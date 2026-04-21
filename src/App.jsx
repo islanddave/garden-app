@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { ZoneProvider } from './context/ZoneContext.jsx'
 import Nav from './components/Nav.jsx'
+import Footer from './components/Footer.jsx'
 import Home from './pages/Home.jsx'
 import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
@@ -33,6 +34,8 @@ function AppRoutes() {
   return (
     <BrowserRouter>
       <Nav />
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 52px)' }}>
+      <div style={{ flex: 1 }}>
       <Routes>
         {/* ---- Public ---- */}
         <Route path="/"             element={<Home />} />
@@ -74,6 +77,9 @@ function AppRoutes() {
         {/* ---- Catch-all ---- */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </div>
+      <Footer />
+      </div>
     </BrowserRouter>
   )
 }
