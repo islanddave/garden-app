@@ -221,9 +221,8 @@ export default function EventNew() {
     }
 
     // 3 — Update entity memory + user stats (non-fatal, fire and move on)
-    const eventDate = new Date(form.event_date)
     await Promise.all([
-      updateEntityMemory(form.project_id, form.location_id, form.event_type, eventDate),
+      updateEntityMemory(form.project_id, form.location_id, form.event_type, new Date(form.event_date)),
       updateUserStats(user.id, form.event_type, { hasPhoto: photoUploaded, eventLogId: event.id }),
     ])
 
