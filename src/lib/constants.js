@@ -63,8 +63,38 @@ export const LOCATION_TYPE_LABELS = [
   'other',
 ]
 
-// Project statuses
-export const PROJECT_STATUSES = ['planning', 'active', 'harvested', 'ended']
+// Project statuses — V1+ lifecycle (matches new DB check constraint)
+// ⚠️  DB MIGRATION REQUIRED before new status values work in production.
+//     Run: supabase/migrations/update_project_status_enum.sql
+//     Until then, new projects with non-legacy values will be rejected by Supabase.
+export const PROJECT_STATUSES = [
+  'planning',
+  'seeding',
+  'sprouting',
+  'growing',
+  'flowering',
+  'fruiting',
+  'harvesting',
+]
+
+// Display mapping — covers both new values and legacy DB values.
+// Structure: { label, emoji } — add color here if needed later.
+// This is the single source of truth for how any status value renders in UI.
+// To re-key a value: update the key here + update PROJECT_STATUSES + run DB migration.
+export const PROJECT_STATUS_MAP = {
+  // ── New lifecycle values ──────────────────────────────────────────
+  planning:   { label: 'Planning',   emoji: '📋' },
+  seeding:    { label: 'Seeding',    emoji: '🌰' },
+  sprouting:  { label: 'Sprouting',  emoji: '🌱' },
+  growing:    { label: 'Growing',    emoji: '🌿' },
+  flowering:  { label: 'Flowering',  emoji: '🌸' },
+  fruiting:   { label: 'Fruiting',   emoji: '🍅' },
+  harvesting: { label: 'Harvesting', emoji: '🧺' },
+  // ── Legacy values (existing DB rows — display-only) ───────────────
+  active:     { label: 'Active',     emoji: '✅' },
+  harvested:  { label: 'Harvested',  emoji: '✓'  },
+  ended:      { label: 'Ended',      emoji: '◼'  },
+}
 
 // Task priorities
 export const TASK_PRIORITIES = ['low', 'normal', 'high']
