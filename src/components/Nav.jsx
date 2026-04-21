@@ -36,6 +36,14 @@ export default function Nav() {
         {user ? (
           <>
             <Link to="/dashboard"  style={navLinkStyle}>Dashboard</Link>
+            <Link to="/log" style={{
+              ...navLinkStyle,
+              backgroundColor: 'rgba(248,245,240,0.15)',
+              border: '1px solid rgba(248,245,240,0.35)',
+              padding: '4px 12px',
+              borderRadius: 6,
+              fontWeight: 600,
+            }}>+ Log</Link>
             <Link to="/locations"  style={navLinkStyle}>Locations</Link>
             <Link to="/tasks"      style={navLinkStyle}>Tasks</Link>
             <Link to="/inventory"  style={navLinkStyle}>Inventory</Link>
