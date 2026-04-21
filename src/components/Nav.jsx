@@ -36,6 +36,9 @@ export default function Nav() {
         {user ? (
           <>
             <Link to="/dashboard"  style={navLinkStyle}>Dashboard</Link>
+            <Link to="/locations"  style={navLinkStyle}>Locations</Link>
+            <Link to="/projects"   style={navLinkStyle}>Projects</Link>
+            <Link to="/tasks"      style={navLinkStyle}>Tasks</Link>
             <Link to="/log" style={{
               ...navLinkStyle,
               backgroundColor: 'rgba(248,245,240,0.15)',
@@ -44,10 +47,6 @@ export default function Nav() {
               borderRadius: 6,
               fontWeight: 600,
             }}>+ Log</Link>
-            <Link to="/locations"  style={navLinkStyle}>Locations</Link>
-            <Link to="/tasks"      style={navLinkStyle}>Tasks</Link>
-            <Link to="/inventory"  style={navLinkStyle}>Inventory</Link>
-            <Link to="/projects"   style={navLinkStyle}>Projects</Link>
             {/* Zone indicator — tap to change zone */}
             <Link
               to={`/zone?from=${encodeURIComponent(location.pathname)}`}
