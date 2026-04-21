@@ -1,772 +1,451 @@
-import { useState, useEffect, useCallback } from 'react'
-import { supabase } from '../lib/supabase.js'
-import { P, INVENTORY_SUBCATEGORIES } from '../lib/constants.js'
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
+import { useInventory } from '../hooks/useInventory.js'
+import { P } from '../lib/constants.js'
 
-// ============================================================
-// Inventory — v0.1
-//
-// Two item types:
-//   consumable — seeds, soil, fertilizer, pest_control, containers
-//   equipment  — lighting, shelving, hand_tools, containers, misc
-//
-// stock_status is computed (NOT stored):
-//   depleted → quantity is null or 0
-//   low      → quantity <= quantity_min (and quantity_min set)
-//   ok       → everything else
-//
-// lifecycle_status is stored:
-//   active | retired
-//
-// current_inventory_value = SUM(purchase_price) WHERE lifecycle_status = 'active'
-// This is active spend only — NOT total historical spend.
-//
-// RLS: permissive (auth.uid() IS NOT NULL).
-// Safe ONLY because Supabase Auth is restricted to islanddave@gmail.com.
-// ============================================================
-
-// ---- Stock status computation (consumable-only) ----
-function stockStatus(item) {
-  if (item.item_type !== 'consumable') return null
-  const q = item.quantity
-  if (q === null || q === undefined || q === 0) return 'depleted'
-  if (item.quantity_min !== null && item.quantity_min !== undefined && q <= item.quantity_min) return 'low'
-  return 'ok'
+// ── Enums (must match inventory_items schema) ─────────────────────────────────
+const CATEGORY_LABELS = {
+  seeds:                    'Seeds',
+  growing_media:            'Growing media',
+  nutrients_and_amendments: 'Nutrients & amendments',
+  pest_control:             'Pest control',
+  containers:               'Containers',
+  lighting:                 'Lighting',
+  shelving:                 'Shelving',
+  climate_control:          'Climate control',
+  tools:                    'Tools',
+  other:                    'Other',
 }
 
-// ---- Default empty form ----
-function emptyForm(type = 'consumable') {
-  return {
-    name:          '',
-    item_type:     type,
-    subcategory:   '',
-    quantity:      '',
-    quantity_unit: '',
-    quantity_min:  '',
-    condition:     '',
-    purchase_price:'',
-    purchase_date: '',
-    vendor:        '',
-    vendor_url:    '',
-    expires_at:    '',
-    location_id:   '',
-    location_note: '',
-    notes:         '',
-  }
-}
-
-// ---- Map form → DB row (enforce type-specific nulling) ----
-function formToRow(f) {
-  const isConsumable = f.item_type === 'consumable'
-  const isEquipment  = f.item_type === 'equipment'
-  return {
-    name:          f.name.trim(),
-    item_type:     f.item_type,
-    subcategory:   f.subcategory  || null,
-    quantity:      isConsumable ? (f.quantity !== '' ? parseFloat(f.quantity) : null) : null,
-    quantity_unit: isConsumable ? (f.quantity_unit.trim() || null) : null,
-    quantity_min:  isConsumable ? (f.quantity_min !== '' ? parseFloat(f.quantity_min) : null) : null,
-    condition:     isEquipment  ? (f.condition    || null) : null,
-    purchase_price:f.purchase_price !== '' ? parseFloat(f.purchase_price) : null,
-    purchase_date: f.purchase_date  || null,
-    vendor:        f.vendor.trim()  || null,
-    vendor_url:    f.vendor_url.trim() || null,
-    expires_at:    isConsumable ? (f.expires_at || null) : null,
-    location_id:   f.location_id   || null,
-    location_note: f.location_note.trim() || null,
-    notes:         f.notes.trim()   || null,
-  }
-}
-
-// ============================================================
-// Main page
-// ============================================================
+// ── Main page ─────────────────────────────────────────────────────────────────
 export default function Inventory() {
-  const [items,        setItems]        = useState([])
-  const [locations,    setLocations]    = useState([])
-  const [loading,      setLoading]      = useState(true)
-  const [error,        setError]        = useState(null)
-  const [showForm,     setShowForm]     = useState(false)
-  const [editItem,     setEditItem]     = useState(null)   // null = create; item = edit
-  const [showRetired,  setShowRetired]  = useState(false)
-  const [typeFilter,   setTypeFilter]   = useState('all')  // 'all'|'consumable'|'equipment'
-  const [saving,       setSaving]       = useState(false)
-  const [formError,    setFormError]    = useState(null)
-  const [form,         setForm]         = useState(emptyForm())
-  const [toast,        setToast]        = useState(null)   // { msg, color }
+  const { items, loading, error, toast, dismissToast, adjustQuantity } = useInventory()
 
-  // ---- Toast helper (3-second auto-dismiss) ----
-  function showToast(msg, color = P.green) {
-    setToast({ msg, color })
-    setTimeout(() => setToast(null), 3000)
-  }
-
-  // ---- Load ----
-  const load = useCallback(async () => {
-    const [
-      { data: invData, error: invErr },
-      { data: locData, error: locErr },
-    ] = await Promise.all([
-      supabase
-        .from('inventory')
-        .select('*')
-        .order('name', { ascending: true }),
-      supabase
-        .from('locations_with_path')
-        .select('id, full_path, level, is_active')
-        .eq('is_active', true)
-        .in('level', [0, 1])
-        .order('full_path'),
-    ])
-    if (invErr || locErr) {
-      setError((invErr || locErr).message)
-    } else {
-      setItems(invData ?? [])
-      setLocations(locData ?? [])
-    }
-    setLoading(false)
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  // ---- CRUD handlers ----
-  async function handleCreate(e) {
-    e.preventDefault()
-    setSaving(true)
-    setFormError(null)
-    const { error } = await supabase.from('inventory').insert(formToRow(form))
-    setSaving(false)
-    if (error) {
-      setFormError(error.message)
-    } else {
-      setShowForm(false)
-      setForm(emptyForm())
-      showToast(`"${form.name}" added to inventory`)
-      load()
-    }
-  }
-
-  async function handleUpdate(e) {
-    e.preventDefault()
-    setSaving(true)
-    setFormError(null)
-    const { error } = await supabase
-      .from('inventory')
-      .update(formToRow(form))
-      .eq('id', editItem.id)
-    setSaving(false)
-    if (error) {
-      setFormError(error.message)
-    } else {
-      setEditItem(null)
-      setShowForm(false)
-      setForm(emptyForm())
-      showToast(`"${form.name}" updated`)
-      load()
-    }
-  }
-
-  async function handleRetire(item) {
-    await supabase.from('inventory').update({ lifecycle_status: 'retired' }).eq('id', item.id)
-    showToast(`"${item.name}" retired`, P.light)
-    load()
-  }
-
-  async function handleReactivate(item) {
-    await supabase.from('inventory').update({ lifecycle_status: 'active' }).eq('id', item.id)
-    showToast(`"${item.name}" restored to active`)
-    load()
-  }
-
-  function openEdit(item) {
-    setEditItem(item)
-    setForm({
-      name:          item.name          ?? '',
-      item_type:     item.item_type     ?? 'consumable',
-      subcategory:   item.subcategory   ?? '',
-      quantity:      item.quantity      != null ? String(item.quantity) : '',
-      quantity_unit: item.quantity_unit ?? '',
-      quantity_min:  item.quantity_min  != null ? String(item.quantity_min) : '',
-      condition:     item.condition     ?? '',
-      purchase_price:item.purchase_price != null ? String(item.purchase_price) : '',
-      purchase_date: item.purchase_date ?? '',
-      vendor:        item.vendor        ?? '',
-      vendor_url:    item.vendor_url    ?? '',
-      expires_at:    item.expires_at    ?? '',
-      location_id:   item.location_id   ?? '',
-      location_note: item.location_note ?? '',
-      notes:         item.notes         ?? '',
-    })
-    setShowForm(true)
-    setFormError(null)
-  }
-
-  function cancelForm() {
-    setShowForm(false)
-    setEditItem(null)
-    setForm(emptyForm())
-    setFormError(null)
-  }
-
-  // ---- Partition items ----
-  const activeItems  = items.filter(i => i.lifecycle_status === 'active')
-  const retiredItems = items.filter(i => i.lifecycle_status === 'retired')
-
-  const filteredActive = typeFilter === 'all'
-    ? activeItems
-    : activeItems.filter(i => i.item_type === typeFilter)
-
-  const needsReorder = activeItems.filter(i => {
-    const s = stockStatus(i)
-    return s === 'depleted' || s === 'low'
-  })
-
-  const totalValue = activeItems.reduce((sum, i) => sum + (i.purchase_price ?? 0), 0)
-
-  const locMap = Object.fromEntries(locations.map(l => [l.id, l.full_path]))
+  const [filterType,     setFilterType]     = useState('all')
+  const [filterCategory, setFilterCategory] = useState('all')
+  const [filterStatus,   setFilterStatus]   = useState('active')
+  const [sortBy,         setSortBy]         = useState('name_asc')
 
   if (loading) return <Shell><Spinner /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
-  return (
-    <Shell>
-      {/* Toast */}
-      {toast && (
-        <div style={{
-          position: 'fixed', top: 16, right: 20, zIndex: 9999,
-          backgroundColor: toast.color, color: P.white,
-          padding: '10px 18px', borderRadius: 8,
-          fontSize: '0.88rem', fontWeight: 600,
-          boxShadow: '0 2px 12px rgba(0,0,0,0.15)',
-        }}>
-          {toast.msg}
-        </div>
-      )}
+  // ── Filter ──
+  const filtered = items.filter(item => {
+    if (filterType     !== 'all' && item.type     !== filterType)     return false
+    if (filterCategory !== 'all' && item.category !== filterCategory) return false
+    if (filterStatus   !== 'all' && item.status   !== filterStatus)   return false
+    return true
+  })
 
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-        <div>
-          <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Inventory</h1>
-          <p style={{ margin: '4px 0 0', color: P.light, fontSize: '0.85rem' }}>
-            {activeItems.length} active items · ${totalValue.toFixed(2)} value
-            {needsReorder.length > 0 && (
-              <span style={{ color: P.terra, marginLeft: 8, fontWeight: 600 }}>
-                · {needsReorder.length} need reorder
-              </span>
-            )}
-          </p>
-        </div>
-        <button
-          onClick={() => {
-            if (showForm && !editItem) { cancelForm() } else { cancelForm(); setShowForm(true) }
-          }}
-          style={btn(showForm && !editItem ? P.light : P.green)}
-        >
-          {showForm && !editItem ? 'Cancel' : '+ Add item'}
-        </button>
-      </div>
+  // ── Sort ──
+  const sorted = [...filtered].sort((a, b) => {
+    switch (sortBy) {
+      case 'name_asc':   return a.name.localeCompare(b.name)
+      case 'name_desc':  return b.name.localeCompare(a.name)
+      case 'date_desc':  return (b.purchase_date ?? '').localeCompare(a.purchase_date ?? '')
+      case 'qty_asc':    return (a.quantity_on_hand ?? Infinity) - (b.quantity_on_hand ?? Infinity)
+      default:           return 0
+    }
+  })
 
-      {/* Reorder banner */}
-      {needsReorder.length > 0 && (
-        <div style={{
-          backgroundColor: '#fde8e0', border: `1px solid ${P.alertBorder}`,
-          borderRadius: 8, padding: '10px 16px', marginBottom: 16,
-          fontSize: '0.85rem', color: '#7a2a10',
-        }}>
-          <strong>Needs reorder:</strong>{' '}
-          {needsReorder.map(i => (
-            <span key={i.id} style={{ marginRight: 10 }}>
-              {stockStatus(i) === 'depleted' ? '🔴' : '🟡'} {i.name}
-            </span>
-          ))}
-        </div>
-      )}
+  // ── Cost summary ──
+  const withCost   = items.filter(i => i.unit_cost != null && i.quantity_purchased != null)
+  const totalCost  = withCost.reduce((sum, i) => sum + i.unit_cost * i.quantity_purchased, 0)
+  const consCost   = withCost.filter(i => i.type === 'consumable').reduce((sum, i) => sum + i.unit_cost * i.quantity_purchased, 0)
+  const duraCost   = withCost.filter(i => i.type === 'durable')   .reduce((sum, i) => sum + i.unit_cost * i.quantity_purchased, 0)
+  const noCostCount = items.filter(i => i.unit_cost == null || i.quantity_purchased == null).length
 
-      {/* Create / Edit form */}
-      {showForm && (
-        <ItemForm
-          form={form} setForm={setForm}
-          locations={locations}
-          saving={saving} formError={formError}
-          isEdit={!!editItem}
-          onSubmit={editItem ? handleUpdate : handleCreate}
-          onCancel={cancelForm}
-        />
-      )}
-
-      {/* Filter bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <TypeFilterBar value={typeFilter} onChange={setTypeFilter} />
-      </div>
-
-      {/* Active items */}
-      {filteredActive.length > 0 ? (
-        <section style={{ marginBottom: 24 }}>
-          {filteredActive.map(item => (
-            <ItemCard
-              key={item.id}
-              item={item}
-              locMap={locMap}
-              onEdit={openEdit}
-              onRetire={handleRetire}
-            />
-          ))}
-        </section>
-      ) : (
-        <Empty msg={
-          typeFilter !== 'all'
-            ? `No active ${typeFilter} items. Hit '+ Add item' to get started.`
-            : "No inventory items yet. Hit '+ Add item' to add your first."
-        } />
-      )}
-
-      {/* Retired items (collapsed by default) */}
-      {retiredItems.length > 0 && (
-        <section style={{ marginTop: 8 }}>
-          <button
-            onClick={() => setShowRetired(s => !s)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: P.mid, fontSize: '0.8rem', padding: '4px 0',
-              textDecoration: 'underline',
-            }}
-          >
-            {showRetired
-              ? `Hide retired items (${retiredItems.length})`
-              : `Show retired items (${retiredItems.length})`}
-          </button>
-          {showRetired && retiredItems.map(item => (
-            <ItemCard
-              key={item.id}
-              item={item}
-              locMap={locMap}
-              onReactivate={handleReactivate}
-              retired
-            />
-          ))}
-        </section>
-      )}
-    </Shell>
+  const lowStockItems = items.filter(i =>
+    i.type === 'consumable' &&
+    i.reorder_threshold !== null &&
+    i.reorder_threshold !== undefined &&
+    (i.quantity_on_hand ?? 0) <= i.reorder_threshold
   )
-}
 
-// ============================================================
-// Item form — progressive disclosure
-// Required fields shown first; optional details behind "Add details" toggle
-// ============================================================
-function ItemForm({ form, setForm, locations, saving, formError, isEdit, onSubmit, onCancel }) {
-  const [showDetails, setShowDetails] = useState(isEdit)
+  const fmt = n => '$' + n.toFixed(2)
 
-  const isConsumable = form.item_type === 'consumable'
-  const isEquipment  = form.item_type === 'equipment'
-
-  const filteredSubs = INVENTORY_SUBCATEGORIES.filter(s => s.types.includes(form.item_type))
+  // Category options for filter (only present in data)
+  const presentCategories = [...new Set(items.map(i => i.category))]
 
   return (
-    <form onSubmit={onSubmit} style={card}>
-      <h2 style={{ margin: '0 0 18px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>
-        {isEdit ? 'Edit item' : 'Add inventory item'}
-      </h2>
-      {formError && <ErrBanner msg={formError} />}
+    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 120px' }}>
 
-      {/* Type selector — tile buttons */}
-      {!isEdit && (
-        <FormRow label="Item type *">
-          <div style={{ display: 'flex', gap: 8 }}>
-            {[
-              { v: 'consumable', label: '🌱 Supplies', sub: 'seeds, soil, fertilizer…' },
-              { v: 'equipment',  label: '🔧 Equipment', sub: 'lights, shelves, tools…' },
-            ].map(opt => (
-              <button
-                key={opt.v}
-                type="button"
-                onClick={() => setForm(f => ({
-                  ...emptyForm(opt.v),
-                  name: f.name,  // preserve name across type switch
-                }))}
-                style={{
-                  flex: 1, padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
-                  border: `2px solid ${form.item_type === opt.v ? P.green : P.border}`,
-                  backgroundColor: form.item_type === opt.v ? P.greenPale : P.white,
-                  textAlign: 'left',
-                }}
-              >
-                <div style={{ fontWeight: 700, fontSize: '0.88rem', color: form.item_type === opt.v ? P.green : P.dark }}>
-                  {opt.label}
-                </div>
-                <div style={{ fontSize: '0.75rem', color: P.light, marginTop: 2 }}>{opt.sub}</div>
-              </button>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
+            Inventory
+          </h1>
+          <Link to="/inventory/add" style={addBtnStyle}>
+            + Add item
+          </Link>
+        </div>
+
+        {/* ── Filters ── */}
+        <div style={{
+          display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 20,
+          padding: '14px 16px',
+          backgroundColor: P.white,
+          border: `1px solid ${P.border}`,
+          borderRadius: 8,
+        }}>
+          <FilterSelect label="Type" value={filterType} onChange={setFilterType}>
+            <option value="all">All types</option>
+            <option value="consumable">Consumable</option>
+            <option value="durable">Durable</option>
+          </FilterSelect>
+
+          <FilterSelect label="Category" value={filterCategory} onChange={setFilterCategory}>
+            <option value="all">All categories</option>
+            {presentCategories.map(c => (
+              <option key={c} value={c}>{CATEGORY_LABELS[c] ?? c}</option>
+            ))}
+          </FilterSelect>
+
+          <FilterSelect label="Status" value={filterStatus} onChange={setFilterStatus}>
+            <option value="active">Active</option>
+            <option value="depleted">Depleted</option>
+            <option value="retired">Retired</option>
+            <option value="missing">Missing</option>
+            <option value="all">All</option>
+          </FilterSelect>
+
+          <FilterSelect label="Sort" value={sortBy} onChange={setSortBy}>
+            <option value="name_asc">Name A→Z</option>
+            <option value="name_desc">Name Z→A</option>
+            <option value="date_desc">Newest first</option>
+            <option value="qty_asc">Low qty first</option>
+          </FilterSelect>
+        </div>
+
+        {/* ── Item list ── */}
+        {sorted.length === 0 ? (
+          items.length === 0 ? <EmptyState /> : (
+            <div style={{
+              textAlign: 'center', color: P.light, padding: '40px 20px',
+              backgroundColor: P.white, border: `1px solid ${P.border}`,
+              borderRadius: 8, fontSize: '0.875rem',
+            }}>
+              No items match these filters.
+            </div>
+          )
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {sorted.map(item => (
+              <InventoryRow
+                key={item.id}
+                item={item}
+                onAdjust={adjustQuantity}
+              />
             ))}
           </div>
-        </FormRow>
-      )}
+        )}
 
-      {/* Name (always required) */}
-      <FormRow label="Name *">
-        <input
-          required
-          value={form.name}
-          onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-          style={input}
-          placeholder={isConsumable ? 'e.g. Stupice tomato seeds' : 'e.g. Barrina T5 grow light'}
-        />
-      </FormRow>
+      </div>
 
-      {/* Consumable quantity row */}
-      {isConsumable && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-          <FormRow label="Quantity *">
-            <input
-              type="number" min="0" step="any"
-              required
-              value={form.quantity}
-              onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
-              style={{ ...input, width: '100%' }}
-              placeholder="e.g. 50"
-            />
-          </FormRow>
-          <FormRow label="Unit">
-            <input
-              value={form.quantity_unit}
-              onChange={e => setForm(f => ({ ...f, quantity_unit: e.target.value }))}
-              style={{ ...input, width: '100%' }}
-              placeholder="seeds, oz, g, pkg…"
-            />
-          </FormRow>
-          <FormRow label="Reorder at (min)">
-            <input
-              type="number" min="0" step="any"
-              value={form.quantity_min}
-              onChange={e => setForm(f => ({ ...f, quantity_min: e.target.value }))}
-              style={{ ...input, width: '100%' }}
-              placeholder="e.g. 10"
-            />
-          </FormRow>
+      {/* ── Cost summary bar (sticky bottom, above nav) ── */}
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0,
+        backgroundColor: P.cream,
+        borderTop: `1px solid ${P.gold}`,
+        padding: '10px 20px',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        gap: 18, flexWrap: 'wrap',
+        fontSize: '0.82rem', color: P.dark,
+        zIndex: 50,
+      }}>
+        <span>
+          <span style={{ color: P.light }}>Purchased cost: </span>
+          <strong>{fmt(totalCost)}</strong>
+        </span>
+        <span style={{ color: P.border }}>|</span>
+        <span>
+          <span style={{ color: P.light }}>Consumables: </span>
+          <strong>{fmt(consCost)}</strong>
+        </span>
+        <span style={{ color: P.border }}>|</span>
+        <span>
+          <span style={{ color: P.light }}>Durables: </span>
+          <strong>{fmt(duraCost)}</strong>
+        </span>
+        {lowStockItems.length > 0 && (
+          <>
+            <span style={{ color: P.border }}>|</span>
+            <button
+              onClick={() => { setFilterType('consumable'); setFilterStatus('active') }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: '#b45309', fontWeight: 700, fontSize: '0.82rem',
+                display: 'flex', alignItems: 'center', gap: 4, padding: 0,
+              }}
+            >
+              <span aria-hidden="true">⚠</span>
+              <span>Low stock: {lowStockItems.length}</span>
+            </button>
+          </>
+        )}
+        {noCostCount > 0 && (
+          <span style={{ color: P.light, fontSize: '0.75rem' }}>
+            ({noCostCount} item{noCostCount > 1 ? 's' : ''} without cost data)
+          </span>
+        )}
+      </div>
+
+      {/* ── Undo / error toast ── */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 60, left: '50%', transform: 'translateX(-50%)',
+          backgroundColor: P.dark, color: P.white,
+          padding: '11px 20px', borderRadius: 8,
+          fontSize: '0.875rem', fontWeight: 500,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
+          zIndex: 200,
+          display: 'flex', alignItems: 'center', gap: 14, whiteSpace: 'nowrap',
+        }}>
+          <span>{toast.msg}</span>
+          {toast.onUndo && (
+            <button
+              onClick={toast.onUndo}
+              style={{
+                background: 'none', border: `1px solid rgba(255,255,255,0.4)`,
+                color: P.white, borderRadius: 4, padding: '3px 10px',
+                cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600,
+              }}
+            >
+              Undo
+            </button>
+          )}
+          <button
+            onClick={dismissToast}
+            style={{
+              background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)',
+              cursor: 'pointer', fontSize: '1rem', padding: 0, lineHeight: 1,
+            }}
+          >
+            ✕
+          </button>
         </div>
       )}
-
-      {/* Equipment condition */}
-      {isEquipment && (
-        <FormRow label="Condition">
-          <select
-            value={form.condition}
-            onChange={e => setForm(f => ({ ...f, condition: e.target.value }))}
-            style={input}
-          >
-            <option value="">— Select condition —</option>
-            <option value="new">New</option>
-            <option value="good">Good</option>
-            <option value="fair">Fair</option>
-            <option value="poor">Poor</option>
-          </select>
-        </FormRow>
-      )}
-
-      {/* Progressive disclosure toggle */}
-      {!showDetails && (
-        <button
-          type="button"
-          onClick={() => setShowDetails(true)}
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: P.green, fontSize: '0.82rem', fontWeight: 600,
-            padding: '4px 0', marginBottom: 8, textDecoration: 'underline',
-          }}
-        >
-          + Add details (subcategory, cost, location…)
-        </button>
-      )}
-
-      {/* Details section */}
-      {showDetails && (
-        <>
-          <FormRow label="Subcategory">
-            <select
-              value={form.subcategory}
-              onChange={e => setForm(f => ({ ...f, subcategory: e.target.value }))}
-              style={input}
-            >
-              <option value="">— None —</option>
-              {filteredSubs.map(s => (
-                <option key={s.v} value={s.v}>{s.label}</option>
-              ))}
-            </select>
-          </FormRow>
-
-          {isConsumable && (
-            <FormRow label="Expires">
-              <input
-                type="date"
-                value={form.expires_at}
-                onChange={e => setForm(f => ({ ...f, expires_at: e.target.value }))}
-                style={{ ...input, width: '100%' }}
-              />
-            </FormRow>
-          )}
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            <FormRow label="Purchase price ($)">
-              <input
-                type="number" min="0" step="0.01"
-                value={form.purchase_price}
-                onChange={e => setForm(f => ({ ...f, purchase_price: e.target.value }))}
-                style={{ ...input, width: '100%' }}
-                placeholder="0.00"
-              />
-            </FormRow>
-            <FormRow label="Purchase date">
-              <input
-                type="date"
-                value={form.purchase_date}
-                onChange={e => setForm(f => ({ ...f, purchase_date: e.target.value }))}
-                style={{ ...input, width: '100%' }}
-              />
-            </FormRow>
-            <FormRow label="Vendor">
-              <input
-                value={form.vendor}
-                onChange={e => setForm(f => ({ ...f, vendor: e.target.value }))}
-                style={{ ...input, width: '100%' }}
-                placeholder="e.g. Johnny's Seeds"
-              />
-            </FormRow>
-          </div>
-
-          <FormRow label="Vendor URL">
-            <input
-              type="url"
-              value={form.vendor_url}
-              onChange={e => setForm(f => ({ ...f, vendor_url: e.target.value }))}
-              style={input}
-              placeholder="https://…"
-            />
-          </FormRow>
-
-          <FormRow label="Location">
-            <select
-              value={form.location_id}
-              onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))}
-              style={input}
-            >
-              <option value="">— No location —</option>
-              {locations.map(l => (
-                <option key={l.id} value={l.id}>{l.full_path}</option>
-              ))}
-            </select>
-          </FormRow>
-
-          <FormRow label="Location note (shelf/bin/slot)">
-            <input
-              value={form.location_note}
-              onChange={e => setForm(f => ({ ...f, location_note: e.target.value }))}
-              style={input}
-              placeholder="e.g. Shelf 2, left bin"
-            />
-          </FormRow>
-
-          <FormRow label="Notes">
-            <textarea
-              value={form.notes}
-              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-              style={{ ...input, minHeight: 64, resize: 'vertical' }}
-              placeholder="Any notes about this item…"
-            />
-          </FormRow>
-        </>
-      )}
-
-      <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
-        <button type="submit" disabled={saving} style={btn(saving ? P.light : P.green)}>
-          {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add to inventory'}
-        </button>
-        <button type="button" onClick={onCancel} style={btn(P.mid)}>
-          Cancel
-        </button>
-      </div>
-    </form>
+    </div>
   )
 }
 
-// ============================================================
-// Item card
-// ============================================================
-function ItemCard({ item, locMap, onEdit, onRetire, onReactivate, retired = false }) {
-  const status = stockStatus(item)
+// ── Inventory row ─────────────────────────────────────────────────────────────
+function InventoryRow({ item, onAdjust }) {
+  const [expanded, setExpanded] = useState(false)
 
-  const stockBadge = {
-    depleted: { bg: P.alert,     color: '#7a2a10', border: P.alertBorder, label: '🔴 depleted' },
-    low:      { bg: '#fff8e6',   color: '#7a5c00', border: P.warnBorder,  label: '🟡 low stock' },
-    ok:       { bg: P.greenPale, color: P.green,   border: P.greenLight,  label: '✓ ok' },
-  }
-  const sb = status ? stockBadge[status] : null
-
-  const conditionColor = {
-    new:  P.green,
-    good: P.greenLight,
-    fair: P.gold,
-    poor: P.terra,
-  }
+  const isLowStock = (
+    item.type === 'consumable' &&
+    item.reorder_threshold !== null &&
+    item.reorder_threshold !== undefined &&
+    (item.quantity_on_hand ?? 0) <= item.reorder_threshold
+  )
+  const isOut = isLowStock && (item.quantity_on_hand ?? 0) === 0
 
   return (
     <div style={{
-      backgroundColor: retired ? '#fafafa' : P.white,
-      border: `1px solid ${retired ? '#e0e0e0' : P.border}`,
-      borderRadius: 8, padding: '12px 16px', marginBottom: 8,
-      display: 'flex', alignItems: 'flex-start', gap: 12,
-      opacity: retired ? 0.7 : 1,
+      backgroundColor: P.white,
+      border: `1px solid ${P.border}`,
+      borderRadius: 8,
+      overflow: 'hidden',
     }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {/* Name + badges */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ fontWeight: 600, color: retired ? P.light : P.dark, fontSize: '0.92rem' }}>
-            {item.name}
+      {/* Main row */}
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+          padding: '14px 16px', textAlign: 'left',
+          display: 'flex', alignItems: 'center', gap: 10, minHeight: 52,
+        }}
+      >
+        <span style={{ flex: 1, fontWeight: 600, color: P.dark, fontSize: '0.95rem' }}>
+          {item.name}
+        </span>
+
+        <span style={{
+          fontSize: '0.72rem', color: P.mid,
+          backgroundColor: '#f0ece8', borderRadius: 10,
+          padding: '2px 8px', flexShrink: 0,
+        }}>
+          {CATEGORY_LABELS[item.category] ?? item.category}
+        </span>
+
+        {/* Low-stock badge — triangle icon + color (WCAG 1.4.1: never color alone) */}
+        {isLowStock && (
+          <span
+            role="img"
+            aria-label={isOut ? 'Out of stock' : 'Low stock'}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              fontSize: '0.72rem', fontWeight: 700, flexShrink: 0,
+              color: isOut ? P.terra : '#b45309',
+              backgroundColor: isOut ? P.alert : P.warn,
+              border: `1px solid ${isOut ? P.alertBorder : P.warnBorder}`,
+              borderRadius: 10, padding: '2px 8px',
+            }}
+          >
+            <span aria-hidden="true">⚠</span>
+            {isOut ? 'Out' : 'Low'}
           </span>
-          {/* Type badge */}
-          <span style={{
-            fontSize: '0.7rem', fontWeight: 600, borderRadius: 10, padding: '1px 7px',
-            backgroundColor: item.item_type === 'consumable' ? P.greenPale : '#eef2ff',
-            color: item.item_type === 'consumable' ? P.green : P.blue,
-            border: `1px solid ${item.item_type === 'consumable' ? P.greenLight : '#93afd8'}`,
+        )}
+
+        <span style={{ color: P.light, fontSize: '0.75rem', flexShrink: 0 }}>
+          {expanded ? '▾' : '▸'}
+        </span>
+      </button>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div style={{
+          padding: '0 16px 16px',
+          borderTop: `1px solid ${P.border}`,
+          display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+
+          {/* Qty adjust — consumable only */}
+          {item.type === 'consumable' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 14 }}>
+              <span style={{ fontSize: '0.82rem', color: P.mid, flexShrink: 0 }}>Qty on hand:</span>
+              <button
+                onClick={() => onAdjust(item.id, -1)}
+                style={qtyBtn}
+                aria-label="Decrease quantity"
+              >−</button>
+              <span style={{ fontWeight: 700, fontSize: '1rem', minWidth: 40, textAlign: 'center' }}>
+                {item.quantity_on_hand ?? 0}
+                {item.unit
+                  ? <span style={{ fontWeight: 400, fontSize: '0.78rem', color: P.mid }}> {item.unit}</span>
+                  : null}
+              </span>
+              <button
+                onClick={() => onAdjust(item.id, +1)}
+                style={qtyBtn}
+                aria-label="Increase quantity"
+              >+</button>
+              {item.reorder_threshold === null && (
+                <span style={{ fontSize: '0.75rem', color: P.light, fontStyle: 'italic' }}>
+                  No reorder reminder set
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Durable qty + condition */}
+          {item.type === 'durable' && (
+            <div style={{ paddingTop: 14, fontSize: '0.88rem', color: P.mid }}>
+              Qty: <strong style={{ color: P.dark }}>{item.quantity}</strong>
+              {item.condition && (
+                <span style={{ marginLeft: 12 }}>
+                  Condition: <strong style={{ color: P.dark }}>{item.condition}</strong>
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Detail cells */}
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1fr 1fr',
+            gap: '6px 20px', paddingTop: 4,
+            fontSize: '0.82rem', color: P.mid,
           }}>
-            {item.item_type === 'consumable' ? '🌱 supplies' : '🔧 equipment'}
-          </span>
-          {/* Stock badge (consumable only) */}
-          {sb && (
-            <span style={{
-              fontSize: '0.7rem', fontWeight: 600, borderRadius: 10, padding: '1px 7px',
-              backgroundColor: sb.bg, color: sb.color, border: `1px solid ${sb.border}`,
-            }}>
-              {sb.label}
-            </span>
+            {item.status !== 'active' && <DetailCell label="Status" value={item.status} />}
+            {item.location_text   && <DetailCell label="Location"  value={item.location_text} />}
+            {item.source          && <DetailCell label="Source"    value={item.source} />}
+            {item.unit_cost != null && <DetailCell label="Unit cost" value={`$${Number(item.unit_cost).toFixed(2)}`} />}
+            {item.purchase_date   && <DetailCell label="Purchased" value={item.purchase_date} />}
+            {item.brand           && <DetailCell label="Brand"     value={item.brand} />}
+            {item.model           && <DetailCell label="Model"     value={item.model} />}
+          </div>
+
+          {item.notes && (
+            <p style={{ margin: 0, fontSize: '0.82rem', color: P.mid, fontStyle: 'italic' }}>
+              {item.notes}
+            </p>
           )}
-          {/* Condition badge (equipment only) */}
-          {item.condition && (
-            <span style={{
-              fontSize: '0.7rem', fontWeight: 600, borderRadius: 10, padding: '1px 7px',
-              backgroundColor: '#f5f5f5', color: conditionColor[item.condition] ?? P.mid,
-              border: `1px solid ${conditionColor[item.condition] ?? P.border}`,
-            }}>
-              {item.condition}
-            </span>
+
+          {item.source_url && (
+            <a
+              href={item.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '0.8rem', color: P.green }}
+            >
+              Buy again →
+            </a>
           )}
-          {retired && (
-            <span style={{
-              fontSize: '0.7rem', fontWeight: 600, borderRadius: 10, padding: '1px 7px',
-              backgroundColor: '#f0f0f0', color: P.light, border: '1px solid #ccc',
-            }}>
-              retired
-            </span>
-          )}
+
+          <div style={{ borderTop: `1px solid ${P.border}`, paddingTop: 10, marginTop: 4 }}>
+            <Link
+              to={`/inventory/${item.id}`}
+              style={{ fontSize: '0.82rem', color: P.green, textDecoration: 'none', fontWeight: 500 }}
+            >
+              Edit item →
+            </Link>
+          </div>
         </div>
-
-        {/* Meta row */}
-        <div style={{ display: 'flex', gap: 14, marginTop: 5, flexWrap: 'wrap' }}>
-          {item.subcategory && (
-            <span style={{ fontSize: '0.78rem', color: P.mid }}>
-              {subcategoryLabel(item.subcategory)}
-            </span>
-          )}
-          {item.item_type === 'consumable' && item.quantity !== null && (
-            <span style={{ fontSize: '0.78rem', color: P.mid }}>
-              Qty: <strong>{item.quantity}</strong>{item.quantity_unit ? ` ${item.quantity_unit}` : ''}
-              {item.quantity_min !== null && ` (min: ${item.quantity_min})`}
-            </span>
-          )}
-          {item.purchase_price !== null && (
-            <span style={{ fontSize: '0.78rem', color: P.mid }}>
-              ${Number(item.purchase_price).toFixed(2)}
-              {item.vendor ? ` · ${item.vendor}` : ''}
-            </span>
-          )}
-          {item.location_id && locMap[item.location_id] && (
-            <span style={{ fontSize: '0.78rem', color: P.mid }}>
-              📍 {locMap[item.location_id]}
-              {item.location_note ? ` · ${item.location_note}` : ''}
-            </span>
-          )}
-          {item.expires_at && (
-            <span style={{ fontSize: '0.78rem', color: isExpiringSoon(item.expires_at) ? P.terra : P.light }}>
-              Exp: {item.expires_at}
-            </span>
-          )}
-        </div>
-
-        {item.notes && (
-          <p style={{ margin: '6px 0 0', fontSize: '0.82rem', color: P.mid, lineHeight: 1.4 }}>
-            {item.notes}
-          </p>
-        )}
-      </div>
-
-      {/* Actions */}
-      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-        {!retired ? (
-          <>
-            <button onClick={() => onEdit(item)} style={actionBtn(P.mid)}>Edit</button>
-            <button onClick={() => onRetire(item)} style={actionBtn(P.light)}>Retire</button>
-          </>
-        ) : (
-          <button onClick={() => onReactivate(item)} style={actionBtn(P.green)}>Restore</button>
-        )}
-      </div>
+      )}
     </div>
   )
 }
 
-// ============================================================
-// Type filter bar
-// ============================================================
-function TypeFilterBar({ value, onChange }) {
-  const opts = [
-    { v: 'all',        label: 'All' },
-    { v: 'consumable', label: '🌱 Supplies' },
-    { v: 'equipment',  label: '🔧 Equipment' },
-  ]
+// ── Sub-components ────────────────────────────────────────────────────────────
+function FilterSelect({ label, value, onChange, children }) {
   return (
-    <div style={{ display: 'flex', gap: 4, backgroundColor: P.border, borderRadius: 6, padding: 3 }}>
-      {opts.map(o => (
-        <button
-          key={o.v}
-          onClick={() => onChange(o.v)}
-          style={{
-            background: value === o.v ? P.white : 'none',
-            border: 'none', borderRadius: 4,
-            padding: '4px 12px',
-            fontSize: '0.8rem',
-            fontWeight: value === o.v ? 600 : 400,
-            color: value === o.v ? P.dark : P.mid,
-            cursor: 'pointer',
-          }}
-        >
-          {o.label}
-        </button>
-      ))}
+    <select
+      aria-label={label}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      style={{
+        padding: '6px 28px 6px 10px',
+        border: `1px solid ${P.border}`,
+        borderRadius: 6, fontSize: '0.82rem',
+        backgroundColor: P.cream, color: P.dark,
+        cursor: 'pointer',
+        appearance: 'none',
+        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23777' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: 'right 8px center',
+      }}
+    >
+      {children}
+    </select>
+  )
+}
+
+function DetailCell({ label, value }) {
+  return (
+    <div>
+      <span style={{ color: P.light }}>{label}: </span>
+      <span style={{ color: P.dark }}>{value}</span>
     </div>
   )
 }
 
-// ============================================================
-// Helpers
-// ============================================================
-function subcategoryLabel(v) {
-  const found = INVENTORY_SUBCATEGORIES.find(s => s.v === v)
-  return found ? found.label : v
+function EmptyState() {
+  return (
+    <div style={{
+      textAlign: 'center', padding: '52px 20px',
+      backgroundColor: P.white, border: `1px solid ${P.border}`,
+      borderRadius: 8,
+    }}>
+      <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📦</div>
+      <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>
+        Nothing here yet
+      </p>
+      <p style={{ margin: '0 0 24px', color: P.light, fontSize: '0.875rem' }}>
+        Add your first item to start tracking
+      </p>
+      <Link to="/inventory/add" style={addBtnStyle}>
+        Add item
+      </Link>
+    </div>
+  )
 }
 
-function isExpiringSoon(dateStr) {
-  if (!dateStr) return false
-  const expires = new Date(dateStr)
-  const now = new Date()
-  const days = (expires - now) / (1000 * 60 * 60 * 24)
-  return days < 60
-}
-
-// ============================================================
-// Shared UI primitives
-// ============================================================
 function Shell({ children }) {
   return (
     <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
-      <div style={{ maxWidth: 800, margin: '0 auto', padding: '32px 20px' }}>{children}</div>
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px' }}>{children}</div>
     </div>
   )
 }
@@ -776,57 +455,22 @@ function Spinner() {
 function ErrMsg({ msg }) {
   return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div>
 }
-function ErrBanner({ msg }) {
-  return (
-    <div style={{
-      backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`,
-      borderRadius: 6, padding: '10px 14px', marginBottom: 16,
-      fontSize: '0.875rem', color: '#7a2a10',
-    }}>
-      {msg}
-    </div>
-  )
-}
-function Empty({ msg }) {
-  return (
-    <div style={{
-      textAlign: 'center', color: P.light, padding: '40px 20px',
-      fontSize: '0.875rem', backgroundColor: P.white,
-      border: `1px solid ${P.border}`, borderRadius: 8,
-    }}>
-      {msg}
-    </div>
-  )
-}
-function FormRow({ label, children }) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>
-        {label}
-      </label>
-      {children}
-    </div>
-  )
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+const addBtnStyle = {
+  display: 'inline-flex', alignItems: 'center',
+  backgroundColor: P.terra, color: P.white,
+  textDecoration: 'none', borderRadius: 8,
+  padding: '10px 20px', fontSize: '0.9rem', fontWeight: 700,
+  minHeight: 44,
 }
 
-const btn = (bg) => ({
-  backgroundColor: bg, color: P.white, border: 'none', borderRadius: 6,
-  padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600,
-  cursor: bg === P.light ? 'default' : 'pointer',
-  whiteSpace: 'nowrap',
-})
-const actionBtn = (color) => ({
-  background: 'none', border: `1px solid ${color}`, color,
-  borderRadius: 5, padding: '4px 11px',
-  fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
-  whiteSpace: 'nowrap',
-})
-const input = {
-  width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`,
-  borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white,
-  boxSizing: 'border-box',
-}
-const card = {
-  backgroundColor: P.white, border: `1px solid ${P.border}`,
-  borderRadius: 10, padding: 24, marginBottom: 24,
+const qtyBtn = {
+  width: 36, height: 36, borderRadius: 6,
+  border: `1px solid ${P.border}`,
+  backgroundColor: P.cream, color: P.dark,
+  cursor: 'pointer', fontSize: '1.1rem', fontWeight: 700,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  flexShrink: 0,
+  padding: 0,
 }
