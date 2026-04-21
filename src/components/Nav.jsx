@@ -1,6 +1,8 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useZone } from '../context/ZoneContext.jsx'
+import { supabase } from '../lib/supabase.js'
 import { P } from '../lib/constants.js'
 
 export default function Nav() {
@@ -8,6 +10,24 @@ export default function Nav() {
   const { activeZone } = useZone()
   const navigate   = useNavigate()
   const location   = useLocation()
+  const [lowStock, setLowStock] = useState(0)
+
+  // Lightweight low-stock count — 2 columns, consumables only
+  useEffect(() => {
+    if (!user) { setLowStock(0); return }
+    supabase
+      .from('inventory_items')
+      .select('quantity_on_hand, reorder_threshold')
+      .eq('type', 'consumable')
+      .is('deleted_at', null)
+      .not('reorder_threshold', 'is', null)
+      .then(({ data }) => {
+        const count = (data ?? []).filter(
+          i => (i.quantity_on_hand ?? 0) <= i.reorder_threshold
+        ).length
+        setLowStock(count)
+      })
+  }, [user])
 
   async function handleSignOut() {
     await signOut()
@@ -39,6 +59,24 @@ export default function Nav() {
             <Link to="/locations"  style={navLinkStyle}>Locations</Link>
             <Link to="/projects"   style={navLinkStyle}>Projects</Link>
             <Link to="/tasks"      style={navLinkStyle}>Tasks</Link>
+            {/* Inventory — with low-stock badge (icon+color per WCAG 1.4.1) */}
+            <Link to="/inventory" style={{ ...navLinkStyle, position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              Inventory
+              {lowStock > 0 && (
+                <span
+                  aria-label={`${lowStock} low stock`}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 2,
+                    backgroundColor: '#b45309', color: P.cream,
+                    fontSize: '0.65rem', fontWeight: 700,
+                    borderRadius: 10, padding: '1px 5px',
+                    lineHeight: 1.4, flexShrink: 0,
+                  }}
+                >
+                  <span aria-hidden="true">⚠</span>{lowStock}
+                </span>
+              )}
+            </Link>
             <Link to="/log" style={{
               ...navLinkStyle,
               backgroundColor: 'rgba(248,245,240,0.15)',
