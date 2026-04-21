@@ -16,6 +16,7 @@ import AuthCallback from './pages/AuthCallback.jsx'
 import ZonePicker from './pages/ZonePicker.jsx'
 import Inventory from './pages/Inventory.jsx'
 import InventoryAdd from './pages/InventoryAdd.jsx'
+import InventoryDetail from './pages/InventoryDetail.jsx'
 import EventNew from './pages/EventNew.jsx'
 import { P } from './lib/constants.js'
 
@@ -73,6 +74,9 @@ function AppRoutes() {
         />
         <Route path="/inventory/add"
           element={<Protected><InventoryAdd /></Protected>}
+        />
+        <Route path="/inventory/:id"
+          element={<Protected><InventoryDetail /></Protected>}
         />
         <Route path="/log"
           element={<Protected><EventNew /></Protected>}
