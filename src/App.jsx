@@ -14,6 +14,7 @@ import ProjectPublic from './pages/ProjectPublic.jsx'
 import AuthCallback from './pages/AuthCallback.jsx'
 import ZonePicker from './pages/ZonePicker.jsx'
 import Inventory from './pages/Inventory.jsx'
+import EventNew from './pages/EventNew.jsx'
 import { P } from './lib/constants.js'
 
 // ---- Protected route wrapper ----
@@ -65,6 +66,9 @@ function AppRoutes() {
         />
         <Route path="/inventory"
           element={<Protected><Inventory /></Protected>}
+        />
+        <Route path="/log"
+          element={<Protected><EventNew /></Protected>}
         />
 
         {/* ---- Catch-all ---- */}
