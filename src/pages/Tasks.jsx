@@ -1,18 +1,84 @@
-import { useState, useEffect, useCallback } from 'react'
-import { supabase } from '../lib/supabase.js'
-import { P, TASK_PRIORITIES } from '../lib/constants.js'
+import { Link } from 'react-router-dom'
+import { P } from '../lib/constants.js'
 
 // ============================================================
-// Tasks — Layer 3: Manual zone picker
+// Tasks — Coming Soon (V2)
 //
-// LOC-006 PROVISIONAL DECISION (2026-04-20):
-//   Task completion is household-shared. assigned_to is set null on
-//   create (any household member can complete any task).
+// Full Tasks implementation (ADHD-aware task cards, zone picker,
+// overdue/today/upcoming sections, priority badges) is complete
+// and preserved below as TasksV2. It will be wired back in once
+// the Supabase tasks table is ready for production and the UI
+// has been through a UX review.
 // ============================================================
+
+export default function Tasks() {
+  return (
+    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
+      <div style={{
+        maxWidth: 480,
+        margin: '0 auto',
+        padding: '80px 24px',
+        textAlign: 'center',
+      }}>
+        <div style={{ fontSize: '3rem', marginBottom: 20 }}>🗒️</div>
+        <h1 style={{ margin: '0 0 12px', color: P.green, fontSize: '1.6rem', fontWeight: 700 }}>
+          Tasks
+        </h1>
+        <p style={{ color: P.mid, fontSize: '1rem', lineHeight: 1.6, margin: '0 0 32px' }}>
+          Coming soon — a household task manager built for real garden life.
+          You'll be able to schedule waterings, set reminders, and share tasks
+          with Jen without anything getting lost.
+        </p>
+        <div style={{
+          display: 'inline-block',
+          backgroundColor: P.greenPale,
+          border: `1px solid ${P.greenLight}`,
+          borderRadius: 8,
+          padding: '8px 18px',
+          fontSize: '0.82rem',
+          color: P.green,
+          fontWeight: 600,
+          marginBottom: 40,
+        }}>
+          Planned for V2
+        </div>
+        <div>
+          <Link
+            to="/dashboard"
+            style={{
+              color: P.green,
+              textDecoration: 'none',
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              borderBottom: `1px solid ${P.greenLight}`,
+              paddingBottom: 1,
+            }}
+          >
+            ← Back to Dashboard
+          </Link>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ============================================================
+// V2 IMPLEMENTATION — preserved, not exported
+// Restore by: export default TasksV2 (replace export above)
+// ============================================================
+
+// eslint-disable-next-line no-unused-vars
+import { useState, useEffect, useCallback } from 'react'
+// eslint-disable-next-line no-unused-vars
+import { supabase } from '../lib/supabase.js'
+// eslint-disable-next-line no-unused-vars
+import { TASK_PRIORITIES } from '../lib/constants.js'
 
 const OVERDUE_DISPLAY_CAP = 3
 
-export default function Tasks() {
+// eslint-disable-next-line no-unused-vars
+function TasksV2() {
   const [tasks,      setTasks]      = useState([])
   const [locations,  setLocations]  = useState([])
   const [projects,   setProjects]   = useState([])
@@ -47,31 +113,15 @@ export default function Tasks() {
   useEffect(() => { load() }, [load])
 
   async function handleCreate(e) {
-    e.preventDefault()
-    setSaving(true); setFormError(null)
-    const { error } = await supabase.from('tasks').insert({
-      title: form.title.trim(), description: form.description.trim() || null,
-      due_date: form.due_date || null, due_time: form.due_time || null,
-      priority: form.priority, location_id: form.location_id || null,
-      project_id: form.project_id || null, assigned_to: null,
-    })
+    e.preventDefault(); setSaving(true); setFormError(null)
+    const { error } = await supabase.from('tasks').insert({ title: form.title.trim(), description: form.description.trim() || null, due_date: form.due_date || null, due_time: form.due_time || null, priority: form.priority, location_id: form.location_id || null, project_id: form.project_id || null, assigned_to: null })
     setSaving(false)
-    if (error) { setFormError(error.message) }
-    else { setForm(emptyForm()); setShowForm(false); load() }
+    if (error) { setFormError(error.message) } else { setForm(emptyForm()); setShowForm(false); load() }
   }
 
-  async function handleComplete(task) {
-    await supabase.from('tasks').update({ status: 'done', completed_at: new Date().toISOString() }).eq('id', task.id)
-    load()
-  }
-  async function handleSkip(task) {
-    await supabase.from('tasks').update({ status: 'skipped' }).eq('id', task.id)
-    load()
-  }
-  async function handleReopen(task) {
-    await supabase.from('tasks').update({ status: 'pending', completed_at: null }).eq('id', task.id)
-    load()
-  }
+  async function handleComplete(task) { await supabase.from('tasks').update({ status: 'done', completed_at: new Date().toISOString() }).eq('id', task.id); load() }
+  async function handleSkip(task)     { await supabase.from('tasks').update({ status: 'skipped' }).eq('id', task.id); load() }
+  async function handleReopen(task)   { await supabase.from('tasks').update({ status: 'pending', completed_at: null }).eq('id', task.id); load() }
 
   const today = new Date().toISOString().split('T')[0]
   const overdue  = tasks.filter(t => t.due_date && t.due_date < today)
@@ -80,106 +130,95 @@ export default function Tasks() {
   const overdueVisible = overdueExpanded ? overdue : overdue.slice(0, OVERDUE_DISPLAY_CAP)
   const locMap = Object.fromEntries(locations.map(l => [l.id, l.full_path]))
 
-  if (loading) return <Shell><Spinner /></Shell>
-  if (error)   return <Shell><ErrMsg msg={error} /></Shell>
+  if (loading) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div></Shell>
+  if (error)   return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{error}</div></Shell>
 
   return (
     <Shell>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
           <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Tasks</h1>
-          <p style={{ margin: '4px 0 0', color: P.light, fontSize: '0.85rem' }}>
-            {tasks.length} {statusFilter} · {overdue.length > 0 ? `${overdue.length} overdue` : 'none overdue'}
-          </p>
+          <p style={{ margin: '4px 0 0', color: P.light, fontSize: '0.85rem' }}>{tasks.length} {statusFilter} · {overdue.length > 0 ? `${overdue.length} overdue` : 'none overdue'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <FilterBar value={statusFilter} onChange={v => { setFilter(v); setLoading(true) }} />
-          {statusFilter === 'pending' && (
-            <button onClick={() => { setShowForm(s => !s); setFormError(null); setForm(emptyForm()) }} style={btn(P.green)}>
-              {showForm ? 'Cancel' : '+ Add task'}
-            </button>
-          )}
+          {statusFilter === 'pending' && <button onClick={() => { setShowForm(s => !s); setFormError(null); setForm(emptyForm()) }} style={btn(P.green)}>{showForm ? 'Cancel' : '+ Add task'}</button>}
         </div>
       </div>
-
-      {showForm && (
-        <CreateForm form={form} setForm={setForm} locations={locations} projects={projects} saving={saving} formError={formError} onSubmit={handleCreate} />
-      )}
-
+      {showForm && <CreateFormV2 form={form} setForm={setForm} locations={locations} projects={projects} saving={saving} formError={formError} onSubmit={handleCreate} />}
       {statusFilter === 'pending' && overdue.length > 0 && (
         <section style={{ marginBottom: 24 }}>
           <SectionHead label={`⚠️ Overdue · ${overdue.length}`} color={P.terra} />
           {overdueVisible.map(t => <TaskCard key={t.id} task={t} urgency="overdue" locMap={locMap} onComplete={handleComplete} onSkip={handleSkip} />)}
-          {overdue.length > OVERDUE_DISPLAY_CAP && (
-            <button onClick={() => setOverdueExpanded(x => !x)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.8rem', padding: '6px 0', textDecoration: 'underline' }}>
-              {overdueExpanded ? 'Show fewer' : `See all overdue (${overdue.length - OVERDUE_DISPLAY_CAP} more)`}
-            </button>
-          )}
+          {overdue.length > OVERDUE_DISPLAY_CAP && <button onClick={() => setOverdueExpanded(x => !x)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.8rem', padding: '6px 0', textDecoration: 'underline' }}>{overdueExpanded ? 'Show fewer' : `See all overdue (${overdue.length - OVERDUE_DISPLAY_CAP} more)`}</button>}
         </section>
       )}
-
       {statusFilter === 'pending' && dueToday.length > 0 && (
         <section style={{ marginBottom: 24 }}>
           <SectionHead label={`📅 Due today · ${dueToday.length}`} color={P.gold} />
           {dueToday.map(t => <TaskCard key={t.id} task={t} urgency="today" locMap={locMap} onComplete={handleComplete} onSkip={handleSkip} />)}
         </section>
       )}
-
       {(statusFilter !== 'pending' ? tasks : upcoming).length > 0 ? (
         <section style={{ marginBottom: 24 }}>
           {statusFilter === 'pending' && <SectionHead label={`Upcoming · ${upcoming.length}`} color={P.mid} />}
-          {(statusFilter !== 'pending' ? tasks : upcoming).map(t => (
-            <TaskCard key={t.id} task={t} urgency="normal" locMap={locMap} onComplete={handleComplete} onSkip={handleSkip} onReopen={statusFilter !== 'pending' ? handleReopen : undefined} />
-          ))}
+          {(statusFilter !== 'pending' ? tasks : upcoming).map(t => <TaskCard key={t.id} task={t} urgency="normal" locMap={locMap} onComplete={handleComplete} onSkip={handleSkip} onReopen={statusFilter !== 'pending' ? handleReopen : undefined} />)}
         </section>
-      ) : (
-        statusFilter === 'pending' && overdue.length === 0 && dueToday.length === 0 && <Empty msg="No tasks yet. Hit '+ Add task' to create one." />
-      )}
+      ) : (statusFilter === 'pending' && overdue.length === 0 && dueToday.length === 0 && <div style={{ textAlign: 'center', color: P.light, padding: '40px 20px', fontSize: '0.875rem', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8 }}>No tasks yet. Hit '+ Add task' to create one.</div>)}
     </Shell>
   )
 }
 
-function CreateForm({ form, setForm, locations, projects, saving, formError, onSubmit }) {
+function CreateFormV2({ form, setForm, locations, projects, saving, formError, onSubmit }) {
   return (
-    <form onSubmit={onSubmit} style={card}>
+    <form onSubmit={onSubmit} style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 24, marginBottom: 24 }}>
       <h2 style={{ margin: '0 0 18px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>New task</h2>
-      {formError && <ErrBanner msg={formError} />}
-      <FormRow label="Title *"><input required value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={input} placeholder="e.g. Water pepper seedlings" /></FormRow>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <FormRow label="Due date"><input type="date" value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} style={{ ...input, width: '100%' }} /></FormRow>
-        <FormRow label="Priority"><select value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} style={{ ...input, width: '100%' }}>{TASK_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}</select></FormRow>
+      {formError && <div style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: '0.875rem', color: '#7a2a10' }}>{formError}</div>}
+      <div style={{ marginBottom: 14 }}>
+        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Title *</label>
+        <input required value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }} placeholder="e.g. Water pepper seedlings" />
       </div>
-      <FormRow label="Location (manual zone picker)">
-        <select value={form.location_id} onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))} style={input}>
-          <option value="">— No location —</option>
-          {locations.map(l => <option key={l.id} value={l.id}>{l.full_path}</option>)}
-        </select>
-      </FormRow>
-      <FormRow label="Project (optional)">
-        <select value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} style={input}>
-          <option value="">— Not linked to a project —</option>
-          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-      </FormRow>
-      <FormRow label="Notes (optional)"><textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} style={{ ...input, minHeight: 64, resize: 'vertical' }} placeholder="Any details…" /></FormRow>
-      <div style={{ marginTop: 20 }}><button type="submit" disabled={saving} style={btn(saving ? P.light : P.green)}>{saving ? 'Saving…' : 'Create task'}</button></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Due date</label>
+          <input type="date" value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Priority</label>
+          <select value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}>{TASK_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}</select>
+        </div>
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Location</label>
+        <select value={form.location_id} onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}><option value="">— No location —</option>{locations.map(l => <option key={l.id} value={l.id}>{l.full_path}</option>)}</select>
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Project (optional)</label>
+        <select value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}><option value="">— Not linked —</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Notes (optional)</label>
+        <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box', minHeight: 64, resize: 'vertical' }} placeholder="Any details…" />
+      </div>
+      <div style={{ marginTop: 20 }}>
+        <button type="submit" disabled={saving} style={{ backgroundColor: saving ? P.light : P.green, color: P.white, border: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600, cursor: saving ? 'not-allowed' : 'pointer' }}>{saving ? 'Saving…' : 'Create task'}</button>
+      </div>
     </form>
   )
 }
 
 function TaskCard({ task, urgency, locMap, onComplete, onSkip, onReopen }) {
   const isPending = !onReopen
-  const urgencyStyles = { overdue:{bg:'#fde8e0',border:P.terra,labelColor:P.terra}, today:{bg:P.warn,border:P.gold,labelColor:'#7a5c00'}, normal:{bg:P.white,border:P.border,labelColor:P.mid} }
-  const s = urgencyStyles[urgency] ?? urgencyStyles.normal
+  const s = { overdue: { bg: '#fde8e0', border: P.terra, labelColor: P.terra }, today: { bg: P.warn, border: P.gold, labelColor: '#7a5c00' }, normal: { bg: P.white, border: P.border, labelColor: P.mid } }[urgency] ?? { bg: P.white, border: P.border, labelColor: P.mid }
   return (
     <div style={{ backgroundColor: s.bg, border: `1px solid ${s.border}`, borderRadius: 8, padding: '12px 16px', marginBottom: 8, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.92rem' }}>{task.title}</span>
-          <PriorityBadge priority={task.priority} />
+          {task.priority !== 'normal' && <span style={{ fontSize: '0.7rem', fontWeight: 600, backgroundColor: task.priority === 'high' ? '#fde8e0' : '#f0f0f0', color: task.priority === 'high' ? P.terra : P.light, border: `1px solid ${task.priority === 'high' ? P.alertBorder : '#ccc'}`, borderRadius: 10, padding: '1px 7px' }}>{task.priority === 'high' ? '↑ high' : '↓ low'}</span>}
         </div>
         <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
-          {task.due_date && <span style={{ fontSize: '0.78rem', color: s.labelColor }}>{urgency==='overdue'?'⚠️':urgency==='today'?'📅':'🗓'} {task.due_date}</span>}
+          {task.due_date && <span style={{ fontSize: '0.78rem', color: s.labelColor }}>{urgency === 'overdue' ? '⚠️' : urgency === 'today' ? '📅' : '🗓'} {task.due_date}</span>}
           {task.location_id && locMap[task.location_id] && <span style={{ fontSize: '0.78rem', color: P.mid }}>📍 {locMap[task.location_id]}</span>}
           {task.completed_at && <span style={{ fontSize: '0.78rem', color: P.light }}>✓ {new Date(task.completed_at).toLocaleDateString()}</span>}
         </div>
@@ -187,46 +226,31 @@ function TaskCard({ task, urgency, locMap, onComplete, onSkip, onReopen }) {
       </div>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
         {isPending ? (
-          <><button onClick={() => onComplete(task)} style={actionBtn(P.green)}>Done ✓</button><button onClick={() => onSkip(task)} style={actionBtn(P.light)}>Skip</button></>
+          <><button onClick={() => onComplete(task)} style={{ background: 'none', border: `1px solid ${P.green}`, color: P.green, borderRadius: 5, padding: '4px 11px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>Done ✓</button><button onClick={() => onSkip(task)} style={{ background: 'none', border: `1px solid ${P.light}`, color: P.light, borderRadius: 5, padding: '4px 11px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>Skip</button></>
         ) : (
-          <button onClick={() => onReopen(task)} style={actionBtn(P.mid)}>Reopen</button>
+          <button onClick={() => onReopen(task)} style={{ background: 'none', border: `1px solid ${P.mid}`, color: P.mid, borderRadius: 5, padding: '4px 11px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>Reopen</button>
         )}
       </div>
     </div>
   )
 }
 
-function PriorityBadge({ priority }) {
-  if (priority === 'normal') return null
-  const styles = { high:{bg:'#fde8e0',color:P.terra,border:P.alertBorder,label:'↑ high'}, low:{bg:'#f0f0f0',color:P.light,border:'#ccc',label:'↓ low'} }
-  const s = styles[priority]
-  if (!s) return null
-  return <span style={{ fontSize: '0.7rem', fontWeight: 600, backgroundColor: s.bg, color: s.color, border: `1px solid ${s.border}`, borderRadius: 10, padding: '1px 7px' }}>{s.label}</span>
-}
-
 function FilterBar({ value, onChange }) {
-  const opts = [{v:'pending',label:'Pending'},{v:'done',label:'Done'},{v:'skipped',label:'Skipped'}]
   return (
     <div style={{ display: 'flex', gap: 4, backgroundColor: P.border, borderRadius: 6, padding: 3 }}>
-      {opts.map(o => <button key={o.v} onClick={() => onChange(o.v)} style={{ background: value===o.v?P.white:'none', border:'none', borderRadius:4, padding:'4px 12px', fontSize:'0.8rem', fontWeight:value===o.v?600:400, color:value===o.v?P.dark:P.mid, cursor:'pointer' }}>{o.label}</button>)}
+      {[{ v: 'pending', label: 'Pending' }, { v: 'done', label: 'Done' }, { v: 'skipped', label: 'Skipped' }].map(o => (
+        <button key={o.v} onClick={() => onChange(o.v)} style={{ background: value === o.v ? P.white : 'none', border: 'none', borderRadius: 4, padding: '4px 12px', fontSize: '0.8rem', fontWeight: value === o.v ? 600 : 400, color: value === o.v ? P.dark : P.mid, cursor: 'pointer' }}>{o.label}</button>
+      ))}
     </div>
   )
 }
 
 function SectionHead({ label, color }) {
-  return <h2 style={{ margin:'0 0 10px', fontSize:'0.85rem', fontWeight:700, color:color??P.mid, textTransform:'uppercase', letterSpacing:'0.5px' }}>{label}</h2>
+  return <h2 style={{ margin: '0 0 10px', fontSize: '0.85rem', fontWeight: 700, color: color ?? P.mid, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</h2>
 }
 
 function Shell({ children }) {
-  return <div style={{ minHeight:'calc(100vh - 52px)', backgroundColor:P.cream }}><div style={{ maxWidth:800, margin:'0 auto', padding:'32px 20px' }}>{children}</div></div>
+  return <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}><div style={{ maxWidth: 800, margin: '0 auto', padding: '32px 20px' }}>{children}</div></div>
 }
-function Spinner() { return <div style={{ padding:48, textAlign:'center', color:P.light }}>Loading…</div> }
-function ErrMsg({ msg }) { return <div style={{ padding:48, textAlign:'center', color:P.terra }}>{msg}</div> }
-function ErrBanner({ msg }) { return <div style={{ backgroundColor:P.alert, border:`1px solid ${P.alertBorder}`, borderRadius:6, padding:'10px 14px', marginBottom:16, fontSize:'0.875rem', color:'#7a2a10' }}>{msg}</div> }
-function Empty({ msg }) { return <div style={{ textAlign:'center', color:P.light, padding:'40px 20px', fontSize:'0.875rem', backgroundColor:P.white, border:`1px solid ${P.border}`, borderRadius:8 }}>{msg}</div> }
-function FormRow({ label, children }) { return <div style={{ marginBottom:14 }}><label style={{ display:'block', fontSize:'0.8rem', fontWeight:600, color:P.mid, marginBottom:5 }}>{label}</label>{children}</div> }
 
-const btn = (bg) => ({ backgroundColor:bg, color:P.white, border:'none', borderRadius:6, padding:'9px 18px', fontSize:'0.88rem', fontWeight:600, cursor:bg===P.light?'not-allowed':'pointer', whiteSpace:'nowrap' })
-const actionBtn = (color) => ({ background:'none', border:`1px solid ${color}`, color:color, borderRadius:5, padding:'4px 11px', fontSize:'0.8rem', fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' })
-const input = { width:'100%', padding:'8px 11px', border:`1px solid ${P.border}`, borderRadius:6, fontSize:'0.88rem', backgroundColor:P.white, boxSizing:'border-box' }
-const card = { backgroundColor:P.white, border:`1px solid ${P.border}`, borderRadius:10, padding:24, marginBottom:24 }
+const btn = (bg) => ({ backgroundColor: bg, color: P.white, border: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600, cursor: bg === P.light ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' })
