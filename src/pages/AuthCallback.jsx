@@ -11,7 +11,7 @@ export default function AuthCallback() {
     if (user) navigate('/dashboard', { replace: true })
   }, [loading, user, navigate])
   return (
-    <div style={{ minHeight:'calc(100vh - 52px)',backgroundColor:P.cream,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:'16px' }}>
+    <div style={{ minHeight:'100dvh',backgroundColor:P.cream,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:'16px' }}>
       <div style={{fontSize:'2.5rem'}}>🌿</div>
       <p style={{color:P.mid,fontSize:'1rem',margin:0}}>Signing you in…</p>
     </div>
