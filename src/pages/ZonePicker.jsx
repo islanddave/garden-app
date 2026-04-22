@@ -191,7 +191,7 @@ function ZoneCard({ icon, name, subtitle, selected, onSelect }) {
       onMouseUp={() => setPressed(false)}
       onMouseLeave={() => setPressed(false)}
       onTouchStart={() => setPressed(true)}
-      onTouchEnd={() => { setPressed(false); onSelect() }}
+      onTouchEnd={() => setPressed(false)}
       style={{
         display: 'flex',
         alignItems: 'center',
