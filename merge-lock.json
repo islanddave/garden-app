@@ -1,0 +1,9 @@
+{
+  "locked": false,
+  "locked_by": null,
+  "expires_at": null,
+  "purpose": null,
+  "last_updated": "2026-04-22T23:00:00Z",
+  "schema_version": "1.0",
+  "_note": "Coordination lock for multi-file Phase 2 writes. Acquire via SHA-conditional PUT before any concurrent write to App.jsx/Nav.jsx/EventNew.jsx. See workflow.md for protocol."
+}
