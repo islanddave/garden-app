@@ -133,20 +133,25 @@ export default function InventoryAdd() {
     if (Object.keys(errs).length) { setErrors(errs); return }
 
     setSaving(true)
-    const payload = buildPayload()
-    const { error } = await createItem(payload)
-    setSaving(false)
+    try {
+      const payload = buildPayload()
+      const { error } = await createItem(payload)
+      setSaving(false)
 
-    if (error) {
-      setErrors({ _form: error })
-      return
+      if (error) {
+        setErrors({ _form: error })
+        return
+      }
+
+      // Success toast (2500ms) then navigate
+      setSuccessToast(true)
+      setTimeout(() => {
+        navigate('/inventory')
+      }, 2500)
+    } catch (err) {
+      setSaving(false)
+      setErrors({ _form: err?.message || 'Unexpected error — please try again.' })
     }
-
-    // Success toast (2500ms) then navigate
-    setSuccessToast(true)
-    setTimeout(() => {
-      navigate('/inventory')
-    }, 2500)
   }
 
   function buildPayload() {
