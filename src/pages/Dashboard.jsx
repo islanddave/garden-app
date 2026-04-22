@@ -5,6 +5,10 @@ import { useZone } from '../context/ZoneContext.jsx'
 import { supabase } from '../lib/supabase.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 
+// Project statuses eligible for display on Dashboard — same filter as EventNew.jsx
+// PROVISIONAL: harvesting excluded — review if users want to see harvesting projects here
+const LOGGABLE_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
+
 export default function Dashboard() {
   const { profile } = useAuth()
   const { activeZone } = useZone()
@@ -34,7 +38,7 @@ export default function Dashboard() {
         supabase
           .from('plant_projects')
           .select('id, name, slug, status, start_date, location_id')
-          .eq('status', 'active')
+          .in('status', LOGGABLE_STATUSES)
           .order('start_date', { ascending: false }),
         supabase
           .from('tasks')
@@ -262,9 +266,16 @@ function daysAgo(dateStr) {
 }
 
 function StatusBadge({ status }) {
+  // TODO (Session B): expand color map for full lifecycle (seeding, sprouting, growing, flowering, fruiting)
+  // New statuses currently fall through to planning style (yellow) via the fallback.
   const colors = {
     planning:  { bg: P.warn,      text: '#7a5c00', border: P.warnBorder },
     active:    { bg: P.greenPale, text: P.green,   border: P.greenLight },
+    seeding:   { bg: P.greenPale, text: P.green,   border: P.greenLight },
+    sprouting: { bg: P.greenPale, text: P.green,   border: P.greenLight },
+    growing:   { bg: P.greenPale, text: P.green,   border: P.greenLight },
+    flowering: { bg: P.greenPale, text: P.green,   border: P.greenLight },
+    fruiting:  { bg: P.greenPale, text: P.green,   border: P.greenLight },
     harvested: { bg: '#eee',      text: P.mid,     border: P.border },
     ended:     { bg: '#eee',      text: P.light,   border: P.border },
   }
