@@ -30,10 +30,10 @@ export default function Dashboard() {
     const today = new Date().toISOString().split('T')[0]
 
     try {
+      // Round 1: projects + tasks in parallel
       const [
         { data: projectData, error: pErr },
         { data: taskData,    error: tErr },
-        { data: emData },
       ] = await Promise.all([
         supabase
           .from('plant_projects')
@@ -46,36 +46,51 @@ export default function Dashboard() {
           .lte('due_date', today)
           .eq('status', 'pending')
           .order('due_date'),
-        supabase
-          .from('entity_memory')
-          .select('project_id, last_event_at, last_event_type'),
       ])
 
       if (pErr) throw pErr
       if (tErr) throw tErr
+      if (!isMounted) return
 
-      if (isMounted) {
-        const activeProjects = projectData ?? []
-        setProjects(activeProjects)
-        setTasks(taskData ?? [])
+      const activeProjects = projectData ?? []
+      setProjects(activeProjects)
+      setTasks(taskData ?? [])
 
-        if (activeProjects.length > 0) {
-          const activeIds = new Set(activeProjects.map(p => p.id))
-          const memMap = {}
-          ;(emData ?? []).forEach(row => {
-            if (activeIds.has(row.project_id)) memMap[row.project_id] = row
-          })
-          setEntityMap(memMap)
+      if (activeProjects.length > 0) {
+        // Round 2: most recent event per active project
+        // Uses composite index idx_event_log_project_date (project_id, event_date desc)
+        const { data: evData } = await supabase
+          .from('event_log')
+          .select('project_id, event_type, event_date')
+          .in('project_id', activeProjects.map(p => p.id))
+          .order('event_date', { ascending: false })
 
-          // Project with no memory entry = never logged = highest priority
-          const neverLogged = activeProjects.find(p => !memMap[p.id])
-          if (neverLogged) {
-            setNextAttention({ id: neverLogged.id, name: neverLogged.name, last_event_at: null })
-          } else {
-            const oldest = activeProjects.reduce((acc, p) =>
-              !acc || memMap[p.id].last_event_at < memMap[acc.id].last_event_at ? p : acc, null)
-            if (oldest) setNextAttention({ id: oldest.id, name: oldest.name, last_event_at: memMap[oldest.id].last_event_at })
+        if (!isMounted) return
+
+        // First occurrence per project_id = most recent event (ordered desc)
+        const memMap = {}
+        ;(evData ?? []).forEach(row => {
+          if (!memMap[row.project_id]) {
+            memMap[row.project_id] = {
+              last_event_at:   row.event_date,
+              last_event_type: row.event_type,
+            }
           }
+        })
+        setEntityMap(memMap)
+
+        // Project with no event entry = never logged = highest priority
+        const neverLogged = activeProjects.find(p => !memMap[p.id])
+        if (neverLogged) {
+          setNextAttention({ id: neverLogged.id, name: neverLogged.name, last_event_at: null })
+        } else {
+          const oldest = activeProjects.reduce((acc, p) =>
+            !acc || memMap[p.id].last_event_at < memMap[acc.id].last_event_at ? p : acc, null)
+          if (oldest) setNextAttention({
+            id:           oldest.id,
+            name:         oldest.name,
+            last_event_at: memMap[oldest.id].last_event_at,
+          })
         }
       }
     } catch (err) {
