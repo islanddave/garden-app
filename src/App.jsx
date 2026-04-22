@@ -2,7 +2,8 @@ import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { ZoneProvider } from './context/ZoneContext.jsx'
-import Nav from './components/Nav.jsx'
+import TopBar from './components/TopBar.jsx'
+import BottomNav from './components/BottomNav.jsx'
 import Footer from './components/Footer.jsx'
 import Home from './pages/Home.jsx'
 import Login from './pages/Login.jsx'
@@ -22,7 +23,7 @@ import EventNew from './pages/EventNew.jsx'
 import PhotoLibrary from './pages/PhotoLibrary.jsx'
 import { P } from './lib/constants.js'
 
-// ---- Error boundary (wraps all routes — prevents full-app crash on photo/library errors) ----
+// ---- Error boundary (route-level — prevents white screens for Jen) ----
 class AppErrorBoundary extends React.Component {
   constructor(props) {
     super(props)
@@ -65,62 +66,70 @@ function AppRoutes() {
   return (
     <BrowserRouter>
       <AppErrorBoundary>
-      <Nav />
-      <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100dvh - 52px)' }}>
-      <div style={{ flex: 1 }}>
-      <Routes>
-        {/* ---- Public ---- */}
-        <Route path="/"             element={<Home />} />
-        <Route path="/garden/:slug" element={<ProjectPublic />} />
+        <TopBar />
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: '100dvh',
+          paddingBottom: user
+            ? 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom))'
+            : 0,
+        }}>
+          <div style={{ flex: 1 }}>
+            <Routes>
+              {/* ---- Public ---- */}
+              <Route path="/"             element={<Home />} />
+              <Route path="/garden/:slug" element={<ProjectPublic />} />
 
-        {/* ---- Auth ---- */}
-        <Route path="/auth/callback" element={<AuthCallback />} />
-        <Route path="/login"
-          element={user ? <Navigate to="/dashboard" replace /> : <Login />}
-        />
-        <Route path="/dashboard"
-          element={<Protected><Dashboard /></Protected>}
-        />
-        <Route path="/locations"
-          element={<Protected><Locations /></Protected>}
-        />
-        <Route path="/tasks"
-          element={<Protected><Tasks /></Protected>}
-        />
-        <Route path="/zone"
-          element={<Protected><ZonePicker /></Protected>}
-        />
-        <Route path="/projects"
-          element={<Protected><ProjectList /></Protected>}
-        />
-        <Route path="/projects/new"
-          element={<Protected><ProjectNew /></Protected>}
-        />
-        <Route path="/projects/:id"
-          element={<Protected><ProjectDetail /></Protected>}
-        />
-        <Route path="/inventory"
-          element={<Protected><Inventory /></Protected>}
-        />
-        <Route path="/inventory/add"
-          element={<Protected><InventoryAdd /></Protected>}
-        />
-        <Route path="/inventory/:id"
-          element={<Protected><InventoryDetail /></Protected>}
-        />
-        <Route path="/log"
-          element={<Protected><EventNew /></Protected>}
-        />
-        <Route path="/photos"
-          element={<Protected><PhotoLibrary /></Protected>}
-        />
+              {/* ---- Auth ---- */}
+              <Route path="/auth/callback" element={<AuthCallback />} />
+              <Route path="/login"
+                element={user ? <Navigate to="/dashboard" replace /> : <Login />}
+              />
+              <Route path="/dashboard"
+                element={<Protected><Dashboard /></Protected>}
+              />
+              <Route path="/locations"
+                element={<Protected><Locations /></Protected>}
+              />
+              <Route path="/tasks"
+                element={<Protected><Tasks /></Protected>}
+              />
+              <Route path="/zone"
+                element={<Protected><ZonePicker /></Protected>}
+              />
+              <Route path="/projects"
+                element={<Protected><ProjectList /></Protected>}
+              />
+              <Route path="/projects/new"
+                element={<Protected><ProjectNew /></Protected>}
+              />
+              <Route path="/projects/:id"
+                element={<Protected><ProjectDetail /></Protected>}
+              />
+              <Route path="/inventory"
+                element={<Protected><Inventory /></Protected>}
+              />
+              <Route path="/inventory/add"
+                element={<Protected><InventoryAdd /></Protected>}
+              />
+              <Route path="/inventory/:id"
+                element={<Protected><InventoryDetail /></Protected>}
+              />
+              <Route path="/log"
+                element={<Protected><EventNew /></Protected>}
+              />
+              <Route path="/photos"
+                element={<Protected><PhotoLibrary /></Protected>}
+              />
 
-        {/* ---- Catch-all ---- */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-      </div>
-      <Footer />
-      </div>
+              {/* ---- Catch-all ---- */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </div>
+          <Footer />
+        </div>
+        {user && <BottomNav />}
       </AppErrorBoundary>
     </BrowserRouter>
   )
