@@ -2,10 +2,10 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { supabase } from '../lib/supabase.js'
-import { P, PHOTO_BUCKET } from '../lib/constants.js'
+import { P, PHOTO_BUCKET, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
 import { updateEntityMemory, updateUserStats } from '../lib/garden-ops.js'
 
-// ---- Event types for UI ----
+// ---- Primary event types (shown immediately) ----
 const EVENT_TYPES_UI = [
   { value: 'watering',    label: 'Watered',                emoji: '💧' },
   { value: 'transplant',  label: 'Transplanted\n/ Planted', emoji: '🌱' },
@@ -13,6 +13,43 @@ const EVENT_TYPES_UI = [
   { value: 'observation', label: 'Observed\n/ Note',        emoji: '👁️' },
   { value: 'pruning',     label: 'Pruned\n/ Topped',        emoji: '✂️' },
 ]
+
+// ---- Secondary event types (collapsible) ----
+// Derived from EVENT_TYPES minus the 5 already in EVENT_TYPES_UI — no hardcoding.
+// Grouped to reduce cognitive load; same tap feedback as primary buttons.
+const PRIMARY_VALUES = new Set(EVENT_TYPES_UI.map(t => t.value))
+
+const EVENT_TYPE_META = {
+  sowing:         { label: 'Sowed',          emoji: '🌰', category: 'Growth & Training' },
+  seed_soak:      { label: 'Seed soak',       emoji: '💦', category: 'Growth & Training' },
+  germination:    { label: 'Germination',     emoji: '🌿', category: 'Growth & Training' },
+  thinning:       { label: 'Thinned',         emoji: '🪓', category: 'Growth & Training' },
+  potting_up:     { label: 'Potted up',       emoji: '🪴', category: 'Growth & Training' },
+  hardening_off:  { label: 'Hardening off',   emoji: '☀️', category: 'Growth & Training' },
+  pest_treatment: { label: 'Pest treatment',  emoji: '🐛', category: 'Pest & Health' },
+  cover:          { label: 'Covered',         emoji: '🌂', category: 'Environmental' },
+  uncover:        { label: 'Uncovered',       emoji: '🌤️', category: 'Environmental' },
+  first_harvest:  { label: 'First harvest',   emoji: '🌟', category: 'Harvest' },
+  harvest:        { label: 'Harvested',       emoji: '🧺', category: 'Harvest' },
+  photo:          { label: 'Photo only',      emoji: '📷', category: 'Pest & Health' },
+  other:          { label: 'Other',           emoji: '📝', category: 'Environmental' },
+}
+
+// Build grouped secondary types at module level (stable reference, no re-compute on render)
+const SECONDARY_GROUPS = (() => {
+  const cats = {}
+  EVENT_TYPES.forEach(v => {
+    if (PRIMARY_VALUES.has(v)) return
+    const meta = EVENT_TYPE_META[v] ?? { label: v, emoji: '📌', category: 'Other' }
+    if (!cats[meta.category]) cats[meta.category] = []
+    cats[meta.category].push({ value: v, label: meta.label, emoji: meta.emoji })
+  })
+  return Object.entries(cats) // [['Growth & Training', [...]], ...]
+})()
+
+// ---- Project statuses eligible for event logging ----
+// PROVISIONAL: harvesting excluded — review if users want to log against harvesting projects
+const LOGGABLE_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
 
 // ---- Format datetime-local value (YYYY-MM-DDTHH:MM) ----
 function toDatetimeLocal(date) {
@@ -125,6 +162,7 @@ export default function EventNew() {
   const [saving,       setSaving]       = useState(false)
   const [error,        setError]        = useState(null)
   const [showPrivate,  setShowPrivate]  = useState(false)
+  const [showMoreTypes, setShowMoreTypes] = useState(false)
   const [success,      setSuccess]      = useState(null)
 
   // Load projects + locations in one round trip
@@ -133,7 +171,7 @@ export default function EventNew() {
       supabase
         .from('plant_projects')
         .select('id, name, status')
-        .in('status', ['planning', 'active'])
+        .in('status', LOGGABLE_STATUSES)
         .order('name'),
       supabase
         .from('locations_with_path')
@@ -292,6 +330,54 @@ export default function EventNew() {
                 <TypeBtn key={t.value} type={t} selected={form.event_type} onSelect={v => setForm(f => ({ ...f, event_type: v }))} />
               ))}
             </div>
+
+            {/* ── More event types (collapsible) ── */}
+            <button
+              type="button"
+              onClick={() => setShowMoreTypes(s => !s)}
+              style={{
+                marginTop: 12, background: 'none', border: 'none',
+                cursor: 'pointer', color: P.green, fontSize: '0.82rem',
+                fontWeight: 600, padding: '4px 0',
+                display: 'flex', alignItems: 'center', gap: 5,
+              }}
+            >
+              <span>{showMoreTypes ? '▾' : '▸'}</span>
+              <span>More event types</span>
+            </button>
+
+            {showMoreTypes && (
+              <div style={{ marginTop: 8 }}>
+                {SECONDARY_GROUPS.map(([category, types]) => (
+                  <div key={category} style={{ marginBottom: 14 }}>
+                    <div style={{
+                      fontSize: '0.7rem', fontWeight: 700, color: P.light,
+                      letterSpacing: '0.4px', textTransform: 'uppercase',
+                      marginBottom: 8,
+                    }}>
+                      {category}
+                    </div>
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: `repeat(${Math.min(types.length, 3)}, 1fr)`,
+                      gap: 8,
+                    }}>
+                      {types.map(t => (
+                        <TypeBtn
+                          key={t.value}
+                          type={t}
+                          selected={form.event_type}
+                          onSelect={v => {
+                            setForm(f => ({ ...f, event_type: v }))
+                            setShowMoreTypes(false) // collapse after selection
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </Section>
 
           {/* ── Project ── */}
