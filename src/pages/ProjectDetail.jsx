@@ -86,6 +86,14 @@ export default function ProjectDetail() {
   const [deletingId,   setDeletingId]   = useState(null)
   const logFormRef = useRef(null)
 
+  // Plants state
+  const [plants,        setPlants]        = useState([])
+  const [plantsLoading, setPlantsLoading] = useState(true)
+  const [showAddPlant,  setShowAddPlant]  = useState(false)
+  const [plantForm,     setPlantForm]     = useState({ name: '', variety: '', quantity: '1', notes: '' })
+  const [addingPlant,   setAddingPlant]   = useState(false)
+  const [plantErr,      setPlantErr]      = useState(null)
+
   useEffect(() => {
     let isMounted = true
     ;(async () => {
@@ -108,6 +116,24 @@ export default function ProjectDetail() {
     return () => { isMounted = false }
   }, [id])
 
+  // Fetch plants for this project
+  useEffect(() => {
+    if (!id) return
+    let isMounted = true
+    supabase
+      .from('plants')
+      .select('id, name, variety, quantity, status')
+      .eq('project_id', id)
+      .is('deleted_at', null)
+      .order('created_at')
+      .then(({ data }) => {
+        if (!isMounted) return
+        setPlants(data ?? [])
+        setPlantsLoading(false)
+      })
+    return () => { isMounted = false }
+  }, [id])
+
   // Fetch events separately so they can be refreshed independently
   useEffect(() => {
     if (!id) return
@@ -125,6 +151,33 @@ export default function ProjectDetail() {
       })
     return () => { isMounted = false }
   }, [id])
+
+  async function handleAddPlant(e) {
+    e.preventDefault()
+    setAddingPlant(true)
+    setPlantErr(null)
+    const qty = parseInt(plantForm.quantity, 10)
+    const { data, error } = await supabase
+      .from('plants')
+      .insert({
+        project_id: id,
+        name:       plantForm.name.trim(),
+        variety:    plantForm.variety.trim()  || null,
+        quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
+        notes:      plantForm.notes.trim()   || null,
+        created_by: user?.id,
+      })
+      .select('id, name, variety, quantity, status')
+      .single()
+    setAddingPlant(false)
+    if (error) {
+      setPlantErr(error.message)
+    } else {
+      setPlants(p => [...p, data])
+      setPlantForm({ name: '', variety: '', quantity: '1', notes: '' })
+      setShowAddPlant(false)
+    }
+  }
 
   async function refreshEvents() {
     const { data } = await supabase
@@ -362,6 +415,100 @@ export default function ProjectDetail() {
           <Fields project={project} locPath={locPath} />
         </div>
       )}
+
+      {/* ---- Plants ---- */}
+      <div style={{ marginTop: 28 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: P.dark }}>
+            Plants
+            {plants.length > 0 && (
+              <span style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.82rem', color: P.light }}>({plants.length})</span>
+            )}
+          </h2>
+          <button onClick={() => { setShowAddPlant(v => !v); setPlantErr(null) }}
+            style={showAddPlant ? ghostBtn : outlineBtn}>
+            {showAddPlant ? 'Cancel' : '+ Add plant'}
+          </button>
+        </div>
+
+        {showAddPlant && (
+          <form onSubmit={handleAddPlant} style={{ ...cardStyle, marginBottom: 16 }}>
+            {plantErr && <ErrBanner msg={plantErr} />}
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+              <FormRow label="Name *">
+                <input required value={plantForm.name}
+                  onChange={e => setPlantForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder='e.g. "Megatron Jalapeno" or "Serrano seedlings"'
+                  style={inputStyle} />
+              </FormRow>
+              <FormRow label="Quantity">
+                <input type="number" min="1" value={plantForm.quantity}
+                  onChange={e => setPlantForm(f => ({ ...f, quantity: e.target.value }))}
+                  style={inputStyle} />
+              </FormRow>
+            </div>
+            <FormRow label="Variety (optional)">
+              <input value={plantForm.variety}
+                onChange={e => setPlantForm(f => ({ ...f, variety: e.target.value }))}
+                placeholder="e.g. Jalapeno Gigante"
+                style={inputStyle} />
+            </FormRow>
+            <FormRow label="Notes (optional)">
+              <input value={plantForm.notes}
+                onChange={e => setPlantForm(f => ({ ...f, notes: e.target.value }))}
+                placeholder="Anything distinctive about this plant or group"
+                style={inputStyle} />
+            </FormRow>
+            <div style={{ display: 'flex', gap: 12, paddingTop: 14, borderTop: `1px solid ${P.border}` }}>
+              <button type="submit" disabled={addingPlant} style={primaryBtn(addingPlant)}>
+                {addingPlant ? 'Adding…' : 'Add plant'}
+              </button>
+              <button type="button" onClick={() => { setShowAddPlant(false); setPlantErr(null) }} style={ghostBtn}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+
+        {plantsLoading ? (
+          <div style={{ padding: '16px 0', color: P.light, fontSize: '0.875rem' }}>Loading…</div>
+        ) : plants.length === 0 ? (
+          <div style={{ padding: '24px 20px', textAlign: 'center', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8, color: P.light, fontSize: '0.875rem' }}>
+            No plants yet — add individuals or groups above.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {plants.map(plant => (
+              <div key={plant.id} style={{
+                backgroundColor: P.white, border: `1px solid ${P.border}`,
+                borderRadius: 8, padding: '12px 16px',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}>
+                <div>
+                  <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
+                    🌿 {plant.name}
+                    {plant.quantity > 1 && (
+                      <span style={{ marginLeft: 8, fontSize: '0.78rem', color: P.mid,
+                        backgroundColor: P.greenPale, borderRadius: 10, padding: '1px 7px' }}>
+                        ×{plant.quantity}
+                      </span>
+                    )}
+                  </div>
+                  {plant.variety && (
+                    <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>{plant.variety}</div>
+                  )}
+                </div>
+                {plant.status && (
+                  <span style={{ fontSize: '0.73rem', color: P.mid, backgroundColor: P.greenPale,
+                    borderRadius: 10, padding: '2px 8px' }}>
+                    {plant.status}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* ---- Event Log ---- */}
       <div style={{ marginTop: 28 }}>
