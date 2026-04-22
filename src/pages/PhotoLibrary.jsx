@@ -4,9 +4,9 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { supabase, getPhotoUrl } from '../lib/supabase.js'
 import { P, PHOTO_BUCKET } from '../lib/constants.js'
 
-// ---- Photo Library — D1 ----
+// ---- Photo Library — D1 + D2 ----
 // Browse all photos, upload standalone photos (event_id = null),
-// and tag / un-tag photos against projects + locations.
+// tag / un-tag photos against projects, locations, and plants.
 
 export default function PhotoLibrary() {
   const { user } = useAuth()
@@ -21,18 +21,20 @@ export default function PhotoLibrary() {
   const [filterMode,    setFilterMode]    = useState('all') // 'all' | 'standalone' | 'untagged'
 
   // Upload state
-  const [showUpload,    setShowUpload]    = useState(false)
-  const [uploadFile,    setUploadFile]    = useState(null)
-  const [uploadPreview, setUploadPreview] = useState(null)
-  const [uploadForm,    setUploadForm]    = useState({ project_id: '', location_id: '', caption: '', is_public: true })
-  const [uploading,     setUploading]     = useState(false)
-  const [uploadErr,     setUploadErr]     = useState(null)
+  const [showUpload,     setShowUpload]     = useState(false)
+  const [uploadFile,     setUploadFile]     = useState(null)
+  const [uploadPreview,  setUploadPreview]  = useState(null)
+  const [uploadForm,     setUploadForm]     = useState({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
+  const [plantsForUpload, setPlantsForUpload] = useState([])
+  const [uploading,      setUploading]      = useState(false)
+  const [uploadErr,      setUploadErr]      = useState(null)
 
   // Modal / tag state
-  const [modal,   setModal]   = useState(null)
-  const [tagForm, setTagForm] = useState({ project_id: '', location_id: '' })
-  const [tagging, setTagging] = useState(false)
-  const [tagErr,  setTagErr]  = useState(null)
+  const [modal,          setModal]          = useState(null)
+  const [tagForm,        setTagForm]        = useState({ project_id: '', location_id: '', plant_id: '' })
+  const [plantsForModal, setPlantsForModal] = useState([])
+  const [tagging,        setTagging]        = useState(false)
+  const [tagErr,         setTagErr]         = useState(null)
 
   // ---- Initial data load ----
   useEffect(() => {
@@ -46,19 +48,43 @@ export default function PhotoLibrary() {
     })
   }, [user])
 
+  // ---- Load plants when upload project changes ----
+  useEffect(() => {
+    if (!uploadForm.project_id) { setPlantsForUpload([]); return }
+    supabase
+      .from('plants')
+      .select('id, name, variety, quantity')
+      .eq('project_id', uploadForm.project_id)
+      .is('deleted_at', null)
+      .order('created_at')
+      .then(({ data }) => setPlantsForUpload(data ?? []))
+  }, [uploadForm.project_id])
+
+  // ---- Load plants when modal project changes ----
+  useEffect(() => {
+    if (!tagForm.project_id) { setPlantsForModal([]); return }
+    supabase
+      .from('plants')
+      .select('id, name, variety, quantity')
+      .eq('project_id', tagForm.project_id)
+      .is('deleted_at', null)
+      .order('created_at')
+      .then(({ data }) => setPlantsForModal(data ?? []))
+  }, [tagForm.project_id])
+
   // ---- Photos query ----
   const loadPhotos = useCallback(async () => {
     if (!user) return
     setLoading(true)
     let q = supabase
       .from('photos')
-      .select('id, project_id, event_id, location_id, storage_path, caption, is_public, created_at, plant_projects(name)')
+      .select('id, project_id, event_id, location_id, plant_id, storage_path, caption, is_public, created_at, plant_projects(name), plants(name, variety, quantity)')
       .eq('uploaded_by', user.id)
       .order('created_at', { ascending: false })
       .limit(120)
 
-    if (filterProject)              q = q.eq('project_id', filterProject)
-    if (filterMode === 'standalone') q = q.is('event_id', null)
+    if (filterProject)               q = q.eq('project_id', filterProject)
+    if (filterMode === 'standalone')  q = q.is('event_id', null)
     if (filterMode === 'untagged') {
       q = q.is('event_id', null)
       q = q.is('project_id', null)
@@ -97,8 +123,8 @@ export default function PhotoLibrary() {
     setUploading(true)
     setUploadErr(null)
 
-    const ext      = uploadFile.name.split('.').pop().toLowerCase()
-    const photoId  = crypto.randomUUID()
+    const ext         = uploadFile.name.split('.').pop().toLowerCase()
+    const photoId     = crypto.randomUUID()
     const storagePath = `standalone/${photoId}.${ext}`
 
     const { error: upErr } = await supabase.storage
@@ -110,6 +136,7 @@ export default function PhotoLibrary() {
     const { error: dbErr } = await supabase.from('photos').insert({
       project_id:   uploadForm.project_id  || null,
       location_id:  uploadForm.location_id || null,
+      plant_id:     uploadForm.plant_id    || null,
       event_id:     null,
       storage_path: storagePath,
       caption:      uploadForm.caption.trim() || null,
@@ -127,14 +154,18 @@ export default function PhotoLibrary() {
     setUploading(false)
     setShowUpload(false)
     clearUploadFile()
-    setUploadForm({ project_id: '', location_id: '', caption: '', is_public: true })
+    setUploadForm({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
     loadPhotos()
   }
 
   // ---- Modal / tag handlers ----
   function openModal(photo) {
     setModal(photo)
-    setTagForm({ project_id: photo.project_id ?? '', location_id: photo.location_id ?? '' })
+    setTagForm({
+      project_id:  photo.project_id  ?? '',
+      location_id: photo.location_id ?? '',
+      plant_id:    photo.plant_id    ?? '',
+    })
     setTagErr(null)
   }
 
@@ -142,6 +173,7 @@ export default function PhotoLibrary() {
     e.preventDefault()
     const newProject  = tagForm.project_id  || null
     const newLocation = tagForm.location_id || null
+    const newPlant    = tagForm.plant_id    || null
     if (!newProject && !newLocation && !modal.event_id) {
       setTagErr('A standalone photo needs at least a project or location.')
       return
@@ -152,15 +184,19 @@ export default function PhotoLibrary() {
 
     const { error } = await supabase
       .from('photos')
-      .update({ project_id: newProject, location_id: newLocation })
+      .update({ project_id: newProject, location_id: newLocation, plant_id: newPlant })
       .eq('id', modal.id)
 
     if (error) { setTagging(false); setTagErr(error.message); return }
 
+    const updatedProject = projects.find(p => p.id === newProject) ?? null
+    const updatedPlant   = plantsForModal.find(p => p.id === newPlant) ?? null
+
     setPhotos(ps => ps.map(p =>
       p.id === modal.id
-        ? { ...p, project_id: newProject, location_id: newLocation,
-            plant_projects: projects.find(pr => pr.id === newProject) ?? null }
+        ? { ...p, project_id: newProject, location_id: newLocation, plant_id: newPlant,
+            plant_projects: updatedProject,
+            plants: updatedPlant }
         : p
     ))
     setModal(null)
@@ -210,8 +246,7 @@ export default function PhotoLibrary() {
               {uploadPreview ? (
                 <div style={{ position: 'relative', display: 'inline-block' }}>
                   <img
-                    src={uploadPreview}
-                    alt="Preview"
+                    src={uploadPreview} alt="Preview"
                     style={{ maxWidth: '100%', maxHeight: 200, borderRadius: 8, display: 'block', border: `1px solid ${P.border}` }}
                   />
                   <button type="button" onClick={clearUploadFile} style={clearBtnStyle}>✕</button>
@@ -228,13 +263,32 @@ export default function PhotoLibrary() {
                 <label style={fieldLabelStyle}>Project</label>
                 <select
                   value={uploadForm.project_id}
-                  onChange={e => setUploadForm(f => ({ ...f, project_id: e.target.value }))}
+                  onChange={e => setUploadForm(f => ({ ...f, project_id: e.target.value, plant_id: '' }))}
                   style={selectStyle}
                 >
                   <option value="">— None —</option>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
+
+              {/* Plant selector — only when project has plants */}
+              {plantsForUpload.length > 0 && (
+                <div>
+                  <label style={fieldLabelStyle}>Plant  ·  optional</label>
+                  <select
+                    value={uploadForm.plant_id}
+                    onChange={e => setUploadForm(f => ({ ...f, plant_id: e.target.value }))}
+                    style={selectStyle}
+                  >
+                    <option value="">— All plants (project level) —</option>
+                    {plantsForUpload.map(pl => (
+                      <option key={pl.id} value={pl.id}>
+                        {pl.name}{pl.quantity > 1 ? ` ×${pl.quantity}` : ''}{pl.variety ? ` — ${pl.variety}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label style={fieldLabelStyle}>Location  ·  optional</label>
@@ -260,8 +314,7 @@ export default function PhotoLibrary() {
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input
-                  id="up_pub"
-                  type="checkbox"
+                  id="up_pub" type="checkbox"
                   checked={uploadForm.is_public}
                   onChange={e => setUploadForm(f => ({ ...f, is_public: e.target.checked }))}
                   style={{ width: 16, height: 16, cursor: 'pointer' }}
@@ -342,6 +395,7 @@ export default function PhotoLibrary() {
           photo={modal}
           tagForm={tagForm}
           setTagForm={setTagForm}
+          plantsForModal={plantsForModal}
           onSave={handleTag}
           onClose={() => setModal(null)}
           tagging={tagging}
@@ -356,14 +410,16 @@ export default function PhotoLibrary() {
 
 // ---- Photo card ----
 function PhotoCard({ photo, onClick }) {
-  const url = getPhotoUrl(photo.storage_path)
+  const url     = getPhotoUrl(photo.storage_path)
+  const project = photo.plant_projects?.name
+  const plant   = photo.plants?.name
+
   return (
     <button
       onClick={onClick}
       style={{
         background: 'none', border: `1px solid ${P.border}`,
-        borderRadius: 8, overflow: 'hidden', cursor: 'pointer',
-        padding: 0, textAlign: 'left',
+        borderRadius: 8, overflow: 'hidden', cursor: 'pointer', padding: 0, textAlign: 'left',
       }}
     >
       <div style={{ position: 'relative', paddingBottom: '100%', backgroundColor: '#e8e2da' }}>
@@ -385,13 +441,18 @@ function PhotoCard({ photo, onClick }) {
           </span>
         )}
       </div>
-      {photo.plant_projects?.name && (
-        <div style={{
-          padding: '5px 7px', fontSize: '0.7rem', color: P.mid,
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          backgroundColor: P.white,
-        }}>
-          {photo.plant_projects.name}
+      {(project || plant) && (
+        <div style={{ padding: '5px 7px', backgroundColor: P.white }}>
+          {project && (
+            <div style={{ fontSize: '0.7rem', color: P.mid, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {project}
+            </div>
+          )}
+          {plant && (
+            <div style={{ fontSize: '0.65rem', color: P.light, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              🌱 {plant}
+            </div>
+          )}
         </div>
       )}
     </button>
@@ -399,7 +460,7 @@ function PhotoCard({ photo, onClick }) {
 }
 
 // ---- Photo modal ----
-function PhotoModal({ photo, tagForm, setTagForm, onSave, onClose, tagging, tagErr, projects, locations }) {
+function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClose, tagging, tagErr, projects, locations }) {
   const url      = getPhotoUrl(photo.storage_path)
   const hasEvent = !!photo.event_id
 
@@ -422,8 +483,7 @@ function PhotoModal({ photo, tagForm, setTagForm, onSave, onClose, tagging, tagE
         <div style={{ position: 'relative' }}>
           {url && (
             <img
-              src={url}
-              alt={photo.caption ?? 'Photo'}
+              src={url} alt={photo.caption ?? 'Photo'}
               style={{ width: '100%', borderRadius: '12px 12px 0 0', display: 'block', maxHeight: 300, objectFit: 'cover' }}
             />
           )}
@@ -462,13 +522,32 @@ function PhotoModal({ photo, tagForm, setTagForm, onSave, onClose, tagging, tagE
                 <label style={fieldLabelStyle}>Project</label>
                 <select
                   value={tagForm.project_id}
-                  onChange={e => setTagForm(f => ({ ...f, project_id: e.target.value }))}
+                  onChange={e => setTagForm(f => ({ ...f, project_id: e.target.value, plant_id: '' }))}
                   style={selectStyle}
                 >
                   <option value="">— None —</option>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
+
+              {/* Plant selector — only when project is selected and has plants */}
+              {plantsForModal.length > 0 && (
+                <div>
+                  <label style={fieldLabelStyle}>Plant  ·  optional</label>
+                  <select
+                    value={tagForm.plant_id}
+                    onChange={e => setTagForm(f => ({ ...f, plant_id: e.target.value }))}
+                    style={selectStyle}
+                  >
+                    <option value="">— All plants (project level) —</option>
+                    {plantsForModal.map(pl => (
+                      <option key={pl.id} value={pl.id}>
+                        {pl.name}{pl.quantity > 1 ? ` ×${pl.quantity}` : ''}{pl.variety ? ` — ${pl.variety}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label style={fieldLabelStyle}>Location</label>
