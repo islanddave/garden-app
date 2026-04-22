@@ -19,6 +19,7 @@ import Inventory from './pages/Inventory.jsx'
 import InventoryAdd from './pages/InventoryAdd.jsx'
 import InventoryDetail from './pages/InventoryDetail.jsx'
 import EventNew from './pages/EventNew.jsx'
+import PhotoLibrary from './pages/PhotoLibrary.jsx'
 import { P } from './lib/constants.js'
 
 // ---- Error boundary (wraps all routes — prevents full-app crash on photo/library errors) ----
@@ -109,6 +110,9 @@ function AppRoutes() {
         />
         <Route path="/log"
           element={<Protected><EventNew /></Protected>}
+        />
+        <Route path="/photos"
+          element={<Protected><PhotoLibrary /></Protected>}
         />
 
         {/* ---- Catch-all ---- */}
