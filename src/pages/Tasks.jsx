@@ -173,9 +173,9 @@ function TaskCard({ task, urgency, locMap, onComplete, onSkip, onReopen }) {
       </div>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
         {isPending ? (
-          <><button onClick={() => onComplete(task)} style={{ background: 'none', border: `1px solid ${P.green}`, color: P.green, borderRadius: 5, padding: '4px 11px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>Done ✓</button><button onClick={() => onSkip(task)} style={{ background: 'none', border: `1px solid ${P.light}`, color: P.light, borderRadius: 5, padding: '4px 11px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>Skip</button></>
+          <><button onClick={() => onComplete(task)} style={{ background: 'none', border: `1px solid ${P.green}`, color: P.green, borderRadius: 6, padding: '8px 14px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', minHeight: 44 }}>Done ✓</button><button onClick={() => onSkip(task)} style={{ background: 'none', border: `1px solid ${P.light}`, color: P.light, borderRadius: 6, padding: '8px 14px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', minHeight: 44 }}>Skip</button></>
         ) : (
-          <button onClick={() => onReopen(task)} style={{ background: 'none', border: `1px solid ${P.mid}`, color: P.mid, borderRadius: 5, padding: '4px 11px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>Reopen</button>
+          <button onClick={() => onReopen(task)} style={{ background: 'none', border: `1px solid ${P.mid}`, color: P.mid, borderRadius: 6, padding: '8px 14px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', minHeight: 44 }}>Reopen</button>
         )}
       </div>
     </div>
@@ -197,7 +197,7 @@ function SectionHead({ label, color }) {
 }
 
 function Shell({ children }) {
-  return <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}><div style={{ maxWidth: 800, margin: '0 auto', padding: '32px 20px' }}>{children}</div></div>
+  return <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}><div style={{ maxWidth: 800, margin: '0 auto', padding: '32px 20px' }}>{children}</div></div>
 }
 
 const btn = (bg) => ({ backgroundColor: bg, color: P.white, border: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600, cursor: bg === P.light ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' })
