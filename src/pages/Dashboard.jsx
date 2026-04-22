@@ -12,6 +12,7 @@ export default function Dashboard() {
   const [projects,      setProjects]      = useState([])
   const [tasks,         setTasks]         = useState([])
   const [nextAttention, setNextAttention] = useState(null)
+  const [entityMap,     setEntityMap]     = useState({})
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState(null)
 
@@ -48,7 +49,6 @@ export default function Dashboard() {
 
       if (pErr) throw pErr
       if (tErr) throw tErr
-      // entity_memory error is non-fatal — degrade gracefully
 
       if (isMounted) {
         const activeProjects = projectData ?? []
@@ -59,16 +59,18 @@ export default function Dashboard() {
           const activeIds = new Set(activeProjects.map(p => p.id))
           const memMap = {}
           ;(emData ?? []).forEach(row => {
-            if (activeIds.has(row.project_id)) memMap[row.project_id] = row.last_event_at
+            if (activeIds.has(row.project_id)) memMap[row.project_id] = row
           })
+          setEntityMap(memMap)
+
           // Project with no memory entry = never logged = highest priority
           const neverLogged = activeProjects.find(p => !memMap[p.id])
           if (neverLogged) {
             setNextAttention({ id: neverLogged.id, name: neverLogged.name, last_event_at: null })
           } else {
             const oldest = activeProjects.reduce((acc, p) =>
-              !acc || memMap[p.id] < memMap[acc.id] ? p : acc, null)
-            if (oldest) setNextAttention({ id: oldest.id, name: oldest.name, last_event_at: memMap[oldest.id] })
+              !acc || memMap[p.id].last_event_at < memMap[acc.id].last_event_at ? p : acc, null)
+            if (oldest) setNextAttention({ id: oldest.id, name: oldest.name, last_event_at: memMap[oldest.id].last_event_at })
           }
         }
       }
@@ -96,7 +98,7 @@ export default function Dashboard() {
   )
 
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
+    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: '720px', margin: '0 auto', padding: '32px 20px' }}>
 
         {/* Header */}
@@ -174,12 +176,10 @@ export default function Dashboard() {
           </Link>
         )}
 
-        {/* Overdue / Due Today */}
+        {/* Overdue / Due Today tasks */}
         {tasks.length > 0 && (
           <section style={{ marginBottom: '32px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '12px' }}>
-              <h2 style={{ ...sectionHeadStyle, margin: 0 }}>⚠️ Needs attention today</h2>
-            </div>
+            <h2 style={{ ...sectionHeadStyle, marginBottom: '12px' }}>⚠️ Needs attention today</h2>
             {tasks.map(task => (
               <div key={task.id} style={{
                 backgroundColor: P.warn,
@@ -217,27 +217,37 @@ export default function Dashboard() {
               <span style={{ color: P.green, cursor: 'pointer' }}>Create your first plant project →</span>
             </div>
           ) : (
-            projects.map(project => (
-              <Link key={project.id} to={`/projects/${project.id}`} style={{ textDecoration: 'none' }}>
-                <div style={{
-                  backgroundColor: P.white,
-                  border: `1px solid ${P.border}`,
-                  borderRadius: '8px',
-                  padding: '14px 16px',
-                  marginBottom: '8px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  cursor: 'pointer',
-                }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = P.greenLight}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = P.border}
-                >
-                  <span style={{ fontWeight: 600, color: P.green }}>{project.name}</span>
-                  <StatusBadge status={project.status} />
-                </div>
-              </Link>
-            ))
+            projects.map(project => {
+              const mem = entityMap[project.id]
+              return (
+                <Link key={project.id} to={`/projects/${project.id}`} style={{ textDecoration: 'none' }}>
+                  <div style={{
+                    backgroundColor: P.white,
+                    border: `1px solid ${P.border}`,
+                    borderRadius: '8px',
+                    padding: '14px 16px',
+                    marginBottom: '8px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    cursor: 'pointer',
+                  }}
+                    onMouseEnter={e => e.currentTarget.style.borderColor = P.greenLight}
+                    onMouseLeave={e => e.currentTarget.style.borderColor = P.border}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, color: P.green }}>{project.name}</div>
+                      <div style={{ fontSize: '0.72rem', color: P.light, marginTop: 2 }}>
+                        {mem?.last_event_at
+                          ? `${mem.last_event_type?.replace(/_/g, ' ')} · ${daysAgo(mem.last_event_at)}`
+                          : 'never logged'}
+                      </div>
+                    </div>
+                    <StatusBadge status={project.status} />
+                  </div>
+                </Link>
+              )
+            })
           )}
         </section>
 
