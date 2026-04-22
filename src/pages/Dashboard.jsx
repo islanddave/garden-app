@@ -9,10 +9,11 @@ export default function Dashboard() {
   const { profile } = useAuth()
   const { activeZone } = useZone()
   const location = useLocation()
-  const [projects,  setProjects]  = useState([])
-  const [tasks,     setTasks]     = useState([])
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState(null)
+  const [projects,      setProjects]      = useState([])
+  const [tasks,         setTasks]         = useState([])
+  const [nextAttention, setNextAttention] = useState(null)
+  const [loading,       setLoading]       = useState(true)
+  const [error,         setError]         = useState(null)
 
   useEffect(() => {
     let isMounted = true
@@ -24,11 +25,13 @@ export default function Dashboard() {
     const today = new Date().toISOString().split('T')[0]
 
     try {
-      const [{ data: projectData, error: pErr }, { data: taskData, error: tErr }] = await Promise.all([
+      const [
+        { data: projectData, error: pErr },
+        { data: taskData,    error: tErr },
+        { data: emData },
+      ] = await Promise.all([
         supabase
           .from('plant_projects')
-          // location_id included for Session 5: project cards will show breadcrumb
-          // via locations_with_path join once Locations CRUD is built
           .select('id, name, slug, status, start_date, location_id')
           .eq('status', 'active')
           .order('start_date', { ascending: false }),
@@ -38,14 +41,36 @@ export default function Dashboard() {
           .lte('due_date', today)
           .eq('status', 'pending')
           .order('due_date'),
+        supabase
+          .from('entity_memory')
+          .select('project_id, last_event_at, last_event_type'),
       ])
 
       if (pErr) throw pErr
       if (tErr) throw tErr
+      // entity_memory error is non-fatal — degrade gracefully
 
       if (isMounted) {
-        setProjects(projectData ?? [])
+        const activeProjects = projectData ?? []
+        setProjects(activeProjects)
         setTasks(taskData ?? [])
+
+        if (activeProjects.length > 0) {
+          const activeIds = new Set(activeProjects.map(p => p.id))
+          const memMap = {}
+          ;(emData ?? []).forEach(row => {
+            if (activeIds.has(row.project_id)) memMap[row.project_id] = row.last_event_at
+          })
+          // Project with no memory entry = never logged = highest priority
+          const neverLogged = activeProjects.find(p => !memMap[p.id])
+          if (neverLogged) {
+            setNextAttention({ id: neverLogged.id, name: neverLogged.name, last_event_at: null })
+          } else {
+            const oldest = activeProjects.reduce((acc, p) =>
+              !acc || memMap[p.id] < memMap[acc.id] ? p : acc, null)
+            if (oldest) setNextAttention({ id: oldest.id, name: oldest.name, last_event_at: memMap[oldest.id] })
+          }
+        }
       }
     } catch (err) {
       if (isMounted) setError(err.message)
@@ -83,7 +108,7 @@ export default function Dashboard() {
         {/* Zone context strip */}
         <Link
           to={`/zone?from=${encodeURIComponent(location.pathname)}`}
-          style={{ textDecoration: 'none', display: 'block', marginBottom: '28px' }}
+          style={{ textDecoration: 'none', display: 'block', marginBottom: '16px' }}
         >
           <div style={{
             display: 'flex',
@@ -114,37 +139,63 @@ export default function Dashboard() {
           </div>
         </Link>
 
+        {/* Give attention to */}
+        {nextAttention && (
+          <Link to={`/projects/${nextAttention.id}`} style={{ textDecoration: 'none', display: 'block', marginBottom: '28px' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '12px 16px',
+              backgroundColor: '#f0f7f0',
+              border: `1.5px solid ${P.greenLight}`,
+              borderRadius: '10px',
+              cursor: 'pointer',
+              transition: 'border-color 150ms',
+            }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = P.green}
+              onMouseLeave={e => e.currentTarget.style.borderColor = P.greenLight}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '1.2rem' }}>🌱</span>
+                <div>
+                  <div style={{ fontSize: '0.75rem', color: P.mid, fontWeight: 500, marginBottom: '1px' }}>
+                    GIVE ATTENTION TO
+                  </div>
+                  <div style={{ fontWeight: 700, color: P.green, fontSize: '0.95rem' }}>
+                    {nextAttention.name}
+                  </div>
+                </div>
+              </div>
+              <span style={{ fontSize: '0.8rem', color: P.mid, flexShrink: 0 }}>
+                {nextAttention.last_event_at ? daysAgo(nextAttention.last_event_at) : 'never logged'}
+              </span>
+            </div>
+          </Link>
+        )}
+
         {/* Overdue / Due Today */}
         {tasks.length > 0 && (
           <section style={{ marginBottom: '32px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '12px' }}>
               <h2 style={{ ...sectionHeadStyle, margin: 0 }}>⚠️ Needs attention today</h2>
-              <Link to="/tasks" style={{ fontSize: '0.8rem', color: P.green, textDecoration: 'none', fontWeight: 500 }}>
-                View all tasks →
-              </Link>
             </div>
             {tasks.map(task => (
-              <Link key={task.id} to="/tasks" style={{ textDecoration: 'none', display: 'block' }}>
-                <div style={{
-                  backgroundColor: P.warn,
-                  border: `1px solid ${P.warnBorder}`,
-                  borderRadius: '8px',
-                  padding: '12px 16px',
-                  marginBottom: '8px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  cursor: 'pointer',
-                }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = P.terra}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = P.warnBorder}
-                >
-                  <span style={{ fontWeight: 500, color: P.dark }}>{task.title}</span>
-                  <span style={{ fontSize: '0.8rem', color: P.mid, flexShrink: 0, marginLeft: '12px' }}>
-                    {task.due_date}
-                  </span>
-                </div>
-              </Link>
+              <div key={task.id} style={{
+                backgroundColor: P.warn,
+                border: `1px solid ${P.warnBorder}`,
+                borderRadius: '8px',
+                padding: '12px 16px',
+                marginBottom: '8px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}>
+                <span style={{ fontWeight: 500, color: P.dark }}>{task.title}</span>
+                <span style={{ fontSize: '0.8rem', color: P.mid, flexShrink: 0, marginLeft: '12px' }}>
+                  {task.due_date}
+                </span>
+              </div>
             ))}
           </section>
         )}
@@ -193,6 +244,11 @@ export default function Dashboard() {
       </div>
     </div>
   )
+}
+
+function daysAgo(dateStr) {
+  const d = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000)
+  return d === 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`
 }
 
 function StatusBadge({ status }) {
