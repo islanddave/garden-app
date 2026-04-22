@@ -70,6 +70,7 @@ export function useInventory() {
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
   async function createItem(data) {
+    if (!user) return { error: 'Not signed in — please refresh and try again.' }
     const { error: err } = await supabase
       .from('inventory_items')
       .insert({ ...data, user_id: user.id })
