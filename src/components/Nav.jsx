@@ -12,36 +12,21 @@ export default function Nav() {
   const location   = useLocation()
   const [lowStock, setLowStock] = useState(0)
 
-  // Low-stock count — fetches on mount + realtime subscription for live updates
+  // Lightweight low-stock count — 2 columns, consumables only
   useEffect(() => {
     if (!user) { setLowStock(0); return }
-
-    async function fetchCount() {
-      const { data } = await supabase
-        .from('inventory_items')
-        .select('quantity_on_hand, reorder_threshold')
-        .eq('type', 'consumable')
-        .is('deleted_at', null)
-        .not('reorder_threshold', 'is', null)
-      const count = (data ?? []).filter(
-        i => (i.quantity_on_hand ?? 0) <= i.reorder_threshold
-      ).length
-      setLowStock(count)
-    }
-
-    fetchCount()
-
-    // Re-fetch on any inventory_items change so badge stays current
-    const channel = supabase
-      .channel('nav-low-stock')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'inventory_items',
-      }, fetchCount)
-      .subscribe()
-
-    return () => { supabase.removeChannel(channel) }
+    supabase
+      .from('inventory_items')
+      .select('quantity_on_hand, reorder_threshold')
+      .eq('type', 'consumable')
+      .is('deleted_at', null)
+      .not('reorder_threshold', 'is', null)
+      .then(({ data }) => {
+        const count = (data ?? []).filter(
+          i => (i.quantity_on_hand ?? 0) <= i.reorder_threshold
+        ).length
+        setLowStock(count)
+      })
   }, [user])
 
   async function handleSignOut() {
