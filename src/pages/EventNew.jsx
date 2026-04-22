@@ -152,6 +152,7 @@ export default function EventNew() {
     notes:         '',
     private_notes: '',
     quantity:      '',
+    plant_id:      '',
     is_public:     true,
   })
 
@@ -164,6 +165,19 @@ export default function EventNew() {
   const [showPrivate,  setShowPrivate]  = useState(false)
   const [showMoreTypes, setShowMoreTypes] = useState(false)
   const [success,      setSuccess]      = useState(null)
+  const [plantsForProject, setPlantsForProject] = useState([])
+
+  // Load plants when project selection changes
+  useEffect(() => {
+    if (!form.project_id) { setPlantsForProject([]); return }
+    supabase
+      .from('plants')
+      .select('id, name, variety, quantity')
+      .eq('project_id', form.project_id)
+      .is('deleted_at', null)
+      .order('created_at')
+      .then(({ data }) => setPlantsForProject(data ?? []))
+  }, [form.project_id])
 
   // Load projects + locations in one round trip
   useEffect(() => {
@@ -231,6 +245,7 @@ export default function EventNew() {
         notes:         form.notes.trim()         || null,
         private_notes: form.private_notes.trim() || null,
         quantity:      form.quantity.trim()       || null,
+        plant_id:      form.plant_id               || null,
         is_public:     form.is_public,
         logged_by:     user.id,
       })
@@ -398,6 +413,24 @@ export default function EventNew() {
               </small>
             )}
           </Section>
+
+          {/* ── Plant / Group (optional, loads after project selected) ── */}
+          {plantsForProject.length > 0 && (
+            <Section label="Plant / Group (optional)">
+              <select
+                value={form.plant_id}
+                onChange={e => setForm(f => ({ ...f, plant_id: e.target.value }))}
+                style={selectStyle}
+              >
+                <option value="">— All plants (project level) —</option>
+                {plantsForProject.map(pl => (
+                  <option key={pl.id} value={pl.id}>
+                    {pl.name}{pl.quantity > 1 ? ` ×${pl.quantity}` : ''}{pl.variety ? ` — ${pl.variety}` : ''}
+                  </option>
+                ))}
+              </select>
+            </Section>
+          )}
 
           {/* ── Location ── */}
           <Section label="Location *">
