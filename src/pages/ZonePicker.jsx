@@ -97,7 +97,7 @@ export default function ZonePicker() {
   )
 
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
+    <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: '480px', margin: '0 auto', padding: '32px 20px 48px' }}>
 
         <h1 style={{
