@@ -11,56 +11,7 @@ import { P } from '../lib/constants.js'
 // has been through a UX review.
 // ============================================================
 
-export default function Tasks() {
-  return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
-      <div style={{
-        maxWidth: 480,
-        margin: '0 auto',
-        padding: '80px 24px',
-        textAlign: 'center',
-      }}>
-        <div style={{ fontSize: '3rem', marginBottom: 20 }}>🗒️</div>
-        <h1 style={{ margin: '0 0 12px', color: P.green, fontSize: '1.6rem', fontWeight: 700 }}>
-          Tasks
-        </h1>
-        <p style={{ color: P.mid, fontSize: '1rem', lineHeight: 1.6, margin: '0 0 32px' }}>
-          Coming soon — a household task manager built for real garden life.
-          You'll be able to schedule waterings, set reminders, and share tasks
-          with Jen without anything getting lost.
-        </p>
-        <div style={{
-          display: 'inline-block',
-          backgroundColor: P.greenPale,
-          border: `1px solid ${P.greenLight}`,
-          borderRadius: 8,
-          padding: '8px 18px',
-          fontSize: '0.82rem',
-          color: P.green,
-          fontWeight: 600,
-          marginBottom: 40,
-        }}>
-          Planned for V2
-        </div>
-        <div>
-          <Link
-            to="/dashboard"
-            style={{
-              color: P.green,
-              textDecoration: 'none',
-              fontSize: '0.9rem',
-              fontWeight: 600,
-              borderBottom: `1px solid ${P.greenLight}`,
-              paddingBottom: 1,
-            }}
-          >
-            ← Back to Dashboard
-          </Link>
-        </div>
-      </div>
-    </div>
-  )
-}
+// Coming Soon placeholder removed — TasksV2 is now active below
 
 
 // ============================================================
@@ -68,17 +19,13 @@ export default function Tasks() {
 // Restore by: export default TasksV2 (replace export above)
 // ============================================================
 
-// eslint-disable-next-line no-unused-vars
 import { useState, useEffect, useCallback } from 'react'
-// eslint-disable-next-line no-unused-vars
 import { supabase } from '../lib/supabase.js'
-// eslint-disable-next-line no-unused-vars
 import { TASK_PRIORITIES } from '../lib/constants.js'
 
 const OVERDUE_DISPLAY_CAP = 3
 
-// eslint-disable-next-line no-unused-vars
-function TasksV2() {
+export default function TasksV2() {
   const [tasks,      setTasks]      = useState([])
   const [locations,  setLocations]  = useState([])
   const [projects,   setProjects]   = useState([])
