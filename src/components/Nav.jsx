@@ -58,7 +58,7 @@ export default function Nav() {
             <Link to="/dashboard"  style={navLinkStyle}>Dashboard</Link>
             <Link to="/locations"  style={navLinkStyle}>Locations</Link>
             <Link to="/projects"   style={navLinkStyle}>Projects</Link>
-            <Link to="/tasks"      style={navLinkStyle}>Tasks</Link>
+            <span title="Coming spring 2026" style={{ ...navLinkStyle, opacity: 0.4, cursor: 'default' }}>Tasks</span>
             {/* Inventory — with low-stock badge (icon+color per WCAG 1.4.1) */}
             <Link to="/inventory" style={{ ...navLinkStyle, position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               Inventory
