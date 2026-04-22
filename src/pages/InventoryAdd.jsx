@@ -195,7 +195,7 @@ export default function InventoryAdd() {
   }
 
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
+    <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 80px' }}>
 
         {/* Breadcrumb */}
