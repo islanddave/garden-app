@@ -94,7 +94,7 @@ function ProjectCard({ project: p }) {
 }
 
 function Shell({ children }) {
-  return <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}><div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px' }}>{children}</div></div>
+  return <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}><div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px' }}>{children}</div></div>
 }
 function Spinner() { return <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div> }
 function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div> }
