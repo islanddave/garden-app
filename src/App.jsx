@@ -36,7 +36,7 @@ function AppRoutes() {
   return (
     <BrowserRouter>
       <Nav />
-      <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 52px)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100dvh - 52px)' }}>
       <div style={{ flex: 1 }}>
       <Routes>
         {/* ---- Public ---- */}
