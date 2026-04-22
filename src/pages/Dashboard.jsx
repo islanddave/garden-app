@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
+import { useZone } from '../context/ZoneContext.jsx'
 import { supabase } from '../lib/supabase.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 
 export default function Dashboard() {
   const { profile } = useAuth()
+  const { activeZone } = useZone()
+  const location = useLocation()
   const [projects,  setProjects]  = useState([])
   const [tasks,     setTasks]     = useState([])
   const [loading,   setLoading]   = useState(true)
@@ -24,6 +27,8 @@ export default function Dashboard() {
       const [{ data: projectData, error: pErr }, { data: taskData, error: tErr }] = await Promise.all([
         supabase
           .from('plant_projects')
+          // location_id included for Session 5: project cards will show breadcrumb
+          // via locations_with_path join once Locations CRUD is built
           .select('id, name, slug, status, start_date, location_id')
           .eq('status', 'active')
           .order('start_date', { ascending: false }),
@@ -73,8 +78,43 @@ export default function Dashboard() {
         <h1 style={{ color: P.green, fontSize: '1.4rem', fontWeight: 700, margin: '0 0 4px' }}>
           Welcome back, {profile?.display_name ?? 'Dave'} 🌿
         </h1>
-        <p style={{ color: P.light, fontSize: '0.875rem', margin: '0 0 32px' }}>{today}</p>
+        <p style={{ color: P.light, fontSize: '0.875rem', margin: '0 0 20px' }}>{today}</p>
 
+        {/* Zone context strip */}
+        <Link
+          to={`/zone?from=${encodeURIComponent(location.pathname)}`}
+          style={{ textDecoration: 'none', display: 'block', marginBottom: '28px' }}
+        >
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '12px 16px',
+            backgroundColor: activeZone ? P.greenPale : P.white,
+            border: `1.5px solid ${activeZone ? P.green : P.border}`,
+            borderRadius: '10px',
+            cursor: 'pointer',
+            transition: 'border-color 150ms',
+          }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = P.greenLight}
+            onMouseLeave={e => e.currentTarget.style.borderColor = activeZone ? P.green : P.border}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '1.2rem' }}>📍</span>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: P.mid, fontWeight: 500, marginBottom: '1px' }}>
+                  WHERE ARE YOU?
+                </div>
+                <div style={{ fontWeight: 700, color: activeZone ? P.green : P.dark, fontSize: '0.95rem' }}>
+                  {activeZone ? activeZone.name : 'Everywhere'}
+                </div>
+              </div>
+            </div>
+            <span style={{ fontSize: '0.8rem', color: P.mid }}>Change →</span>
+          </div>
+        </Link>
+
+        {/* Overdue / Due Today */}
         {tasks.length > 0 && (
           <section style={{ marginBottom: '32px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '12px' }}>
@@ -109,6 +149,7 @@ export default function Dashboard() {
           </section>
         )}
 
+        {/* Active Projects */}
         <section>
           <h2 style={sectionHeadStyle}>Active projects</h2>
           {projects.length === 0 ? (
