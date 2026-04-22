@@ -28,7 +28,7 @@ export default function Login() {
 
   return (
     <div style={{
-      minHeight: 'calc(100vh - 52px)',
+      minHeight: '100dvh',
       backgroundColor: P.cream,
       display: 'flex',
       alignItems: 'center',
