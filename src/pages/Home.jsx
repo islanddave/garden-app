@@ -1,7 +1,7 @@
 import { P } from '../lib/constants.js'
 export default function Home() {
   return (
-    <div style={{minHeight:'calc(100vh - 52px)',backgroundColor:P.cream}}>
+    <div style={{minHeight:'100dvh',backgroundColor:P.cream}}>
       <div style={{maxWidth:'660px',margin:'0 auto',padding:'56px 20px 40px',textAlign:'center'}}>
         <div style={{fontSize:'3.5rem',marginBottom:'16px'}}>🌱</div>
         <h1 style={{color:P.green,fontSize:'2rem',fontWeight:700,margin:'0 0 10px'}}>Garden at the Ridge</h1>
