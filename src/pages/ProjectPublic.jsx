@@ -110,5 +110,5 @@ function StatusBadge({ status }) {
 }
 
 function Page({ children }) {
-  return <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>{children}</div>
+  return <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>{children}</div>
 }
