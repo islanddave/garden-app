@@ -125,6 +125,7 @@ export default function EventNew() {
   const [saving,       setSaving]       = useState(false)
   const [error,        setError]        = useState(null)
   const [showPrivate,  setShowPrivate]  = useState(false)
+  const [success,      setSuccess]      = useState(null)
 
   // Load projects + locations in one round trip
   useEffect(() => {
@@ -143,6 +144,13 @@ export default function EventNew() {
       setLocations((locs ?? []).filter(l => l.is_active))
     })
   }, [])
+
+  // Auto-navigate to dashboard after success screen
+  useEffect(() => {
+    if (!success) return
+    const t = setTimeout(() => navigate('/dashboard'), 2500)
+    return () => clearTimeout(t)
+  }, [success, navigate])
 
   // Photo handlers
   function handlePhotoChange(e) {
@@ -220,14 +228,32 @@ export default function EventNew() {
       }
     }
 
-    // 3 — Update entity memory + user stats (non-fatal, fire and move on)
-    await Promise.all([
+    // 3 — Update entity memory + user stats; capture stats for success screen
+    const [, stats] = await Promise.all([
       updateEntityMemory(form.project_id, form.location_id, form.event_type, new Date(form.event_date)),
       updateUserStats(user.id, form.event_type, { hasPhoto: photoUploaded, eventLogId: event.id }),
     ])
 
     setSaving(false)
-    navigate('/dashboard')
+    setSuccess({
+      newStreak: stats?.newStreak ?? 1,
+      earnedXp:  stats?.earnedXp  ?? 0,
+      isLevelUp: stats?.isLevelUp ?? false,
+      newLevel:  stats?.newLevel  ?? null,
+      eventType: form.event_type,
+    })
+  }
+
+  // Success screen — early return
+  if (success) {
+    return (
+      <div style={{
+        minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <SuccessScreen success={success} onDashboard={() => navigate('/dashboard')} />
+      </div>
+    )
   }
 
   return (
@@ -528,6 +554,92 @@ function ErrBanner({ msg }) {
       fontSize: '0.875rem', color: '#7a2a10',
     }}>
       {msg}
+    </div>
+  )
+}
+
+function SuccessScreen({ success, onDashboard }) {
+  const eventMeta = EVENT_TYPES_UI.find(t => t.value === success.eventType)
+  const streakMsg = success.newStreak > 1 ? `${success.newStreak}-day streak` : 'Day 1 — keep it going!'
+
+  return (
+    <div style={{
+      textAlign: 'center',
+      padding: '40px 32px',
+      maxWidth: 340,
+    }}>
+      {/* Big event emoji + check */}
+      <div style={{ fontSize: '3.5rem', lineHeight: 1, marginBottom: 8 }}>
+        {eventMeta?.emoji ?? '✅'}
+      </div>
+      <div style={{
+        width: 52, height: 52,
+        borderRadius: '50%',
+        backgroundColor: P.green,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        margin: '0 auto 20px',
+        fontSize: '1.4rem', color: P.white,
+      }}>
+        ✓
+      </div>
+
+      <h2 style={{ margin: '0 0 6px', color: P.green, fontSize: '1.5rem', fontWeight: 700 }}>
+        Logged!
+      </h2>
+      <p style={{ margin: '0 0 24px', color: P.mid, fontSize: '0.9rem' }}>
+        {eventMeta?.label?.replace('\n', ' ') ?? 'Event'} recorded
+      </p>
+
+      {/* Stats row */}
+      <div style={{
+        display: 'flex', gap: 12, justifyContent: 'center', marginBottom: 28,
+      }}>
+        {/* Streak */}
+        <div style={{
+          backgroundColor: P.white, border: `1px solid ${P.border}`,
+          borderRadius: 10, padding: '12px 18px', flex: 1,
+        }}>
+          <div style={{ fontSize: '1.4rem', marginBottom: 4 }}>🔥</div>
+          <div style={{ fontSize: '1.05rem', fontWeight: 700, color: P.terra }}>{streakMsg}</div>
+        </div>
+
+        {/* XP */}
+        <div style={{
+          backgroundColor: P.white, border: `1px solid ${P.border}`,
+          borderRadius: 10, padding: '12px 18px', flex: 1,
+        }}>
+          <div style={{ fontSize: '1.4rem', marginBottom: 4 }}>⚡</div>
+          <div style={{ fontSize: '1.05rem', fontWeight: 700, color: P.gold }}>+{success.earnedXp} XP</div>
+        </div>
+      </div>
+
+      {/* Level up */}
+      {success.isLevelUp && (
+        <div style={{
+          backgroundColor: '#fef9ec',
+          border: '1px solid #e6c96a',
+          borderRadius: 10, padding: '12px 20px', marginBottom: 24,
+          fontSize: '0.9rem', color: '#7a5c00', fontWeight: 600,
+        }}>
+          🎉 Level up → Level {success.newLevel}!
+        </div>
+      )}
+
+      <p style={{ margin: 0, fontSize: '0.78rem', color: P.light }}>
+        Back to dashboard in a moment…
+      </p>
+      <button
+        type="button"
+        onClick={onDashboard}
+        style={{
+          marginTop: 14,
+          background: 'none', border: 'none',
+          color: P.green, fontSize: '0.85rem',
+          cursor: 'pointer', textDecoration: 'underline',
+        }}
+      >
+        Go now
+      </button>
     </div>
   )
 }
