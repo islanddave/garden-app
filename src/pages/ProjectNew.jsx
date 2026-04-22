@@ -90,7 +90,7 @@ export default function ProjectNew() {
   }
 
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
+    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '32px 20px' }}>
 
         {/* Breadcrumb */}
