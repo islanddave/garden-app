@@ -1,3 +1,4 @@
+import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { ZoneProvider } from './context/ZoneContext.jsx'
@@ -20,6 +21,33 @@ import InventoryDetail from './pages/InventoryDetail.jsx'
 import EventNew from './pages/EventNew.jsx'
 import { P } from './lib/constants.js'
 
+// ---- Error boundary (wraps all routes — prevents full-app crash on photo/library errors) ----
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: '48px 20px', textAlign: 'center', color: '#b94a3a' }}>
+          <p style={{ marginBottom: 16 }}>Something went wrong loading this page.</p>
+          <button
+            onClick={() => this.setState({ hasError: false })}
+            style={{ color: '#4a7c59', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.9rem', textDecoration: 'underline' }}
+          >
+            Try again
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 // ---- Protected route wrapper ----
 // Render nothing while loading to prevent flash-of-unauth content with stale/expired tokens.
 // Only after getSession() resolves do we know the true auth state.
@@ -35,6 +63,7 @@ function AppRoutes() {
 
   return (
     <BrowserRouter>
+      <AppErrorBoundary>
       <Nav />
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100dvh - 52px)' }}>
       <div style={{ flex: 1 }}>
@@ -88,6 +117,7 @@ function AppRoutes() {
       </div>
       <Footer />
       </div>
+      </AppErrorBoundary>
     </BrowserRouter>
   )
 }
