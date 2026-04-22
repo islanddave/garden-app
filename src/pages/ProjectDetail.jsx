@@ -281,6 +281,11 @@ export default function ProjectDetail() {
               </a>
             )}
           </div>
+          {!eventsLoading && events.length > 0 && (
+            <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 6 }}>
+              Last: {EVENT_ICONS[events[0].event_type] ?? '📝'} {events[0].event_type.replace(/_/g, ' ')} · {daysAgo(events[0].event_date)}
+            </div>
+          )}
         </div>
         {!editing && (
           <button onClick={startEdit} style={outlineBtn}>Edit</button>
@@ -613,9 +618,14 @@ function EventRow({ event: ev, isLast, deleting, onDelete }) {
 }
 
 // ---- Shared UI ----
+function daysAgo(dateStr) {
+  const d = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000)
+  return d === 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`
+}
+
 function Shell({ children }) {
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
+    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px' }}>{children}</div>
     </div>
   )
