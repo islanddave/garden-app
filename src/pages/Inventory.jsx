@@ -68,7 +68,7 @@ export default function Inventory() {
   const presentCategories = [...new Set(items.map(i => i.category))]
 
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
+    <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 120px' }}>
 
         {/* Header */}
@@ -444,7 +444,7 @@ function EmptyState() {
 
 function Shell({ children }) {
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
+    <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px' }}>{children}</div>
     </div>
   )
