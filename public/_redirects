@@ -1,1 +1,11 @@
+# Pass static PWA files through before the SPA catch-all.
+# Without these, Netlify's rewrite rule intercepts them and returns HTML.
+/manifest.webmanifest  /manifest.webmanifest  200
+/registerSW.js         /registerSW.js         200
+/sw.js                 /sw.js                 200
+/workbox-*.js          /workbox-*.js          200
+
+# Required for React Router client-side routing on Netlify.
+# Without this, direct navigation to any route (e.g. /dashboard, /garden/peppers-2026)
+# returns a 404 from Netlify instead of letting React Router handle it.
 /*  /index.html  200
