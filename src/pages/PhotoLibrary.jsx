@@ -469,14 +469,15 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
       style={{
         position: 'fixed', inset: 0, zIndex: 200,
+        boxSizing: 'border-box',
         backgroundColor: 'rgba(0,0,0,0.72)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 16,
+        padding: 'env(safe-area-inset-top) 16px env(safe-area-inset-bottom) 16px',
       }}
     >
       <div style={{
         backgroundColor: P.white, borderRadius: 12,
-        maxWidth: 480, width: '100%', maxHeight: '90vh', overflowY: 'auto',
+        maxWidth: 480, width: '100%', maxHeight: '90dvh', overflow: 'hidden',
       }}>
 
         {/* Image */}
