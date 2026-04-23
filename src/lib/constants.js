@@ -129,6 +129,8 @@ export const INVENTORY_CATEGORIES = [
 // Supabase Storage bucket name
 export const PHOTO_BUCKET = 'garden-photos'
 
+export const APP_NAME = 'Gardens at Mathews Ridge'
+
 // Public URL base — used for canonical links, og:url, GCal descriptions (Phase 3+)
 export const APP_URL = 'https://garden.futureishere.net'
 
@@ -137,6 +139,3 @@ export const PROJECT_CATEGORIES = [
   { v: 'garden',         label: 'Garden',         icon: '🌱' },
   { v: 'infrastructure', label: 'Infrastructure',  icon: '🔨' },
 ]
-// App identity
-export const APP_NAME = 'Gardens at Mathews Ridge'
-export const APP_URL = 'https://garden.futureishere.net'
