@@ -22,6 +22,7 @@ import InventoryDetail from './pages/InventoryDetail.jsx'
 import EventNew from './pages/EventNew.jsx'
 import PhotoLibrary from './pages/PhotoLibrary.jsx'
 import Favorites from './pages/Favorites.jsx'
+import Plants from './pages/Plants.jsx'
 import { P } from './lib/constants.js'
 
 class AppErrorBoundary extends React.Component {
@@ -76,6 +77,7 @@ function AppRoutes() {
               <Route path="/log"           element={<Protected><EventNew /></Protected>} />
               <Route path="/photos"        element={<Protected><PhotoLibrary /></Protected>} />
               <Route path="/favorites"     element={<Protected><Favorites /></Protected>} />
+              <Route path="/plants"        element={<Protected><Plants /></Protected>} />
               <Route path="*"              element={<Navigate to="/" replace />} />
             </Routes>
           </div>
