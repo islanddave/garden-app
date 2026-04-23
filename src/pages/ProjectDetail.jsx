@@ -4,7 +4,6 @@ import { supabase } from '../lib/supabase.js'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import { updateEntityMemory, updateUserStats } from '../lib/garden-ops.js'
-import FavoriteToggle from '../components/FavoriteToggle.jsx'
 
 const EVENT_ICONS = {
   sowing:        '🌱',
@@ -142,8 +141,9 @@ export default function ProjectDetail() {
     setEventsLoading(true)
     supabase
       .from('event_log')
-      .select('id, event_type, event_date, title, notes, private_notes, quantity, is_public, created_at')
+      .select('id, event_type, event_date, title, notes, private_notes, quantity, is_public, created_at, logged_by, profiles!logged_by(display_name)')
       .eq('project_id', id)
+      .is('deleted_at', null)
       .order('event_date', { ascending: false })
       .then(({ data }) => {
         if (!isMounted) return
@@ -183,8 +183,9 @@ export default function ProjectDetail() {
   async function refreshEvents() {
     const { data } = await supabase
       .from('event_log')
-      .select('id, event_type, event_date, title, notes, private_notes, quantity, is_public, created_at')
+      .select('id, event_type, event_date, title, notes, private_notes, quantity, is_public, created_at, logged_by, profiles!logged_by(display_name)')
       .eq('project_id', id)
+      .is('deleted_at', null)
       .order('event_date', { ascending: false })
     setEvents(data ?? [])
   }
@@ -240,9 +241,9 @@ export default function ProjectDetail() {
   }
 
   async function handleDeleteEvent(evId) {
-    if (!window.confirm('Delete this event? This cannot be undone.')) return
+    if (!window.confirm('Delete this event?')) return
     setDeletingId(evId)
-    await supabase.from('event_log').delete().eq('id', evId)
+    await supabase.from('event_log').update({ deleted_at: new Date().toISOString() }).eq('id', evId)
     setDeletingId(null)
     await refreshEvents()
   }
@@ -342,10 +343,7 @@ export default function ProjectDetail() {
           )}
         </div>
         {!editing && (
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <FavoriteToggle entityType="project" entityId={id} />
-            <button onClick={startEdit} style={outlineBtn}>Edit</button>
-          </div>
+          <button onClick={startEdit} style={outlineBtn}>Edit</button>
         )}
       </div>
 
@@ -646,6 +644,7 @@ export default function ProjectDetail() {
                 <EventRow
                   key={ev.id}
                   event={ev}
+                  projectId={id}
                   isLast={i === events.length - 1}
                   deleting={deletingId === ev.id}
                   onDelete={() => handleDeleteEvent(ev.id)}
@@ -683,13 +682,14 @@ function Fields({ project: p, locPath }) {
 }
 
 // ---- Event row ----
-function EventRow({ event: ev, isLast, deleting, onDelete }) {
+function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
   const icon = EVENT_ICONS[ev.event_type] ?? '📝'
   const d = new Date(ev.event_date)
   const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
   return (
-    <div style={{ display: 'flex', gap: 14, paddingBottom: isLast ? 0 : 18 }}>
+    <Link to={`/projects/${projectId}/events/${ev.id}`}
+      style={{ textDecoration: 'none', color: 'inherit', display: 'flex', gap: 14, paddingBottom: isLast ? 0 : 18 }}>
       {/* Icon bubble */}
       <div style={{
         width: 36, height: 36, borderRadius: '50%',
@@ -733,8 +733,21 @@ function EventRow({ event: ev, isLast, deleting, onDelete }) {
                 </span>
               )}
             </div>
-            <div style={{ fontSize: '0.75rem', color: P.light, marginBottom: ev.notes || ev.private_notes ? 6 : 0 }}>
+            <div style={{ fontSize: '0.75rem', color: P.light, marginBottom: ev.notes || ev.private_notes ? 6 : 0, display: 'flex', alignItems: 'center', gap: 6 }}>
               {dateStr}
+              {ev.profiles?.display_name && (
+                <span
+                  title={ev.profiles.display_name}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: 18, height: 18, borderRadius: '50%',
+                    backgroundColor: ev.profiles.display_name === 'Dave' ? '#4a7fb5' : P.terra,
+                    color: P.white, fontSize: '0.62rem', fontWeight: 700, flexShrink: 0,
+                  }}
+                >
+                  {ev.profiles.display_name[0]}
+                </span>
+              )}
             </div>
             {ev.notes && (
               <p style={{ margin: '0 0 4px', color: P.mid, fontSize: '0.83rem', lineHeight: 1.5 }}>
@@ -752,7 +765,7 @@ function EventRow({ event: ev, isLast, deleting, onDelete }) {
             )}
           </div>
           <button
-            onClick={onDelete}
+            onClick={(e) => { e.preventDefault(); onDelete() }}
             disabled={deleting}
             title="Delete event"
             style={{
@@ -764,7 +777,7 @@ function EventRow({ event: ev, isLast, deleting, onDelete }) {
           </button>
         </div>
       </div>
-    </div>
+    </Link>
   )
 }
 
