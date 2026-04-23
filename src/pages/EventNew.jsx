@@ -165,6 +165,7 @@ export default function EventNew() {
   const [showPrivate,  setShowPrivate]  = useState(false)
   const [showMoreTypes, setShowMoreTypes] = useState(false)
   const [success,      setSuccess]      = useState(null)
+  const [photoWarning, setPhotoWarning]  = useState(null)
   const [plantsForProject, setPlantsForProject] = useState([])
 
   // Load plants when project selection changes
@@ -258,26 +259,31 @@ export default function EventNew() {
       return
     }
 
-    // 2 — Upload photo (non-fatal if it fails)
+    // 2 — Upload photo (non-fatal — event still succeeds if photo fails)
     let photoUploaded = false
     if (photoFile) {
-      const ext       = photoFile.name.split('.').pop().toLowerCase()
-      const photoId   = crypto.randomUUID()
+      const ext         = photoFile.name.split('.').pop().toLowerCase()
+      const photoId     = crypto.randomUUID()
       const storagePath = `events/${event.id}/${photoId}.${ext}`
+      const mimeType    = photoFile.type || 'image/jpeg'
 
       const { error: upErr } = await supabase.storage
         .from(PHOTO_BUCKET)
-        .upload(storagePath, photoFile, { upsert: false })
+        .upload(storagePath, photoFile, { upsert: false, contentType: mimeType })
 
       if (!upErr) {
         await supabase.from('photos').insert({
           project_id:   form.project_id,
           event_id:     event.id,
+          location_id:  form.location_id || null,
+          plant_id:     form.plant_id    || null,
           storage_path: storagePath,
           is_public:    form.is_public,
           uploaded_by:  user.id,
         })
         photoUploaded = true
+      } else {
+        setPhotoWarning(upErr.message)
       }
     }
 
@@ -289,11 +295,12 @@ export default function EventNew() {
 
     setSaving(false)
     setSuccess({
-      newStreak: stats?.newStreak ?? 1,
-      earnedXp:  stats?.earnedXp  ?? 0,
-      isLevelUp: stats?.isLevelUp ?? false,
-      newLevel:  stats?.newLevel  ?? null,
-      eventType: form.event_type,
+      newStreak:    stats?.newStreak ?? 1,
+      earnedXp:     stats?.earnedXp  ?? 0,
+      isLevelUp:    stats?.isLevelUp ?? false,
+      newLevel:     stats?.newLevel  ?? null,
+      eventType:    form.event_type,
+      photoWarning: photoWarning,
     })
   }
 
@@ -303,7 +310,18 @@ export default function EventNew() {
       <div style={{
         minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexDirection: 'column', padding: '0 16px',
       }}>
+        {success.photoWarning && (
+          <div style={{
+            backgroundColor: '#fff8e6', border: '1px solid #c9a84c',
+            borderRadius: 10, padding: '10px 16px', marginBottom: 12,
+            maxWidth: 340, width: '100%',
+            fontSize: '0.82rem', color: '#7a5c00',
+          }}>
+            📷 Photo couldn't be saved — you can add it from the Photos page.
+          </div>
+        )}
         <SuccessScreen success={success} onDashboard={() => navigate('/dashboard')} />
       </div>
     )
