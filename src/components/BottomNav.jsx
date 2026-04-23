@@ -3,7 +3,6 @@ import { Link, useLocation } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 
 // BottomNav — 5-tab mobile navigation
-// More sheet: Photos, Inventory, Favorites. Plants added in P-session when route exists.
 
 const TABS = [
   { to: '/dashboard', label: 'Dashboard', icon: '🏠' },
@@ -16,6 +15,7 @@ const MORE_ITEMS = [
   { to: '/photos',    label: 'Photos',    icon: '📷' },
   { to: '/inventory', label: 'Inventory', icon: '📦' },
   { to: '/favorites', label: 'Favorites', icon: '★'  },
+  { to: '/plants',    label: 'Plants',    icon: '🌿' },
 ]
 
 export default function BottomNav() {
