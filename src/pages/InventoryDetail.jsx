@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase.js'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
+import FavoriteToggle from '../components/FavoriteToggle.jsx'
 
 // ── Shared enums (mirror InventoryAdd) ───────────────────────────────────────
 const CATEGORIES = [
@@ -195,9 +196,12 @@ export default function InventoryDetail() {
           {' › '}{item.name}
         </div>
 
-        <h1 style={{ margin: '0 0 24px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
-          Edit item
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+          <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700, flex: 1 }}>
+            {item.name}
+          </h1>
+          <FavoriteToggle entityType="inventory_item" entityId={id} />
+        </div>
 
         {errors._form && (
           <div style={{
