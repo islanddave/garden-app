@@ -2,7 +2,7 @@
 // Cache-first for static assets, network-first for Supabase API calls.
 // CACHE_VERSION should be updated with each deploy for cache-busting.
 
-const CACHE_VERSION = 'v12-20260423b'
+const CACHE_VERSION = 'v13-20260423'
 const STATIC_CACHE  = `static-${CACHE_VERSION}`
 const API_CACHE     = `api-${CACHE_VERSION}`
 
