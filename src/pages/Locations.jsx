@@ -27,7 +27,7 @@ export default function Locations() {
   const load = useCallback(async () => {
     let isMounted = true
     const [{ data: locs, error: e1 }, { data: paths, error: e2 }] = await Promise.all([
-      supabase.from('locations').select('*').order('level').order('sort_order').order('name'),
+      supabase.from('locations').select('*').is('deleted_at', null).order('level').order('sort_order').order('name'),
       supabase.from('locations_with_path').select('id, full_path, level, is_active').order('full_path'),
     ])
     if (!isMounted) return
