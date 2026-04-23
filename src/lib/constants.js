@@ -9,7 +9,7 @@ export const P = {
   greenLight:  '#52b788',
   greenPale:   '#d8f3dc',
   terra:       '#b7532a',
-  gold:        '#c9a84c',
+  gold:        '#8a6e2a',  // darkened for WCAG AA contrast on cream (was #c9a84c)
   dark:        '#1a1a1a',
   mid:         '#4a4a4a',
   light:       '#777',
@@ -129,13 +129,5 @@ export const INVENTORY_CATEGORIES = [
 // Supabase Storage bucket name
 export const PHOTO_BUCKET = 'garden-photos'
 
-export const APP_NAME = 'Gardens at Mathews Ridge'
-
 // Public URL base — used for canonical links, og:url, GCal descriptions (Phase 3+)
 export const APP_URL = 'https://garden.futureishere.net'
-
-// Project type categories — matches project_types.category check constraint
-export const PROJECT_CATEGORIES = [
-  { v: 'garden',         label: 'Garden',         icon: '🌱' },
-  { v: 'infrastructure', label: 'Infrastructure',  icon: '🔨' },
-]
