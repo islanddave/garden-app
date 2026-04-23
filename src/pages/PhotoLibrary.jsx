@@ -78,7 +78,7 @@ export default function PhotoLibrary() {
     setLoading(true)
     let q = supabase
       .from('photos')
-      .select('id, project_id, event_id, location_id, plant_id, storage_path, caption, is_public, created_at, plant_projects(name), plants(name, variety, quantity)')
+      .select('id, project_id, event_id, location_id, plant_id, storage_path, caption, is_public, created_at, plant_projects!project_id(name), plants!plant_id(name, variety, quantity)')
       .eq('uploaded_by', user.id)
       .order('created_at', { ascending: false })
       .limit(120)
