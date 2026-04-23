@@ -198,13 +198,6 @@ export default function EventNew() {
     })
   }, [])
 
-  // Auto-navigate to dashboard after success screen
-  useEffect(() => {
-    if (!success) return
-    const t = setTimeout(() => navigate('/dashboard'), 2500)
-    return () => clearTimeout(t)
-  }, [success, navigate])
-
   // Photo handlers
   function handlePhotoChange(e) {
     const file = e.target.files?.[0]
@@ -744,20 +737,18 @@ function SuccessScreen({ success, onDashboard }) {
         </div>
       )}
 
-      <p style={{ margin: 0, fontSize: '0.78rem', color: P.light }}>
-        Back to dashboard in a moment…
-      </p>
       <button
         type="button"
         onClick={onDashboard}
         style={{
-          marginTop: 14,
-          background: 'none', border: 'none',
-          color: P.green, fontSize: '0.85rem',
-          cursor: 'pointer', textDecoration: 'underline',
+          marginTop: 8,
+          backgroundColor: P.green, color: P.white,
+          border: 'none', borderRadius: 8,
+          padding: '13px 30px', fontSize: '0.95rem', fontWeight: 700,
+          cursor: 'pointer', minWidth: 180,
         }}
       >
-        Go now
+        Back to Dashboard
       </button>
     </div>
   )
