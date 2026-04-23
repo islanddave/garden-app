@@ -3,12 +3,8 @@ import { supabase } from '../lib/supabase.js'
 
 const AuthContext = createContext(null)
 
-// Hardcoded allowlist — only these emails may access the app.
-// V2: move to app_config table when multi-user/roles land.
-const ALLOWED_EMAILS = [
-  'islanddave@gmail.com',
-  'jennifer.of.koetters@gmail.com',
-]
+// Access control: a user must have a row in public.profiles to enter the app.
+// Add/remove rows in profiles to grant/revoke access. No trigger auto-creates rows.
 
 export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null)
@@ -20,7 +16,6 @@ export function AuthProvider({ children }) {
       if (session?.user) {
         checkAllowlist(session.user)
       } else {
-        setUser(null)
         setLoading(false)
       }
     })
@@ -38,16 +33,16 @@ export function AuthProvider({ children }) {
 
   async function checkAllowlist(authUser) {
     try {
-      if (!ALLOWED_EMAILS.includes(authUser.email)) {
+      const { data: prof, error } = await supabase
+        .from('profiles').select('id, display_name, avatar_url').eq('id', authUser.id).single()
+      if (error || !prof) {
         setUser(null); setProfile(null)
         await supabase.auth.signOut()
         window.location.replace('/login?error=not_authorized')
         return
       }
       setUser(authUser)
-      const { data: prof } = await supabase
-        .from('profiles').select('id, display_name, avatar_url').eq('id', authUser.id).single()
-      setProfile(prof ?? null)
+      setProfile(prof)
     } catch (e) {
       setUser(null); setProfile(null)
       await supabase.auth.signOut()
