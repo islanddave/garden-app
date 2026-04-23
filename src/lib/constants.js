@@ -137,3 +137,6 @@ export const PROJECT_CATEGORIES = [
   { v: 'garden',         label: 'Garden',         icon: '🌱' },
   { v: 'infrastructure', label: 'Infrastructure',  icon: '🔨' },
 ]
+// App identity
+export const APP_NAME = 'Gardens at Mathews Ridge'
+export const APP_URL = 'https://garden.futureishere.net'
