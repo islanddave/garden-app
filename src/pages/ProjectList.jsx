@@ -10,132 +10,125 @@ const STATUS_COLORS = {
   ended:     { bg: '#eee',    text: '#777',    border: '#d4c9be' },
 }
 
-const FILTERS = [
-  { v: 'all',            label: 'All' },
-  { v: 'garden',        label: '🌱 Garden' },
-  { v: 'infrastructure',label: '🔨 Infrastructure' },
-  { v: 'none',          label: 'No type' },
-]
-
 export default function ProjectList() {
-  const [projects,  setProjects]  = useState([])
-  const [typeMap,   setTypeMap]   = useState({})
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState(null)
-  const [filter,    setFilter]    = useState('all')
+  const [projects, setProjects] = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [error,    setError]    = useState(null)
 
   useEffect(() => {
     let isMounted = true
     ;(async () => {
-      const [{ data: pData, error: pErr }, { data: tData }] = await Promise.all([
-        supabase.from('plant_projects')
-          .select('id, name, slug, status, variety, start_date, is_public, location_id, project_type_id')
-          .order('start_date', { ascending: false, nullsFirst: false }),
-        supabase.from('project_types').select('id, name, icon, category'),
-      ])
+      // Fetch projects, then batch-resolve location paths via locations_with_path view
+      const { data: projects, error: pErr } = await supabase
+        .from('plant_projects')
+        .select('id, name, slug, status, variety, start_date, is_public, location_id')
+        .is('deleted_at', null)
+        .order('start_date', { ascending: false, nullsFirst: false })
+
       if (!isMounted) return
       if (pErr) { setError(pErr.message); setLoading(false); return }
 
-      const tMap = {}
-      ;(tData ?? []).forEach(t => { tMap[t.id] = t })
-      setTypeMap(tMap)
-
-      const locIds = [...new Set((pData ?? []).map(p => p.location_id).filter(Boolean))]
+      // Fetch location paths for all unique location_ids
+      const locIds = [...new Set((projects ?? []).map(p => p.location_id).filter(Boolean))]
       let pathMap = {}
       if (locIds.length) {
-        const { data: locs } = await supabase.from('locations_with_path').select('id, full_path').in('id', locIds)
+        const { data: locs } = await supabase
+          .from('locations_with_path')
+          .select('id, full_path')
+          .in('id', locIds)
         ;(locs ?? []).forEach(l => { pathMap[l.id] = l.full_path })
       }
+
       if (isMounted) {
-        setProjects((pData ?? []).map(p => ({ ...p, location_path: pathMap[p.location_id] ?? null })))
+        setProjects((projects ?? []).map(p => ({ ...p, location_path: pathMap[p.location_id] ?? null })))
         setLoading(false)
       }
     })()
     return () => { isMounted = false }
   }, [])
 
-  const filtered = projects.filter(p => {
-    if (filter === 'all')    return true
-    if (filter === 'none')   return !p.project_type_id
-    const t = typeMap[p.project_type_id]
-    return t && t.category === filter
-  })
-
   if (loading) return <Shell><Spinner /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
   return (
     <Shell>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Projects</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Link to="/project-types" style={secondaryBtn}>Types</Link>
-          <Link to="/projects/new" style={btnLink}>+ New project</Link>
-        </div>
+        <Link to="/projects/new" style={btnLink}>+ New project</Link>
       </div>
 
-      {/* Filter tabs */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
-        {FILTERS.map(f => (
-          <button key={f.v} onClick={() => setFilter(f.v)} style={{
-            padding: '6px 14px', borderRadius: 20, fontSize: '0.8rem', fontWeight: filter === f.v ? 700 : 400,
-            border: `1px solid ${filter === f.v ? P.green : P.border}`,
-            backgroundColor: filter === f.v ? P.greenPale : P.white,
-            color: filter === f.v ? P.green : P.mid, cursor: 'pointer',
-          }}>
-            {f.label}
-          </button>
-        ))}
-      </div>
-
-      {filtered.length === 0 ? (
-        <Empty msg={projects.length === 0 ? 'No projects yet. Create your first one!' : 'No projects match this filter.'} />
+      {/* List */}
+      {projects.length === 0 ? (
+        <ProjectsEmptyState />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {filtered.map(p => <ProjectCard key={p.id} project={p} type={typeMap[p.project_type_id] ?? null} />)}
+          {projects.map(p => <ProjectCard key={p.id} project={p} />)}
         </div>
       )}
     </Shell>
   )
 }
 
-function ProjectCard({ project: p, type }) {
+function ProjectCard({ project: p }) {
   const sc = STATUS_COLORS[p.status] ?? STATUS_COLORS.planning
   return (
     <Link to={`/projects/${p.id}`} style={{ textDecoration: 'none' }}>
       <div style={{
-        backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8,
-        padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', transition: 'border-color 0.15s',
+        backgroundColor: P.white,
+        border: `1px solid ${P.border}`,
+        borderRadius: 8,
+        padding: '14px 18px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        cursor: 'pointer',
+        transition: 'border-color 0.15s',
       }}
         onMouseEnter={e => e.currentTarget.style.borderColor = P.greenLight}
         onMouseLeave={e => e.currentTarget.style.borderColor = P.border}
       >
-        {type && <span style={{ fontSize: '1.3rem', flexShrink: 0 }}>{type.icon}</span>}
+        {/* Name + meta */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, color: P.green, fontSize: '0.95rem' }}>{p.name}</span>
-            {p.variety && <span style={{ fontSize: '0.8rem', color: P.mid }}>{p.variety}</span>}
-            {!p.is_public && <span style={{ fontSize: '0.7rem', color: P.light, backgroundColor: '#eee', borderRadius: 10, padding: '1px 7px' }}>private</span>}
-          </div>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 3 }}>
-            {type && <span style={{ fontSize: '0.73rem', color: P.mid }}>{type.name}</span>}
-            {p.location_path && <span style={{ fontSize: '0.78rem', color: P.mid }}>📍 {p.location_path}</span>}
-            {p.start_date && (
-              <span style={{ fontSize: '0.75rem', color: P.light }}>
-                Started {new Date(p.start_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+            {p.variety && (
+              <span style={{ fontSize: '0.8rem', color: P.mid }}>{p.variety}</span>
+            )}
+            {!p.is_public && (
+              <span style={{ fontSize: '0.7rem', color: P.light, backgroundColor: '#eee', borderRadius: 10, padding: '1px 7px' }}>
+                private
               </span>
             )}
           </div>
+          {p.location_path && (
+            <div style={{ fontSize: '0.78rem', color: P.mid, marginTop: 3 }}>
+              📍 {p.location_path}
+            </div>
+          )}
+          {p.start_date && (
+            <div style={{ fontSize: '0.75rem', color: P.light, marginTop: 2 }}>
+              Started {new Date(p.start_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+            </div>
+          )}
         </div>
-        <span style={{ backgroundColor: sc.bg, color: sc.text, border: `1px solid ${sc.border}`, fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600, flexShrink: 0 }}>
+
+        {/* Status badge */}
+        <span style={{
+          backgroundColor: sc.bg, color: sc.text, border: `1px solid ${sc.border}`,
+          fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600, flexShrink: 0,
+        }}>
           {p.status}
         </span>
+
+        {/* Arrow */}
         <span style={{ color: P.border, fontSize: '1rem', flexShrink: 0 }}>›</span>
       </div>
     </Link>
   )
 }
 
+// ---- Shared UI ----
 function Shell({ children }) {
   return (
     <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
@@ -153,5 +146,27 @@ function Empty({ msg }) {
   )
 }
 
-const btnLink = { backgroundColor: P.green, color: P.white, textDecoration: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600 }
-const secondaryBtn = { backgroundColor: P.white, color: P.mid, textDecoration: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600, border: `1px solid ${P.border}` }
+function ProjectsEmptyState() {
+  return (
+    <div style={{
+      textAlign: 'center', padding: '48px 24px',
+      backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8,
+    }}>
+      <div style={{ fontSize: '3rem', marginBottom: 12 }}>🌿</div>
+      <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>
+        No projects yet
+      </p>
+      <p style={{ margin: '0 0 24px', color: P.light, fontSize: '0.875rem' }}>
+        Each project tracks a plant or crop from start to harvest.
+      </p>
+      <Link to="/projects/new" style={btnLink}>
+        Create your first project
+      </Link>
+    </div>
+  )
+}
+
+const btnLink = {
+  backgroundColor: P.green, color: P.white, textDecoration: 'none',
+  borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600,
+}
