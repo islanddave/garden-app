@@ -3,6 +3,13 @@ import { supabase } from '../lib/supabase.js'
 
 const AuthContext = createContext(null)
 
+// Hardcoded allowlist — only these emails may access the app.
+// V2: move to app_config table when multi-user/roles land.
+const ALLOWED_EMAILS = [
+  'islanddave@gmail.com',
+  'jennifer.of.koetters@gmail.com',
+]
+
 export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null)
   const [profile, setProfile] = useState(null)
@@ -10,50 +17,41 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      setLoading(false)
-      if (session?.user) fetchProfile(session.user.id)
+      if (session?.user) {
+        checkAllowlist(session.user)
+      } else {
+        setUser(null)
+        setLoading(false)
+      }
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
-        setUser(session?.user ?? null)
-        if (!session?.user) { setProfile(null); setLoading(false); return }
-        if (event === 'SIGNED_IN') {
-          checkAllowlist(session.user.id)
-        } else {
-          fetchProfile(session.user.id)
+        if (!session?.user) { setUser(null); setProfile(null); setLoading(false); return }
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          checkAllowlist(session.user)
         }
       }
     )
     return () => subscription.unsubscribe()
   }, [])
 
-  async function checkAllowlist(userId) {
+  async function checkAllowlist(authUser) {
     try {
-      const { data: prof, error } = await supabase
-        .from('profiles').select('id, display_name, avatar_url').eq('id', userId).single()
-      if (error || !prof) {
+      if (!ALLOWED_EMAILS.includes(authUser.email)) {
         setUser(null); setProfile(null)
         await supabase.auth.signOut()
         window.location.replace('/login?error=not_authorized')
         return
       }
-      setProfile(prof)
+      setUser(authUser)
+      const { data: prof } = await supabase
+        .from('profiles').select('id, display_name, avatar_url').eq('id', authUser.id).single()
+      setProfile(prof ?? null)
     } catch (e) {
       setUser(null); setProfile(null)
       await supabase.auth.signOut()
       window.location.replace('/login?error=not_authorized')
-    }
-  }
-
-  async function fetchProfile(userId) {
-    try {
-      const { data } = await supabase
-        .from('profiles').select('id, display_name, avatar_url').eq('id', userId).single()
-      setProfile(data)
-    } catch (e) {
-      console.warn('fetchProfile error:', e)
     } finally {
       setLoading(false)
     }
