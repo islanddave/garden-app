@@ -39,6 +39,7 @@ export default function Dashboard() {
           .from('plant_projects')
           .select('id, name, slug, status, start_date, location_id')
           .in('status', LOGGABLE_STATUSES)
+          .is('deleted_at', null)
           .order('start_date', { ascending: false }),
         supabase
           .from('tasks')
@@ -224,16 +225,24 @@ export default function Dashboard() {
           <h2 style={sectionHeadStyle}>Active projects</h2>
           {projects.length === 0 ? (
             <div style={{
-              backgroundColor: P.white,
-              border: `1px solid ${P.border}`,
-              borderRadius: '8px',
-              padding: '28px 20px',
-              textAlign: 'center',
-              color: P.light,
-              fontSize: '0.9rem',
+              backgroundColor: P.white, border: `1px solid ${P.border}`,
+              borderRadius: 10, padding: '48px 24px', textAlign: 'center',
             }}>
-              No active projects yet.{' '}
-              <span style={{ color: P.green, cursor: 'pointer' }}>Create your first plant project →</span>
+              <div style={{ fontSize: '3rem', marginBottom: 12 }}>🌱</div>
+              <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>
+                Nothing planted yet
+              </p>
+              <p style={{ margin: '0 0 24px', color: P.light, fontSize: '0.875rem' }}>
+                Start your first project and the garden tracker comes to life.
+              </p>
+              <Link to="/projects/new" style={{
+                display: 'inline-block',
+                backgroundColor: P.green, color: P.white,
+                textDecoration: 'none', borderRadius: 8,
+                padding: '11px 24px', fontSize: '0.9rem', fontWeight: 700,
+              }}>
+                Create a project
+              </Link>
             </div>
           ) : (
             projects.map(project => {
