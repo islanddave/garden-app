@@ -115,10 +115,7 @@ export default function PhotoLibrary() {
   async function handleUpload(e) {
     e.preventDefault()
     if (!uploadFile) { setUploadErr('Select a photo first.'); return }
-    if (!uploadForm.project_id && !uploadForm.location_id) {
-      setUploadErr('Select a project or location — at least one is required.')
-      return
-    }
+
 
     setUploading(true)
     setUploadErr(null)
@@ -127,9 +124,10 @@ export default function PhotoLibrary() {
     const photoId     = crypto.randomUUID()
     const storagePath = `standalone/${photoId}.${ext}`
 
+    const mimeType = uploadFile.type || 'image/jpeg'
     const { error: upErr } = await supabase.storage
       .from(PHOTO_BUCKET)
-      .upload(storagePath, uploadFile, { upsert: false })
+      .upload(storagePath, uploadFile, { upsert: false, contentType: mimeType })
 
     if (upErr) { setUploading(false); setUploadErr(upErr.message); return }
 
@@ -260,7 +258,7 @@ export default function PhotoLibrary() {
               )}
 
               <div>
-                <label style={fieldLabelStyle}>Project</label>
+                <label style={fieldLabelStyle}>Project  ·  optional</label>
                 <select
                   value={uploadForm.project_id}
                   onChange={e => setUploadForm(f => ({ ...f, project_id: e.target.value, plant_id: '' }))}
