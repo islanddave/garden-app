@@ -127,6 +127,12 @@ export const INVENTORY_CATEGORIES = [
 ]
 
 // Supabase Storage bucket name
+
+// Project categories — used in project_types table and ProjectTypes.jsx
+export const PROJECT_CATEGORIES = [
+  { v: 'garden',         label: 'Garden' },
+  { v: 'infrastructure', label: 'Infrastructure' },
+]
 export const PHOTO_BUCKET = 'garden-photos'
 
 // Public URL base — used for canonical links, og:url, GCal descriptions (Phase 3+)
