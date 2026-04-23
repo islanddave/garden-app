@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase.js'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import { updateEntityMemory, updateUserStats } from '../lib/garden-ops.js'
+import FavoriteToggle from '../components/FavoriteToggle.jsx'
 
 const EVENT_ICONS = {
   sowing:        '🌱',
@@ -341,7 +342,10 @@ export default function ProjectDetail() {
           )}
         </div>
         {!editing && (
-          <button onClick={startEdit} style={outlineBtn}>Edit</button>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <FavoriteToggle entityType="project" entityId={id} />
+            <button onClick={startEdit} style={outlineBtn}>Edit</button>
+          </div>
         )}
       </div>
 
