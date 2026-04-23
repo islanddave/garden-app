@@ -22,6 +22,7 @@ import EventNew from './pages/EventNew.jsx'
 import PhotoLibrary from './pages/PhotoLibrary.jsx'
 import ProjectTypes from './pages/ProjectTypes.jsx'
 import { P } from './lib/constants.js'
+import Plants from './pages/Plants.jsx'
 
 // ---- Error boundary (wraps all routes — prevents full-app crash on photo/library errors) ----
 class AppErrorBoundary extends React.Component {
@@ -120,6 +121,7 @@ function AppRoutes() {
         />
 
         {/* ---- Catch-all ---- */}
+        <Route path="/plants" element={<Protected><Plants /></Protected>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       </div>
