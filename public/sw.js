@@ -2,7 +2,7 @@
 // Cache-first for static assets, network-first for Supabase API calls.
 // CACHE_VERSION should be updated with each deploy for cache-busting.
 
-const CACHE_VERSION = 'v9-20260423a'
+const CACHE_VERSION = 'v9-20260423b'
 const STATIC_CACHE  = `static-${CACHE_VERSION}`
 const API_CACHE     = `api-${CACHE_VERSION}`
 
@@ -85,7 +85,10 @@ async function cacheFirst(request, cacheName) {
 
 async function networkFirst(request, cacheName) {
   try {
-    const response = await fetch(request)
+    // cache: 'no-store' bypasses browser HTTP disk cache — prevents stale 300/redirect
+    // responses from poisoning Supabase API calls (root cause of photo gallery not refreshing)
+    const networkReq = new Request(request, { cache: 'no-store' })
+    const response = await fetch(networkReq)
     if (response.ok) {
       const cache = await caches.open(cacheName)
       cache.put(request, response.clone())
