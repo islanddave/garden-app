@@ -165,7 +165,6 @@ export default function EventNew() {
   const [showPrivate,  setShowPrivate]  = useState(false)
   const [showMoreTypes, setShowMoreTypes] = useState(false)
   const [success,      setSuccess]      = useState(null)
-  const [photoWarning, setPhotoWarning]  = useState(null)
   const [plantsForProject, setPlantsForProject] = useState([])
 
   // Load plants when project selection changes
@@ -261,6 +260,7 @@ export default function EventNew() {
 
     // 2 — Upload photo (non-fatal — event still succeeds if photo fails)
     let photoUploaded = false
+    let photoError = null
     if (photoFile) {
       const ext         = photoFile.name.split('.').pop().toLowerCase()
       const photoId     = crypto.randomUUID()
@@ -283,7 +283,7 @@ export default function EventNew() {
         })
         photoUploaded = true
       } else {
-        setPhotoWarning(upErr.message)
+        photoError = upErr.message
       }
     }
 
@@ -300,7 +300,7 @@ export default function EventNew() {
       isLevelUp:    stats?.isLevelUp ?? false,
       newLevel:     stats?.newLevel  ?? null,
       eventType:    form.event_type,
-      photoWarning: photoWarning,
+      photoWarning: photoError,
     })
   }
 
