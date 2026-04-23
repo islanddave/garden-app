@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { P, LOCATION_TYPE_LABELS } from '../lib/constants.js'
+import FavoriteToggle from '../components/FavoriteToggle.jsx'
 
 const LEVEL_LABELS = ['Zone', 'Area', 'Section', 'Position']
 
@@ -246,6 +247,7 @@ function LocRow({ loc, indent, open, hasKids, onToggleExpand, onToggleActive }) 
         {!loc.is_active && <span style={{ fontSize: '0.7rem', color: P.light, backgroundColor: '#eee', borderRadius: 10, padding: '1px 7px' }}>inactive</span>}
       </div>
       <span style={{ fontSize: '0.75rem', color: P.light, fontFamily: 'monospace', marginRight: 8, flexShrink: 0 }}>/{loc.slug}</span>
+      <FavoriteToggle entityType="location" entityId={loc.id} />
       <button onClick={() => onToggleActive(loc)} style={{ fontSize: '0.75rem', color: loc.is_active ? P.terra : P.green, background: 'none', border: `1px solid ${loc.is_active ? P.alertBorder : P.greenLight}`, borderRadius: 4, padding: '2px 9px', cursor: 'pointer', flexShrink: 0 }}>
         {loc.is_active ? 'Deactivate' : 'Activate'}
       </button>
