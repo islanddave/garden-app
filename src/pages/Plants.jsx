@@ -1,0 +1,222 @@
+import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import { supabase } from '../lib/supabase.js'
+import { P } from '../lib/constants.js'
+import { useAuth } from '../context/AuthContext.jsx'
+
+const PLANT_STATUSES = ['seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant']
+
+function ErrBanner({ msg }) {
+  return <div style={{ padding: '10px 14px', backgroundColor: P.alert, color: P.terra, borderRadius: 8, fontSize: '0.85rem', marginBottom: 12 }}>{msg}</div>
+}
+
+export default function Plants() {
+  const { user } = useAuth()
+  const [plants,      setPlants]      = useState([])
+  const [projects,    setProjects]    = useState([])
+  const [loading,     setLoading]     = useState(true)
+  const [showAdd,     setShowAdd]     = useState(false)
+  const [form,        setForm]        = useState({ name: '', variety: '', quantity: '1', notes: '', status: '', project_id: '' })
+  const [saving,      setSaving]      = useState(false)
+  const [err,         setErr]         = useState(null)
+  const [expandedId,  setExpandedId]  = useState(null)
+  const [editForm,    setEditForm]    = useState(null)
+  const [editSaving,  setEditSaving]  = useState(false)
+  const [editErr,     setEditErr]     = useState(null)
+  const [deleting,    setDeleting]    = useState(null)
+
+  useEffect(() => {
+    let mounted = true
+    Promise.all([
+      supabase.from('plants')
+        .select('id, name, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false }),
+      supabase.from('plant_projects').select('id, name').order('name'),
+    ]).then(([{ data: p }, { data: proj }]) => {
+      if (!mounted) return
+      setPlants(p ?? [])
+      setProjects(proj ?? [])
+      if (proj?.length) setForm(f => ({ ...f, project_id: proj[0].id }))
+      setLoading(false)
+    })
+    return () => { mounted = false }
+  }, [])
+
+  async function handleAdd(e) {
+    e.preventDefault()
+    setSaving(true); setErr(null)
+    const qty = parseInt(form.quantity, 10)
+    const { data, error } = await supabase.from('plants').insert({
+      project_id: form.project_id,
+      name:       form.name.trim(),
+      variety:    form.variety.trim()  || null,
+      quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
+      notes:      form.notes.trim()    || null,
+      status:     form.status          || null,
+      created_by: user?.id,
+    }).select('id, name, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)').single()
+    setSaving(false)
+    if (error) { setErr(error.message); return }
+    setPlants(p => [data, ...p])
+    setForm(f => ({ ...f, name: '', variety: '', quantity: '1', notes: '', status: '' }))
+    setShowAdd(false)
+  }
+
+  function startEdit(plant) {
+    setExpandedId(plant.id)
+    setEditForm({ name: plant.name, variety: plant.variety ?? '', quantity: String(plant.quantity ?? 1), notes: plant.notes ?? '', status: plant.status ?? '' })
+    setEditErr(null)
+  }
+
+  async function handleEdit(e, id) {
+    e.preventDefault()
+    setEditSaving(true); setEditErr(null)
+    const qty = parseInt(editForm.quantity, 10)
+    const { data, error } = await supabase.from('plants').update({
+      name:     editForm.name.trim(),
+      variety:  editForm.variety.trim()  || null,
+      quantity: isNaN(qty) || qty < 1 ? 1 : qty,
+      notes:    editForm.notes.trim()    || null,
+      status:   editForm.status          || null,
+    }).eq('id', id).select('id, name, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)').single()
+    setEditSaving(false)
+    if (error) { setEditErr(error.message); return }
+    setPlants(p => p.map(pl => pl.id === id ? data : pl))
+    setExpandedId(null); setEditForm(null)
+  }
+
+  async function handleDelete(id) {
+    setDeleting(id)
+    await supabase.from('plants').update({ deleted_at: new Date().toISOString() }).eq('id', id)
+    setPlants(p => p.filter(pl => pl.id !== id))
+    setDeleting(null); setExpandedId(null)
+  }
+
+  const card       = { backgroundColor: P.white, border: \`1px solid \${P.border}\`, borderRadius: 12, padding: '14px 16px', marginBottom: 10 }
+  const inputStyle = { width: '100%', padding: '9px 12px', border: \`1px solid \${P.border}\`, borderRadius: 8, fontSize: '0.92rem', backgroundColor: P.white, boxSizing: 'border-box', color: P.dark }
+  const primaryBtn = (dis) => ({ padding: '10px 20px', backgroundColor: dis ? P.greenLight : P.green, color: '#fff', border: 'none', borderRadius: 8, fontSize: '0.9rem', fontWeight: 600, cursor: dis ? 'not-allowed' : 'pointer' })
+  const ghostBtn   = { padding: '9px 16px', backgroundColor: 'transparent', color: P.mid, border: \`1px solid \${P.border}\`, borderRadius: 8, fontSize: '0.9rem', cursor: 'pointer' }
+
+  return (
+    <div style={{ maxWidth: 640, margin: '0 auto', padding: '16px 16px 32px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <h1 style={{ margin: 0, fontSize: '1.4rem', color: P.dark }}>🌿 Plants</h1>
+        <button onClick={() => { setShowAdd(v => !v); setErr(null) }}
+          style={showAdd ? ghostBtn : { ...primaryBtn(false), fontSize: '0.85rem', padding: '8px 14px' }}>
+          {showAdd ? 'Cancel' : '+ New Plant'}
+        </button>
+      </div>
+
+      {showAdd && (
+        <form onSubmit={handleAdd} style={{ ...card, marginBottom: 20 }}>
+          <div style={{ fontWeight: 600, marginBottom: 12, color: P.green }}>Add plant</div>
+          {err && <ErrBanner msg={err} />}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={{ fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }}>Name *</label>
+              <input required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Tomato" style={inputStyle} />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }}>Variety</label>
+              <input value={form.variety} onChange={e => setForm(f => ({ ...f, variety: e.target.value }))} placeholder="e.g. Sun Gold" style={inputStyle} />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }}>Quantity</label>
+              <input type="number" min="1" value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }}>Status</label>
+              <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inputStyle}>
+                <option value="">— none —</option>
+                {PLANT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }}>Project *</label>
+              <select required value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} style={inputStyle}>
+                {projects.length === 0 && <option value="">No projects yet</option>}
+                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={{ fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }}>Notes</label>
+              <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional" style={inputStyle} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button type="submit" disabled={saving} style={primaryBtn(saving)}>{saving ? 'Adding…' : 'Add plant'}</button>
+            <button type="button" onClick={() => setShowAdd(false)} style={ghostBtn}>Cancel</button>
+          </div>
+        </form>
+      )}
+
+      {loading ? (
+        <p style={{ color: P.light, textAlign: 'center', marginTop: 40 }}>Loading…</p>
+      ) : plants.length === 0 ? (
+        <p style={{ color: P.light, textAlign: 'center', marginTop: 40 }}>No plants yet — add one above.</p>
+      ) : plants.map(plant => (
+        <div key={plant.id} style={card}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 600, color: P.dark }}>🌿 {plant.name}</span>
+                {plant.quantity > 1 && <span style={{ fontSize: '0.78rem', color: P.green, fontWeight: 600 }}>×{plant.quantity}</span>}
+                {plant.status && <span style={{ fontSize: '0.72rem', backgroundColor: P.greenPale, color: P.green, padding: '2px 8px', borderRadius: 20 }}>{plant.status}</span>}
+              </div>
+              {plant.variety && <div style={{ fontSize: '0.8rem', color: P.light, marginTop: 2 }}>{plant.variety}</div>}
+              <div style={{ fontSize: '0.75rem', color: P.light, marginTop: 4 }}>
+                <Link to={`/projects/${plant.project_id}`} style={{ color: P.green, textDecoration: 'none' }}>
+                  {plant.plant_projects?.name ?? 'Project'}
+                </Link>
+              </div>
+            </div>
+            <button onClick={() => expandedId === plant.id ? (setExpandedId(null), setEditForm(null)) : startEdit(plant)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.light, fontSize: '0.82rem', padding: '4px 8px', whiteSpace: 'nowrap' }}>
+              {expandedId === plant.id ? 'Close' : 'Edit'}
+            </button>
+          </div>
+
+          {expandedId === plant.id && editForm && (
+            <form onSubmit={e => handleEdit(e, plant.id)} style={{ marginTop: 14, paddingTop: 14, borderTop: \`1px solid \${P.border}\` }}>
+              {editErr && <ErrBanner msg={editErr} />}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }}>Name *</label>
+                  <input required value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }}>Variety</label>
+                  <input value={editForm.variety} onChange={e => setEditForm(f => ({ ...f, variety: e.target.value }))} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }}>Qty</label>
+                  <input type="number" min="1" value={editForm.quantity} onChange={e => setEditForm(f => ({ ...f, quantity: e.target.value }))} style={inputStyle} />
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }}>Status</label>
+                  <select value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))} style={inputStyle}>
+                    <option value="">— none —</option>
+                    {PLANT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }}>Notes</label>
+                  <input value={editForm.notes} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} style={inputStyle} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <button type="submit" disabled={editSaving} style={primaryBtn(editSaving)}>{editSaving ? 'Saving…' : 'Save'}</button>
+                <button type="button" onClick={() => { setExpandedId(null); setEditForm(null) }} style={ghostBtn}>Cancel</button>
+                <button type="button" disabled={deleting === plant.id} onClick={() => handleDelete(plant.id)}
+                  style={{ marginLeft: 'auto', background: 'none', border: 'none', color: P.terra, fontSize: '0.82rem', cursor: 'pointer' }}>
+                  {deleting === plant.id ? 'Removing…' : 'Remove'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
