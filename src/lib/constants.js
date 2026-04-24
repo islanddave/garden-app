@@ -134,7 +134,7 @@ export const PROJECT_CATEGORIES = [
   { v: 'infrastructure', label: 'Infrastructure' },
 ]
 
-export const APP_NAME = 'Gardens at Mathews Ridge'
+export const APP_NAME = 'Gardens at Home'
 export const PHOTO_BUCKET = 'garden-photos'
 
 // Public URL base — used for canonical links, og:url, GCal descriptions (Phase 3+)
