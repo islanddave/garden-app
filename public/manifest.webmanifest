@@ -1,7 +1,7 @@
 {
-  "name": "Garden Tracker",
-  "short_name": "Garden",
-  "description": "Dave & Jen's garden journal — Conway, MA",
+  "name": "Gardens at Home",
+  "short_name": "Gardens",
+  "description": "Dave & Jen's garden journal \u2014 Conway, Massachusetts",
   "theme_color": "#2d6a4f",
   "background_color": "#f8f5f0",
   "display": "standalone",
