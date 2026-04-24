@@ -12,18 +12,10 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        checkAllowlist(session.user)
-      } else {
-        setLoading(false)
-      }
-    })
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (!session?.user) { setUser(null); setProfile(null); setLoading(false); return }
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
           checkAllowlist(session.user)
         }
       }
@@ -32,6 +24,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   async function checkAllowlist(authUser) {
+    setUser(authUser)  // optimistic — nav appears immediately
     try {
       const { data: prof, error } = await supabase
         .from('profiles').select('id, display_name, avatar_url').eq('id', authUser.id).single()
@@ -41,7 +34,6 @@ export function AuthProvider({ children }) {
         window.location.replace('/login?error=not_authorized')
         return
       }
-      setUser(authUser)
       setProfile(prof)
     } catch (e) {
       setUser(null); setProfile(null)
@@ -77,3 +69,4 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>')
   return ctx
 }
+
