@@ -23,6 +23,7 @@ import PhotoLibrary from './pages/PhotoLibrary.jsx'
 import Favorites from './pages/Favorites.jsx'
 import ProjectTypes from './pages/ProjectTypes.jsx'
 import Plants from './pages/Plants.jsx'
+import LocationDetail from './pages/LocationDetail.jsx'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null } }
@@ -71,6 +72,7 @@ function AppRoutes() {
               <Route path="/login"         element={user ? <Navigate to="/dashboard" replace /> : <Login />} />
               <Route path="/dashboard"     element={<Protected><Dashboard /></Protected>} />
               <Route path="/locations"     element={<Protected><Locations /></Protected>} />
+              <Route path="/locations/:id" element={<Protected><LocationDetail /></Protected>} />
               <Route path="/tasks"         element={<Protected><Tasks /></Protected>} />
               <Route path="/zone"          element={<Protected><ZonePicker /></Protected>} />
               <Route path="/projects"      element={<Protected><ProjectList /></Protected>} />
