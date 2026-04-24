@@ -112,7 +112,7 @@ export default function Dashboard() {
   )
 
   if (error) return (
-    <div style={{ padding: '48px 20px', textAlign: 'center', color: P.terra }}>
+    <div role="alert" style={{ padding: '48px 20px', textAlign: 'center', color: P.terra }}>
       Error loading dashboard: {error}
     </div>
   )
@@ -326,3 +326,4 @@ const sectionHeadStyle = {
   fontWeight: 700,
   margin: '0 0 12px',
 }
+
