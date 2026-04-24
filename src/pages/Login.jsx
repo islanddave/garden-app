@@ -58,14 +58,14 @@ export default function Login() {
 
           {/* Not-authorized message (set by AuthContext after allowlist rejection) */}
           {notAuthorized && (
-            <div style={errorBannerStyle}>
+            <div role="alert" style={errorBannerStyle}>
               Access not granted. This is a private garden app.
             </div>
           )}
 
           {/* Runtime error (e.g. OAuth initiation failure) */}
           {error && (
-            <div style={errorBannerStyle}>
+            <div role="alert" style={errorBannerStyle}>
               {error}
             </div>
           )}
@@ -139,3 +139,4 @@ const errorBannerStyle = {
   fontSize: '0.875rem',
   color: '#7a2a10',
 }
+
