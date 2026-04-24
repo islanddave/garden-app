@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 const PLANT_STATUSES = ['seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant']
 
 function ErrBanner({ msg }) {
-  return <div style={{ padding: '10px 14px', backgroundColor: P.alert, color: P.terra, borderRadius: 8, fontSize: '0.85rem', marginBottom: 12 }}>{msg}</div>
+  return <div role="alert" style={{ padding: '10px 14px', backgroundColor: P.alert, color: P.terra, borderRadius: 8, fontSize: '0.85rem', marginBottom: 12 }}>{msg}</div>
 }
 
 export default function Plants() {
@@ -118,34 +118,34 @@ export default function Plants() {
           {err && <ErrBanner msg={err} />}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
             <div style={{ gridColumn: '1 / -1' }}>
-              <label style={lbl}>Name *</label>
-              <input required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Tomato" style={inp} />
+              <label htmlFor="plant-name" style={lbl}>Name *</label>
+              <input id="plant-name" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Tomato" style={inp} />
             </div>
             <div>
-              <label style={lbl}>Variety</label>
-              <input value={form.variety} onChange={e => setForm(f => ({ ...f, variety: e.target.value }))} placeholder="e.g. Sun Gold" style={inp} />
+              <label htmlFor="plant-variety" style={lbl}>Variety</label>
+              <input id="plant-variety" value={form.variety} onChange={e => setForm(f => ({ ...f, variety: e.target.value }))} placeholder="e.g. Sun Gold" style={inp} />
             </div>
             <div>
-              <label style={lbl}>Quantity</label>
-              <input type="number" min="1" value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))} style={inp} />
+              <label htmlFor="plant-quantity" style={lbl}>Quantity</label>
+              <input id="plant-quantity" type="number" min="1" value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))} style={inp} />
             </div>
             <div>
-              <label style={lbl}>Status</label>
-              <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inp}>
+              <label htmlFor="plant-status" style={lbl}>Status</label>
+              <select id="plant-status" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inp}>
                 <option value="">— none —</option>
                 {PLANT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div>
-              <label style={lbl}>Project *</label>
-              <select required value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} style={inp}>
+              <label htmlFor="plant-project" style={lbl}>Project *</label>
+              <select id="plant-project" required value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} style={inp}>
                 {projects.length === 0 && <option value="">No projects yet</option>}
                 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
-              <label style={lbl}>Notes</label>
-              <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional" style={inp} />
+              <label htmlFor="plant-notes" style={lbl}>Notes</label>
+              <input id="plant-notes" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional" style={inp} />
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
@@ -186,27 +186,27 @@ export default function Plants() {
               {editErr && <ErrBanner msg={editErr} />}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
                 <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={lbl}>Name *</label>
-                  <input required value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} style={inp} />
+                  <label htmlFor="plant-edit-name" style={lbl}>Name *</label>
+                  <input id="plant-edit-name" required value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} style={inp} />
                 </div>
                 <div>
-                  <label style={lbl}>Variety</label>
-                  <input value={editForm.variety} onChange={e => setEditForm(f => ({ ...f, variety: e.target.value }))} style={inp} />
+                  <label htmlFor="plant-edit-variety" style={lbl}>Variety</label>
+                  <input id="plant-edit-variety" value={editForm.variety} onChange={e => setEditForm(f => ({ ...f, variety: e.target.value }))} style={inp} />
                 </div>
                 <div>
-                  <label style={lbl}>Qty</label>
-                  <input type="number" min="1" value={editForm.quantity} onChange={e => setEditForm(f => ({ ...f, quantity: e.target.value }))} style={inp} />
+                  <label htmlFor="plant-edit-qty" style={lbl}>Qty</label>
+                  <input id="plant-edit-qty" type="number" min="1" value={editForm.quantity} onChange={e => setEditForm(f => ({ ...f, quantity: e.target.value }))} style={inp} />
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={lbl}>Status</label>
-                  <select value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))} style={inp}>
+                  <label htmlFor="plant-edit-status" style={lbl}>Status</label>
+                  <select id="plant-edit-status" value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))} style={inp}>
                     <option value="">— none —</option>
                     {PLANT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={lbl}>Notes</label>
-                  <input value={editForm.notes} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} style={inp} />
+                  <label htmlFor="plant-edit-notes" style={lbl}>Notes</label>
+                  <input id="plant-edit-notes" value={editForm.notes} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} style={inp} />
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -224,3 +224,4 @@ export default function Plants() {
     </div>
   )
 }
+
