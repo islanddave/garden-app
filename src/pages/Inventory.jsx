@@ -193,7 +193,7 @@ export default function Inventory() {
 
       {/* ── Undo / error toast ── */}
       {toast && (
-        <div style={{
+        <div role="status" aria-live="polite" style={{
           position: 'fixed', bottom: 60, left: '50%', transform: 'translateX(-50%)',
           backgroundColor: P.dark, color: P.white,
           padding: '11px 20px', borderRadius: 8,
@@ -217,6 +217,7 @@ export default function Inventory() {
           )}
           <button
             onClick={dismissToast}
+            aria-label="Dismiss notification"
             style={{
               background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)',
               cursor: 'pointer', fontSize: '1rem', padding: 0, lineHeight: 1,
@@ -252,6 +253,8 @@ function InventoryRow({ item, onAdjust }) {
       {/* Main row */}
       <button
         onClick={() => setExpanded(e => !e)}
+        aria-expanded={expanded}
+        aria-label={`${item.name} — ${expanded ? 'collapse' : 'expand'} details`}
         style={{
           width: '100%', background: 'none', border: 'none', cursor: 'pointer',
           padding: '14px 16px', textAlign: 'left',
@@ -474,3 +477,4 @@ const qtyBtn = {
   flexShrink: 0,
   padding: 0,
 }
+
