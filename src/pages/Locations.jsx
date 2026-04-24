@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase.js'
 import { P, LOCATION_TYPE_LABELS } from '../lib/constants.js'
 
@@ -234,14 +235,15 @@ function LocationCard({ loc, depth, hasChildren,
           <div style={{ flex: 1, minWidth: 0 }}>
             {/* Name + type badge + inactive badge */}
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5 }}>
-              <span style={{
+              <Link to={`/locations/${loc.id}`} style={{
                 fontWeight: loc.level === 0 ? 700 : 500,
                 fontSize:   loc.level === 0 ? '0.96rem' : '0.89rem',
                 color:      P.dark,
                 wordBreak:  'break-word',
+                textDecoration: 'none',
               }}>
                 {loc.name}
-              </span>
+              </Link>
               {loc.type_label && (
                 <span style={{ fontSize: '0.67rem', background: P.border, color: P.mid, borderRadius: 10, padding: '2px 7px', flexShrink: 0 }}>
                   {loc.type_label}
