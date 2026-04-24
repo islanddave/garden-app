@@ -1,4 +1,3 @@
-import React from 'react'
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { P, LOCATION_TYPE_LABELS } from '../lib/constants.js'
@@ -133,7 +132,7 @@ export default function Locations() {
   const roots = locations.filter(l => l.level === 0)
 
   if (loading) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div></Shell>
-  if (error)   return <Shell><div role="alert" style={{ padding: 48, textAlign: 'center', color: P.terra }}>{error}</div></Shell>
+  if (error)   return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{error}</div></Shell>
 
   return (
     <Shell>
@@ -166,7 +165,7 @@ export default function Locations() {
 
       {/* Global op error */}
       {opError && (
-        <div role="alert" style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 14, fontSize: '0.84rem', color: '#7a2a10' }}>
+        <div style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 14, fontSize: '0.84rem', color: '#7a2a10' }}>
           {opError}
         </div>
       )}
@@ -496,22 +495,19 @@ function Shell({ children }) {
 }
 
 function Field({ label, children }) {
-  const fid = React.useId()
-  const kids = React.Children.toArray(children)
   return (
     <div>
-      <label htmlFor={fid} style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: P.mid, marginBottom: 4 }}>
+      <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: P.mid, marginBottom: 4 }}>
         {label}
       </label>
-      {React.isValidElement(kids[0]) ? React.cloneElement(kids[0], { id: fid }) : kids[0]}
-      {kids.slice(1)}
+      {children}
     </div>
   )
 }
 
 function ErrBanner({ msg }) {
   return (
-    <div role="alert" style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 14, fontSize: '0.84rem', color: '#7a2a10' }}>
+    <div style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 14, fontSize: '0.84rem', color: '#7a2a10' }}>
       {msg}
     </div>
   )
