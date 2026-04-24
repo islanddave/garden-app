@@ -8,6 +8,7 @@ const TYPE_META = {
   project:        { label: 'Projects',  icon: '🌱', link: i => `/projects/${i.id}` },
   location:       { label: 'Locations', icon: '📍', link: () => `/locations` },
   inventory_item: { label: 'Inventory', icon: '📦', link: i => `/inventory/${i.id}` },
+  plant:          { label: 'Plants',    icon: '🌿', link: () => `/plants` },
 }
 
 export default function Favorites() {
@@ -47,6 +48,10 @@ export default function Favorites() {
           .from('inventory_items').select('id, name, type, status')
           .in('id', byType.inventory_item).is('deleted_at', null)
           .then(({ data }) => ({ type: 'inventory_item', items: data ?? [] })),
+        byType.plant && supabase
+          .from('plants').select('id, name, variety, quantity, status')
+          .in('id', byType.plant).is('deleted_at', null)
+          .then(({ data }) => ({ type: 'plant', items: data ?? [] })),
       ].filter(Boolean))
 
       setSections(results.filter(r => r.items.length > 0))
@@ -72,7 +77,7 @@ export default function Favorites() {
             borderRadius: '10px', padding: '40px 20px',
             textAlign: 'center', color: P.light, fontSize: '0.95rem',
           }}>
-            No favorites yet. Tap ☆ on any project, location, or inventory item to save it here.
+            No favorites yet. Tap ☆ on any project, location, plant, or inventory item to save it here.
           </div>
         ) : sections.map(({ type, items }) => {
           const meta = TYPE_META[type]
@@ -91,7 +96,10 @@ export default function Favorites() {
                     onMouseEnter={e => e.currentTarget.style.borderColor = P.greenLight}
                     onMouseLeave={e => e.currentTarget.style.borderColor = P.border}
                   >
-                    <span style={{ fontWeight: 600, color: P.green }}>{item.name}</span>
+                    <div>
+                      <span style={{ fontWeight: 600, color: P.green }}>{item.name}</span>
+                      {item.variety && <span style={{ fontSize: '0.8rem', color: P.light, marginLeft: 6 }}>{item.variety}</span>}
+                    </div>
                     {item.status && <span style={{ fontSize: '0.75rem', color: P.light }}>{item.status}</span>}
                   </div>
                 </Link>
@@ -103,3 +111,4 @@ export default function Favorites() {
     </div>
   )
 }
+
