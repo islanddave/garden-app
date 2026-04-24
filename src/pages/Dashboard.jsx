@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [tasks,         setTasks]         = useState([])
   const [nextAttention, setNextAttention] = useState(null)
   const [entityMap,     setEntityMap]     = useState({})
+  const [recentEvents,  setRecentEvents]  = useState([])
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState(null)
 
@@ -30,10 +31,11 @@ export default function Dashboard() {
     const today = new Date().toISOString().split('T')[0]
 
     try {
-      // Round 1: projects + tasks in parallel
+      // Round 1: projects + tasks + recent activity in parallel
       const [
-        { data: projectData, error: pErr },
-        { data: taskData,    error: tErr },
+        { data: projectData,  error: pErr },
+        { data: taskData,     error: tErr },
+        { data: activityData, error: aErr },
       ] = await Promise.all([
         supabase
           .from('plant_projects')
@@ -47,15 +49,27 @@ export default function Dashboard() {
           .lte('due_date', today)
           .eq('status', 'pending')
           .order('due_date'),
+        // FEED-LIGHT: last 5 events cross-project with attribution.
+        // PROVISIONAL DEBT: shows all events without ownership filtering.
+        // If OWN-ADR scopes visibility per user/workspace, FEED-LIGHT requires a V2 rewrite.
+        // This is acceptable debt — do not treat this filter as a permanent visibility model.
+        supabase
+          .from('event_log')
+          .select('id, event_type, created_at, plant_projects!project_id(name), profiles!logged_by(display_name)')
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false })
+          .limit(5),
       ])
 
       if (pErr) throw pErr
       if (tErr) throw tErr
+      if (aErr) throw aErr
       if (!isMounted) return
 
       const activeProjects = projectData ?? []
       setProjects(activeProjects)
       setTasks(taskData ?? [])
+      setRecentEvents(activityData ?? [])
 
       if (activeProjects.length > 0) {
         // Round 2: most recent event per active project
@@ -112,7 +126,7 @@ export default function Dashboard() {
   )
 
   if (error) return (
-    <div role="alert" style={{ padding: '48px 20px', textAlign: 'center', color: P.terra }}>
+    <div style={{ padding: '48px 20px', textAlign: 'center', color: P.terra }}>
       Error loading dashboard: {error}
     </div>
   )
@@ -221,7 +235,7 @@ export default function Dashboard() {
         )}
 
         {/* Active Projects */}
-        <section>
+        <section style={{ marginBottom: '32px' }}>
           <h2 style={sectionHeadStyle}>Active projects</h2>
           {projects.length === 0 ? (
             <div style={{
@@ -279,6 +293,67 @@ export default function Dashboard() {
           )}
         </section>
 
+        {/* Recent Activity — FEED-LIGHT widget */}
+        {recentEvents.length > 0 && (
+          <section>
+            <h2 style={sectionHeadStyle}>Recent activity</h2>
+            <div style={{
+              backgroundColor: P.white,
+              border: `1px solid ${P.border}`,
+              borderRadius: '10px',
+              overflow: 'hidden',
+            }}>
+              {recentEvents.map((ev, i) => (
+                <div
+                  key={ev.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '11px 16px',
+                    borderBottom: i < recentEvents.length - 1 ? `1px solid ${P.border}` : 'none',
+                    gap: '12px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                    <span style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      color: P.green,
+                      backgroundColor: P.greenPale,
+                      border: `1px solid ${P.greenLight}`,
+                      borderRadius: '10px',
+                      padding: '2px 9px',
+                      flexShrink: 0,
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {ev.event_type?.replace(/_/g, ' ')}
+                    </span>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{
+                        fontWeight: 500,
+                        color: P.dark,
+                        fontSize: '0.875rem',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}>
+                        {ev.plant_projects?.name ?? '—'}
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: P.light, marginTop: '1px' }}>
+                        by {ev.profiles?.display_name ?? 'unknown'}
+                      </div>
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '0.75rem', color: P.light, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                    {relativeTime(ev.created_at)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
       </div>
     </div>
   )
@@ -287,6 +362,18 @@ export default function Dashboard() {
 function daysAgo(dateStr) {
   const d = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000)
   return d === 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`
+}
+
+function relativeTime(isoStr) {
+  const diffMs = Date.now() - new Date(isoStr).getTime()
+  const mins  = Math.floor(diffMs / 60000)
+  const hours = Math.floor(diffMs / 3600000)
+  const days  = Math.floor(diffMs / 86400000)
+  if (mins < 1)   return 'just now'
+  if (mins < 60)  return `${mins}m ago`
+  if (hours < 24) return `${hours}h ago`
+  if (days === 1) return 'yesterday'
+  return `${days}d ago`
 }
 
 function StatusBadge({ status }) {
@@ -326,4 +413,3 @@ const sectionHeadStyle = {
   fontWeight: 700,
   margin: '0 0 12px',
 }
-
