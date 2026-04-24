@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase.js'
 import { P } from '../lib/constants.js'
 import { useAuth } from '../context/AuthContext.jsx'
+import FavoriteToggle from '../components/FavoriteToggle.jsx'
 
-const PLANT_STATUSES = ['seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant']
+const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']
 
 function ErrBanner({ msg }) {
   return <div role="alert" style={{ padding: '10px 14px', backgroundColor: P.alert, color: P.terra, borderRadius: 8, fontSize: '0.85rem', marginBottom: 12 }}>{msg}</div>
@@ -16,7 +17,7 @@ export default function Plants() {
   const [projects,   setProjects]   = useState([])
   const [loading,    setLoading]    = useState(true)
   const [showAdd,    setShowAdd]    = useState(false)
-  const [form,       setForm]       = useState({ name: '', variety: '', quantity: '1', notes: '', status: '', project_id: '' })
+  const [form,       setForm]       = useState({ name: '', genus: '', species: '', variety: '', quantity: '1', notes: '', status: '', project_id: '' })
   const [saving,     setSaving]     = useState(false)
   const [err,        setErr]        = useState(null)
   const [expandedId, setExpandedId] = useState(null)
@@ -29,7 +30,7 @@ export default function Plants() {
     let mounted = true
     Promise.all([
       supabase.from('plants')
-        .select('id, name, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)')
+        .select('id, name, genus, species, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)')
         .is('deleted_at', null)
         .order('created_at', { ascending: false }),
       supabase.from('plant_projects').select('id, name').order('name'),
@@ -50,22 +51,24 @@ export default function Plants() {
     const { data, error } = await supabase.from('plants').insert({
       project_id: form.project_id,
       name:       form.name.trim(),
+      genus:      form.genus.trim()    || null,
+      species:    form.species.trim()  || null,
       variety:    form.variety.trim()  || null,
       quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
       notes:      form.notes.trim()    || null,
       status:     form.status          || null,
       created_by: user?.id,
-    }).select('id, name, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)').single()
+    }).select('id, name, genus, species, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)').single()
     setSaving(false)
     if (error) { setErr(error.message); return }
     setPlants(p => [data, ...p])
-    setForm(f => ({ ...f, name: '', variety: '', quantity: '1', notes: '', status: '' }))
+    setForm(f => ({ ...f, name: '', genus: '', species: '', variety: '', quantity: '1', notes: '', status: '' }))
     setShowAdd(false)
   }
 
   function startEdit(plant) {
     setExpandedId(plant.id)
-    setEditForm({ name: plant.name, variety: plant.variety ?? '', quantity: String(plant.quantity ?? 1), notes: plant.notes ?? '', status: plant.status ?? '' })
+    setEditForm({ name: plant.name, genus: plant.genus ?? '', species: plant.species ?? '', variety: plant.variety ?? '', quantity: String(plant.quantity ?? 1), notes: plant.notes ?? '', status: plant.status ?? '' })
     setEditErr(null)
   }
 
@@ -77,11 +80,13 @@ export default function Plants() {
     const qty = parseInt(editForm.quantity, 10)
     const { data, error } = await supabase.from('plants').update({
       name:     editForm.name.trim(),
+      genus:    editForm.genus.trim()    || null,
+      species:  editForm.species.trim()  || null,
       variety:  editForm.variety.trim()  || null,
       quantity: isNaN(qty) || qty < 1 ? 1 : qty,
       notes:    editForm.notes.trim()    || null,
       status:   editForm.status          || null,
-    }).eq('id', id).select('id, name, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)').single()
+    }).eq('id', id).select('id, name, genus, species, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)').single()
     setEditSaving(false)
     if (error) { setEditErr(error.message); return }
     setPlants(p => p.map(pl => pl.id === id ? data : pl))
@@ -120,6 +125,14 @@ export default function Plants() {
             <div style={{ gridColumn: '1 / -1' }}>
               <label htmlFor="plant-name" style={lbl}>Name *</label>
               <input id="plant-name" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Tomato" style={inp} />
+            </div>
+            <div>
+              <label htmlFor="plant-genus" style={lbl}>Genus</label>
+              <input id="plant-genus" value={form.genus} onChange={e => setForm(f => ({ ...f, genus: e.target.value }))} placeholder="e.g. Solanum" style={inp} />
+            </div>
+            <div>
+              <label htmlFor="plant-species" style={lbl}>Species</label>
+              <input id="plant-species" value={form.species} onChange={e => setForm(f => ({ ...f, species: e.target.value }))} placeholder="e.g. lycopersicum" style={inp} />
             </div>
             <div>
               <label htmlFor="plant-variety" style={lbl}>Variety</label>
@@ -167,7 +180,13 @@ export default function Plants() {
                 <span style={{ fontWeight: 600, color: P.dark }}>🌿 {plant.name}</span>
                 {plant.quantity > 1 && <span style={{ fontSize: '0.78rem', color: P.green, fontWeight: 600 }}>×{plant.quantity}</span>}
                 {plant.status && <span style={{ fontSize: '0.72rem', backgroundColor: P.greenPale, color: P.green, padding: '2px 8px', borderRadius: 20 }}>{plant.status}</span>}
+                <FavoriteToggle entityType="plant" entityId={plant.id} />
               </div>
+              {(plant.genus || plant.species) && (
+                <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2, fontStyle: 'italic' }}>
+                  {[plant.genus, plant.species].filter(Boolean).join(' ')}
+                </div>
+              )}
               {plant.variety && <div style={{ fontSize: '0.8rem', color: P.light, marginTop: 2 }}>{plant.variety}</div>}
               <div style={{ fontSize: '0.75rem', marginTop: 4 }}>
                 <Link to={`/projects/${plant.project_id}`} style={{ color: P.green, textDecoration: 'none' }}>
@@ -188,6 +207,14 @@ export default function Plants() {
                 <div style={{ gridColumn: '1 / -1' }}>
                   <label htmlFor="plant-edit-name" style={lbl}>Name *</label>
                   <input id="plant-edit-name" required value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} style={inp} />
+                </div>
+                <div>
+                  <label htmlFor="plant-edit-genus" style={lbl}>Genus</label>
+                  <input id="plant-edit-genus" value={editForm.genus} onChange={e => setEditForm(f => ({ ...f, genus: e.target.value }))} placeholder="e.g. Solanum" style={inp} />
+                </div>
+                <div>
+                  <label htmlFor="plant-edit-species" style={lbl}>Species</label>
+                  <input id="plant-edit-species" value={editForm.species} onChange={e => setEditForm(f => ({ ...f, species: e.target.value }))} placeholder="e.g. lycopersicum" style={inp} />
                 </div>
                 <div>
                   <label htmlFor="plant-edit-variety" style={lbl}>Variety</label>
@@ -224,4 +251,3 @@ export default function Plants() {
     </div>
   )
 }
-
