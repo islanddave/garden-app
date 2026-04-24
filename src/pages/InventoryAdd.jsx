@@ -1,3 +1,4 @@
+import React from 'react'
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
@@ -235,7 +236,7 @@ export default function InventoryAdd() {
         )}
 
         {errors._form && (
-          <div style={{
+          <div role="alert" style={{
             backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`,
             borderRadius: 8, padding: '12px 16px', marginBottom: 20,
             fontSize: '0.875rem', color: '#7a2a10',
@@ -495,7 +496,7 @@ export default function InventoryAdd() {
 
       {/* Success toast */}
       {successToast && (
-        <div style={{
+        <div role="status" aria-live="polite" style={{
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
           backgroundColor: P.greenLight, color: P.white,
           padding: '12px 24px', borderRadius: 8,
@@ -543,16 +544,19 @@ function TypeCard({ type, selected, onSelect, hasError }) {
 }
 
 function Field({ label, children, error }) {
+  const fid = React.useId()
+  const kids = React.Children.toArray(children)
   return (
     <div style={{ marginBottom: 0 }}>
-      <label style={{
+      <label htmlFor={fid} style={{
         display: 'block',
         fontSize: '0.78rem', fontWeight: 700, color: P.mid,
         marginBottom: 6, letterSpacing: '0.3px', textTransform: 'uppercase',
       }}>
         {label}
       </label>
-      {children}
+      {React.isValidElement(kids[0]) ? React.cloneElement(kids[0], { id: fid }) : kids[0]}
+      {kids.slice(1)}
       {error && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 5,
@@ -614,3 +618,4 @@ const btn = (bg, disabled) => ({
   cursor: disabled ? 'not-allowed' : 'pointer',
   minHeight: 48,
 })
+

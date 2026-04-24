@@ -1,3 +1,4 @@
+import React from 'react'
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
@@ -227,16 +228,19 @@ function TypeChip({ type: t, selected, onSelect }) {
 
 function ErrBanner({ msg }) {
   return (
-    <div style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: '0.875rem', color: '#7a2a10' }}>
+    <div role="alert" style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: '0.875rem', color: '#7a2a10' }}>
       {msg}
     </div>
   )
 }
 function FormRow({ label, children }) {
+  const fid = React.useId()
+  const kids = React.Children.toArray(children)
   return (
     <div style={{ marginBottom: 16 }}>
-      <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>{label}</label>
-      {children}
+      <label htmlFor={fid} style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>{label}</label>
+      {React.isValidElement(kids[0]) ? React.cloneElement(kids[0], { id: fid }) : kids[0]}
+      {kids.slice(1)}
     </div>
   )
 }
@@ -249,3 +253,4 @@ const primaryBtn = (disabled) => ({
 const cancelLink = { display: 'inline-flex', alignItems: 'center', color: P.mid, textDecoration: 'none', fontSize: '0.9rem' }
 const inputStyle = { width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }
 const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 28 }
+

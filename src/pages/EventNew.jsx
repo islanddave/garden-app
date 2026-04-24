@@ -108,6 +108,7 @@ function MicBtn({ fieldKey, onResult, voice, top = '50%', transform = 'translate
     <button
       type="button"
       onClick={() => active ? voice.stop() : voice.start(fieldKey, onResult)}
+      aria-label={active ? 'Stop voice input' : 'Speak to fill this field'}
       title={active ? 'Stop' : 'Speak to fill this field'}
       style={{
         position: 'absolute',
@@ -394,6 +395,7 @@ export default function EventNew() {
             <select
               value={form.project_id}
               onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))}
+              aria-label="Project"
               style={selectStyle}
             >
               <option value="">— Select project —</option>
@@ -414,6 +416,7 @@ export default function EventNew() {
               <select
                 value={form.plant_id}
                 onChange={e => setForm(f => ({ ...f, plant_id: e.target.value }))}
+                aria-label="Plant or group"
                 style={selectStyle}
               >
                 <option value="">— All plants (project level) —</option>
@@ -431,6 +434,7 @@ export default function EventNew() {
             <select
               value={form.location_id}
               onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))}
+              aria-label="Location"
               style={selectStyle}
             >
               <option value="">— Select location —</option>
@@ -451,6 +455,7 @@ export default function EventNew() {
               type="datetime-local"
               value={form.event_date}
               onChange={e => setForm(f => ({ ...f, event_date: e.target.value }))}
+              aria-label="Event date and time"
               style={inputStyle}
             />
           </Section>
@@ -461,6 +466,7 @@ export default function EventNew() {
               <textarea
                 value={form.notes}
                 onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                aria-label="Notes"
                 style={{ ...inputStyle, height: 90, resize: 'vertical', paddingRight: 44 }}
                 placeholder="What did you do? What did you observe?"
               />
@@ -480,6 +486,7 @@ export default function EventNew() {
               <input
                 value={form.quantity}
                 onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
+              aria-label="Quantity"
                 style={{ ...inputStyle, paddingRight: 44 }}
                 placeholder="e.g. 3 plants, 500ml, 1 tray"
               />
@@ -506,6 +513,7 @@ export default function EventNew() {
                 <button
                   type="button"
                   onClick={clearPhoto}
+                  aria-label="Remove photo"
                   style={{
                     position: 'absolute', top: 8, right: 8,
                     background: 'rgba(0,0,0,0.55)', color: P.white,
@@ -569,6 +577,7 @@ export default function EventNew() {
                 <textarea
                   value={form.private_notes}
                   onChange={e => setForm(f => ({ ...f, private_notes: e.target.value }))}
+                  aria-label="Private notes"
                   style={{ ...inputStyle, height: 72, resize: 'vertical', paddingRight: 44 }}
                   placeholder="Dosage, concerns, anomalies — internal only"
                 />
@@ -660,7 +669,7 @@ function Section({ label, children }) {
 
 function ErrBanner({ msg }) {
   return (
-    <div style={{
+    <div role="alert" style={{
       backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`,
       borderRadius: 8, padding: '12px 16px', marginBottom: 16,
       fontSize: '0.875rem', color: '#7a2a10',
@@ -727,7 +736,7 @@ function SuccessScreen({ success, onDashboard }) {
 
       {/* Level up */}
       {success.isLevelUp && (
-        <div style={{
+        <div role="status" aria-live="polite" style={{
           backgroundColor: '#fef9ec',
           border: '1px solid #e6c96a',
           borderRadius: 10, padding: '12px 20px', marginBottom: 24,
@@ -780,3 +789,4 @@ const primaryBtn = (disabled) => ({
   cursor: disabled ? 'not-allowed' : 'pointer',
   minWidth: 130,
 })
+

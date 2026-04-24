@@ -23,6 +23,7 @@ import PhotoLibrary from './pages/PhotoLibrary.jsx'
 import Favorites from './pages/Favorites.jsx'
 import ProjectTypes from './pages/ProjectTypes.jsx'
 import Plants from './pages/Plants.jsx'
+import LocationDetail from './pages/LocationDetail.jsx'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null } }
@@ -30,7 +31,7 @@ class AppErrorBoundary extends React.Component {
   componentDidCatch(error, info) { console.error('[AppErrorBoundary]', error, info) }
   render() {
     if (this.state.hasError) return (
-      <div style={{ padding: '48px 20px', textAlign: 'center', color: '#b94a3a' }}>
+      <div role="alert" style={{ padding: '48px 20px', textAlign: 'center', color: '#b94a3a' }}>
         <p style={{ marginBottom: 8 }}>Something went wrong loading this page.</p>
         {this.state.error && (
           <pre style={{ fontSize: '0.72rem', color: '#666', marginBottom: 16, textAlign: 'left', maxWidth: 600, margin: '0 auto 16px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
@@ -71,6 +72,7 @@ function AppRoutes() {
               <Route path="/login"         element={user ? <Navigate to="/dashboard" replace /> : <Login />} />
               <Route path="/dashboard"     element={<Protected><Dashboard /></Protected>} />
               <Route path="/locations"     element={<Protected><Locations /></Protected>} />
+              <Route path="/locations/:id" element={<Protected><LocationDetail /></Protected>} />
               <Route path="/tasks"         element={<Protected><Tasks /></Protected>} />
               <Route path="/zone"          element={<Protected><ZonePicker /></Protected>} />
               <Route path="/projects"      element={<Protected><ProjectList /></Protected>} />
@@ -104,3 +106,4 @@ export default function App() {
     </AuthProvider>
   )
 }
+

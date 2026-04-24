@@ -120,32 +120,32 @@ function CreateFormV2({ form, setForm, locations, projects, saving, formError, o
   return (
     <form onSubmit={onSubmit} style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 24, marginBottom: 24 }}>
       <h2 style={{ margin: '0 0 18px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>New task</h2>
-      {formError && <div style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: '0.875rem', color: '#7a2a10' }}>{formError}</div>}
+      {formError && <div role="alert" style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: '0.875rem', color: '#7a2a10' }}>{formError}</div>}
       <div style={{ marginBottom: 14 }}>
-        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Title *</label>
-        <input required value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }} placeholder="e.g. Water pepper seedlings" />
+        <label htmlFor="task-title" style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Title *</label>
+        <input id="task-title" required value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }} placeholder="e.g. Water pepper seedlings" />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div style={{ marginBottom: 14 }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Due date</label>
-          <input type="date" value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }} />
+          <label htmlFor="task-due-date" style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Due date</label>
+          <input id="task-due-date" type="date" value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }} />
         </div>
         <div style={{ marginBottom: 14 }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Priority</label>
-          <select value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}>{TASK_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}</select>
+          <label htmlFor="task-priority" style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Priority</label>
+          <select id="task-priority" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}>{TASK_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}</select>
         </div>
       </div>
       <div style={{ marginBottom: 14 }}>
-        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Location</label>
-        <select value={form.location_id} onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}><option value="">— No location —</option>{locations.map(l => <option key={l.id} value={l.id}>{l.full_path}</option>)}</select>
+        <label htmlFor="task-location" style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Location</label>
+        <select id="task-location" value={form.location_id} onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}><option value="">— No location —</option>{locations.map(l => <option key={l.id} value={l.id}>{l.full_path}</option>)}</select>
       </div>
       <div style={{ marginBottom: 14 }}>
-        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Project (optional)</label>
-        <select value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}><option value="">— Not linked —</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+        <label htmlFor="task-project" style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Project (optional)</label>
+        <select id="task-project" value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}><option value="">— Not linked —</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
       </div>
       <div style={{ marginBottom: 14 }}>
-        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Notes (optional)</label>
-        <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box', minHeight: 64, resize: 'vertical' }} placeholder="Any details…" />
+        <label htmlFor="task-notes" style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Notes (optional)</label>
+        <textarea id="task-notes" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box', minHeight: 64, resize: 'vertical' }} placeholder="Any details…" />
       </div>
       <div style={{ marginTop: 20 }}>
         <button type="submit" disabled={saving} style={{ backgroundColor: saving ? P.light : P.green, color: P.white, border: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600, cursor: saving ? 'not-allowed' : 'pointer' }}>{saving ? 'Saving…' : 'Create task'}</button>
@@ -201,3 +201,4 @@ function Shell({ children }) {
 }
 
 const btn = (bg) => ({ backgroundColor: bg, color: P.white, border: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600, cursor: bg === P.light ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' })
+

@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase.js'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import { updateEntityMemory, updateUserStats } from '../lib/garden-ops.js'
+import Breadcrumb from '../components/Breadcrumb.jsx'
 
 const EVENT_ICONS = {
   sowing:        '🌱',
@@ -305,11 +306,7 @@ export default function ProjectDetail() {
 
   return (
     <Shell>
-      {/* Breadcrumb */}
-      <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 20 }}>
-        <Link to="/projects" style={{ color: P.green, textDecoration: 'none' }}>Projects</Link>
-        {' › '}{project.name}
-      </div>
+      <Breadcrumb path={[{ label: 'Home', href: '/dashboard' }, { label: project.name, href: null }]} />
 
       {/* Header row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, gap: 16 }}>

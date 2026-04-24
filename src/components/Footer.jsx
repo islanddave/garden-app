@@ -2,7 +2,7 @@ import { P } from '../lib/constants.js'
 
 // ── App version injected by vite.config.js at build time ──
 // Falls back to '0.1.0' in dev if define hasn't been configured yet.
-const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.1.0'
+const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.0.0'
 
 // Page load time — captured once when the module is first imported.
 // This is a module-level constant so it doesn't re-render on every route change.
