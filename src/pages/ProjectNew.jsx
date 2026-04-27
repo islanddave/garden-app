@@ -1,8 +1,7 @@
 import React from 'react'
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext.jsx'
-import { supabase } from '../lib/supabase.js'
+import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 
 function slugify(str) {
@@ -15,7 +14,7 @@ function generateSlug(name, startDate) {
 }
 
 export default function ProjectNew() {
-  const { user } = useAuth()
+  const { fetch } = useApiFetch()
   const navigate  = useNavigate()
   const today = new Date().toISOString().split('T')[0]
 
@@ -31,11 +30,14 @@ export default function ProjectNew() {
   const [error,  setError]  = useState(null)
 
   useEffect(() => {
-    supabase.from('project_types').select('*').order('category').order('name')
-      .then(({ data }) => setProjectTypes(data ?? []))
-    supabase.from('locations_with_path').select('id, full_path, is_active').order('full_path')
-      .then(({ data }) => setLocations((data ?? []).filter(l => l.is_active)))
-  }, [])
+    Promise.all([
+      fetch('/api/projects/types'),
+      fetch('/api/locations/with-path'),
+    ]).then(([types, locs]) => {
+      setProjectTypes(types ?? [])
+      setLocations((locs ?? []).filter(l => l.is_active))
+    }).catch(() => {})
+  }, [fetch])
 
   function handleTypeSelect(t) {
     setSelectedType(t)
@@ -57,29 +59,32 @@ export default function ProjectNew() {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!user) return
     setSaving(true)
     setError(null)
-    const { data, error } = await supabase.from('plant_projects').insert({
-      name:            form.name.trim(),
-      slug:            form.slug.trim(),
-      variety:         form.variety.trim()     || null,
-      species:         form.species.trim()     || null,
-      description:     form.description.trim() || null,
-      status:          form.status,
-      start_date:      form.start_date         || null,
-      is_public:       form.is_public,
-      location_id:     form.location_id        || null,
-      created_by:      user.id,
-      project_type_id: form.project_type_id    || null,
-    }).select('id').single()
-    setSaving(false)
-    if (error) {
-      if (error.code === '23505')
-        setError(`A project with slug "${form.slug}" already exists. Try a different name or change the year.`)
-      else setError(error.message)
-    } else {
+    try {
+      const data = await fetch('/api/projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          name:            form.name.trim(),
+          slug:            form.slug.trim(),
+          variety:         form.variety.trim()     || null,
+          species:         form.species.trim()     || null,
+          description:     form.description.trim() || null,
+          status:          form.status,
+          start_date:      form.start_date         || null,
+          is_public:       form.is_public,
+          location_id:     form.location_id        || null,
+          project_type_id: form.project_type_id    || null,
+        }),
+      })
       navigate(`/projects/${data.id}`)
+    } catch (err) {
+      const msg = err.message ?? ''
+      if (msg.toLowerCase().includes('already exists') || msg.toLowerCase().includes('duplicate') || msg.includes('23505'))
+        setError(`A project with slug "${form.slug}" already exists. Try a different name or change the year.`)
+      else setError(msg)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -253,4 +258,3 @@ const primaryBtn = (disabled) => ({
 const cancelLink = { display: 'inline-flex', alignItems: 'center', color: P.mid, textDecoration: 'none', fontSize: '0.9rem' }
 const inputStyle = { width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }
 const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 28 }
-
