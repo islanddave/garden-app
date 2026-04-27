@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '../lib/supabase.js'
+import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 
 const STATUS_COLORS = {
@@ -11,41 +11,26 @@ const STATUS_COLORS = {
 }
 
 export default function ProjectList() {
+  const { fetch } = useApiFetch()
   const [projects, setProjects] = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
 
   useEffect(() => {
     let isMounted = true
-    ;(async () => {
-      // Fetch projects, then batch-resolve location paths via locations_with_path view
-      const { data: projects, error: pErr } = await supabase
-        .from('plant_projects')
-        .select('id, name, slug, status, variety, start_date, is_public, location_id')
-        .is('deleted_at', null)
-        .order('start_date', { ascending: false, nullsFirst: false })
-
-      if (!isMounted) return
-      if (pErr) { setError(pErr.message); setLoading(false); return }
-
-      // Fetch location paths for all unique location_ids
-      const locIds = [...new Set((projects ?? []).map(p => p.location_id).filter(Boolean))]
-      let pathMap = {}
-      if (locIds.length) {
-        const { data: locs } = await supabase
-          .from('locations_with_path')
-          .select('id, full_path')
-          .in('id', locIds)
-        ;(locs ?? []).forEach(l => { pathMap[l.id] = l.full_path })
-      }
-
-      if (isMounted) {
-        setProjects((projects ?? []).map(p => ({ ...p, location_path: pathMap[p.location_id] ?? null })))
+    fetch('/api/projects')
+      .then(data => {
+        if (!isMounted) return
+        setProjects(data ?? [])
         setLoading(false)
-      }
-    })()
+      })
+      .catch(err => {
+        if (!isMounted) return
+        setError(err.message)
+        setLoading(false)
+      })
     return () => { isMounted = false }
-  }, [])
+  }, [fetch])
 
   if (loading) return <Shell><Spinner /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
@@ -138,13 +123,6 @@ function Shell({ children }) {
 }
 function Spinner() { return <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div> }
 function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div> }
-function Empty({ msg }) {
-  return (
-    <div style={{ textAlign: 'center', color: P.light, padding: '40px 20px', fontSize: '0.9rem', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8 }}>
-      {msg}
-    </div>
-  )
-}
 
 function ProjectsEmptyState() {
   return (
