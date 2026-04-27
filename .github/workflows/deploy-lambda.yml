@@ -74,6 +74,31 @@ jobs:
             --function-name "garden-${{ matrix.function }}"
           echo "garden-${{ matrix.function }} is active"
 
+      - name: Configure function URL (AuthType NONE + public access)
+        run: |
+          FUNCTION_NAME="garden-${{ matrix.function }}"
+
+          if aws lambda get-function-url-config --function-name "$FUNCTION_NAME" 2>/dev/null; then
+            echo "Updating function URL config for $FUNCTION_NAME"
+            aws lambda update-function-url-config \
+              --function-name "$FUNCTION_NAME" \
+              --auth-type NONE \
+              --cors '{"AllowOrigins":["*"],"AllowMethods":["GET","POST","PUT","DELETE","PATCH","HEAD"],"AllowHeaders":["*"],"ExposeHeaders":["*"],"MaxAge":86400}'
+          else
+            echo "Creating function URL config for $FUNCTION_NAME"
+            aws lambda create-function-url-config \
+              --function-name "$FUNCTION_NAME" \
+              --auth-type NONE \
+              --cors '{"AllowOrigins":["*"],"AllowMethods":["GET","POST","PUT","DELETE","PATCH","HEAD"],"AllowHeaders":["*"],"ExposeHeaders":["*"],"MaxAge":86400}'
+          fi
+
+          aws lambda add-permission \
+            --function-name "$FUNCTION_NAME" \
+            --statement-id AllowPublicAccess \
+            --action lambda:InvokeFunctionUrl \
+            --principal "*" \
+            --function-url-auth-type NONE 2>/dev/null || echo "Permission already exists, skipping"
+
 # Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
 # at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).
 # These are NOT injected as GitHub Actions env vars — no DB credentials touch GitHub.
