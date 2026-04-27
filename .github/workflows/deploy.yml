@@ -28,24 +28,35 @@ jobs:
         run: npm ci
 
       - name: Validate env vars
-        # VITE_NEON_API_URL is the Lambda function URL base (NOT a raw Neon connection string)
-        # VITE_CLERK_PUBLISHABLE_KEY is the Clerk publishable key (pk_live_... or pk_test_...)
-        # Neither value contains DB credentials — safe to use as Vite build-time vars
         run: |
-          [[ -n "$VITE_NEON_API_URL" ]] || { echo "ERROR: VITE_NEON_API_URL not set"; exit 1; }
-          [[ -n "$VITE_CLERK_PUBLISHABLE_KEY" ]] || { echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY not set"; exit 1; }
+          for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD; do
+            [[ -n "${!VAR}" ]] || { echo "ERROR: $VAR not set"; exit 1; }
+          done
+          echo "All VITE_ vars present"
         env:
-          VITE_NEON_API_URL: ${{ vars.VITE_NEON_API_URL }}
           VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
+          VITE_API_PROJECTS:          ${{ vars.VITE_API_PROJECTS }}
+          VITE_API_PLANTS:            ${{ vars.VITE_API_PLANTS }}
+          VITE_API_LOCATIONS:         ${{ vars.VITE_API_LOCATIONS }}
+          VITE_API_EVENTS:            ${{ vars.VITE_API_EVENTS }}
+          VITE_API_FAVORITES:         ${{ vars.VITE_API_FAVORITES }}
+          VITE_API_PHOTOS:            ${{ vars.VITE_API_PHOTOS }}
+          VITE_API_DASHBOARD:         ${{ vars.VITE_API_DASHBOARD }}
 
       - name: Build
         run: npm run build
         env:
-          VITE_NEON_API_URL: ${{ vars.VITE_NEON_API_URL }}
           VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
+          VITE_API_PROJECTS:          ${{ vars.VITE_API_PROJECTS }}
+          VITE_API_PLANTS:            ${{ vars.VITE_API_PLANTS }}
+          VITE_API_LOCATIONS:         ${{ vars.VITE_API_LOCATIONS }}
+          VITE_API_EVENTS:            ${{ vars.VITE_API_EVENTS }}
+          VITE_API_FAVORITES:         ${{ vars.VITE_API_FAVORITES }}
+          VITE_API_PHOTOS:            ${{ vars.VITE_API_PHOTOS }}
+          VITE_API_DASHBOARD:         ${{ vars.VITE_API_DASHBOARD }}
 
       - name: Verify build output
-        run: test -f dist/index.html || { echo "ERROR: dist/index.html missing — build may have failed silently"; exit 1; }
+        run: test -f dist/index.html || { echo "ERROR: dist/index.html missing"; exit 1; }
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -54,8 +65,6 @@ jobs:
           aws-region: us-east-1
 
       - name: Deploy to S3
-        # s3:PutObject + s3:DeleteObject on arn:aws:s3:::garden-app-prod/*
-        # s3:ListBucket on arn:aws:s3:::garden-app-prod (required by --delete flag)
         run: aws s3 sync dist/ s3://${{ vars.S3_BUCKET_NAME }} --delete
 
       - name: Invalidate CloudFront cache
