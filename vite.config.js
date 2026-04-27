@@ -26,6 +26,7 @@ export default defineConfig({
     react(),
   ],
   resolve: {
+    dedupe: ['@clerk/shared'],
     alias: {
       'use-sync-external-store/shim/index.js': resolve(__dirname, 'src/shims/useSyncExternalStore.js'),
       'use-sync-external-store/shim': resolve(__dirname, 'src/shims/useSyncExternalStore.js'),
