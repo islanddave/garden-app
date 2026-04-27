@@ -1,12 +1,12 @@
 import { createContext, useContext } from 'react'
-import { useUser, useClerk, useSignIn } from '@clerk/react'
+import { useUser, useClerk } from '@clerk/react'
 
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
   const { user: clerkUser, isSignedIn, isLoaded } = useUser()
-  const { signOut: clerkSignOut } = useClerk()
-  const { signIn } = useSignIn()
+  const clerk = useClerk()
+  const { signOut: clerkSignOut } = clerk
 
   const user = isSignedIn ? clerkUser : null
   const loading = !isLoaded
@@ -18,7 +18,7 @@ export function AuthProvider({ children }) {
 
   async function signInWithGoogle() {
     try {
-      await signIn.authenticateWithRedirect({
+      await clerk.client.signIn.authenticateWithRedirect({
         strategy: 'oauth_google',
         redirectUrl: `${window.location.origin}/auth/callback`,
         redirectUrlComplete: `${window.location.origin}/dashboard`,
@@ -32,6 +32,7 @@ export function AuthProvider({ children }) {
   async function signOut() {
     await clerkSignOut()
   }
+
 
   return (
     <AuthContext.Provider value={{ user, profile, loading, signInWithGoogle, signOut }}>
