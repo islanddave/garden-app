@@ -31,21 +31,20 @@ jobs:
           aws-region: us-east-1
 
       - name: pg_dump from Supabase
-        # IMPORTANT: Use port 5432 (direct connection), NOT port 6543 (Supavisor pooler).
-        # pg_dump is incompatible with the pooler — it will hang or produce corrupt output.
+        # Use Supabase session pooler (aws-1-us-west-2.pooler.supabase.com:5432).
+        # Direct connection (db.xxx.supabase.co) resolves only to IPv6; GitHub Actions
+        # runners cannot reach it. Session pooler has IPv4 and is pg_dump-compatible
+        # (session mode maintains a persistent connection, unlike transaction pooler).
+        # Username for session pooler is postgres.{project-ref}, NOT postgres.
         # --no-owner and --no-privileges required: Supabase roles don't exist on Neon.
         # --schema=public required: exclude Supabase internal schemas (auth, storage, etc.)
         # -Fc = custom format; supports selective restore and compression.
-        # Force IPv4: GitHub Actions runners resolve to IPv6 first; Supabase port 5432
-        # is unreachable over IPv6. getent ahostsv4 returns only the IPv4 address.
         run: |
           DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
-          HOST_IPV4=$(getent ahostsv4 "${{ vars.SUPABASE_DB_HOST }}" | awk '{print $1; exit}')
-          echo "Resolved ${{ vars.SUPABASE_DB_HOST }} to IPv4: $HOST_IPV4"
           PGPASSWORD=${{ secrets.SUPABASE_DB_PASSWORD }} pg_dump \
-            --host="$HOST_IPV4" \
+            --host=${{ vars.SUPABASE_DB_HOST }} \
             --port=5432 \
-            --username=postgres \
+            --username=${{ vars.SUPABASE_DB_USER }} \
             --schema=public \
             --no-owner \
             --no-privileges \
