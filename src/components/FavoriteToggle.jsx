@@ -1,23 +1,19 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
-import { supabase } from '../lib/supabase.js'
+import { useApiFetch } from '../lib/api.js'
 
 export default function FavoriteToggle({ entityType, entityId, size = '1.2rem' }) {
   const { user } = useAuth()
+  const { fetch } = useApiFetch()
   const [isFav,   setIsFav]   = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!user || !entityId) { setLoading(false); return }
-    supabase
-      .from('favorites')
-      .select('id')
-      .eq('user_id',    user.id)
-      .eq('entity_type', entityType)
-      .eq('entity_id',   entityId)
-      .maybeSingle()
-      .then(({ data }) => { setIsFav(!!data); setLoading(false) })
-  }, [user, entityType, entityId])
+    fetch(`/api/favorites?entity_type=${entityType}&entity_id=${entityId}`)
+      .then(data => { setIsFav(!!data?.favorited); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [user, entityType, entityId, fetch])
 
   async function toggle(e) {
     e.preventDefault()
@@ -25,17 +21,10 @@ export default function FavoriteToggle({ entityType, entityId, size = '1.2rem' }
     if (!user || loading) return
     setLoading(true)
     if (isFav) {
-      await supabase.from('favorites').delete()
-        .eq('user_id',    user.id)
-        .eq('entity_type', entityType)
-        .eq('entity_id',   entityId)
+      await fetch(`/api/favorites?entity_type=${entityType}&entity_id=${entityId}`, { method: 'DELETE' })
       setIsFav(false)
     } else {
-      await supabase.from('favorites').insert({
-        user_id:     user.id,
-        entity_type: entityType,
-        entity_id:   entityId,
-      })
+      await fetch('/api/favorites', { method: 'POST', body: JSON.stringify({ entity_type: entityType, entity_id: entityId }) })
       setIsFav(true)
     }
     setLoading(false)
