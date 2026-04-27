@@ -1,11 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext.jsx'
-import { supabase } from '../lib/supabase.js'
-import { P, PHOTO_BUCKET, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
-import { updateEntityMemory, updateUserStats } from '../lib/garden-ops.js'
+import { useApiFetch } from '../lib/api.js'
+import { P, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
 
-// ---- Primary event types (shown immediately) ----
 const EVENT_TYPES_UI = [
   { value: 'watering',    label: 'Watered',                emoji: '💧' },
   { value: 'transplant',  label: 'Transplanted\n/ Planted', emoji: '🌱' },
@@ -14,9 +11,6 @@ const EVENT_TYPES_UI = [
   { value: 'pruning',     label: 'Pruned\n/ Topped',        emoji: '✂️' },
 ]
 
-// ---- Secondary event types (collapsible) ----
-// Derived from EVENT_TYPES minus the 5 already in EVENT_TYPES_UI — no hardcoding.
-// Grouped to reduce cognitive load; same tap feedback as primary buttons.
 const PRIMARY_VALUES = new Set(EVENT_TYPES_UI.map(t => t.value))
 
 const EVENT_TYPE_META = {
@@ -35,7 +29,6 @@ const EVENT_TYPE_META = {
   other:          { label: 'Other',           emoji: '📝', category: 'Environmental' },
 }
 
-// Build grouped secondary types at module level (stable reference, no re-compute on render)
 const SECONDARY_GROUPS = (() => {
   const cats = {}
   EVENT_TYPES.forEach(v => {
@@ -44,22 +37,17 @@ const SECONDARY_GROUPS = (() => {
     if (!cats[meta.category]) cats[meta.category] = []
     cats[meta.category].push({ value: v, label: meta.label, emoji: meta.emoji })
   })
-  return Object.entries(cats) // [['Growth & Training', [...]], ...]
+  return Object.entries(cats)
 })()
 
-// ---- Project statuses eligible for event logging ----
-// PROVISIONAL: harvesting excluded — review if users want to log against harvesting projects
 const LOGGABLE_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
 
-// ---- Format datetime-local value (YYYY-MM-DDTHH:MM) ----
 function toDatetimeLocal(date) {
   const d = date || new Date()
   const pad = n => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-// ---- Voice input hook ----
-// One recognition session at a time. fieldKey tracks which field is active.
 function useVoiceInput() {
   const [listening, setListening] = useState(false)
   const [fieldKey,  setFieldKey]  = useState(null)
@@ -100,7 +88,6 @@ function useVoiceInput() {
   return { start, stop, listening, fieldKey, supported }
 }
 
-// ---- Mic button — rendered alongside any text input ----
 function MicBtn({ fieldKey, onResult, voice, top = '50%', transform = 'translateY(-50%)' }) {
   if (!voice.supported) return null
   const active = voice.listening && voice.fieldKey === fieldKey
@@ -136,12 +123,11 @@ function MicBtn({ fieldKey, onResult, voice, top = '50%', transform = 'translate
   )
 }
 
-// ---- Main page ----
 export default function EventNew() {
-  const { user }     = useAuth()
-  const navigate     = useNavigate()
+  const navigate       = useNavigate()
   const [searchParams] = useSearchParams()
   const preselectedProjectId = searchParams.get('project') || ''
+  const { fetch: apiFetch } = useApiFetch()
 
   const voice = useVoiceInput()
 
@@ -171,35 +157,22 @@ export default function EventNew() {
   // Load plants when project selection changes
   useEffect(() => {
     if (!form.project_id) { setPlantsForProject([]); return }
-    supabase
-      .from('plants')
-      .select('id, name, variety, quantity')
-      .eq('project_id', form.project_id)
-      .is('deleted_at', null)
-      .order('created_at')
-      .then(({ data }) => setPlantsForProject(data ?? []))
-  }, [form.project_id])
+    apiFetch('/api/plants?project_id=' + form.project_id)
+      .then(data => setPlantsForProject(data ?? []))
+      .catch(() => setPlantsForProject([]))
+  }, [apiFetch, form.project_id])
 
-  // Load projects + locations in one round trip
+  // Load projects + locations
   useEffect(() => {
     Promise.all([
-      supabase
-        .from('plant_projects')
-        .select('id, name, status')
-        .in('status', LOGGABLE_STATUSES)
-        .is('deleted_at', null)
-        .order('name'),
-      supabase
-        .from('locations_with_path')
-        .select('id, full_path, is_active')
-        .order('full_path'),
-    ]).then(([{ data: proj }, { data: locs }]) => {
-      setProjects(proj ?? [])
+      apiFetch('/api/projects'),
+      apiFetch('/api/locations/with-path'),
+    ]).then(([proj, locs]) => {
+      setProjects((proj ?? []).filter(p => LOGGABLE_STATUSES.includes(p.status)))
       setLocations((locs ?? []).filter(l => l.is_active))
-    })
-  }, [])
+    }).catch(() => {})
+  }, [apiFetch])
 
-  // Photo handlers
   function handlePhotoChange(e) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -213,86 +186,87 @@ export default function EventNew() {
     setPhotoPreview(null)
   }
 
-  // Submit
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!user) return
-
-    // Client-side required checks (supplements HTML required)
     if (!form.event_type)  { setError('Select an event type above.'); return }
     if (!form.project_id)  { setError('Select a project.'); return }
-    if (!form.location_id) { setError('Select a location.'); return }
 
     setSaving(true)
     setError(null)
 
-    // datetime-local → ISO UTC
-    const eventDate = new Date(form.event_date).toISOString()
+    // Send date portion only — Lambda appends T12:00:00 internally
+    const eventDateStr = form.event_date.split('T')[0]
 
-    // 1 — Insert event
-    const { data: event, error: evErr } = await supabase
-      .from('event_log')
-      .insert({
-        project_id:    form.project_id,
-        location_id:   form.location_id,
-        event_type:    form.event_type,
-        event_date:    eventDate,
-        notes:         form.notes.trim()         || null,
-        private_notes: form.private_notes.trim() || null,
-        quantity:      form.quantity.trim()       || null,
-        plant_id:      form.plant_id               || null,
-        is_public:     form.is_public,
-        logged_by:     user.id,
+    // 1 — POST event, get back { eventId, stats }
+    let result
+    try {
+      result = await apiFetch('/api/events', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_id:    form.project_id,
+          event_type:    form.event_type,
+          event_date:    eventDateStr,
+          notes:         form.notes.trim()         || null,
+          private_notes: form.private_notes.trim() || null,
+          quantity:      form.quantity.trim()       || null,
+          plant_id:      form.plant_id               || null,
+          is_public:     form.is_public,
+          has_photo:     !!photoFile,
+        }),
       })
-      .select('id')
-      .single()
-
-    if (evErr) {
+    } catch (err) {
       setSaving(false)
-      setError(evErr.message)
+      setError(err.message)
       return
     }
 
-    // 2 — Upload photo (non-fatal if it fails)
-    let photoUploaded = false
+    const { eventId, stats } = result
+
+    // 2 — Upload photo via pre-signed S3 URL (non-fatal)
     if (photoFile) {
-      const ext       = photoFile.name.split('.').pop().toLowerCase()
-      const photoId   = crypto.randomUUID()
-      const storagePath = `events/${event.id}/${photoId}.${ext}`
+      try {
+        const ext      = photoFile.name.split('.').pop().toLowerCase()
+        const photoId  = crypto.randomUUID()
+        const key      = `events/${eventId}/${photoId}.${ext}`
+        const mimeType = photoFile.type || 'image/jpeg'
 
-      const { error: upErr } = await supabase.storage
-        .from(PHOTO_BUCKET)
-        .upload(storagePath, photoFile, { upsert: false })
+        const { upload_url } = await apiFetch(
+          `/api/photos/upload-url?key=${encodeURIComponent(key)}&content_type=${encodeURIComponent(mimeType)}`
+        )
 
-      if (!upErr) {
-        await supabase.from('photos').insert({
-          project_id:   form.project_id,
-          event_id:     event.id,
-          storage_path: storagePath,
-          is_public:    form.is_public,
-          uploaded_by:  user.id,
+        // Direct S3 PUT — no auth header, no JSON
+        const s3Res = await window.fetch(upload_url, {
+          method: 'PUT',
+          body: photoFile,
+          headers: { 'Content-Type': mimeType },
         })
-        photoUploaded = true
+
+        if (s3Res.ok) {
+          await apiFetch('/api/photos', {
+            method: 'POST',
+            body: JSON.stringify({
+              storage_path: key,
+              project_id:   form.project_id,
+              event_id:     eventId,
+              is_public:    form.is_public,
+            }),
+          })
+        }
+      } catch {
+        // Photo upload is non-fatal — event was logged successfully
       }
     }
 
-    // 3 — Update entity memory + user stats; capture stats for success screen
-    const [, stats] = await Promise.all([
-      updateEntityMemory(form.project_id, form.location_id, form.event_type, new Date(form.event_date)),
-      updateUserStats(user.id, form.event_type, { hasPhoto: photoUploaded, eventLogId: event.id }),
-    ])
-
     setSaving(false)
     setSuccess({
-      newStreak: stats?.newStreak ?? 1,
-      earnedXp:  stats?.earnedXp  ?? 0,
-      isLevelUp: stats?.isLevelUp ?? false,
-      newLevel:  stats?.newLevel  ?? null,
+      newStreak: 1,                      // Lambda doesn't track streaks yet
+      earnedXp:  stats?.xp_earned ?? 0,
+      isLevelUp: false,                  // Lambda doesn't signal level-up yet
+      newLevel:  stats?.level    ?? null,
       eventType: form.event_type,
     })
   }
 
-  // Success screen — early return
   if (success) {
     return (
       <div style={{
@@ -308,7 +282,6 @@ export default function EventNew() {
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 60px' }}>
 
-        {/* Header */}
         <div style={{ marginBottom: 24 }}>
           <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
             <Link to="/dashboard" style={{ color: P.green, textDecoration: 'none' }}>Dashboard</Link>
@@ -341,7 +314,6 @@ export default function EventNew() {
               ))}
             </div>
 
-            {/* ── More event types (collapsible) ── */}
             <button
               type="button"
               onClick={() => setShowMoreTypes(s => !s)}
@@ -379,7 +351,7 @@ export default function EventNew() {
                           selected={form.event_type}
                           onSelect={v => {
                             setForm(f => ({ ...f, event_type: v }))
-                            setShowMoreTypes(false) // collapse after selection
+                            setShowMoreTypes(false)
                           }}
                         />
                       ))}
@@ -410,7 +382,7 @@ export default function EventNew() {
             )}
           </Section>
 
-          {/* ── Plant / Group (optional, loads after project selected) ── */}
+          {/* ── Plant / Group (optional) ── */}
           {plantsForProject.length > 0 && (
             <Section label="Plant / Group (optional)">
               <select
@@ -429,25 +401,22 @@ export default function EventNew() {
             </Section>
           )}
 
-          {/* ── Location ── */}
-          <Section label="Location *">
-            <select
-              value={form.location_id}
-              onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))}
-              aria-label="Location"
-              style={selectStyle}
-            >
-              <option value="">— Select location —</option>
-              {locations.map(l => (
-                <option key={l.id} value={l.id}>{l.full_path}</option>
-              ))}
-            </select>
-            {locations.length === 0 && (
-              <small style={{ color: P.terra, fontSize: '0.75rem', display: 'block', marginTop: 6 }}>
-                No active locations — <Link to="/locations" style={{ color: P.terra }}>add zones first</Link>.
-              </small>
-            )}
-          </Section>
+          {/* ── Location (optional — informational) ── */}
+          {locations.length > 0 && (
+            <Section label="Location  ·  optional">
+              <select
+                value={form.location_id}
+                onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))}
+                aria-label="Location"
+                style={selectStyle}
+              >
+                <option value="">— Select location —</option>
+                {locations.map(l => (
+                  <option key={l.id} value={l.id}>{l.full_path}</option>
+                ))}
+              </select>
+            </Section>
+          )}
 
           {/* ── Date / time ── */}
           <Section label="When?">
@@ -486,7 +455,7 @@ export default function EventNew() {
               <input
                 value={form.quantity}
                 onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
-              aria-label="Quantity"
+                aria-label="Quantity"
                 style={{ ...inputStyle, paddingRight: 44 }}
                 placeholder="e.g. 3 plants, 500ml, 1 tray"
               />
@@ -612,7 +581,6 @@ export default function EventNew() {
   )
 }
 
-// ---- Event type button ----
 function TypeBtn({ type, selected, onSelect }) {
   const isSelected = selected === type.value
   return (
@@ -648,7 +616,6 @@ function TypeBtn({ type, selected, onSelect }) {
   )
 }
 
-// ---- Shared UI ----
 function Section({ label, children }) {
   return (
     <div style={{
@@ -689,7 +656,6 @@ function SuccessScreen({ success, onDashboard }) {
       padding: '40px 32px',
       maxWidth: 340,
     }}>
-      {/* Big event emoji + check */}
       <div style={{ fontSize: '3.5rem', lineHeight: 1, marginBottom: 8 }}>
         {eventMeta?.emoji ?? '✅'}
       </div>
@@ -711,11 +677,9 @@ function SuccessScreen({ success, onDashboard }) {
         {eventMeta?.label?.replace('\n', ' ') ?? 'Event'} recorded
       </p>
 
-      {/* Stats row */}
       <div style={{
         display: 'flex', gap: 12, justifyContent: 'center', marginBottom: 28,
       }}>
-        {/* Streak */}
         <div style={{
           backgroundColor: P.white, border: `1px solid ${P.border}`,
           borderRadius: 10, padding: '12px 18px', flex: 1,
@@ -724,7 +688,6 @@ function SuccessScreen({ success, onDashboard }) {
           <div style={{ fontSize: '1.05rem', fontWeight: 700, color: P.terra }}>{streakMsg}</div>
         </div>
 
-        {/* XP */}
         <div style={{
           backgroundColor: P.white, border: `1px solid ${P.border}`,
           borderRadius: 10, padding: '12px 18px', flex: 1,
@@ -734,7 +697,6 @@ function SuccessScreen({ success, onDashboard }) {
         </div>
       </div>
 
-      {/* Level up */}
       {success.isLevelUp && (
         <div role="status" aria-live="polite" style={{
           backgroundColor: '#fef9ec',
@@ -789,4 +751,3 @@ const primaryBtn = (disabled) => ({
   cursor: disabled ? 'not-allowed' : 'pointer',
   minWidth: 130,
 })
-
