@@ -1,0 +1,26 @@
+name: Diagnose Lambda Policy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Get resource policy and URL config for garden-projects
+        run: |
+          echo "=== Function URL Config ==="
+          aws lambda get-function-url-config --function-name garden-projects
+          echo ""
+          echo "=== Resource Policy ==="
+          aws lambda get-policy --function-name garden-projects 2>&1
