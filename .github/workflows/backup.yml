@@ -36,10 +36,14 @@ jobs:
         # --no-owner and --no-privileges required: Supabase roles don't exist on Neon.
         # --schema=public required: exclude Supabase internal schemas (auth, storage, etc.)
         # -Fc = custom format; supports selective restore and compression.
+        # Force IPv4: GitHub Actions runners resolve to IPv6 first; Supabase port 5432
+        # is unreachable over IPv6. getent ahostsv4 returns only the IPv4 address.
         run: |
           DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
+          HOST_IPV4=$(getent ahostsv4 "${{ vars.SUPABASE_DB_HOST }}" | awk '{print $1; exit}')
+          echo "Resolved ${{ vars.SUPABASE_DB_HOST }} to IPv4: $HOST_IPV4"
           PGPASSWORD=${{ secrets.SUPABASE_DB_PASSWORD }} pg_dump \
-            --host=${{ vars.SUPABASE_DB_HOST }} \
+            --host="$HOST_IPV4" \
             --port=5432 \
             --username=postgres \
             --schema=public \
