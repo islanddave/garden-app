@@ -1,0 +1,65 @@
+name: Build and Deploy — SPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate env vars
+        # VITE_NEON_API_URL is the Lambda function URL base (NOT a raw Neon connection string)
+        # VITE_CLERK_PUBLISHABLE_KEY is the Clerk publishable key (pk_live_... or pk_test_...)
+        # Neither value contains DB credentials — safe to use as Vite build-time vars
+        run: |
+          [[ -n "$VITE_NEON_API_URL" ]] || { echo "ERROR: VITE_NEON_API_URL not set"; exit 1; }
+          [[ -n "$VITE_CLERK_PUBLISHABLE_KEY" ]] || { echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY not set"; exit 1; }
+        env:
+          VITE_NEON_API_URL: ${{ vars.VITE_NEON_API_URL }}
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_NEON_API_URL: ${{ vars.VITE_NEON_API_URL }}
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
+
+      - name: Verify build output
+        run: test -f dist/index.html || { echo "ERROR: dist/index.html missing — build may have failed silently"; exit 1; }
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Deploy to S3
+        # s3:PutObject + s3:DeleteObject on arn:aws:s3:::garden-app-prod/*
+        # s3:ListBucket on arn:aws:s3:::garden-app-prod (required by --delete flag)
+        run: aws s3 sync dist/ s3://${{ vars.S3_BUCKET_NAME }} --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ vars.CLOUDFRONT_DIST_ID }} \
+            --paths "/*"
