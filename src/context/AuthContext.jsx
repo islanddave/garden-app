@@ -1,60 +1,36 @@
-import { createContext, useContext, useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase.js'
+import { createContext, useContext } from 'react'
+import { useUser, useClerk, useSignIn } from '@clerk/react'
 
 const AuthContext = createContext(null)
 
-// Access control: a user must have a row in public.profiles to enter the app.
-// Add/remove rows in profiles to grant/revoke access. No trigger auto-creates rows.
-
 export function AuthProvider({ children }) {
-  const [user,    setUser]    = useState(null)
-  const [profile, setProfile] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const { user: clerkUser, isSignedIn, isLoaded } = useUser()
+  const { signOut: clerkSignOut } = useClerk()
+  const { signIn } = useSignIn()
 
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (!session?.user) { setUser(null); setProfile(null); setLoading(false); return }
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
-          checkAllowlist(session.user)
-        }
-      }
-    )
-    return () => subscription.unsubscribe()
-  }, [])
+  const user = isSignedIn ? clerkUser : null
+  const loading = !isLoaded
+  const profile = clerkUser ? {
+    id: clerkUser.id,
+    display_name: clerkUser.fullName || clerkUser.firstName || clerkUser.emailAddresses?.[0]?.emailAddress || '',
+    avatar_url: clerkUser.imageUrl || null,
+  } : null
 
-  async function checkAllowlist(authUser) {
-    setUser(authUser)  // optimistic — nav appears immediately
+  async function signInWithGoogle() {
     try {
-      const { data: prof, error } = await supabase
-        .from('profiles').select('id, display_name, avatar_url').eq('id', authUser.id).single()
-      if (error || !prof) {
-        setUser(null); setProfile(null)
-        await supabase.auth.signOut()
-        window.location.replace('/login?error=not_authorized')
-        return
-      }
-      setProfile(prof)
-    } catch (e) {
-      setUser(null); setProfile(null)
-      await supabase.auth.signOut()
-      window.location.replace('/login?error=not_authorized')
-    } finally {
-      setLoading(false)
+      await signIn.authenticateWithRedirect({
+        strategy: 'oauth_google',
+        redirectUrl: `${window.location.origin}/auth/callback`,
+        redirectUrlComplete: `${window.location.origin}/dashboard`,
+      })
+      return { error: null }
+    } catch (err) {
+      return { error: err }
     }
   }
 
-  async function signInWithGoogle() {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    })
-    return { error }
-  }
-
   async function signOut() {
-    setUser(null); setProfile(null)
-    await supabase.auth.signOut()
+    await clerkSignOut()
   }
 
   return (
@@ -69,4 +45,3 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>')
   return ctx
 }
-
