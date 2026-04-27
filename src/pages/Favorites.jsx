@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext.jsx'
+import { useApiFetch } from '../lib/api.js'
 import { supabase } from '../lib/supabase.js'
 import { P } from '../lib/constants.js'
 
@@ -12,55 +12,68 @@ const TYPE_META = {
 }
 
 export default function Favorites() {
-  const { user } = useAuth()
+  const { fetch } = useApiFetch()
   const [sections, setSections] = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
 
-  useEffect(() => { if (user) load() }, [user])
-
-  async function load() {
+  const load = useCallback(async () => {
     try {
-      const { data: favs, error: fErr } = await supabase
-        .from('favorites')
-        .select('entity_type, entity_id')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-      if (fErr) throw fErr
-      if (!favs?.length) { setSections([]); return }
+      // Parallel: favorites list + entity data for Lambda-backed types
+      const [favs, allProjects, allLocations] = await Promise.all([
+        fetch('/api/favorites'),
+        fetch('/api/projects'),
+        fetch('/api/locations'),
+      ])
 
+      if (!favs?.length) { setSections([]); setLoading(false); return }
+
+      // Group favorites by entity_type
       const byType = {}
-      favs.forEach(f => {
+      ;(favs ?? []).forEach(f => {
         if (!byType[f.entity_type]) byType[f.entity_type] = []
         byType[f.entity_type].push(f.entity_id)
       })
 
-      const results = await Promise.all([
-        byType.project && supabase
-          .from('plant_projects').select('id, name, status')
-          .in('id', byType.project).is('deleted_at', null)
-          .then(({ data }) => ({ type: 'project', items: data ?? [] })),
-        byType.location && supabase
-          .from('locations').select('id, name, type_label')
-          .in('id', byType.location)
-          .then(({ data }) => ({ type: 'location', items: data ?? [] })),
-        byType.inventory_item && supabase
+      const resolvedSections = []
+
+      // Projects — cross-reference with Lambda result
+      if (byType.project) {
+        const items = (allProjects ?? []).filter(p => byType.project.includes(p.id))
+        if (items.length) resolvedSections.push({ type: 'project', items })
+      }
+
+      // Locations — cross-reference with Lambda result
+      if (byType.location) {
+        const items = (allLocations ?? []).filter(l => byType.location.includes(l.id))
+        if (items.length) resolvedSections.push({ type: 'location', items })
+      }
+
+      // TODO DB-MIGRATE-INVENTORY: migrate when /api/inventory Lambda deployed
+      if (byType.inventory_item) {
+        const { data } = await supabase
           .from('inventory_items').select('id, name, type, status')
           .in('id', byType.inventory_item).is('deleted_at', null)
-          .then(({ data }) => ({ type: 'inventory_item', items: data ?? [] })),
-        byType.plant && supabase
+        if (data?.length) resolvedSections.push({ type: 'inventory_item', items: data })
+      }
+
+      // TODO DB-MIGRATE-PLANTS: migrate when /api/plants supports batch-by-ids
+      if (byType.plant) {
+        const { data } = await supabase
           .from('plants').select('id, name, variety, quantity, status')
           .in('id', byType.plant).is('deleted_at', null)
-          .then(({ data }) => ({ type: 'plant', items: data ?? [] })),
-      ].filter(Boolean))
+        if (data?.length) resolvedSections.push({ type: 'plant', items: data })
+      }
 
-      setSections(results.filter(r => r.items.length > 0))
+      setSections(resolvedSections)
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }
+  }, [fetch])
+
+  useEffect(() => { load() }, [load])
 
   if (loading) return <div style={{ padding: '48px 20px', textAlign: 'center', color: P.mid }}>Loading…</div>
   if (error)   return <div style={{ padding: '48px 20px', textAlign: 'center', color: P.terra }}>Error: {error}</div>
@@ -111,4 +124,3 @@ export default function Favorites() {
     </div>
   )
 }
-
