@@ -15,10 +15,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install postgresql-client-17
-        # Pin to pg17 — must match or exceed source Supabase PostgreSQL version (currently 17.6).
-        # Verify Supabase PG version before migration day: SELECT version();
-        # If Supabase upgrades past 17, update this step accordingly.
+        # pg17 required: Supabase server runs PostgreSQL 17.6; pg_dump must be >= server version.
+        # Ubuntu runners don't ship pg17 — add the official PGDG apt repo first.
+        # If Supabase upgrades past 17, update the version in both the repo add and install lines.
         run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -qq
           sudo apt-get install -y postgresql-client-17
           pg_dump --version
