@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '../lib/supabase.js'
+import { useApiFetch } from '../lib/api.js'
 import { P, LOCATION_TYPE_LABELS } from '../lib/constants.js'
 
 const LEVEL_LABELS = ['Zone', 'Area', 'Section', 'Sub-Section']
@@ -14,6 +14,7 @@ function emptyCreateForm() {
 }
 
 export default function Locations() {
+  const { fetch } = useApiFetch()
   const [locations,    setLocations]    = useState([])
   const [withPaths,    setWithPaths]    = useState([])
   const [loading,      setLoading]      = useState(true)
@@ -37,14 +38,19 @@ export default function Locations() {
   }, [menuOpenId])
 
   const load = useCallback(async () => {
-    const [{ data: locs, error: e1 }, { data: paths, error: e2 }] = await Promise.all([
-      supabase.from('locations').select('*').is('deleted_at', null).order('level').order('sort_order').order('name'),
-      supabase.from('locations_with_path').select('id, full_path, level, is_active').order('full_path'),
-    ])
-    if (e1 || e2) setError((e1 || e2).message)
-    else { setLocations(locs ?? []); setWithPaths(paths ?? []) }
-    setLoading(false)
-  }, [])
+    try {
+      const [locs, paths] = await Promise.all([
+        fetch('/api/locations'),
+        fetch('/api/locations/with-path'),
+      ])
+      setLocations(locs ?? [])
+      setWithPaths(paths ?? [])
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [fetch])
 
   useEffect(() => { load() }, [load])
 
@@ -58,65 +64,96 @@ export default function Locations() {
     e.preventDefault()
     setSaving(true); setFormError(null)
     const slug = form.slug.trim() || slugify(form.name.trim())
-    const { error } = await supabase.from('locations').insert({
-      name:        form.name.trim(),
-      slug,
-      level:       inferLevel(form.parent_id),
-      type_label:  form.type_label || null,
-      parent_id:   form.parent_id  || null,
-      sort_order:  parseInt(form.sort_order) || 0,
-      description: form.description.trim() || null,
-    })
-    setSaving(false)
-    if (error) {
-      setFormError(error.code === '23505'
-        ? `Slug "${slug}" already exists. Try a different name.`
-        : error.message)
-    } else {
+    try {
+      await fetch('/api/locations', {
+        method: 'POST',
+        body: JSON.stringify({
+          name:        form.name.trim(),
+          slug,
+          level:       inferLevel(form.parent_id),
+          type_label:  form.type_label || null,
+          parent_id:   form.parent_id  || null,
+          sort_order:  parseInt(form.sort_order) || 0,
+          description: form.description.trim() || null,
+        }),
+      })
       setForm(emptyCreateForm()); setShowAddForm(false); load()
+    } catch (err) {
+      const msg = err.message ?? ''
+      setFormError(msg.includes('already exists') || msg.includes('duplicate') || msg.includes('23505')
+        ? `Slug "${slug}" already exists. Try a different name.`
+        : msg)
+    } finally {
+      setSaving(false)
     }
   }
 
   async function handleEdit(loc) {
     setOpError(null)
-    const { error } = await supabase.from('locations').update({
-      name:        editForm.name.trim(),
-      type_label:  editForm.type_label || null,
-      sort_order:  parseInt(editForm.sort_order) || 0,
-      description: editForm.description.trim() || null,
-    }).eq('id', loc.id)
-    if (error) { setOpError(error.message); return }
-    setEditingId(null); load()
+    try {
+      await fetch('/api/locations/' + loc.id, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name:        editForm.name.trim(),
+          slug:        loc.slug,
+          level:       loc.level,
+          parent_id:   loc.parent_id || null,
+          type_label:  editForm.type_label || null,
+          is_active:   loc.is_active,
+          sort_order:  parseInt(editForm.sort_order) || 0,
+          notes:       editForm.description.trim() || null,
+        }),
+      })
+      setEditingId(null); load()
+    } catch (err) {
+      setOpError(err.message)
+    }
   }
 
   async function handleDelete(loc) {
     setOpError(null)
     if (!window.confirm(`Delete "${loc.name}"?\n\nThis will also hide all child locations.`)) return
-    const { error } = await supabase.from('locations').update({ deleted_at: new Date().toISOString() }).eq('id', loc.id)
-    if (error) setOpError(error.message)
-    else load()
+    try {
+      await fetch('/api/locations/' + loc.id, { method: 'DELETE' })
+      load()
+    } catch (err) {
+      setOpError(err.message)
+    }
   }
 
   async function toggleActive(loc) {
-    await supabase.from('locations').update({ is_active: !loc.is_active }).eq('id', loc.id)
-    load()
+    try {
+      await fetch('/api/locations/' + loc.id + '/active', {
+        method: 'PATCH',
+        body: JSON.stringify({ is_active: !loc.is_active }),
+      })
+      load()
+    } catch (err) {
+      setOpError(err.message)
+    }
   }
 
   async function handleAddChild(parentLoc) {
     setOpError(null)
     const childLevel = Math.min(parentLoc.level + 1, 3)
     const slug = addChildForm.slug.trim() || slugify(addChildForm.name.trim())
-    const { error } = await supabase.from('locations').insert({
-      name:        addChildForm.name.trim(),
-      slug,
-      level:       childLevel,
-      type_label:  addChildForm.type_label || null,
-      parent_id:   parentLoc.id,
-      sort_order:  parseInt(addChildForm.sort_order) || 0,
-      description: addChildForm.description.trim() || null,
-    })
-    if (error) { setOpError(error.message); return }
-    setAddChildTo(null); load()
+    try {
+      await fetch('/api/locations', {
+        method: 'POST',
+        body: JSON.stringify({
+          name:        addChildForm.name.trim(),
+          slug,
+          level:       childLevel,
+          type_label:  addChildForm.type_label || null,
+          parent_id:   parentLoc.id,
+          sort_order:  parseInt(addChildForm.sort_order) || 0,
+          description: addChildForm.description?.trim() || null,
+        }),
+      })
+      setAddChildTo(null); load()
+    } catch (err) {
+      setOpError(err.message)
+    }
   }
 
   const shared = {
