@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '../lib/supabase.js'
+import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import { useAuth } from '../context/AuthContext.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 
 const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']
@@ -12,7 +11,7 @@ function ErrBanner({ msg }) {
 }
 
 export default function Plants() {
-  const { user } = useAuth()
+  const { fetch } = useApiFetch()
   const [plants,     setPlants]     = useState([])
   const [projects,   setProjects]   = useState([])
   const [loading,    setLoading]    = useState(true)
@@ -29,41 +28,46 @@ export default function Plants() {
   useEffect(() => {
     let mounted = true
     Promise.all([
-      supabase.from('plants')
-        .select('id, name, genus, species, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)')
-        .is('deleted_at', null)
-        .order('created_at', { ascending: false }),
-      supabase.from('plant_projects').select('id, name').order('name'),
-    ]).then(([{ data: p }, { data: proj }]) => {
+      fetch('/api/plants'),
+      fetch('/api/projects'),
+    ]).then(([plantsData, projData]) => {
       if (!mounted) return
-      setPlants(p ?? [])
-      setProjects(proj ?? [])
-      if (proj?.length) setForm(f => ({ ...f, project_id: proj[0].id }))
+      setPlants(plantsData ?? [])
+      setProjects(projData ?? [])
+      if (projData?.length) setForm(f => ({ ...f, project_id: projData[0].id }))
       setLoading(false)
-    })
+    }).catch(() => { if (mounted) setLoading(false) })
     return () => { mounted = false }
-  }, [])
+  }, [fetch])
 
   async function handleAdd(e) {
     e.preventDefault()
     setSaving(true); setErr(null)
     const qty = parseInt(form.quantity, 10)
-    const { data, error } = await supabase.from('plants').insert({
-      project_id: form.project_id,
-      name:       form.name.trim(),
-      genus:      form.genus.trim()    || null,
-      species:    form.species.trim()  || null,
-      variety:    form.variety.trim()  || null,
-      quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
-      notes:      form.notes.trim()    || null,
-      status:     form.status          || null,
-      created_by: user?.id,
-    }).select('id, name, genus, species, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)').single()
-    setSaving(false)
-    if (error) { setErr(error.message); return }
-    setPlants(p => [data, ...p])
-    setForm(f => ({ ...f, name: '', genus: '', species: '', variety: '', quantity: '1', notes: '', status: '' }))
-    setShowAdd(false)
+    try {
+      const data = await fetch('/api/plants', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_id: form.project_id,
+          name:       form.name.trim(),
+          genus:      form.genus.trim()    || null,
+          species:    form.species.trim()  || null,
+          variety:    form.variety.trim()  || null,
+          quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
+          notes:      form.notes.trim()    || null,
+          status:     form.status          || null,
+        }),
+      })
+      // POST returns raw row without project_name JOIN — merge client-side
+      const proj = projects.find(p => p.id === form.project_id)
+      setPlants(p => [{ ...data, project_name: data.project_name ?? proj?.name }, ...p])
+      setForm(f => ({ ...f, name: '', genus: '', species: '', variety: '', quantity: '1', notes: '', status: '' }))
+      setShowAdd(false)
+    } catch (error) {
+      setErr(error.message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   function startEdit(plant) {
@@ -78,34 +82,47 @@ export default function Plants() {
     e.preventDefault()
     setEditSaving(true); setEditErr(null)
     const qty = parseInt(editForm.quantity, 10)
-    const { data, error } = await supabase.from('plants').update({
-      name:     editForm.name.trim(),
-      genus:    editForm.genus.trim()    || null,
-      species:  editForm.species.trim()  || null,
-      variety:  editForm.variety.trim()  || null,
-      quantity: isNaN(qty) || qty < 1 ? 1 : qty,
-      notes:    editForm.notes.trim()    || null,
-      status:   editForm.status          || null,
-    }).eq('id', id).select('id, name, genus, species, variety, quantity, status, notes, project_id, plant_projects!project_id(id, name)').single()
-    setEditSaving(false)
-    if (error) { setEditErr(error.message); return }
-    setPlants(p => p.map(pl => pl.id === id ? data : pl))
-    closeEdit()
+    try {
+      const data = await fetch('/api/plants/' + id, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name:     editForm.name.trim(),
+          genus:    editForm.genus.trim()    || null,
+          species:  editForm.species.trim()  || null,
+          variety:  editForm.variety.trim()  || null,
+          quantity: isNaN(qty) || qty < 1 ? 1 : qty,
+          notes:    editForm.notes.trim()    || null,
+          status:   editForm.status          || null,
+        }),
+      })
+      // PUT returns raw row without project_name — preserve existing
+      setPlants(p => p.map(pl => pl.id === id ? { ...data, project_name: data.project_name ?? pl.project_name } : pl))
+      closeEdit()
+    } catch (error) {
+      setEditErr(error.message)
+    } finally {
+      setEditSaving(false)
+    }
   }
 
   async function handleDelete(id) {
     setDeleting(id)
-    await supabase.from('plants').update({ deleted_at: new Date().toISOString() }).eq('id', id)
-    setPlants(p => p.filter(pl => pl.id !== id))
-    setDeleting(null); closeEdit()
+    try {
+      await fetch('/api/plants/' + id, { method: 'DELETE' })
+      setPlants(p => p.filter(pl => pl.id !== id))
+    } catch {
+      // non-fatal
+    } finally {
+      setDeleting(null); closeEdit()
+    }
   }
 
-  const bdr      = `1px solid ${P.border}`
-  const card     = { backgroundColor: P.white, border: bdr, borderRadius: 12, padding: '14px 16px', marginBottom: 10 }
-  const inp      = { width: '100%', padding: '9px 12px', border: bdr, borderRadius: 8, fontSize: '0.92rem', backgroundColor: P.white, boxSizing: 'border-box', color: P.dark }
-  const pBtn     = dis => ({ padding: '10px 20px', backgroundColor: dis ? P.greenLight : P.green, color: '#fff', border: 'none', borderRadius: 8, fontSize: '0.9rem', fontWeight: 600, cursor: dis ? 'not-allowed' : 'pointer' })
-  const gBtn     = { padding: '9px 16px', backgroundColor: 'transparent', color: P.mid, border: bdr, borderRadius: 8, fontSize: '0.9rem', cursor: 'pointer' }
-  const lbl      = { fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }
+  const bdr  = `1px solid ${P.border}`
+  const card = { backgroundColor: P.white, border: bdr, borderRadius: 12, padding: '14px 16px', marginBottom: 10 }
+  const inp  = { width: '100%', padding: '9px 12px', border: bdr, borderRadius: 8, fontSize: '0.92rem', backgroundColor: P.white, boxSizing: 'border-box', color: P.dark }
+  const pBtn = dis => ({ padding: '10px 20px', backgroundColor: dis ? P.greenLight : P.green, color: '#fff', border: 'none', borderRadius: 8, fontSize: '0.9rem', fontWeight: 600, cursor: dis ? 'not-allowed' : 'pointer' })
+  const gBtn = { padding: '9px 16px', backgroundColor: 'transparent', color: P.mid, border: bdr, borderRadius: 8, fontSize: '0.9rem', cursor: 'pointer' }
+  const lbl  = { fontSize: '0.8rem', color: P.mid, display: 'block', marginBottom: 4 }
 
   return (
     <div style={{ maxWidth: 640, margin: '0 auto', padding: '16px 16px 32px' }}>
@@ -190,7 +207,7 @@ export default function Plants() {
               {plant.variety && <div style={{ fontSize: '0.8rem', color: P.light, marginTop: 2 }}>{plant.variety}</div>}
               <div style={{ fontSize: '0.75rem', marginTop: 4 }}>
                 <Link to={`/projects/${plant.project_id}`} style={{ color: P.green, textDecoration: 'none' }}>
-                  {plant.plant_projects?.name ?? 'Project'}
+                  {plant.project_name ?? 'Project'}
                 </Link>
               </div>
             </div>
