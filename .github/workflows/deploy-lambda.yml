@@ -1,0 +1,80 @@
+name: Deploy Lambda Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lambda/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: lambda-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # One job per Lambda function directory under lambda/
+        function: [projects, plants, locations, events, favorites, photos, dashboard]
+      # Deploy functions in parallel; reduce max-parallel if Lambda rate limits hit
+      max-parallel: 4
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Build and zip ${{ matrix.function }}
+        run: |
+          cd lambda/${{ matrix.function }}
+          npm ci
+          zip -r ../${{ matrix.function }}.zip .
+
+      - name: Deploy or create ${{ matrix.function }}
+        run: |
+          FUNCTION_NAME="garden-${{ matrix.function }}"
+          ZIP_FILE="fileb://lambda/${{ matrix.function }}.zip"
+
+          # Check if function exists; create on first deploy, update thereafter
+          if aws lambda get-function --function-name "$FUNCTION_NAME" 2>/dev/null; then
+            echo "Updating existing function: $FUNCTION_NAME"
+            aws lambda update-function-code \
+              --function-name "$FUNCTION_NAME" \
+              --zip-file "$ZIP_FILE"
+          else
+            echo "Creating new function: $FUNCTION_NAME"
+            aws lambda create-function \
+              --function-name "$FUNCTION_NAME" \
+              --runtime nodejs20.x \
+              --handler index.handler \
+              --role ${{ vars.LAMBDA_EXECUTION_ROLE_ARN }} \
+              --zip-file "$ZIP_FILE" \
+              --timeout 30 \
+              --memory-size 256
+          fi
+
+      - name: Wait for ${{ matrix.function }} update to complete
+        run: |
+          aws lambda wait function-updated \
+            --function-name "garden-${{ matrix.function }}"
+          echo "garden-${{ matrix.function }} is active"
+
+# Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
+# at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).
+# These are NOT injected as GitHub Actions env vars — no DB credentials touch GitHub.
+# Lambda execution role requires secretsmanager:GetSecretValue on arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:garden-app/*
