@@ -1,129 +1,93 @@
-// Lambda: /api/photos
-// Routes: GET / | POST / (pre-signed S3 URL + DB record) | DELETE /:id (soft)
-//
-// POST flow:
-//   1. Client sends metadata (filename, content_type, project_id, etc.)
-//   2. Lambda generates S3 key, creates DB record, returns {photo, upload_url}
-//   3. Client PUTs the file directly to S3 using upload_url
-//   4. Photo is live. No second API call needed.
-//
-// S3 bucket: process.env.S3_PHOTOS_BUCKET (garden-photos-prod)
-// Region: us-east-1. Lambda exec role provides credentials automatically.
-// Pre-signed URL expiry: 5 min (sufficient for mobile upload).
-
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { queryAs, queryPublic } from '../shared/db.mjs';
+import { queryAs } from '../shared/db.mjs';
 import { requireAuth, AuthError, ok, created, noContent, err, corsPreflight } from '../shared/auth.mjs';
 
 const s3 = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
-const PHOTOS_BUCKET  = process.env.S3_PHOTOS_BUCKET || 'garden-photos-prod';
-const UPLOAD_EXPIRES = 300; // 5 minutes
+const BUCKET = process.env.S3_PHOTOS_BUCKET;
+const VIEW_TTL = 3600;
+const UPLOAD_TTL = 300;
+
+async function signedViewUrl(key) {
+  return getSignedUrl(s3, new GetObjectCommand({Bucket:BUCKET,Key:key}), {expiresIn:VIEW_TTL});
+}
 
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') return corsPreflight();
-
   const method = event.requestContext?.http?.method;
-  const pathParts = (event.rawPath || '').split('/').filter(Boolean);
-  const id = pathParts[2] || null;
+  const pathParts = (event.rawPath||'').split('/').filter(Boolean);
+  const seg2 = pathParts[2] || null;
+  const qs = event.queryStringParameters || {};
 
   try {
-    if (method === 'GET' && !id) {
-      let userId = null;
-      try { userId = await requireAuth(event); } catch {}
-
-      const qs         = event.queryStringParameters || {};
-      const projectId  = qs.project_id  || null;
-      const eventId    = qs.event_id    || null;
-      const locationId = qs.location_id || null;
-      const plantId    = qs.plant_id    || null;
-
-      if (userId) {
-        const params = [];
-        let sql = `
-          SELECT ph.*,
-                 p.name  AS project_name,
-                 e.title AS event_title, e.event_type
-          FROM photos ph
-          LEFT JOIN plant_projects p ON p.id = ph.project_id
-          LEFT JOIN event_log e ON e.id = ph.event_id
-          WHERE ph.deleted_at IS NULL
-        `;
-        if (projectId)  { params.push(projectId);  sql += ` AND ph.project_id  = $${params.length}`; }
-        if (eventId)    { params.push(eventId);    sql += ` AND ph.event_id    = $${params.length}`; }
-        if (locationId) { params.push(locationId); sql += ` AND ph.location_id = $${params.length}`; }
-        if (plantId)    { params.push(plantId);    sql += ` AND ph.plant_id    = $${params.length}`; }
-        sql += ` ORDER BY ph.created_at DESC LIMIT 200`;
-        const { rows } = await queryAs(userId, sql, params);
-        return ok(rows);
-      } else {
-        const params = [];
-        let sql = `
-          SELECT ph.id, ph.project_id, ph.event_id, ph.location_id,
-                 ph.storage_path, ph.caption, ph.is_public, ph.created_at
-          FROM photos ph
-          WHERE ph.deleted_at IS NULL AND ph.is_public = true
-        `;
-        if (projectId) { params.push(projectId); sql += ` AND ph.project_id = $${params.length}`; }
-        sql += ` ORDER BY ph.created_at DESC LIMIT 100`;
-        const { rows } = await queryPublic(sql, params);
-        return ok(rows);
-      }
-    }
-
     const userId = await requireAuth(event);
 
+    if (method === 'GET' && seg2 === 'upload-url') {
+      const {key,content_type} = qs;
+      if (!key) return err(400,'key required');
+      const upload_url = await getSignedUrl(s3,
+        new PutObjectCommand({Bucket:BUCKET,Key:key,ContentType:content_type||'image/jpeg'}),
+        {expiresIn:UPLOAD_TTL});
+      return ok({upload_url, key});
+    }
+
+    if (method === 'GET' && seg2 === 'view-url') {
+      const {key} = qs;
+      if (!key) return err(400,'key required');
+      return ok({view_url: await signedViewUrl(key)});
+    }
+
+    if (method === 'GET' && !seg2) {
+      const {project_id,limit} = qs;
+      let sql = `SELECT p.*, pp.name AS project_name FROM photos p
+                 LEFT JOIN plant_projects pp ON pp.id=p.project_id
+                 WHERE p.deleted_at IS NULL`;
+      const params = [];
+      if (project_id) { sql += ` AND p.project_id=$${params.length+1}`; params.push(project_id); }
+      sql += ` ORDER BY p.taken_at DESC NULLS LAST, p.created_at DESC`;
+      if (limit) { sql += ` LIMIT $${params.length+1}`; params.push(parseInt(limit)||20); }
+      const {rows} = await queryAs(userId, sql, params);
+      const withUrls = await Promise.all(rows.map(async r => ({
+        ...r, view_url: r.storage_path ? await signedViewUrl(r.storage_path) : null,
+      })));
+      return ok(withUrls);
+    }
+
+    if (method === 'GET' && seg2) {
+      const {rows} = await queryAs(userId,
+        `SELECT p.*, pp.name AS project_name FROM photos p
+         LEFT JOIN plant_projects pp ON pp.id=p.project_id
+         WHERE p.id=$1 AND p.deleted_at IS NULL`, [seg2]);
+      if (!rows.length) return err(404,'Photo not found');
+      const photo = {...rows[0], view_url: rows[0].storage_path ? await signedViewUrl(rows[0].storage_path) : null};
+      return ok(photo);
+    }
+
     if (method === 'POST') {
-      const body = JSON.parse(event.body || '{}');
-      const { filename, content_type, project_id, event_id, location_id,
-              plant_id, caption, is_public } = body;
-      if (!filename) return err(400, 'filename is required');
-
-      const ext     = (filename.split('.').pop() || 'jpg').toLowerCase().slice(0, 5);
-      const photoId = crypto.randomUUID();
-      const prefix  = event_id    ? `events/${event_id}`
-                    : project_id  ? `projects/${project_id}`
-                    : 'standalone';
-      const s3Key   = `${prefix}/${photoId}.${ext}`;
-      const mime    = content_type || 'image/jpeg';
-
-      const cmd = new PutObjectCommand({
-        Bucket:      PHOTOS_BUCKET,
-        Key:         s3Key,
-        ContentType: mime,
-      });
-      const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: UPLOAD_EXPIRES });
-
-      const { rows } = await queryAs(userId,
-        `INSERT INTO photos
-           (project_id, event_id, location_id, plant_id, storage_path,
-            caption, is_public, uploaded_by, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-         RETURNING *`,
-        [project_id  || null, event_id    || null,
-         location_id || null, plant_id    || null,
-         s3Key, caption || null, is_public !== false, userId, userId],
-      );
-
-      return created({ ...rows[0], upload_url: uploadUrl });
+      const {event_id,project_id,plant_id,location_id,storage_path,taken_at,caption,tags,is_public} = JSON.parse(event.body||'{}');
+      if (!storage_path||!project_id) return err(400,'storage_path and project_id required');
+      const {rows} = await queryAs(userId,
+        `INSERT INTO photos (event_id,project_id,plant_id,location_id,storage_path,taken_at,caption,tags,is_public,created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [event_id||null,project_id,plant_id||null,location_id||null,storage_path,taken_at||null,caption||null,tags||null,is_public!==false,userId]);
+      const photo = {...rows[0], view_url: await signedViewUrl(rows[0].storage_path)};
+      return created(photo);
     }
 
-    if (method === 'DELETE' && id) {
-      const { rows } = await queryAs(userId,
-        `UPDATE photos SET deleted_at = NOW()
-         WHERE id = $1 AND created_by = $2 AND deleted_at IS NULL
-         RETURNING id`,
-        [id, userId],
-      );
-      if (!rows.length) return err(404, 'Photo not found or not authorized');
-      return noContent();
+    if (method === 'PUT' && seg2) {
+      const {tags,caption,project_id,location_id,plant_id} = JSON.parse(event.body||'{}');
+      const {rows} = await queryAs(userId,
+        `UPDATE photos SET tags=$2,caption=$3,project_id=$4,location_id=$5,plant_id=$6
+         WHERE id=$1 AND deleted_at IS NULL RETURNING *`,
+        [seg2,tags||null,caption||null,project_id||null,location_id||null,plant_id||null]);
+      if (!rows.length) return err(404,'Photo not found');
+      return ok(rows[0]);
     }
 
-    return err(405, 'Method not allowed');
-
-  } catch (e) {
-    if (e instanceof AuthError) return err(401, e.message);
-    console.error('photos handler error:', e);
-    return err(500, 'Internal server error');
+    return err(405,'Method not allowed');
+  } catch(e) {
+    if (e instanceof AuthError) return err(401,e.message);
+    console.error('photos handler error:',e);
+    return err(500,'Internal server error');
   }
 };
