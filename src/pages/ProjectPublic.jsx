@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { supabase } from '../lib/supabase.js'
+import { apiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 
 function formatDate(iso) {
@@ -25,21 +25,20 @@ export default function ProjectPublic() {
 
   useEffect(() => {
     let isMounted = true
-    ;(async () => {
-      const { data: proj, error: pErr } = await supabase
-        .from('plant_projects')
-        .select('id, name, slug, variety, species, description, status, start_date, location_id, is_public')
-        .eq('slug', slug).eq('is_public', true).single()
-      if (!isMounted) return
-      if (pErr || !proj) { setNotFound(true); setLoading(false); return }
-      setProject(proj)
-      const [{ data: evts }, { data: locs }] = await Promise.all([
-        supabase.from('event_log_public').select('id, event_type, event_date, title, notes, quantity').eq('project_id', proj.id).order('event_date', { ascending: false }),
-        proj.location_id ? supabase.from('locations_with_path').select('id, full_path').eq('id', proj.location_id).single() : Promise.resolve({ data: null }),
-      ])
-      if (!isMounted) return
-      setEvents(evts ?? []); setLocPath(locs?.full_path ?? null); setLoading(false)
-    })()
+    apiFetch('/api/projects/public/' + slug)
+      .then(proj => {
+        if (!isMounted) return
+        if (!proj) { setNotFound(true); setLoading(false); return }
+        setProject(proj)
+        setEvents((proj.events || []).filter(Boolean))
+        setLocPath(proj.location_path ?? null)
+        setLoading(false)
+      })
+      .catch(() => {
+        if (!isMounted) return
+        setNotFound(true)
+        setLoading(false)
+      })
     return () => { isMounted = false }
   }, [slug])
 
