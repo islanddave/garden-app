@@ -74,24 +74,10 @@ jobs:
             --function-name "garden-${{ matrix.function }}"
           echo "garden-${{ matrix.function }} is active"
 
-      - name: Configure function URL (AuthType NONE + public access)
+      - name: Allow public invocation via function URL
         run: |
           FUNCTION_NAME="garden-${{ matrix.function }}"
-
-          if aws lambda get-function-url-config --function-name "$FUNCTION_NAME" 2>/dev/null; then
-            echo "Updating function URL config for $FUNCTION_NAME"
-            aws lambda update-function-url-config \
-              --function-name "$FUNCTION_NAME" \
-              --auth-type NONE \
-              --cors '{"AllowOrigins":["*"],"AllowMethods":["GET","POST","PUT","DELETE","PATCH","HEAD"],"AllowHeaders":["*"],"ExposeHeaders":["*"],"MaxAge":86400}'
-          else
-            echo "Creating function URL config for $FUNCTION_NAME"
-            aws lambda create-function-url-config \
-              --function-name "$FUNCTION_NAME" \
-              --auth-type NONE \
-              --cors '{"AllowOrigins":["*"],"AllowMethods":["GET","POST","PUT","DELETE","PATCH","HEAD"],"AllowHeaders":["*"],"ExposeHeaders":["*"],"MaxAge":86400}'
-          fi
-
+          # Auth type is already NONE — just ensure the resource policy allows public access
           aws lambda add-permission \
             --function-name "$FUNCTION_NAME" \
             --statement-id AllowPublicAccess \
