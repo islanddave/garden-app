@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { supabase } from '../lib/supabase.js'
+import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES } from '../lib/constants.js'
 import { useAuth } from '../context/AuthContext.jsx'
 
@@ -16,6 +16,7 @@ export default function EventDetail() {
   const { id: projectId, eventId } = useParams()
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { fetch } = useApiFetch()
 
   const [event, setEvent] = useState(null)
   const [project, setProject] = useState(null)
@@ -29,33 +30,21 @@ export default function EventDetail() {
 
   useEffect(() => {
     let isMounted = true
-    ;(async () => {
-      const [{ data: ev, error: evErr }, { data: proj, error: projErr }] = await Promise.all([
-        supabase
-          .from('event_log')
-          .select('*')
-          .eq('id', eventId)
-          .is('deleted_at', null)
-          .single(),
-        supabase
-          .from('plant_projects')
-          .select('id, name')
-          .eq('id', projectId)
-          .single(),
-      ])
+    Promise.all([
+      fetch('/api/events/' + eventId),
+      fetch('/api/projects/' + projectId),
+    ]).then(([ev, proj]) => {
       if (!isMounted) return
-      if (evErr) {
-        setError(evErr.code === 'PGRST116' ? 'Event not found.' : evErr.message)
-      } else if (projErr) {
-        setError('Could not load project.')
-      } else {
-        setEvent(ev)
-        setProject(proj)
-      }
+      setEvent(ev)
+      setProject(proj)
       setLoading(false)
-    })()
+    }).catch(e => {
+      if (!isMounted) return
+      setError(e.message)
+      setLoading(false)
+    })
     return () => { isMounted = false }
-  }, [eventId, projectId])
+  }, [eventId, projectId, fetch])
 
   function startEdit() {
     setForm({
@@ -75,44 +64,38 @@ export default function EventDetail() {
     e.preventDefault()
     setSaving(true)
     setSaveErr(null)
-    const eventDate = new Date(form.event_date + 'T12:00:00').toISOString()
-    const { error } = await supabase
-      .from('event_log')
-      .update({
-        event_type:    form.event_type,
-        event_date:    eventDate,
-        title:         form.title.trim()         || null,
-        notes:         form.notes.trim()         || null,
-        private_notes: form.private_notes.trim() || null,
-        quantity:      form.quantity.trim()       || null,
-        is_public:     form.is_public,
+    try {
+      const eventDate = new Date(form.event_date + 'T12:00:00').toISOString()
+      const updated = await fetch('/api/events/' + eventId, {
+        method: 'PUT',
+        body: JSON.stringify({
+          event_type:    form.event_type,
+          event_date:    eventDate,
+          title:         form.title.trim()         || null,
+          notes:         form.notes.trim()         || null,
+          private_notes: form.private_notes.trim() || null,
+          quantity:      form.quantity.trim()       || null,
+          is_public:     form.is_public,
+        }),
       })
-      .eq('id', eventId)
-    setSaving(false)
-    if (error) {
-      setSaveErr(error.message)
-    } else {
-      const { data: updated, error: refetchErr } = await supabase
-        .from('event_log')
-        .select('*')
-        .eq('id', eventId)
-        .single()
-      if (refetchErr) { setSaveErr(refetchErr.message); return }
       setEvent(updated)
       setEditing(false)
+    } catch (e) {
+      setSaveErr(e.message)
     }
+    setSaving(false)
   }
 
   async function handleDelete() {
     if (!window.confirm('Delete this event permanently?')) return
     setDeleting(true)
-    const { error: delErr } = await supabase
-      .from('event_log')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', eventId)
-    setDeleting(false)
-    if (delErr) { setError(delErr.message); return }
-    navigate(`/projects/${projectId}`)
+    try {
+      await fetch('/api/events/' + eventId, { method: 'DELETE' })
+      navigate(`/projects/${projectId}`)
+    } catch (e) {
+      setError(e.message)
+      setDeleting(false)
+    }
   }
 
   if (loading) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div></Shell>
