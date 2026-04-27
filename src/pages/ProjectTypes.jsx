@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
-import { supabase } from '../lib/supabase.js'
+import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_CATEGORIES } from '../lib/constants.js'
 
 const DEFAULT_ICONS = ['🌳','🌿','🪴','🌱','🥕','🍅','🌻','🌾','🪵','🏠','🚜','🔨','🛠️','📦','💧','🌍']
 
 export default function ProjectTypes() {
   const { user } = useAuth()
+  const { fetch } = useApiFetch()
   const [types, setTypes]       = useState([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
@@ -16,40 +17,48 @@ export default function ProjectTypes() {
   const [form, setForm]         = useState({ name: '', category: 'garden', description: '', icon: '🌱' })
 
   async function load() {
-    const { data, error } = await supabase
-      .from('project_types')
-      .select('*')
-      .order('category').order('name')
-    if (error) setError(error.message)
-    else setTypes(data ?? [])
+    try {
+      const data = await fetch('/api/projects/types')
+      setTypes(data ?? [])
+    } catch (e) {
+      setError(e.message)
+    }
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [fetch])
 
   async function handleCreate(e) {
     e.preventDefault()
     if (!user) return
     setSaving(true)
-    const { error } = await supabase.from('project_types').insert({
-      name: form.name.trim(),
-      category: form.category,
-      description: form.description.trim() || null,
-      icon: form.icon || '📋',
-      created_by: user.id,
-    })
+    try {
+      await fetch('/api/projects/types', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: form.name.trim(),
+          category: form.category,
+          description: form.description.trim() || null,
+          icon: form.icon || '📋',
+        }),
+      })
+      setForm({ name: '', category: 'garden', description: '', icon: '🌱' })
+      setShowForm(false)
+      load()
+    } catch (e) {
+      setError(e.message)
+    }
     setSaving(false)
-    if (error) { setError(error.message); return }
-    setForm({ name: '', category: 'garden', description: '', icon: '🌱' })
-    setShowForm(false)
-    load()
   }
 
   async function handleDelete(id) {
     if (!window.confirm('Delete this project type?')) return
-    const { error } = await supabase.from('project_types').delete().eq('id', id)
-    if (error) setError(error.message)
-    else setTypes(t => t.filter(x => x.id !== id))
+    try {
+      await fetch('/api/projects/types/' + id, { method: 'DELETE' })
+      setTypes(t => t.filter(x => x.id !== id))
+    } catch (e) {
+      setError(e.message)
+    }
   }
 
   const garden = types.filter(t => t.category === 'garden')
