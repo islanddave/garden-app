@@ -1,163 +1,111 @@
-// Lambda: /api/events
-// Table: event_log (NOT "events" — confirmed in neon-post-restore.sql)
-// Routes: GET / | GET /:id | POST / | PUT /:id | DELETE /:id (soft)
-// Ownership columns: logged_by = Clerk user ID (set on INSERT); created_by = Clerk user ID
-// Public read: events where is_public = true AND parent project is_public = true
-
-import { queryAs, queryPublic } from '../shared/db.mjs';
+import { queryAs } from '../shared/db.mjs';
 import { requireAuth, AuthError, ok, created, noContent, err, corsPreflight } from '../shared/auth.mjs';
+
+const XP_BY_TYPE = {watering:10,observation:15,pruning:20,fertilizing:20,transplant:25,harvest:30,first_harvest:30};
+const DEFAULT_XP = 10;
+const PHOTO_BONUS_XP = 5;
+const MEM_COL_MAP = {
+  watering:'last_watered_at',fertilizing:'last_fertilized_at',
+  pruning:'last_pruned_at',observation:'last_observed_at',
+  harvest:'last_harvested_at',first_harvest:'last_harvested_at',
+};
+const LEVEL_XP = [0,100,250,500,1000,2000,4000,7500,15000];
+const levelFromXp = xp => LEVEL_XP.reduce((lv,thresh,i) => xp >= thresh ? i : lv, 0);
 
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') return corsPreflight();
-
   const method = event.requestContext?.http?.method;
-  const pathParts = (event.rawPath || '').split('/').filter(Boolean);
+  const pathParts = (event.rawPath||'').split('/').filter(Boolean);
   const id = pathParts[2] || null;
+  const qs = event.queryStringParameters || {};
 
   try {
-    if (method === 'GET' && !id) {
-      let userId = null;
-      try { userId = await requireAuth(event); } catch {}
-
-      const qs         = event.queryStringParameters || {};
-      const projectId  = qs.project_id  || null;
-      const locationId = qs.location_id || null;
-      const eventType  = qs.event_type  || null;
-      const limit      = Math.min(parseInt(qs.limit, 10) || 200, 500);
-
-      if (userId) {
-        const params = [];
-        let sql = `
-          SELECT e.*,
-                 p.name AS project_name, p.slug AS project_slug,
-                 l.name AS location_name
-          FROM event_log e
-          LEFT JOIN plant_projects p ON p.id = e.project_id
-          LEFT JOIN locations l ON l.id = e.location_id
-          WHERE e.deleted_at IS NULL
-        `;
-        if (projectId)  { params.push(projectId);  sql += ` AND e.project_id  = $${params.length}`; }
-        if (locationId) { params.push(locationId); sql += ` AND e.location_id = $${params.length}`; }
-        if (eventType)  { params.push(eventType);  sql += ` AND e.event_type  = $${params.length}`; }
-        sql += ` ORDER BY e.event_date DESC LIMIT ${limit}`;
-        const { rows } = await queryAs(userId, sql, params);
-        return ok(rows);
-      } else {
-        const params = [];
-        let sql = `
-          SELECT e.id, e.project_id, e.location_id, e.event_type, e.event_date,
-                 e.title, e.notes, e.quantity, e.is_public, e.logged_by,
-                 e.created_at, e.updated_at,
-                 p.name AS project_name, p.slug AS project_slug
-          FROM event_log e
-          JOIN plant_projects p ON p.id = e.project_id
-          WHERE e.deleted_at IS NULL
-            AND e.is_public = true
-            AND p.is_public = true
-            AND p.deleted_at IS NULL
-        `;
-        if (projectId) { params.push(projectId); sql += ` AND e.project_id = $${params.length}`; }
-        if (eventType) { params.push(eventType); sql += ` AND e.event_type  = $${params.length}`; }
-        sql += ` ORDER BY e.event_date DESC LIMIT 100`;
-        const { rows } = await queryPublic(sql, params);
-        return ok(rows);
-      }
-    }
-
-    if (method === 'GET' && id) {
-      let userId = null;
-      try { userId = await requireAuth(event); } catch {}
-
-      if (userId) {
-        const { rows } = await queryAs(userId,
-          `SELECT e.*,
-                  p.name AS project_name, p.slug AS project_slug,
-                  l.name AS location_name
-           FROM event_log e
-           LEFT JOIN plant_projects p ON p.id = e.project_id
-           LEFT JOIN locations l ON l.id = e.location_id
-           WHERE e.id = $1 AND e.deleted_at IS NULL`,
-          [id],
-        );
-        if (!rows.length) return err(404, 'Event not found');
-        return ok(rows[0]);
-      } else {
-        const { rows } = await queryPublic(
-          `SELECT e.id, e.project_id, e.location_id, e.event_type, e.event_date,
-                  e.title, e.notes, e.quantity, e.is_public, e.logged_by,
-                  e.created_at, e.updated_at,
-                  p.name AS project_name, p.slug AS project_slug
-           FROM event_log e
-           JOIN plant_projects p ON p.id = e.project_id
-           WHERE e.id = $1
-             AND e.deleted_at IS NULL AND e.is_public = true
-             AND p.is_public = true AND p.deleted_at IS NULL`,
-          [id],
-        );
-        if (!rows.length) return err(404, 'Event not found');
-        return ok(rows[0]);
-      }
-    }
-
     const userId = await requireAuth(event);
 
-    if (method === 'POST') {
-      const body = JSON.parse(event.body || '{}');
-      const { project_id, location_id, event_type, event_date,
-              title, notes, private_notes, quantity, is_public } = body;
-      if (!project_id) return err(400, 'project_id is required');
-      if (!event_type) return err(400, 'event_type is required');
-
-      const { rows } = await queryAs(userId,
-        `INSERT INTO event_log
-           (project_id, location_id, event_type, event_date, title, notes,
-            private_notes, quantity, is_public, logged_by, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-         RETURNING *`,
-        [project_id, location_id || null, event_type,
-         event_date || new Date().toISOString(),
-         title || null, notes || null, private_notes || null,
-         quantity || null, is_public !== false, userId, userId],
-      );
-      return created(rows[0]);
+    // GET /api/events?project_id=x
+    if (method === 'GET' && !id) {
+      const {project_id} = qs;
+      if (!project_id) return err(400,'project_id required');
+      const {rows} = await queryAs(userId,
+        `SELECT * FROM event_log WHERE project_id=$1 AND deleted_at IS NULL ORDER BY event_date DESC, created_at DESC`,
+        [project_id]);
+      return ok(rows);
     }
 
-    if (method === 'PUT' && id) {
-      const body = JSON.parse(event.body || '{}');
-      const { event_type, event_date, title, notes, private_notes,
-              quantity, is_public, location_id } = body;
-      if (!event_type) return err(400, 'event_type is required');
-
-      const { rows } = await queryAs(userId,
-        `UPDATE event_log
-         SET event_type=$2, event_date=$3, title=$4, notes=$5,
-             private_notes=$6, quantity=$7, is_public=$8, location_id=$9
-         WHERE id=$1 AND deleted_at IS NULL
-         RETURNING *`,
-        [id, event_type, event_date, title || null, notes || null,
-         private_notes || null, quantity || null,
-         is_public !== false, location_id || null],
-      );
-      if (!rows.length) return err(404, 'Event not found or not authorized');
+    // GET /api/events/:id
+    if (method === 'GET' && id) {
+      const {rows} = await queryAs(userId,
+        `SELECT * FROM event_log WHERE id=$1 AND deleted_at IS NULL`, [id]);
+      if (!rows.length) return err(404,'Event not found');
       return ok(rows[0]);
     }
 
+    // POST /api/events — creates event + side effects, returns { eventId, stats }
+    if (method === 'POST') {
+      const {project_id,plant_id,event_type,event_date,title,notes,private_notes,quantity,is_public,has_photo} = JSON.parse(event.body||'{}');
+      if (!project_id||!event_type||!event_date) return err(400,'project_id, event_type, event_date required');
+
+      const eventDateIso = new Date(event_date+'T12:00:00').toISOString();
+      const xpBase = XP_BY_TYPE[event_type] ?? DEFAULT_XP;
+      const xpEarned = xpBase + (has_photo ? PHOTO_BONUS_XP : 0);
+
+      const {rows:[ev]} = await queryAs(userId,
+        `INSERT INTO event_log (project_id,plant_id,event_type,event_date,title,notes,private_notes,quantity,is_public,logged_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+        [project_id,plant_id||null,event_type,eventDateIso,title||null,notes||null,private_notes||null,quantity||null,is_public!==false,userId]);
+
+      const memCol = MEM_COL_MAP[event_type];
+      if (memCol) {
+        await queryAs(userId,
+          `INSERT INTO entity_memory (user_id,entity_type,entity_id,${memCol}) VALUES ($1,'project',$2,$3)
+           ON CONFLICT (user_id,entity_type,entity_id) DO UPDATE SET ${memCol}=EXCLUDED.${memCol}`,
+          [userId,project_id,eventDateIso]);
+      }
+
+      const {rows:[statsRow]} = await queryAs(userId,
+        `INSERT INTO user_stats (user_id,total_xp,events_logged) VALUES ($1,$2,1)
+         ON CONFLICT (user_id) DO UPDATE
+         SET total_xp=user_stats.total_xp+$2, events_logged=user_stats.events_logged+1
+         RETURNING total_xp, events_logged`,
+        [userId,xpEarned]);
+
+      await queryAs(userId,
+        `INSERT INTO xp_events (user_id,event_log_id,xp_earned,reason) VALUES ($1,$2,$3,$4)`,
+        [userId,ev.id,xpEarned,event_type]).catch(() => {});
+
+      const level = levelFromXp(statsRow.total_xp);
+      return created({
+        eventId: ev.id,
+        stats: {total_xp:statsRow.total_xp, level, events_logged:statsRow.events_logged, xp_earned:xpEarned},
+      });
+    }
+
+    // PUT /api/events/:id
+    if (method === 'PUT' && id) {
+      const {event_type,event_date,title,notes,private_notes,quantity,is_public} = JSON.parse(event.body||'{}');
+      const eventDateIso = event_date ? new Date(event_date+'T12:00:00').toISOString() : null;
+      const {rows} = await queryAs(userId,
+        `UPDATE event_log
+         SET event_type=$2, event_date=COALESCE($3,event_date),
+             title=$4, notes=$5, private_notes=$6, quantity=$7, is_public=$8
+         WHERE id=$1 AND deleted_at IS NULL RETURNING *`,
+        [id,event_type,eventDateIso,title||null,notes||null,private_notes||null,quantity||null,is_public]);
+      if (!rows.length) return err(404,'Event not found');
+      return ok(rows[0]);
+    }
+
+    // DELETE /api/events/:id
     if (method === 'DELETE' && id) {
-      const { rows } = await queryAs(userId,
-        `UPDATE event_log SET deleted_at = NOW()
-         WHERE id = $1 AND created_by = $2 AND deleted_at IS NULL
-         RETURNING id`,
-        [id, userId],
-      );
-      if (!rows.length) return err(404, 'Event not found or not authorized');
+      const {rows} = await queryAs(userId,
+        `UPDATE event_log SET deleted_at=NOW() WHERE id=$1 AND deleted_at IS NULL RETURNING id`, [id]);
+      if (!rows.length) return err(404,'Event not found');
       return noContent();
     }
 
-    return err(405, 'Method not allowed');
-
-  } catch (e) {
-    if (e instanceof AuthError) return err(401, e.message);
-    console.error('events handler error:', e);
-    return err(500, 'Internal server error');
+    return err(405,'Method not allowed');
+  } catch(e) {
+    if (e instanceof AuthError) return err(401,e.message);
+    console.error('events handler error:',e);
+    return err(500,'Internal server error');
   }
 };
