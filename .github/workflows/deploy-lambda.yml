@@ -76,6 +76,7 @@ jobs:
           echo "garden-${{ matrix.function }} is active"
 
       - name: Clear Lambda URL CORS config (handler owns CORS)
+        continue-on-error: true  # requires lambda:UpdateFunctionUrlConfig on deploy role — add to IAM if missing
         run: |
           # Handler code sets CORS headers on every response.
           # Lambda URL CORS config must be empty — duplicate headers break browsers.
