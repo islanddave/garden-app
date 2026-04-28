@@ -46,7 +46,6 @@ export const handler = async (event) => {
   const sql = neon(secrets.NEON_DATABASE_URL);
 
   try {
-    // set_config CTE in each query — neon HTTP driver has no persistent session; each sql`` is its own transaction
     const [
       recentEvents,
       counts,
@@ -54,7 +53,6 @@ export const handler = async (event) => {
       activeProjects,
     ] = await Promise.all([
       sql`
-        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         SELECT
           e.id, e.event_type, e.event_date, e.created_at,
           pp.name AS project_name,
@@ -68,7 +66,6 @@ export const handler = async (event) => {
         LIMIT 5
       `,
       sql`
-        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         SELECT
           (
             SELECT COUNT(*)::int
@@ -88,7 +85,6 @@ export const handler = async (event) => {
           ) AS location_count
       `,
       sql`
-        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         SELECT COUNT(*)::int AS count
         FROM favorites
         WHERE user_id = ${userId}
