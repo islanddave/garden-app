@@ -116,7 +116,7 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.event_type) return resp(400, { error: 'event_type is required' });
       if (!body.project_id) return resp(400, { error: 'project_id is required' });
-      if (!body.location_id) return resp(400, { error: 'location_id is required' });
+      // location_id is optional — stored as NULL if not provided
 
       const eventDate = body.event_date
         ? new Date(body.event_date).toISOString()
@@ -129,7 +129,7 @@ export const handler = async (event) => {
            notes, private_notes, quantity, is_public, logged_by)
         VALUES (
           ${body.project_id},
-          ${body.location_id},
+          ${body.location_id ?? null},
           ${body.plant_id ?? null},
           ${body.event_type},
           ${eventDate},
