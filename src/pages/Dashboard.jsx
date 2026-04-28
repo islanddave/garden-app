@@ -38,15 +38,13 @@ export default function Dashboard() {
     const today = new Date().toISOString().split('T')[0]
     try {
       // Parallel: dashboard API + tasks (still on Supabase until /api/tasks Lambda deployed)
+      // TODO DB-MIGRATE-TASKS: migrate when /api/tasks Lambda deployed
+      const taskQuery = supabase
+        ? supabase.from('tasks').select('id, title, due_date, priority, status').lte('due_date', today).eq('status', 'pending').order('due_date')
+        : Promise.resolve({ data: [], error: null })
       const [dashData, { data: taskData, error: tErr }] = await Promise.all([
         apiFetch('/api/dashboard'),
-        // TODO DB-MIGRATE-TASKS: migrate when /api/tasks Lambda deployed
-        supabase
-          .from('tasks')
-          .select('id, title, due_date, priority, status')
-          .lte('due_date', today)
-          .eq('status', 'pending')
-          .order('due_date'),
+        taskQuery,
       ])
 
       if (tErr) throw tErr
