@@ -17,11 +17,7 @@ async function getSecrets() {
   return _secrets;
 }
 
-const CORS = {
-  'Access-Control-Allow-Origin': 'https://garden.futureishere.net',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-};
+const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 function resp(statusCode, body) {
   return {
@@ -71,6 +67,8 @@ export const handler = async (event) => {
   const rawPath = event.rawPath ?? '/api/photos';
 
   try {
+    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
+
     // GET /api/photos/upload-url — returns pre-signed S3 PUT URL for browser upload
     // Query params: ext (file extension), content_type (MIME type)
     if (rawPath === '/api/photos/upload-url' && method === 'GET') {
@@ -86,7 +84,6 @@ export const handler = async (event) => {
     if (viewMatch && method === 'GET') {
       const photoId = viewMatch[1];
       const rows = await sql`
-        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         SELECT storage_path FROM photos
         WHERE id = ${photoId}
           AND uploaded_by = ${userId}
@@ -103,7 +100,6 @@ export const handler = async (event) => {
 
       const rows = projectId
         ? await sql`
-            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
               p.storage_path, p.caption, p.is_public, p.created_at,
@@ -116,7 +112,6 @@ export const handler = async (event) => {
             LIMIT ${limit}
           `
         : await sql`
-            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
               p.storage_path, p.caption, p.is_public, p.created_at,
@@ -150,7 +145,6 @@ export const handler = async (event) => {
       if (!body.storage_path) return resp(400, { error: 'storage_path is required' });
 
       const rows = await sql`
-        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         INSERT INTO photos
           (project_id, event_id, location_id, plant_id,
            storage_path, caption, is_public, uploaded_by)
