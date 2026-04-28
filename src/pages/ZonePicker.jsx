@@ -34,8 +34,8 @@ export default function ZonePicker() {
 
   async function loadZones() {
     try {
-      const [zoneData, projData] = await Promise.all([
-        fetch('/api/locations?level=0&active=true'),
+      const [locsResp, projData] = await Promise.all([
+        fetch('/api/locations'),
         fetch('/api/projects'),
       ])
 
@@ -46,7 +46,10 @@ export default function ZonePicker() {
         }
       })
 
-      setZones(zoneData ?? [])
+      // Locations Lambda returns { locations: [...], locations_with_path: [...] }
+      // Filter to level-0 active zones only for the zone picker
+      const allLocs = locsResp?.locations ?? []
+      setZones(allLocs.filter(l => l.level === 0 && l.is_active !== false))
       setCounts(countMap)
     } catch (err) {
       setError(err.message)
