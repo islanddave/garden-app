@@ -13,11 +13,7 @@ async function getSecrets() {
   return _secrets;
 }
 
-const CORS = {
-  'Access-Control-Allow-Origin': 'https://garden.futureishere.net',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-};
+const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 function resp(statusCode, body) {
   return {
@@ -51,8 +47,6 @@ export const handler = async (event) => {
   const idMatch = rawPath.match(/^\/api\/events\/([^/]+)$/);
 
   try {
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
-
     if (idMatch) {
       const eventId = idMatch[1];
 
@@ -116,20 +110,21 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.event_type) return resp(400, { error: 'event_type is required' });
       if (!body.project_id) return resp(400, { error: 'project_id is required' });
-      if (!body.location_id) return resp(400, { error: 'location_id is required' });
+      // location_id is optional — stored as NULL if not provided
 
       const eventDate = body.event_date
         ? new Date(body.event_date).toISOString()
         : new Date().toISOString();
 
-      // Insert event
+      // Insert event — set_config CTE referenced via FROM _ (unreferenced CTEs are skipped by PG planner)
       const eventRows = await sql`
+        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         INSERT INTO event_log
           (project_id, location_id, plant_id, event_type, event_date,
-           notes, private_notes, quantity, is_public, logged_by)
-        VALUES (
+           notes, private_notes, quantity, is_public, logged_by, created_by)
+        SELECT
           ${body.project_id},
-          ${body.location_id},
+          ${body.location_id ?? null},
           ${body.plant_id ?? null},
           ${body.event_type},
           ${eventDate},
@@ -137,8 +132,9 @@ export const handler = async (event) => {
           ${body.private_notes ?? null},
           ${body.quantity ?? null},
           ${body.is_public ?? true},
+          ${userId},
           ${userId}
-        )
+        FROM _
         RETURNING *
       `;
       const newEvent = eventRows[0];
@@ -149,20 +145,20 @@ export const handler = async (event) => {
       // This is a best-effort operation — non-fatal on failure
       try {
         await sql`
-          INSERT INTO user_stats (user_id, event_count, last_event_date, xp, streak)
+          INSERT INTO user_stats (user_id, total_events, last_active_date, xp, current_streak)
           VALUES (${userId}, 1, CURRENT_DATE, 10, 1)
           ON CONFLICT (user_id) DO UPDATE
           SET
-            event_count     = user_stats.event_count + 1,
-            xp              = user_stats.xp + 10,
-            streak          = CASE
-              WHEN user_stats.last_event_date = CURRENT_DATE - INTERVAL '1 day'
-                THEN user_stats.streak + 1
-              WHEN user_stats.last_event_date = CURRENT_DATE
-                THEN user_stats.streak
+            total_events      = user_stats.total_events + 1,
+            xp                = user_stats.xp + 10,
+            current_streak    = CASE
+              WHEN user_stats.last_active_date = CURRENT_DATE - INTERVAL '1 day'
+                THEN user_stats.current_streak + 1
+              WHEN user_stats.last_active_date = CURRENT_DATE
+                THEN user_stats.current_streak
               ELSE 1
             END,
-            last_event_date = CURRENT_DATE
+            last_active_date  = CURRENT_DATE
         `;
       } catch (statsErr) {
         console.warn('user_stats upsert failed (non-fatal)', statsErr.message);
