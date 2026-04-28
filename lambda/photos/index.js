@@ -6,7 +6,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'us-east-1' });
-const BUCKET = process.env.S3_PHOTOS_BUCKET;
+const BUCKET = process.env.S3_PHOTOS_BUCKET || 'garden-photos-prod';
 
 let _secrets = null;
 async function getSecrets() {
