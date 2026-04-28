@@ -1,3 +1,4 @@
+// TODO DB-MIGRATE-INVENTORY: migrate to /api/inventory Lambda when deployed
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { useAuth } from '../context/AuthContext.jsx'

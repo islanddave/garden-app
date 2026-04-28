@@ -1,3 +1,4 @@
+// TODO DB-MIGRATE-INVENTORY: migrate to /api/inventory Lambda when deployed
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase.js'

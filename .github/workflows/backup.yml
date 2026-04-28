@@ -14,19 +14,13 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install postgresql-client-17
-        # pg17 required: Supabase server runs PostgreSQL 17.6; pg_dump must be >= server version.
-        # Ubuntu runners don't ship pg17 — add the official PGDG apt repo first.
-        # If Supabase upgrades past 17, update the version in both the repo add and install lines.
+      - name: Install postgresql-client-16
+        # Pin to pg16 — must match or exceed source Supabase PostgreSQL version.
+        # Verify Supabase PG version before migration day: SELECT version();
+        # If Supabase upgrades past 16, update this step accordingly.
         run: |
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
-            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
-            | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client-17
+          sudo apt-get install -y postgresql-client-16
           pg_dump --version
 
       - name: Configure AWS credentials (OIDC)
@@ -37,11 +31,8 @@ jobs:
           aws-region: us-east-1
 
       - name: pg_dump from Supabase
-        # Use Supabase session pooler (aws-1-us-west-2.pooler.supabase.com:5432).
-        # Direct connection (db.xxx.supabase.co) resolves only to IPv6; GitHub Actions
-        # runners cannot reach it. Session pooler has IPv4 and is pg_dump-compatible
-        # (session mode maintains a persistent connection, unlike transaction pooler).
-        # Username for session pooler is postgres.{project-ref}, NOT postgres.
+        # IMPORTANT: Use port 5432 (direct connection), NOT port 6543 (Supavisor pooler).
+        # pg_dump is incompatible with the pooler — it will hang or produce corrupt output.
         # --no-owner and --no-privileges required: Supabase roles don't exist on Neon.
         # --schema=public required: exclude Supabase internal schemas (auth, storage, etc.)
         # -Fc = custom format; supports selective restore and compression.
@@ -50,7 +41,7 @@ jobs:
           PGPASSWORD=${{ secrets.SUPABASE_DB_PASSWORD }} pg_dump \
             --host=${{ vars.SUPABASE_DB_HOST }} \
             --port=5432 \
-            --username=${{ vars.SUPABASE_DB_USER }} \
+            --username=postgres \
             --schema=public \
             --no-owner \
             --no-privileges \

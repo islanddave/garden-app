@@ -74,22 +74,6 @@ jobs:
             --function-name "garden-${{ matrix.function }}"
           echo "garden-${{ matrix.function }} is active"
 
-      - name: Allow public invocation via function URL
-        run: |
-          FUNCTION_NAME="garden-${{ matrix.function }}"
-          # Both lambda:InvokeFunction AND lambda:InvokeFunctionUrl required for AuthType NONE public access
-          aws lambda add-permission \
-            --function-name "$FUNCTION_NAME" \
-            --statement-id AllowPublicInvoke \
-            --action lambda:InvokeFunction \
-            --principal "*" 2>/dev/null || echo "AllowPublicInvoke already exists"
-          aws lambda add-permission \
-            --function-name "$FUNCTION_NAME" \
-            --statement-id AllowPublicAccess \
-            --action lambda:InvokeFunctionUrl \
-            --principal "*" \
-            --function-url-auth-type NONE 2>/dev/null || echo "AllowPublicAccess already exists"
-
 # Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
 # at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).
 # These are NOT injected as GitHub Actions env vars — no DB credentials touch GitHub.

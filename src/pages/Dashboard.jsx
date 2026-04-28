@@ -1,16 +1,29 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useZone } from '../context/ZoneContext.jsx'
+import { useApiFetch } from '../lib/api.js'
 import { supabase } from '../lib/supabase.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 
-// Project statuses eligible for display on Dashboard — same filter as EventNew.jsx
+// Project statuses eligible for display on Dashboard
 // PROVISIONAL: harvesting excluded — review if users want to see harvesting projects here
 const LOGGABLE_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
 
+// Build last-activity summary from entity_memory fields on each project row
+function getProjectActivity(p) {
+  const candidates = [
+    { at: p.last_watered_at,    type: 'watering' },
+    { at: p.last_observed_at,   type: 'observation' },
+    { at: p.last_fertilized_at, type: 'fertilizing' },
+  ].filter(c => c.at).sort((a, b) => b.at.localeCompare(a.at))
+  if (!candidates.length) return null
+  return { last_event_at: candidates[0].at, last_event_type: candidates[0].type }
+}
+
 export default function Dashboard() {
   const { profile } = useAuth()
+  const { fetch: apiFetch } = useApiFetch()
   const { activeZone } = useZone()
   const location = useLocation()
   const [projects,      setProjects]      = useState([])
@@ -21,80 +34,43 @@ export default function Dashboard() {
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState(null)
 
-  useEffect(() => {
-    let isMounted = true
-    loadDashboard(isMounted)
-    return () => { isMounted = false }
-  }, [])
-
-  async function loadDashboard(isMounted) {
+  const loadDashboard = useCallback(async (isMounted) => {
     const today = new Date().toISOString().split('T')[0]
-
     try {
-      // Round 1: projects + tasks + recent activity in parallel
-      const [
-        { data: projectData,  error: pErr },
-        { data: taskData,     error: tErr },
-        { data: activityData, error: aErr },
-      ] = await Promise.all([
-        supabase
-          .from('plant_projects')
-          .select('id, name, slug, status, start_date, location_id')
-          .in('status', LOGGABLE_STATUSES)
-          .is('deleted_at', null)
-          .order('start_date', { ascending: false }),
+      // Parallel: dashboard API + tasks (still on Supabase until /api/tasks Lambda deployed)
+      const [dashData, { data: taskData, error: tErr }] = await Promise.all([
+        apiFetch('/api/dashboard'),
+        // TODO DB-MIGRATE-TASKS: migrate when /api/tasks Lambda deployed
         supabase
           .from('tasks')
           .select('id, title, due_date, priority, status')
           .lte('due_date', today)
           .eq('status', 'pending')
           .order('due_date'),
-        // FEED-LIGHT: last 5 events cross-project with attribution.
-        // PROVISIONAL DEBT: shows all events without ownership filtering.
-        // If OWN-ADR scopes visibility per user/workspace, FEED-LIGHT requires a V2 rewrite.
-        // This is acceptable debt — do not treat this filter as a permanent visibility model.
-        supabase
-          .from('event_log')
-          .select('id, event_type, created_at, plant_projects!project_id(name), profiles!logged_by(display_name)')
-          .is('deleted_at', null)
-          .order('created_at', { ascending: false })
-          .limit(5),
       ])
 
-      if (pErr) throw pErr
       if (tErr) throw tErr
-      if (aErr) throw aErr
       if (!isMounted) return
 
-      const activeProjects = projectData ?? []
+      const activeProjects = (dashData.projects ?? []).filter(p =>
+        LOGGABLE_STATUSES.includes(p.status)
+      )
       setProjects(activeProjects)
       setTasks(taskData ?? [])
-      setRecentEvents(activityData ?? [])
 
+      // Build recentEvents — Lambda returns project_name inline (not nested join)
+      setRecentEvents(dashData.recentEvents ?? [])
+
+      // Build entityMap from entity_memory fields on each project row
+      const memMap = {}
+      activeProjects.forEach(p => {
+        const activity = getProjectActivity(p)
+        if (activity) memMap[p.id] = activity
+      })
+      setEntityMap(memMap)
+
+      // nextAttention: never-logged project first, then oldest-tended
       if (activeProjects.length > 0) {
-        // Round 2: most recent event per active project
-        // Uses composite index idx_event_log_project_date (project_id, event_date desc)
-        const { data: evData } = await supabase
-          .from('event_log')
-          .select('project_id, event_type, event_date')
-          .in('project_id', activeProjects.map(p => p.id))
-          .order('event_date', { ascending: false })
-
-        if (!isMounted) return
-
-        // First occurrence per project_id = most recent event (ordered desc)
-        const memMap = {}
-        ;(evData ?? []).forEach(row => {
-          if (!memMap[row.project_id]) {
-            memMap[row.project_id] = {
-              last_event_at:   row.event_date,
-              last_event_type: row.event_type,
-            }
-          }
-        })
-        setEntityMap(memMap)
-
-        // Project with no event entry = never logged = highest priority
         const neverLogged = activeProjects.find(p => !memMap[p.id])
         if (neverLogged) {
           setNextAttention({ id: neverLogged.id, name: neverLogged.name, last_event_at: null })
@@ -102,8 +78,8 @@ export default function Dashboard() {
           const oldest = activeProjects.reduce((acc, p) =>
             !acc || memMap[p.id].last_event_at < memMap[acc.id].last_event_at ? p : acc, null)
           if (oldest) setNextAttention({
-            id:           oldest.id,
-            name:         oldest.name,
+            id:            oldest.id,
+            name:          oldest.name,
             last_event_at: memMap[oldest.id].last_event_at,
           })
         }
@@ -113,7 +89,13 @@ export default function Dashboard() {
     } finally {
       if (isMounted) setLoading(false)
     }
-  }
+  }, [apiFetch])
+
+  useEffect(() => {
+    let isMounted = true
+    loadDashboard(isMounted)
+    return () => { isMounted = false }
+  }, [loadDashboard])
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric',
@@ -338,10 +320,7 @@ export default function Dashboard() {
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                       }}>
-                        {ev.plant_projects?.name ?? '—'}
-                      </div>
-                      <div style={{ fontSize: '0.72rem', color: P.light, marginTop: '1px' }}>
-                        by {ev.profiles?.display_name ?? 'unknown'}
+                        {ev.project_name ?? '—'}
                       </div>
                     </div>
                   </div>
@@ -377,8 +356,6 @@ function relativeTime(isoStr) {
 }
 
 function StatusBadge({ status }) {
-  // TODO (Session B): expand color map for full lifecycle (seeding, sprouting, growing, flowering, fruiting)
-  // New statuses currently fall through to planning style (yellow) via the fallback.
   const colors = {
     planning:  { bg: P.warn,      text: '#7a5c00', border: P.warnBorder },
     active:    { bg: P.greenPale, text: P.green,   border: P.greenLight },

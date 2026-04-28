@@ -1,26 +1,26 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext.jsx'
-import { supabase, getPhotoUrl } from '../lib/supabase.js'
-import { P, PHOTO_BUCKET } from '../lib/constants.js'
+import { useApiFetch } from '../lib/api.js'
+import { P } from '../lib/constants.js'
 
-// ---- Photo Library — D1 + D2 ----
+// ---- Photo Library ----
 // Browse all photos, upload standalone photos (event_id = null),
 // tag / un-tag photos against projects, locations, and plants.
+// Photos Lambda GET returns view_url (signed S3 URL) and project_name inline.
+// Filter modes 'standalone' and 'untagged' are applied client-side.
+// NOTE: project_id is required by photos Lambda POST — upload form requires it.
 
 export default function PhotoLibrary() {
-  const { user } = useAuth()
+  const { fetch: apiFetch } = useApiFetch()
 
   const [photos,        setPhotos]        = useState([])
   const [loading,       setLoading]       = useState(true)
   const [projects,      setProjects]      = useState([])
   const [locations,     setLocations]     = useState([])
 
-  // Filter state
   const [filterProject, setFilterProject] = useState('')
-  const [filterMode,    setFilterMode]    = useState('all') // 'all' | 'standalone' | 'untagged'
+  const [filterMode,    setFilterMode]    = useState('all')
 
-  // Upload state
   const [showUpload,     setShowUpload]     = useState(false)
   const [uploadFile,     setUploadFile]     = useState(null)
   const [uploadPreview,  setUploadPreview]  = useState(null)
@@ -29,7 +29,6 @@ export default function PhotoLibrary() {
   const [uploading,      setUploading]      = useState(false)
   const [uploadErr,      setUploadErr]      = useState(null)
 
-  // Modal / tag state
   const [modal,          setModal]          = useState(null)
   const [tagForm,        setTagForm]        = useState({ project_id: '', location_id: '', plant_id: '' })
   const [plantsForModal, setPlantsForModal] = useState([])
@@ -38,62 +37,45 @@ export default function PhotoLibrary() {
 
   // ---- Initial data load ----
   useEffect(() => {
-    if (!user) return
     Promise.all([
-      supabase.from('plant_projects').select('id, name').order('name'),
-      supabase.from('locations_with_path').select('id, full_path, is_active').order('full_path'),
-    ]).then(([{ data: proj }, { data: locs }]) => {
+      apiFetch('/api/projects'),
+      apiFetch('/api/locations/with-path'),
+    ]).then(([proj, locs]) => {
       setProjects(proj ?? [])
       setLocations((locs ?? []).filter(l => l.is_active))
-    })
-  }, [user])
+    }).catch(() => {})
+  }, [apiFetch])
 
   // ---- Load plants when upload project changes ----
   useEffect(() => {
     if (!uploadForm.project_id) { setPlantsForUpload([]); return }
-    supabase
-      .from('plants')
-      .select('id, name, variety, quantity')
-      .eq('project_id', uploadForm.project_id)
-      .is('deleted_at', null)
-      .order('created_at')
-      .then(({ data }) => setPlantsForUpload(data ?? []))
-  }, [uploadForm.project_id])
+    apiFetch('/api/plants?project_id=' + uploadForm.project_id)
+      .then(data => setPlantsForUpload(data ?? []))
+      .catch(() => setPlantsForUpload([]))
+  }, [apiFetch, uploadForm.project_id])
 
   // ---- Load plants when modal project changes ----
   useEffect(() => {
     if (!tagForm.project_id) { setPlantsForModal([]); return }
-    supabase
-      .from('plants')
-      .select('id, name, variety, quantity')
-      .eq('project_id', tagForm.project_id)
-      .is('deleted_at', null)
-      .order('created_at')
-      .then(({ data }) => setPlantsForModal(data ?? []))
-  }, [tagForm.project_id])
+    apiFetch('/api/plants?project_id=' + tagForm.project_id)
+      .then(data => setPlantsForModal(data ?? []))
+      .catch(() => setPlantsForModal([]))
+  }, [apiFetch, tagForm.project_id])
 
   // ---- Photos query ----
   const loadPhotos = useCallback(async () => {
-    if (!user) return
     setLoading(true)
-    let q = supabase
-      .from('photos')
-      .select('id, project_id, event_id, location_id, plant_id, storage_path, caption, is_public, created_at, plant_projects!project_id(name), plants!plant_id(name, variety, quantity)')
-      .eq('uploaded_by', user.id)
-      .order('created_at', { ascending: false })
-      .limit(120)
-
-    if (filterProject)               q = q.eq('project_id', filterProject)
-    if (filterMode === 'standalone')  q = q.is('event_id', null)
-    if (filterMode === 'untagged') {
-      q = q.is('event_id', null)
-      q = q.is('project_id', null)
+    const qs = filterProject ? `?project_id=${filterProject}` : ''
+    try {
+      let data = await apiFetch('/api/photos' + qs) ?? []
+      if (filterMode === 'standalone') data = data.filter(p => !p.event_id)
+      if (filterMode === 'untagged')   data = data.filter(p => !p.event_id && !p.project_id)
+      setPhotos(data)
+    } catch {
+      setPhotos([])
     }
-
-    const { data } = await q
-    setPhotos(data ?? [])
     setLoading(false)
-  }, [user, filterProject, filterMode])
+  }, [apiFetch, filterProject, filterMode])
 
   useEffect(() => { loadPhotos() }, [loadPhotos])
 
@@ -115,45 +97,52 @@ export default function PhotoLibrary() {
   async function handleUpload(e) {
     e.preventDefault()
     if (!uploadFile) { setUploadErr('Select a photo first.'); return }
-
+    if (!uploadForm.project_id) { setUploadErr('Select a project (required).'); return }
 
     setUploading(true)
     setUploadErr(null)
 
-    const ext         = uploadFile.name.split('.').pop().toLowerCase()
-    const photoId     = crypto.randomUUID()
-    const storagePath = `standalone/${photoId}.${ext}`
-
+    const ext      = uploadFile.name.split('.').pop().toLowerCase()
+    const photoId  = crypto.randomUUID()
+    const key      = `standalone/${photoId}.${ext}`
     const mimeType = uploadFile.type || 'image/jpeg'
-    const { error: upErr } = await supabase.storage
-      .from(PHOTO_BUCKET)
-      .upload(storagePath, uploadFile, { upsert: false, contentType: mimeType })
 
-    if (upErr) { setUploading(false); setUploadErr(upErr.message); return }
+    try {
+      // 1. Get pre-signed upload URL
+      const { upload_url } = await apiFetch(
+        `/api/photos/upload-url?key=${encodeURIComponent(key)}&content_type=${encodeURIComponent(mimeType)}`
+      )
 
-    const { error: dbErr } = await supabase.from('photos').insert({
-      project_id:   uploadForm.project_id  || null,
-      location_id:  uploadForm.location_id || null,
-      plant_id:     uploadForm.plant_id    || null,
-      event_id:     null,
-      storage_path: storagePath,
-      caption:      uploadForm.caption.trim() || null,
-      is_public:    uploadForm.is_public,
-      uploaded_by:  user.id,
-    })
+      // 2. Upload directly to S3 — no auth header
+      const s3Res = await window.fetch(upload_url, {
+        method: 'PUT',
+        body: uploadFile,
+        headers: { 'Content-Type': mimeType },
+      })
+      if (!s3Res.ok) throw new Error('S3 upload failed')
 
-    if (dbErr) {
-      await supabase.storage.from(PHOTO_BUCKET).remove([storagePath])
+      // 3. Register in DB
+      await apiFetch('/api/photos', {
+        method: 'POST',
+        body: JSON.stringify({
+          storage_path: key,
+          project_id:   uploadForm.project_id,
+          location_id:  uploadForm.location_id || null,
+          plant_id:     uploadForm.plant_id    || null,
+          caption:      uploadForm.caption.trim() || null,
+          is_public:    uploadForm.is_public,
+        }),
+      })
+
       setUploading(false)
-      setUploadErr(dbErr.message)
-      return
+      setShowUpload(false)
+      clearUploadFile()
+      setUploadForm({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
+      loadPhotos()
+    } catch (err) {
+      setUploading(false)
+      setUploadErr(err.message || 'Upload failed.')
     }
-
-    setUploading(false)
-    setShowUpload(false)
-    clearUploadFile()
-    setUploadForm({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
-    loadPhotos()
   }
 
   // ---- Modal / tag handlers ----
@@ -180,25 +169,31 @@ export default function PhotoLibrary() {
     setTagging(true)
     setTagErr(null)
 
-    const { error } = await supabase
-      .from('photos')
-      .update({ project_id: newProject, location_id: newLocation, plant_id: newPlant })
-      .eq('id', modal.id)
+    try {
+      await apiFetch('/api/photos/' + modal.id, {
+        method: 'PUT',
+        body: JSON.stringify({
+          project_id:  newProject,
+          location_id: newLocation,
+          plant_id:    newPlant,
+          caption:     modal.caption ?? null,
+          tags:        modal.tags    ?? null,
+        }),
+      })
 
-    if (error) { setTagging(false); setTagErr(error.message); return }
+      const updatedProjectName = projects.find(p => p.id === newProject)?.name ?? null
 
-    const updatedProject = projects.find(p => p.id === newProject) ?? null
-    const updatedPlant   = plantsForModal.find(p => p.id === newPlant) ?? null
-
-    setPhotos(ps => ps.map(p =>
-      p.id === modal.id
-        ? { ...p, project_id: newProject, location_id: newLocation, plant_id: newPlant,
-            plant_projects: updatedProject,
-            plants: updatedPlant }
-        : p
-    ))
-    setModal(null)
-    setTagging(false)
+      setPhotos(ps => ps.map(p =>
+        p.id === modal.id
+          ? { ...p, project_id: newProject, location_id: newLocation, plant_id: newPlant, project_name: updatedProjectName }
+          : p
+      ))
+      setModal(null)
+      setTagging(false)
+    } catch (err) {
+      setTagging(false)
+      setTagErr(err.message)
+    }
   }
 
   return (
@@ -258,18 +253,17 @@ export default function PhotoLibrary() {
               )}
 
               <div>
-                <label style={fieldLabelStyle}>Project  ·  optional</label>
+                <label style={fieldLabelStyle}>Project  ·  required</label>
                 <select
                   value={uploadForm.project_id}
                   onChange={e => setUploadForm(f => ({ ...f, project_id: e.target.value, plant_id: '' }))}
                   style={selectStyle}
                 >
-                  <option value="">— None —</option>
+                  <option value="">— Select project —</option>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
 
-              {/* Plant selector — only when project has plants */}
               {plantsForUpload.length > 0 && (
                 <div>
                   <label style={fieldLabelStyle}>Plant  ·  optional</label>
@@ -407,10 +401,9 @@ export default function PhotoLibrary() {
 }
 
 // ---- Photo card ----
+// Uses photo.view_url (signed S3 URL from Lambda) and photo.project_name (inline JOIN)
 function PhotoCard({ photo, onClick }) {
-  const url     = getPhotoUrl(photo.storage_path)
-  const project = photo.plant_projects?.name
-  const plant   = photo.plants?.name
+  const project = photo.project_name
 
   return (
     <button
@@ -421,9 +414,9 @@ function PhotoCard({ photo, onClick }) {
       }}
     >
       <div style={{ position: 'relative', paddingBottom: '100%', backgroundColor: '#e8e2da' }}>
-        {url && (
+        {photo.view_url && (
           <img
-            src={url}
+            src={photo.view_url}
             alt={photo.caption ?? 'Garden photo'}
             loading="lazy"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
@@ -439,18 +432,11 @@ function PhotoCard({ photo, onClick }) {
           </span>
         )}
       </div>
-      {(project || plant) && (
+      {project && (
         <div style={{ padding: '5px 7px', backgroundColor: P.white }}>
-          {project && (
-            <div style={{ fontSize: '0.7rem', color: P.mid, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {project}
-            </div>
-          )}
-          {plant && (
-            <div style={{ fontSize: '0.65rem', color: P.light, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              🌱 {plant}
-            </div>
-          )}
+          <div style={{ fontSize: '0.7rem', color: P.mid, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {project}
+          </div>
         </div>
       )}
     </button>
@@ -458,8 +444,8 @@ function PhotoCard({ photo, onClick }) {
 }
 
 // ---- Photo modal ----
+// Uses photo.view_url for display
 function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClose, tagging, tagErr, projects, locations }) {
-  const url      = getPhotoUrl(photo.storage_path)
   const hasEvent = !!photo.event_id
 
   return (
@@ -478,11 +464,10 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
         maxWidth: 480, width: '100%', maxHeight: '90dvh', overflow: 'hidden',
       }}>
 
-        {/* Image */}
         <div style={{ position: 'relative' }}>
-          {url && (
+          {photo.view_url && (
             <img
-              src={url} alt={photo.caption ?? 'Photo'}
+              src={photo.view_url} alt={photo.caption ?? 'Photo'}
               style={{ width: '100%', borderRadius: '12px 12px 0 0', display: 'block', maxHeight: 300, objectFit: 'cover' }}
             />
           )}
@@ -498,7 +483,6 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
           >✕</button>
         </div>
 
-        {/* Details */}
         <div style={{ padding: '16px 20px 20px' }}>
           {photo.caption && (
             <p style={{ margin: '0 0 12px', fontSize: '0.88rem', color: P.mid }}>{photo.caption}</p>
@@ -529,7 +513,6 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
                 </select>
               </div>
 
-              {/* Plant selector — only when project is selected and has plants */}
               {plantsForModal.length > 0 && (
                 <div>
                   <label style={fieldLabelStyle}>Plant  ·  optional</label>
@@ -571,7 +554,6 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
   )
 }
 
-// ---- Shared UI ----
 function ErrBanner({ msg }) {
   return (
     <div style={{

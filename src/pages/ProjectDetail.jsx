@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase.js'
+import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
-import { useAuth } from '../context/AuthContext.jsx'
-import { updateEntityMemory, updateUserStats } from '../lib/garden-ops.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 
 const EVENT_ICONS = {
@@ -28,7 +26,6 @@ const EVENT_ICONS = {
 }
 
 function todayLocal() {
-  // Returns YYYY-MM-DD in local time (not UTC) for date input default
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
@@ -65,7 +62,7 @@ const STATUS_COLORS = {
 export default function ProjectDetail() {
   const { id }   = useParams()
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { fetch } = useApiFetch()
 
   const [project,      setProject]      = useState(null)
   const [locPath,      setLocPath]      = useState(null)
@@ -77,17 +74,15 @@ export default function ProjectDetail() {
   const [saving,       setSaving]       = useState(false)
   const [saveErr,      setSaveErr]      = useState(null)
 
-  // Event log state
-  const [events,       setEvents]       = useState([])
-  const [eventsLoading,setEventsLoading]= useState(true)
-  const [showLogForm,  setShowLogForm]  = useState(false)
-  const [eventForm,    setEventForm]    = useState(emptyEventForm())
-  const [loggingEvent, setLoggingEvent] = useState(false)
-  const [logErr,       setLogErr]       = useState(null)
-  const [deletingId,   setDeletingId]   = useState(null)
+  const [events,        setEvents]        = useState([])
+  const [eventsLoading, setEventsLoading] = useState(true)
+  const [showLogForm,   setShowLogForm]   = useState(false)
+  const [eventForm,     setEventForm]     = useState(emptyEventForm())
+  const [loggingEvent,  setLoggingEvent]  = useState(false)
+  const [logErr,        setLogErr]        = useState(null)
+  const [deletingId,    setDeletingId]    = useState(null)
   const logFormRef = useRef(null)
 
-  // Plants state
   const [plants,        setPlants]        = useState([])
   const [plantsLoading, setPlantsLoading] = useState(true)
   const [showAddPlant,  setShowAddPlant]  = useState(false)
@@ -95,158 +90,119 @@ export default function ProjectDetail() {
   const [addingPlant,   setAddingPlant]   = useState(false)
   const [plantErr,      setPlantErr]      = useState(null)
 
+  // Load project + events + locations in parallel
   useEffect(() => {
-    let isMounted = true
-    ;(async () => {
-      const [{ data: proj, error: pErr }, { data: locs }] = await Promise.all([
-        supabase.from('plant_projects').select('*').eq('id', id).single(),
-        supabase.from('locations_with_path').select('id, full_path, is_active').order('full_path'),
-      ])
-      if (!isMounted) return
-      if (pErr) { setError(pErr.code === 'PGRST116' ? 'Project not found.' : pErr.message); setLoading(false); return }
-
+    let cancelled = false
+    setLoading(true)
+    setEventsLoading(true)
+    Promise.all([
+      fetch('/api/projects/' + id),
+      fetch('/api/events?project_id=' + id),
+      fetch('/api/locations/with-path'),
+    ]).then(([proj, eventsData, locs]) => {
+      if (cancelled) return
+      if (!proj) { setError('Project not found.'); setLoading(false); setEventsLoading(false); return }
       setProject(proj)
+      setLocPath(proj.location_path ?? null)
       setLocations((locs ?? []).filter(l => l.is_active))
-
-      if (proj.location_id) {
-        const loc = (locs ?? []).find(l => l.id === proj.location_id)
-        setLocPath(loc?.full_path ?? null)
-      }
+      setEvents(eventsData ?? [])
       setLoading(false)
-    })()
-    return () => { isMounted = false }
-  }, [id])
+      setEventsLoading(false)
+    }).catch(err => {
+      if (cancelled) return
+      setError(err.message || 'Failed to load project.')
+      setLoading(false)
+      setEventsLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [id, fetch])
 
-  // Fetch plants for this project
+  // Load plants separately
   useEffect(() => {
     if (!id) return
-    let isMounted = true
-    supabase
-      .from('plants')
-      .select('id, name, variety, quantity, status')
-      .eq('project_id', id)
-      .is('deleted_at', null)
-      .order('created_at')
-      .then(({ data }) => {
-        if (!isMounted) return
+    let cancelled = false
+    setPlantsLoading(true)
+    fetch('/api/plants?project_id=' + id)
+      .then(data => {
+        if (cancelled) return
         setPlants(data ?? [])
         setPlantsLoading(false)
       })
-    return () => { isMounted = false }
-  }, [id])
-
-  // Fetch events separately so they can be refreshed independently
-  useEffect(() => {
-    if (!id) return
-    let isMounted = true
-    setEventsLoading(true)
-    supabase
-      .from('event_log')
-      .select('id, event_type, event_date, title, notes, private_notes, quantity, is_public, created_at, logged_by, profiles!logged_by(display_name)')
-      .eq('project_id', id)
-      .is('deleted_at', null)
-      .order('event_date', { ascending: false })
-      .then(({ data }) => {
-        if (!isMounted) return
-        setEvents(data ?? [])
-        setEventsLoading(false)
+      .catch(() => {
+        if (cancelled) return
+        setPlantsLoading(false)
       })
-    return () => { isMounted = false }
-  }, [id])
+    return () => { cancelled = true }
+  }, [id, fetch])
+
+  async function refreshEvents() {
+    const data = await fetch('/api/events?project_id=' + id)
+    setEvents(data ?? [])
+  }
 
   async function handleAddPlant(e) {
     e.preventDefault()
     setAddingPlant(true)
     setPlantErr(null)
     const qty = parseInt(plantForm.quantity, 10)
-    const { data, error } = await supabase
-      .from('plants')
-      .insert({
-        project_id: id,
-        name:       plantForm.name.trim(),
-        variety:    plantForm.variety.trim()  || null,
-        quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
-        notes:      plantForm.notes.trim()   || null,
-        created_by: user?.id,
+    try {
+      const data = await fetch('/api/plants', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_id: id,
+          name:       plantForm.name.trim(),
+          variety:    plantForm.variety.trim()  || null,
+          quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
+          notes:      plantForm.notes.trim()   || null,
+        }),
       })
-      .select('id, name, variety, quantity, status')
-      .single()
-    setAddingPlant(false)
-    if (error) {
-      setPlantErr(error.message)
-    } else {
       setPlants(p => [...p, data])
       setPlantForm({ name: '', variety: '', quantity: '1', notes: '' })
       setShowAddPlant(false)
+    } catch (err) {
+      setPlantErr(err.message)
     }
-  }
-
-  async function refreshEvents() {
-    const { data } = await supabase
-      .from('event_log')
-      .select('id, event_type, event_date, title, notes, private_notes, quantity, is_public, created_at, logged_by, profiles!logged_by(display_name)')
-      .eq('project_id', id)
-      .is('deleted_at', null)
-      .order('event_date', { ascending: false })
-    setEvents(data ?? [])
+    setAddingPlant(false)
   }
 
   async function handleLogEvent(e) {
     e.preventDefault()
     setLoggingEvent(true)
     setLogErr(null)
-
-    // Capture form values before any state resets
-    const capturedType     = eventForm.event_type
-    const capturedLocation = project?.location_id ?? null
-    const eventDate = eventForm.event_date
-      ? new Date(eventForm.event_date + 'T12:00:00').toISOString()
-      : new Date().toISOString()
-
-    const payload = {
-      project_id:    id,
-      event_type:    capturedType,
-      event_date:    eventDate,
-      title:         eventForm.title.trim()         || null,
-      notes:         eventForm.notes.trim()         || null,
-      private_notes: eventForm.private_notes.trim() || null,
-      quantity:      eventForm.quantity.trim()       || null,
-      is_public:     eventForm.is_public,
-      logged_by:     user?.id ?? null,
-      location_id:   capturedLocation,
-    }
-
-    const { data: event, error } = await supabase
-      .from('event_log')
-      .insert(payload)
-      .select('id')
-      .single()
-
-    setLoggingEvent(false)
-
-    if (error) {
-      setLogErr(error.message)
-    } else {
+    try {
+      await fetch('/api/events', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_id:    id,
+          event_type:    eventForm.event_type,
+          event_date:    eventForm.event_date,
+          title:         eventForm.title.trim()         || null,
+          notes:         eventForm.notes.trim()         || null,
+          private_notes: eventForm.private_notes.trim() || null,
+          quantity:      eventForm.quantity.trim()       || null,
+          is_public:     eventForm.is_public,
+          has_photo:     false,
+        }),
+      })
       setEventForm(emptyEventForm())
       setShowLogForm(false)
       await refreshEvents()
-
-      // Non-fatal side effects — entity memory + user XP
-      await Promise.all([
-        updateEntityMemory(id, capturedLocation, capturedType, new Date(eventDate)),
-        user?.id
-          ? updateUserStats(user.id, capturedType, { eventLogId: event?.id })
-          : Promise.resolve(),
-      ])
+    } catch (err) {
+      setLogErr(err.message)
     }
+    setLoggingEvent(false)
   }
 
   async function handleDeleteEvent(evId) {
     if (!window.confirm('Delete this event?')) return
     setDeletingId(evId)
-    await supabase.from('event_log').update({ deleted_at: new Date().toISOString() }).eq('id', evId)
+    try {
+      await fetch('/api/events/' + evId, { method: 'DELETE' })
+      await refreshEvents()
+    } catch (e) {
+      console.error('delete event failed', e)
+    }
     setDeletingId(null)
-    await refreshEvents()
   }
 
   function startEdit() {
@@ -269,33 +225,34 @@ export default function ProjectDetail() {
     e.preventDefault()
     setSaving(true)
     setSaveErr(null)
-    const { error } = await supabase
-      .from('plant_projects')
-      .update({
-        name:        form.name.trim(),
-        slug:        form.slug.trim(),
-        variety:     form.variety.trim()     || null,
-        species:     form.species.trim()     || null,
-        description: form.description.trim() || null,
-        status:      form.status,
-        start_date:  form.start_date         || null,
-        is_public:   form.is_public,
-        location_id: form.location_id        || null,
+    try {
+      const updated = await fetch('/api/projects/' + id, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name:        form.name.trim(),
+          slug:        form.slug.trim(),
+          variety:     form.variety.trim()     || null,
+          species:     form.species.trim()     || null,
+          description: form.description.trim() || null,
+          status:      form.status,
+          start_date:  form.start_date         || null,
+          is_public:   form.is_public,
+          location_id: form.location_id        || null,
+        }),
       })
-      .eq('id', id)
-    setSaving(false)
-    if (error) {
-      setSaveErr(error.code === '23505'
-        ? `Slug "${form.slug}" is already taken.`
-        : error.message)
-    } else {
-      // Refresh
-      const { data: updated } = await supabase.from('plant_projects').select('*').eq('id', id).single()
-      setProject(updated)
       const loc = locations.find(l => l.id === (form.location_id || null))
       setLocPath(loc?.full_path ?? null)
+      setProject(updated)
       setEditing(false)
+    } catch (err) {
+      const msg = err.message ?? ''
+      setSaveErr(
+        msg.includes('23505') || msg.toLowerCase().includes('already') || msg.toLowerCase().includes('duplicate')
+          ? `Slug "${form.slug}" is already taken.`
+          : msg || 'Failed to save.'
+      )
     }
+    setSaving(false)
   }
 
   if (loading) return <Shell><Spinner /></Shell>
@@ -308,7 +265,6 @@ export default function ProjectDetail() {
     <Shell>
       <Breadcrumb path={[{ label: 'Home', href: '/dashboard' }, { label: project.name, href: null }]} />
 
-      {/* Header row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, gap: 16 }}>
         <div>
           <h1 style={{ margin: '0 0 6px', color: P.green, fontSize: '1.4rem', fontWeight: 700 }}>
@@ -344,7 +300,6 @@ export default function ProjectDetail() {
         )}
       </div>
 
-      {/* Edit form */}
       {editing ? (
         <form onSubmit={handleSave} style={cardStyle}>
           <h2 style={{ margin: '0 0 18px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>Edit project</h2>
@@ -409,7 +364,6 @@ export default function ProjectDetail() {
           </div>
         </form>
       ) : (
-        /* View mode */
         <div style={cardStyle}>
           <Fields project={project} locPath={locPath} />
         </div>
@@ -437,7 +391,7 @@ export default function ProjectDetail() {
               <FormRow label="Name *">
                 <input required value={plantForm.name}
                   onChange={e => setPlantForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder='e.g. "Megatron Jalapeno" or "Serrano seedlings"'
+                  placeholder='"Megatron Jalapeno" or "Serrano seedlings"'
                   style={inputStyle} />
               </FormRow>
               <FormRow label="Quantity">
@@ -511,7 +465,6 @@ export default function ProjectDetail() {
 
       {/* ---- Event Log ---- */}
       <div style={{ marginTop: 28 }}>
-        {/* Section header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: P.dark }}>
             Event log
@@ -533,7 +486,6 @@ export default function ProjectDetail() {
           </button>
         </div>
 
-        {/* Log event form */}
         {showLogForm && (
           <form ref={logFormRef} onSubmit={handleLogEvent} style={{ ...cardStyle, marginBottom: 20 }}>
             {logErr && <ErrBanner msg={logErr} />}
@@ -625,7 +577,6 @@ export default function ProjectDetail() {
           </form>
         )}
 
-        {/* Timeline */}
         {eventsLoading ? (
           <div style={{ padding: '24px 0', textAlign: 'center', color: P.light, fontSize: '0.875rem' }}>Loading…</div>
         ) : events.length === 0 ? (
@@ -634,7 +585,6 @@ export default function ProjectDetail() {
           </div>
         ) : (
           <div style={{ position: 'relative' }}>
-            {/* Timeline spine */}
             <div style={{ position: 'absolute', left: 18, top: 0, bottom: 0, width: 2, backgroundColor: P.border }} />
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               {events.map((ev, i) => (
@@ -678,7 +628,6 @@ function Fields({ project: p, locPath }) {
   )
 }
 
-// ---- Event row ----
 function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
   const icon = EVENT_ICONS[ev.event_type] ?? '📝'
   const d = new Date(ev.event_date)
@@ -687,7 +636,6 @@ function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
   return (
     <Link to={`/projects/${projectId}/events/${ev.id}`}
       style={{ textDecoration: 'none', color: 'inherit', display: 'flex', gap: 14, paddingBottom: isLast ? 0 : 18 }}>
-      {/* Icon bubble */}
       <div style={{
         width: 36, height: 36, borderRadius: '50%',
         backgroundColor: P.white, border: `2px solid ${P.border}`,
@@ -697,7 +645,6 @@ function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
         {icon}
       </div>
 
-      {/* Content card */}
       <div style={{
         flex: 1, backgroundColor: P.white, border: `1px solid ${P.border}`,
         borderRadius: 8, padding: '10px 14px', marginBottom: isLast ? 0 : 2,
@@ -730,21 +677,8 @@ function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
                 </span>
               )}
             </div>
-            <div style={{ fontSize: '0.75rem', color: P.light, marginBottom: ev.notes || ev.private_notes ? 6 : 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ fontSize: '0.75rem', color: P.light, marginBottom: ev.notes || ev.private_notes ? 6 : 0 }}>
               {dateStr}
-              {ev.profiles?.display_name && (
-                <span
-                  title={ev.profiles.display_name}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    width: 18, height: 18, borderRadius: '50%',
-                    backgroundColor: ev.profiles.display_name === 'Dave' ? '#4a7fb5' : P.terra,
-                    color: P.white, fontSize: '0.62rem', fontWeight: 700, flexShrink: 0,
-                  }}
-                >
-                  {ev.profiles.display_name[0]}
-                </span>
-              )}
             </div>
             {ev.notes && (
               <p style={{ margin: '0 0 4px', color: P.mid, fontSize: '0.83rem', lineHeight: 1.5 }}>
@@ -778,7 +712,6 @@ function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
   )
 }
 
-// ---- Shared UI ----
 function daysAgo(dateStr) {
   const d = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000)
   return d === 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`

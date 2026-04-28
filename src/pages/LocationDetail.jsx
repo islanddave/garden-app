@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase.js'
+import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 
@@ -8,7 +8,6 @@ import Breadcrumb from '../components/Breadcrumb.jsx'
 //   - Sub-location list (children of this location) → V2
 //   - Edit/delete actions → V2 (currently managed from Locations list page)
 //   - Full hierarchy breadcrumb (Space → Zone → Area → ...) → V2
-//     (Breadcrumb component already supports it via the path array)
 
 function Shell({ children }) {
   return (
@@ -25,30 +24,26 @@ function Spinner() {
 export default function LocationDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { fetch } = useApiFetch()
   const [location, setLocation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     let mounted = true
-    async function load() {
-      const { data, error: e } = await supabase
-        .from('locations')
-        .select('*')
-        .eq('id', id)
-        .is('deleted_at', null)
-        .single()
-      if (!mounted) return
-      if (e || !data) {
-        setError(e?.message ?? 'Location not found')
-      } else {
+    fetch('/api/locations/' + id)
+      .then(data => {
+        if (!mounted) return
         setLocation(data)
-      }
-      setLoading(false)
-    }
-    load()
+        setLoading(false)
+      })
+      .catch(e => {
+        if (!mounted) return
+        setError(e.message ?? 'Location not found')
+        setLoading(false)
+      })
     return () => { mounted = false }
-  }, [id])
+  }, [id, fetch])
 
   if (loading) return <Shell><Spinner /></Shell>
   if (error) return (
