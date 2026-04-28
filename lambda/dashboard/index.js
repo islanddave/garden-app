@@ -60,7 +60,7 @@ export const handler = async (event) => {
           pr.display_name
         FROM event_log e
         JOIN plant_projects pp ON pp.id = e.project_id
-        LEFT JOIN profiles pr ON pr.user_id = e.logged_by
+        LEFT JOIN profiles pr ON pr.id = e.logged_by
         WHERE pp.created_by = ${userId}
           AND e.deleted_at IS NULL
         ORDER BY e.created_at DESC
