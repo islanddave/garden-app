@@ -66,7 +66,6 @@ export const handler = async (event) => {
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
         const rows = await sql`
-          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           UPDATE locations
           SET
             name        = COALESCE(${body.name ?? null}, name),
@@ -84,7 +83,6 @@ export const handler = async (event) => {
 
       if (method === 'DELETE') {
         await sql`
-          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           UPDATE locations
           SET deleted_at = NOW()
           WHERE id = ${locId}
@@ -131,7 +129,6 @@ export const handler = async (event) => {
         body.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
       const rows = await sql`
-        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         INSERT INTO locations
           (name, slug, level, type_label, parent_id, sort_order, description)
         VALUES (

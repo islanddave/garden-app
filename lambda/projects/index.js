@@ -53,7 +53,6 @@ export const handler = async (event) => {
       if (method === 'GET') {
         const [projectRows, plantCountRows, eventCountRows] = await Promise.all([
           sql`
-            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT id, name, slug, status, variety, description, start_date,
                    is_public, location_id, created_at, updated_at, created_by
             FROM plant_projects
@@ -62,14 +61,12 @@ export const handler = async (event) => {
               AND deleted_at IS NULL
           `,
           sql`
-            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT COUNT(*)::int AS count
             FROM plants
             WHERE project_id = ${projectId}
               AND deleted_at IS NULL
           `,
           sql`
-            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT COUNT(*)::int AS count
             FROM event_log
             WHERE project_id = ${projectId}
@@ -87,7 +84,6 @@ export const handler = async (event) => {
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
         const rows = await sql`
-          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           UPDATE plant_projects
           SET
             name        = COALESCE(${body.name ?? null}, name),
@@ -108,7 +104,6 @@ export const handler = async (event) => {
 
       if (method === 'DELETE') {
         await sql`
-          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           UPDATE plant_projects
           SET deleted_at = NOW()
           WHERE id = ${projectId}
@@ -123,7 +118,6 @@ export const handler = async (event) => {
 
     if (method === 'GET') {
       const rows = await sql`
-        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         SELECT id, name, slug, status, variety, start_date, is_public, location_id,
                created_at, updated_at
         FROM plant_projects
@@ -138,7 +132,6 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.name) return resp(400, { error: 'name is required' });
       const rows = await sql`
-        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         INSERT INTO plant_projects
           (name, slug, status, variety, description, start_date, is_public, location_id, created_by)
         VALUES (
