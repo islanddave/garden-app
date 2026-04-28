@@ -5,7 +5,15 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'us-east-1' });
+// requestChecksumCalculation/responseChecksumValidation: newer SDK v3 versions (3.679+) default
+// to injecting x-amz-checksum-mode=ENABLED into GetObject presigned URLs as a query param.
+// S3 only accepts that header on actual requests, not presigned URL query strings — causes 403.
+// WHEN_REQUIRED suppresses the injection entirely for presigned GET URLs.
+const s3 = new S3Client({
+  region: process.env.AWS_REGION ?? 'us-east-1',
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
+});
 const BUCKET = process.env.S3_PHOTOS_BUCKET || 'garden-photos-prod';
 
 let _secrets = null;
