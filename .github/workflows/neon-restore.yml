@@ -55,13 +55,10 @@ jobs:
           echo "Dump size: $(du -sh $DUMP_FILE | cut -f1)"
           echo "DUMP_FILE=$DUMP_FILE" >> "$GITHUB_ENV"
 
-      - name: Get Neon connection string from Secrets Manager
+      - name: Set Neon connection string
         run: |
-          NEON_URL=$(aws secretsmanager get-secret-value \
-            --secret-id garden-app/neon-database-url \
-            --query SecretString --output text)
-          echo "NEON_DATABASE_URL=$NEON_URL" >> "$GITHUB_ENV"
-          echo "Neon connection string retrieved"
+          echo "NEON_DATABASE_URL=${{ secrets.NEON_DATABASE_URL }}" >> "$GITHUB_ENV"
+          echo "Neon connection string set"
 
       - name: pg_restore to Neon
         # --single-transaction: all-or-nothing. If any object fails, full rollback.
