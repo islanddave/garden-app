@@ -36,6 +36,7 @@ export function useInventory() {
 
   const load = useCallback(async () => {
     if (!user) { setLoading(false); return }
+    if (!supabase) { setError('Inventory temporarily unavailable.'); setLoading(false); return }
     setLoading(true)
     setError(null)
     const { data, error: err } = await supabase
