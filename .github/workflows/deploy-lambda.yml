@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'lambdas/**'
+      - 'lambda/**'
   workflow_dispatch:
 
 permissions:
@@ -20,8 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # One job per Lambda function directory under lambda/
         function: [projects, plants, locations, events, favorites, photos, dashboard]
+      # Deploy functions in parallel; reduce max-parallel if Lambda rate limits hit
       max-parallel: 4
+      fail-fast: false
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -29,6 +32,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.19.0'
+          # no root-level lockfile — caching disabled for lambda subdirs
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -38,15 +42,16 @@ jobs:
 
       - name: Build and zip ${{ matrix.function }}
         run: |
-          cd lambdas/${{ matrix.function }}
+          cd lambda/${{ matrix.function }}
           npm install --omit=dev
           zip -r ../${{ matrix.function }}.zip .
 
       - name: Deploy or create ${{ matrix.function }}
         run: |
           FUNCTION_NAME="garden-${{ matrix.function }}"
-          ZIP_FILE="fileb://lambdas/${{ matrix.function }}.zip"
+          ZIP_FILE="fileb://lambda/${{ matrix.function }}.zip"
 
+          # Check if function exists; create on first deploy, update thereafter
           if aws lambda get-function --function-name "$FUNCTION_NAME" 2>/dev/null; then
             echo "Updating existing function: $FUNCTION_NAME"
             aws lambda update-function-code \
@@ -70,7 +75,17 @@ jobs:
             --function-name "garden-${{ matrix.function }}"
           echo "garden-${{ matrix.function }} is active"
 
-# Env vars (DATABASE_URL, CLERK_SECRET_KEY) are managed via AWS Console / CloudShell.
-# update-function-code does not reset env vars, so they persist across deployments.
-# Re-apply via CloudShell if a function is recreated from scratch.
+      - name: Clear Lambda URL CORS config (handler owns CORS)
+        continue-on-error: true  # requires lambda:UpdateFunctionUrlConfig on deploy role — add to IAM if missing
+        run: |
+          # Handler code sets CORS headers on every response.
+          # Lambda URL CORS config must be empty — duplicate headers break browsers.
+          aws lambda update-function-url-config \
+            --function-name "garden-${{ matrix.function }}" \
+            --cors '{"AllowOrigins":[],"AllowHeaders":[],"AllowMethods":[]}'
+          echo "CORS config cleared for garden-${{ matrix.function }}"
 
+# Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
+# at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).
+# These are NOT injected as GitHub Actions env vars — no DB credentials touch GitHub.
+# Lambda execution role requires secretsmanager:GetSecretValue on arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:garden-app/*
