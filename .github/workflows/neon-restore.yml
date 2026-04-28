@@ -1,0 +1,98 @@
+name: Neon Restore (DB-MIGRATE-2)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dump_date:
+        description: 'Dump date to restore (YYYYMMDD) — defaults to today'
+        required: false
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install postgresql-client-17
+        # Neon runs PostgreSQL 17. pg_restore must be >= server version.
+        # Ubuntu runners don't ship pg17 — add PGDG apt repo first.
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client-17
+          pg_restore --version
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Resolve dump date
+        run: |
+          if [ -n "${{ github.event.inputs.dump_date }}" ]; then
+            DUMP_DATE="${{ github.event.inputs.dump_date }}"
+          else
+            DUMP_DATE=$(date +%Y%m%d)
+          fi
+          echo "DUMP_DATE=$DUMP_DATE" >> "$GITHUB_ENV"
+          echo "Using dump date: $DUMP_DATE"
+
+      - name: Download dump from S3
+        run: |
+          S3_KEY="db/garden-${DUMP_DATE}.dump"
+          DUMP_FILE="/tmp/garden-${DUMP_DATE}.dump"
+          echo "Downloading s3://${{ vars.BACKUP_BUCKET_NAME }}/$S3_KEY"
+          aws s3 cp "s3://${{ vars.BACKUP_BUCKET_NAME }}/$S3_KEY" "$DUMP_FILE"
+          echo "Dump size: $(du -sh $DUMP_FILE | cut -f1)"
+          echo "DUMP_FILE=$DUMP_FILE" >> "$GITHUB_ENV"
+
+      - name: Get Neon connection string from Secrets Manager
+        run: |
+          NEON_URL=$(aws secretsmanager get-secret-value \
+            --secret-id garden-app/neon-database-url \
+            --query SecretString --output text)
+          echo "NEON_DATABASE_URL=$NEON_URL" >> "$GITHUB_ENV"
+          echo "Neon connection string retrieved"
+
+      - name: pg_restore to Neon
+        # --single-transaction: all-or-nothing. If any object fails, full rollback.
+        # --no-owner: Supabase owners (postgres, supabase_admin) don't exist on Neon.
+        # --no-acl: Supabase GRANTs reference roles that don't exist on Neon.
+        # --schema=public: restore only public schema (exclude Supabase internals).
+        # auth stub + uuid-ossp + current_user_id() must exist before this runs
+        # (applied by neon-pre-restore.sql in the migration session).
+        run: |
+          pg_restore \
+            --dbname="$NEON_DATABASE_URL" \
+            --schema=public \
+            --no-owner \
+            --no-acl \
+            --single-transaction \
+            -Fc "$DUMP_FILE" \
+          && echo "pg_restore: SUCCESS — 0 errors" \
+          || { echo "pg_restore: FAILED"; exit 1; }
+
+      - name: Row count spot-check
+        # Quick sanity check — full verification runs in neon-post-restore.sql
+        run: |
+          psql "$NEON_DATABASE_URL" -c "
+            SELECT 'plant_projects' AS tbl, COUNT(*) FROM public.plant_projects
+            UNION ALL SELECT 'plants',        COUNT(*) FROM public.plants
+            UNION ALL SELECT 'event_log',     COUNT(*) FROM public.event_log
+            UNION ALL SELECT 'profiles',      COUNT(*) FROM public.profiles
+            UNION ALL SELECT 'locations',     COUNT(*) FROM public.locations
+            ORDER BY tbl;
+          "
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/garden-*.dump
