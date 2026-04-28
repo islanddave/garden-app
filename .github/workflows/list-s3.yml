@@ -1,0 +1,22 @@
+name: List S3 Photos Bucket
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: List bucket contents
+        run: |
+          echo "=== Bucket summary ==="
+          aws s3 ls s3://garden-photos-prod/ --recursive --summarize | tail -5
+          echo ""
+          echo "=== First 20 objects ==="
+          aws s3 ls s3://garden-photos-prod/ --recursive | head -20
