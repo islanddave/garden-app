@@ -44,6 +44,11 @@ export default function TasksV2() {
   }
 
   const load = useCallback(async () => {
+    if (!supabase) {
+      setError('Tasks temporarily unavailable — coming soon via Lambda.')
+      setLoading(false)
+      return
+    }
     const [
       { data: taskData,  error: tErr },
       { data: locData,   error: lErr },
