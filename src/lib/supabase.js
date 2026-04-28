@@ -6,7 +6,11 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 // Supabase client retained for inventory_items and tasks (no Lambdas deployed yet).
 // TODO DB-MIGRATE-INVENTORY: remove when /api/inventory Lambda is deployed.
 // TODO DB-MIGRATE-TASKS: remove when /api/tasks Lambda is deployed.
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Guard: env vars not injected in production build (Supabase paused — tasks/inventory Lambdas pending).
+// TODO DB-MIGRATE-TASKS, DB-MIGRATE-INVENTORY: remove guard when Lambdas deployed and env vars dropped.
+export const supabase = (supabaseUrl && supabaseAnonKey)
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null;
 
 // getPhotoUrl removed — photos now include view_url from the photos Lambda (signed S3 URL).
 // Remove any remaining imports of getPhotoUrl from callers.
