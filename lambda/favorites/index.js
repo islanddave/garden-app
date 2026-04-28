@@ -44,8 +44,6 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
 
   try {
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
-
     // GET /api/favorites — list user's favorites, optionally filtered by entity_type
     if (method === 'GET') {
       const entityType = event.queryStringParameters?.entity_type ?? null;
@@ -81,7 +79,9 @@ export const handler = async (event) => {
 
       if (existing.length) {
         await sql`
+          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           DELETE FROM favorites
+          USING _
           WHERE user_id = ${userId}
             AND entity_type = ${body.entity_type}
             AND entity_id = ${body.entity_id}
@@ -89,8 +89,9 @@ export const handler = async (event) => {
         return resp(200, { favorited: false, entity_type: body.entity_type, entity_id: body.entity_id });
       } else {
         await sql`
+          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           INSERT INTO favorites (user_id, entity_type, entity_id)
-          VALUES (${userId}, ${body.entity_type}, ${body.entity_id})
+          SELECT ${userId}, ${body.entity_type}, ${body.entity_id} FROM _
         `;
         return resp(201, { favorited: true, entity_type: body.entity_type, entity_id: body.entity_id });
       }
