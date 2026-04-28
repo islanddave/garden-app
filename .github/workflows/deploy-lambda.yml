@@ -24,6 +24,7 @@ jobs:
         function: [projects, plants, locations, events, favorites, photos, dashboard]
       # Deploy functions in parallel; reduce max-parallel if Lambda rate limits hit
       max-parallel: 4
+      fail-fast: false
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -73,6 +74,15 @@ jobs:
           aws lambda wait function-updated \
             --function-name "garden-${{ matrix.function }}"
           echo "garden-${{ matrix.function }} is active"
+
+      - name: Clear Lambda URL CORS config (handler owns CORS)
+        run: |
+          # Handler code sets CORS headers on every response.
+          # Lambda URL CORS config must be empty — duplicate headers break browsers.
+          aws lambda update-function-url-config \
+            --function-name "garden-${{ matrix.function }}" \
+            --cors '{"AllowOrigins":[],"AllowHeaders":[],"AllowMethods":[]}'
+          echo "CORS config cleared for garden-${{ matrix.function }}"
 
 # Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
 # at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).
