@@ -4,7 +4,6 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
-// Cached at module scope — one cold-start fetch per Lambda container lifetime
 let _secrets = null;
 async function getSecrets() {
   if (_secrets) return _secrets;
@@ -35,7 +34,6 @@ export const handler = async (event) => {
 
   const secrets = await getSecrets();
 
-  // Verify Clerk JWT
   const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
   const token = authHeader.replace(/^Bearer\s+/i, '');
   let userId;
@@ -50,19 +48,16 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/projects';
 
-  // Route: /api/projects/:id
   const idMatch = rawPath.match(/^\/api\/projects\/([^/]+)$/);
 
   try {
-    // SET LOCAL so RLS current_user_id() resolves to this user's Clerk ID
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
-
     if (idMatch) {
       const projectId = idMatch[1];
 
       if (method === 'GET') {
         const [projectRows, plantCountRows, eventCountRows] = await Promise.all([
           sql`
+            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT id, name, slug, status, variety, description, start_date,
                    is_public, location_id, created_at, updated_at, created_by
             FROM plant_projects
@@ -71,12 +66,14 @@ export const handler = async (event) => {
               AND deleted_at IS NULL
           `,
           sql`
+            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT COUNT(*)::int AS count
             FROM plants
             WHERE project_id = ${projectId}
               AND deleted_at IS NULL
           `,
           sql`
+            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT COUNT(*)::int AS count
             FROM event_log
             WHERE project_id = ${projectId}
@@ -94,6 +91,7 @@ export const handler = async (event) => {
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
         const rows = await sql`
+          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           UPDATE plant_projects
           SET
             name        = COALESCE(${body.name ?? null}, name),
@@ -114,6 +112,7 @@ export const handler = async (event) => {
 
       if (method === 'DELETE') {
         await sql`
+          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           UPDATE plant_projects
           SET deleted_at = NOW()
           WHERE id = ${projectId}
@@ -126,9 +125,9 @@ export const handler = async (event) => {
       return resp(405, { error: 'Method not allowed' });
     }
 
-    // Route: /api/projects
     if (method === 'GET') {
       const rows = await sql`
+        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         SELECT id, name, slug, status, variety, start_date, is_public, location_id,
                created_at, updated_at
         FROM plant_projects
@@ -143,6 +142,7 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.name) return resp(400, { error: 'name is required' });
       const rows = await sql`
+        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         INSERT INTO plant_projects
           (name, slug, status, variety, description, start_date, is_public, location_id, created_by)
         VALUES (
