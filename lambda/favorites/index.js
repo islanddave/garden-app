@@ -44,57 +44,57 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
 
   try {
-    // GET /api/favorites — list user's favorites, optionally filtered by entity_type
+    // GET /api/favorites
+    // With entity_type+entity_id: returns {favorited:bool} for single-entity check
+    // Without: returns array of all user favorites
     if (method === 'GET') {
       const entityType = event.queryStringParameters?.entity_type ?? null;
-      const rows = entityType
-        ? await sql`
-            SELECT id, entity_type, entity_id, created_at
-            FROM favorites
-            WHERE user_id = ${userId}
-              AND entity_type = ${entityType}
-            ORDER BY created_at DESC
-          `
-        : await sql`
-            SELECT id, entity_type, entity_id, created_at
-            FROM favorites
-            WHERE user_id = ${userId}
-            ORDER BY entity_type, created_at DESC
-          `;
+      const entityId   = event.queryStringParameters?.entity_id   ?? null;
+      if (entityType && entityId) {
+        const rows = await sql`
+          SELECT id FROM favorites
+          WHERE user_id = ${userId}
+            AND entity_type = ${entityType}
+            AND entity_id = ${entityId}::uuid
+        `;
+        return resp(200, { favorited: rows.length > 0, id: rows[0]?.id ?? null });
+      }
+      const rows = await sql`
+        SELECT id, entity_type, entity_id, created_at
+        FROM favorites
+        WHERE user_id = ${userId}
+        ORDER BY entity_type, created_at DESC
+      `;
       return resp(200, rows);
     }
 
-    // POST /api/favorites — toggle: insert if absent, delete if present
+    // POST /api/favorites — upsert (insert or ignore if already favorited)
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.entity_type) return resp(400, { error: 'entity_type is required' });
-      if (!body.entity_id) return resp(400, { error: 'entity_id is required' });
-
-      const existing = await sql`
-        SELECT id FROM favorites
-        WHERE user_id = ${userId}
-          AND entity_type = ${body.entity_type}
-          AND entity_id = ${body.entity_id}
+      if (!body.entity_id)   return resp(400, { error: 'entity_id is required' });
+      const rows = await sql`
+        INSERT INTO favorites (user_id, entity_type, entity_id)
+        VALUES (${userId}, ${body.entity_type}, ${body.entity_id}::uuid)
+        ON CONFLICT (user_id, entity_type, entity_id) DO NOTHING
+        RETURNING id
       `;
+      const id = rows[0]?.id ?? null;
+      return resp(201, { favorited: true, id, entity_type: body.entity_type, entity_id: body.entity_id });
+    }
 
-      if (existing.length) {
-        await sql`
-          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
-          DELETE FROM favorites
-          USING _
-          WHERE user_id = ${userId}
-            AND entity_type = ${body.entity_type}
-            AND entity_id = ${body.entity_id}
-        `;
-        return resp(200, { favorited: false, entity_type: body.entity_type, entity_id: body.entity_id });
-      } else {
-        await sql`
-          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
-          INSERT INTO favorites (user_id, entity_type, entity_id)
-          SELECT ${userId}, ${body.entity_type}, ${body.entity_id} FROM _
-        `;
-        return resp(201, { favorited: true, entity_type: body.entity_type, entity_id: body.entity_id });
-      }
+    // DELETE /api/favorites?entity_type=x&entity_id=y
+    if (method === 'DELETE') {
+      const entityType = event.queryStringParameters?.entity_type ?? null;
+      const entityId   = event.queryStringParameters?.entity_id   ?? null;
+      if (!entityType || !entityId) return resp(400, { error: 'entity_type and entity_id are required' });
+      await sql`
+        DELETE FROM favorites
+        WHERE user_id = ${userId}
+          AND entity_type = ${entityType}
+          AND entity_id = ${entityId}::uuid
+      `;
+      return resp(200, { favorited: false, entity_type: entityType, entity_id: entityId });
     }
 
     return resp(405, { error: 'Method not allowed' });
