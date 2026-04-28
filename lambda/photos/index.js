@@ -6,7 +6,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'us-east-1' });
-const BUCKET = process.env.PHOTOS_BUCKET_NAME;
+const BUCKET = process.env.S3_PHOTOS_BUCKET;
 
 let _secrets = null;
 async function getSecrets() {
@@ -68,13 +68,14 @@ export const handler = async (event) => {
 
   try {
     // GET /api/photos/upload-url — returns pre-signed S3 PUT URL for browser upload
-    // Query params: ext (file extension), content_type (MIME type)
+    // Query params: key (full S3 key, caller-generated), content_type (MIME type)
     if (rawPath === '/api/photos/upload-url' && method === 'GET') {
-      const ext = event.queryStringParameters?.ext ?? 'jpg';
+      const key = event.queryStringParameters?.key;
       const contentType = event.queryStringParameters?.content_type ?? 'image/jpeg';
-      const photoId = crypto.randomUUID();
-      const { url, key } = await getUploadUrl(photoId, ext, contentType);
-      return resp(200, { upload_url: url, storage_path: key, photo_id: photoId });
+      if (!key) return resp(400, { error: 'key is required' });
+      const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType });
+      const upload_url = await getSignedUrl(s3, cmd, { expiresIn: 300 });
+      return resp(200, { upload_url, key });
     }
 
     // GET /api/photos/view-url/:id — returns pre-signed GET URL for a photo record
