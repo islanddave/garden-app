@@ -17,11 +17,7 @@ async function getSecrets() {
   return _secrets;
 }
 
-const CORS = {
-  'Access-Control-Allow-Origin': 'https://garden.futureishere.net',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-};
+const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 function resp(statusCode, body) {
   return {
@@ -71,8 +67,6 @@ export const handler = async (event) => {
   const rawPath = event.rawPath ?? '/api/photos';
 
   try {
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
-
     // GET /api/photos/upload-url — returns pre-signed S3 PUT URL for browser upload
     // Query params: ext (file extension), content_type (MIME type)
     if (rawPath === '/api/photos/upload-url' && method === 'GET') {
