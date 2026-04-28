@@ -4,7 +4,6 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
-// Cached at module scope — one cold-start fetch per Lambda container lifetime
 let _secrets = null;
 async function getSecrets() {
   if (_secrets) return _secrets;
@@ -14,11 +13,7 @@ async function getSecrets() {
   return _secrets;
 }
 
-const CORS = {
-  'Access-Control-Allow-Origin': 'https://garden.futureishere.net',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-};
+const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 function resp(statusCode, body, extra = {}) {
   return {
@@ -35,7 +30,6 @@ export const handler = async (event) => {
 
   const secrets = await getSecrets();
 
-  // Verify Clerk JWT
   const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
   const token = authHeader.replace(/^Bearer\s+/i, '');
   let userId;
@@ -50,13 +44,9 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/projects';
 
-  // Route: /api/projects/:id
   const idMatch = rawPath.match(/^\/api\/projects\/([^/]+)$/);
 
   try {
-    // SET LOCAL so RLS current_user_id() resolves to this user's Clerk ID
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
-
     if (idMatch) {
       const projectId = idMatch[1];
 
@@ -126,7 +116,6 @@ export const handler = async (event) => {
       return resp(405, { error: 'Method not allowed' });
     }
 
-    // Route: /api/projects
     if (method === 'GET') {
       const rows = await sql`
         SELECT id, name, slug, status, variety, start_date, is_public, location_id,
