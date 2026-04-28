@@ -64,7 +64,7 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/locations';
 
-  const idMatch = rawPath.match(/^\/api\/locations\/([^/]+)$/);
+  const idMatch = rawPath !== '/api/locations/with-path' && rawPath.match(/^\/api\/locations\/([^/]+)$/);
 
   try {
     await sql`SELECT set_config('app.user_id', ${userId}, true)`;
@@ -121,7 +121,7 @@ export const handler = async (event) => {
           ORDER BY full_path
         `,
       ]);
-      return resp(200, { locations: locRows, locations_with_path: pathRows });
+      return resp(200, rawPath === "/api/locations/with-path" ? pathRows : { locations: locRows, locations_with_path: pathRows });
     }
 
     if (method === 'POST') {
