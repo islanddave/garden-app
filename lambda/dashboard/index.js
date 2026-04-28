@@ -13,11 +13,7 @@ async function getSecrets() {
   return _secrets;
 }
 
-const CORS = {
-  'Access-Control-Allow-Origin': 'https://garden.futureishere.net',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-};
+const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 function resp(statusCode, body) {
   return {
@@ -50,16 +46,12 @@ export const handler = async (event) => {
   const sql = neon(secrets.NEON_DATABASE_URL);
 
   try {
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
-
-    // All dashboard queries run in parallel
     const [
       recentEvents,
       counts,
       favCount,
+      activeProjects,
     ] = await Promise.all([
-      // Recent event log entries (last 5), with project name and display_name attribution.
-      // profiles.display_name: assumed column on profiles table keyed by user_id TEXT.
       sql`
         SELECT
           e.id, e.event_type, e.event_date, e.created_at,
@@ -67,13 +59,12 @@ export const handler = async (event) => {
           pr.display_name
         FROM event_log e
         JOIN plant_projects pp ON pp.id = e.project_id
-        LEFT JOIN profiles pr ON pr.user_id = e.logged_by
+        LEFT JOIN profiles pr ON pr.id = e.logged_by
         WHERE pp.created_by = ${userId}
           AND e.deleted_at IS NULL
         ORDER BY e.created_at DESC
         LIMIT 5
       `,
-      // Aggregate counts for projects / plants / locations owned by this user
       sql`
         SELECT
           (
@@ -93,16 +84,24 @@ export const handler = async (event) => {
             WHERE deleted_at IS NULL
           ) AS location_count
       `,
-      // Favorites count for this user
       sql`
         SELECT COUNT(*)::int AS count
         FROM favorites
         WHERE user_id = ${userId}
       `,
+      sql`
+        SELECT id, name, status, variety, start_date,
+               last_watered_at, last_observed_at, last_fertilized_at
+        FROM plant_projects
+        WHERE created_by = ${userId}
+          AND deleted_at IS NULL
+        ORDER BY created_at DESC
+      `,
     ]);
 
     return resp(200, {
       recent_events: recentEvents,
+      active_projects: activeProjects,
       counts: {
         projects:  counts[0].project_count,
         plants:    counts[0].plant_count,
