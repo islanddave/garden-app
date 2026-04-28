@@ -50,7 +50,7 @@ export default function Favorites() {
       }
 
       // TODO DB-MIGRATE-INVENTORY: migrate when /api/inventory Lambda deployed
-      if (byType.inventory_item) {
+      if (byType.inventory_item && supabase) {
         const { data } = await supabase
           .from('inventory_items').select('id, name, type, status')
           .in('id', byType.inventory_item).is('deleted_at', null)
@@ -58,7 +58,7 @@ export default function Favorites() {
       }
 
       // TODO DB-MIGRATE-PLANTS: migrate when /api/plants supports batch-by-ids
-      if (byType.plant) {
+      if (byType.plant && supabase) {
         const { data } = await supabase
           .from('plants').select('id, name, variety, quantity, status')
           .in('id', byType.plant).is('deleted_at', null)
