@@ -35,37 +35,41 @@ export class AuthError extends Error {
 }
 
 // Standard Lambda response helpers
+// NOTE: No CORS headers here — Lambda Function URL handles CORS.
+// Adding them here causes duplicate Access-Control-Allow-Origin headers
+// which browsers reject.
 export const ok = (body) => ({
   statusCode: 200,
-  headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(body),
 });
 
 export const created = (body) => ({
   statusCode: 201,
-  headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(body),
 });
 
 export const noContent = () => ({
   statusCode: 204,
-  headers: { 'Access-Control-Allow-Origin': '*' },
+  headers: {},
   body: '',
 });
 
 export const err = (status, message) => ({
   statusCode: status,
-  headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ error: message }),
 });
 
-// CORS preflight — all Lambda handlers return this for OPTIONS
+// CORS preflight — Function URL handles OPTIONS before invoking Lambda,
+// so this is kept as a safety fallback but should never be reached.
 export const corsPreflight = () => ({
   statusCode: 200,
   headers: {
-    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   },
   body: '',
 });
+
