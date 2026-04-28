@@ -154,7 +154,7 @@ export const handler = async (event) => {
       const rows = await sql`
         INSERT INTO photos
           (project_id, event_id, location_id, plant_id,
-           storage_path, caption, is_public, uploaded_by)
+           storage_path, caption, is_public, uploaded_by, created_by)
         VALUES (
           ${body.project_id ?? null},
           ${body.event_id ?? null},
@@ -163,6 +163,7 @@ export const handler = async (event) => {
           ${body.storage_path},
           ${body.caption ?? null},
           ${body.is_public ?? true},
+          ${userId},
           ${userId}
         )
         RETURNING *
