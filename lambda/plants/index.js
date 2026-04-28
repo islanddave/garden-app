@@ -13,11 +13,7 @@ async function getSecrets() {
   return _secrets;
 }
 
-const CORS = {
-  'Access-Control-Allow-Origin': 'https://garden.futureishere.net',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-};
+const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 function resp(statusCode, body) {
   return {
@@ -51,8 +47,6 @@ export const handler = async (event) => {
   const idMatch = rawPath.match(/^\/api\/plants\/([^/]+)$/);
 
   try {
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
-
     if (idMatch) {
       const plantId = idMatch[1];
 
@@ -110,9 +104,7 @@ export const handler = async (event) => {
       return resp(405, { error: 'Method not allowed' });
     }
 
-    // /api/plants
     if (method === 'GET') {
-      // Optional filter by project_id
       const projectId = event.queryStringParameters?.project_id ?? null;
       const rows = projectId
         ? await sql`
