@@ -51,13 +51,12 @@ export const handler = async (event) => {
   const idMatch = rawPath.match(/^\/api\/events\/([^/]+)$/);
 
   try {
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
-
     if (idMatch) {
       const eventId = idMatch[1];
 
       if (method === 'GET') {
         const rows = await sql`
+          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           SELECT
             e.id, e.project_id, e.location_id, e.plant_id,
             e.event_type, e.event_date, e.notes, e.private_notes,
@@ -83,6 +82,7 @@ export const handler = async (event) => {
 
       const rows = projectId
         ? await sql`
+            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT
               e.id, e.project_id, e.location_id, e.plant_id,
               e.event_type, e.event_date, e.notes,
@@ -97,6 +97,7 @@ export const handler = async (event) => {
             LIMIT ${limit}
           `
         : await sql`
+            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT
               e.id, e.project_id, e.location_id, e.plant_id,
               e.event_type, e.event_date, e.notes,
@@ -124,6 +125,7 @@ export const handler = async (event) => {
 
       // Insert event
       const eventRows = await sql`
+        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         INSERT INTO event_log
           (project_id, location_id, plant_id, event_type, event_date,
            notes, private_notes, quantity, is_public, logged_by)
@@ -149,6 +151,7 @@ export const handler = async (event) => {
       // This is a best-effort operation — non-fatal on failure
       try {
         await sql`
+          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           INSERT INTO user_stats (user_id, event_count, last_event_date, xp, streak)
           VALUES (${userId}, 1, CURRENT_DATE, 10, 1)
           ON CONFLICT (user_id) DO UPDATE
