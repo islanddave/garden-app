@@ -50,17 +50,14 @@ export const handler = async (event) => {
   const sql = neon(secrets.NEON_DATABASE_URL);
 
   try {
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
-
-    // All dashboard queries run in parallel
+    // set_config CTE in each query — neon HTTP driver has no persistent session; each sql`` is its own transaction
     const [
       recentEvents,
       counts,
       favCount,
     ] = await Promise.all([
-      // Recent event log entries (last 5), with project name and display_name attribution.
-      // profiles.display_name: assumed column on profiles table keyed by user_id TEXT.
       sql`
+        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         SELECT
           e.id, e.event_type, e.event_date, e.created_at,
           pp.name AS project_name,
@@ -73,8 +70,8 @@ export const handler = async (event) => {
         ORDER BY e.created_at DESC
         LIMIT 5
       `,
-      // Aggregate counts for projects / plants / locations owned by this user
       sql`
+        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         SELECT
           (
             SELECT COUNT(*)::int
@@ -93,8 +90,8 @@ export const handler = async (event) => {
             WHERE deleted_at IS NULL
           ) AS location_count
       `,
-      // Favorites count for this user
       sql`
+        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         SELECT COUNT(*)::int AS count
         FROM favorites
         WHERE user_id = ${userId}
