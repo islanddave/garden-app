@@ -47,14 +47,17 @@ export const handler = async (event) => {
   const sql = neon(secrets.NEON_DATABASE_URL);
   const method = event.requestContext?.http?.method ?? 'GET';
 
-  try {
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
+  // NOTE: neon() uses HTTP mode — each sql`` call is its own connection/transaction.
+  // set_config with is_local=true is transaction-scoped and does NOT persist across calls.
+  // Fix: inline set_config via CTE in every query so the GUC is set in the same transaction
+  // as the RLS check. Removing the standalone set_config call at the top.
 
-    // GET /api/favorites — list user's favorites, optionally filtered by entity_type
+  try {
     if (method === 'GET') {
       const entityType = event.queryStringParameters?.entity_type ?? null;
       const rows = entityType
         ? await sql`
+            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT id, entity_type, entity_id, created_at
             FROM favorites
             WHERE user_id = ${userId}
@@ -62,6 +65,7 @@ export const handler = async (event) => {
             ORDER BY created_at DESC
           `
         : await sql`
+            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT id, entity_type, entity_id, created_at
             FROM favorites
             WHERE user_id = ${userId}
@@ -70,13 +74,13 @@ export const handler = async (event) => {
       return resp(200, rows);
     }
 
-    // POST /api/favorites — toggle: insert if absent, delete if present
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.entity_type) return resp(400, { error: 'entity_type is required' });
       if (!body.entity_id) return resp(400, { error: 'entity_id is required' });
 
       const existing = await sql`
+        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         SELECT id FROM favorites
         WHERE user_id = ${userId}
           AND entity_type = ${body.entity_type}
@@ -85,6 +89,7 @@ export const handler = async (event) => {
 
       if (existing.length) {
         await sql`
+          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           DELETE FROM favorites
           WHERE user_id = ${userId}
             AND entity_type = ${body.entity_type}
@@ -93,8 +98,9 @@ export const handler = async (event) => {
         return resp(200, { favorited: false, entity_type: body.entity_type, entity_id: body.entity_id });
       } else {
         await sql`
+          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           INSERT INTO favorites (user_id, entity_type, entity_id)
-          VALUES (${userId}, ${body.entity_type}, ${body.entity_id})
+          SELECT ${userId}, ${body.entity_type}, ${body.entity_id}
         `;
         return resp(201, { favorited: true, entity_type: body.entity_type, entity_id: body.entity_id });
       }
