@@ -51,13 +51,12 @@ export const handler = async (event) => {
   const idMatch = rawPath.match(/^\/api\/plants\/([^/]+)$/);
 
   try {
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
-
     if (idMatch) {
       const plantId = idMatch[1];
 
       if (method === 'GET') {
         const rows = await sql`
+          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
                  p.status, p.notes, p.project_id, p.created_at, p.updated_at,
                  pp.name AS project_name
@@ -74,6 +73,7 @@ export const handler = async (event) => {
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
         const rows = await sql`
+          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           UPDATE plants p
           SET
             name     = COALESCE(${body.name ?? null}, p.name),
@@ -96,6 +96,7 @@ export const handler = async (event) => {
 
       if (method === 'DELETE') {
         await sql`
+          WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
           UPDATE plants p
           SET deleted_at = NOW()
           FROM plant_projects pp
@@ -110,12 +111,11 @@ export const handler = async (event) => {
       return resp(405, { error: 'Method not allowed' });
     }
 
-    // /api/plants
     if (method === 'GET') {
-      // Optional filter by project_id
       const projectId = event.queryStringParameters?.project_id ?? null;
       const rows = projectId
         ? await sql`
+            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
                    p.status, p.notes, p.project_id, p.created_at,
                    pp.name AS project_name
@@ -127,6 +127,7 @@ export const handler = async (event) => {
             ORDER BY p.created_at DESC
           `
         : await sql`
+            WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
             SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
                    p.status, p.notes, p.project_id, p.created_at,
                    pp.name AS project_name
@@ -145,6 +146,7 @@ export const handler = async (event) => {
       if (!body.project_id) return resp(400, { error: 'project_id is required' });
       const qty = parseInt(body.quantity, 10);
       const rows = await sql`
+        WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         INSERT INTO plants
           (project_id, name, genus, species, variety, quantity, status, notes, created_by)
         VALUES (
