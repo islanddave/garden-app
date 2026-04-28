@@ -50,14 +50,14 @@ export default function Dashboard() {
       if (tErr) throw tErr
       if (!isMounted) return
 
-      const activeProjects = (dashData.projects ?? []).filter(p =>
+      const activeProjects = (dashData.active_projects ?? []).filter(p =>
         LOGGABLE_STATUSES.includes(p.status)
       )
       setProjects(activeProjects)
       setTasks(taskData ?? [])
 
       // Build recentEvents — Lambda returns project_name inline (not nested join)
-      setRecentEvents(dashData.recentEvents ?? [])
+      setRecentEvents(dashData.recent_events ?? [])
 
       // Build entityMap from entity_memory fields on each project row
       const memMap = {}
