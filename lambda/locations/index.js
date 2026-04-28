@@ -13,11 +13,7 @@ async function getSecrets() {
   return _secrets;
 }
 
-const CORS = {
-  'Access-Control-Allow-Origin': 'https://garden.futureishere.net',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-};
+const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 function resp(statusCode, body) {
   return {
@@ -27,9 +23,6 @@ function resp(statusCode, body) {
   };
 }
 
-// Build a hierarchical tree from a flat array of location rows.
-// Returned as flat array ordered by level/sort_order/name — the UI
-// builds the visual tree itself (same approach as Locations.jsx).
 function buildHierarchy(rows) {
   const byId = Object.fromEntries(rows.map(r => [r.id, { ...r, children: [] }]));
   const roots = [];
@@ -64,11 +57,9 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/locations';
 
-  const idMatch = rawPath.match(/^\/api\/locations\/([^/]+)$/);
+  const idMatch = rawPath !== '/api/locations/with-path' && rawPath.match(/^\/api\/locations\/([^/]+)$/);
 
   try {
-    await sql`SELECT set_config('app.user_id', ${userId}, true)`;
-
     if (idMatch) {
       const locId = idMatch[1];
 
@@ -103,9 +94,7 @@ export const handler = async (event) => {
       return resp(405, { error: 'Method not allowed' });
     }
 
-    // /api/locations
     if (method === 'GET') {
-      // Return flat list; also return locations_with_path for full_path display
       const [locRows, pathRows] = await Promise.all([
         sql`
           SELECT id, name, slug, level, type_label, parent_id, sort_order,
@@ -121,14 +110,13 @@ export const handler = async (event) => {
           ORDER BY full_path
         `,
       ]);
-      return resp(200, { locations: locRows, locations_with_path: pathRows });
+      return resp(200, rawPath === "/api/locations/with-path" ? pathRows : { locations: locRows, locations_with_path: pathRows });
     }
 
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.name) return resp(400, { error: 'name is required' });
 
-      // Infer level from parent
       let level = 0;
       if (body.parent_id) {
         const parentRows = await sql`
@@ -161,7 +149,6 @@ export const handler = async (event) => {
 
   } catch (err) {
     console.error('locations lambda error', err);
-    // Unique slug violation
     if (err.code === '23505') return resp(409, { error: 'Slug already exists' });
     return resp(500, { error: 'Internal server error' });
   }
