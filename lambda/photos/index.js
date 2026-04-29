@@ -14,7 +14,8 @@ const s3 = new S3Client({
   requestChecksumCalculation: 'WHEN_REQUIRED',
   responseChecksumValidation: 'WHEN_REQUIRED',
 });
-const BUCKET = process.env.S3_PHOTOS_BUCKET || 'garden-photos-prod';
+const BUCKET = process.env.S3_PHOTOS_BUCKET;
+if (!BUCKET) throw new Error('S3_PHOTOS_BUCKET env var not set â check Lambda configuration');
 
 let _secrets = null;
 async function getSecrets() {
