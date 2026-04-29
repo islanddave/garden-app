@@ -73,3 +73,17 @@ jobs:
           aws cloudfront create-invalidation \
             --distribution-id ${{ vars.CLOUDFRONT_DIST_ID }} \
             --paths "/*"
+
+      - name: Restore Lambda Function URL CORS
+        # GHA deploys reset Lambda URL config — re-apply CORS after every deploy.
+        # OPTIONS must NOT be in AllowMethods (>6 chars fails validation); AWS handles preflight automatically.
+        run: |
+          CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
+          for fn in garden-dashboard garden-events garden-favorites garden-locations garden-photos garden-plants garden-projects; do
+            echo -n "CORS $fn: "
+            aws lambda update-function-url-config \
+              --function-name "$fn" \
+              --region us-east-1 \
+              --cors "$CORS" \
+              --query 'Cors.AllowOrigins[0]' --output text
+          done
