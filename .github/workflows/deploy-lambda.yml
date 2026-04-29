@@ -43,7 +43,7 @@ jobs:
       - name: Build and zip ${{ matrix.function }}
         run: |
           cd lambda/${{ matrix.function }}
-          npm install --omit=dev
+          npm ci --omit=dev
           zip -r ../${{ matrix.function }}.zip .
 
       - name: Deploy or create ${{ matrix.function }}
