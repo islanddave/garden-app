@@ -28,7 +28,17 @@ export const handler = async (event) => {
     return { statusCode: 204, headers: CORS, body: '' };
   }
 
-  const secrets = await getSecrets();
+  let secrets;
+  try {
+    secrets = await getSecrets();
+    if (!secrets.CLERK_SECRET_KEY || !secrets.NEON_DATABASE_URL) {
+      console.error('projects lambda: missing required secrets', Object.keys(secrets));
+      return resp(500, { error: 'Internal server error' });
+    }
+  } catch (err) {
+    console.error('projects lambda: secrets fetch failed', err);
+    return resp(500, { error: 'Internal server error' });
+  }
 
   const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
   const token = authHeader.replace(/^Bearer\s+/i, '');
@@ -40,13 +50,13 @@ export const handler = async (event) => {
     return resp(401, { error: 'Unauthorized' });
   }
 
-  const sql = neon(secrets.NEON_DATABASE_URL);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/projects';
-
   const idMatch = rawPath.match(/^\/api\/projects\/([^/]+)$/);
 
   try {
+    const sql = neon(secrets.NEON_DATABASE_URL);
+
     if (idMatch) {
       const projectId = idMatch[1];
 
