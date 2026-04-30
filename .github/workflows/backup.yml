@@ -44,13 +44,14 @@ jobs:
 
       - name: pg_dump from Neon
         # Neon runs PostgreSQL 17 on us-east-1.
-        # Connection string includes sslmode=require — no extra flags needed.
+        # Use full pg17 path — system pg_dump in PATH may be pg16 (runner default).
+        # pg_dump version must be >= server version or it aborts.
         # --no-owner and --no-privileges: avoid role-specific ACLs that don't exist on restore targets.
         # --schema=public: exclude pg internals.
         # -Fc: custom format; supports selective restore and compression.
         run: |
           DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
-          pg_dump \
+          /usr/lib/postgresql/17/bin/pg_dump \
             "$NEON_DATABASE_URL" \
             --schema=public \
             --no-owner \
