@@ -1,4 +1,4 @@
-name: Build and Deploy — SPA
+name: Build and Deploy - SPA
 
 on:
   push:
@@ -60,7 +60,8 @@ jobs:
           VITE_API_DASHBOARD:         ${{ vars.VITE_API_DASHBOARD }}
 
       - name: Verify build output
-        run: test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+        run: |
+          test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -68,13 +69,13 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Deploy to S3 — hashed assets (immutable)
+      - name: Deploy to S3 - hashed assets (immutable)
         run: |
           aws s3 sync dist/assets/ s3://${{ vars.S3_BUCKET_NAME }}/assets/ \
             --cache-control "public, max-age=31536000, immutable" \
             --metadata-directive REPLACE
 
-      - name: Deploy to S3 — root files (no-cache, prune stale)
+      - name: Deploy to S3 - root files (no-cache, prune stale)
         run: |
           aws s3 sync dist/ s3://${{ vars.S3_BUCKET_NAME }}/ \
             --exclude "assets/*" \
@@ -82,7 +83,7 @@ jobs:
             --metadata-directive REPLACE \
             --delete
 
-      - name: Invalidate CloudFront — index.html only
+      - name: Invalidate CloudFront - index.html only
         run: |
           aws cloudfront create-invalidation \
             --distribution-id ${{ vars.CLOUDFRONT_DIST_ID }} \
