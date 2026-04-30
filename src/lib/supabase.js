@@ -1,15 +1,7 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-// Supabase client retained for inventory_items and tasks (no Lambdas deployed yet).
-// TODO DB-MIGRATE-INVENTORY: remove when /api/inventory Lambda is deployed.
-// TODO DB-MIGRATE-TASKS: remove when /api/tasks Lambda is deployed.
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-// getPhotoUrl removed — photos now include view_url from the photos Lambda (signed S3 URL).
-// Remove any remaining imports of getPhotoUrl from callers.
+// Supabase removed from stack — migrated to Neon + Lambda.
+// Tasks and Inventory Lambdas pending (DB-MIGRATE-TASKS, DB-MIGRATE-INVENTORY).
+// All callers guard on `supabase &&` / `if (!supabase)` — null is handled gracefully.
+export const supabase = null;
 
 export function getGCalUrl({ title, date, notes }) {
   const start = date?.replace(/-/g, '') ?? '';
