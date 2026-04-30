@@ -7,7 +7,7 @@ const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east
 let _secrets = null;
 async function getSecrets() {
   if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: 'garden-app/secrets' });
+  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
   const res = await sm.send(cmd);
   _secrets = JSON.parse(res.SecretString);
   return _secrets;

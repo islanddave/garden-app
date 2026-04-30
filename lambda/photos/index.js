@@ -5,13 +5,22 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'us-east-1' });
-const BUCKET = process.env.PHOTOS_BUCKET_NAME;
+// requestChecksumCalculation/responseChecksumValidation: newer SDK v3 versions (3.679+) default
+// to injecting x-amz-checksum-mode=ENABLED into GetObject presigned URLs as a query param.
+// S3 only accepts that header on actual requests, not presigned URL query strings — causes 403.
+// WHEN_REQUIRED suppresses the injection entirely for presigned GET URLs.
+const s3 = new S3Client({
+  region: process.env.AWS_REGION ?? 'us-east-1',
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
+});
+const BUCKET = process.env.S3_PHOTOS_BUCKET;
+if (!BUCKET) throw new Error('S3_PHOTOS_BUCKET env var not set — check Lambda configuration');
 
 let _secrets = null;
 async function getSecrets() {
   if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: 'garden-app/secrets' });
+  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
   const res = await sm.send(cmd);
   _secrets = JSON.parse(res.SecretString);
   return _secrets;
@@ -27,6 +36,7 @@ function resp(statusCode, body) {
   };
 }
 
+// Pre-signed PUT URL — browser uploads directly to S3, Lambda never touches the bytes
 async function getUploadUrl(photoId, ext, contentType) {
   const key = `uploads/${photoId}.${ext}`;
   const cmd = new PutObjectCommand({
@@ -34,10 +44,11 @@ async function getUploadUrl(photoId, ext, contentType) {
     Key: key,
     ContentType: contentType ?? 'image/jpeg',
   });
-  const url = await getSignedUrl(s3, cmd, { expiresIn: 300 });
+  const url = await getSignedUrl(s3, cmd, { expiresIn: 300 }); // 5 minutes
   return { url, key };
 }
 
+// Pre-signed GET URL — 15-minute expiry per architecture spec
 async function getViewUrl(storagePath) {
   const cmd = new GetObjectCommand({ Bucket: BUCKET, Key: storagePath });
   return getSignedUrl(s3, cmd, { expiresIn: 900 });
@@ -65,14 +76,18 @@ export const handler = async (event) => {
   const rawPath = event.rawPath ?? '/api/photos';
 
   try {
+    // GET /api/photos/upload-url — returns pre-signed S3 PUT URL for browser upload
+    // Query params: key (full S3 key, caller-generated), content_type (MIME type)
     if (rawPath === '/api/photos/upload-url' && method === 'GET') {
-      const ext = event.queryStringParameters?.ext ?? 'jpg';
+      const key = event.queryStringParameters?.key;
       const contentType = event.queryStringParameters?.content_type ?? 'image/jpeg';
-      const photoId = crypto.randomUUID();
-      const { url, key } = await getUploadUrl(photoId, ext, contentType);
-      return resp(200, { upload_url: url, storage_path: key, photo_id: photoId });
+      if (!key) return resp(400, { error: 'key is required' });
+      const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType });
+      const upload_url = await getSignedUrl(s3, cmd, { expiresIn: 300 });
+      return resp(200, { upload_url, key });
     }
 
+    // GET /api/photos/view-url/:id — returns pre-signed GET URL for a photo record
     const viewMatch = rawPath.match(/^\/api\/photos\/view-url\/([^/]+)$/);
     if (viewMatch && method === 'GET') {
       const photoId = viewMatch[1];
@@ -86,6 +101,7 @@ export const handler = async (event) => {
       return resp(200, { view_url: viewUrl, expires_in: 900 });
     }
 
+    // GET /api/photos — list user's photos with optional filters
     if (rawPath === '/api/photos' && method === 'GET') {
       const projectId = event.queryStringParameters?.project_id ?? null;
       const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '120', 10), 200);
@@ -115,6 +131,7 @@ export const handler = async (event) => {
             LIMIT ${limit}
           `;
 
+      // Attach pre-signed view URLs to each photo record
       const withUrls = await Promise.all(
         rows.map(async (photo) => {
           try {
@@ -129,6 +146,8 @@ export const handler = async (event) => {
       return resp(200, withUrls);
     }
 
+    // POST /api/photos — register a photo record after browser has uploaded to S3
+    // Browser: PUT to upload_url (from upload-url endpoint), then POST here with storage_path
     if (rawPath === '/api/photos' && method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.storage_path) return resp(400, { error: 'storage_path is required' });
@@ -136,7 +155,7 @@ export const handler = async (event) => {
       const rows = await sql`
         INSERT INTO photos
           (project_id, event_id, location_id, plant_id,
-           storage_path, caption, is_public, uploaded_by)
+           storage_path, caption, is_public, uploaded_by, created_by)
         VALUES (
           ${body.project_id ?? null},
           ${body.event_id ?? null},
@@ -145,6 +164,7 @@ export const handler = async (event) => {
           ${body.storage_path},
           ${body.caption ?? null},
           ${body.is_public ?? true},
+          ${userId},
           ${userId}
         )
         RETURNING *

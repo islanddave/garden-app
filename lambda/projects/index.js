@@ -7,7 +7,7 @@ const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east
 let _secrets = null;
 async function getSecrets() {
   if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: 'garden-app/secrets' });
+  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
   const res = await sm.send(cmd);
   _secrets = JSON.parse(res.SecretString);
   return _secrets;
@@ -52,18 +52,68 @@ export const handler = async (event) => {
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/projects';
+
+  // Must check /types routes before idMatch — otherwise 'types' is treated as a project UUID
+  const typesItemMatch = rawPath.match(/^\/api\/projects\/types\/([^/]+)$/);
+  const typesMatch = rawPath === '/api/projects/types';
+
   const idMatch = rawPath.match(/^\/api\/projects\/([^/]+)$/);
 
   try {
     const sql = neon(secrets.NEON_DATABASE_URL);
 
+    // --- /api/projects/types/:id ---
+    if (typesItemMatch) {
+      const typeId = typesItemMatch[1];
+      if (method === 'DELETE') {
+        await sql`
+          UPDATE project_types SET deleted_at = NOW()
+          WHERE id = ${typeId} AND created_by = ${userId} AND deleted_at IS NULL
+        `;
+        return resp(200, { ok: true });
+      }
+      return resp(405, { error: 'Method not allowed' });
+    }
+
+    // --- /api/projects/types ---
+    if (typesMatch) {
+      if (method === 'GET') {
+        const rows = await sql`
+          SELECT id, name, category, description, icon, created_by
+          FROM project_types
+          WHERE deleted_at IS NULL
+          ORDER BY category, name
+        `;
+        return resp(200, rows);
+      }
+      if (method === 'POST') {
+        const body = JSON.parse(event.body ?? '{}');
+        if (!body.name) return resp(400, { error: 'name is required' });
+        const rows = await sql`
+          INSERT INTO project_types (name, category, description, icon, created_by)
+          VALUES (
+            ${body.name},
+            ${body.category ?? 'garden'},
+            ${body.description ?? null},
+            ${body.icon ?? '📋'},
+            ${userId}
+          )
+          RETURNING *
+        `;
+        return resp(201, rows[0]);
+      }
+      return resp(405, { error: 'Method not allowed' });
+    }
+
+    // --- /api/projects/:id ---
     if (idMatch) {
       const projectId = idMatch[1];
 
       if (method === 'GET') {
         const [projectRows, plantCountRows, eventCountRows] = await Promise.all([
           sql`
-            SELECT id, name, slug, status, variety, description, start_date,
+            SELECT id, name, slug, status, variety, description,
+                   to_char(start_date, 'YYYY-MM-DD') AS start_date,
                    is_public, location_id, created_at, updated_at, created_by
             FROM plant_projects
             WHERE id = ${projectId}
@@ -106,7 +156,9 @@ export const handler = async (event) => {
           WHERE id = ${projectId}
             AND created_by = ${userId}
             AND deleted_at IS NULL
-          RETURNING *
+          RETURNING id, name, slug, status, variety, description,
+                    to_char(start_date, 'YYYY-MM-DD') AS start_date,
+                    is_public, location_id, created_at, updated_at, created_by
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
@@ -126,10 +178,12 @@ export const handler = async (event) => {
       return resp(405, { error: 'Method not allowed' });
     }
 
+    // --- /api/projects ---
     if (method === 'GET') {
       const rows = await sql`
-        SELECT id, name, slug, status, variety, start_date, is_public, location_id,
-               created_at, updated_at
+        SELECT id, name, slug, status, variety,
+               to_char(start_date, 'YYYY-MM-DD') AS start_date,
+               is_public, location_id, created_at, updated_at
         FROM plant_projects
         WHERE created_by = ${userId}
           AND deleted_at IS NULL
@@ -155,7 +209,9 @@ export const handler = async (event) => {
           ${body.location_id ?? null},
           ${userId}
         )
-        RETURNING *
+        RETURNING id, name, slug, status, variety, description,
+                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
+                  is_public, location_id, created_at, updated_at, created_by
       `;
       return resp(201, rows[0]);
     }
