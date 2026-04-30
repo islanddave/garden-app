@@ -14,52 +14,60 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install postgresql-client-16
-        # Pin to pg16 — must match or exceed source Supabase PostgreSQL version.
-        # Verify Supabase PG version before migration day: SELECT version();
-        # If Supabase upgrades past 16, update this step accordingly.
+      - name: Install postgresql-client-17
+        # Neon runs PostgreSQL 17. pg_dump must be >= server version.
+        # Ubuntu runners don't ship pg17 — add the official PGDG apt repo first.
         run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client-16
+          sudo apt-get install -y postgresql-client-17
           pg_dump --version
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
-          # Separate backup role — only needs s3:PutObject on backup bucket
-          role-to-assume: ${{ vars.AWS_BACKUP_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: pg_dump from Supabase
-        # IMPORTANT: Use port 5432 (direct connection), NOT port 6543 (Supavisor pooler).
-        # pg_dump is incompatible with the pooler — it will hang or produce corrupt output.
-        # --no-owner and --no-privileges required: Supabase roles don't exist on Neon.
-        # --schema=public required: exclude Supabase internal schemas (auth, storage, etc.)
-        # -Fc = custom format; supports selective restore and compression.
+      - name: Fetch Neon connection string from Secrets Manager
+        run: |
+          NEON_URL=$(aws secretsmanager get-secret-value \
+            --secret-id garden-app/neon-database-url \
+            --query SecretString --output text)
+          echo "NEON_DATABASE_URL=$NEON_URL" >> "$GITHUB_ENV"
+          echo "Neon connection string retrieved"
+
+      - name: pg_dump from Neon
+        # Neon runs PostgreSQL 17 on us-east-1.
+        # Connection string includes sslmode=require — no extra flags needed.
+        # --no-owner and --no-privileges: avoid role-specific ACLs that don't exist on restore targets.
+        # --schema=public: exclude pg internals.
+        # -Fc: custom format; supports selective restore and compression.
         run: |
           DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
-          PGPASSWORD=${{ secrets.SUPABASE_DB_PASSWORD }} pg_dump \
-            --host=${{ vars.SUPABASE_DB_HOST }} \
-            --port=5432 \
-            --username=postgres \
+          pg_dump \
+            "$NEON_DATABASE_URL" \
             --schema=public \
             --no-owner \
             --no-privileges \
             -Fc \
-            postgres > "$DUMP_FILE"
+            -f "$DUMP_FILE"
           echo "DUMP_FILE=$DUMP_FILE" >> "$GITHUB_ENV"
           echo "Dump file size: $(du -sh $DUMP_FILE | cut -f1)"
 
       - name: Upload to S3
         run: |
-          DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
           S3_KEY="db/garden-$(date +%Y%m%d).dump"
           aws s3 cp "$DUMP_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$S3_KEY"
 
       - name: Verify upload
         run: |
           S3_KEY="db/garden-$(date +%Y%m%d).dump"
-          # Confirm the object exists in S3 and has non-zero size
           RESULT=$(aws s3 ls "s3://${{ vars.BACKUP_BUCKET_NAME }}/$S3_KEY" 2>&1)
           if [ $? -ne 0 ] || [ -z "$RESULT" ]; then
             echo "ERROR: Upload verification failed — object not found in S3"
@@ -72,14 +80,11 @@ jobs:
         if: always()
         run: rm -f /tmp/garden-*.dump
 
-# S3 lifecycle rules must be configured on the backup bucket (infrastructure step, not here):
+# S3 lifecycle rules must be configured on the backup bucket:
 #   - Retain last 14 daily dumps
-#   - Retain last 4 weekly dumps (tag Sunday backups or use prefix-based lifecycle)
+#   - Retain last 4 weekly dumps
 #   - Expire older objects automatically
-# Do NOT rely on GitHub Actions artifacts for backup retention — 90-day expiry silently
-# deletes backups and artifacts are not accessible via AWS tooling for restore workflows.
 #
-# Failure alerting: GitHub Actions will email repo notification subscribers on workflow
-# failure if notifications are enabled for the repo. Enable at:
-# repo Settings → Notifications → Actions → "Send notifications for failed workflows"
-# For more robust alerting, add an SNS topic and publish from a failure step.
+# IAM: garden-app-github-deploy role has secretsmanager:GetSecretValue on
+# arn:aws:secretsmanager:us-east-1:769788341849:secret:garden-app/neon-database-url-CfCmYc
+# (policy: garden-backup-secrets-read, added 2026-04-30)
