@@ -1,7 +1,5 @@
 // Supabase removed from stack — migrated to Neon + Lambda.
-// Tasks and Inventory Lambdas pending (DB-MIGRATE-TASKS, DB-MIGRATE-INVENTORY).
-// All callers guard on `supabase &&` / `if (!supabase)` — null is handled gracefully.
-export const supabase = null;
+// Tasks Lambda: DB-MIGRATE-TASKS | Inventory Lambda: DB-MIGRATE-INVENTORY
 
 export function getGCalUrl({ title, date, notes }) {
   const start = date?.replace(/-/g, '') ?? '';

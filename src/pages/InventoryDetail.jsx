@@ -1,7 +1,6 @@
 // TODO DB-MIGRATE-INVENTORY: migrate to /api/inventory Lambda when deployed
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { supabase } from '../lib/supabase.js'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
@@ -41,22 +40,10 @@ export default function InventoryDetail() {
   const [deleting,     setDeleting]     = useState(false)
 
   // ── Load item ──────────────────────────────────────────────────────────────
+  // TODO DB-MIGRATE-INVENTORY: fetch from /api/inventory/:id Lambda when deployed
   useEffect(() => {
-    async function load() {
-      const { data, error } = await supabase
-        .from('inventory_items')
-        .select('*')
-        .eq('id', id)
-        .single()
-      if (error) {
-        setLoadErr(error.message)
-      } else {
-        setItem(data)
-        setForm(itemToForm(data))
-      }
-      setLoading(false)
-    }
-    load()
+    setLoadErr('Inventory temporarily unavailable — Lambda migration pending.')
+    setLoading(false)
   }, [id])
 
   // ── Helpers ────────────────────────────────────────────────────────────────

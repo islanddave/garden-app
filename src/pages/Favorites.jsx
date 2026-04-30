@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { supabase } from '../lib/supabase.js'
 import { P } from '../lib/constants.js'
 
 const TYPE_META = {
@@ -49,21 +48,8 @@ export default function Favorites() {
         if (items.length) resolvedSections.push({ type: 'location', items })
       }
 
-      // TODO DB-MIGRATE-INVENTORY: migrate when /api/inventory Lambda deployed
-      if (byType.inventory_item) {
-        const { data } = await supabase
-          .from('inventory_items').select('id, name, type, status')
-          .in('id', byType.inventory_item).is('deleted_at', null)
-        if (data?.length) resolvedSections.push({ type: 'inventory_item', items: data })
-      }
-
-      // TODO DB-MIGRATE-PLANTS: migrate when /api/plants supports batch-by-ids
-      if (byType.plant) {
-        const { data } = await supabase
-          .from('plants').select('id, name, variety, quantity, status')
-          .in('id', byType.plant).is('deleted_at', null)
-        if (data?.length) resolvedSections.push({ type: 'plant', items: data })
-      }
+      // TODO DB-MIGRATE-INVENTORY: wire when /api/inventory Lambda deployed
+      // TODO DB-MIGRATE-PLANTS: wire when /api/plants supports batch-by-ids
 
       setSections(resolvedSections)
     } catch (err) {
