@@ -75,15 +75,18 @@ jobs:
             --function-name "garden-${{ matrix.function }}"
           echo "garden-${{ matrix.function }} is active"
 
-      - name: Clear Lambda URL CORS config (handler owns CORS)
-        continue-on-error: true  # requires lambda:UpdateFunctionUrlConfig on deploy role — add to IAM if missing
+      - name: Set Lambda URL CORS config
+        # CORS is managed at the Lambda URL config level, not in handler code.
+        # OPTIONS must NOT be in AllowMethods (>6 chars fails validation); AWS handles preflight automatically.
+        # Kept in sync with deploy.yml — ensures CORS is correct even when only
+        # Lambdas are deployed (without a simultaneous SPA deploy).
         run: |
-          # Handler code sets CORS headers on every response.
-          # Lambda URL CORS config must be empty — duplicate headers break browsers.
+          CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
           aws lambda update-function-url-config \
             --function-name "garden-${{ matrix.function }}" \
-            --cors '{"AllowOrigins":[],"AllowHeaders":[],"AllowMethods":[]}'
-          echo "CORS config cleared for garden-${{ matrix.function }}"
+            --region us-east-1 \
+            --cors "$CORS" \
+            --query 'Cors.AllowOrigins[0]' --output text
 
 # Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
 # at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).
