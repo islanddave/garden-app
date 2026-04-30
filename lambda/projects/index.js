@@ -44,9 +44,16 @@ export const handler = async (event) => {
   const token = authHeader.replace(/^Bearer\s+/i, '');
   let userId;
   try {
-    const payload = await verifyToken(token, { secretKey: secrets.CLERK_SECRET_KEY });
+    const payload = await verifyToken(token, {
+      secretKey: secrets.CLERK_SECRET_KEY,
+      authorizedParties: [
+        'https://garden.futureishere.net',
+        'https://dg6mmjhepoyt9.cloudfront.net',
+      ],
+    });
     userId = payload.sub;
-  } catch {
+  } catch (err) {
+    console.error('verifyToken failed:', err?.message ?? String(err));
     return resp(401, { error: 'Unauthorized' });
   }
 
