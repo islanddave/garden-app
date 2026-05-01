@@ -40,6 +40,45 @@ const SECONDARY_GROUPS = (() => {
   return Object.entries(cats)
 })()
 
+// Per-type metadata field definitions for Tier 2 enrichment
+const EVENT_METADATA_FIELDS = {
+  sowing:        [
+    { key: 'depth_cm',                  label: 'Sowing depth (cm)',        type: 'number' },
+    { key: 'spacing_cm',                label: 'Spacing (cm)',              type: 'number' },
+    { key: 'germination_expected_days', label: 'Expected germination (days)', type: 'number' },
+  ],
+  germination:   [
+    { key: 'days_to_germinate',      label: 'Days to germinate',    type: 'number' },
+    { key: 'germination_rate_pct',   label: 'Germination rate (%)', type: 'number' },
+  ],
+  observation:   [
+    { key: 'height_cm',   label: 'Height (cm)',  type: 'number' },
+    { key: 'leaf_count',  label: 'Leaf count',   type: 'number' },
+    { key: 'health',      label: 'Health',        type: 'select', options: ['excellent', 'good', 'fair', 'poor', 'critical'] },
+  ],
+  watering:      [
+    { key: 'amount_ml', label: 'Amount (ml)', type: 'number' },
+  ],
+  fertilizing:   [
+    { key: 'product',   label: 'Product / mix',   type: 'text' },
+    { key: 'dilution',  label: 'Dilution ratio',  type: 'text' },
+    { key: 'amount_ml', label: 'Amount (ml)',      type: 'number' },
+  ],
+  harvest:       [
+    { key: 'weight_g', label: 'Weight (g)', type: 'number' },
+    { key: 'count',    label: 'Count',      type: 'number' },
+    { key: 'quality',  label: 'Quality',    type: 'select', options: ['excellent', 'good', 'fair', 'poor'] },
+  ],
+  first_harvest: [
+    { key: 'weight_g', label: 'Weight (g)', type: 'number' },
+    { key: 'count',    label: 'Count',      type: 'number' },
+  ],
+  pest_treatment: [
+    { key: 'pest',      label: 'Pest / disease', type: 'text' },
+    { key: 'treatment', label: 'Treatment used', type: 'text' },
+  ],
+}
+
 const LOGGABLE_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
 
 function toDatetimeLocal(date) {
@@ -123,6 +162,58 @@ function MicBtn({ fieldKey, onResult, voice, top = '50%', transform = 'translate
   )
 }
 
+// Tier 2: collapsible per-type metadata fields
+function MetadataSection({ eventType, metadataState, onMetadataChange }) {
+  const [open, setOpen] = useState(false)
+  const fields = EVENT_METADATA_FIELDS[eventType]
+  if (!fields) return null
+
+  return (
+    <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 18px' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(s => !s)}
+        style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.green, fontSize: '0.82rem', fontWeight: 600, padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
+      >
+        <span>{open ? '▾' : '▸'}</span>
+        <span>More details (optional)</span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {fields.map(field => (
+            <div key={field.key}>
+              <label style={{ display: 'block', fontSize: '0.77rem', fontWeight: 700, color: P.mid, marginBottom: 6, letterSpacing: '0.4px', textTransform: 'uppercase' }}>
+                {field.label}
+              </label>
+              {field.type === 'select' ? (
+                <select
+                  value={metadataState[field.key] ?? ''}
+                  onChange={e => onMetadataChange(field.key, e.target.value || undefined)}
+                  style={selectStyle}
+                >
+                  <option value="">— optional —</option>
+                  {field.options.map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type={field.type}
+                  value={metadataState[field.key] ?? ''}
+                  onChange={e => onMetadataChange(field.key, e.target.value === '' ? undefined : e.target.value)}
+                  style={inputStyle}
+                  placeholder="optional"
+                  min={field.type === 'number' ? 0 : undefined}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function EventNew() {
   const navigate       = useNavigate()
   const [searchParams] = useSearchParams()
@@ -143,6 +234,9 @@ export default function EventNew() {
     is_public:     true,
   })
 
+  // Tier 2 metadata state — { [field.key]: value } — only populated keys submitted
+  const [metadataState, setMetadataState] = useState({})
+
   const [photoFile,    setPhotoFile]    = useState(null)
   const [photoPreview, setPhotoPreview] = useState(null)
   const [projects,     setProjects]     = useState([])
@@ -153,6 +247,11 @@ export default function EventNew() {
   const [showMoreTypes, setShowMoreTypes] = useState(false)
   const [success,      setSuccess]      = useState(null)
   const [plantsForProject, setPlantsForProject] = useState([])
+
+  // Reset metadata when event type changes
+  useEffect(() => {
+    setMetadataState({})
+  }, [form.event_type])
 
   // Load plants when project selection changes
   useEffect(() => {
@@ -172,6 +271,20 @@ export default function EventNew() {
       setLocations((locs ?? []).filter(l => l.is_active))
     }).catch(() => {})
   }, [apiFetch])
+
+  function handleMetadataChange(key, value) {
+    setMetadataState(prev => {
+      const next = { ...prev }
+      if (value === undefined || value === '') {
+        delete next[key]
+      } else {
+        // Coerce number fields to actual numbers
+        const fieldDef = EVENT_METADATA_FIELDS[form.event_type]?.find(f => f.key === key)
+        next[key] = fieldDef?.type === 'number' ? Number(value) : value
+      }
+      return next
+    })
+  }
 
   function handlePhotoChange(e) {
     const file = e.target.files?.[0]
@@ -197,6 +310,9 @@ export default function EventNew() {
     // Send date portion only — Lambda appends T12:00:00 internally
     const eventDateStr = form.event_date.split('T')[0]
 
+    // Build metadata — only include if there are populated keys
+    const metadata = Object.keys(metadataState).length > 0 ? metadataState : null
+
     // 1 — POST event, get back { eventId, stats }
     let result
     try {
@@ -212,6 +328,7 @@ export default function EventNew() {
           plant_id:      form.plant_id               || null,
           is_public:     form.is_public,
           has_photo:     !!photoFile,
+          metadata,
         }),
       })
     } catch (err) {
@@ -448,6 +565,13 @@ export default function EventNew() {
               />
             </div>
           </Section>
+
+          {/* ── Tier 2: per-type metadata enrichment (collapsible) ── */}
+          <MetadataSection
+            eventType={form.event_type}
+            metadataState={metadataState}
+            onMetadataChange={handleMetadataChange}
+          />
 
           {/* ── Quantity ── */}
           <Section label="Quantity  ·  optional">
