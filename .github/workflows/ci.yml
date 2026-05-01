@@ -48,7 +48,8 @@ jobs:
           VITE_API_DASHBOARD:         https://ci-placeholder.lambda-url.us-east-1.on.aws/
 
       - name: Verify build output
-        run: test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+        run: |
+          test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
 
       - name: Run unit tests with coverage
         run: npm test
