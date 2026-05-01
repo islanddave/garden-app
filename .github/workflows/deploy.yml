@@ -1,4 +1,4 @@
-name: Build and Deploy - SPA
+name: Build and Deploy — SPA
 
 on:
   push:
@@ -60,8 +60,7 @@ jobs:
           VITE_API_DASHBOARD:         ${{ vars.VITE_API_DASHBOARD }}
 
       - name: Verify build output
-        run: |
-          test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+        run: test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -69,13 +68,28 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Deploy to S3 - hashed assets (immutable)
+      - name: Verify S3 versioning enabled [Boss condition 2]
+        # Hard gate: S3 versioning must be enabled before any deploy.
+        # Versioning is required for the S3 rollback leg of the three-unit rollback strategy.
+        # If this fails: aws s3api put-bucket-versioning --bucket <bucket> --versioning-configuration Status=Enabled
+        run: |
+          STATUS=$(aws s3api get-bucket-versioning \
+            --bucket ${{ vars.S3_BUCKET_NAME }} \
+            | jq -r '.Status // "None"')
+          [[ "$STATUS" == "Enabled" ]] || {
+            echo "FATAL: S3 versioning not enabled on ${{ vars.S3_BUCKET_NAME }} (status: $STATUS)"
+            echo "Fix: aws s3api put-bucket-versioning --bucket ${{ vars.S3_BUCKET_NAME }} --versioning-configuration Status=Enabled"
+            exit 1
+          }
+          echo "✅ S3 versioning: $STATUS"
+
+      - name: Deploy to S3 — hashed assets (immutable)
         run: |
           aws s3 sync dist/assets/ s3://${{ vars.S3_BUCKET_NAME }}/assets/ \
             --cache-control "public, max-age=31536000, immutable" \
             --metadata-directive REPLACE
 
-      - name: Deploy to S3 - root files (no-cache, prune stale)
+      - name: Deploy to S3 — root files (no-cache, prune stale)
         run: |
           aws s3 sync dist/ s3://${{ vars.S3_BUCKET_NAME }}/ \
             --exclude "assets/*" \
@@ -83,7 +97,7 @@ jobs:
             --metadata-directive REPLACE \
             --delete
 
-      - name: Invalidate CloudFront - index.html only
+      - name: Invalidate CloudFront — index.html only
         run: |
           aws cloudfront create-invalidation \
             --distribution-id ${{ vars.CLOUDFRONT_DIST_ID }} \
@@ -101,3 +115,21 @@ jobs:
               --cors "$CORS" \
               --query 'Cors.AllowOrigins[0]' --output text
           done
+
+      - name: Post-deploy Lambda health check
+        # Confirms all 7 prod Lambda functions are Active after deploy.
+        # Catches: broken zip, failed update, function in Pending/Failed state.
+        run: |
+          HEALTH_FAIL=0
+          for fn in garden-dashboard garden-events garden-favorites garden-locations garden-photos garden-plants garden-projects; do
+            STATE=$(aws lambda get-function-configuration \
+              --function-name "$fn" \
+              --query 'State' --output text)
+            if [[ "$STATE" == "Active" ]]; then
+              echo "✅ $fn: $STATE"
+            else
+              echo "❌ $fn: $STATE (expected Active)"
+              ((HEALTH_FAIL++))
+            fi
+          done
+          [[ "$HEALTH_FAIL" -eq 0 ]] || { echo "FATAL: $HEALTH_FAIL Lambda(s) not Active post-deploy"; exit 1; }
