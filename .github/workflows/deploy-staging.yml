@@ -161,11 +161,17 @@ jobs:
             --distribution-id ${{ env.STAGING_CF_DIST_ID }} \
             --paths "/index.html" \
             --query 'Invalidation.Id' --output text)
-          echo "Waiting for invalidation $INVAL_ID to complete (edge flush, not just accepted)..."
-          aws cloudfront wait invalidation-completed \
-            --distribution-id ${{ env.STAGING_CF_DIST_ID }} \
-            --id "$INVAL_ID"
-          echo "✅ CF invalidation $INVAL_ID complete"
+          echo "Waiting for invalidation $INVAL_ID..."
+          for i in $(seq 1 40); do
+            STATUS=$(aws cloudfront get-invalidation \
+              --distribution-id ${{ env.STAGING_CF_DIST_ID }} \
+              --id "$INVAL_ID" \
+              --query 'Invalidation.Status' --output text)
+            echo "Attempt $i/40: $STATUS"
+            [[ "$STATUS" == "Completed" ]] && { echo "CF invalidation complete"; break; }
+            [[ $i -eq 40 ]] && { echo "FATAL: CF invalidation did not complete after 40 attempts"; exit 1; }
+            sleep 15
+          done
 
       - name: "Verify CF edge serving new build [Boss condition 1]"
         # Confirms CF is serving the just-deployed build, not a stale cached version.
