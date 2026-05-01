@@ -1,12 +1,12 @@
 // Hand-rolled service worker — no vite-plugin-pwa
-// Cache-first for static assets, network-first for Supabase API calls.
+// Cache-first for static assets, network-first for Lambda API calls.
 // CACHE_VERSION should be updated with each deploy for cache-busting.
 
-const CACHE_VERSION = 'v13-20260423'
+const CACHE_VERSION = 'v14-20260501'
 const STATIC_CACHE  = `static-${CACHE_VERSION}`
 const API_CACHE     = `api-${CACHE_VERSION}`
 
-const SUPABASE_ORIGIN = 'supabase.co'
+const LAMBDA_ORIGIN = 'lambda-url.us-east-1.on.aws'
 
 // Assets to precache on install
 const PRECACHE_URLS = [
@@ -47,8 +47,8 @@ self.addEventListener('fetch', (event) => {
   // Skip browser-extension and non-http requests
   if (!url.protocol.startsWith('http')) return
 
-  // Network-first for Supabase API calls
-  if (url.hostname.includes(SUPABASE_ORIGIN)) {
+  // Network-first for Lambda API calls (never serve stale API responses)
+  if (url.hostname.includes(LAMBDA_ORIGIN)) {
     event.respondWith(networkFirst(request, API_CACHE))
     return
   }
@@ -86,7 +86,7 @@ async function cacheFirst(request, cacheName) {
 async function networkFirst(request, cacheName) {
   try {
     // cache: 'no-store' bypasses browser HTTP disk cache — prevents stale 300/redirect
-    // responses from poisoning Supabase API calls (root cause of photo gallery not refreshing)
+    // responses from reaching Lambda (root cause of photo gallery not refreshing)
     const networkReq = new Request(request, { cache: 'no-store' })
     const response = await fetch(networkReq)
     if (response.ok) {
