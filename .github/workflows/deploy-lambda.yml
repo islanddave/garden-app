@@ -18,6 +18,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     strategy:
       matrix:
         # One job per Lambda function directory under lambda/
