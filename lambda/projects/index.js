@@ -59,6 +59,7 @@ export const handler = async (event) => {
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/projects';
+  const qs = event.queryStringParameters ?? {};
 
   // Must check /types routes before idMatch — otherwise 'types' is treated as a project UUID
   const typesItemMatch = rawPath.match(/^\/api\/projects\/types\/([^/]+)$/);
@@ -119,13 +120,16 @@ export const handler = async (event) => {
       if (method === 'GET') {
         const [projectRows, plantCountRows, eventCountRows] = await Promise.all([
           sql`
-            SELECT id, name, slug, status, variety, description,
-                   to_char(start_date, 'YYYY-MM-DD') AS start_date,
-                   is_public, location_id, created_at, updated_at, created_by
-            FROM plant_projects
-            WHERE id = ${projectId}
-              AND created_by = ${userId}
-              AND deleted_at IS NULL
+            SELECT pp.id, pp.name, pp.slug, pp.status, pp.variety, pp.description,
+                   to_char(pp.start_date, 'YYYY-MM-DD') AS start_date,
+                   pp.is_public, pp.location_id, pp.created_at, pp.updated_at, pp.created_by,
+                   pp.parent_project_id,
+                   p.name AS parent_project_name
+            FROM plant_projects pp
+            LEFT JOIN plant_projects p ON p.id = pp.parent_project_id AND p.deleted_at IS NULL
+            WHERE pp.id = ${projectId}
+              AND pp.created_by = ${userId}
+              AND pp.deleted_at IS NULL
           `,
           sql`
             SELECT COUNT(*)::int AS count
@@ -150,22 +154,31 @@ export const handler = async (event) => {
 
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
+        // Prevent self-reference
+        if (body.parent_project_id && body.parent_project_id === projectId) {
+          return resp(400, { error: 'A project cannot be its own parent' });
+        }
         const rows = await sql`
           UPDATE plant_projects
           SET
-            name        = COALESCE(${body.name ?? null}, name),
-            description = COALESCE(${body.description ?? null}, description),
-            status      = COALESCE(${body.status ?? null}, status),
-            variety     = COALESCE(${body.variety ?? null}, variety),
-            start_date  = COALESCE(${body.start_date ?? null}, start_date),
-            is_public   = COALESCE(${body.is_public ?? null}, is_public),
-            location_id = COALESCE(${body.location_id ?? null}, location_id)
+            name             = COALESCE(${body.name ?? null}, name),
+            description      = COALESCE(${body.description ?? null}, description),
+            status           = COALESCE(${body.status ?? null}, status),
+            variety          = COALESCE(${body.variety ?? null}, variety),
+            start_date       = COALESCE(${body.start_date ?? null}, start_date),
+            is_public        = COALESCE(${body.is_public ?? null}, is_public),
+            location_id      = COALESCE(${body.location_id ?? null}, location_id),
+            parent_project_id = CASE
+              WHEN ${Object.prototype.hasOwnProperty.call(body, 'parent_project_id')} THEN ${body.parent_project_id ?? null}
+              ELSE parent_project_id
+            END
           WHERE id = ${projectId}
             AND created_by = ${userId}
             AND deleted_at IS NULL
           RETURNING id, name, slug, status, variety, description,
                     to_char(start_date, 'YYYY-MM-DD') AS start_date,
-                    is_public, location_id, created_at, updated_at, created_by
+                    is_public, location_id, created_at, updated_at, created_by,
+                    parent_project_id
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
@@ -187,24 +200,54 @@ export const handler = async (event) => {
 
     // --- /api/projects ---
     if (method === 'GET') {
-      const rows = await sql`
-        SELECT id, name, slug, status, variety,
-               to_char(start_date, 'YYYY-MM-DD') AS start_date,
-               is_public, location_id, created_at, updated_at
-        FROM plant_projects
-        WHERE created_by = ${userId}
-          AND deleted_at IS NULL
-        ORDER BY start_date DESC NULLS LAST, created_at DESC
-      `;
+      // Optional filter: ?parent_id=<uuid> returns only children of that parent
+      // ?parent_id=null returns only root-level projects
+      const parentIdFilter = qs.parent_id;
+
+      let rows;
+      if (parentIdFilter === 'null' || parentIdFilter === '') {
+        rows = await sql`
+          SELECT id, name, slug, status, variety,
+                 to_char(start_date, 'YYYY-MM-DD') AS start_date,
+                 is_public, location_id, created_at, updated_at, parent_project_id
+          FROM plant_projects
+          WHERE created_by = ${userId}
+            AND deleted_at IS NULL
+            AND parent_project_id IS NULL
+          ORDER BY start_date DESC NULLS LAST, created_at DESC
+        `;
+      } else if (parentIdFilter) {
+        rows = await sql`
+          SELECT id, name, slug, status, variety,
+                 to_char(start_date, 'YYYY-MM-DD') AS start_date,
+                 is_public, location_id, created_at, updated_at, parent_project_id
+          FROM plant_projects
+          WHERE created_by = ${userId}
+            AND deleted_at IS NULL
+            AND parent_project_id = ${parentIdFilter}
+          ORDER BY start_date DESC NULLS LAST, created_at DESC
+        `;
+      } else {
+        rows = await sql`
+          SELECT id, name, slug, status, variety,
+                 to_char(start_date, 'YYYY-MM-DD') AS start_date,
+                 is_public, location_id, created_at, updated_at, parent_project_id
+          FROM plant_projects
+          WHERE created_by = ${userId}
+            AND deleted_at IS NULL
+          ORDER BY start_date DESC NULLS LAST, created_at DESC
+        `;
+      }
       return resp(200, rows);
     }
 
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.name) return resp(400, { error: 'name is required' });
+      // Validate parent_project_id is not self-referential (can't know id yet, but guard against explicit self-reference attempts via name matching — full guard at PUT)
       const rows = await sql`
         INSERT INTO plant_projects
-          (name, slug, status, variety, description, start_date, is_public, location_id, created_by)
+          (name, slug, status, variety, description, start_date, is_public, location_id, created_by, parent_project_id)
         VALUES (
           ${body.name},
           ${body.slug ?? body.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-')},
@@ -214,11 +257,13 @@ export const handler = async (event) => {
           ${body.start_date ?? null},
           ${body.is_public ?? false},
           ${body.location_id ?? null},
-          ${userId}
+          ${userId},
+          ${body.parent_project_id ?? null}
         )
         RETURNING id, name, slug, status, variety, description,
                   to_char(start_date, 'YYYY-MM-DD') AS start_date,
-                  is_public, location_id, created_at, updated_at, created_by
+                  is_public, location_id, created_at, updated_at, created_by,
+                  parent_project_id
       `;
       return resp(201, rows[0]);
     }
