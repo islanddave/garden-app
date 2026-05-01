@@ -21,7 +21,6 @@ import { P } from '../lib/constants.js'
 // ============================================================
 
 import { useState, useEffect, useCallback } from 'react'
-import { supabase } from '../lib/supabase.js'
 import { TASK_PRIORITIES } from '../lib/constants.js'
 
 const OVERDUE_DISPLAY_CAP = 3
@@ -44,37 +43,22 @@ export default function TasksV2() {
   }
 
   const load = useCallback(async () => {
-    if (!supabase) {
-      setError('Tasks temporarily unavailable — coming soon via Lambda.')
-      setLoading(false)
-      return
-    }
-    const [
-      { data: taskData,  error: tErr },
-      { data: locData,   error: lErr },
-      { data: projData,  error: pErr },
-    ] = await Promise.all([
-      supabase.from('tasks').select('id, title, description, due_date, due_time, priority, status, completed_at, assigned_to, location_id, project_id').eq('status', statusFilter).order('due_date', { ascending: true, nullsFirst: false }),
-      supabase.from('locations_with_path').select('id, full_path, level, is_active').eq('is_active', true).order('full_path'),
-      supabase.from('plant_projects').select('id, name').in('status', ['planning', 'active']).order('name'),
-    ])
-    if (tErr || lErr || pErr) { setError((tErr || lErr || pErr).message) }
-    else { setTasks(taskData ?? []); setLocations(locData ?? []); setProjects(projData ?? []) }
+    setTasks([])
+    setLocations([])
+    setProjects([])
     setLoading(false)
   }, [statusFilter])
 
   useEffect(() => { load() }, [load])
 
   async function handleCreate(e) {
-    e.preventDefault(); setSaving(true); setFormError(null)
-    const { error } = await supabase.from('tasks').insert({ title: form.title.trim(), description: form.description.trim() || null, due_date: form.due_date || null, due_time: form.due_time || null, priority: form.priority, location_id: form.location_id || null, project_id: form.project_id || null, assigned_to: null })
-    setSaving(false)
-    if (error) { setFormError(error.message) } else { setForm(emptyForm()); setShowForm(false); load() }
+    e.preventDefault()
+    setFormError('Task creation coming soon via /api/tasks Lambda.')
   }
 
-  async function handleComplete(task) { await supabase.from('tasks').update({ status: 'done', completed_at: new Date().toISOString() }).eq('id', task.id); load() }
-  async function handleSkip(task)     { await supabase.from('tasks').update({ status: 'skipped' }).eq('id', task.id); load() }
-  async function handleReopen(task)   { await supabase.from('tasks').update({ status: 'pending', completed_at: null }).eq('id', task.id); load() }
+  async function handleComplete() {}
+  async function handleSkip()     {}
+  async function handleReopen()   {}
 
   const today = new Date().toISOString().split('T')[0]
   const overdue  = tasks.filter(t => t.due_date && t.due_date < today)
