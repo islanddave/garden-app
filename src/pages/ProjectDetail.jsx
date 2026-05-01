@@ -67,6 +67,7 @@ export default function ProjectDetail() {
   const [project,      setProject]      = useState(null)
   const [locPath,      setLocPath]      = useState(null)
   const [locations,    setLocations]    = useState([])
+  const [allProjects,  setAllProjects]  = useState([])
   const [loading,      setLoading]      = useState(true)
   const [error,        setError]        = useState(null)
   const [editing,      setEditing]      = useState(false)
@@ -90,7 +91,11 @@ export default function ProjectDetail() {
   const [addingPlant,   setAddingPlant]   = useState(false)
   const [plantErr,      setPlantErr]      = useState(null)
 
-  // Load project + events + locations in parallel
+  const [deleting,        setDeleting]        = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [childProjects,    setChildProjects]    = useState([])
+
+  // Load project + events + locations + all projects in parallel
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -99,12 +104,15 @@ export default function ProjectDetail() {
       fetch('/api/projects/' + id),
       fetch('/api/events?project_id=' + id),
       fetch('/api/locations/with-path'),
-    ]).then(([proj, eventsData, locs]) => {
+      fetch('/api/projects'),
+    ]).then(([proj, eventsData, locs, projects]) => {
       if (cancelled) return
       if (!proj) { setError('Project not found.'); setLoading(false); setEventsLoading(false); return }
       setProject(proj)
       setLocPath(proj.location_path ?? null)
       setLocations((locs ?? []).filter(l => l.is_active))
+      // Exclude current project from re-parent picker
+      setAllProjects((projects ?? []).filter(p => p.id !== id && p.name))
       setEvents(eventsData ?? [])
       setLoading(false)
       setEventsLoading(false)
@@ -207,15 +215,16 @@ export default function ProjectDetail() {
 
   function startEdit() {
     setForm({
-      name:        project.name,
-      slug:        project.slug,
-      variety:     project.variety     ?? '',
-      species:     project.species     ?? '',
-      description: project.description ?? '',
-      status:      project.status,
-      start_date:  project.start_date  ?? '',
-      is_public:   project.is_public,
-      location_id: project.location_id ?? '',
+      name:              project.name,
+      slug:              project.slug,
+      variety:           project.variety     ?? '',
+      species:           project.species     ?? '',
+      description:       project.description ?? '',
+      status:            project.status,
+      start_date:        project.start_date  ?? '',
+      is_public:         project.is_public,
+      location_id:       project.location_id ?? '',
+      parent_project_id: project.parent_project_id ?? '',
     })
     setSaveErr(null)
     setEditing(true)
@@ -229,15 +238,16 @@ export default function ProjectDetail() {
       const updated = await fetch('/api/projects/' + id, {
         method: 'PUT',
         body: JSON.stringify({
-          name:        form.name.trim(),
-          slug:        form.slug.trim(),
-          variety:     form.variety.trim()     || null,
-          species:     form.species.trim()     || null,
-          description: form.description.trim() || null,
-          status:      form.status,
-          start_date:  form.start_date         || null,
-          is_public:   form.is_public,
-          location_id: form.location_id        || null,
+          name:              form.name.trim(),
+          slug:              form.slug.trim(),
+          variety:           form.variety.trim()     || null,
+          species:           form.species.trim()     || null,
+          description:       form.description.trim() || null,
+          status:            form.status,
+          start_date:        form.start_date         || null,
+          is_public:         form.is_public,
+          location_id:       form.location_id        || null,
+          parent_project_id: form.parent_project_id  || null,
         }),
       })
       const loc = locations.find(l => l.id === (form.location_id || null))
@@ -249,10 +259,44 @@ export default function ProjectDetail() {
       setSaveErr(
         msg.includes('23505') || msg.toLowerCase().includes('already') || msg.toLowerCase().includes('duplicate')
           ? `Slug "${form.slug}" is already taken.`
+          : msg.includes('cannot be its own parent')
+          ? 'A project cannot be its own parent.'
           : msg || 'Failed to save.'
       )
     }
     setSaving(false)
+  }
+
+  async function handleDeleteClick() {
+    // Check for child projects before allowing delete
+    try {
+      const children = await fetch('/api/projects?parent_id=' + id)
+      setChildProjects(children ?? [])
+    } catch {
+      setChildProjects([])
+    }
+    setDeleteDialogOpen(true)
+  }
+
+  async function confirmDelete(archive) {
+    setDeleting(true)
+    setDeleteDialogOpen(false)
+    try {
+      if (archive) {
+        await fetch('/api/projects/' + id, {
+          method: 'PUT',
+          body: JSON.stringify({ status: 'ended' }),
+        })
+        setProject(p => ({ ...p, status: 'ended' }))
+        setDeleting(false)
+      } else {
+        await fetch('/api/projects/' + id, { method: 'DELETE' })
+        navigate('/projects')
+      }
+    } catch (err) {
+      console.error('delete/archive failed', err)
+      setDeleting(false)
+    }
   }
 
   if (loading) return <Shell><Spinner /></Shell>
@@ -264,6 +308,19 @@ export default function ProjectDetail() {
   return (
     <Shell>
       <Breadcrumb path={[{ label: 'Home', href: '/dashboard' }, { label: project.name, href: null }]} />
+
+      {/* Parent breadcrumb — shown when project has a parent */}
+      {project.parent_project_id && project.parent_project_name && (
+        <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 12 }}>
+          Part of:{' '}
+          <Link
+            to={`/projects/${project.parent_project_id}`}
+            style={{ color: P.green, textDecoration: 'none', fontWeight: 600 }}
+          >
+            {project.parent_project_name}
+          </Link>
+        </div>
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, gap: 16 }}>
         <div>
@@ -296,9 +353,28 @@ export default function ProjectDetail() {
           )}
         </div>
         {!editing && (
-          <button onClick={startEdit} style={outlineBtn}>Edit</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={startEdit} style={outlineBtn}>Edit</button>
+            <button
+              onClick={handleDeleteClick}
+              disabled={deleting}
+              style={{ ...outlineBtn, color: P.terra, borderColor: P.alertBorder }}
+            >
+              {deleting ? 'Working…' : 'Delete'}
+            </button>
+          </div>
         )}
       </div>
+
+      {/* Delete confirmation dialog */}
+      {deleteDialogOpen && (
+        <DeleteDialog
+          childProjects={childProjects}
+          onArchive={() => confirmDelete(true)}
+          onDelete={() => confirmDelete(false)}
+          onCancel={() => setDeleteDialogOpen(false)}
+        />
+      )}
 
       {editing ? (
         <form onSubmit={handleSave} style={cardStyle}>
@@ -342,6 +418,23 @@ export default function ProjectDetail() {
               <option value="">— None —</option>
               {locations.map(l => <option key={l.id} value={l.id}>{l.full_path}</option>)}
             </select>
+          </FormRow>
+
+          {/* ── Re-parent picker ── */}
+          <FormRow label="Nest under another project?">
+            <select
+              value={form.parent_project_id}
+              onChange={e => setForm(f => ({ ...f, parent_project_id: e.target.value }))}
+              style={inputStyle}
+            >
+              <option value="">None — top-level project</option>
+              {allProjects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
+              Optional — leave blank for a top-level project.
+            </small>
           </FormRow>
 
           <FormRow label="Description">
@@ -602,6 +695,71 @@ export default function ProjectDetail() {
         )}
       </div>
     </Shell>
+  )
+}
+
+function DeleteDialog({ childProjects, onArchive, onDelete, onCancel }) {
+  const hasChildren = childProjects.length > 0
+  const top3 = childProjects.slice(0, 3)
+  const extra = childProjects.length - 3
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+    }}>
+      <div style={{
+        backgroundColor: P.white, borderRadius: 12, padding: 28,
+        maxWidth: 440, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+      }}>
+        <h2 style={{ margin: '0 0 12px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>
+          {hasChildren ? 'This project has sub-projects' : 'Delete project?'}
+        </h2>
+
+        {hasChildren && (
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ margin: '0 0 8px', fontSize: '0.88rem', color: P.mid }}>
+              {childProjects.length} sub-project{childProjects.length !== 1 ? 's' : ''} will become top-level projects if you delete this one:
+            </p>
+            <ul style={{ margin: '0 0 8px', paddingLeft: 20 }}>
+              {top3.map(c => (
+                <li key={c.id} style={{ fontSize: '0.85rem', color: P.dark, marginBottom: 3 }}>{c.name}</li>
+              ))}
+              {extra > 0 && (
+                <li style={{ fontSize: '0.85rem', color: P.light }}>…and {extra} more</li>
+              )}
+            </ul>
+          </div>
+        )}
+
+        {!hasChildren && (
+          <p style={{ margin: '0 0 20px', fontSize: '0.88rem', color: P.mid }}>
+            This will permanently remove the project. This action cannot be undone.
+          </p>
+        )}
+
+        <p style={{ margin: '0 0 20px', fontSize: '0.83rem', color: P.light }}>
+          Recommended: archive instead to keep the record without cluttering your active list.
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <button onClick={onArchive} style={{
+            backgroundColor: P.green, color: P.white, border: 'none', borderRadius: 6,
+            padding: '10px 20px', fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer', textAlign: 'center',
+          }}>
+            Archive instead (recommended)
+          </button>
+          <button onClick={onDelete} style={{
+            backgroundColor: 'transparent', color: P.terra,
+            border: `1px solid ${P.alertBorder}`, borderRadius: 6,
+            padding: '9px 20px', fontSize: '0.88rem', cursor: 'pointer',
+          }}>
+            Delete permanently
+          </button>
+          <button onClick={onCancel} style={ghostBtn}>Cancel</button>
+        </div>
+      </div>
+    </div>
   )
 }
 
