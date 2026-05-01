@@ -5,6 +5,7 @@ Reads coverage-ratchet.json schedule and vitest.config.ts thresholds.
 Fails (exit 1) if the lowest vitest threshold is below the calendar-due target.
 Forces the team to bump thresholds on schedule rather than silently stagnating.
 
+# CI-validated 2026-05-01 via no-op PR (Step 2c).
 Source: pipeline-consolidation-plan-20260501.md §B2 (boss VP add).
 """
 import datetime
