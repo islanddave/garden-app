@@ -12,6 +12,26 @@ const EVENT_ICONS = {
   photo: '📷', other: '📝',
 }
 
+// Shared metadata field label map — mirrors EVENT_METADATA_FIELDS keys from EventNew
+const METADATA_LABELS = {
+  depth_cm:                  'Sowing depth (cm)',
+  spacing_cm:                'Spacing (cm)',
+  germination_expected_days: 'Expected germination (days)',
+  days_to_germinate:         'Days to germinate',
+  germination_rate_pct:      'Germination rate (%)',
+  height_cm:                 'Height (cm)',
+  leaf_count:                'Leaf count',
+  health:                    'Health',
+  amount_ml:                 'Amount (ml)',
+  product:                   'Product / mix',
+  dilution:                  'Dilution ratio',
+  weight_g:                  'Weight (g)',
+  count:                     'Count',
+  quality:                   'Quality',
+  pest:                      'Pest / disease',
+  treatment:                 'Treatment used',
+}
+
 export default function EventDetail() {
   const { id: projectId, eventId } = useParams()
   const navigate = useNavigate()
@@ -240,6 +260,11 @@ function EventFields({ event: ev }) {
     ev.private_notes && ['Private notes', ev.private_notes],
   ].filter(Boolean)
 
+  // Determine if metadata has any displayable entries
+  const metadataEntries = ev.metadata && typeof ev.metadata === 'object'
+    ? Object.entries(ev.metadata).filter(([, v]) => v !== null && v !== undefined && v !== '')
+    : []
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {rows.map(([label, value]) => (
@@ -258,6 +283,33 @@ function EventFields({ event: ev }) {
           </div>
         </div>
       ))}
+
+      {metadataEntries.length > 0 && (
+        <div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: P.light, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            Details
+          </div>
+          <div style={{
+            backgroundColor: P.cream, borderRadius: 8, padding: '12px 14px',
+            border: `1px solid ${P.border}`,
+            display: 'flex', flexDirection: 'column', gap: 8,
+          }}>
+            {metadataEntries.map(([key, value]) => {
+              const label = METADATA_LABELS[key] ?? null
+              return (
+                <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                  <span style={{ fontSize: '0.82rem', color: P.mid, flexShrink: 0 }}>
+                    {label ?? <span style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{key}</span>}
+                  </span>
+                  <span style={{ fontSize: '0.9rem', color: P.dark, fontWeight: 500, textAlign: 'right' }}>
+                    {label ? String(value) : <span style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>{String(value)}</span>}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
