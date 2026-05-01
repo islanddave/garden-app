@@ -1,11 +1,11 @@
 name: CI — Build and Unit Tests
 
-# Gate on every dev push and on PRs targeting any protected branch.
-# Must pass before merge to staging or main is permitted.
+# Gate on PRs targeting any protected branch.
+# Must pass before merge to dev, staging, or main is permitted.
+# `push: [dev]` trigger removed 2026-05-01 (pipeline hardening sprint Step 1)
+# to avoid double-firing once enhanced branch protection lands on main/staging.
 
 on:
-  push:
-    branches: [dev]
   pull_request:
     branches: [dev, staging, main]
 
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -34,8 +34,6 @@ jobs:
       - name: Build (CI — placeholder env vars)
         # VITE_ vars are inlined at build time as string literals.
         # Placeholder values allow build to succeed without real infrastructure.
-        # Any missing VITE_ var that causes a runtime import.meta.env reference to fail
-        # will surface here as a build error, not a silent runtime bug.
         run: npm run build
         env:
           VITE_CLERK_PUBLISHABLE_KEY: pk_test_ci_placeholder
@@ -48,10 +46,16 @@ jobs:
           VITE_API_DASHBOARD:         https://ci-placeholder.lambda-url.us-east-1.on.aws/
 
       - name: Verify build output
-        run: test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+        run: |
+          test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+
+      - name: Coverage ratchet enforcement
+        # Fails the build if vitest.config.ts thresholds fall below the
+        # calendar-due target in coverage-ratchet.json.
+        # B2 from pipeline-consolidation-plan-20260501.md (boss VP add).
+        run: python3 scripts/check-coverage-ratchet.py
 
       - name: Run unit tests with coverage
         run: npm test
-        # vitest exits non-zero if coverage thresholds not met.
-        # Thresholds defined in vitest.config.ts (60% lines/functions/branches for components,
-        # 70% for lib/ and hooks/).
+        # vitest exits non-zero if coverage thresholds (in vitest.config.ts) not met.
+        # Path A baseline: thresholds at 0%; schedule ratchets up per coverage-ratchet.json.

@@ -15,7 +15,8 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -33,7 +34,7 @@ jobs:
             [[ -n "${!VAR}" ]] || { echo "ERROR: $VAR not set"; exit 1; }
           done
           [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_live_* ]] || {
-            echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY must be pk_live_* for prod"
+            echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY must be pk_live_* for prod (got ${VITE_CLERK_PUBLISHABLE_KEY:0:12}...)"
             exit 1
           }
           echo "All VITE_ vars present and valid"
@@ -60,8 +61,7 @@ jobs:
           VITE_API_DASHBOARD:         ${{ vars.VITE_API_DASHBOARD }}
 
       - name: Verify build output
-        run: |
-          test -f dist/index.html || { echo "ERROR: dist/index.html missing"; exit 1; }
+        run: test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -69,18 +69,20 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Verify S3 versioning enabled
-        # Boss condition 2 hard gate — S3 versioning required for rollback strategy.
-        # Fix: aws s3api put-bucket-versioning --bucket BUCKET --versioning-configuration Status=Enabled
+      - name: Verify S3 versioning enabled [Boss condition 2]
+        # Hard gate: S3 versioning must be enabled before any deploy.
+        # Versioning is required for the S3 rollback leg of the three-unit rollback strategy.
+        # If this fails: aws s3api put-bucket-versioning --bucket <bucket> --versioning-configuration Status=Enabled
         run: |
           STATUS=$(aws s3api get-bucket-versioning \
             --bucket ${{ vars.S3_BUCKET_NAME }} \
             | jq -r '.Status // "None"')
           [[ "$STATUS" == "Enabled" ]] || {
             echo "FATAL: S3 versioning not enabled on ${{ vars.S3_BUCKET_NAME }} (status: $STATUS)"
+            echo "Fix: aws s3api put-bucket-versioning --bucket ${{ vars.S3_BUCKET_NAME }} --versioning-configuration Status=Enabled"
             exit 1
           }
-          echo "S3 versioning OK: $STATUS"
+          echo "✅ S3 versioning: $STATUS"
 
       - name: Deploy to S3 — hashed assets (immutable)
         run: |
@@ -103,6 +105,7 @@ jobs:
             --paths "/index.html"
 
       - name: Restore Lambda Function URL CORS
+        # OPTIONS excluded from AllowMethods (>6 chars fails validation); AWS handles preflight automatically.
         run: |
           CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
           for fn in garden-dashboard garden-events garden-favorites garden-locations garden-photos garden-plants garden-projects; do
@@ -115,6 +118,8 @@ jobs:
           done
 
       - name: Post-deploy Lambda health check
+        # Confirms all 7 prod Lambda functions are Active after deploy.
+        # Catches: broken zip, failed update, function in Pending/Failed state.
         run: |
           HEALTH_FAIL=0
           for fn in garden-dashboard garden-events garden-favorites garden-locations garden-photos garden-plants garden-projects; do
@@ -122,9 +127,9 @@ jobs:
               --function-name "$fn" \
               --query 'State' --output text)
             if [[ "$STATE" == "Active" ]]; then
-              echo "OK $fn: $STATE"
+              echo "✅ $fn: $STATE"
             else
-              echo "FAIL $fn: $STATE (expected Active)"
+              echo "❌ $fn: $STATE (expected Active)"
               ((HEALTH_FAIL++))
             fi
           done
