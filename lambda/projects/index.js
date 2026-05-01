@@ -200,12 +200,27 @@ export const handler = async (event) => {
 
     // --- /api/projects ---
     if (method === 'GET') {
-      // Optional filter: ?parent_id=<uuid> returns only children of that parent
-      // ?parent_id=null returns only root-level projects
-      const parentIdFilter = qs.parent_id;
+      // Optional filters:
+      //   ?parent_id=<uuid>  — children of that parent project
+      //   ?parent_id=null    — root-level projects only
+      //   ?location_id=<uuid> — projects assigned to a specific location
+      const parentIdFilter   = qs.parent_id;
+      const locationIdFilter = qs.location_id;
 
       let rows;
-      if (parentIdFilter === 'null' || parentIdFilter === '') {
+      if (locationIdFilter) {
+        rows = await sql`
+          SELECT id, name, slug, status, variety,
+                 to_char(start_date, 'YYYY-MM-DD') AS start_date,
+                 is_public, location_id, created_at, updated_at, parent_project_id,
+                 (SELECT COUNT(*)::int FROM plants pl WHERE pl.project_id = plant_projects.id AND pl.deleted_at IS NULL) AS plant_count
+          FROM plant_projects
+          WHERE created_by = ${userId}
+            AND deleted_at IS NULL
+            AND location_id = ${locationIdFilter}
+          ORDER BY start_date DESC NULLS LAST, created_at DESC
+        `;
+      } else if (parentIdFilter === 'null' || parentIdFilter === '') {
         rows = await sql`
           SELECT id, name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
