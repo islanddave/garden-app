@@ -126,6 +126,17 @@ export const handler = async (event) => {
     if (idMatch) {
       const locId = idMatch[1];
 
+      if (method === 'GET') {
+        const rows = await sql`
+          SELECT id, name, slug, level, type_label, parent_id, sort_order,
+                 description, is_active, created_at
+          FROM locations
+          WHERE id = ${locId} AND deleted_at IS NULL
+        `;
+        if (!rows.length) return resp(404, { error: 'Not found' });
+        return resp(200, rows[0]);
+      }
+
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
         const rows = await sql`
