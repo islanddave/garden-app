@@ -15,9 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install postgresql-client-16
-        # Pin to pg16 — must match or exceed source Supabase PostgreSQL version.
-        # Verify Supabase PG version before migration day: SELECT version();
-        # If Supabase upgrades past 16, update this step accordingly.
+        # Pin to pg16 — Neon runs PostgreSQL 17 but pg16 client is compatible for dumps.
+        # Upgrade to pg17 client when ubuntu-24.04 runner ships it in default repos.
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y postgresql-client-16
@@ -30,23 +29,21 @@ jobs:
           role-to-assume: ${{ vars.AWS_BACKUP_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: pg_dump from Supabase
-        # IMPORTANT: Use port 5432 (direct connection), NOT port 6543 (Supavisor pooler).
-        # pg_dump is incompatible with the pooler — it will hang or produce corrupt output.
-        # --no-owner and --no-privileges required: Supabase roles don't exist on Neon.
-        # --schema=public required: exclude Supabase internal schemas (auth, storage, etc.)
-        # -Fc = custom format; supports selective restore and compression.
+      - name: pg_dump from Neon (prod)
+        # IMPORTANT: Use direct endpoint (no -pooler suffix) — pg_dump is incompatible
+        # with connection poolers and will hang or produce corrupt output.
+        # NEON_BACKUP_URL must point to the direct host, not the pooler host.
+        # --no-owner: Neon roles differ from source; restore as current role.
+        # --schema=public: only dump app tables; exclude pg_catalog internals.
+        # -Fc: custom format — supports selective restore and compression.
         run: |
           DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
-          PGPASSWORD=${{ secrets.SUPABASE_DB_PASSWORD }} pg_dump \
-            --host=${{ vars.SUPABASE_DB_HOST }} \
-            --port=5432 \
-            --username=postgres \
+          pg_dump "${{ secrets.NEON_BACKUP_URL }}" \
             --schema=public \
             --no-owner \
             --no-privileges \
             -Fc \
-            postgres > "$DUMP_FILE"
+            > "$DUMP_FILE"
           echo "DUMP_FILE=$DUMP_FILE" >> "$GITHUB_ENV"
           echo "Dump file size: $(du -sh $DUMP_FILE | cut -f1)"
 
