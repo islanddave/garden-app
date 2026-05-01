@@ -63,6 +63,7 @@ export const handler = async (event) => {
             e.id, e.project_id, e.location_id, e.plant_id,
             e.event_type, e.event_date, e.notes, e.private_notes,
             e.quantity, e.is_public, e.logged_by, e.created_at,
+            e.metadata,
             pp.name AS project_name
           FROM event_log e
           JOIN plant_projects pp ON pp.id = e.project_id
@@ -88,6 +89,7 @@ export const handler = async (event) => {
               e.id, e.project_id, e.location_id, e.plant_id,
               e.event_type, e.event_date, e.notes,
               e.quantity, e.is_public, e.logged_by, e.created_at,
+              e.metadata,
               pp.name AS project_name
             FROM event_log e
             JOIN plant_projects pp ON pp.id = e.project_id
@@ -102,6 +104,7 @@ export const handler = async (event) => {
               e.id, e.project_id, e.location_id, e.plant_id,
               e.event_type, e.event_date, e.notes,
               e.quantity, e.is_public, e.logged_by, e.created_at,
+              e.metadata,
               pp.name AS project_name
             FROM event_log e
             JOIN plant_projects pp ON pp.id = e.project_id
@@ -123,12 +126,15 @@ export const handler = async (event) => {
         ? new Date(body.event_date).toISOString()
         : new Date().toISOString();
 
+      // metadata: pass object directly — Neon handles JSONB serialization
+      const metadata = body.metadata ?? null;
+
       // Insert event — set_config CTE referenced via FROM _ (unreferenced CTEs are skipped by PG planner)
       const eventRows = await sql`
         WITH _ AS (SELECT set_config('app.user_id', ${userId}, true))
         INSERT INTO event_log
           (project_id, location_id, plant_id, event_type, event_date,
-           notes, private_notes, quantity, is_public, logged_by, created_by)
+           notes, private_notes, quantity, is_public, logged_by, created_by, metadata)
         SELECT
           ${body.project_id},
           ${body.location_id ?? null},
@@ -140,7 +146,8 @@ export const handler = async (event) => {
           ${body.quantity ?? null},
           ${body.is_public ?? true},
           ${userId},
-          ${userId}
+          ${userId},
+          ${metadata}
         FROM _
         RETURNING *
       `;
