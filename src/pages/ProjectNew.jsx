@@ -20,22 +20,25 @@ export default function ProjectNew() {
 
   const [projectTypes, setProjectTypes] = useState([])
   const [locations, setLocations]       = useState([])
+  const [allProjects, setAllProjects]   = useState([])
   const [selectedType, setSelectedType] = useState(null)
   const [form, setForm] = useState({
     name: '', slug: '', variety: '', species: '', description: '',
     status: 'planning', start_date: today, is_public: true, location_id: '',
-    project_type_id: '',
+    project_type_id: '', parent_project_id: '',
   })
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState(null)
 
   useEffect(() => {
+    // Fetch types independently — route may not exist on all Lambda versions
+    fetch('/api/projects/types').then(t => setProjectTypes(t ?? [])).catch(() => {})
     Promise.all([
-      fetch('/api/projects/types'),
       fetch('/api/locations/with-path'),
-    ]).then(([types, locs]) => {
-      setProjectTypes(types ?? [])
+      fetch('/api/projects'),
+    ]).then(([locs, projects]) => {
       setLocations((locs ?? []).filter(l => l.is_active))
+      setAllProjects((projects ?? []).filter(p => p.name))
     }).catch(() => {})
   }, [fetch])
 
@@ -65,16 +68,17 @@ export default function ProjectNew() {
       const data = await fetch('/api/projects', {
         method: 'POST',
         body: JSON.stringify({
-          name:            form.name.trim(),
-          slug:            form.slug.trim(),
-          variety:         form.variety.trim()     || null,
-          species:         form.species.trim()     || null,
-          description:     form.description.trim() || null,
-          status:          form.status,
-          start_date:      form.start_date         || null,
-          is_public:       form.is_public,
-          location_id:     form.location_id        || null,
-          project_type_id: form.project_type_id    || null,
+          name:             form.name.trim(),
+          slug:             form.slug.trim(),
+          variety:          form.variety.trim()     || null,
+          species:          form.species.trim()     || null,
+          description:      form.description.trim() || null,
+          status:           form.status,
+          start_date:       form.start_date         || null,
+          is_public:        form.is_public,
+          location_id:      form.location_id        || null,
+          project_type_id:  form.project_type_id    || null,
+          parent_project_id: form.parent_project_id || null,
         }),
       })
       navigate(`/projects/${data.id}`)
@@ -148,6 +152,23 @@ export default function ProjectNew() {
           <FormRow label="Project name *">
             <input required value={form.name} onChange={e => handleNameChange(e.target.value)} style={inputStyle}
               placeholder={selectedType ? `e.g. ${selectedType.name} 2026` : 'e.g. Peppers 2026'} />
+          </FormRow>
+
+          {/* ── Parent project picker ── */}
+          <FormRow label="Nest under another project?">
+            <select
+              value={form.parent_project_id}
+              onChange={e => setForm(f => ({ ...f, parent_project_id: e.target.value }))}
+              style={inputStyle}
+            >
+              <option value="">None — top-level project</option>
+              {allProjects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
+              Optional — leave blank for a top-level project.
+            </small>
           </FormRow>
 
           <FormRow label="Slug  ·  used in public URL: /garden/{slug}">
