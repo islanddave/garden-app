@@ -1,0 +1,139 @@
+name: Build and Deploy — Staging
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: true
+
+env:
+  # Staging Clerk (dev instance — publishable key is intentionally client-visible)
+  STAGING_CLERK_KEY: pk_test_ZWxlY3RyaWMtaGF3ay04Ny5jbGVyay5hY2NvdW50cy5kZXYk
+  # Staging Lambda URLs
+  STAGING_API_PROJECTS:  https://mjozckiuondhvmsa7eulvuld3m0rptdh.lambda-url.us-east-1.on.aws/
+  STAGING_API_PLANTS:    https://fhgmxvrp2mefmzybhhwiptb2j40abfrw.lambda-url.us-east-1.on.aws/
+  STAGING_API_LOCATIONS: https://7d7gjas5nuup6dowlq7fxlwh6a0cotgd.lambda-url.us-east-1.on.aws/
+  STAGING_API_EVENTS:    https://ugggquxg5qk5rkupwib3s53hty0vqdjf.lambda-url.us-east-1.on.aws/
+  STAGING_API_FAVORITES: https://groahbarqmnhamc2oicymsuuba0rugkj.lambda-url.us-east-1.on.aws/
+  STAGING_API_PHOTOS:    https://sj6y3awedsfxqttuascvateeoy0tohji.lambda-url.us-east-1.on.aws/
+  STAGING_API_DASHBOARD: https://rsooajzuwmmyldgrpx7ebp2doa0gttpn.lambda-url.us-east-1.on.aws/
+  # Staging infra
+  STAGING_S3_BUCKET:   garden-app-staging
+  STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
+  STAGING_CF_ORIGIN:   https://dg6mmjhepoyt9.cloudfront.net
+
+jobs:
+  # ── Deploy staging Lambda functions ──────────────────────────────────────
+  deploy-lambdas:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        function: [projects, plants, locations, events, favorites, photos, dashboard]
+      max-parallel: 4
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.19.0'
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Build and zip ${{ matrix.function }}
+        run: |
+          cd lambda/${{ matrix.function }}
+          npm install --omit=dev
+          zip -r ../${{ matrix.function }}.zip .
+
+      - name: Deploy ${{ matrix.function }}-staging
+        run: |
+          aws lambda update-function-code \
+            --function-name "garden-${{ matrix.function }}-staging" \
+            --zip-file "fileb://lambda/${{ matrix.function }}.zip"
+
+      - name: Wait for ${{ matrix.function }}-staging
+        run: |
+          aws lambda wait function-updated \
+            --function-name "garden-${{ matrix.function }}-staging"
+          echo "garden-${{ matrix.function }}-staging active"
+
+      - name: Restore staging Lambda CORS
+        run: |
+          CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["${{ env.STAGING_CF_ORIGIN }}"],"ExposeHeaders":[],"MaxAge":300}'
+          aws lambda update-function-url-config \
+            --function-name "garden-${{ matrix.function }}-staging" \
+            --region us-east-1 \
+            --cors "$CORS" \
+            --query 'Cors.AllowOrigins[0]' --output text
+
+  # ── Build and deploy staging frontend ────────────────────────────────────
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    needs: deploy-lambdas
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build (staging)
+        run: npm run build
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ env.STAGING_CLERK_KEY }}
+          VITE_API_PROJECTS:          ${{ env.STAGING_API_PROJECTS }}
+          VITE_API_PLANTS:            ${{ env.STAGING_API_PLANTS }}
+          VITE_API_LOCATIONS:         ${{ env.STAGING_API_LOCATIONS }}
+          VITE_API_EVENTS:            ${{ env.STAGING_API_EVENTS }}
+          VITE_API_FAVORITES:         ${{ env.STAGING_API_FAVORITES }}
+          VITE_API_PHOTOS:            ${{ env.STAGING_API_PHOTOS }}
+          VITE_API_DASHBOARD:         ${{ env.STAGING_API_DASHBOARD }}
+
+      - name: Verify build output
+        run: |
+          test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Deploy to S3 staging — hashed assets (immutable)
+        run: |
+          aws s3 sync dist/assets/ s3://${{ env.STAGING_S3_BUCKET }}/assets/ \
+            --cache-control "public, max-age=31536000, immutable" \
+            --metadata-directive REPLACE
+
+      - name: Deploy to S3 staging — root files (no-cache)
+        run: |
+          aws s3 sync dist/ s3://${{ env.STAGING_S3_BUCKET }}/ \
+            --exclude "assets/*" \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --metadata-directive REPLACE \
+            --delete
+
+      - name: Invalidate staging CloudFront — index.html only
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ env.STAGING_CF_DIST_ID }} \
+            --paths "/index.html"
+          echo "Staging deploy complete → ${{ env.STAGING_CF_ORIGIN }}"
