@@ -7,6 +7,7 @@
 # Never touches prod DB. Safe to re-run.
 
 set -euo pipefail
+# neon-url-fix-trigger: removed channel_binding from NEON_STAGING_URL 2026-05-01
 
 [[ -n "${NEON_STAGING_URL:-}" ]] || { echo "FATAL: NEON_STAGING_URL unset"; exit 1; }
 
