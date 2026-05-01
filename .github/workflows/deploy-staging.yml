@@ -1,5 +1,6 @@
 name: Build and Deploy — Staging + Regression Suite
 
+# iam-fix-trigger: cloudfront:GetInvalidation added 2026-05-01
 on:
   push:
     branches: [staging]
