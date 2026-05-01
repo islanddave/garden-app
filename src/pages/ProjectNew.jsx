@@ -31,12 +31,12 @@ export default function ProjectNew() {
   const [error,  setError]  = useState(null)
 
   useEffect(() => {
+    // Fetch types independently — route may not exist on all Lambda versions
+    fetch('/api/projects/types').then(t => setProjectTypes(t ?? [])).catch(() => {})
     Promise.all([
-      fetch('/api/projects/types'),
       fetch('/api/locations/with-path'),
       fetch('/api/projects'),
-    ]).then(([types, locs, projects]) => {
-      setProjectTypes(types ?? [])
+    ]).then(([locs, projects]) => {
       setLocations((locs ?? []).filter(l => l.is_active))
       setAllProjects((projects ?? []).filter(p => p.name))
     }).catch(() => {})
