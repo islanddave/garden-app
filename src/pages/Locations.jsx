@@ -43,8 +43,8 @@ export default function Locations() {
         fetch('/api/locations'),
         fetch('/api/locations/with-path'),
       ])
-      setLocations(locs ?? [])
-      setWithPaths(paths ?? [])
+      setLocations(Array.isArray(locs) ? locs : (locs?.locations ?? []))
+      setWithPaths(Array.isArray(paths) ? paths : (paths?.locations_with_path ?? []))
     } catch (e) {
       setError(e.message)
     } finally {
