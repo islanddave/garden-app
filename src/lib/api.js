@@ -13,7 +13,7 @@ const FUNCTION_URLS = {
 
 function resolveUrl(path) {
   for (const [prefix, base] of Object.entries(FUNCTION_URLS)) {
-    if (path.startsWith(prefix)) return `${base}${path}`;
+    if (path.startsWith(prefix)) return `${base.replace(/\/$/, '')}${path}`;
   }
   throw new Error(`No Lambda URL configured for path: ${path}`);
 }
