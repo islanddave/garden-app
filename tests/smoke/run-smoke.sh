@@ -61,15 +61,15 @@ check_reachable() {
   local FIRST="${HTTP_CODE:0:1}"
   if [[ "$HTTP_CODE" == "000" ]]; then
     echo "❌ FAIL [$label] connection failed (timeout or DNS error)"
-    ((FAIL++))
+    FAIL=$((FAIL+1))
   elif [[ "$FIRST" == "5" ]]; then
     echo "❌ FAIL [$label] HTTP $HTTP_CODE (server error)"
     echo "   Body: ${BODY:0:200}"
-    ((FAIL++))
+    FAIL=$((FAIL+1))
   else
     # 2xx = open/working, 4xx = auth check working — both are valid smoke passes
     echo "✅ PASS [$label] HTTP $HTTP_CODE"
-    ((PASS++))
+    PASS=$((PASS+1))
   fi
 }
 
@@ -99,7 +99,7 @@ auth_request() {
   if [[ "$HTTP_CODE" == "000" ]] || [[ "$FIRST" == "5" ]]; then
     echo "❌ FAIL [$label] HTTP $HTTP_CODE"
     echo "   Body: ${BODY:0:200}"
-    ((FAIL++))
+    FAIL=$((FAIL+1))
     echo ""
     return 1
   else
@@ -205,7 +205,7 @@ else
 
   if [[ "${CREATE_HTTP:0:1}" == "2" ]]; then
     echo "✅ PASS [crud:POST /projects] HTTP $CREATE_HTTP"
-    ((PASS++))
+    PASS=$((PASS+1))
     CREATED_PROJECT_ID=$(echo "$CREATE_RESPONSE" | jq -r '.id // .project_id // empty' 2>/dev/null || echo "")
     if [[ -n "$CREATED_PROJECT_ID" ]]; then
       DATA_CREATED=true
@@ -219,7 +219,7 @@ else
   else
     echo "❌ FAIL [crud:POST /projects] HTTP $CREATE_HTTP"
     echo "   Body: ${CREATE_RESPONSE:0:200}"
-    ((FAIL++))
+    FAIL=$((FAIL+1))
   fi
 fi
 
