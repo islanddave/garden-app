@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { P } from '../lib/constants.js'
+import { P, PROJECT_STATUS_MAP } from '../lib/constants.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 
 // DEFERRED:
@@ -19,6 +19,119 @@ function Shell({ children }) {
 
 function Spinner() {
   return <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div>
+}
+
+function StatusBadge({ status }) {
+  const map = PROJECT_STATUS_MAP[status] ?? { label: status, emoji: '' }
+  return (
+    <span style={{
+      fontSize: '0.72rem',
+      background: P.greenPale,
+      color: P.green,
+      borderRadius: 10,
+      padding: '2px 8px',
+      fontWeight: 600,
+      flexShrink: 0,
+    }}>
+      {map.emoji ? `${map.emoji} ${map.label}` : map.label}
+    </span>
+  )
+}
+
+function ContentsSection({ locationId, fetch }) {
+  const [projects, setProjects] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let mounted = true
+    fetch('/api/projects?location_id=' + locationId)
+      .then(data => {
+        if (!mounted) return
+        setProjects(Array.isArray(data) ? data : [])
+        setLoading(false)
+      })
+      .catch(() => {
+        if (!mounted) return
+        setLoading(false)
+      })
+    return () => { mounted = false }
+  }, [locationId, fetch])
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <h2 style={{ margin: '0 0 12px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>
+        At this location
+      </h2>
+
+      {loading ? (
+        <div style={{
+          background: '#fff', border: `1px solid ${P.sage ?? P.border}`,
+          borderRadius: 10, padding: '14px 18px',
+          fontSize: '0.87rem', color: P.light,
+        }}>
+          Loading contents…
+        </div>
+      ) : projects.length === 0 ? (
+        <div style={{
+          background: '#fff', border: `1px solid ${P.border}`,
+          borderRadius: 10, padding: '32px 20px',
+          textAlign: 'center',
+        }}>
+          <div style={{ fontSize: '1.5rem', marginBottom: 10 }}>🌿</div>
+          <div style={{ fontSize: '0.93rem', fontWeight: 600, color: P.dark, marginBottom: 6 }}>
+            Nothing here yet
+          </div>
+          <div style={{ fontSize: '0.84rem', color: P.light, marginBottom: 16, maxWidth: 320, margin: '0 auto 16px' }}>
+            When you assign a project to this location, it will appear here.
+          </div>
+          <Link
+            to="/projects/new"
+            style={{
+              display: 'inline-block',
+              background: P.green, color: '#fff',
+              borderRadius: 6, padding: '9px 18px',
+              fontSize: '0.875rem', fontWeight: 600,
+              textDecoration: 'none',
+            }}
+          >
+            Create a project
+          </Link>
+        </div>
+      ) : (
+        <div style={{
+          background: '#fff', border: `1px solid ${P.border}`,
+          borderRadius: 10, overflow: 'hidden',
+        }}>
+          {projects.map((proj, i) => (
+            <Link
+              key={proj.id}
+              to={`/projects/${proj.id}`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '12px 16px',
+                borderTop: i > 0 ? `1px solid ${P.border}` : 'none',
+                textDecoration: 'none',
+                color: P.dark,
+              }}
+            >
+              <span style={{ flex: 1, fontWeight: 500, fontSize: '0.9rem', minWidth: 0 }}>
+                {proj.name}
+              </span>
+              {proj.status && <StatusBadge status={proj.status} />}
+              {proj.plant_count > 0 && (
+                <span style={{ fontSize: '0.78rem', color: P.light, flexShrink: 0 }}>
+                  {proj.plant_count} {proj.plant_count === 1 ? 'plant' : 'plants'}
+                </span>
+              )}
+              <span style={{ fontSize: '0.8rem', color: P.border, flexShrink: 0 }}>›</span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function LocationDetail() {
@@ -82,7 +195,7 @@ export default function LocationDetail() {
 
       {location.notes && (
         <div style={{
-          background: '#fff', border: `1px solid ${P.sage}`,
+          background: '#fff', border: `1px solid ${P.sage ?? P.border}`,
           borderRadius: 10, padding: '14px 18px', marginBottom: 20,
           fontSize: '0.9rem', color: P.dark, lineHeight: 1.6,
         }}>
@@ -91,7 +204,7 @@ export default function LocationDetail() {
       )}
 
       <div style={{
-        background: '#fff', border: `1px solid ${P.sage}`,
+        background: '#fff', border: `1px solid ${P.sage ?? P.border}`,
         borderRadius: 10, padding: '14px 18px',
         fontSize: '0.87rem', color: P.dark,
       }}>
@@ -116,6 +229,8 @@ export default function LocationDetail() {
           )}
         </div>
       </div>
+
+      <ContentsSection locationId={id} fetch={fetch} />
     </Shell>
   )
 }
