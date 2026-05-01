@@ -211,11 +211,6 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Install postgresql-client
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client
-
       - name: Run schema integrity check
         run: bash tests/schema/check-schema.sh
         env:
