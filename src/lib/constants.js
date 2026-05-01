@@ -64,9 +64,6 @@ export const LOCATION_TYPE_LABELS = [
 ]
 
 // Project statuses — V1+ lifecycle (matches new DB check constraint)
-// ⚠️  DB MIGRATION REQUIRED before new status values work in production.
-//     Run: supabase/migrations/update_project_status_enum.sql
-//     Until then, new projects with non-legacy values will be rejected by Supabase.
 export const PROJECT_STATUSES = [
   'planning',
   'seeding',
@@ -125,8 +122,6 @@ export const INVENTORY_SUBCATEGORIES = [
 export const INVENTORY_CATEGORIES = [
   'seed', 'fertilizer', 'soil_amendment', 'container', 'tool', 'pest_control', 'other',
 ]
-
-// Supabase Storage bucket name
 
 // Project categories — used in project_types table and ProjectTypes.jsx
 export const PROJECT_CATEGORIES = [
