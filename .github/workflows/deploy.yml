@@ -32,7 +32,11 @@ jobs:
           for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD; do
             [[ -n "${!VAR}" ]] || { echo "ERROR: $VAR not set"; exit 1; }
           done
-          echo "All VITE_ vars present"
+          [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_live_* ]] || {
+            echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY must be pk_live_* for prod (got ${VITE_CLERK_PUBLISHABLE_KEY:0:12}...)"
+            exit 1
+          }
+          echo "All VITE_ vars present and valid"
         env:
           VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
           VITE_API_PROJECTS:          ${{ vars.VITE_API_PROJECTS }}
@@ -56,8 +60,7 @@ jobs:
           VITE_API_DASHBOARD:         ${{ vars.VITE_API_DASHBOARD }}
 
       - name: Verify build output
-        run: |
-          test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+        run: test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -65,11 +68,68 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Deploy to S3
-        run: aws s3 sync dist/ s3://${{ vars.S3_BUCKET_NAME }} --delete
+      - name: Verify S3 versioning enabled [Boss condition 2]
+        # Hard gate: S3 versioning must be enabled before any deploy.
+        # Versioning is required for the S3 rollback leg of the three-unit rollback strategy.
+        # If this fails: aws s3api put-bucket-versioning --bucket <bucket> --versioning-configuration Status=Enabled
+        run: |
+          STATUS=$(aws s3api get-bucket-versioning \
+            --bucket ${{ vars.S3_BUCKET_NAME }} \
+            | jq -r '.Status // "None"')
+          [[ "$STATUS" == "Enabled" ]] || {
+            echo "FATAL: S3 versioning not enabled on ${{ vars.S3_BUCKET_NAME }} (status: $STATUS)"
+            echo "Fix: aws s3api put-bucket-versioning --bucket ${{ vars.S3_BUCKET_NAME }} --versioning-configuration Status=Enabled"
+            exit 1
+          }
+          echo "✅ S3 versioning: $STATUS"
 
-      - name: Invalidate CloudFront cache
+      - name: Deploy to S3 — hashed assets (immutable)
+        run: |
+          aws s3 sync dist/assets/ s3://${{ vars.S3_BUCKET_NAME }}/assets/ \
+            --cache-control "public, max-age=31536000, immutable" \
+            --metadata-directive REPLACE
+
+      - name: Deploy to S3 — root files (no-cache, prune stale)
+        run: |
+          aws s3 sync dist/ s3://${{ vars.S3_BUCKET_NAME }}/ \
+            --exclude "assets/*" \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --metadata-directive REPLACE \
+            --delete
+
+      - name: Invalidate CloudFront — index.html only
         run: |
           aws cloudfront create-invalidation \
             --distribution-id ${{ vars.CLOUDFRONT_DIST_ID }} \
-            --paths "/*"
+            --paths "/index.html"
+
+      - name: Restore Lambda Function URL CORS
+        # OPTIONS excluded from AllowMethods (>6 chars fails validation); AWS handles preflight automatically.
+        run: |
+          CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
+          for fn in garden-dashboard garden-events garden-favorites garden-locations garden-photos garden-plants garden-projects; do
+            echo -n "CORS $fn: "
+            aws lambda update-function-url-config \
+              --function-name "$fn" \
+              --region us-east-1 \
+              --cors "$CORS" \
+              --query 'Cors.AllowOrigins[0]' --output text
+          done
+
+      - name: Post-deploy Lambda health check
+        # Confirms all 7 prod Lambda functions are Active after deploy.
+        # Catches: broken zip, failed update, function in Pending/Failed state.
+        run: |
+          HEALTH_FAIL=0
+          for fn in garden-dashboard garden-events garden-favorites garden-locations garden-photos garden-plants garden-projects; do
+            STATE=$(aws lambda get-function-configuration \
+              --function-name "$fn" \
+              --query 'State' --output text)
+            if [[ "$STATE" == "Active" ]]; then
+              echo "✅ $fn: $STATE"
+            else
+              echo "❌ $fn: $STATE (expected Active)"
+              ((HEALTH_FAIL++))
+            fi
+          done
+          [[ "$HEALTH_FAIL" -eq 0 ]] || { echo "FATAL: $HEALTH_FAIL Lambda(s) not Active post-deploy"; exit 1; }
