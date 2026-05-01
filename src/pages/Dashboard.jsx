@@ -3,7 +3,6 @@ import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useZone } from '../context/ZoneContext.jsx'
 import { useApiFetch } from '../lib/api.js'
-import { supabase } from '../lib/supabase.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 
 // Project statuses eligible for display on Dashboard
@@ -37,11 +36,8 @@ export default function Dashboard() {
   const loadDashboard = useCallback(async (isMounted) => {
     const today = new Date().toISOString().split('T')[0]
     try {
-      // Parallel: dashboard API + tasks (still on Supabase until /api/tasks Lambda deployed)
-      // TODO DB-MIGRATE-TASKS: migrate when /api/tasks Lambda deployed
-      const taskQuery = supabase
-        ? supabase.from('tasks').select('id, title, due_date, priority, status').lte('due_date', today).eq('status', 'pending').order('due_date')
-        : Promise.resolve({ data: [], error: null })
+      // TODO DB-MIGRATE-TASKS: wire to /api/tasks Lambda when deployed
+      const taskQuery = Promise.resolve({ data: [], error: null })
       const [dashData, { data: taskData, error: tErr }] = await Promise.all([
         apiFetch('/api/dashboard'),
         taskQuery,
