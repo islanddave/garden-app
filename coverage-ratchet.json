@@ -1,0 +1,15 @@
+{
+  "_meta": {
+    "purpose": "Coverage threshold schedule for vitest. CI fails if vitest.config.ts thresholds fall below the calendar-due target.",
+    "source": "pipeline-consolidation-plan-20260501.md §B2 (boss VP add)",
+    "created": "2026-05-01",
+    "applies_to": "vitest.config.ts coverage thresholds (lines/functions/branches/statements minimum)",
+    "tunable": "Dave or session may revise dates/targets here as scope adjusts."
+  },
+  "schedule": [
+    {"date": "2026-05-01", "target": 0,  "milestone": "Path A baseline"},
+    {"date": "2026-06-30", "target": 10, "milestone": "V2 close"},
+    {"date": "2026-09-30", "target": 25, "milestone": "V2.1"},
+    {"date": "2026-12-31", "target": 50, "milestone": "V3"}
+  ]
+}
