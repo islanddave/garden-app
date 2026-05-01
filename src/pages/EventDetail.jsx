@@ -30,6 +30,9 @@ const METADATA_LABELS = {
   quality:                   'Quality',
   pest:                      'Pest / disease',
   treatment:                 'Treatment used',
+  depth_mm:                  'Sowing depth (mm)',
+  medium:                    'Growing medium',
+  container:                 'Container',
 }
 
 export default function EventDetail() {
