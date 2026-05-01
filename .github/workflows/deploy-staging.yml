@@ -132,7 +132,8 @@ jobs:
           VITE_API_DASHBOARD:         ${{ env.STAGING_API_DASHBOARD }}
 
       - name: Verify build output
-        run: test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+        run: |
+          test -f dist/index.html || { echo "ERROR: dist/index.html missing"; exit 1; }
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -166,7 +167,7 @@ jobs:
             --id "$INVAL_ID"
           echo "✅ CF invalidation $INVAL_ID complete"
 
-      - name: Verify CF edge serving new build [Boss condition 1]
+      - name: "Verify CF edge serving new build [Boss condition 1]"
         # Confirms CF is serving the just-deployed build, not a stale cached version.
         # Strategy: Vite bakes content hash into asset filenames; grep the served
         # index.html for the known hashed filename. Mismatch = stale edge cache.
