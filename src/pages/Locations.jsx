@@ -39,11 +39,11 @@ export default function Locations() {
 
   const load = useCallback(async () => {
     try {
-      const [locsResp, paths] = await Promise.all([
+      const [locs, paths] = await Promise.all([
         fetch('/api/locations'),
         fetch('/api/locations/with-path'),
       ])
-      setLocations(locsResp?.locations ?? [])
+      setLocations(locs ?? [])
       setWithPaths(paths ?? [])
     } catch (e) {
       setError(e.message)
