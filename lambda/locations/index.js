@@ -131,7 +131,7 @@ export const handler = async (event) => {
           SELECT id, name, slug, level, type_label, parent_id, sort_order,
                  description, is_active, created_at
           FROM locations
-          WHERE id = ${locId} AND deleted_at IS NULL
+          WHERE (slug = ${locId} OR id::text = ${locId}) AND deleted_at IS NULL
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
@@ -147,7 +147,7 @@ export const handler = async (event) => {
             sort_order  = COALESCE(${body.sort_order ?? null}, sort_order),
             description = COALESCE(${body.description ?? null}, description),
             is_active   = COALESCE(${body.is_active ?? null}, is_active)
-          WHERE id = ${locId}
+          WHERE (slug = ${locId} OR id::text = ${locId})
             AND deleted_at IS NULL
           RETURNING *
         `;
