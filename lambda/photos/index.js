@@ -15,12 +15,12 @@ const s3 = new S3Client({
   responseChecksumValidation: 'WHEN_REQUIRED',
 });
 const BUCKET = process.env.S3_PHOTOS_BUCKET;
-if (!BUCKET) throw new Error('S3_PHOTOS_BUCKET env var not set â check Lambda configuration');
+if (!BUCKET) throw new Error('S3_PHOTOS_BUCKET env var not set — check Lambda configuration');
 
 let _secrets = null;
 async function getSecrets() {
   if (_secrets) return _secrets;
-  const cmd = new GetSecretValueCommand({ SecretId: 'garden-app/secrets' });
+  const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
   const res = await sm.send(cmd);
   _secrets = JSON.parse(res.SecretString);
   return _secrets;
@@ -144,8 +144,7 @@ export const handler = async (event) => {
           try {
             const view_url = await getViewUrl(photo.storage_path);
             return { ...photo, view_url };
-          } catch (err) {
-    console.error('verifyToken failed:', err?.message ?? String(err));
+          } catch {
             return { ...photo, view_url: null };
           }
         })
