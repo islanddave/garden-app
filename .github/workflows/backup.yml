@@ -14,12 +14,18 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install postgresql-client-16
-        # Pin to pg16 — Neon runs PostgreSQL 17 but pg16 client is compatible for dumps.
-        # Upgrade to pg17 client when ubuntu-24.04 runner ships it in default repos.
+      - name: Install postgresql-client-17 (from pgdg apt repo)
+        # Neon runs PostgreSQL 17. pg_dump enforces strict major-version match
+        # since pg-15+, so pg-16 client cannot dump from pg-17 server (proven
+        # 2026-05-05: failed with "server version: 17.8; pg_dump version: 16.13").
+        # Pull pg17 client from the PostgreSQL Apt Repository (apt.postgresql.org)
+        # until Ubuntu runners ship pg17 in default repos.
         run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
           sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client-16
+          sudo apt-get install -y postgresql-client-17
           pg_dump --version
 
       - name: Configure AWS credentials (OIDC)
