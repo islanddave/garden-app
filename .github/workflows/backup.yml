@@ -26,7 +26,10 @@ jobs:
           sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
           sudo apt-get update -qq
           sudo apt-get install -y postgresql-client-17
-          pg_dump --version
+          # Use explicit path: /usr/bin/pg_dump on this runner image still resolves
+          # to pg16 even after pg17 install (both client versions coexist; the
+          # default wrapper picks pg16). Step 4 also overrides PATH to fix this.
+          /usr/lib/postgresql/17/bin/pg_dump --version
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -42,7 +45,11 @@ jobs:
         # --no-owner: Neon roles differ from source; restore as current role.
         # --schema=public: only dump app tables; exclude pg_catalog internals.
         # -Fc: custom format — supports selective restore and compression.
+        # PATH override: bare `pg_dump` resolves to pg16 on this runner image even
+        # when pg17 is installed (postgresql-client-common wrapper picks pg16).
+        # Prepending pg17's bin dir forces the major-version match Neon requires.
         run: |
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
           DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
           pg_dump "${{ secrets.NEON_BACKUP_URL }}" \
             --schema=public \
