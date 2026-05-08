@@ -18,6 +18,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production  # claim env:production OIDC subject for garden-app-github-deploy trust (scoped 2026-05-05)
     strategy:
       matrix:
         # One job per Lambda function directory under lambda/
