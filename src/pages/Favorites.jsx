@@ -19,10 +19,11 @@ export default function Favorites() {
   const load = useCallback(async () => {
     try {
       // Parallel: favorites list + entity data for Lambda-backed types
-      const [favs, allProjects, allLocations] = await Promise.all([
+      const [favs, allProjects, allLocations, allInventory] = await Promise.all([
         fetch('/api/favorites'),
         fetch('/api/projects'),
         fetch('/api/locations'),
+        fetch('/api/inventory-items').catch(() => []),
       ])
 
       if (!favs?.length) { setSections([]); setLoading(false); return }
@@ -48,7 +49,12 @@ export default function Favorites() {
         if (items.length) resolvedSections.push({ type: 'location', items })
       }
 
-      // TODO DB-MIGRATE-INVENTORY: wire when /api/inventory Lambda deployed
+      // Inventory items — cross-reference with Lambda result
+      if (byType.inventory_item) {
+        const items = (allInventory ?? []).filter(it => byType.inventory_item.includes(it.id))
+        if (items.length) resolvedSections.push({ type: 'inventory_item', items })
+      }
+
       // TODO DB-MIGRATE-PLANTS: wire when /api/plants supports batch-by-ids
 
       setSections(resolvedSections)

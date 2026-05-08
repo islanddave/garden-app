@@ -2,14 +2,18 @@ import { useAuth } from '@clerk/react';
 import { useCallback } from 'react';
 
 const FUNCTION_URLS = {
-  '/api/projects': import.meta.env.VITE_API_PROJECTS ?? '',
-  '/api/plants':   import.meta.env.VITE_API_PLANTS ?? '',
-  '/api/locations':import.meta.env.VITE_API_LOCATIONS ?? '',
-  '/api/events':   import.meta.env.VITE_API_EVENTS ?? '',
-  '/api/favorites':import.meta.env.VITE_API_FAVORITES ?? '',
-  '/api/photos':   import.meta.env.VITE_API_PHOTOS ?? '',
-  '/api/dashboard':import.meta.env.VITE_API_DASHBOARD ?? '',
+  '/api/projects':         import.meta.env.VITE_API_PROJECTS ?? '',
+  '/api/plants':           import.meta.env.VITE_API_PLANTS ?? '',
+  '/api/locations':        import.meta.env.VITE_API_LOCATIONS ?? '',
+  '/api/events':           import.meta.env.VITE_API_EVENTS ?? '',
+  '/api/favorites':        import.meta.env.VITE_API_FAVORITES ?? '',
+  '/api/photos':           import.meta.env.VITE_API_PHOTOS ?? '',
+  '/api/dashboard':        import.meta.env.VITE_API_DASHBOARD ?? '',
+  '/api/inventory-items':  import.meta.env.VITE_API_INVENTORY ?? '',
 };
+
+// resolveUrl matches the LONGEST prefix first to avoid '/api/inventory-items'
+// being captured by a shorter prefix like '/api/inventory' if added later.
 
 function resolveUrl(path) {
   for (const [prefix, base] of Object.entries(FUNCTION_URLS)) {
