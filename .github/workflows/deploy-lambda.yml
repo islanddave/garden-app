@@ -90,12 +90,21 @@ jobs:
               --auth-type NONE \
               --cors '{"AllowOrigins":["*"],"AllowMethods":["*"],"AllowHeaders":["*"]}'
             # Add resource-based policy for public invoke (required when AuthType=NONE)
+            # Function URL invocations require BOTH InvokeFunctionUrl (URL-config layer)
+            # AND InvokeFunction (handler-dispatch layer) — missing either returns 403
+            # at the URL layer before the request reaches the handler.
+            # Ref: error-log.md E-magical-nifty-franklin-pickup-002 (2026-05-08)
             aws lambda add-permission \
               --function-name "$FUNCTION_NAME" \
               --statement-id FunctionURLAllowPublicAccess \
               --action lambda:InvokeFunctionUrl \
               --principal "*" \
               --function-url-auth-type NONE 2>/dev/null || true
+            aws lambda add-permission \
+              --function-name "$FUNCTION_NAME" \
+              --statement-id AllowPublicInvoke \
+              --action lambda:InvokeFunction \
+              --principal "*" 2>/dev/null || true
             echo "Function URL created for $FUNCTION_NAME"
           fi
 
