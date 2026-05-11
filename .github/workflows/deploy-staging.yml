@@ -25,6 +25,9 @@ env:
   STAGING_API_PHOTOS:    https://sj6y3awedsfxqttuascvateeoy0tohji.lambda-url.us-east-1.on.aws/
   STAGING_API_DASHBOARD: https://rsooajzuwmmyldgrpx7ebp2doa0gttpn.lambda-url.us-east-1.on.aws/
   STAGING_API_INVENTORY: https://yjp6wsb2gkckork57shkxwqlzu0shwcm.lambda-url.us-east-1.on.aws/
+  # VARIETY-REF Session 2: placeholder until first staging deploy creates the Function URL.
+  # Update with the actual URL after the first deploy completes (handoff documents this).
+  STAGING_API_VARIETIES: https://placeholder-set-after-first-staging-deploy.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
@@ -37,7 +40,7 @@ jobs:
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     strategy:
       matrix:
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties]
       max-parallel: 4
       fail-fast: false
 
@@ -60,11 +63,30 @@ jobs:
           npm install --omit=dev
           zip -r ../${{ matrix.function }}.zip .
 
-      - name: Deploy ${{ matrix.function }}-staging
+      - name: Deploy or create ${{ matrix.function }}-staging
+        # First-deploy support per VARIETY-REF Session 2 — mirrors deploy-lambda.yml
+        # create-or-update pattern (closes Pending D1 from carry-forward backlog).
+        # Existing functions update; missing functions are created with default config.
         run: |
-          aws lambda update-function-code \
-            --function-name "garden-${{ matrix.function }}-staging" \
-            --zip-file "fileb://lambda/${{ matrix.function }}.zip"
+          FN="garden-${{ matrix.function }}-staging"
+          ZIP_FILE="fileb://lambda/${{ matrix.function }}.zip"
+          if aws lambda get-function --function-name "$FN" 2>/dev/null; then
+            echo "Updating existing function: $FN"
+            aws lambda update-function-code \
+              --function-name "$FN" \
+              --zip-file "$ZIP_FILE"
+          else
+            echo "Creating new function: $FN"
+            aws lambda create-function \
+              --function-name "$FN" \
+              --runtime nodejs20.x \
+              --handler index.handler \
+              --role arn:aws:iam::769788341849:role/garden-app-lambda-exec \
+              --zip-file "$ZIP_FILE" \
+              --timeout 30 \
+              --memory-size 256 \
+              --environment 'Variables={SECRET_NAME=garden-app/secrets-staging}'
+          fi
 
       - name: Wait for ${{ matrix.function }}-staging
         run: |
@@ -80,6 +102,33 @@ jobs:
             --query 'State' --output text)
           [[ "$STATE" == "Active" ]] || { echo "FATAL: $FN state=$STATE (expected Active)"; exit 1; }
           echo "✅ $FN is $STATE"
+
+      - name: Ensure Function URL exists for ${{ matrix.function }}-staging
+        # First-deploy support: mirror deploy-lambda.yml Function URL creation step.
+        # Existing URLs unchanged; missing URLs created with public access (handler owns CORS).
+        continue-on-error: true  # requires lambda:CreateFunctionUrlConfig + AddPermission on staging deploy role
+        run: |
+          FN="garden-${{ matrix.function }}-staging"
+          if aws lambda get-function-url-config --function-name "$FN" 2>/dev/null; then
+            echo "Function URL already exists for $FN"
+          else
+            echo "Creating Function URL for $FN"
+            aws lambda create-function-url-config \
+              --function-name "$FN" \
+              --auth-type NONE \
+              --cors '{"AllowOrigins":["*"],"AllowMethods":["*"],"AllowHeaders":["*"]}'
+            aws lambda add-permission \
+              --function-name "$FN" \
+              --statement-id FunctionURLAllowPublicAccess \
+              --action lambda:InvokeFunctionUrl \
+              --principal "*" \
+              --function-url-auth-type NONE 2>/dev/null || true
+            aws lambda add-permission \
+              --function-name "$FN" \
+              --statement-id AllowPublicInvoke \
+              --action lambda:InvokeFunction \
+              --principal "*" 2>/dev/null || true
+          fi
 
       - name: Restore staging Lambda CORS
         run: |
@@ -134,6 +183,7 @@ jobs:
           VITE_API_PHOTOS:            ${{ env.STAGING_API_PHOTOS }}
           VITE_API_DASHBOARD:         ${{ env.STAGING_API_DASHBOARD }}
           VITE_API_INVENTORY:         ${{ env.STAGING_API_INVENTORY }}
+          VITE_API_VARIETIES:         ${{ env.STAGING_API_VARIETIES }}
 
       - name: Verify build output
         run: |
@@ -240,6 +290,7 @@ jobs:
           STAGING_API_FAVORITES: ${{ env.STAGING_API_FAVORITES }}
           STAGING_API_PHOTOS:    ${{ env.STAGING_API_PHOTOS }}
           STAGING_API_DASHBOARD: ${{ env.STAGING_API_DASHBOARD }}
+          STAGING_API_VARIETIES: ${{ env.STAGING_API_VARIETIES }}
           COMMIT_SHA:            ${{ needs.deploy-frontend.outputs.commit-sha }}
           # Phase 2 (authenticated CRUD) — set these GHA secrets to enable:
           # CLERK_SECRET_KEY_STAGING = sk_test_... (Clerk dev instance secret key)
