@@ -18,25 +18,25 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: production
+    environment: production  # claim env:production OIDC subject for garden-app-github-deploy trust (scoped 2026-05-05)
     strategy:
       matrix:
         # One job per Lambda function directory under lambda/
-        function: [projects, plants, locations, events, favorites, photos, dashboard]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items]
       # Deploy functions in parallel; reduce max-parallel if Lambda rate limits hit
       max-parallel: 4
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.19.0'
           # no root-level lockfile — caching disabled for lambda subdirs
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
@@ -75,6 +75,38 @@ jobs:
           aws lambda wait function-updated \
             --function-name "garden-${{ matrix.function }}"
           echo "garden-${{ matrix.function }} is active"
+
+      - name: Ensure Function URL exists for ${{ matrix.function }}
+        continue-on-error: true  # requires lambda:CreateFunctionUrlConfig + lambda:GetFunctionUrlConfig + lambda:AddPermission on deploy role
+        run: |
+          FUNCTION_NAME="garden-${{ matrix.function }}"
+          # Check if Function URL exists; create on first deploy.
+          if aws lambda get-function-url-config --function-name "$FUNCTION_NAME" 2>/dev/null; then
+            echo "Function URL already exists for $FUNCTION_NAME"
+          else
+            echo "Creating Function URL for $FUNCTION_NAME"
+            aws lambda create-function-url-config \
+              --function-name "$FUNCTION_NAME" \
+              --auth-type NONE \
+              --cors '{"AllowOrigins":["*"],"AllowMethods":["*"],"AllowHeaders":["*"]}'
+            # Add resource-based policy for public invoke (required when AuthType=NONE)
+            # Function URL invocations require BOTH InvokeFunctionUrl (URL-config layer)
+            # AND InvokeFunction (handler-dispatch layer) — missing either returns 403
+            # at the URL layer before the request reaches the handler.
+            # Ref: error-log.md E-magical-nifty-franklin-pickup-002 (2026-05-08)
+            aws lambda add-permission \
+              --function-name "$FUNCTION_NAME" \
+              --statement-id FunctionURLAllowPublicAccess \
+              --action lambda:InvokeFunctionUrl \
+              --principal "*" \
+              --function-url-auth-type NONE 2>/dev/null || true
+            aws lambda add-permission \
+              --function-name "$FUNCTION_NAME" \
+              --statement-id AllowPublicInvoke \
+              --action lambda:InvokeFunction \
+              --principal "*" 2>/dev/null || true
+            echo "Function URL created for $FUNCTION_NAME"
+          fi
 
       - name: Clear Lambda URL CORS config (handler owns CORS)
         continue-on-error: true  # requires lambda:UpdateFunctionUrlConfig on deploy role — add to IAM if missing

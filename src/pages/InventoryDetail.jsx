@@ -1,7 +1,7 @@
-// TODO DB-MIGRATE-INVENTORY: migrate to /api/inventory Lambda when deployed
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
+import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 
@@ -28,6 +28,7 @@ export default function InventoryDetail() {
   const { id }       = useParams()
   const navigate     = useNavigate()
   const { updateItem, deleteItem } = useInventory()
+  const { fetch } = useApiFetch()
 
   const [item,         setItem]         = useState(null)
   const [form,         setForm]         = useState(null)
@@ -40,11 +41,26 @@ export default function InventoryDetail() {
   const [deleting,     setDeleting]     = useState(false)
 
   // ── Load item ──────────────────────────────────────────────────────────────
-  // TODO DB-MIGRATE-INVENTORY: fetch from /api/inventory/:id Lambda when deployed
   useEffect(() => {
-    setLoadErr('Inventory temporarily unavailable — Lambda migration pending.')
-    setLoading(false)
-  }, [id])
+    let mounted = true
+    setLoading(true)
+    setLoadErr(null)
+    fetch('/api/inventory-items/' + id)
+      .then(data => {
+        if (!mounted) return
+        setItem(data)
+        setForm(itemToForm(data))
+        setLoading(false)
+      })
+      .catch(err => {
+        if (!mounted) return
+        setLoadErr(err?.status === 404
+          ? 'Item not found — it may have been removed.'
+          : (err?.message ?? 'Failed to load item.'))
+        setLoading(false)
+      })
+    return () => { mounted = false }
+  }, [id, fetch])
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function itemToForm(i) {

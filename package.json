@@ -19,6 +19,7 @@
     "react-router-dom": "^6.22.0"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.5.2",
     "@vitejs/plugin-react": "^5.0.0",
@@ -29,4 +30,3 @@
     "vitest": "^2.0.0"
   }
 }
-
