@@ -30,7 +30,7 @@ jobs:
 
       - name: Validate env vars
         run: |
-          for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD VITE_API_INVENTORY; do
+          for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD VITE_API_INVENTORY VITE_API_VARIETIES; do
             [[ -n "${!VAR}" ]] || { echo "ERROR: $VAR not set"; exit 1; }
           done
           [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_live_* ]] || {
@@ -48,6 +48,7 @@ jobs:
           VITE_API_PHOTOS:            ${{ vars.VITE_API_PHOTOS }}
           VITE_API_DASHBOARD:         ${{ vars.VITE_API_DASHBOARD }}
           VITE_API_INVENTORY:         ${{ vars.VITE_API_INVENTORY }}
+          VITE_API_VARIETIES:         ${{ vars.VITE_API_VARIETIES }}
 
       - name: Build
         run: npm run build
@@ -61,6 +62,7 @@ jobs:
           VITE_API_PHOTOS:            ${{ vars.VITE_API_PHOTOS }}
           VITE_API_DASHBOARD:         ${{ vars.VITE_API_DASHBOARD }}
           VITE_API_INVENTORY:         ${{ vars.VITE_API_INVENTORY }}
+          VITE_API_VARIETIES:         ${{ vars.VITE_API_VARIETIES }}
 
       - name: Verify build output
         run: |
@@ -111,7 +113,7 @@ jobs:
         # OPTIONS excluded from AllowMethods (>6 chars fails validation); AWS handles preflight automatically.
         run: |
           CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
-          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects; do
+          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties; do
             echo -n "CORS $fn: "
             aws lambda update-function-url-config \
               --function-name "$fn" \
@@ -121,11 +123,11 @@ jobs:
           done
 
       - name: Post-deploy Lambda health check
-        # Confirms all 7 prod Lambda functions are Active after deploy.
+        # Confirms all 9 prod Lambda functions are Active after deploy.
         # Catches: broken zip, failed update, function in Pending/Failed state.
         run: |
           HEALTH_FAIL=0
-          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects; do
+          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties; do
             STATE=$(aws lambda get-function-configuration \
               --function-name "$fn" \
               --query 'State' --output text)
