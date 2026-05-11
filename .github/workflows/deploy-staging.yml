@@ -1,4 +1,4 @@
-name: Build and Deploy — Staging
+name: Build and Deploy — Staging + Regression Suite
 
 on:
   push:
@@ -24,6 +24,7 @@ env:
   STAGING_API_FAVORITES: https://groahbarqmnhamc2oicymsuuba0rugkj.lambda-url.us-east-1.on.aws/
   STAGING_API_PHOTOS:    https://sj6y3awedsfxqttuascvateeoy0tohji.lambda-url.us-east-1.on.aws/
   STAGING_API_DASHBOARD: https://rsooajzuwmmyldgrpx7ebp2doa0gttpn.lambda-url.us-east-1.on.aws/
+  STAGING_API_INVENTORY: https://yjp6wsb2gkckork57shkxwqlzu0shwcm.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
@@ -32,23 +33,23 @@ env:
 jobs:
   # ── Deploy staging Lambda functions ──────────────────────────────────────
   deploy-lambdas:
-    runs-on: ubuntu-latest
-    environment: staging
+    runs-on: ubuntu-24.04
+    environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     strategy:
       matrix:
-        function: [projects, plants, locations, events, favorites, photos, dashboard]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items]
       max-parallel: 4
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.19.0'
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: arn:aws:iam::769788341849:role/garden-app-github-deploy-staging
           aws-region: us-east-1
@@ -71,6 +72,15 @@ jobs:
             --function-name "garden-${{ matrix.function }}-staging"
           echo "garden-${{ matrix.function }}-staging active"
 
+      - name: Health check ${{ matrix.function }}-staging
+        run: |
+          FN="garden-${{ matrix.function }}-staging"
+          STATE=$(aws lambda get-function-configuration \
+            --function-name "$FN" \
+            --query 'State' --output text)
+          [[ "$STATE" == "Active" ]] || { echo "FATAL: $FN state=$STATE (expected Active)"; exit 1; }
+          echo "✅ $FN is $STATE"
+
       - name: Restore staging Lambda CORS
         run: |
           CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["${{ env.STAGING_CF_ORIGIN }}"],"ExposeHeaders":[],"MaxAge":300}'
@@ -82,14 +92,18 @@ jobs:
 
   # ── Build and deploy staging frontend ────────────────────────────────────
   deploy-frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     needs: deploy-lambdas
-    environment: staging
+    outputs:
+      artifact-hash:   ${{ steps.build.outputs.artifact-hash }}
+      asset-filename:  ${{ steps.build.outputs.asset-filename }}
+      commit-sha:      ${{ steps.build.outputs.commit-sha }}
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.19.0'
           cache: 'npm'
@@ -98,7 +112,18 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Build (staging)
-        run: npm run build
+        id: build
+        run: |
+          npm run build
+          ARTIFACT_HASH=$(sha256sum dist/index.html | awk '{print $1}')
+          ASSET_FILE=$(ls dist/assets/index-*.js 2>/dev/null | head -1 | xargs -r basename || echo "")
+          COMMIT_SHA=$(git rev-parse HEAD)
+          echo "artifact-hash=$ARTIFACT_HASH"  >> "$GITHUB_OUTPUT"
+          echo "asset-filename=$ASSET_FILE"    >> "$GITHUB_OUTPUT"
+          echo "commit-sha=$COMMIT_SHA"        >> "$GITHUB_OUTPUT"
+          echo "Build artifact hash : $ARTIFACT_HASH"
+          echo "Hashed asset file   : $ASSET_FILE"
+          echo "Commit SHA          : $COMMIT_SHA"
         env:
           VITE_CLERK_PUBLISHABLE_KEY: ${{ env.STAGING_CLERK_KEY }}
           VITE_API_PROJECTS:          ${{ env.STAGING_API_PROJECTS }}
@@ -108,13 +133,14 @@ jobs:
           VITE_API_FAVORITES:         ${{ env.STAGING_API_FAVORITES }}
           VITE_API_PHOTOS:            ${{ env.STAGING_API_PHOTOS }}
           VITE_API_DASHBOARD:         ${{ env.STAGING_API_DASHBOARD }}
+          VITE_API_INVENTORY:         ${{ env.STAGING_API_INVENTORY }}
 
       - name: Verify build output
         run: |
           test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: arn:aws:iam::769788341849:role/garden-app-github-deploy-staging
           aws-region: us-east-1
@@ -133,10 +159,107 @@ jobs:
             --metadata-directive REPLACE \
             --delete
 
-      - name: Invalidate staging CloudFront — index.html only
+      - name: Invalidate staging CloudFront and wait for completion
         run: |
-          aws cloudfront create-invalidation \
+          INVAL_ID=$(aws cloudfront create-invalidation \
             --distribution-id ${{ env.STAGING_CF_DIST_ID }} \
-            --paths "/index.html"
-          echo "Staging deploy complete → ${{ env.STAGING_CF_ORIGIN }}"
+            --paths "/index.html" \
+            --query 'Invalidation.Id' --output text)
+          echo "Waiting for invalidation $INVAL_ID to complete (edge flush, not just accepted)..."
+          aws cloudfront wait invalidation-completed \
+            --distribution-id ${{ env.STAGING_CF_DIST_ID }} \
+            --id "$INVAL_ID"
+          echo "✅ CF invalidation $INVAL_ID complete"
 
+      - name: Verify CF edge serving new build [Boss condition 1]
+        # Confirms CF is serving the just-deployed build, not a stale cached version.
+        # Strategy: Vite bakes content hash into asset filenames; grep the served
+        # index.html for the known hashed filename. Mismatch = stale edge cache.
+        run: |
+          ASSET_FILE="${{ steps.build.outputs.asset-filename }}"
+          if [[ -z "$ASSET_FILE" ]]; then
+            echo "WARNING: No hashed asset filename captured from build — skipping content verify"
+            echo "         (This may mean the Vite build config changed asset naming conventions)"
+          else
+            echo "Verifying CF edge serves index.html referencing $ASSET_FILE..."
+            CF_HTML=$(curl -sf --max-time 30 --connect-timeout 10 \
+              "${{ env.STAGING_CF_ORIGIN }}/index.html") || {
+              echo "FATAL: Could not fetch ${{ env.STAGING_CF_ORIGIN }}/index.html"
+              exit 1
+            }
+            if grep -q "$ASSET_FILE" <<< "$CF_HTML"; then
+              echo "✅ CF serving fresh build (found $ASSET_FILE in index.html)"
+            else
+              echo "FATAL: CF serving stale build — $ASSET_FILE not found in served index.html"
+              echo "First 300 chars of CF response:"
+              echo "${CF_HTML:0:300}"
+              exit 1
+            fi
+          fi
+
+  # ── DB schema integrity check ─────────────────────────────────────────────
+  # Runs AFTER frontend deploy so Lambda and DB changes are both live.
+  # Uses isolated staging Neon branch — never touches prod DB.
+  db-schema-check:
+    runs-on: ubuntu-24.04
+    needs: deploy-frontend
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install postgresql-client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Run schema integrity check
+        run: bash tests/schema/check-schema.sh
+        env:
+          NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
+
+  # ── Smoke tests ───────────────────────────────────────────────────────────
+  # Phase 1: Lambda reachability (no auth required — 4xx is fine, 5xx is not).
+  # Phase 2: Authenticated CRUD (requires CLERK_SECRET_KEY_STAGING + CLERK_TEST_USER_ID secrets).
+  smoke-tests:
+    runs-on: ubuntu-24.04
+    needs: db-schema-check
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Run smoke tests
+        run: bash tests/smoke/run-smoke.sh
+        env:
+          # Phase 1 (Lambda reachability) uses these — always set
+          STAGING_API_PROJECTS:  ${{ env.STAGING_API_PROJECTS }}
+          STAGING_API_PLANTS:    ${{ env.STAGING_API_PLANTS }}
+          STAGING_API_LOCATIONS: ${{ env.STAGING_API_LOCATIONS }}
+          STAGING_API_EVENTS:    ${{ env.STAGING_API_EVENTS }}
+          STAGING_API_FAVORITES: ${{ env.STAGING_API_FAVORITES }}
+          STAGING_API_PHOTOS:    ${{ env.STAGING_API_PHOTOS }}
+          STAGING_API_DASHBOARD: ${{ env.STAGING_API_DASHBOARD }}
+          COMMIT_SHA:            ${{ needs.deploy-frontend.outputs.commit-sha }}
+          # Phase 2 (authenticated CRUD) — set these GHA secrets to enable:
+          # CLERK_SECRET_KEY_STAGING = sk_test_... (Clerk dev instance secret key)
+          # CLERK_TEST_USER_ID       = user_...    (existing user in dev Clerk instance)
+          CLERK_SECRET_KEY_STAGING: ${{ secrets.CLERK_SECRET_KEY_STAGING }}
+          CLERK_TEST_USER_ID:       ${{ secrets.CLERK_TEST_USER_ID }}
+
+  # ── E2E advisory (non-blocking) ───────────────────────────────────────────
+  # Playwright rejected as merge gate: 250MB browser binaries per cold runner,
+  # trace triage requires human. This job is the future hook for optional nightly
+  # browser tests. continue-on-error: true = never blocks the gate.
+  e2e-advisory:
+    runs-on: ubuntu-24.04
+    needs: smoke-tests
+    continue-on-error: true
+
+    steps:
+      - name: Advisory placeholder
+        run: |
+          echo "E2E advisory layer — no browser tests in current gate config"
+          echo "Smoke tests green for commit: ${{ needs.deploy-frontend.outputs.commit-sha || github.sha }}"
+          echo "Staging regression suite: PASSED ✅"
+          echo "To add Playwright: create tests/e2e/ and invoke from this job with continue-on-error: true"
