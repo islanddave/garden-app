@@ -30,9 +30,14 @@ jobs:
 
       - name: Validate env vars
         run: |
-          for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD VITE_API_INVENTORY VITE_API_VARIETIES; do
+          for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD VITE_API_INVENTORY; do
             [[ -n "${!VAR}" ]] || { echo "ERROR: $VAR not set"; exit 1; }
           done
+          # VITE_API_VARIETIES is intentionally not in the strict required list yet —
+          # first prod deploy creates the Lambda + Function URL; var gets set post-deploy.
+          # Brief window where VITE_API_VARIETIES is empty/placeholder is acceptable
+          # because no UI references /api/varieties until Session 4 (VarietyPicker etc).
+          [[ -n "${VITE_API_VARIETIES:-}" ]] || echo "WARN: VITE_API_VARIETIES not set — varieties UI will not work until set"
           [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_live_* ]] || {
             echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY must be pk_live_* for prod (got ${VITE_CLERK_PUBLISHABLE_KEY:0:12}...)"
             exit 1
