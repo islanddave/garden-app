@@ -10,6 +10,7 @@ const FUNCTION_URLS = {
   '/api/photos':           import.meta.env.VITE_API_PHOTOS ?? '',
   '/api/dashboard':        import.meta.env.VITE_API_DASHBOARD ?? '',
   '/api/inventory-items':  import.meta.env.VITE_API_INVENTORY ?? '',
+  '/api/varieties':        import.meta.env.VITE_API_VARIETIES ?? '',
 };
 
 // resolveUrl matches the LONGEST prefix first to avoid '/api/inventory-items'
