@@ -1,3 +1,14 @@
+// /api/dashboard — V1.2a-1 Session 3
+// Returns aggregated dashboard state in a single round trip:
+//   - recent_events: last 5 logged events
+//   - active_projects: all non-deleted projects + entity_memory state (last_*_at, next_water_at, location_type, watering_interval_days)
+//   - counts: projects, plants, locations, favorites
+//   - user_stats: current_streak, longest_streak, last_active_date, total_events, xp (defaults if no row)
+//   - water_due: projects with entity_memory.next_water_at < NOW(), ordered by next_water_at ASC (Tile 2 data)
+//
+// active_projects JOINs entity_memory (authoritative source for last_*_at since Lambda 2.1.x).
+// LEFT JOIN: projects without any logged events return NULL for entity_memory fields.
+
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
@@ -58,6 +69,8 @@ export const handler = async (event) => {
       counts,
       favCount,
       activeProjects,
+      userStatsRows,
+      waterDue,
     ] = await Promise.all([
       sql`
         SELECT
@@ -97,14 +110,44 @@ export const handler = async (event) => {
         WHERE user_id = ${userId}
       `,
       sql`
-        SELECT id, name, status, variety, start_date,
-               last_watered_at, last_observed_at, last_fertilized_at
-        FROM plant_projects
-        WHERE created_by = ${userId}
-          AND deleted_at IS NULL
-        ORDER BY created_at DESC
+        SELECT
+          pp.id, pp.name, pp.status, pp.variety, pp.start_date,
+          em.last_watered_at, em.last_observed_at, em.last_fertilized_at,
+          em.last_pruned_at, em.last_harvested_at, em.last_event_at,
+          em.next_water_at, em.location_type, em.watering_interval_days
+        FROM plant_projects pp
+        LEFT JOIN entity_memory em ON em.project_id = pp.id
+        WHERE pp.created_by = ${userId}
+          AND pp.deleted_at IS NULL
+        ORDER BY pp.created_at DESC
+      `,
+      sql`
+        SELECT current_streak, longest_streak, last_active_date, total_events, xp
+        FROM user_stats
+        WHERE user_id = ${userId}
+      `,
+      sql`
+        SELECT
+          em.project_id, pp.name AS project_name,
+          em.last_watered_at, em.next_water_at,
+          em.location_type, em.watering_interval_days
+        FROM entity_memory em
+        JOIN plant_projects pp ON pp.id = em.project_id
+        WHERE pp.created_by = ${userId}
+          AND pp.deleted_at IS NULL
+          AND em.next_water_at IS NOT NULL
+          AND em.next_water_at < NOW()
+        ORDER BY em.next_water_at ASC
       `,
     ]);
+
+    const userStats = userStatsRows[0] ?? {
+      current_streak: 0,
+      longest_streak: 0,
+      last_active_date: null,
+      total_events: 0,
+      xp: 0,
+    };
 
     return resp(200, {
       recent_events: recentEvents,
@@ -115,6 +158,8 @@ export const handler = async (event) => {
         locations: counts[0].location_count,
         favorites: favCount[0].count,
       },
+      user_stats: userStats,
+      water_due: waterDue,
     });
 
   } catch (err) {

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
+import { hapticShort } from '../lib/haptic.js'
 
 const EVENT_TYPES_UI = [
   { value: 'watering',    label: 'Watered',                emoji: '💧' },
@@ -218,12 +219,13 @@ export default function EventNew() {
   const navigate       = useNavigate()
   const [searchParams] = useSearchParams()
   const preselectedProjectId = searchParams.get('project') || ''
+  const preselectedEventType = searchParams.get('event_type') || ''
   const { fetch: apiFetch } = useApiFetch()
 
   const voice = useVoiceInput()
 
   const [form, setForm] = useState({
-    event_type:    '',
+    event_type:    preselectedEventType,
     project_id:    preselectedProjectId,
     location_id:   '',
     event_date:    toDatetimeLocal(new Date()),
@@ -245,7 +247,6 @@ export default function EventNew() {
   const [error,        setError]        = useState(null)
   const [showPrivate,  setShowPrivate]  = useState(false)
   const [showMoreTypes, setShowMoreTypes] = useState(false)
-  const [success,      setSuccess]      = useState(null)
   const [plantsForProject, setPlantsForProject] = useState([])
 
   // Reset metadata when event type changes
@@ -337,7 +338,9 @@ export default function EventNew() {
       return
     }
 
-    const { eventId, stats } = result
+    // V1.2a-1 Lambda 2.1.x response shape: event_row fields at top level + updated_streak / xp_gained / newly_earned_achievements / daily_xp_remaining.
+    const { id: eventId, updated_streak, xp_gained, newly_earned_achievements } = result
+    hapticShort() // V002 §C-V1.2a-1-D: log save haptic
 
     // 2 — Upload photo via pre-signed S3 URL (non-fatal)
     if (photoFile) {
@@ -375,24 +378,23 @@ export default function EventNew() {
     }
 
     setSaving(false)
-    setSuccess({
-      newStreak: 1,                      // Lambda doesn't track streaks yet
-      earnedXp:  stats?.xp_earned ?? 0,
-      isLevelUp: false,                  // Lambda doesn't signal level-up yet
-      newLevel:  stats?.level    ?? null,
-      eventType: form.event_type,
+    // V1.2a-1 §C-V1.2a-1-D: skip success screen, navigate straight to dashboard.
+    // Dashboard reads location.state.logged → refetches data + renders achievement toasts + 5s undo toast.
+    const projectRow = projects.find(p => p.id === form.project_id)
+    navigate('/dashboard', {
+      replace: true,
+      state: {
+        logged: {
+          id: eventId,
+          project_id:                form.project_id,
+          project_name:              projectRow?.name ?? null,
+          event_type:                form.event_type,
+          updated_streak,
+          xp_gained,
+          newly_earned_achievements: newly_earned_achievements ?? [],
+        },
+      },
     })
-  }
-
-  if (success) {
-    return (
-      <div style={{
-        minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <SuccessScreen success={success} onDashboard={() => navigate('/dashboard')} />
-      </div>
-    )
   }
 
   return (
@@ -554,7 +556,7 @@ export default function EventNew() {
                 onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                 aria-label="Notes"
                 style={{ ...inputStyle, height: 90, resize: 'vertical', paddingRight: 44 }}
-                placeholder="What did you do? What did you observe?"
+                placeholder="Notes (optional — leave blank to save)"
               />
               <MicBtn
                 fieldKey="notes"
@@ -770,6 +772,8 @@ function ErrBanner({ msg }) {
   )
 }
 
+// SuccessScreen retained for reference; V1.2a-1 flow navigates straight to dashboard.
+// eslint-disable-next-line no-unused-vars
 function SuccessScreen({ success, onDashboard }) {
   const eventMeta = EVENT_TYPES_UI.find(t => t.value === success.eventType)
   const streakMsg = success.newStreak > 1 ? `${success.newStreak}-day streak` : 'Day 1 — keep it going!'

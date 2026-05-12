@@ -555,7 +555,7 @@ function ErrBanner({ msg }) {
 function EmptyState() {
   return (
     <div style={{ textAlign: 'center', color: P.light, padding: '40px 16px', fontSize: '0.875rem', background: P.white, border: `1px solid ${P.border}`, borderRadius: 8 }}>
-      No zones yet. Run the seed SQL in Supabase to create initial zones (Stable, Deck, Pasture, Steps, House), then add child areas here.
+      No zones yet. Use the form above to add your first zone (e.g. Stable, Deck, Pasture, Steps, House), then add child areas under it.
     </div>
   )
 }
