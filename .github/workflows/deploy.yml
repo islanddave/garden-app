@@ -122,15 +122,22 @@ jobs:
 
       - name: Restore Lambda Function URL CORS
         # OPTIONS excluded from AllowMethods (>6 chars fails validation); AWS handles preflight automatically.
+        # First-deploy resilience: skip Lambdas that don't exist yet (e.g., a new Lambda added in the same
+        # commit that creates it via deploy-lambda.yml — SPA deploy.yml may run first and find the function
+        # not yet provisioned). Fixed 2026-05-12 (3f27c817 V1.2a-1 Session 2 first-deploy of garden-app-events).
         run: |
           CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
           for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events; do
-            echo -n "CORS $fn: "
-            aws lambda update-function-url-config \
-              --function-name "$fn" \
-              --region us-east-1 \
-              --cors "$CORS" \
-              --query 'Cors.AllowOrigins[0]' --output text
+            if aws lambda get-function --function-name "$fn" >/dev/null 2>&1; then
+              echo -n "CORS $fn: "
+              aws lambda update-function-url-config \
+                --function-name "$fn" \
+                --region us-east-1 \
+                --cors "$CORS" \
+                --query 'Cors.AllowOrigins[0]' --output text
+            else
+              echo "CORS $fn: SKIPPED (function not yet provisioned — deploy-lambda.yml will create it)"
+            fi
           done
 
       - name: Post-deploy Lambda health check
@@ -139,6 +146,10 @@ jobs:
         run: |
           HEALTH_FAIL=0
           for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events; do
+            if ! aws lambda get-function --function-name "$fn" >/dev/null 2>&1; then
+              echo "⚠️ $fn: NOT YET PROVISIONED (skipping health check — first-deploy in progress)"
+              continue
+            fi
             STATE=$(aws lambda get-function-configuration \
               --function-name "$fn" \
               --query 'State' --output text)
