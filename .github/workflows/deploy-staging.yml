@@ -28,6 +28,8 @@ env:
   # VARIETY-REF Session 2: placeholder until first staging deploy creates the Function URL.
   # Update with the actual URL after the first deploy completes (handoff documents this).
   STAGING_API_VARIETIES: https://placeholder-set-after-first-staging-deploy.lambda-url.us-east-1.on.aws/
+  # V1.2a-1 Session 2: placeholder until first staging deploy creates the Function URL.
+  STAGING_API_APP_EVENTS: https://placeholder-set-after-first-staging-deploy.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
@@ -40,7 +42,7 @@ jobs:
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     strategy:
       matrix:
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events]
       max-parallel: 4
       fail-fast: false
 
@@ -184,6 +186,7 @@ jobs:
           VITE_API_DASHBOARD:         ${{ env.STAGING_API_DASHBOARD }}
           VITE_API_INVENTORY:         ${{ env.STAGING_API_INVENTORY }}
           VITE_API_VARIETIES:         ${{ env.STAGING_API_VARIETIES }}
+          VITE_API_APP_EVENTS:        ${{ env.STAGING_API_APP_EVENTS }}
 
       - name: Verify build output
         run: |
@@ -291,6 +294,7 @@ jobs:
           STAGING_API_PHOTOS:    ${{ env.STAGING_API_PHOTOS }}
           STAGING_API_DASHBOARD: ${{ env.STAGING_API_DASHBOARD }}
           STAGING_API_VARIETIES: ${{ env.STAGING_API_VARIETIES }}
+          STAGING_API_APP_EVENTS: ${{ env.STAGING_API_APP_EVENTS }}
           COMMIT_SHA:            ${{ needs.deploy-frontend.outputs.commit-sha }}
           # Phase 2 (authenticated CRUD) — set these GHA secrets to enable:
           # CLERK_SECRET_KEY_STAGING = sk_test_... (Clerk dev instance secret key)
