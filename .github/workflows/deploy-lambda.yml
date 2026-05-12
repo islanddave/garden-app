@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         # One job per Lambda function directory under lambda/
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, xp-reconcile]
       # Deploy functions in parallel; reduce max-parallel if Lambda rate limits hit
       max-parallel: 4
       fail-fast: false
@@ -77,6 +77,7 @@ jobs:
           echo "garden-${{ matrix.function }} is active"
 
       - name: Ensure Function URL exists for ${{ matrix.function }}
+        if: matrix.function != 'xp-reconcile'  # xp-reconcile is EventBridge-invoked, no Function URL
         continue-on-error: true  # requires lambda:CreateFunctionUrlConfig + lambda:GetFunctionUrlConfig + lambda:AddPermission on deploy role
         run: |
           FUNCTION_NAME="garden-${{ matrix.function }}"
@@ -109,6 +110,7 @@ jobs:
           fi
 
       - name: Restore Lambda Function URL CORS (prod garden.futureishere.net)
+        if: matrix.function != 'xp-reconcile'  # xp-reconcile has no Function URL
         continue-on-error: true  # requires lambda:UpdateFunctionUrlConfig on deploy role
         run: |
           # Set CORS to allow garden.futureishere.net (the prod SPA origin).
@@ -122,6 +124,50 @@ jobs:
             --cors '{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}' \
             --query 'Cors.AllowOrigins[0]' --output text
           echo "CORS restored for garden-${{ matrix.function }}"
+
+      - name: Set xp-reconcile DRY_RUN env on first deploy
+        if: matrix.function == 'xp-reconcile'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration; idempotent (only sets if unset)
+        run: |
+          # On first deploy, set DRY_RUN=true. Subsequent deploys preserve whatever value is currently set.
+          CURRENT=$(aws lambda get-function-configuration \
+            --function-name garden-xp-reconcile \
+            --query 'Environment.Variables.DRY_RUN' --output text 2>/dev/null || echo "None")
+          if [[ "$CURRENT" == "None" || -z "$CURRENT" ]]; then
+            echo "DRY_RUN not set; defaulting to true on first deploy."
+            aws lambda update-function-configuration \
+              --function-name garden-xp-reconcile \
+              --environment 'Variables={DRY_RUN=true}'
+            aws lambda wait function-updated --function-name garden-xp-reconcile
+          else
+            echo "DRY_RUN already set to: $CURRENT (preserving)"
+          fi
+
+      - name: Ensure EventBridge cron rule for xp-reconcile
+        if: matrix.function == 'xp-reconcile'
+        continue-on-error: true  # requires events:PutRule + events:PutTargets + lambda:AddPermission on deploy role
+        run: |
+          RULE_NAME=garden-xp-reconcile-daily
+          # cron(min hr day-of-month month day-of-week year) — 04:00 UTC daily = midnight ET (standard) / 11pm ET (DST)
+          aws events put-rule \
+            --name "$RULE_NAME" \
+            --schedule-expression 'cron(0 4 * * ? *)' \
+            --state ENABLED \
+            --description 'Daily XP reconciliation: heal user_stats.xp drift vs SUM(xp_events.amount)'
+          # Lambda ARN for target
+          LAMBDA_ARN=$(aws lambda get-function --function-name garden-xp-reconcile --query 'Configuration.FunctionArn' --output text)
+          aws events put-targets \
+            --rule "$RULE_NAME" \
+            --targets "Id=1,Arn=$LAMBDA_ARN"
+          # Permit EventBridge to invoke. AddPermission is idempotent-by-statement-id — duplicate calls return ResourceConflictException (squelched).
+          RULE_ARN=$(aws events describe-rule --name "$RULE_NAME" --query 'Arn' --output text)
+          aws lambda add-permission \
+            --function-name garden-xp-reconcile \
+            --statement-id EventBridgeInvokeDaily \
+            --action lambda:InvokeFunction \
+            --principal events.amazonaws.com \
+            --source-arn "$RULE_ARN" 2>/dev/null || echo "AddPermission already exists (expected on re-deploy)."
+          echo "EventBridge rule $RULE_NAME wired to garden-xp-reconcile (cron 0 4 * * ? *)"
 
 # Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
 # at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).

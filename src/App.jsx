@@ -25,6 +25,7 @@ import ProjectTypes from './pages/ProjectTypes.jsx'
 import Plants from './pages/Plants.jsx'
 import LocationDetail from './pages/LocationDetail.jsx'
 import EventDetail from './pages/EventDetail.jsx'
+import Achievements from './pages/Achievements.jsx'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null } }
@@ -88,6 +89,7 @@ function AppRoutes() {
               <Route path="/project-types" element={<Protected><ProjectTypes /></Protected>} />
               <Route path="/plants"        element={<Protected><Plants /></Protected>} />
               <Route path="/projects/:id/events/:eventId" element={<Protected><EventDetail /></Protected>} />
+              <Route path="/achievements" element={<Protected><Achievements /></Protected>} />
               <Route path="*"             element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </div>

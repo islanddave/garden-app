@@ -1,0 +1,9 @@
+{
+  "name": "garden-lambda-xp-reconcile",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.0",
+    "@aws-sdk/client-secrets-manager": "^3.0.0"
+  }
+}
