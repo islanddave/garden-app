@@ -170,16 +170,21 @@ export default function Dashboard() {
     return () => clearTimeout(t)
   }, [undoState])
 
-  // Sequential achievement toasts (2s each).
+  // Sequential achievement toasts (2s each). Split into two effects so the auto-dismiss
+  // timer isn't cancelled by the promotion effect's cleanup when currentToast changes.
   const [currentToast, setCurrentToast] = useState(null)
+  // Promotion: when no toast is showing and queue has items, promote the next one.
   useEffect(() => {
     if (currentToast || achievementQueue.length === 0) return
-    const next = achievementQueue[0]
-    setCurrentToast(next)
+    setCurrentToast(achievementQueue[0])
     setAchievementQueue(q => q.slice(1))
+  }, [achievementQueue, currentToast])
+  // Auto-dismiss: when a toast is showing, clear it 2s later.
+  useEffect(() => {
+    if (!currentToast) return
     const t = setTimeout(() => setCurrentToast(null), 2000)
     return () => clearTimeout(t)
-  }, [achievementQueue, currentToast])
+  }, [currentToast])
 
   async function handleUndo() {
     if (!undoState) return
@@ -387,8 +392,8 @@ export default function Dashboard() {
         />
       )}
 
-      {/* Achievement toast (top, auto-dismiss 2s) */}
-      {currentToast && <AchievementToast achievement={currentToast} />}
+      {/* Achievement toast (top, auto-dismiss 2s, click-to-dismiss) */}
+      {currentToast && <AchievementToast achievement={currentToast} onDismiss={() => setCurrentToast(null)} />}
 
       {/* Undo toast (bottom, 5s) */}
       {undoState && <UndoToast state={undoState} onUndo={handleUndo} onDismiss={() => setUndoState(null)} />}
@@ -747,9 +752,12 @@ function WaterMeTile({ waterDue, hasProjects }) {
 }
 
 // ─── Toasts ──────────────────────────────────────────────────────────────────
-function AchievementToast({ achievement }) {
+function AchievementToast({ achievement, onDismiss }) {
   return (
-    <div
+    <button
+      type="button"
+      onClick={onDismiss}
+      aria-label={`Dismiss achievement: ${achievement.name}`}
       role="status"
       aria-live="polite"
       style={{
@@ -759,6 +767,7 @@ function AchievementToast({ achievement }) {
         transform: 'translateX(-50%)',
         backgroundColor: P.gold,
         color: P.white,
+        border: 'none',
         borderRadius: 10,
         padding: '12px 20px',
         boxShadow: '0 6px 18px rgba(0,0,0,0.22)',
@@ -767,16 +776,18 @@ function AchievementToast({ achievement }) {
         zIndex: 1100,
         display: 'flex', alignItems: 'center', gap: 10,
         animation: 'streakPulse 400ms ease-out',
+        cursor: 'pointer',
       }}
     >
       <span style={{ fontSize: '1.4rem' }}>{achievement.emoji ?? '🏆'}</span>
-      <div>
+      <div style={{ textAlign: 'left' }}>
         <div style={{ lineHeight: 1.2 }}>{achievement.name}</div>
         <div style={{ fontSize: '0.78rem', opacity: 0.92, marginTop: 2 }}>
           +{achievement.xp_reward ?? 0} XP
         </div>
       </div>
-    </div>
+      <span style={{ fontSize: '0.85rem', opacity: 0.7, marginLeft: 4 }}>✕</span>
+    </button>
   )
 }
 
