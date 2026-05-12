@@ -491,7 +491,7 @@ function StreakModal({ stats, onClose }) {
 
         <div style={{ display: 'grid', gap: 10, marginBottom: 20 }}>
           <Row label="Longest streak"  value={`${stats.longest_streak ?? 0} day${(stats.longest_streak ?? 0) === 1 ? '' : 's'}`} />
-          <Row label="Last active"     value={stats.last_active_date ?? 'never'} />
+          <Row label="Last active"     value={formatLastActive(stats.last_active_date)} />
           <Row label="Total events"    value={`${stats.total_events ?? 0}`} />
           <Row label="XP"              value={`${stats.xp ?? 0}`} />
         </div>
@@ -848,6 +848,27 @@ function UndoToast({ state, onUndo, onDismiss }) {
 function daysAgo(dateStr) {
   const d = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000)
   return d === 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`
+}
+
+// ADHD-friendly local-date format for user_stats.last_active_date.
+// Backend stores DATE in user's TZ; neon serverless serializes as UTC midnight
+// (e.g., "2026-05-12T00:00:00.000Z"). Naively parsing with new Date() can shift
+// the date back one day in negative-offset TZs. Extract YYYY-MM-DD and build a
+// local-tz Date to avoid the shift.
+function formatLastActive(dateStr) {
+  if (!dateStr) return 'never'
+  const ymd = dateStr.slice(0, 10).split('-').map(Number)
+  if (ymd.length !== 3 || ymd.some(Number.isNaN)) return dateStr
+  const [y, m, d] = ymd
+  const local = new Date(y, m - 1, d)
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const diffDays = Math.round((today.getTime() - local.getTime()) / 86400000)
+  if (diffDays === 0) return 'Today'
+  if (diffDays === 1) return 'Yesterday'
+  const wd = local.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+  if (diffDays > 1 && diffDays < 7) return `${wd} (${diffDays} days ago)`
+  return wd
 }
 
 function absoluteDate(dateStr) {
