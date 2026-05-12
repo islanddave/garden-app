@@ -11,6 +11,7 @@ const FUNCTION_URLS = {
   '/api/dashboard':        import.meta.env.VITE_API_DASHBOARD ?? '',
   '/api/inventory-items':  import.meta.env.VITE_API_INVENTORY ?? '',
   '/api/varieties':        import.meta.env.VITE_API_VARIETIES ?? '',
+  '/api/achievements':     import.meta.env.VITE_API_ACHIEVEMENTS ?? '',
 };
 
 // resolveUrl matches the LONGEST prefix first to avoid '/api/inventory-items'

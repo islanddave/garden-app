@@ -12,10 +12,11 @@ const TABS = [
 ]
 
 const MORE_ITEMS = [
-  { to: '/photos',    label: 'Photos',    icon: '📷' },
-  { to: '/inventory', label: 'Inventory', icon: '📦' },
-  { to: '/favorites', label: 'Favorites', icon: '★'  },
-  { to: '/plants',    label: 'Plants',    icon: '🌿' },
+  { to: '/photos',       label: 'Photos',       icon: '📷' },
+  { to: '/inventory',    label: 'Inventory',    icon: '📦' },
+  { to: '/favorites',    label: 'Favorites',    icon: '★'  },
+  { to: '/plants',       label: 'Plants',       icon: '🌿' },
+  { to: '/achievements', label: 'Achievements', icon: '🏆' },
 ]
 
 export default function BottomNav() {
