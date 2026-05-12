@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         # One job per Lambda function directory under lambda/
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events]
       # Deploy functions in parallel; reduce max-parallel if Lambda rate limits hit
       max-parallel: 4
       fail-fast: false

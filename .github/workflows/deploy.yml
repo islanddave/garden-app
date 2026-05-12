@@ -33,6 +33,15 @@ jobs:
           for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD VITE_API_INVENTORY; do
             [[ -n "${!VAR}" ]] || { echo "ERROR: $VAR not set"; exit 1; }
           done
+          # VITE_API_VARIETIES is intentionally not in the strict required list yet —
+          # first prod deploy creates the Lambda + Function URL; var gets set post-deploy.
+          # Brief window where VITE_API_VARIETIES is empty/placeholder is acceptable
+          # because no UI references /api/varieties until Session 4 (VarietyPicker etc).
+          [[ -n "${VITE_API_VARIETIES:-}" ]] || echo "WARN: VITE_API_VARIETIES not set — varieties UI will not work until set"
+          # VITE_API_APP_EVENTS — same first-deploy bootstrap as varieties (V1.2a-1 Session 2).
+          # No SPA caller until V1.2a-1 Session 3 dashboard ships. Lambda writes telemetry directly
+          # in events Lambda step 5; SPA-side telemetry calls land in Session 3.
+          [[ -n "${VITE_API_APP_EVENTS:-}" ]] || echo "WARN: VITE_API_APP_EVENTS not set — SPA telemetry will not flow until set"
           [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_live_* ]] || {
             echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY must be pk_live_* for prod (got ${VITE_CLERK_PUBLISHABLE_KEY:0:12}...)"
             exit 1
@@ -48,6 +57,8 @@ jobs:
           VITE_API_PHOTOS:            ${{ vars.VITE_API_PHOTOS }}
           VITE_API_DASHBOARD:         ${{ vars.VITE_API_DASHBOARD }}
           VITE_API_INVENTORY:         ${{ vars.VITE_API_INVENTORY }}
+          VITE_API_VARIETIES:         ${{ vars.VITE_API_VARIETIES }}
+          VITE_API_APP_EVENTS:        ${{ vars.VITE_API_APP_EVENTS }}
 
       - name: Build
         run: npm run build
@@ -61,6 +72,8 @@ jobs:
           VITE_API_PHOTOS:            ${{ vars.VITE_API_PHOTOS }}
           VITE_API_DASHBOARD:         ${{ vars.VITE_API_DASHBOARD }}
           VITE_API_INVENTORY:         ${{ vars.VITE_API_INVENTORY }}
+          VITE_API_VARIETIES:         ${{ vars.VITE_API_VARIETIES }}
+          VITE_API_APP_EVENTS:        ${{ vars.VITE_API_APP_EVENTS }}
 
       - name: Verify build output
         run: |
@@ -111,7 +124,7 @@ jobs:
         # OPTIONS excluded from AllowMethods (>6 chars fails validation); AWS handles preflight automatically.
         run: |
           CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
-          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects; do
+          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events; do
             echo -n "CORS $fn: "
             aws lambda update-function-url-config \
               --function-name "$fn" \
@@ -121,11 +134,11 @@ jobs:
           done
 
       - name: Post-deploy Lambda health check
-        # Confirms all 7 prod Lambda functions are Active after deploy.
+        # Confirms all 10 prod Lambda functions are Active after deploy.
         # Catches: broken zip, failed update, function in Pending/Failed state.
         run: |
           HEALTH_FAIL=0
-          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects; do
+          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events; do
             STATE=$(aws lambda get-function-configuration \
               --function-name "$fn" \
               --query 'State' --output text)
