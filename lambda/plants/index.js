@@ -1,3 +1,9 @@
+// /api/plants — VARIETY-REF Session 2 dual-read update
+// Adds variety_id + source_inventory_item_id + metadata write paths.
+// Adds nested variety_ref object via LEFT JOIN to plant_varieties (deleted_at-aware).
+// Legacy flat fields (genus, species, variety as text) RETAINED for backward compat
+// during Session 2/3 cutover window. Lambda 2.0.5 (Session 3 cleanup) will remove them.
+
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
@@ -22,6 +28,29 @@ function resp(statusCode, body) {
     body: JSON.stringify(body),
   };
 }
+
+// Shared SELECT clause — list + by-id share columns and JOIN shape.
+// Build variety_ref as JSONB object on the SQL side; LEFT JOIN preserves rows
+// where variety_id is NULL or the linked variety is soft-deleted.
+const SELECT_COLS = `
+  p.id, p.name, p.genus, p.species, p.variety, p.quantity,
+  p.status, p.notes, p.project_id,
+  p.variety_id, p.source_inventory_item_id, p.metadata,
+  p.created_at, p.updated_at,
+  pp.name AS project_name,
+  CASE WHEN pv.id IS NOT NULL THEN
+    jsonb_build_object(
+      'id', pv.id, 'name', pv.name, 'species', pv.species, 'genus', pv.genus,
+      'days_to_maturity_min', pv.days_to_maturity_min,
+      'days_to_maturity_max', pv.days_to_maturity_max,
+      'care_notes', pv.care_notes, 'soil_notes', pv.soil_notes,
+      'sun_requirements', pv.sun_requirements,
+      'common_diseases', pv.common_diseases,
+      'expected_yield_notes', pv.expected_yield_notes,
+      'photo_id', pv.photo_id, 'source_url', pv.source_url
+    )
+  ELSE NULL END AS variety_ref
+`;
 
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -60,10 +89,25 @@ export const handler = async (event) => {
       if (method === 'GET') {
         const rows = await sql`
           SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
-                 p.status, p.notes, p.project_id, p.created_at, p.updated_at,
-                 pp.name AS project_name
+                 p.status, p.notes, p.project_id,
+                 p.variety_id, p.source_inventory_item_id, p.metadata,
+                 p.created_at, p.updated_at,
+                 pp.name AS project_name,
+                 CASE WHEN pv.id IS NOT NULL THEN
+                   jsonb_build_object(
+                     'id', pv.id, 'name', pv.name, 'species', pv.species, 'genus', pv.genus,
+                     'days_to_maturity_min', pv.days_to_maturity_min,
+                     'days_to_maturity_max', pv.days_to_maturity_max,
+                     'care_notes', pv.care_notes, 'soil_notes', pv.soil_notes,
+                     'sun_requirements', pv.sun_requirements,
+                     'common_diseases', pv.common_diseases,
+                     'expected_yield_notes', pv.expected_yield_notes,
+                     'photo_id', pv.photo_id, 'source_url', pv.source_url
+                   )
+                 ELSE NULL END AS variety_ref
           FROM plants p
           JOIN plant_projects pp ON pp.id = p.project_id
+          LEFT JOIN plant_varieties pv ON pv.id = p.variety_id AND pv.deleted_at IS NULL
           WHERE p.id = ${plantId}
             AND p.deleted_at IS NULL
             AND pp.created_by = ${userId}
@@ -77,13 +121,16 @@ export const handler = async (event) => {
         const rows = await sql`
           UPDATE plants p
           SET
-            name     = COALESCE(${body.name ?? null}, p.name),
-            genus    = COALESCE(${body.genus ?? null}, p.genus),
-            species  = COALESCE(${body.species ?? null}, p.species),
-            variety  = COALESCE(${body.variety ?? null}, p.variety),
-            quantity = COALESCE(${body.quantity ?? null}, p.quantity),
-            status   = COALESCE(${body.status ?? null}, p.status),
-            notes    = COALESCE(${body.notes ?? null}, p.notes)
+            name                     = COALESCE(${body.name ?? null}, p.name),
+            genus                    = COALESCE(${body.genus ?? null}, p.genus),
+            species                  = COALESCE(${body.species ?? null}, p.species),
+            variety                  = COALESCE(${body.variety ?? null}, p.variety),
+            quantity                 = COALESCE(${body.quantity ?? null}, p.quantity),
+            status                   = COALESCE(${body.status ?? null}, p.status),
+            notes                    = COALESCE(${body.notes ?? null}, p.notes),
+            variety_id               = COALESCE(${body.variety_id ?? null}, p.variety_id),
+            source_inventory_item_id = COALESCE(${body.source_inventory_item_id ?? null}, p.source_inventory_item_id),
+            metadata                 = COALESCE(${body.metadata ?? null}, p.metadata)
           FROM plant_projects pp
           WHERE p.id = ${plantId}
             AND p.project_id = pp.id
@@ -116,10 +163,25 @@ export const handler = async (event) => {
       const rows = projectId
         ? await sql`
             SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
-                   p.status, p.notes, p.project_id, p.created_at,
-                   pp.name AS project_name
+                   p.status, p.notes, p.project_id,
+                   p.variety_id, p.source_inventory_item_id, p.metadata,
+                   p.created_at,
+                   pp.name AS project_name,
+                   CASE WHEN pv.id IS NOT NULL THEN
+                     jsonb_build_object(
+                       'id', pv.id, 'name', pv.name, 'species', pv.species, 'genus', pv.genus,
+                       'days_to_maturity_min', pv.days_to_maturity_min,
+                       'days_to_maturity_max', pv.days_to_maturity_max,
+                       'care_notes', pv.care_notes, 'soil_notes', pv.soil_notes,
+                       'sun_requirements', pv.sun_requirements,
+                       'common_diseases', pv.common_diseases,
+                       'expected_yield_notes', pv.expected_yield_notes,
+                       'photo_id', pv.photo_id, 'source_url', pv.source_url
+                     )
+                   ELSE NULL END AS variety_ref
             FROM plants p
             JOIN plant_projects pp ON pp.id = p.project_id
+            LEFT JOIN plant_varieties pv ON pv.id = p.variety_id AND pv.deleted_at IS NULL
             WHERE pp.created_by = ${userId}
               AND p.project_id = ${projectId}
               AND p.deleted_at IS NULL
@@ -127,10 +189,25 @@ export const handler = async (event) => {
           `
         : await sql`
             SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
-                   p.status, p.notes, p.project_id, p.created_at,
-                   pp.name AS project_name
+                   p.status, p.notes, p.project_id,
+                   p.variety_id, p.source_inventory_item_id, p.metadata,
+                   p.created_at,
+                   pp.name AS project_name,
+                   CASE WHEN pv.id IS NOT NULL THEN
+                     jsonb_build_object(
+                       'id', pv.id, 'name', pv.name, 'species', pv.species, 'genus', pv.genus,
+                       'days_to_maturity_min', pv.days_to_maturity_min,
+                       'days_to_maturity_max', pv.days_to_maturity_max,
+                       'care_notes', pv.care_notes, 'soil_notes', pv.soil_notes,
+                       'sun_requirements', pv.sun_requirements,
+                       'common_diseases', pv.common_diseases,
+                       'expected_yield_notes', pv.expected_yield_notes,
+                       'photo_id', pv.photo_id, 'source_url', pv.source_url
+                     )
+                   ELSE NULL END AS variety_ref
             FROM plants p
             JOIN plant_projects pp ON pp.id = p.project_id
+            LEFT JOIN plant_varieties pv ON pv.id = p.variety_id AND pv.deleted_at IS NULL
             WHERE pp.created_by = ${userId}
               AND p.deleted_at IS NULL
             ORDER BY p.created_at DESC
@@ -145,7 +222,8 @@ export const handler = async (event) => {
       const qty = parseInt(body.quantity, 10);
       const rows = await sql`
         INSERT INTO plants
-          (project_id, name, genus, species, variety, quantity, status, notes, created_by)
+          (project_id, name, genus, species, variety, quantity, status, notes, created_by,
+           variety_id, source_inventory_item_id, metadata)
         VALUES (
           ${body.project_id},
           ${body.name},
@@ -155,7 +233,10 @@ export const handler = async (event) => {
           ${isNaN(qty) || qty < 1 ? 1 : qty},
           ${body.status ?? null},
           ${body.notes ?? null},
-          ${userId}
+          ${userId},
+          ${body.variety_id ?? null},
+          ${body.source_inventory_item_id ?? null},
+          ${body.metadata ?? null}
         )
         RETURNING *
       `;
@@ -166,6 +247,8 @@ export const handler = async (event) => {
 
   } catch (err) {
     console.error('plants lambda error', err);
+    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
+    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
     return resp(500, { error: 'Internal server error' });
   }
 };

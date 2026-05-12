@@ -18,6 +18,7 @@ export default defineConfig({
       VITE_API_PHOTOS:            'https://test-placeholder.lambda-url.us-east-1.on.aws/',
       VITE_API_DASHBOARD:         'https://test-placeholder.lambda-url.us-east-1.on.aws/',
       VITE_API_INVENTORY:         'https://test-placeholder.lambda-url.us-east-1.on.aws/',
+      VITE_API_VARIETIES:         'https://test-placeholder.lambda-url.us-east-1.on.aws/',
     },
     coverage: {
       provider: 'v8',
