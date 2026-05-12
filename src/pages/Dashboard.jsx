@@ -631,7 +631,7 @@ function WaterMeTile({ waterDue, hasProjects }) {
   }
 
   function goToLog(projectId) {
-    navigate(`/events/new?project=${projectId}&event_type=watering`)
+    navigate(`/log?project=${projectId}&event_type=watering`)
   }
 
   // Single result
