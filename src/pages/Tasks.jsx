@@ -8,7 +8,7 @@ import { P } from '../lib/constants.js'
 // Full Tasks implementation (ADHD-aware task cards, zone picker,
 // overdue/today/upcoming sections, priority badges) is complete
 // and preserved below as TasksV2. It will be wired back in once
-// the Supabase tasks table is ready for production and the UI
+// the Neon tasks table is ready for production and the UI
 // has been through a UX review.
 // ============================================================
 

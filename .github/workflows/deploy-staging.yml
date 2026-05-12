@@ -25,11 +25,10 @@ env:
   STAGING_API_PHOTOS:    https://sj6y3awedsfxqttuascvateeoy0tohji.lambda-url.us-east-1.on.aws/
   STAGING_API_DASHBOARD: https://rsooajzuwmmyldgrpx7ebp2doa0gttpn.lambda-url.us-east-1.on.aws/
   STAGING_API_INVENTORY: https://yjp6wsb2gkckork57shkxwqlzu0shwcm.lambda-url.us-east-1.on.aws/
-  # VARIETY-REF Session 2: placeholder until first staging deploy creates the Function URL.
-  # Update with the actual URL after the first deploy completes (handoff documents this).
-  STAGING_API_VARIETIES: https://placeholder-set-after-first-staging-deploy.lambda-url.us-east-1.on.aws/
-  # V1.2a-1 Session 2: placeholder until first staging deploy creates the Function URL.
-  STAGING_API_APP_EVENTS: https://placeholder-set-after-first-staging-deploy.lambda-url.us-east-1.on.aws/
+  # VARIETY-REF Session 2: provisioned 2026-05-12 (V1.2a-1 Session 2 staging promote).
+  STAGING_API_VARIETIES: https://dlhj5pjej6alk6ynyih2ktbxca0uiorl.lambda-url.us-east-1.on.aws/
+  # V1.2a-1 Session 2: provisioned 2026-05-12.
+  STAGING_API_APP_EVENTS: https://m3lvka5lzswyqkl6uzpkof24y40hoqki.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
