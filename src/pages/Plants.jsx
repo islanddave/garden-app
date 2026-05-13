@@ -9,6 +9,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
+import PhotoUpload from '../components/PhotoUpload.jsx'
 
 const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']
 
@@ -320,10 +321,30 @@ export default function Plants() {
                 </Link>
               </div>
             </div>
-            <button onClick={() => expandedId === plant.id ? closeEdit() : startEdit(plant)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.light, fontSize: '0.82rem', padding: '4px 8px', whiteSpace: 'nowrap' }}>
-              {expandedId === plant.id ? 'Close' : 'Edit'}
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {/* V2-PHOTO-F1 S2: per-plant photo trigger. Compact icon-only button keeps
+                  row layout tight; <PhotoUpload> handles the file picker + 3-step upload. */}
+              <PhotoUpload
+                keyPrefix="plants"
+                parentId={plant.id}
+                linkage={{ plant_id: plant.id, project_id: plant.project_id }}
+                errorMode="surface"
+                buttonLabel="📷"
+                showPreview={false}
+                inputId={`plant-list-photo-${plant.id}`}
+                buttonStyle={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 34, height: 34, padding: 0,
+                  background: 'transparent', color: P.mid,
+                  border: `1px solid ${P.border}`, borderRadius: '50%',
+                  cursor: 'pointer', fontSize: '0.9rem', userSelect: 'none',
+                }}
+              />
+              <button onClick={() => expandedId === plant.id ? closeEdit() : startEdit(plant)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.light, fontSize: '0.82rem', padding: '4px 8px', whiteSpace: 'nowrap' }}>
+                {expandedId === plant.id ? 'Close' : 'Edit'}
+              </button>
+            </div>
           </div>
 
           {expandedId === plant.id && editForm && (
