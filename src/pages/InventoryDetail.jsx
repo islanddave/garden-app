@@ -4,6 +4,7 @@ import { useInventory } from '../hooks/useInventory.js'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
+import PhotoUpload from '../components/PhotoUpload.jsx'
 
 // ── Shared enums (mirror InventoryAdd) ───────────────────────────────────────
 const CATEGORIES = [
@@ -222,6 +223,27 @@ export default function InventoryDetail() {
             }}
           />
         )}
+
+        {/* V2-PHOTO-F1 Session 2: inventory item photo upload.
+            Belongs just below the S4b Plant-from-packet CTA per Session 2 spec.
+            Useful for capturing seed-packet photos, durable-tool photos, etc. */}
+        <div style={{
+          marginBottom: 20, padding: '14px 16px',
+          backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
+        }}>
+          <div style={{ fontSize: '0.78rem', fontWeight: 700, color: P.mid, marginBottom: 10,
+                        letterSpacing: '0.3px', textTransform: 'uppercase' }}>
+            Photo
+          </div>
+          <PhotoUpload
+            keyPrefix="inventory"
+            parentId={item.id}
+            linkage={{ inventory_item_id: item.id }}
+            errorMode="surface"
+            buttonLabel="Add Item Photo"
+            inputId={`inventory-photo-${item.id}`}
+          />
+        </div>
 
         {errors._form && (
           <div style={{
