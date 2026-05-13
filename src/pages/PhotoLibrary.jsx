@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import PhotoUpload from '../components/PhotoUpload.jsx'
 
 // ---- Photo Library ----
 // Browse all photos, upload standalone photos (event_id = null),
@@ -9,6 +10,12 @@ import { P } from '../lib/constants.js'
 // Photos Lambda GET returns view_url (signed S3 URL) and project_name inline.
 // Filter modes 'standalone' and 'untagged' are applied client-side.
 // NOTE: project_id is required by photos Lambda POST — upload form requires it.
+//
+// V2-PHOTO-F1 Session 2 (2026-05-13): refactored to use shared <PhotoUpload>
+// component + useUploadPhoto hook. The component owns the 3-step presign/PUT/POST
+// dance and preview lifecycle. We still own project_id/plant_id/location_id
+// selection and caption/is_public — they flow in via the `linkage`/`caption`/
+// `is_public` props. errorMode="surface" preserves the prior loud-error UX.
 
 export default function PhotoLibrary() {
   const { fetch: apiFetch } = useApiFetch()
@@ -22,11 +29,8 @@ export default function PhotoLibrary() {
   const [filterMode,    setFilterMode]    = useState('all')
 
   const [showUpload,     setShowUpload]     = useState(false)
-  const [uploadFile,     setUploadFile]     = useState(null)
-  const [uploadPreview,  setUploadPreview]  = useState(null)
   const [uploadForm,     setUploadForm]     = useState({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
   const [plantsForUpload, setPlantsForUpload] = useState([])
-  const [uploading,      setUploading]      = useState(false)
   const [uploadErr,      setUploadErr]      = useState(null)
 
   const [modal,          setModal]          = useState(null)
@@ -80,70 +84,30 @@ export default function PhotoLibrary() {
   useEffect(() => { loadPhotos() }, [loadPhotos])
 
   // ---- Upload handlers ----
-  function handleFileChange(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploadFile(file)
-    setUploadPreview(URL.createObjectURL(file))
+  // V2-PHOTO-F1 Session 2: 3-step engine moved into <PhotoUpload> + useUploadPhoto.
+  // We retain only the surface-level state: error gating before the picker fires
+  // (project_id required) and post-success cleanup (form reset + list reload).
+  function handleUploadComplete() {
+    setShowUpload(false)
+    setUploadForm({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
     setUploadErr(null)
+    loadPhotos()
   }
 
-  function clearUploadFile() {
-    setUploadFile(null)
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview)
-    setUploadPreview(null)
+  function handleUploadError(msg) {
+    setUploadErr(msg || 'Upload failed.')
   }
 
-  async function handleUpload(e) {
-    e.preventDefault()
-    if (!uploadFile) { setUploadErr('Select a photo first.'); return }
-    if (!uploadForm.project_id) { setUploadErr('Select a project (required).'); return }
-
-    setUploading(true)
-    setUploadErr(null)
-
-    const ext      = uploadFile.name.split('.').pop().toLowerCase()
-    const photoId  = crypto.randomUUID()
-    const key      = `standalone/${photoId}.${ext}`
-    const mimeType = uploadFile.type || 'image/jpeg'
-
-    try {
-      // 1. Get pre-signed upload URL
-      const { upload_url } = await apiFetch(
-        `/api/photos/upload-url?key=${encodeURIComponent(key)}&content_type=${encodeURIComponent(mimeType)}`
-      )
-
-      // 2. Upload directly to S3 — no auth header
-      const s3Res = await window.fetch(upload_url, {
-        method: 'PUT',
-        body: uploadFile,
-        headers: { 'Content-Type': mimeType },
-      })
-      if (!s3Res.ok) throw new Error('S3 upload failed')
-
-      // 3. Register in DB
-      await apiFetch('/api/photos', {
-        method: 'POST',
-        body: JSON.stringify({
-          storage_path: key,
-          project_id:   uploadForm.project_id,
-          location_id:  uploadForm.location_id || null,
-          plant_id:     uploadForm.plant_id    || null,
-          caption:      uploadForm.caption.trim() || null,
-          is_public:    uploadForm.is_public,
-        }),
-      })
-
-      setUploading(false)
-      setShowUpload(false)
-      clearUploadFile()
-      setUploadForm({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
-      loadPhotos()
-    } catch (err) {
-      setUploading(false)
-      setUploadErr(err.message || 'Upload failed.')
-    }
+  // Build the linkage object the photo component forwards into POST /api/photos.
+  // Empty strings become null so the Lambda treats them as "unset" rather than ""
+  // (which would fail FK validation for non-uuid columns).
+  const photoLinkage = {
+    project_id:  uploadForm.project_id || null,
+    location_id: uploadForm.location_id || null,
+    plant_id:    uploadForm.plant_id    || null,
   }
+  const photoCaption = uploadForm.caption.trim() || null
+  const projectIdMissing = !uploadForm.project_id
 
   // ---- Modal / tag handlers ----
   function openModal(photo) {
@@ -234,23 +198,7 @@ export default function PhotoLibrary() {
               Upload standalone photo
             </h2>
             {uploadErr && <ErrBanner msg={uploadErr} />}
-            <form onSubmit={handleUpload} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-
-              {uploadPreview ? (
-                <div style={{ position: 'relative', display: 'inline-block' }}>
-                  <img
-                    src={uploadPreview} alt="Preview"
-                    style={{ maxWidth: '100%', maxHeight: 200, borderRadius: 8, display: 'block', border: `1px solid ${P.border}` }}
-                  />
-                  <button type="button" onClick={clearUploadFile} style={clearBtnStyle}>✕</button>
-                </div>
-              ) : (
-                <label style={dropZoneStyle}>
-                  <span style={{ fontSize: '1.5rem' }}>📷</span>
-                  <span>Tap to choose a photo</span>
-                  <input type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
-                </label>
-              )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} data-testid="photo-library-upload-form">
 
               <div>
                 <label style={fieldLabelStyle}>Project  ·  required</label>
@@ -316,10 +264,25 @@ export default function PhotoLibrary() {
                 </label>
               </div>
 
-              <button type="submit" disabled={uploading} style={{ ...primaryBtn(uploading), alignSelf: 'flex-start' }}>
-                {uploading ? 'Uploading…' : 'Upload'}
-              </button>
-            </form>
+              {projectIdMissing && (
+                <p style={{ margin: 0, fontSize: '0.8rem', color: P.light }}>
+                  Select a project before uploading.
+                </p>
+              )}
+
+              <PhotoUpload
+                keyPrefix="standalone"
+                linkage={photoLinkage}
+                caption={photoCaption}
+                is_public={uploadForm.is_public}
+                errorMode="surface"
+                buttonLabel="Tap to choose a photo"
+                onUploadComplete={handleUploadComplete}
+                onUploadError={handleUploadError}
+                disabled={projectIdMissing}
+                inputId="photolibrary-upload-input"
+              />
+            </div>
           </div>
         )}
 
@@ -587,19 +550,8 @@ const selectStyle = {
   paddingRight: 36, cursor: 'pointer',
 }
 
-const dropZoneStyle = {
-  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
-  padding: '20px 16px', border: `2px dashed ${P.border}`, borderRadius: 8,
-  cursor: 'pointer', backgroundColor: P.cream, color: P.mid, fontSize: '0.88rem',
-}
-
-const clearBtnStyle = {
-  position: 'absolute', top: 8, right: 8,
-  background: 'rgba(0,0,0,0.55)', color: '#fff',
-  border: 'none', borderRadius: '50%',
-  width: 28, height: 28, cursor: 'pointer', fontSize: '0.85rem',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-}
+// dropZoneStyle / clearBtnStyle removed in V2-PHOTO-F1 S2: <PhotoUpload> owns
+// the trigger affordance and preview lifecycle now.
 
 const primaryBtn = (disabled) => ({
   backgroundColor: disabled ? P.light : P.green,
