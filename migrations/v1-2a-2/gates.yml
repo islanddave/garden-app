@@ -1,0 +1,153 @@
+# gates.yml
+# V1.2a-2 Session 1 — pre/sweep/post gates for the migration runner.
+#
+# L-058 SWEEP (mandatory): chk_event_log_severity_requires_flag predicate,
+# NO `deleted_at IS NULL` filter (mirrors VALIDATE all-row scope).
+# Expected 0 on first apply: flagged_as_issue defaults to false → severity defaults
+# to NULL → predicate trivially true for every row. Runner re-runs sweep between
+# 0b→0c per its codified pattern.
+#
+# Pre-gates (7): absence of all new tables/columns; event_log baseline rowcount=24;
+#                no pre-existing seeded achievements.
+# Post-gates (11): all 3 event_log columns + harvest_log + notification_subscriptions
+#                  + inactive_project_dismissals + entity_memory.last_issue_at +
+#                  CHECK convalidated + partial index + 6 new achievements active +
+#                  event_log rowcount unchanged + all existing rows flagged=false.
+
+pre:
+  - name: pre_event_log_no_new_cols
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_name='event_log'
+         AND column_name IN ('flagged_as_issue','severity','resolved_at')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_harvest_log_table
+    sql: |
+      SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='harvest_log'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_notification_subscriptions_table
+    sql: |
+      SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='notification_subscriptions'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_inactive_dismissals_table
+    sql: |
+      SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='inactive_project_dismissals'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_entity_memory_last_issue_at
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_name='entity_memory' AND column_name='last_issue_at'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_event_log_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='event_log'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_achievements_baseline
+    sql: |
+      SELECT COUNT(*) FROM achievements
+       WHERE slug IN ('big_harvest','quality_grower','harvest_century',
+                      'attentive','three_strikes','caretaker')
+    expect: scalar_eq
+    value: 0
+
+sweep:
+  # L-058 — VALIDATE predicate, NO deleted_at filter.
+  - name: sweep_severity_requires_flag
+    sql: |
+      SELECT COUNT(*) FROM event_log
+       WHERE flagged_as_issue = false AND severity IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: post_event_log_has_new_cols
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_name='event_log'
+         AND column_name IN ('flagged_as_issue','severity','resolved_at')
+    expect: rowcount_eq
+    value: 3
+
+  - name: post_flagged_as_issue_default
+    sql: |
+      SELECT column_default FROM information_schema.columns
+       WHERE table_name='event_log' AND column_name='flagged_as_issue'
+    expect: scalar_eq
+    value: "false"
+
+  - name: post_harvest_log_exists
+    sql: |
+      SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='harvest_log'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_notification_subscriptions_exists
+    sql: |
+      SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='notification_subscriptions'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_inactive_dismissals_exists
+    sql: |
+      SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='inactive_project_dismissals'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_entity_memory_last_issue_at_exists
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_name='entity_memory' AND column_name='last_issue_at'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_check_constraint_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint
+       WHERE conname='chk_event_log_severity_requires_flag'
+    expect: scalar_eq
+    value: true
+
+  - name: post_partial_index_flagged_exists
+    sql: |
+      SELECT indexname FROM pg_indexes
+       WHERE indexname='idx_event_log_flagged' AND schemaname='public'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_achievements_seeded
+    sql: |
+      SELECT COUNT(*) FROM achievements
+       WHERE slug IN ('big_harvest','quality_grower','harvest_century',
+                      'attentive','three_strikes','caretaker')
+         AND is_active = true
+    expect: scalar_eq
+    value: 6
+
+  - name: post_no_flagged_true_rows
+    sql: "SELECT COUNT(*) FROM event_log WHERE flagged_as_issue = true"
+    expect: scalar_eq
+    value: 0
+
+  - name: post_no_severity_set_rows
+    sql: "SELECT COUNT(*) FROM event_log WHERE severity IS NOT NULL"
+    expect: scalar_eq
+    value: 0

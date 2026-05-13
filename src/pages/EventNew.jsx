@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
 import { hapticShort } from '../lib/haptic.js'
+import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 
 const EVENT_TYPES_UI = [
   { value: 'watering',    label: 'Watered',                emoji: '💧' },
@@ -224,6 +225,12 @@ export default function EventNew() {
 
   const voice = useVoiceInput()
 
+  // V2-PHOTO-F1 Session 2: photo upload routed through shared hook in 'swallow'
+  // mode — the event has already been saved by the time we call upload(), so a
+  // photo failure must NOT take down the success flow. Matches prior behavior
+  // (catch {} block that swallowed errors silently).
+  const photoUploader = useUploadPhoto({ errorMode: 'swallow' })
+
   const [form, setForm] = useState({
     event_type:    preselectedEventType,
     project_id:    preselectedProjectId,
@@ -342,39 +349,21 @@ export default function EventNew() {
     const { id: eventId, updated_streak, xp_gained, newly_earned_achievements } = result
     hapticShort() // V002 §C-V1.2a-1-D: log save haptic
 
-    // 2 — Upload photo via pre-signed S3 URL (non-fatal)
+    // 2 — Upload photo via shared hook (non-fatal — errorMode='swallow')
+    // The hook runs the same 3-step presign → S3 PUT → POST /api/photos dance.
+    // We pass keyPrefix='events' + parentId=eventId so the key resolves to
+    // events/{eventId}/{uuid}.{ext} — matching the prior inline behavior.
     if (photoFile) {
-      try {
-        const ext      = photoFile.name.split('.').pop().toLowerCase()
-        const photoId  = crypto.randomUUID()
-        const key      = `events/${eventId}/${photoId}.${ext}`
-        const mimeType = photoFile.type || 'image/jpeg'
-
-        const { upload_url } = await apiFetch(
-          `/api/photos/upload-url?key=${encodeURIComponent(key)}&content_type=${encodeURIComponent(mimeType)}`
-        )
-
-        // Direct S3 PUT — no auth header, no JSON
-        const s3Res = await window.fetch(upload_url, {
-          method: 'PUT',
-          body: photoFile,
-          headers: { 'Content-Type': mimeType },
-        })
-
-        if (s3Res.ok) {
-          await apiFetch('/api/photos', {
-            method: 'POST',
-            body: JSON.stringify({
-              storage_path: key,
-              project_id:   form.project_id,
-              event_id:     eventId,
-              is_public:    form.is_public,
-            }),
-          })
-        }
-      } catch {
-        // Photo upload is non-fatal — event was logged successfully
-      }
+      await photoUploader.upload(photoFile, {
+        keyPrefix: 'events',
+        parentId:  eventId,
+        linkage: {
+          project_id: form.project_id,
+          event_id:   eventId,
+        },
+        is_public: form.is_public,
+      })
+      // Errors are already swallowed by the hook in 'swallow' mode — no try/catch needed.
     }
 
     setSaving(false)

@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES } from '../lib/constants.js'
 import { useAuth } from '../context/AuthContext.jsx'
+import PhotoUpload from '../components/PhotoUpload.jsx'
 
 const EVENT_ICONS = {
   sowing: '🌱', seed_soak: '💧', germination: '🌿', thinning: '✂️',
@@ -244,6 +245,25 @@ export default function EventDetail() {
       ) : (
         <div style={cardStyle}>
           <EventFields event={event} />
+        </div>
+      )}
+
+      {/* V2-PHOTO-F1 Session 2: attach a photo to this existing event.
+          'swallow' mode mirrors EventNew's non-fatal posture — the event already
+          exists, so a failed upload should NOT block the user. */}
+      {!editing && (
+        <div style={{ ...cardStyle, marginTop: 20 }}>
+          <h2 style={{ margin: '0 0 12px', fontSize: '0.95rem', fontWeight: 700, color: P.dark }}>
+            Add a photo to this event
+          </h2>
+          <PhotoUpload
+            keyPrefix="events"
+            parentId={event.id}
+            linkage={{ event_id: event.id, project_id: projectId }}
+            errorMode="swallow"
+            buttonLabel="Tap to take or choose a photo"
+            inputId={`event-photo-${event.id}`}
+          />
         </div>
       )}
     </Shell>

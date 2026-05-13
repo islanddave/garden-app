@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
+import PhotoUpload from '../components/PhotoUpload.jsx'
 
 // ── Shared enums (mirror InventoryAdd) ───────────────────────────────────────
 const CATEGORIES = [
@@ -205,6 +206,43 @@ export default function InventoryDetail() {
             {item.name}
           </h1>
           <FavoriteToggle entityType="inventory_item" entityId={id} />
+        </div>
+
+        {/* Plant-from-packet CTA — VARIETY-REF S4b.
+            Visible only for seed packets with stock on hand. Tap-target ≥44px (Jen iPhone-primary).
+            Carries source_inventory_item_id + variety_id as query params; Plants.jsx reads them and
+            opens the Add Plant form pre-filled. */}
+        {item.category === 'seeds' && Number(item.quantity_on_hand ?? 0) > 0 && (
+          <PlantFromPacketCTA
+            item={item}
+            onClick={() => {
+              const params = new URLSearchParams()
+              params.set('source_inventory_item_id', item.id)
+              if (item.variety_id) params.set('variety_id', item.variety_id)
+              navigate(`/plants?${params.toString()}`)
+            }}
+          />
+        )}
+
+        {/* V2-PHOTO-F1 Session 2: inventory item photo upload.
+            Belongs just below the S4b Plant-from-packet CTA per Session 2 spec.
+            Useful for capturing seed-packet photos, durable-tool photos, etc. */}
+        <div style={{
+          marginBottom: 20, padding: '14px 16px',
+          backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
+        }}>
+          <div style={{ fontSize: '0.78rem', fontWeight: 700, color: P.mid, marginBottom: 10,
+                        letterSpacing: '0.3px', textTransform: 'uppercase' }}>
+            Photo
+          </div>
+          <PhotoUpload
+            keyPrefix="inventory"
+            parentId={item.id}
+            linkage={{ inventory_item_id: item.id }}
+            errorMode="surface"
+            buttonLabel="Add Item Photo"
+            inputId={`inventory-photo-${item.id}`}
+          />
         </div>
 
         {errors._form && (
@@ -494,6 +532,42 @@ export default function InventoryDetail() {
 }
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
+function PlantFromPacketCTA({ item, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Plant from ${item.name}`}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        width: '100%',
+        marginBottom: 20,
+        padding: '14px 16px',
+        backgroundColor: P.greenPale,
+        border: `2px solid ${P.green}`,
+        borderRadius: 10,
+        cursor: 'pointer',
+        minHeight: 56,
+        textAlign: 'left',
+        fontFamily: 'inherit',
+      }}
+    >
+      <span aria-hidden="true" style={{ fontSize: '1.4rem', lineHeight: 1 }}>🌱</span>
+      <span style={{ flex: 1 }}>
+        <span style={{ display: 'block', fontWeight: 700, color: P.green, fontSize: '0.95rem' }}>
+          Plant from this packet
+        </span>
+        <span style={{ display: 'block', fontSize: '0.78rem', color: P.mid, marginTop: 2 }}>
+          Opens a new plant pre-filled with this variety.
+        </span>
+      </span>
+      <span aria-hidden="true" style={{ color: P.green, fontSize: '1.1rem' }}>›</span>
+    </button>
+  )
+}
+
 function Field({ label, children, error }) {
   return (
     <div>
