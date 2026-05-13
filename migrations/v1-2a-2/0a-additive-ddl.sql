@@ -102,6 +102,31 @@ CREATE INDEX IF NOT EXISTS idx_entity_memory_issue
 CREATE INDEX IF NOT EXISTS idx_inactive_dismissals_user
   ON inactive_project_dismissals (user_id);
 
+-- §3.7a Extend achievements_trigger_type_check CHECK to permit new trigger types.
+-- Existing enum: event_count, event_type_count, streak, level, location_count,
+--   time_of_day, absence_return, multi_per_day, photo_count, project_event_count,
+--   seasonal, manual.
+-- Adding: harvest_quantity, harvest_quality, issue_resolve_count.
+-- This is constraint RELAXATION (allows MORE values) → safe to drop-and-recreate;
+-- no existing row can violate the wider predicate. Idempotent guard via name lookup.
+DO LANGUAGE plpgsql $BODY$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'achievements_trigger_type_check'
+  ) THEN
+    ALTER TABLE achievements DROP CONSTRAINT achievements_trigger_type_check;
+  END IF;
+  ALTER TABLE achievements
+    ADD CONSTRAINT achievements_trigger_type_check
+    CHECK (trigger_type = ANY (ARRAY[
+      'event_count','event_type_count','streak','level','location_count',
+      'time_of_day','absence_return','multi_per_day','photo_count',
+      'project_event_count','seasonal','manual',
+      'harvest_quantity','harvest_quality','issue_resolve_count'
+    ]));
+END
+$BODY$;
+
 -- §3.7 Achievement seeds (6 new; first_harvest + harvester already exist per probe).
 -- Sort order range 110-115. Total XP supply: 75+50+200+30+75+150 = 580.
 -- New trigger_types: harvest_quantity, harvest_quality, issue_resolve_count.
