@@ -1,28 +1,28 @@
-// /api/events — Lambda 2.1.x (V1.2a-1 Session 2)
-// V002 spec: garden/v1.2a-1-schema-design-V002-20260511.md §C-V1.2a-1-C
+// /api/events — Lambda 2.2.x (V1.2a-2 Session 2)
+// V002 spec: garden/v12a2-session2-lambda-design-V002-20260513.md
+// Brief overrides (Dave 2026-05-13): F16=path-b (achievement XP UNCAPPED — daily 30-XP cap
+// is event_logged-only); F17=scope reduction (ship harvest infra + validators + F18 caps,
+// DEFER harvest_quantity/harvest_quality CASE branches to V4; harvest_century works via
+// existing event_type_count evaluator; issue_resolve_count SHIPS in PATCH path);
+// F19=moot since quality_grower not evaluated this session.
 //
-// POST flow (5 round trips total, P99 ≤ 500ms hard gate):
-//   1. Pre-fetch user_timezone (1 query, COALESCE to America/New_York)
-//   2. sql.transaction([set_config, INSERT event_log RETURNING, UPSERT entity_memory])
-//      - entity_memory next_water_at: location_type-aware interval lookup via SQL CASE
-//      - GREATEST() guards backdated event POSTs from regressing next_water_at into the past
-//   3. user_stats UPSERT + achievement eval CTE pipeline (best-effort; see ACHIEVEMENT EVAL)
-//   4. Flat XP grant with 30/day cap, timezone-aware (best-effort)
-//   5. app_events telemetry INSERT (best-effort, fire-and-forget semantics)
+// Endpoints:
+//   GET    /api/events                       (unchanged from 2.1.x)
+//   GET    /api/events/:id                   (unchanged from 2.1.x; UUID pre-validated per F9)
+//   POST   /api/events                       (extended: flagged_as_issue, severity, harvest{})
+//   PATCH  /api/events/:id                   (NEW: issue resolve; UUID pre-validated per F9)
+//   POST   /api/notifications/subscribe      (NEW)
 //
-// ACHIEVEMENT EVAL pipeline (single multi-CTE query):
-//   - inline scope per V002 A4: streak / event_count / event_type_count / time_of_day / multi_per_day
-//   - deferred (V1.2a-2): location_count, photo_count, level, seasonal, project_event_count, detail_oriented
-//   - INSERT user_achievements ON CONFLICT DO NOTHING RETURNING — gates xp_events INSERT
-//   - retry-safe: lambda re-execution cannot inflate XP (CTE only inserts xp for newly-created user_achievements rows)
-//
-// All side-effects (steps 3-5) are wrapped in try/catch. event_log INSERT and entity_memory UPSERT
-// are atomic (transaction). On side-effect failure, the response still returns the inserted event row
-// — callers see success and the side-effect failure is logged for backfill.
+// Routing precedence (F10):
+//   1. POST /api/notifications/subscribe       — exact path
+//   2. PATCH /api/events/:id                   — regex, UUID-pre-validated
+//   3. GET   /api/events/:id                   — regex, UUID-pre-validated
+//   4. GET / POST /api/events                  — base path
 
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { validatePostBody, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE } from './validators.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -45,16 +45,14 @@ function resp(statusCode, body) {
   };
 }
 
-// Per-location-type watering interval defaults (V002 §A3).
-// Lookup precedence: project's watering_interval_days override → location_type default → 4-day fallback.
-// Computed inside SQL via inline CASE so a single transactional UPSERT can update next_water_at
-// without a pre-fetch round trip. (Inlined directly in the template literal below — neon serverless
-// template literals only parameterize values, not SQL fragments. Static text outside ${} is appended.)
-
-// Daily flat-XP cap (V002 §11): cap event_logged grants at 30 XP/user/day to prevent burst-logging Goodhart.
-// Achievement-earned XP is uncapped.
+// Daily flat-XP cap (V002 §11; F16 brief override): cap event_logged grants at 30 XP/user/day.
+// Achievement XP is encouragement-class — milestones celebrate progress, not bounded by daily limits.
 const DAILY_FLAT_XP_CAP = 30;
 const FLAT_XP_PER_EVENT = 10;
+
+// Harvest constants, validator, UUID regex live in validators.js (DB-free, unit-testable).
+// Re-exported here for backward compat with any caller importing from index.js directly.
+export { HARVEST_UNITS, MAX_PLAUSIBLE, validatePostBody, UUID_RE };
 
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -84,11 +82,206 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/events';
 
-  const idMatch = rawPath.match(/^\/api\/events\/([^/]+)$/);
-
   try {
+    // ── Route 1 (F10 precedence): POST /api/notifications/subscribe ────────────────────────────
+    if (rawPath === '/api/notifications/subscribe' && method === 'POST') {
+      const body = JSON.parse(event.body ?? '{}');
+      if (!['default', 'granted', 'denied'].includes(body.permission_state)) {
+        return resp(400, { error: 'permission_state must be default, granted, or denied' });
+      }
+      const state = body.permission_state;
+
+      // F29 — defensive profiles INSERT so notification_subscriptions FK never fails on first call.
+      // Brief override: profiles PK is `id`, not `user_id` (V002 §3.3 draft used wrong column name).
+      await sql`INSERT INTO profiles (id) VALUES (${userId}) ON CONFLICT (id) DO NOTHING`;
+
+      const rows = await sql`
+        INSERT INTO notification_subscriptions
+          (user_id, permission_state, granted_at, last_prompted_at)
+        VALUES (
+          ${userId},
+          ${state},
+          CASE WHEN ${state} = 'granted' THEN NOW() ELSE NULL END,
+          CASE WHEN ${state} <> 'default' THEN NOW() ELSE NULL END
+        )
+        ON CONFLICT (user_id) DO UPDATE SET
+          permission_state = EXCLUDED.permission_state,
+          granted_at = CASE
+            WHEN EXCLUDED.permission_state = 'granted'
+              AND notification_subscriptions.granted_at IS NULL
+              THEN NOW()
+            ELSE notification_subscriptions.granted_at
+          END,
+          last_prompted_at = CASE
+            WHEN EXCLUDED.permission_state <> 'default' THEN NOW()
+            ELSE notification_subscriptions.last_prompted_at
+          END,
+          updated_at = NOW()
+        RETURNING permission_state, granted_at, last_prompted_at, updated_at
+      `;
+
+      // F28 — canonical event name: notification_permission_<state>
+      try {
+        await sql`
+          INSERT INTO app_events (user_clerk_sub, event_name, event_source, metadata)
+          VALUES (${userId}, ${'notification_permission_' + state}, 'lambda', ${{ source: 'banner' }})
+        `;
+      } catch (telErr) {
+        console.warn('notification telemetry failed (non-fatal)', telErr.message);
+      }
+
+      return resp(200, rows[0]);
+    }
+
+    // ── Route 2/3 (F10 precedence): /api/events/:id (PATCH then GET) ──────────────────────────
+    const idMatch = rawPath.match(/^\/api\/events\/([^/]+)$/);
     if (idMatch) {
       const eventId = idMatch[1];
+      // F9 — UUID pre-validation returns 404 (existence-oblivious, no parse oracle)
+      if (!UUID_RE.test(eventId)) return resp(404, { error: 'Not found' });
+
+      if (method === 'PATCH') {
+        const body = JSON.parse(event.body ?? '{}');
+        if (body.resolved !== true) return resp(400, { error: 'resolved must be true' });
+
+        // §2.3 — single-statement UPDATE with auth via plant_projects join.
+        // F8 NOW()-relative achievement gate in RETURNING (not preserved resolved_at).
+        // F26 resolved_by COALESCE preserves first-resolver on idempotent re-PATCH.
+        const updated = await sql`
+          UPDATE event_log el
+          SET resolved_at = COALESCE(el.resolved_at, NOW()),
+              resolved_by = COALESCE(el.resolved_by, ${userId}),
+              updated_at  = NOW()
+          FROM plant_projects pp
+          WHERE el.id = ${eventId}
+            AND el.flagged_as_issue = true
+            AND el.deleted_at IS NULL
+            AND pp.id = el.project_id
+            AND pp.created_by = ${userId}
+            AND pp.deleted_at IS NULL
+          RETURNING
+            el.id, el.project_id, el.event_type, el.flagged_as_issue,
+            el.severity, el.resolved_at, el.resolved_by, el.created_at,
+            (NOW() >= el.created_at + INTERVAL '24 hours') AS qualifies_for_achievement
+        `;
+        if (!updated.length) return resp(404, { error: 'Not found' });
+        const row = updated[0];
+
+        // Pre-fetch timezone for distinct-days computation. COALESCE to America/New_York.
+        const tzRows = await sql`
+          SELECT COALESCE(
+            (SELECT user_timezone FROM profiles WHERE id = ${userId}),
+            'America/New_York'
+          ) AS tz
+        `;
+        const userTz = tzRows[0].tz;
+
+        // §2.5 issue_resolve_count achievement evaluator.
+        // F20 caretaker (count>=10) requires >=3 distinct calendar days.
+        // RETURNING-gate chain is the race mitigation for parallel PATCH-resolves crossing same threshold.
+        let newlyEarned = [];
+        let xpGained = 0;
+        if (row.qualifies_for_achievement) {
+          try {
+            const earnedRows = await sql`
+              WITH resolved_set AS (
+                SELECT
+                  el.id,
+                  el.resolved_at,
+                  DATE(el.resolved_at AT TIME ZONE ${userTz}) AS resolve_day
+                FROM event_log el
+                JOIN plant_projects pp ON pp.id = el.project_id
+                WHERE pp.created_by = ${userId}
+                  AND pp.deleted_at IS NULL
+                  AND el.deleted_at IS NULL
+                  AND el.flagged_as_issue = true
+                  AND el.resolved_at IS NOT NULL
+                  AND el.resolved_at >= el.created_at + INTERVAL '24 hours'
+              ),
+              resolved_stats AS (
+                SELECT
+                  COUNT(*)::int AS cnt,
+                  COUNT(DISTINCT resolve_day)::int AS distinct_days
+                FROM resolved_set
+              ),
+              candidates AS (
+                SELECT a.id, a.xp_reward, a.slug
+                FROM achievements a, resolved_stats rs
+                WHERE a.is_active = true
+                  AND a.trigger_type = 'issue_resolve_count'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM user_achievements ua
+                    WHERE ua.user_id = ${userId} AND ua.achievement_id = a.id
+                  )
+                  AND rs.cnt >= (a.trigger_value->>'count')::int
+                  AND (
+                    (a.trigger_value->>'count')::int < 10
+                    OR rs.distinct_days >= COALESCE((a.trigger_value->>'min_distinct_days')::int, 3)
+                  )
+              ),
+              inserted AS (
+                INSERT INTO user_achievements (user_id, achievement_id, trigger_event_id)
+                SELECT ${userId}, c.id, ${eventId}::uuid FROM candidates c
+                ON CONFLICT (user_id, achievement_id) DO NOTHING
+                RETURNING achievement_id
+              ),
+              xp_grants AS (
+                INSERT INTO xp_events (user_id, amount, reason, source_id)
+                SELECT ${userId}, a.xp_reward, 'achievement_earned', i.achievement_id
+                FROM inserted i JOIN achievements a ON a.id = i.achievement_id
+                RETURNING amount, source_id
+              ),
+              stats_xp AS (
+                UPDATE user_stats
+                  SET xp = user_stats.xp + COALESCE((SELECT SUM(amount) FROM xp_grants), 0),
+                      updated_at = NOW()
+                WHERE user_id = ${userId}
+                  AND EXISTS (SELECT 1 FROM xp_grants)
+                RETURNING xp
+              )
+              SELECT
+                COALESCE(
+                  (SELECT json_agg(
+                     json_build_object('slug', a.slug, 'name', a.name, 'emoji', a.emoji, 'xp_reward', a.xp_reward)
+                     ORDER BY a.sort_order
+                   )
+                   FROM xp_grants xg JOIN achievements a ON a.id = xg.source_id),
+                  '[]'::json
+                ) AS newly_earned,
+                COALESCE((SELECT SUM(amount) FROM xp_grants), 0)::int AS xp_total
+            `;
+            if (earnedRows.length) {
+              newlyEarned = earnedRows[0].newly_earned ?? [];
+              xpGained = earnedRows[0].xp_total ?? 0;
+            }
+          } catch (achErr) {
+            console.warn('resolve achievement eval failed (non-fatal)', achErr.message);
+          }
+        }
+
+        // §2.6 telemetry — only on UPDATE-success path (skip on 404)
+        try {
+          await sql`
+            INSERT INTO app_events (user_clerk_sub, event_name, event_source, metadata)
+            VALUES (${userId}, 'event_resolved', 'lambda',
+              ${{ event_id: eventId, project_id: row.project_id, severity: row.severity, qualified: row.qualifies_for_achievement }})
+          `;
+        } catch (telErr) {
+          console.warn('resolve telemetry failed (non-fatal)', telErr.message);
+        }
+
+        return resp(200, {
+          id: row.id,
+          project_id: row.project_id,
+          event_type: row.event_type,
+          flagged_as_issue: row.flagged_as_issue,
+          severity: row.severity,
+          resolved_at: row.resolved_at,
+          resolved_by: row.resolved_by,
+          newly_earned_achievements: newlyEarned,
+          xp_gained: xpGained,
+        });
+      }
 
       if (method === 'GET') {
         const rows = await sql`
@@ -111,7 +304,7 @@ export const handler = async (event) => {
       return resp(405, { error: 'Method not allowed' });
     }
 
-    // /api/events
+    // ── Route 4: /api/events (collection) ──────────────────────────────────────────────────────
     if (method === 'GET') {
       const projectId = event.queryStringParameters?.project_id ?? null;
       const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '50', 10), 200);
@@ -151,8 +344,8 @@ export const handler = async (event) => {
 
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
-      if (!body.event_type) return resp(400, { error: 'event_type is required' });
-      if (!body.project_id) return resp(400, { error: 'project_id is required' });
+      const vErr = validatePostBody(body);
+      if (vErr) return resp(vErr.status, { error: vErr.error });
 
       const eventDate = body.event_date
         ? new Date(body.event_date).toISOString()
@@ -160,8 +353,16 @@ export const handler = async (event) => {
       const eventType = body.event_type;
       const projectId = body.project_id;
       const metadata = body.metadata ?? null;
+      // B8 — normalize flagged_as_issue ONCE; use throughout SQL bindings.
+      const flagged = body.flagged_as_issue === true;
+      const severity = flagged ? body.severity : null;
+      const isHarvest = eventType === 'harvest';
+      const harvestQty = isHarvest ? body.harvest.quantity : null;
+      const harvestUnit = isHarvest ? body.harvest.unit : null;
+      const harvestQuality = isHarvest ? (body.harvest.quality_rating ?? null) : null;
+      const harvestNotes = isHarvest ? (body.harvest.notes ?? null) : null;
 
-      // ── Step 1: pre-fetch user_timezone (COALESCE to America/New_York if profile row absent) ───────
+      // ── Step 1: pre-fetch user_timezone (COALESCE to America/New_York) ───────────────────────
       const tzRows = await sql`
         SELECT COALESCE(
           (SELECT user_timezone FROM profiles WHERE id = ${userId}),
@@ -170,45 +371,70 @@ export const handler = async (event) => {
       `;
       const userTz = tzRows[0].tz;
 
-      // ── Step 2: atomic transaction — set_config + INSERT event_log + UPSERT entity_memory ─────────
-      // set_config sets the audit-trigger actor (no audit trigger on event_log/entity_memory currently;
-      // included for symmetry with varieties Lambda + future-proofing per V002 §A8).
-      //
-      // entity_memory UPSERT semantics:
-      //   - last_event_at: always GREATEST() with event_date (out-of-order POSTs don't regress)
-      //   - last_<type>_at: only updated when event_type matches (CASE on each column)
-      //   - next_water_at: only recomputed when event_type='watering';
-      //     uses GREATEST(prior last_watered_at, event_date) + interval (location-type-aware)
-      //
-      // INSERT path (no existing entity_memory row): location_type/watering_interval_days are NULL,
-      // so next_water_at uses the 4-day fallback. UPDATE path applies the full lookup precedence.
+      // ── Step 2: atomic transaction — set_config + dual-write CTE + entity_memory UPSERT ──────
+      // Statement 2 (CTE): event_log + harvest_log (conditional) via WITH new_event AS / new_harvest AS.
+      // F3 quantity_numeric synced for harvest events. F15 explicit RETURNING allow-list (no *).
+      // F12 JS extraction: harvest_row stripped from row, exposed as `harvest` key.
+      // Statement 3: entity_memory UPSERT with last_issue_at (F2 — present in INSERT col list, VALUES,
+      // and ON CONFLICT branch). B1 prod vocabulary: 'watering' / 'fertilization' / 'pruning' /
+      // 'observation' / 'harvest' verbatim.
       const txResult = await sql.transaction([
         sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
         sql`
-          INSERT INTO event_log
-            (project_id, location_id, plant_id, event_type, event_date,
-             notes, private_notes, quantity, is_public, logged_by, created_by, metadata)
-          VALUES (
-            ${projectId},
-            ${body.location_id ?? null},
-            ${body.plant_id ?? null},
-            ${eventType},
-            ${eventDate},
-            ${body.notes ?? null},
-            ${body.private_notes ?? null},
-            ${body.quantity ?? null},
-            ${body.is_public ?? true},
-            ${userId},
-            ${userId},
-            ${metadata}
+          WITH new_event AS (
+            INSERT INTO event_log
+              (project_id, location_id, plant_id, event_type, event_date,
+               notes, private_notes, quantity, quantity_numeric, is_public,
+               logged_by, created_by, metadata,
+               flagged_as_issue, severity)
+            VALUES (
+              ${projectId},
+              ${body.location_id ?? null},
+              ${body.plant_id ?? null},
+              ${eventType},
+              ${eventDate}::timestamptz,
+              ${body.notes ?? null},
+              ${body.private_notes ?? null},
+              ${body.quantity ?? null},
+              ${harvestQty}::numeric,
+              ${body.is_public ?? true},
+              ${userId},
+              ${userId},
+              ${metadata},
+              ${flagged},
+              ${severity}
+            )
+            RETURNING
+              id, project_id, location_id, plant_id, event_type, event_date,
+              notes, private_notes, quantity, quantity_numeric, is_public,
+              logged_by, created_by, metadata,
+              flagged_as_issue, severity, resolved_at, resolved_by,
+              created_at, updated_at
+          ),
+          new_harvest AS (
+            INSERT INTO harvest_log
+              (event_id, project_id, quantity, unit, quality_rating, notes, created_by)
+            SELECT
+              ne.id, ne.project_id,
+              ${harvestQty}::numeric,
+              ${harvestUnit},
+              ${harvestQuality}::smallint,
+              ${harvestNotes},
+              ${userId}
+            FROM new_event ne
+            WHERE ${isHarvest}::boolean = true
+            RETURNING id, quantity, unit, quality_rating, notes
           )
-          RETURNING *
+          SELECT
+            ne.*,
+            (SELECT row_to_json(nh) FROM new_harvest nh) AS harvest_row
+          FROM new_event ne
         `,
         sql`
           INSERT INTO entity_memory
             (project_id, last_event_at,
              last_watered_at, last_fertilized_at, last_pruned_at, last_observed_at, last_harvested_at,
-             next_water_at)
+             next_water_at, last_issue_at)
           VALUES (
             ${projectId},
             ${eventDate}::timestamptz,
@@ -217,7 +443,8 @@ export const handler = async (event) => {
             CASE WHEN ${eventType} = 'pruning'       THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'observation'   THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'harvest'       THEN ${eventDate}::timestamptz ELSE NULL END,
-            CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END
+            CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
+            CASE WHEN ${flagged}::boolean = true     THEN ${eventDate}::timestamptz ELSE NULL END
           )
           ON CONFLICT (project_id) DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
@@ -231,28 +458,32 @@ export const handler = async (event) => {
                    + (COALESCE(
                        entity_memory.watering_interval_days,
                        CASE entity_memory.location_type
-                         WHEN 'indoor_seedling'  THEN 1
+                         WHEN 'indoor_seedling'   THEN 1
                          WHEN 'outdoor_container' THEN 2
-                         WHEN 'outdoor_bed'      THEN 4
-                         WHEN 'outdoor_inground' THEN 5
-                         WHEN 'indoor_mature'    THEN 5
+                         WHEN 'outdoor_bed'       THEN 4
+                         WHEN 'outdoor_inground'  THEN 5
+                         WHEN 'indoor_mature'     THEN 5
                          ELSE 4
                        END
                      )::int * INTERVAL '1 day')
               ELSE entity_memory.next_water_at
             END,
+            last_issue_at      = CASE WHEN ${flagged}::boolean = true
+              THEN GREATEST(COALESCE(entity_memory.last_issue_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz)
+              ELSE entity_memory.last_issue_at
+            END,
             updated_at = NOW()
         `,
       ]);
+
+      // F12 — JS-side extraction of harvest sub-row from the joined CTE row.
       const newEvent = txResult[1][0];
+      const harvest = newEvent.harvest_row;
+      delete newEvent.harvest_row;
+      newEvent.harvest = harvest;
       const eventId = newEvent.id;
 
-      // ── Step 3a: user_stats UPSERT with timezone-aware streak math ────────────────────────────────
-      // Streak grace (V002 §A7): 1-day passive grace — last_active_date = today-2 still extends the streak.
-      // Hard reset only if gap > 2 days in user TZ.
-      // Split from achievement eval (Step 3b) because Postgres forbids two CTEs UPDATEing the same
-      // row in a single statement ("tuple updated by another command in this transaction"). Two
-      // sequential queries cost +1 round-trip but eliminate the double-update class of bug.
+      // ── Step 3a: user_stats UPSERT with timezone-aware streak math ──────────────────────────
       let achievementResult = { newly_earned: [], current_streak: null, total_events: null };
       try {
         const statsRows = await sql`
@@ -260,8 +491,6 @@ export const handler = async (event) => {
             SELECT (NOW() AT TIME ZONE ${userTz})::date AS today_date
           ),
           new_streak_calc AS (
-            -- UPDATE-path streak: derived from existing user_stats row.
-            -- INSERT-path defaults to 1 (first event for this user).
             SELECT
               CASE
                 WHEN s.last_active_date = (SELECT today_date FROM today_in_tz)
@@ -292,10 +521,12 @@ export const handler = async (event) => {
         console.warn('user_stats upsert failed (non-fatal)', statsErr.message);
       }
 
-      // ── Step 3b: inline achievement evaluation + XP grant for newly-earned ────────────────────────
-      // Uses post-upsert current_streak + total_events from Step 3a (passed as JS parameters).
-      // RETURNING-gate pattern (V002 §A4): xp_events INSERT only fires for user_achievements rows
-      // that were actually inserted (not ON CONFLICT skipped) — Lambda retries cannot inflate XP.
+      // ── Step 3b: inline achievement evaluation for existing trigger types ────────────────────
+      // F17 brief override: harvest_quantity / harvest_quality CASE branches DEFERRED to V4.
+      // issue_resolve_count is resolve-path-only by design — intentional no-op on POST.
+      // harvest_century works automatically via the existing event_type_count evaluator (count of
+      // event_type='harvest' events); no special handling needed for V1.2a-2 ship.
+      // F16: no daily cap on achievement XP — encouragement-class grants stay uncapped.
       try {
         if (achievementResult.current_streak != null) {
           const streakVal = achievementResult.current_streak;
@@ -374,9 +605,7 @@ export const handler = async (event) => {
         console.warn('achievement eval failed (non-fatal)', achErr.message);
       }
 
-      // ── Step 4: flat XP grant with daily cap (timezone-aware) ─────────────────────────────────────
-      // Single multi-CTE query: read today's flat XP sum → conditionally insert 10 XP if under cap →
-      // update user_stats.xp → return granted amount + new today total.
+      // ── Step 4: flat XP grant with daily cap (timezone-aware) ────────────────────────────────
       let flatXpResult = { granted: 0, today_total: 0, daily_xp_remaining: DAILY_FLAT_XP_CAP };
       try {
         const rows = await sql`
@@ -414,8 +643,7 @@ export const handler = async (event) => {
         console.warn('flat XP grant failed (non-fatal)', xpErr.message);
       }
 
-      // ── Step 5: app_events telemetry (best-effort, fire-and-forget semantics) ─────────────────────
-      // V002 §A5: log_entry_created on every POST; daily_xp_capped if cap was hit.
+      // ── Step 5: app_events telemetry ────────────────────────────────────────────────────────
       try {
         const telemetryEvents = [{
           name: 'log_entry_created',
@@ -437,7 +665,7 @@ export const handler = async (event) => {
         console.warn('app_events telemetry failed (non-fatal)', telErr.message);
       }
 
-      // ── Response: enriched event + reward state ───────────────────────────────────────────────────
+      // F16 — achievement XP is uncapped; xp_gained sums flat + all earned-achievement rewards.
       const xpFromAchievements = achievementResult.newly_earned.reduce((s, a) => s + (a.xp_reward ?? 0), 0);
       return resp(201, {
         ...newEvent,
