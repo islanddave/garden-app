@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" aria-label="Flicker the Northern Cardinal">
+  <defs>
+    <radialGradient id="bg-flicker" cx="50%" cy="40%" r="65%">
+      <stop offset="0%" stop-color="#fef2f2"/>
+      <stop offset="100%" stop-color="#fecaca"/>
+    </radialGradient>
+    <linearGradient id="body-flicker" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#ef4444"/>
+      <stop offset="100%" stop-color="#991b1b"/>
+    </linearGradient>
+    <linearGradient id="crest-flicker" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#f87171"/>
+      <stop offset="100%" stop-color="#b91c1c"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="20" fill="url(#bg-flicker)"/>
+  <!-- perched branch -->
+  <path d="M 30 210 Q 128 220 226 210" stroke="#78350f" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <path d="M 80 210 L 78 200" stroke="#92400e" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 160 210 L 162 200" stroke="#92400e" stroke-width="3" stroke-linecap="round"/>
+  <!-- tail (long, pointed) -->
+  <path d="M 178 168 Q 220 180 232 200 L 220 192 L 218 178 Z" fill="url(#body-flicker)" stroke="#7f1d1d" stroke-width="2"/>
+  <!-- body (rounded, plump cardinal silhouette) -->
+  <ellipse cx="128" cy="148" rx="56" ry="50" fill="url(#body-flicker)" stroke="#7f1d1d" stroke-width="2.5"/>
+  <!-- wing detail -->
+  <path d="M 100 130 Q 130 124 158 138 Q 152 168 130 178 Q 108 168 100 130 Z" fill="#b91c1c" stroke="#7f1d1d" stroke-width="2"/>
+  <ellipse cx="124" cy="150" rx="10" ry="3" fill="#7f1d1d" opacity="0.6"/>
+  <!-- highlight on chest -->
+  <ellipse cx="108" cy="138" rx="14" ry="20" fill="#fca5a5" opacity="0.5"/>
+  <!-- head -->
+  <circle cx="100" cy="92" r="32" fill="url(#body-flicker)" stroke="#7f1d1d" stroke-width="2.5"/>
+  <!-- crest (signature peak) -->
+  <path d="M 88 64 Q 84 38 96 28 Q 104 36 100 60 Q 110 50 116 42 Q 118 58 108 70 Z" fill="url(#crest-flicker)" stroke="#7f1d1d" stroke-width="2"/>
+  <!-- black face mask (signature) -->
+  <path d="M 78 96 Q 84 110 102 112 Q 110 110 116 106 Q 110 96 100 92 Q 86 90 78 96 Z" fill="#1f2937"/>
+  <!-- orange beak (thick conical) -->
+  <path d="M 116 100 L 138 96 L 138 108 L 116 106 Z" fill="#f59e0b" stroke="#78350f" stroke-width="1.5"/>
+  <path d="M 116 102 L 138 102" stroke="#78350f" stroke-width="1"/>
+  <!-- eye -->
+  <circle cx="94" cy="88" r="5" fill="#ffffff"/>
+  <circle cx="94" cy="89" r="3" fill="#1f2937"/>
+  <circle cx="95" cy="87" r="1" fill="#ffffff"/>
+  <!-- feet -->
+  <path d="M 110 198 L 108 212 M 110 198 L 116 212 M 110 198 L 104 212" stroke="#92400e" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <path d="M 144 198 L 142 212 M 144 198 L 150 212 M 144 198 L 138 212" stroke="#92400e" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <!-- tier badge (Common = violet) -->
+  <circle cx="226" cy="30" r="14" fill="#8B5CF6" stroke="#ffffff" stroke-width="2"/>
+  <text x="226" y="34" text-anchor="middle" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="#ffffff">C</text>
+  <!-- name plate -->
+  <rect x="48" y="226" width="160" height="22" rx="11" fill="#ffffff" opacity="0.92" stroke="#7f1d1d" stroke-width="1.5"/>
+  <text x="128" y="242" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="#7f1d1d">Flicker · N. Cardinal</text>
+</svg>
