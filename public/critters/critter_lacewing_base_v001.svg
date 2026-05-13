@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" aria-label="Sprout the Green Lacewing">
+  <defs>
+    <radialGradient id="bg-sprout" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#ecfeff"/>
+      <stop offset="100%" stop-color="#a7f3d0"/>
+    </radialGradient>
+    <linearGradient id="body-sprout" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#86efac"/>
+      <stop offset="100%" stop-color="#16a34a"/>
+    </linearGradient>
+    <radialGradient id="wing-sprout" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#d1fae5" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#a7f3d0" stop-opacity="0.45"/>
+    </radialGradient>
+  </defs>
+  <rect width="256" height="256" rx="20" fill="url(#bg-sprout)"/>
+  <!-- 4 lacy wings with venation (signature of Chrysoperla) -->
+  <g>
+    <!-- forewing pair -->
+    <ellipse cx="78" cy="118" rx="58" ry="22" fill="url(#wing-sprout)" stroke="#10b981" stroke-width="1.4" transform="rotate(-18 78 118)"/>
+    <ellipse cx="178" cy="118" rx="58" ry="22" fill="url(#wing-sprout)" stroke="#10b981" stroke-width="1.4" transform="rotate(18 178 118)"/>
+    <!-- hindwing pair (slightly smaller, biological accuracy) -->
+    <ellipse cx="86" cy="146" rx="48" ry="18" fill="url(#wing-sprout)" stroke="#10b981" stroke-width="1.2" transform="rotate(-10 86 146)"/>
+    <ellipse cx="170" cy="146" rx="48" ry="18" fill="url(#wing-sprout)" stroke="#10b981" stroke-width="1.2" transform="rotate(10 170 146)"/>
+    <!-- venation crosshatch on forewings -->
+    <g stroke="#059669" stroke-width="0.7" fill="none" opacity="0.7">
+      <path d="M 30 124 Q 60 110 90 100"/>
+      <path d="M 38 132 Q 68 122 98 116"/>
+      <path d="M 46 138 Q 76 130 100 126"/>
+      <path d="M 60 100 L 62 138"/>
+      <path d="M 78 96 L 80 134"/>
+      <path d="M 96 100 L 98 138"/>
+      <path d="M 226 124 Q 196 110 166 100"/>
+      <path d="M 218 132 Q 188 122 158 116"/>
+      <path d="M 210 138 Q 180 130 156 126"/>
+      <path d="M 196 100 L 194 138"/>
+      <path d="M 178 96 L 176 134"/>
+      <path d="M 160 100 L 158 138"/>
+    </g>
+  </g>
+  <!-- elongated slender body -->
+  <ellipse cx="128" cy="140" rx="14" ry="56" fill="url(#body-sprout)" stroke="#15803d" stroke-width="2"/>
+  <!-- body segmentation -->
+  <line x1="116" y1="120" x2="140" y2="120" stroke="#15803d" stroke-width="1.2" opacity="0.6"/>
+  <line x1="116" y1="140" x2="140" y2="140" stroke="#15803d" stroke-width="1.2" opacity="0.6"/>
+  <line x1="116" y1="160" x2="140" y2="160" stroke="#15803d" stroke-width="1.2" opacity="0.6"/>
+  <line x1="118" y1="180" x2="138" y2="180" stroke="#15803d" stroke-width="1.2" opacity="0.6"/>
+  <!-- highlight along body -->
+  <ellipse cx="122" cy="135" rx="3" ry="40" fill="#d1fae5" opacity="0.7"/>
+  <!-- head (small, green) -->
+  <circle cx="128" cy="78" r="16" fill="#86efac" stroke="#15803d" stroke-width="2"/>
+  <!-- golden eyes (signature trait of green lacewings) -->
+  <ellipse cx="121" cy="76" rx="5" ry="6" fill="#fbbf24" stroke="#92400e" stroke-width="1"/>
+  <ellipse cx="135" cy="76" rx="5" ry="6" fill="#fbbf24" stroke="#92400e" stroke-width="1"/>
+  <circle cx="121" cy="77" r="2" fill="#78350f"/>
+  <circle cx="135" cy="77" r="2" fill="#78350f"/>
+  <circle cx="122" cy="75" r="0.8" fill="#fef9c3"/>
+  <circle cx="136" cy="75" r="0.8" fill="#fef9c3"/>
+  <!-- long thread antennae (Chrysoperla signature: very long, filiform) -->
+  <path d="M 120 66 Q 100 52 78 36 Q 60 26 44 22" stroke="#15803d" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <path d="M 136 66 Q 156 52 178 36 Q 196 26 212 22" stroke="#15803d" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <!-- gentle smile -->
+  <path d="M 122 86 Q 128 90 134 86" stroke="#15803d" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+  <!-- legs (6) -->
+  <path d="M 118 110 L 100 116" stroke="#15803d" stroke-width="2" stroke-linecap="round"/>
+  <path d="M 138 110 L 156 116" stroke="#15803d" stroke-width="2" stroke-linecap="round"/>
+  <path d="M 116 142 L 96 150" stroke="#15803d" stroke-width="2" stroke-linecap="round"/>
+  <path d="M 140 142 L 160 150" stroke="#15803d" stroke-width="2" stroke-linecap="round"/>
+  <path d="M 116 172 L 98 184" stroke="#15803d" stroke-width="2" stroke-linecap="round"/>
+  <path d="M 140 172 L 158 184" stroke="#15803d" stroke-width="2" stroke-linecap="round"/>
+  <!-- tier badge (Rare = emerald) -->
+  <circle cx="226" cy="30" r="14" fill="#10B981" stroke="#ffffff" stroke-width="2"/>
+  <text x="226" y="34" text-anchor="middle" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="#ffffff">R</text>
+  <!-- name plate -->
+  <rect x="48" y="228" width="160" height="22" rx="11" fill="#ffffff" opacity="0.92" stroke="#15803d" stroke-width="1.5"/>
+  <text x="128" y="244" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="#15803d">Sprout · Green Lacewing</text>
+</svg>
