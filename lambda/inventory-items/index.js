@@ -1,8 +1,27 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
+const s3 = new S3Client({
+  region: process.env.AWS_REGION ?? 'us-east-1',
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
+});
+const BUCKET = process.env.S3_PHOTOS_BUCKET;
+
+async function getFeaturedPhotoViewUrl(storagePath) {
+  if (!storagePath || !BUCKET) return null;
+  try {
+    const cmd = new GetObjectCommand({ Bucket: BUCKET, Key: storagePath });
+    return await getSignedUrl(s3, cmd, { expiresIn: 900 });
+  } catch (err) {
+    console.error('getFeaturedPhotoViewUrl failed', err?.message ?? err);
+    return null;
+  }
+}
 
 let _secrets = null;
 async function getSecrets() {
@@ -97,19 +116,38 @@ export const handler = async (event) => {
 
       if (method === 'GET') {
         const rows = await sql`
-          SELECT * FROM inventory_items
-          WHERE id = ${itemId}
-            AND created_by = ${userId}
-            AND deleted_at IS NULL
+          SELECT i.*, fp.storage_path AS featured_photo_storage_path
+          FROM inventory_items i
+          LEFT JOIN photos fp ON fp.id = i.featured_photo_id
+          WHERE i.id = ${itemId}
+            AND i.created_by = ${userId}
+            AND i.deleted_at IS NULL
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
-        return resp(200, rows[0]);
+        const row = rows[0];
+        const featured_photo_view_url = await getFeaturedPhotoViewUrl(row.featured_photo_storage_path);
+        const { featured_photo_storage_path: _ignore, ...rest } = row;
+        return resp(200, { ...rest, featured_photo_view_url });
       }
 
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
         const verr = validateUpdate(body);
         if (verr) return resp(400, { error: verr });
+
+        // V2-PHOTO-F1: strict validation for featured_photo_id (linkage = photos.inventory_item_id).
+        const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
+        if (hasFeatured && body.featured_photo_id != null) {
+          const linkRows = await sql`
+            SELECT 1 FROM photos
+             WHERE id = ${body.featured_photo_id}
+               AND inventory_item_id = ${itemId}
+               AND uploaded_by = ${userId}
+          `;
+          if (!linkRows.length) {
+            return resp(400, { error: 'featured_photo_id must be a photo linked to this inventory item' });
+          }
+        }
 
         const isConsumable = body.type === 'consumable';
         const isDurable = body.type === 'durable';
@@ -141,7 +179,11 @@ export const handler = async (event) => {
             brand             = ${body.brand ?? null},
             model             = ${body.model ?? null},
             image_url         = ${body.image_url ?? null},
-            featured_image_id = ${body.featured_image_id ?? null}
+            featured_image_id = ${body.featured_image_id ?? null},
+            featured_photo_id = CASE
+              WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
+              ELSE featured_photo_id
+            END
           WHERE id = ${itemId}
             AND created_by = ${userId}
             AND deleted_at IS NULL
