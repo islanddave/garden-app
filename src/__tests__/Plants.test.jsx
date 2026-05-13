@@ -68,6 +68,19 @@ vi.mock('../components/VarietyPicker.jsx', () => ({
   ),
 }))
 
+// V2-PHOTO-F1 S2: stub PhotoUpload so per-plant photo triggers do not pull in
+// the full upload hook + presign network mocks. We only need to assert the
+// component is mounted with the right keyPrefix/linkage shape.
+vi.mock('../components/PhotoUpload.jsx', () => ({
+  default: ({ keyPrefix, parentId, linkage }) => (
+    <span
+      data-testid={`plant-photo-upload-${parentId ?? 'none'}`}
+      data-key-prefix={keyPrefix}
+      data-linkage={JSON.stringify(linkage ?? {})}
+    />
+  ),
+}))
+
 import Plants from '../pages/Plants.jsx'
 
 const SAMPLE_PROJECT = { id: 'proj-1', name: 'Spring 2026' }
@@ -349,5 +362,18 @@ describe('Plants — edit flow', () => {
     expect(screen.getByText(/Legacy:/)).toBeDefined()
     // "Sun Gold" appears twice (card + legacy hint <em>) — assert both are present.
     expect(screen.getAllByText('Sun Gold').length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('Plants — V2-PHOTO-F1 S2 per-plant upload trigger', () => {
+  it('renders PhotoUpload on each plant card with plants keyPrefix + plant_id linkage', async () => {
+    primeMountFetches({ plants: [SAMPLE_PLANT] })
+    render(<Plants />)
+    await waitFor(() => screen.getByTestId('plant-photo-upload-plant-1'))
+    const node = screen.getByTestId('plant-photo-upload-plant-1')
+    expect(node.dataset.keyPrefix).toBe('plants')
+    const linkage = JSON.parse(node.dataset.linkage)
+    expect(linkage.plant_id).toBe('plant-1')
+    expect(linkage.project_id).toBe('proj-1')
   })
 })
