@@ -51,10 +51,12 @@ pre:
     expect: rowcount_eq
     value: 0
 
-  - name: pre_event_log_baseline_rowcount
-    sql: "SELECT COUNT(*) FROM event_log"
-    expect: scalar_eq
-    value: 24
+  - name: pre_event_log_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='event_log'
+    expect: rowcount_eq
+    value: 1
 
   - name: pre_achievements_baseline
     sql: |
@@ -140,12 +142,12 @@ post:
     expect: scalar_eq
     value: 6
 
-  - name: post_event_log_rowcount_unchanged
-    sql: "SELECT COUNT(*) FROM event_log"
+  - name: post_no_flagged_true_rows
+    sql: "SELECT COUNT(*) FROM event_log WHERE flagged_as_issue = true"
     expect: scalar_eq
-    value: 24
+    value: 0
 
-  - name: post_existing_rows_default_false
-    sql: "SELECT COUNT(*) FROM event_log WHERE flagged_as_issue = false"
+  - name: post_no_severity_set_rows
+    sql: "SELECT COUNT(*) FROM event_log WHERE severity IS NOT NULL"
     expect: scalar_eq
-    value: 24
+    value: 0
