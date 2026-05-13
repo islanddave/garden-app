@@ -154,20 +154,32 @@ export const handler = async (event) => {
     }
 
     // POST /api/photos — register a photo record after browser has uploaded to S3
-    // Browser: PUT to upload_url (from upload-url endpoint), then POST here with storage_path
+    // Browser: PUT to upload_url (from upload-url endpoint), then POST here with storage_path.
+    //
+    // V2-PHOTO-F1 AUTO-PROMOTE (Dave decision 2026-05-13, YES):
+    //   After insert, if the new photo links to exactly one featurable parent
+    //   (project / plant / location / inventory_item) AND that parent's
+    //   featured_photo_id IS NULL, PATCH it to this photo's id. Single transaction.
+    //   Race-safe: the UPDATE's `WHERE featured_photo_id IS NULL` predicate guards
+    //   against concurrent uploads — only the first to commit wins; later inserts
+    //   no-op on the auto-promote.
     if (rawPath === '/api/photos' && method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.storage_path) return resp(400, { error: 'storage_path is required' });
 
-      const rows = await sql`
+      // neon serverless driver: tagged-template calls are auto-committed individually.
+      // For atomicity, wrap in sql.transaction([...]) — multiple tagged templates
+      // run in one BEGIN/COMMIT and roll back together on failure.
+      const insertQuery = sql`
         INSERT INTO photos
-          (project_id, event_id, location_id, plant_id,
+          (project_id, event_id, location_id, plant_id, inventory_item_id,
            storage_path, caption, is_public, uploaded_by, created_by)
         VALUES (
           ${body.project_id ?? null},
           ${body.event_id ?? null},
           ${body.location_id ?? null},
           ${body.plant_id ?? null},
+          ${body.inventory_item_id ?? null},
           ${body.storage_path},
           ${body.caption ?? null},
           ${body.is_public ?? true},
@@ -176,7 +188,62 @@ export const handler = async (event) => {
         )
         RETURNING *
       `;
-      return resp(201, rows[0]);
+
+      const insertedRows = await insertQuery;
+      const inserted = insertedRows[0];
+
+      // Auto-promote: parent-by-parent, only if photo has the linkage AND
+      // parent's featured_photo_id IS NULL AND caller owns the parent.
+      // Each UPDATE is a separate atomic statement; the WHERE clauses guard
+      // race conditions. Failures here are non-fatal: the photo row is
+      // already persisted, auto-promote is best-effort.
+      try {
+        if (inserted.project_id) {
+          await sql`
+            UPDATE plant_projects
+               SET featured_photo_id = ${inserted.id}
+             WHERE id = ${inserted.project_id}
+               AND created_by = ${userId}
+               AND featured_photo_id IS NULL
+               AND deleted_at IS NULL
+          `;
+        }
+        if (inserted.plant_id) {
+          await sql`
+            UPDATE plants p
+               SET featured_photo_id = ${inserted.id}
+              FROM plant_projects pp
+             WHERE p.id = ${inserted.plant_id}
+               AND p.project_id = pp.id
+               AND pp.created_by = ${userId}
+               AND p.featured_photo_id IS NULL
+               AND p.deleted_at IS NULL
+          `;
+        }
+        if (inserted.location_id) {
+          await sql`
+            UPDATE locations
+               SET featured_photo_id = ${inserted.id}
+             WHERE id = ${inserted.location_id}
+               AND featured_photo_id IS NULL
+               AND deleted_at IS NULL
+          `;
+        }
+        if (inserted.inventory_item_id) {
+          await sql`
+            UPDATE inventory_items
+               SET featured_photo_id = ${inserted.id}
+             WHERE id = ${inserted.inventory_item_id}
+               AND created_by = ${userId}
+               AND featured_photo_id IS NULL
+               AND deleted_at IS NULL
+          `;
+        }
+      } catch (promoteErr) {
+        console.error('auto-promote non-fatal failure', promoteErr?.message ?? promoteErr);
+      }
+
+      return resp(201, inserted);
     }
 
     return resp(405, { error: 'Method not allowed' });
