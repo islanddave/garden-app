@@ -5,6 +5,7 @@ import { ZoneProvider } from './context/ZoneContext.jsx'
 import TopBar from './components/TopBar.jsx'
 import BottomNav from './components/BottomNav.jsx'
 import Footer from './components/Footer.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Locations from './pages/Locations.jsx'
@@ -27,27 +28,43 @@ import LocationDetail from './pages/LocationDetail.jsx'
 import EventDetail from './pages/EventDetail.jsx'
 import Achievements from './pages/Achievements.jsx'
 
-class AppErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { hasError: false, error: null } }
-  static getDerivedStateFromError(error) { return { hasError: true, error } }
-  componentDidCatch(error, info) { console.error('[AppErrorBoundary]', error, info) }
-  render() {
-    if (this.state.hasError) return (
-      <div role="alert" style={{ padding: '48px 20px', textAlign: 'center', color: '#b94a3a' }}>
-        <p style={{ marginBottom: 8 }}>Something went wrong loading this page.</p>
-        {this.state.error && (
-          <pre style={{ fontSize: '0.72rem', color: '#666', marginBottom: 16, textAlign: 'left', maxWidth: 600, margin: '0 auto 16px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-            {this.state.error.message}
-          </pre>
-        )}
-        <button onClick={() => this.setState({ hasError: false, error: null })}
-          style={{ color: '#4a7c59', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.9rem', textDecoration: 'underline' }}>
-          Try again
-        </button>
-      </div>
-    )
-    return this.props.children
-  }
+// W1 placeholder — W4 replaces with import InactiveProjects from './pages/InactiveProjects.jsx'
+function InactivePlaceholder() {
+  return <div style={{ padding: '48px 20px', textAlign: 'center', color: '#777' }}>Loading inactive projects...</div>
+}
+
+function AppFallback({ error, retry } = {}) {
+  return (
+    <div role="alert" style={{ padding: '48px 20px', textAlign: 'center', color: '#b94a3a' }}>
+      <p style={{ marginBottom: 8 }}>Something went wrong loading this page.</p>
+      {error && (
+        <pre style={{ fontSize: '0.72rem', color: '#666', marginBottom: 16, textAlign: 'left', maxWidth: 600, margin: '0 auto 16px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+          {error.message}
+        </pre>
+      )}
+      <button onClick={retry}
+        style={{ color: '#4a7c59', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.9rem', textDecoration: 'underline' }}>
+        Try again
+      </button>
+    </div>
+  )
+}
+
+function RouteFallback({ error, retry } = {}) {
+  return (
+    <div role="alert" style={{ padding: '32px 20px', textAlign: 'center', color: '#b94a3a' }}>
+      <p style={{ marginBottom: 8 }}>This page failed to load.</p>
+      {error && (
+        <pre style={{ fontSize: '0.72rem', color: '#666', marginBottom: 12, textAlign: 'left', maxWidth: 600, margin: '0 auto 12px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+          {error.message}
+        </pre>
+      )}
+      <button onClick={retry}
+        style={{ color: '#4a7c59', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.9rem', textDecoration: 'underline' }}>
+        Try again
+      </button>
+    </div>
+  )
 }
 
 function Protected({ children }) {
@@ -60,7 +77,7 @@ function AppRoutes() {
   const { user } = useAuth()
   return (
     <BrowserRouter>
-      <AppErrorBoundary>
+      <ErrorBoundary scope="app" fallback={<AppFallback />}>
         <TopBar />
         <div style={{
           display: 'flex', flexDirection: 'column', minHeight: '100dvh',
@@ -80,10 +97,11 @@ function AppRoutes() {
               <Route path="/projects"      element={<Protected><ProjectList /></Protected>} />
               <Route path="/projects/new"  element={<Protected><ProjectNew /></Protected>} />
               <Route path="/projects/:id"  element={<Protected><ProjectDetail /></Protected>} />
+              <Route path="/inactive"      element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><InactivePlaceholder /></ErrorBoundary></Protected>} />
               <Route path="/inventory"     element={<Protected><Inventory /></Protected>} />
               <Route path="/inventory/add" element={<Protected><InventoryAdd /></Protected>} />
               <Route path="/inventory/:id" element={<Protected><InventoryDetail /></Protected>} />
-              <Route path="/log"           element={<Protected><EventNew /></Protected>} />
+              <Route path="/log"           element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><EventNew /></ErrorBoundary></Protected>} />
               <Route path="/photos"        element={<Protected><PhotoLibrary /></Protected>} />
               <Route path="/favorites"     element={<Protected><Favorites /></Protected>} />
               <Route path="/project-types" element={<Protected><ProjectTypes /></Protected>} />
@@ -96,7 +114,7 @@ function AppRoutes() {
           <Footer />
         </div>
         {user && <BottomNav />}
-      </AppErrorBoundary>
+      </ErrorBoundary>
     </BrowserRouter>
   )
 }
@@ -110,4 +128,3 @@ export default function App() {
     </AuthProvider>
   )
 }
-

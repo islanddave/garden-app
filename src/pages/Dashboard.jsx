@@ -5,6 +5,47 @@ import { useZone } from '../context/ZoneContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 import { hapticDouble, hapticTriple } from '../lib/haptic.js'
+import ErrorBoundary from '../components/ErrorBoundary.jsx'
+
+function HarvestReadyTilePlaceholder() {
+  return <div style={{ padding: 16, color: '#888', fontStyle: 'italic' }}>Tile loading...</div>
+}
+
+function HeadsUpTilePlaceholder() {
+  return <div style={{ padding: 16, color: '#888', fontStyle: 'italic' }}>Tile loading...</div>
+}
+
+function DashboardFallback({ error, retry } = {}) {
+  const ts = new Date().toLocaleString()
+  const code = Math.random().toString(36).slice(2, 8)
+  return (
+    <div role="alert" style={{
+      padding: '20px 16px',
+      margin: '12px 0',
+      backgroundColor: '#fde8e0',
+      border: '1px solid #b7532a',
+      borderRadius: 10,
+      color: '#7a2a10',
+      fontSize: '0.88rem',
+    }}>
+      <div style={{ fontWeight: 700, marginBottom: 4 }}>Couldn't load dashboard at {ts}.</div>
+      <div style={{ fontSize: '0.78rem', color: '#7a5c3c', marginBottom: 10 }}>Code: {code}</div>
+      <button
+        type="button"
+        onClick={retry}
+        style={{
+          minHeight: 44, minWidth: 44,
+          padding: '8px 16px',
+          background: 'transparent',
+          border: '1px solid #b7532a',
+          borderRadius: 6,
+          color: '#7a2a10',
+          fontWeight: 600,
+          cursor: 'pointer',
+        }}>Try again</button>
+    </div>
+  )
+}
 
 const LOGGABLE_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
 
@@ -58,6 +99,7 @@ export default function Dashboard() {
   const [recentEvents,  setRecentEvents]  = useState([])
   const [userStats,     setUserStats]     = useState({ current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0 })
   const [waterDue,      setWaterDue]      = useState([])
+  const [inactiveCount, setInactiveCount] = useState(0)
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState(null)
   const [streakModalOpen, setStreakModalOpen] = useState(false)
@@ -80,6 +122,7 @@ export default function Dashboard() {
       setRecentEvents(dashData.recent_events ?? [])
       setUserStats(dashData.user_stats ?? { current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0 })
       setWaterDue(dashData.water_due ?? [])
+      setInactiveCount(dashData.inactive_projects_count ?? 0)
 
       const memMap = {}
       activeProjects.forEach(p => {
@@ -263,14 +306,38 @@ export default function Dashboard() {
           </div>
         </Link>
 
-        {/* Tile 1: Give attention to — non-hide zero state */}
-        <GiveAttentionTile
-          nextAttention={nextAttention}
-          hasProjects={projects.length > 0}
-        />
+        {/* Dashboard tile region — wrapped in ErrorBoundary so tile crashes don't blank the page */}
+        <ErrorBoundary scope="dashboard" fallback={<DashboardFallback />}>
+          {/* Tile 1: Give attention to — non-hide zero state */}
+          <GiveAttentionTile
+            nextAttention={nextAttention}
+            hasProjects={projects.length > 0}
+          />
 
-        {/* Tile 2: Water me — non-hide primer + multi-overdue list */}
-        <WaterMeTile waterDue={waterDue} hasProjects={projects.length > 0} />
+          {/* Tile 2: Water me — non-hide primer + multi-overdue list */}
+          <WaterMeTile waterDue={waterDue} hasProjects={projects.length > 0} />
+
+          {/* W2/W3 tiles — placeholders until real components land */}
+          <HarvestReadyTilePlaceholder />
+          <HeadsUpTilePlaceholder />
+
+          {/* Footer link to inactive projects surface (V1.2a-2 S3) */}
+          {inactiveCount > 0 && (
+            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              <Link to="/inactive" style={{
+                display: 'inline-block',
+                minHeight: 44,
+                padding: '12px 16px',
+                color: P.green,
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                textDecoration: 'none',
+              }}>
+                View {inactiveCount} inactive project{inactiveCount === 1 ? '' : 's'} →
+              </Link>
+            </div>
+          )}
+        </ErrorBoundary>
 
         {/* Active Projects */}
         <section style={{ marginBottom: '32px' }}>

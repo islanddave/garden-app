@@ -22,7 +22,8 @@ export default defineConfig({
     },
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov'],
+      reporter: ['text', 'lcov', 'html'],
+      reportsDirectory: './coverage',
       thresholds: {
         // Floor thresholds — set just below current actual coverage to prevent regression.
         // Forward enforcement is driven by coverage-ratchet.json + scripts/check-coverage-ratchet.py
