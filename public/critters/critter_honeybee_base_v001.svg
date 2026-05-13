@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" aria-label="Buzz the Honeybee">
+  <defs>
+    <radialGradient id="bg-buzz" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#fffbeb"/>
+      <stop offset="100%" stop-color="#fde68a"/>
+    </radialGradient>
+    <linearGradient id="body-buzz" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <radialGradient id="wing-buzz" cx="50%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.45"/>
+    </radialGradient>
+  </defs>
+  <rect width="256" height="256" rx="20" fill="url(#bg-buzz)"/>
+  <!-- wings (4: two pairs, biologically accurate Apis) -->
+  <ellipse cx="98" cy="92" rx="42" ry="26" fill="url(#wing-buzz)" stroke="#94a3b8" stroke-width="1.2" transform="rotate(-22 98 92)"/>
+  <ellipse cx="158" cy="92" rx="42" ry="26" fill="url(#wing-buzz)" stroke="#94a3b8" stroke-width="1.2" transform="rotate(22 158 92)"/>
+  <ellipse cx="86" cy="118" rx="28" ry="18" fill="url(#wing-buzz)" stroke="#94a3b8" stroke-width="1" transform="rotate(-15 86 118)"/>
+  <ellipse cx="170" cy="118" rx="28" ry="18" fill="url(#wing-buzz)" stroke="#94a3b8" stroke-width="1" transform="rotate(15 170 118)"/>
+  <!-- abdomen (oval, segmented) -->
+  <ellipse cx="128" cy="160" rx="56" ry="44" fill="url(#body-buzz)" stroke="#78350f" stroke-width="2.5"/>
+  <!-- black abdominal stripes -->
+  <path d="M 86 152 Q 128 142 170 152" stroke="#1f2937" stroke-width="11" fill="none" stroke-linecap="round"/>
+  <path d="M 86 174 Q 128 184 170 174" stroke="#1f2937" stroke-width="11" fill="none" stroke-linecap="round"/>
+  <!-- cel-shade highlight on abdomen -->
+  <ellipse cx="112" cy="142" rx="18" ry="8" fill="#fef3c7" opacity="0.55"/>
+  <!-- thorax (fuzzy yellow) -->
+  <ellipse cx="128" cy="108" rx="32" ry="26" fill="#f59e0b" stroke="#78350f" stroke-width="2.5"/>
+  <circle cx="120" cy="100" r="6" fill="#fde68a" opacity="0.7"/>
+  <!-- head -->
+  <circle cx="128" cy="72" r="22" fill="#1f2937" stroke="#000" stroke-width="2"/>
+  <!-- eyes (large, friendly) -->
+  <ellipse cx="119" cy="68" rx="6" ry="8" fill="#ffffff"/>
+  <ellipse cx="137" cy="68" rx="6" ry="8" fill="#ffffff"/>
+  <circle cx="120" cy="70" r="3" fill="#1f2937"/>
+  <circle cx="138" cy="70" r="3" fill="#1f2937"/>
+  <circle cx="121" cy="68" r="1.2" fill="#ffffff"/>
+  <circle cx="139" cy="68" r="1.2" fill="#ffffff"/>
+  <!-- antennae -->
+  <path d="M 119 54 Q 110 42 106 32" stroke="#1f2937" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <path d="M 137 54 Q 146 42 150 32" stroke="#1f2937" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <circle cx="106" cy="32" r="2.5" fill="#1f2937"/>
+  <circle cx="150" cy="32" r="2.5" fill="#1f2937"/>
+  <!-- smile -->
+  <path d="M 121 82 Q 128 86 135 82" stroke="#fbbf24" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <!-- tier badge (Common = violet) -->
+  <circle cx="226" cy="30" r="14" fill="#8B5CF6" stroke="#ffffff" stroke-width="2"/>
+  <text x="226" y="34" text-anchor="middle" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="#ffffff">C</text>
+  <!-- name plate -->
+  <rect x="58" y="218" width="140" height="26" rx="13" fill="#ffffff" opacity="0.9" stroke="#78350f" stroke-width="1.5"/>
+  <text x="128" y="236" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#78350f">Buzz · Honeybee</text>
+</svg>

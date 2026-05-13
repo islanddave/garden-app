@@ -1,8 +1,29 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
+// S3 client for featured-photo view URL enrichment.
+// Matches lambda/photos checksum hardening (3.679+ presign-URL incompatibility).
+const s3 = new S3Client({
+  region: process.env.AWS_REGION ?? 'us-east-1',
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
+});
+const BUCKET = process.env.S3_PHOTOS_BUCKET;
+
+async function getFeaturedPhotoViewUrl(storagePath) {
+  if (!storagePath || !BUCKET) return null;
+  try {
+    const cmd = new GetObjectCommand({ Bucket: BUCKET, Key: storagePath });
+    return await getSignedUrl(s3, cmd, { expiresIn: 900 });
+  } catch (err) {
+    console.error('getFeaturedPhotoViewUrl failed', err?.message ?? err);
+    return null;
+  }
+}
 
 let _secrets = null;
 async function getSecrets() {
@@ -123,10 +144,12 @@ export const handler = async (event) => {
             SELECT pp.id, pp.name, pp.slug, pp.status, pp.variety, pp.description,
                    to_char(pp.start_date, 'YYYY-MM-DD') AS start_date,
                    pp.is_public, pp.location_id, pp.created_at, pp.updated_at, pp.created_by,
-                   pp.parent_project_id,
-                   p.name AS parent_project_name
+                   pp.parent_project_id, pp.featured_photo_id,
+                   p.name AS parent_project_name,
+                   fp.storage_path AS featured_photo_storage_path
             FROM plant_projects pp
             LEFT JOIN plant_projects p ON p.id = pp.parent_project_id AND p.deleted_at IS NULL
+            LEFT JOIN photos fp ON fp.id = pp.featured_photo_id
             WHERE pp.id = ${projectId}
               AND pp.created_by = ${userId}
               AND pp.deleted_at IS NULL
@@ -145,8 +168,13 @@ export const handler = async (event) => {
           `,
         ]);
         if (!projectRows.length) return resp(404, { error: 'Not found' });
+        const row = projectRows[0];
+        const featured_photo_view_url = await getFeaturedPhotoViewUrl(row.featured_photo_storage_path);
+        // Strip the join-only column from the response; expose only the signed URL.
+        const { featured_photo_storage_path: _ignore, ...rest } = row;
         return resp(200, {
-          ...projectRows[0],
+          ...rest,
+          featured_photo_view_url,
           plant_count: plantCountRows[0].count,
           event_count: eventCountRows[0].count,
         });
@@ -158,6 +186,24 @@ export const handler = async (event) => {
         if (body.parent_project_id && body.parent_project_id === projectId) {
           return resp(400, { error: 'A project cannot be its own parent' });
         }
+
+        // V2-PHOTO-F1: strict validation for featured_photo_id.
+        // If the field is present AND non-null, the photo must exist AND be
+        // linked to this project via photos.project_id. Otherwise return 400.
+        // Field-presence test (not truthy test) lets callers set it to null to clear.
+        const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
+        if (hasFeatured && body.featured_photo_id != null) {
+          const linkRows = await sql`
+            SELECT 1 FROM photos
+             WHERE id = ${body.featured_photo_id}
+               AND project_id = ${projectId}
+               AND uploaded_by = ${userId}
+          `;
+          if (!linkRows.length) {
+            return resp(400, { error: 'featured_photo_id must be a photo linked to this project' });
+          }
+        }
+
         const rows = await sql`
           UPDATE plant_projects
           SET
@@ -171,6 +217,10 @@ export const handler = async (event) => {
             parent_project_id = CASE
               WHEN ${Object.prototype.hasOwnProperty.call(body, 'parent_project_id')} THEN ${body.parent_project_id ?? null}
               ELSE parent_project_id
+            END,
+            featured_photo_id = CASE
+              WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
+              ELSE featured_photo_id
             END
           WHERE id = ${projectId}
             AND created_by = ${userId}
@@ -178,7 +228,7 @@ export const handler = async (event) => {
           RETURNING id, name, slug, status, variety, description,
                     to_char(start_date, 'YYYY-MM-DD') AS start_date,
                     is_public, location_id, created_at, updated_at, created_by,
-                    parent_project_id
+                    parent_project_id, featured_photo_id
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
@@ -200,27 +250,12 @@ export const handler = async (event) => {
 
     // --- /api/projects ---
     if (method === 'GET') {
-      // Optional filters:
-      //   ?parent_id=<uuid>  — children of that parent project
-      //   ?parent_id=null    — root-level projects only
-      //   ?location_id=<uuid> — projects assigned to a specific location
-      const parentIdFilter   = qs.parent_id;
-      const locationIdFilter = qs.location_id;
+      // Optional filter: ?parent_id=<uuid> returns only children of that parent
+      // ?parent_id=null returns only root-level projects
+      const parentIdFilter = qs.parent_id;
 
       let rows;
-      if (locationIdFilter) {
-        rows = await sql`
-          SELECT id, name, slug, status, variety,
-                 to_char(start_date, 'YYYY-MM-DD') AS start_date,
-                 is_public, location_id, created_at, updated_at, parent_project_id,
-                 (SELECT COUNT(*)::int FROM plants pl WHERE pl.project_id = plant_projects.id AND pl.deleted_at IS NULL) AS plant_count
-          FROM plant_projects
-          WHERE created_by = ${userId}
-            AND deleted_at IS NULL
-            AND location_id = ${locationIdFilter}
-          ORDER BY start_date DESC NULLS LAST, created_at DESC
-        `;
-      } else if (parentIdFilter === 'null' || parentIdFilter === '') {
+      if (parentIdFilter === 'null' || parentIdFilter === '') {
         rows = await sql`
           SELECT id, name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,

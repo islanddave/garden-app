@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" aria-label="Dot the Convergent Ladybug">
+  <defs>
+    <radialGradient id="bg-dot" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#f0fdf4"/>
+      <stop offset="100%" stop-color="#bbf7d0"/>
+    </radialGradient>
+    <radialGradient id="shell-dot" cx="40%" cy="35%" r="70%">
+      <stop offset="0%" stop-color="#f87171"/>
+      <stop offset="60%" stop-color="#dc2626"/>
+      <stop offset="100%" stop-color="#7f1d1d"/>
+    </radialGradient>
+  </defs>
+  <rect width="256" height="256" rx="20" fill="url(#bg-dot)"/>
+  <!-- leaf underneath (green palette nod) -->
+  <path d="M 40 200 Q 128 240 220 200 Q 200 220 128 226 Q 56 220 40 200 Z" fill="#86efac" stroke="#16a34a" stroke-width="2" opacity="0.85"/>
+  <path d="M 60 208 Q 128 222 200 208" stroke="#16a34a" stroke-width="1.5" fill="none"/>
+  <!-- legs (6, biologically correct insect) -->
+  <path d="M 80 170 L 56 188" stroke="#1f2937" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 72 150 L 44 156" stroke="#1f2937" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 80 130 L 54 122" stroke="#1f2937" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 176 170 L 200 188" stroke="#1f2937" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 184 150 L 212 156" stroke="#1f2937" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 176 130 L 202 122" stroke="#1f2937" stroke-width="3" stroke-linecap="round"/>
+  <!-- pronotum (black with white "converging" marks — signature of H. convergens) -->
+  <ellipse cx="128" cy="90" rx="38" ry="22" fill="#1f2937" stroke="#000" stroke-width="2"/>
+  <!-- white converging slash marks (the species ID feature) -->
+  <path d="M 110 84 L 122 92" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 146 84 L 134 92" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <!-- shell (elytra) -->
+  <ellipse cx="128" cy="148" rx="68" ry="50" fill="url(#shell-dot)" stroke="#1f2937" stroke-width="3"/>
+  <!-- center seam -->
+  <line x1="128" y1="100" x2="128" y2="196" stroke="#1f2937" stroke-width="2.5"/>
+  <!-- 12 spots (6 per side, convergens has variable but ~12 spot pattern) -->
+  <circle cx="106" cy="120" r="6" fill="#1f2937"/>
+  <circle cx="150" cy="120" r="6" fill="#1f2937"/>
+  <circle cx="92" cy="146" r="7" fill="#1f2937"/>
+  <circle cx="164" cy="146" r="7" fill="#1f2937"/>
+  <circle cx="116" cy="156" r="5" fill="#1f2937"/>
+  <circle cx="140" cy="156" r="5" fill="#1f2937"/>
+  <circle cx="102" cy="176" r="6" fill="#1f2937"/>
+  <circle cx="154" cy="176" r="6" fill="#1f2937"/>
+  <circle cx="128" cy="186" r="5" fill="#1f2937"/>
+  <circle cx="124" cy="108" r="4" fill="#1f2937"/>
+  <circle cx="132" cy="108" r="4" fill="#1f2937"/>
+  <!-- cel-shade highlight -->
+  <ellipse cx="106" cy="120" rx="14" ry="22" fill="#ffffff" opacity="0.18"/>
+  <!-- head -->
+  <circle cx="128" cy="64" r="16" fill="#1f2937" stroke="#000" stroke-width="2"/>
+  <!-- eyes -->
+  <circle cx="121" cy="60" r="4" fill="#ffffff"/>
+  <circle cx="135" cy="60" r="4" fill="#ffffff"/>
+  <circle cx="121" cy="61" r="2" fill="#1f2937"/>
+  <circle cx="135" cy="61" r="2" fill="#1f2937"/>
+  <!-- antennae -->
+  <path d="M 119 52 Q 112 44 108 38" stroke="#1f2937" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M 137 52 Q 144 44 148 38" stroke="#1f2937" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <!-- smile -->
+  <path d="M 122 70 Q 128 74 134 70" stroke="#dc2626" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <!-- tier badge (Uncommon = blue) -->
+  <circle cx="226" cy="30" r="14" fill="#3B82F6" stroke="#ffffff" stroke-width="2"/>
+  <text x="226" y="34" text-anchor="middle" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="#ffffff">U</text>
+  <!-- name plate -->
+  <rect x="48" y="232" width="160" height="20" rx="10" fill="#ffffff" opacity="0.92" stroke="#7f1d1d" stroke-width="1.5"/>
+  <text x="128" y="246" text-anchor="middle" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="#7f1d1d">Dot · Convergent Ladybug</text>
+</svg>

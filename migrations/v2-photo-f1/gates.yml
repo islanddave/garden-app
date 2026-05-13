@@ -1,0 +1,131 @@
+# gates.yml
+# V2-PHOTO-F1 Session 1 — pre/post gates for the migration runner.
+#
+# L-058 SWEEP: empty by design.
+# Rationale: the new featured_photo_id columns are nullable with no CHECK or
+# NOT VALID constraints. There is no VALIDATE step in this migration (no 0c file),
+# so a pre-VALIDATE sweep would have nothing to verify. The runner's behavior on an
+# empty `sweep` list is "(no sweep gates)" — safe.
+#
+# Pre-gates confirm the four target tables and photos table exist.
+# Post-gates confirm each featured_photo_id column landed AND each partial index exists.
+
+pre:
+  - name: photos_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='photos'
+    expect: rowcount_eq
+    value: 1
+
+  - name: plant_projects_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plant_projects'
+    expect: rowcount_eq
+    value: 1
+
+  - name: plants_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+
+  - name: locations_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='locations'
+    expect: rowcount_eq
+    value: 1
+
+  - name: inventory_items_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='inventory_items'
+    expect: rowcount_eq
+    value: 1
+
+sweep: []
+
+post:
+  - name: plant_projects_featured_photo_id_column
+    sql: |
+      SELECT data_type FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_projects'
+         AND column_name='featured_photo_id'
+    expect: scalar_eq
+    value: uuid
+
+  - name: plants_featured_photo_id_column
+    sql: |
+      SELECT data_type FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants'
+         AND column_name='featured_photo_id'
+    expect: scalar_eq
+    value: uuid
+
+  - name: locations_featured_photo_id_column
+    sql: |
+      SELECT data_type FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='locations'
+         AND column_name='featured_photo_id'
+    expect: scalar_eq
+    value: uuid
+
+  - name: inventory_items_featured_photo_id_column
+    sql: |
+      SELECT data_type FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='inventory_items'
+         AND column_name='featured_photo_id'
+    expect: scalar_eq
+    value: uuid
+
+  - name: idx_plant_projects_featured_photo_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND indexname='idx_plant_projects_featured_photo'
+    expect: rowcount_eq
+    value: 1
+
+  - name: idx_plants_featured_photo_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND indexname='idx_plants_featured_photo'
+    expect: rowcount_eq
+    value: 1
+
+  - name: idx_locations_featured_photo_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND indexname='idx_locations_featured_photo'
+    expect: rowcount_eq
+    value: 1
+
+  - name: idx_inventory_items_featured_photo_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND indexname='idx_inventory_items_featured_photo'
+    expect: rowcount_eq
+    value: 1
+
+  - name: photos_inventory_item_id_column
+    sql: |
+      SELECT data_type FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='photos'
+         AND column_name='inventory_item_id'
+    expect: scalar_eq
+    value: uuid
+
+  - name: idx_photos_inventory_item_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND indexname='idx_photos_inventory_item'
+    expect: rowcount_eq
+    value: 1
+
+  - name: schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='2.1.0a'
+    expect: rowcount_eq
+    value: 1
