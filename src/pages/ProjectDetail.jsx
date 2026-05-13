@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
+import PhotoUpload from '../components/PhotoUpload.jsx'
+import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 
 const EVENT_ICONS = {
   sowing:        '🌱',
@@ -83,6 +85,13 @@ export default function ProjectDetail() {
   const [logErr,        setLogErr]        = useState(null)
   const [deletingId,    setDeletingId]    = useState(null)
   const logFormRef = useRef(null)
+
+  // V2-PHOTO-F1 Session 2: staged photo for inline mini-event-logger. Mirrors
+  // EventNew's pattern — file selected first, uploaded after event POST so the
+  // S3 key resolves under events/{eventId}/.
+  const [miniPhotoFile,    setMiniPhotoFile]    = useState(null)
+  const [miniPhotoPreview, setMiniPhotoPreview] = useState(null)
+  const miniPhotoUploader = useUploadPhoto({ errorMode: 'swallow' })
 
   const [plants,        setPlants]        = useState([])
   const [plantsLoading, setPlantsLoading] = useState(true)
@@ -178,7 +187,7 @@ export default function ProjectDetail() {
     setLoggingEvent(true)
     setLogErr(null)
     try {
-      await fetch('/api/events', {
+      const created = await fetch('/api/events', {
         method: 'POST',
         body: JSON.stringify({
           project_id:    id,
@@ -189,16 +198,43 @@ export default function ProjectDetail() {
           private_notes: eventForm.private_notes.trim() || null,
           quantity:      eventForm.quantity.trim()       || null,
           is_public:     eventForm.is_public,
-          has_photo:     false,
+          has_photo:     !!miniPhotoFile,
         }),
       })
+
+      // V2-PHOTO-F1 S2: upload staged photo (if any) — non-fatal via 'swallow'.
+      const newEventId = created?.id
+      if (miniPhotoFile && newEventId) {
+        await miniPhotoUploader.upload(miniPhotoFile, {
+          keyPrefix: 'events',
+          parentId:  newEventId,
+          linkage:   { project_id: id, event_id: newEventId },
+          is_public: eventForm.is_public,
+        })
+      }
+
       setEventForm(emptyEventForm())
+      clearMiniPhoto()
       setShowLogForm(false)
       await refreshEvents()
     } catch (err) {
       setLogErr(err.message)
     }
     setLoggingEvent(false)
+  }
+
+  function handleMiniPhotoChange(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setMiniPhotoFile(file)
+    if (miniPhotoPreview) URL.revokeObjectURL(miniPhotoPreview)
+    setMiniPhotoPreview(URL.createObjectURL(file))
+  }
+
+  function clearMiniPhoto() {
+    setMiniPhotoFile(null)
+    if (miniPhotoPreview) URL.revokeObjectURL(miniPhotoPreview)
+    setMiniPhotoPreview(null)
   }
 
   async function handleDeleteEvent(evId) {
@@ -544,16 +580,57 @@ export default function ProjectDetail() {
                     <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>{plant.variety}</div>
                   )}
                 </div>
-                {plant.status && (
-                  <span style={{ fontSize: '0.73rem', color: P.mid, backgroundColor: P.greenPale,
-                    borderRadius: 10, padding: '2px 8px' }}>
-                    {plant.status}
-                  </span>
-                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {plant.status && (
+                    <span style={{ fontSize: '0.73rem', color: P.mid, backgroundColor: P.greenPale,
+                      borderRadius: 10, padding: '2px 8px' }}>
+                      {plant.status}
+                    </span>
+                  )}
+                  {/* V2-PHOTO-F1 S2: per-plant upload trigger on each card. */}
+                  <PhotoUpload
+                    keyPrefix="plants"
+                    parentId={plant.id}
+                    linkage={{ plant_id: plant.id, project_id: id }}
+                    errorMode="surface"
+                    buttonLabel="📷"
+                    showPreview={false}
+                    inputId={`plant-photo-${plant.id}`}
+                    buttonStyle={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      width: 36, height: 36, padding: 0,
+                      background: 'transparent', color: P.mid,
+                      border: `1px solid ${P.border}`, borderRadius: '50%',
+                      cursor: 'pointer', fontSize: '0.95rem', userSelect: 'none',
+                    }}
+                  />
+                </div>
               </div>
             ))}
           </div>
         )}
+      </div>
+
+      {/* ---- Project photos (V2-PHOTO-F1 Session 2) ---- */}
+      <div style={{ marginTop: 28 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: P.dark }}>
+            Project photos
+          </h2>
+        </div>
+        <div style={{ ...cardStyle }}>
+          <p style={{ margin: '0 0 12px', fontSize: '0.85rem', color: P.mid }}>
+            Add photos directly to this project — they will appear in the Photo Library tagged with this project.
+          </p>
+          <PhotoUpload
+            keyPrefix="projects"
+            parentId={id}
+            linkage={{ project_id: id }}
+            errorMode="surface"
+            buttonLabel="Add Project Photo"
+            inputId={`project-photo-${id}`}
+          />
+        </div>
       </div>
 
       {/* ---- Event Log ---- */}
@@ -644,6 +721,47 @@ export default function ProjectDetail() {
                 placeholder="Dosage, stress signs, anything you don't want to share…"
                 style={{ ...inputStyle, height: 52, resize: 'vertical', borderColor: P.warnBorder, backgroundColor: P.warn }}
               />
+            </FormRow>
+
+            {/* V2-PHOTO-F1 S2: inline photo capture for the mini-logger.
+                Uses staged-file pattern (file picked here, uploaded after event POST). */}
+            <FormRow label="Photo · optional">
+              {miniPhotoPreview ? (
+                <div style={{ position: 'relative', display: 'inline-block' }}>
+                  <img
+                    src={miniPhotoPreview} alt="Preview"
+                    style={{ maxWidth: '100%', maxHeight: 180, borderRadius: 8, display: 'block', border: `1px solid ${P.border}` }}
+                  />
+                  <button type="button" onClick={clearMiniPhoto}
+                    aria-label="Remove staged photo"
+                    style={{
+                      position: 'absolute', top: 6, right: 6,
+                      background: 'rgba(0,0,0,0.55)', color: P.white,
+                      border: 'none', borderRadius: '50%',
+                      width: 26, height: 26, cursor: 'pointer', fontSize: '0.8rem',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>✕</button>
+                </div>
+              ) : (
+                <label
+                  data-testid="mini-photo-label"
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                    padding: '14px 12px', border: `2px dashed ${P.border}`, borderRadius: 8,
+                    cursor: 'pointer', backgroundColor: P.cream, color: P.mid, fontSize: '0.85rem',
+                  }}>
+                  <span style={{ fontSize: '1.2rem' }}>📷</span>
+                  <span>Tap to take or choose a photo</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleMiniPhotoChange}
+                    style={{ display: 'none' }}
+                    data-testid="mini-photo-input"
+                  />
+                </label>
+              )}
             </FormRow>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
