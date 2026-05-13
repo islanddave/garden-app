@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
+import VarietyPicker from '../components/VarietyPicker.jsx'
 
 // ── Spec-compliant enums (inventory_items schema) ────────────────────────────
 const TYPES = [
@@ -63,6 +64,9 @@ export default function InventoryAdd() {
     quantity_purchased:'',
     notes:            '',
     location_text:    '',
+    // Variety reference (CHECK constraint chk_inventory_seed_requires_variety:
+    // category='seeds' requires variety_id NOT NULL).
+    variety:          null, // full variety object — flattens to variety_id on submit
   })
 
   const [showFull,      setShowFull]      = useState(false)
@@ -125,6 +129,10 @@ export default function InventoryAdd() {
       if (!form.quantity && form.quantity !== 0)
         e.quantity = 'How many do you have?'
     }
+    // CHECK chk_inventory_seed_requires_variety — UI enforcement.
+    if (form.category === 'seeds' && !form.variety) {
+      e.variety = 'Pick or create the seed variety so the packet links to a plant.'
+    }
     return e
   }
 
@@ -169,7 +177,7 @@ export default function InventoryAdd() {
       status:        'active',
     }
     if (form.type === 'consumable') {
-      return {
+      const payload = {
         ...base,
         quantity_on_hand:   parseNum(form.quantity_on_hand) ?? 0,
         unit:               form.unit,
@@ -177,6 +185,12 @@ export default function InventoryAdd() {
         reorder_quantity:   parseNum(form.reorder_quantity),
         quantity_purchased: parseNum(form.quantity_purchased),
       }
+      // Seeds require variety_id (DB CHECK). Always include the field so the
+      // server sees null vs missing the same way.
+      if (form.category === 'seeds') {
+        payload.variety_id = form.variety?.id ?? null
+      }
+      return payload
     }
     // durable
     return {
@@ -280,7 +294,13 @@ export default function InventoryAdd() {
             <Field label="Category" error={errors.category}>
               <select
                 value={form.category}
-                onChange={e => set('category', e.target.value)}
+                onChange={e => {
+                  set('category', e.target.value)
+                  // When category changes away from seeds, clear variety selection.
+                  if (e.target.value !== 'seeds' && form.variety) {
+                    setForm(f => ({ ...f, variety: null }))
+                  }
+                }}
                 style={selectStyle(!!errors.category)}
                 disabled={!form.type}
               >
@@ -290,6 +310,24 @@ export default function InventoryAdd() {
                 ))}
               </select>
             </Field>
+
+            {/* Variety picker — required when category is seeds (DB CHECK chk_inventory_seed_requires_variety) */}
+            {form.category === 'seeds' && (
+              <Field label="Variety" error={errors.variety}>
+                <VarietyPicker
+                  value={form.variety}
+                  onChange={(variety) => {
+                    setForm(f => ({ ...f, variety }))
+                    if (errors.variety) setErrors(e => ({ ...e, variety: null }))
+                  }}
+                  required
+                  placeholder="Search or create a variety…"
+                />
+                <div style={{ marginTop: 6, fontSize: '0.74rem', color: P.light }}>
+                  Linking the variety lets future plants and harvest events trace back to this packet.
+                </div>
+              </Field>
+            )}
 
             {/* Quantity — type-aware */}
             {form.type === 'consumable' && (
