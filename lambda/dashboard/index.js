@@ -1,17 +1,42 @@
-// /api/dashboard — V1.2a-1 Session 3
-// Returns aggregated dashboard state in a single round trip:
-//   - recent_events: last 5 logged events
-//   - active_projects: all non-deleted projects + entity_memory state (last_*_at, next_water_at, location_type, watering_interval_days)
-//   - counts: projects, plants, locations, favorites
-//   - user_stats: current_streak, longest_streak, last_active_date, total_events, xp (defaults if no row)
-//   - water_due: projects with entity_memory.next_water_at < NOW(), ordered by next_water_at ASC (Tile 2 data)
+// /api/dashboard — V1.2a-2 Session 2 (extends V1.2a-1 Session 3)
+// Per-path method dispatch (F11):
+//   - GET  /api/dashboard                                 → aggregated dashboard state
+//   - GET  /api/projects/inactive                         → inactive project list (§7)
+//   - POST /api/projects/inactive/:projectId/dismiss      → dismiss inactive project (§8)
 //
-// active_projects JOINs entity_memory (authoritative source for last_*_at since Lambda 2.1.x).
-// LEFT JOIN: projects without any logged events return NULL for entity_memory fields.
+// GET /api/dashboard returns aggregated dashboard state in a single round trip:
+//   - recent_events: last 5 logged events
+//   - active_projects: all non-deleted projects + entity_memory state
+//   - counts: projects, plants, locations, favorites
+//   - user_stats: current_streak, longest_streak, last_active_date, total_events, xp
+//   - water_due: projects with entity_memory.next_water_at < NOW() (Tile 2)
+//   - harvest_ready: projects with status='harvesting' ordered by oldest last_observed_at (Tile 3, §4)
+//   - heads_up: Hybrid A+C union — flagged-unresolved + active-growth stale (Tile 4, §5)
+//   - inactive_projects_count: scalar count of harvested/ended NOT dismissed (§6)
+//
+// F1: days computed via calendar-day arithmetic (NOW()::date - col::date)::int — NOT EXTRACT(DAY FROM interval).
+// F7: Tile 4 stale predicate handles NULL last_observed_at with COALESCE(last_event_at, created_at) fallback.
+// F9: POST dismiss validates UUID via regex BEFORE handler dispatch (404 on parse failure).
+// F11: per-path method dispatch — no blanket non-GET 405.
+// B6: Tile 4 'stale' = OBSERVATION staleness by design.
+//
+// This file is the Lambda entry point — it wires neon + Clerk + SecretsManager
+// to the pure SQL builders in ./handlers.js. Unit tests import ONLY handlers.js
+// (no @neondatabase/serverless / @clerk/backend / @aws-sdk/* deps required at
+// test load time). Mirrors the lambda/events/{index,validators}.js split.
 
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import {
+  classifyRoute,
+  resp,
+  optionsResp,
+  handleDashboard,
+  handleGetInactive,
+  handleDismissInactive,
+  UUID_RE,
+} from './handlers.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -24,19 +49,12 @@ async function getSecrets() {
   return _secrets;
 }
 
-const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
-
-function resp(statusCode, body) {
-  return {
-    statusCode,
-    headers: { 'Content-Type': 'application/json', ...CORS },
-    body: JSON.stringify(body),
-  };
-}
+// Re-export for backward compat with any caller importing UUID_RE from index.js.
+export { UUID_RE };
 
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS, body: '' };
+    return optionsResp();
   }
 
   const secrets = await getSecrets();
@@ -59,109 +77,21 @@ export const handler = async (event) => {
   }
 
   const method = event.requestContext?.http?.method ?? 'GET';
-  if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
+  const rawPath = event.rawPath ?? '/api/dashboard';
+
+  const route = classifyRoute(method, rawPath);
+  if (route.kind === 'options') return optionsResp();
+  if (route.kind === 'method-not-allowed') return resp(405, { error: 'Method not allowed' });
+  if (route.kind === 'not-found') return resp(404, { error: 'Not found' });
+  if (route.kind === 'uuid-not-found') return resp(404, { error: 'Not found' });
 
   const sql = neon(secrets.NEON_DATABASE_URL);
 
   try {
-    const [
-      recentEvents,
-      counts,
-      favCount,
-      activeProjects,
-      userStatsRows,
-      waterDue,
-    ] = await Promise.all([
-      sql`
-        SELECT
-          e.id, e.event_type, e.event_date, e.created_at,
-          pp.name AS project_name,
-          pr.display_name
-        FROM event_log e
-        JOIN plant_projects pp ON pp.id = e.project_id
-        LEFT JOIN profiles pr ON pr.id = e.logged_by
-        WHERE pp.created_by = ${userId}
-          AND e.deleted_at IS NULL
-        ORDER BY e.created_at DESC
-        LIMIT 5
-      `,
-      sql`
-        SELECT
-          (
-            SELECT COUNT(*)::int
-            FROM plant_projects
-            WHERE created_by = ${userId} AND deleted_at IS NULL
-          ) AS project_count,
-          (
-            SELECT COUNT(*)::int
-            FROM plants p
-            JOIN plant_projects pp ON pp.id = p.project_id
-            WHERE pp.created_by = ${userId} AND p.deleted_at IS NULL
-          ) AS plant_count,
-          (
-            SELECT COUNT(*)::int
-            FROM locations
-            WHERE deleted_at IS NULL
-          ) AS location_count
-      `,
-      sql`
-        SELECT COUNT(*)::int AS count
-        FROM favorites
-        WHERE user_id = ${userId}
-      `,
-      sql`
-        SELECT
-          pp.id, pp.name, pp.status, pp.variety, pp.start_date,
-          em.last_watered_at, em.last_observed_at, em.last_fertilized_at,
-          em.last_pruned_at, em.last_harvested_at, em.last_event_at,
-          em.next_water_at, em.location_type, em.watering_interval_days
-        FROM plant_projects pp
-        LEFT JOIN entity_memory em ON em.project_id = pp.id
-        WHERE pp.created_by = ${userId}
-          AND pp.deleted_at IS NULL
-        ORDER BY pp.created_at DESC
-      `,
-      sql`
-        SELECT current_streak, longest_streak, last_active_date, total_events, xp
-        FROM user_stats
-        WHERE user_id = ${userId}
-      `,
-      sql`
-        SELECT
-          em.project_id, pp.name AS project_name,
-          em.last_watered_at, em.next_water_at,
-          em.location_type, em.watering_interval_days
-        FROM entity_memory em
-        JOIN plant_projects pp ON pp.id = em.project_id
-        WHERE pp.created_by = ${userId}
-          AND pp.deleted_at IS NULL
-          AND em.next_water_at IS NOT NULL
-          AND em.next_water_at < NOW()
-        ORDER BY em.next_water_at ASC
-      `,
-    ]);
-
-    const userStats = userStatsRows[0] ?? {
-      current_streak: 0,
-      longest_streak: 0,
-      last_active_date: null,
-      total_events: 0,
-      xp: 0,
-    };
-
-    return resp(200, {
-      recent_events: recentEvents,
-      active_projects: activeProjects,
-      counts: {
-        projects:  counts[0].project_count,
-        plants:    counts[0].plant_count,
-        locations: counts[0].location_count,
-        favorites: favCount[0].count,
-      },
-      user_stats: userStats,
-      water_due: waterDue,
-    });
-
+    if (route.kind === 'inactive-list') return await handleGetInactive(sql, userId);
+    if (route.kind === 'inactive-dismiss') return await handleDismissInactive(sql, userId, route.projectId);
+    // route.kind === 'dashboard'
+    return await handleDashboard(sql, userId);
   } catch (err) {
     console.error('dashboard lambda error', err);
     return resp(500, { error: 'Internal server error' });
