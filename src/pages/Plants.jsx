@@ -1,8 +1,14 @@
-import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+// Plants page — VARIETY-REF Session 4b: VarietyPicker integration + Plant-from-packet flow.
+// - Replaces freeform variety text input with VarietyPicker (search/create from plant_varieties).
+// - Reads ?source_inventory_item_id and ?variety_id query params (deep-link from InventoryDetail).
+// - Submits variety_id (canonical) AND legacy flat variety text (Lambda dual-read compat per S2).
+// - Schema columns confirmed present in prod 2026-05-13 (variety_id, source_inventory_item_id, metadata).
+import React, { useState, useEffect, useRef } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
+import VarietyPicker from '../components/VarietyPicker.jsx'
 
 const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']
 
@@ -12,11 +18,17 @@ function ErrBanner({ msg }) {
 
 export default function Plants() {
   const { fetch } = useApiFetch()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const sourceInventoryItemId = searchParams.get('source_inventory_item_id') || null
+  const queryVarietyId        = searchParams.get('variety_id') || null
+
   const [plants,     setPlants]     = useState([])
   const [projects,   setProjects]   = useState([])
   const [loading,    setLoading]    = useState(true)
   const [showAdd,    setShowAdd]    = useState(false)
-  const [form,       setForm]       = useState({ name: '', genus: '', species: '', variety: '', quantity: '1', notes: '', status: '', project_id: '' })
+  // form.variety holds the full variety object (or null); form.varietyText is the legacy flat string
+  // captured at submission time for dual-read compat.
+  const [form,       setForm]       = useState({ name: '', genus: '', species: '', variety: null, quantity: '1', notes: '', status: '', project_id: '' })
   const [saving,     setSaving]     = useState(false)
   const [err,        setErr]        = useState(null)
   const [expandedId, setExpandedId] = useState(null)
@@ -24,6 +36,11 @@ export default function Plants() {
   const [editSaving, setEditSaving] = useState(false)
   const [editErr,    setEditErr]    = useState(null)
   const [deleting,   setDeleting]   = useState(null)
+
+  // Source-packet preview (when deep-linked from InventoryDetail).
+  const [sourcePacket, setSourcePacket] = useState(null)
+  // Track whether the user has manually changed variety after a pre-fill (so we know to clear the lock).
+  const prefilledVarietyIdRef = useRef(null)
 
   useEffect(() => {
     let mounted = true
@@ -40,29 +57,79 @@ export default function Plants() {
     return () => { mounted = false }
   }, [fetch])
 
+  // Deep-link side effects: query params → open Add form, prefill variety + name from source packet.
+  useEffect(() => {
+    let mounted = true
+    if (!sourceInventoryItemId && !queryVarietyId) return
+    setShowAdd(true)
+    if (sourceInventoryItemId) {
+      fetch('/api/inventory-items/' + sourceInventoryItemId)
+        .then(item => {
+          if (!mounted || !item) return
+          setSourcePacket(item)
+          setForm(f => ({
+            ...f,
+            // Pre-fill name from packet name if user hasn't typed anything yet.
+            name: f.name || item.name || '',
+          }))
+        })
+        .catch(() => { /* non-fatal — packet preview just won't render */ })
+    }
+    if (queryVarietyId) {
+      // Fetch the variety so VarietyPicker can render its chip. Avoid creating a fake stub
+      // because the chip displays species/common_name fields.
+      fetch('/api/varieties/' + queryVarietyId)
+        .then(variety => {
+          if (!mounted || !variety) return
+          prefilledVarietyIdRef.current = variety.id
+          setForm(f => ({ ...f, variety }))
+        })
+        .catch(() => { /* non-fatal */ })
+    }
+    return () => { mounted = false }
+  }, [sourceInventoryItemId, queryVarietyId, fetch])
+
+  function clearQueryParams() {
+    if (sourceInventoryItemId || queryVarietyId) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('source_inventory_item_id')
+      next.delete('variety_id')
+      setSearchParams(next, { replace: true })
+    }
+    setSourcePacket(null)
+    prefilledVarietyIdRef.current = null
+  }
+
   async function handleAdd(e) {
     e.preventDefault()
+    if (saving) return // guard against double-submit
     setSaving(true); setErr(null)
     const qty = parseInt(form.quantity, 10)
+    // Dual-write: variety_id (canonical) + variety text (legacy flat, derived from picker selection).
+    const varietyText = form.variety?.name ?? null
+    const payload = {
+      project_id: form.project_id,
+      name:       form.name.trim(),
+      genus:      form.genus.trim()    || form.variety?.genus   || null,
+      species:    form.species.trim()  || form.variety?.species || null,
+      variety:    varietyText,
+      variety_id: form.variety?.id ?? null,
+      quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
+      notes:      form.notes.trim()    || null,
+      status:     form.status          || null,
+    }
+    if (sourceInventoryItemId) payload.source_inventory_item_id = sourceInventoryItemId
     try {
       const data = await fetch('/api/plants', {
         method: 'POST',
-        body: JSON.stringify({
-          project_id: form.project_id,
-          name:       form.name.trim(),
-          genus:      form.genus.trim()    || null,
-          species:    form.species.trim()  || null,
-          variety:    form.variety.trim()  || null,
-          quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
-          notes:      form.notes.trim()    || null,
-          status:     form.status          || null,
-        }),
+        body: JSON.stringify(payload),
       })
       // POST returns raw row without project_name JOIN — merge client-side
       const proj = projects.find(p => p.id === form.project_id)
       setPlants(p => [{ ...data, project_name: data.project_name ?? proj?.name }, ...p])
-      setForm(f => ({ ...f, name: '', genus: '', species: '', variety: '', quantity: '1', notes: '', status: '' }))
+      setForm(f => ({ ...f, name: '', genus: '', species: '', variety: null, quantity: '1', notes: '', status: '' }))
       setShowAdd(false)
+      clearQueryParams()
     } catch (error) {
       setErr(error.message)
     } finally {
@@ -72,7 +139,18 @@ export default function Plants() {
 
   function startEdit(plant) {
     setExpandedId(plant.id)
-    setEditForm({ name: plant.name, genus: plant.genus ?? '', species: plant.species ?? '', variety: plant.variety ?? '', quantity: String(plant.quantity ?? 1), notes: plant.notes ?? '', status: plant.status ?? '' })
+    // Pre-fill variety chip from plant.variety_ref (Lambda LEFT JOIN). Fallback: null
+    // (legacy plants will keep their flat variety text in the locked-out path until manual change).
+    setEditForm({
+      name:     plant.name,
+      genus:    plant.genus ?? '',
+      species:  plant.species ?? '',
+      variety:  plant.variety_ref ?? null,
+      varietyText: plant.variety ?? '', // legacy fallback display
+      quantity: String(plant.quantity ?? 1),
+      notes:    plant.notes ?? '',
+      status:   plant.status ?? '',
+    })
     setEditErr(null)
   }
 
@@ -80,19 +158,22 @@ export default function Plants() {
 
   async function handleEdit(e, id) {
     e.preventDefault()
+    if (editSaving) return // guard against double-submit
     setEditSaving(true); setEditErr(null)
     const qty = parseInt(editForm.quantity, 10)
+    const varietyText = editForm.variety?.name ?? editForm.varietyText?.trim() ?? null
     try {
       const data = await fetch('/api/plants/' + id, {
         method: 'PUT',
         body: JSON.stringify({
-          name:     editForm.name.trim(),
-          genus:    editForm.genus.trim()    || null,
-          species:  editForm.species.trim()  || null,
-          variety:  editForm.variety.trim()  || null,
-          quantity: isNaN(qty) || qty < 1 ? 1 : qty,
-          notes:    editForm.notes.trim()    || null,
-          status:   editForm.status          || null,
+          name:       editForm.name.trim(),
+          genus:      editForm.genus.trim()    || editForm.variety?.genus   || null,
+          species:    editForm.species.trim()  || editForm.variety?.species || null,
+          variety:    varietyText || null,
+          variety_id: editForm.variety?.id ?? null,
+          quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
+          notes:      editForm.notes.trim()    || null,
+          status:     editForm.status          || null,
         }),
       })
       // PUT returns raw row without project_name — preserve existing
@@ -137,6 +218,22 @@ export default function Plants() {
       {showAdd && (
         <form onSubmit={handleAdd} style={{ ...card, marginBottom: 20 }}>
           <div style={{ fontWeight: 600, marginBottom: 12, color: P.green }}>Add plant</div>
+          {sourcePacket && (
+            <div style={{
+              backgroundColor: P.greenPale, border: `1px solid ${P.green}`,
+              borderRadius: 8, padding: '10px 12px', marginBottom: 12,
+              fontSize: '0.85rem', color: P.dark, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+            }}>
+              <span>
+                <span aria-hidden="true">🌱 </span>
+                Planting from <strong>{sourcePacket.name}</strong>
+              </span>
+              <button type="button" onClick={clearQueryParams}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.78rem', textDecoration: 'underline', padding: 0 }}>
+                Clear
+              </button>
+            </div>
+          )}
           {err && <ErrBanner msg={err} />}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
             <div style={{ gridColumn: '1 / -1' }}>
@@ -151,9 +248,17 @@ export default function Plants() {
               <label htmlFor="plant-species" style={lbl}>Species</label>
               <input id="plant-species" value={form.species} onChange={e => setForm(f => ({ ...f, species: e.target.value }))} placeholder="e.g. lycopersicum" style={inp} />
             </div>
-            <div>
+            <div style={{ gridColumn: '1 / -1' }}>
               <label htmlFor="plant-variety" style={lbl}>Variety</label>
-              <input id="plant-variety" value={form.variety} onChange={e => setForm(f => ({ ...f, variety: e.target.value }))} placeholder="e.g. Sun Gold" style={inp} />
+              <VarietyPicker
+                id="plant-variety"
+                value={form.variety}
+                onChange={(variety) => setForm(f => ({ ...f, variety }))}
+                placeholder="Search or create a variety…"
+              />
+              <div style={{ marginTop: 4, fontSize: '0.72rem', color: P.light }}>
+                Optional — link a variety to enable care/maturity hints.
+              </div>
             </div>
             <div>
               <label htmlFor="plant-quantity" style={lbl}>Quantity</label>
@@ -180,7 +285,7 @@ export default function Plants() {
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button type="submit" disabled={saving} style={pBtn(saving)}>{saving ? 'Adding…' : 'Add plant'}</button>
-            <button type="button" onClick={() => setShowAdd(false)} style={gBtn}>Cancel</button>
+            <button type="button" onClick={() => { setShowAdd(false); clearQueryParams() }} style={gBtn}>Cancel</button>
           </div>
         </form>
       )}
@@ -204,7 +309,11 @@ export default function Plants() {
                   {[plant.genus, plant.species].filter(Boolean).join(' ')}
                 </div>
               )}
-              {plant.variety && <div style={{ fontSize: '0.8rem', color: P.light, marginTop: 2 }}>{plant.variety}</div>}
+              {(plant.variety_ref?.name || plant.variety) && (
+                <div style={{ fontSize: '0.8rem', color: P.light, marginTop: 2 }}>
+                  {plant.variety_ref?.name ?? plant.variety}
+                </div>
+              )}
               <div style={{ fontSize: '0.75rem', marginTop: 4 }}>
                 <Link to={`/projects/${plant.project_id}`} style={{ color: P.green, textDecoration: 'none' }}>
                   {plant.project_name ?? 'Project'}
@@ -233,9 +342,19 @@ export default function Plants() {
                   <label htmlFor="plant-edit-species" style={lbl}>Species</label>
                   <input id="plant-edit-species" value={editForm.species} onChange={e => setEditForm(f => ({ ...f, species: e.target.value }))} placeholder="e.g. lycopersicum" style={inp} />
                 </div>
-                <div>
+                <div style={{ gridColumn: '1 / -1' }}>
                   <label htmlFor="plant-edit-variety" style={lbl}>Variety</label>
-                  <input id="plant-edit-variety" value={editForm.variety} onChange={e => setEditForm(f => ({ ...f, variety: e.target.value }))} style={inp} />
+                  <VarietyPicker
+                    id="plant-edit-variety"
+                    value={editForm.variety}
+                    onChange={(variety) => setEditForm(f => ({ ...f, variety }))}
+                    placeholder="Search or create a variety…"
+                  />
+                  {!editForm.variety && editForm.varietyText && (
+                    <div style={{ marginTop: 4, fontSize: '0.72rem', color: P.light }}>
+                      Legacy: <em>{editForm.varietyText}</em> — picking a variety above replaces this on save.
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label htmlFor="plant-edit-qty" style={lbl}>Qty</label>
