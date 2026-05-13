@@ -36,6 +36,18 @@ vi.mock('../components/FavoriteToggle.jsx', () => ({
   default: () => <span data-testid="favorite-toggle" />,
 }))
 
+// V2-PHOTO-F1 S2: stub PhotoUpload — InventoryDetail now mounts one for the
+// per-item photo section beneath the S4b CTA.
+vi.mock('../components/PhotoUpload.jsx', () => ({
+  default: ({ keyPrefix, parentId, linkage }) => (
+    <span
+      data-testid={`inventory-photo-upload-${parentId ?? 'none'}`}
+      data-key-prefix={keyPrefix}
+      data-linkage={JSON.stringify(linkage ?? {})}
+    />
+  ),
+}))
+
 // useInventory hook used internally for update/delete — stub the methods to no-op
 vi.mock('../hooks/useInventory.js', () => ({
   useInventory: () => ({
@@ -142,5 +154,24 @@ describe('InventoryDetail — Plant-from-packet CTA navigation', () => {
     const cta = screen.getByLabelText(/Plant from Black Krim seeds/i)
     // Inline style minHeight set to 56
     expect(cta.style.minHeight).toBe('56px')
+  })
+})
+
+describe('InventoryDetail — V2-PHOTO-F1 S2 inventory photo upload', () => {
+  it('mounts PhotoUpload with inventory keyPrefix and inventory_item_id linkage', async () => {
+    fetchSpy.mockResolvedValueOnce(SEED_WITH_STOCK)
+    render(<InventoryDetail />)
+    await waitFor(() => screen.getByTestId('inventory-photo-upload-item-seed-1'))
+    const node = screen.getByTestId('inventory-photo-upload-item-seed-1')
+    expect(node.dataset.keyPrefix).toBe('inventory')
+    const linkage = JSON.parse(node.dataset.linkage)
+    expect(linkage.inventory_item_id).toBe('item-seed-1')
+  })
+
+  it('photo section renders for durable items too', async () => {
+    paramsRef.current = { id: 'item-2' }
+    fetchSpy.mockResolvedValueOnce(DURABLE)
+    render(<InventoryDetail />)
+    await waitFor(() => screen.getByTestId('inventory-photo-upload-item-2'))
   })
 })
