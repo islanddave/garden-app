@@ -8,6 +8,7 @@ import { hapticDouble, hapticTriple } from '../lib/haptic.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
 import HeadsUpTile from '../components/HeadsUpTile.jsx'
+import NotifyButton from '../components/NotifyButton.jsx'
 
 function DashboardFallback({ error, retry } = {}) {
   const ts = new Date().toLocaleString()
@@ -320,6 +321,9 @@ export default function Dashboard() {
 
           {/* Tile 4: Heads up — flagged + stale projects (V1.2a-2 S3 W2) */}
           <HeadsUpTile headsUp={headsUp} onDataRefresh={() => loadDashboard(true)} />
+
+          {/* NotifyButton — push-consent tile, behind NOTIFY_ENABLED flag (default OFF → renders null) */}
+          <NotifyButton eventCount={userStats.total_events ?? 0} />
 
           {/* Footer link to inactive projects surface (V1.2a-2 S3) */}
           {inactiveCount > 0 && (

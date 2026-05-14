@@ -27,11 +27,7 @@ import Plants from './pages/Plants.jsx'
 import LocationDetail from './pages/LocationDetail.jsx'
 import EventDetail from './pages/EventDetail.jsx'
 import Achievements from './pages/Achievements.jsx'
-
-// W1 placeholder — W4 replaces with import InactiveProjects from './pages/InactiveProjects.jsx'
-function InactivePlaceholder() {
-  return <div style={{ padding: '48px 20px', textAlign: 'center', color: '#777' }}>Loading inactive projects...</div>
-}
+import InactiveProjects from './pages/InactiveProjects.jsx'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -97,7 +93,7 @@ function AppRoutes() {
               <Route path="/projects"      element={<Protected><ProjectList /></Protected>} />
               <Route path="/projects/new"  element={<Protected><ProjectNew /></Protected>} />
               <Route path="/projects/:id"  element={<Protected><ProjectDetail /></Protected>} />
-              <Route path="/inactive"      element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><InactivePlaceholder /></ErrorBoundary></Protected>} />
+              <Route path="/inactive"      element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><InactiveProjects /></ErrorBoundary></Protected>} />
               <Route path="/inventory"     element={<Protected><Inventory /></Protected>} />
               <Route path="/inventory/add" element={<Protected><InventoryAdd /></Protected>} />
               <Route path="/inventory/:id" element={<Protected><InventoryDetail /></Protected>} />
