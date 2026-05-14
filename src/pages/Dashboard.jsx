@@ -1,10 +1,46 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useZone } from '../context/ZoneContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 import { hapticDouble, hapticTriple } from '../lib/haptic.js'
+import ErrorBoundary from '../components/ErrorBoundary.jsx'
+import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
+import HeadsUpTile from '../components/HeadsUpTile.jsx'
+import NotifyButton from '../components/NotifyButton.jsx'
+
+function DashboardFallback({ error, retry } = {}) {
+  const ts = new Date().toLocaleString()
+  const code = Math.random().toString(36).slice(2, 8)
+  return (
+    <div role="alert" style={{
+      padding: '20px 16px',
+      margin: '12px 0',
+      backgroundColor: '#fde8e0',
+      border: '1px solid #b7532a',
+      borderRadius: 10,
+      color: '#7a2a10',
+      fontSize: '0.88rem',
+    }}>
+      <div style={{ fontWeight: 700, marginBottom: 4 }}>Couldn't load dashboard at {ts}.</div>
+      <div style={{ fontSize: '0.78rem', color: '#7a5c3c', marginBottom: 10 }}>Code: {code}</div>
+      <button
+        type="button"
+        onClick={retry}
+        style={{
+          minHeight: 44, minWidth: 44,
+          padding: '8px 16px',
+          background: 'transparent',
+          border: '1px solid #b7532a',
+          borderRadius: 6,
+          color: '#7a2a10',
+          fontWeight: 600,
+          cursor: 'pointer',
+        }}>Try again</button>
+    </div>
+  )
+}
 
 const LOGGABLE_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
 
@@ -58,6 +94,9 @@ export default function Dashboard() {
   const [recentEvents,  setRecentEvents]  = useState([])
   const [userStats,     setUserStats]     = useState({ current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0 })
   const [waterDue,      setWaterDue]      = useState([])
+  const [inactiveCount, setInactiveCount] = useState(0)
+  const [harvestReady,  setHarvestReady]  = useState(undefined)
+  const [headsUp,       setHeadsUp]       = useState(undefined)
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState(null)
   const [streakModalOpen, setStreakModalOpen] = useState(false)
@@ -80,6 +119,9 @@ export default function Dashboard() {
       setRecentEvents(dashData.recent_events ?? [])
       setUserStats(dashData.user_stats ?? { current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0 })
       setWaterDue(dashData.water_due ?? [])
+      setInactiveCount(dashData.inactive_projects_count ?? 0)
+      setHarvestReady(dashData.harvest_ready ?? [])
+      setHeadsUp(dashData.heads_up ?? [])
 
       const memMap = {}
       activeProjects.forEach(p => {
@@ -152,6 +194,27 @@ export default function Dashboard() {
         projectName: logged.project_name ?? 'event',
         expiresAt: Date.now() + 5000,
       })
+    }
+
+    // Clear navigation state so refresh on tab-revisit doesn't re-fire.
+    navigate(location.pathname, { replace: true, state: null })
+
+    return () => { isMounted = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, loadDashboard, navigate])
+
+  // Handle issue-resolve return from EventDetail: refresh data, queue achievement
+  // toasts. No undo toast — that's only for the logged-event flow.
+  useEffect(() => {
+    if (!location.state?.refreshDashboard) return
+
+    let isMounted = true
+    loadDashboard(isMounted)
+
+    const earned = location.state?.newly_earned_achievements
+    if (earned?.length) {
+      setAchievementQueue(q => [...q, ...earned])
+      hapticTriple()
     }
 
     // Clear navigation state so refresh on tab-revisit doesn't re-fire.
@@ -263,14 +326,43 @@ export default function Dashboard() {
           </div>
         </Link>
 
-        {/* Tile 1: Give attention to — non-hide zero state */}
-        <GiveAttentionTile
-          nextAttention={nextAttention}
-          hasProjects={projects.length > 0}
-        />
+        {/* Dashboard tile region — wrapped in ErrorBoundary so tile crashes don't blank the page */}
+        <ErrorBoundary scope="dashboard" fallback={<DashboardFallback />}>
+          {/* Tile 1: Give attention to — non-hide zero state */}
+          <GiveAttentionTile
+            nextAttention={nextAttention}
+            hasProjects={projects.length > 0}
+          />
 
-        {/* Tile 2: Water me — non-hide primer + multi-overdue list */}
-        <WaterMeTile waterDue={waterDue} hasProjects={projects.length > 0} />
+          {/* Tile 2: Water me — non-hide primer + multi-overdue list */}
+          <WaterMeTile waterDue={waterDue} hasProjects={projects.length > 0} />
+
+          {/* Tile 3: Harvest ready — projects in 'harvesting' status (V1.2a-2 S3 W2) */}
+          <HarvestReadyTile harvestReady={harvestReady} onDataRefresh={() => loadDashboard(true)} />
+
+          {/* Tile 4: Heads up — flagged + stale projects (V1.2a-2 S3 W2) */}
+          <HeadsUpTile headsUp={headsUp} onDataRefresh={() => loadDashboard(true)} />
+
+          {/* NotifyButton — push-consent tile, behind NOTIFY_ENABLED flag (default OFF → renders null) */}
+          <NotifyButton eventCount={userStats.total_events ?? 0} />
+
+          {/* Footer link to inactive projects surface (V1.2a-2 S3) */}
+          {inactiveCount > 0 && (
+            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              <Link to="/inactive" style={{
+                display: 'inline-block',
+                minHeight: 44,
+                padding: '12px 16px',
+                color: P.green,
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                textDecoration: 'none',
+              }}>
+                View {inactiveCount} inactive project{inactiveCount === 1 ? '' : 's'} →
+              </Link>
+            </div>
+          )}
+        </ErrorBoundary>
 
         {/* Active Projects */}
         <section style={{ marginBottom: '32px' }}>
