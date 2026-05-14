@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
 import { hapticShort } from '../lib/haptic.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
+import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 
 const EVENT_TYPES_UI = [
   { value: 'watering',    label: 'Watered',                emoji: '💧' },
@@ -82,6 +83,61 @@ const EVENT_METADATA_FIELDS = {
 }
 
 const LOGGABLE_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
+
+// V1.2a-2 Wave 3: harvest panel — anchored quality scale (NOT a star widget).
+const HARVEST_QUALITY_LABELS = {
+  1: 'inedible',
+  2: 'poor',
+  3: 'acceptable',
+  4: 'good',
+  5: 'excellent',
+}
+
+// V1.2a-2 Wave 3: observation flag — severity options. "Stale" is system-assigned
+// only and is intentionally excluded from this list (see SeverityBadge.jsx).
+const SEVERITY_OPTIONS = [
+  { value: 1, label: 'Watch',  anchor: 'monitor only, no action today' },
+  { value: 2, label: 'Issue',  anchor: 'action within 48h' },
+  { value: 3, label: 'Urgent', anchor: 'action today or plant may be lost' },
+]
+
+const DEFAULT_HARVEST_UNIT = 'count'
+
+// Read the user's last-used harvest unit from localStorage. Guarded for
+// tests / SSR where localStorage may be unavailable or throw.
+function readLastHarvestUnit() {
+  try {
+    const stored = localStorage.getItem('lastHarvestUnit')
+    if (stored && HARVEST_UNITS.includes(stored)) return stored
+  } catch { /* localStorage unavailable — fall through to default */ }
+  return DEFAULT_HARVEST_UNIT
+}
+
+// V1.2a-2 Wave 3: never render a raw server error string to the user. Map known
+// server error patterns to canned, friendly copy; fall back to a safe generic.
+function friendlyError(err) {
+  const raw = (err && err.message) ? String(err.message) : ''
+  const status = err && err.status
+  if (/exceeds max for unit/i.test(raw)) {
+    return 'Quantity is unusually high — double-check?'
+  }
+  if (/quantity must be a positive/i.test(raw)) {
+    return 'Quantity doesn’t look right — check the form and try again.'
+  }
+  if (/severity/i.test(raw)) {
+    return 'Something didn’t look right with the issue flag — check and try again.'
+  }
+  if (typeof status === 'number') {
+    if (status >= 400 && status < 500) {
+      return 'Something didn’t look right — check the form and try again.'
+    }
+    if (status >= 500) {
+      return 'Couldn’t save — try again.'
+    }
+  }
+  // Network errors (no status) and anything unmapped.
+  return 'Couldn’t save — try again.'
+}
 
 function toDatetimeLocal(date) {
   const d = date || new Date()
@@ -167,7 +223,9 @@ function MicBtn({ fieldKey, onResult, voice, top = '50%', transform = 'translate
 // Tier 2: collapsible per-type metadata fields
 function MetadataSection({ eventType, metadataState, onMetadataChange }) {
   const [open, setOpen] = useState(false)
-  const fields = EVENT_METADATA_FIELDS[eventType]
+  // V1.2a-2 Wave 3: harvest now has a dedicated structured panel — suppress the
+  // legacy weight_g/count/quality "More details" fields for harvest events.
+  const fields = eventType === 'harvest' ? null : EVENT_METADATA_FIELDS[eventType]
   if (!fields) return null
 
   return (
@@ -246,6 +304,24 @@ export default function EventNew() {
   // Tier 2 metadata state — { [field.key]: value } — only populated keys submitted
   const [metadataState, setMetadataState] = useState({})
 
+  // V1.2a-2 Wave 3: harvest panel state — only submitted for event_type=harvest.
+  const [harvest, setHarvest] = useState(() => ({
+    quantity:       '',
+    unit:           readLastHarvestUnit(),
+    quality_rating: null,
+  }))
+  const [harvestError, setHarvestError] = useState(null)
+
+  // V1.2a-2 Wave 3: observation flag state — only submitted for event_type=observation.
+  const [flaggedAsIssue, setFlaggedAsIssue] = useState(false)
+  const [severity,       setSeverity]       = useState(null)
+  const [severityError,  setSeverityError]  = useState(null)
+  const [severityShake,  setSeverityShake]  = useState(false)
+  const severitySelectRef = useRef(null)
+
+  // V1.2a-2 Wave 3: non-fatal notice (e.g. deep-link project not found).
+  const [notice, setNotice] = useState(null)
+
   const [photoFile,    setPhotoFile]    = useState(null)
   const [photoPreview, setPhotoPreview] = useState(null)
   const [projects,     setProjects]     = useState([])
@@ -259,6 +335,14 @@ export default function EventNew() {
   // Reset metadata when event type changes
   useEffect(() => {
     setMetadataState({})
+    // V1.2a-2 Wave 3: reset the type-specific panels too. Harvest unit is
+    // re-seeded from localStorage so the user's last choice persists across types.
+    setHarvest({ quantity: '', unit: readLastHarvestUnit(), quality_rating: null })
+    setHarvestError(null)
+    setFlaggedAsIssue(false)
+    setSeverity(null)
+    setSeverityError(null)
+    setSeverityShake(false)
   }, [form.event_type])
 
   // Load plants when project selection changes
@@ -275,10 +359,18 @@ export default function EventNew() {
       apiFetch('/api/projects'),
       apiFetch('/api/locations/with-path'),
     ]).then(([proj, locs]) => {
-      setProjects((proj ?? []).filter(p => LOGGABLE_STATUSES.includes(p.status)))
+      const loggable = (proj ?? []).filter(p => LOGGABLE_STATUSES.includes(p.status))
+      setProjects(loggable)
       setLocations((locs ?? []).filter(l => l.is_active))
+      // V1.2a-2 Wave 3: deep-link safety — if a ?project= param was supplied but
+      // doesn't match any loaded (active, owned) project, clear the prefill and
+      // surface a non-fatal notice rather than silently POSTing a bad project_id.
+      if (preselectedProjectId && !loggable.some(p => p.id === preselectedProjectId)) {
+        setForm(f => (f.project_id === preselectedProjectId ? { ...f, project_id: '' } : f))
+        setNotice('Project not found — pick one.')
+      }
     }).catch(() => {})
-  }, [apiFetch])
+  }, [apiFetch, preselectedProjectId])
 
   function handleMetadataChange(key, value) {
     setMetadataState(prev => {
@@ -307,10 +399,43 @@ export default function EventNew() {
     setPhotoPreview(null)
   }
 
+  // V1.2a-2 Wave 3: client-side harvest validation — mirrors the server contract
+  // in lambda/events/validators.js. Returns an error string, or null if valid.
+  function validateHarvest() {
+    const qty = Number(harvest.quantity)
+    if (harvest.quantity === '' || !Number.isFinite(qty) || qty <= 0) {
+      return 'Enter a quantity greater than zero.'
+    }
+    if (qty > MAX_PLAUSIBLE[harvest.unit]) {
+      return `That's higher than expected for ${harvest.unit} — double-check the amount.`
+    }
+    return null
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
     if (!form.event_type)  { setError('Select an event type above.'); return }
     if (!form.project_id)  { setError('Select a project.'); return }
+
+    // V1.2a-2 Wave 3: harvest panel gate — block the POST on invalid quantity,
+    // surface an inline error near the quantity field.
+    if (form.event_type === 'harvest') {
+      const hErr = validateHarvest()
+      if (hErr) { setHarvestError(hErr); return }
+      setHarvestError(null)
+    }
+
+    // V1.2a-2 Wave 3: observation flag gate — action-then-correct pattern.
+    // Button stays enabled; on submit with the flag on but no severity, we show
+    // an inline error, focus the select, and shake — but do NOT fire the POST.
+    if (form.event_type === 'observation' && flaggedAsIssue && severity == null) {
+      setSeverityError('Pick a severity to flag.')
+      setSeverityShake(true)
+      setTimeout(() => setSeverityShake(false), 100)
+      severitySelectRef.current?.focus()
+      return
+    }
+    setSeverityError(null)
 
     setSaving(true)
     setError(null)
@@ -320,6 +445,23 @@ export default function EventNew() {
 
     // Build metadata — only include if there are populated keys
     const metadata = Object.keys(metadataState).length > 0 ? metadataState : null
+
+    // V1.2a-2 Wave 3: assemble type-specific payload fields.
+    const isHarvest = form.event_type === 'harvest'
+    const harvestPayload = isHarvest
+      ? {
+          harvest: {
+            quantity:       Number(harvest.quantity),
+            unit:           harvest.unit,
+            quality_rating: harvest.quality_rating != null ? Number(harvest.quality_rating) : null,
+          },
+        }
+      : {}
+    // Flag fields only when the event is an observation AND the flag is on —
+    // never send severity without flagged_as_issue (server rejects that).
+    const flagPayload = (form.event_type === 'observation' && flaggedAsIssue)
+      ? { flagged_as_issue: true, severity }
+      : {}
 
     // 1 — POST event, get back { eventId, stats }
     let result
@@ -332,17 +474,26 @@ export default function EventNew() {
           event_date:    eventDateStr,
           notes:         form.notes.trim()         || null,
           private_notes: form.private_notes.trim() || null,
-          quantity:      form.quantity.trim()       || null,
+          // Harvest events use the structured harvest panel — the generic
+          // freetext quantity field is intentionally nulled for them.
+          quantity:      isHarvest ? null : (form.quantity.trim() || null),
           plant_id:      form.plant_id               || null,
           is_public:     form.is_public,
           has_photo:     !!photoFile,
           metadata,
+          ...harvestPayload,
+          ...flagPayload,
         }),
       })
     } catch (err) {
       setSaving(false)
-      setError(err.message)
+      setError(friendlyError(err))
       return
+    }
+
+    // V1.2a-2 Wave 3: remember the chosen harvest unit for next time.
+    if (isHarvest) {
+      try { localStorage.setItem('lastHarvestUnit', harvest.unit) } catch { /* noop */ }
     }
 
     // V1.2a-1 Lambda 2.1.x response shape: event_row fields at top level + updated_streak / xp_gained / newly_earned_achievements / daily_xp_remaining.
@@ -388,6 +539,13 @@ export default function EventNew() {
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
+      {/* V1.2a-2 Wave 3: shake animation for the severity-required nudge. */}
+      <style>{`@keyframes evnew-shake {
+        0% { transform: translateX(0); }
+        25% { transform: translateX(-4px); }
+        75% { transform: translateX(4px); }
+        100% { transform: translateX(0); }
+      }`}</style>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 60px' }}>
 
         <div style={{ marginBottom: 24 }}>
@@ -406,6 +564,7 @@ export default function EventNew() {
         </div>
 
         {error && <ErrBanner msg={error} />}
+        {notice && <ErrBanner msg={notice} />}
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
@@ -564,23 +723,161 @@ export default function EventNew() {
             onMetadataChange={handleMetadataChange}
           />
 
-          {/* ── Quantity ── */}
-          <Section label="Quantity  ·  optional">
-            <div style={{ position: 'relative' }}>
-              <input
-                value={form.quantity}
-                onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
-                aria-label="Quantity"
-                style={{ ...inputStyle, paddingRight: 44 }}
-                placeholder="e.g. 3 plants, 500ml, 1 tray"
-              />
-              <MicBtn
-                fieldKey="quantity"
-                onResult={text => setForm(f => ({ ...f, quantity: text }))}
-                voice={voice}
-              />
-            </div>
-          </Section>
+          {/* ── V1.2a-2 Wave 3: Harvest panel (harvest events only) ── */}
+          {form.event_type === 'harvest' && (
+            <Section label="Harvest *">
+              <div style={{ display: 'flex', gap: 10 }}>
+                <div style={{ flex: 2 }}>
+                  <label htmlFor="harvest-quantity" style={fieldLabelStyle}>
+                    Quantity *
+                  </label>
+                  <input
+                    id="harvest-quantity"
+                    type="text"
+                    inputMode="decimal"
+                    value={harvest.quantity}
+                    onChange={e => {
+                      setHarvest(h => ({ ...h, quantity: e.target.value }))
+                      if (harvestError) setHarvestError(null)
+                    }}
+                    aria-label="Harvest quantity"
+                    style={inputStyle}
+                    placeholder="e.g. 2.5"
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label htmlFor="harvest-unit" style={fieldLabelStyle}>
+                    Unit
+                  </label>
+                  <select
+                    id="harvest-unit"
+                    value={harvest.unit}
+                    onChange={e => setHarvest(h => ({ ...h, unit: e.target.value }))}
+                    aria-label="Harvest unit"
+                    style={{ ...selectStyle, minHeight: 44, minWidth: 44 }}
+                  >
+                    {HARVEST_UNITS.map(u => (
+                      <option key={u} value={u}>{u}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {harvestError && (
+                <div role="alert" style={inlineErrorStyle}>{harvestError}</div>
+              )}
+
+              <div style={{ marginTop: 16 }}>
+                <label style={fieldLabelStyle}>Quality  ·  optional</label>
+                <div role="radiogroup" aria-label="Harvest quality" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <label key={n} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem', color: P.mid }}>
+                      <input
+                        type="radio"
+                        name="harvest-quality"
+                        value={n}
+                        checked={harvest.quality_rating === n}
+                        onChange={() => setHarvest(h => ({ ...h, quality_rating: n }))}
+                        style={{ width: 16, height: 16, cursor: 'pointer' }}
+                      />
+                      <span>{n} = {HARVEST_QUALITY_LABELS[n]}</span>
+                    </label>
+                  ))}
+                </div>
+                {harvest.quality_rating != null && (
+                  <button
+                    type="button"
+                    onClick={() => setHarvest(h => ({ ...h, quality_rating: null }))}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.light, fontSize: '0.78rem', padding: '6px 0 0', textDecoration: 'underline' }}
+                  >
+                    Clear quality
+                  </button>
+                )}
+              </div>
+            </Section>
+          )}
+
+          {/* ── V1.2a-2 Wave 3: Observation flag form (observation events only) ── */}
+          {form.event_type === 'observation' && (
+            <Section label="Flag this observation">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={flaggedAsIssue}
+                  onChange={e => {
+                    const on = e.target.checked
+                    setFlaggedAsIssue(on)
+                    // Toggling OFF clears severity so a stale value never reaches the POST.
+                    if (!on) { setSeverity(null); setSeverityError(null) }
+                  }}
+                  aria-label="Flag as an issue"
+                  style={{ width: 18, height: 18, cursor: 'pointer' }}
+                />
+                <span style={{ fontSize: '0.88rem', color: P.mid }}>Flag as an issue</span>
+              </label>
+
+              {flaggedAsIssue && (
+                <div style={{ marginTop: 14 }}>
+                  <label htmlFor="severity-select" style={fieldLabelStyle}>
+                    Severity *
+                  </label>
+                  <select
+                    id="severity-select"
+                    ref={severitySelectRef}
+                    value={severity ?? ''}
+                    onChange={e => {
+                      const v = e.target.value === '' ? null : Number(e.target.value)
+                      setSeverity(v)
+                      if (v != null && severityError) setSeverityError(null)
+                    }}
+                    aria-label="Severity"
+                    style={{
+                      ...selectStyle,
+                      minHeight: 44,
+                      borderColor: severityError ? P.alertBorder : P.border,
+                      animation: severityShake ? 'evnew-shake 0.1s linear' : undefined,
+                    }}
+                  >
+                    <option value="">— Pick a severity —</option>
+                    {SEVERITY_OPTIONS.map(o => (
+                      <option key={o.value} value={o.value}>
+                        {o.value} · {o.label} — {o.anchor}
+                      </option>
+                    ))}
+                  </select>
+                  {severityError && (
+                    <div role="alert" style={inlineErrorStyle}>{severityError}</div>
+                  )}
+                  <div style={{ marginTop: 8, fontSize: '0.75rem', color: P.light, lineHeight: 1.5 }}>
+                    {SEVERITY_OPTIONS.map(o => (
+                      <div key={o.value}>
+                        <strong>{o.label}</strong> — {o.anchor}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </Section>
+          )}
+
+          {/* ── Quantity (hidden for harvest — superseded by the harvest panel) ── */}
+          {form.event_type !== 'harvest' && (
+            <Section label="Quantity  ·  optional">
+              <div style={{ position: 'relative' }}>
+                <input
+                  value={form.quantity}
+                  onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
+                  aria-label="Quantity"
+                  style={{ ...inputStyle, paddingRight: 44 }}
+                  placeholder="e.g. 3 plants, 500ml, 1 tray"
+                />
+                <MicBtn
+                  fieldKey="quantity"
+                  onResult={text => setForm(f => ({ ...f, quantity: text }))}
+                  voice={voice}
+                />
+              </div>
+            </Section>
+          )}
 
           {/* ── Photo ── */}
           <Section label="Photo  ·  optional">
@@ -849,6 +1146,18 @@ const inputStyle = {
   backgroundColor: P.white,
   boxSizing: 'border-box',
   fontFamily: 'inherit',
+}
+
+// V1.2a-2 Wave 3: inline sub-field label (lighter than the Section <label>).
+const fieldLabelStyle = {
+  display: 'block', fontSize: '0.74rem', fontWeight: 700,
+  color: P.light, marginBottom: 6,
+  letterSpacing: '0.3px', textTransform: 'uppercase',
+}
+
+// V1.2a-2 Wave 3: inline validation error anchored beneath a field.
+const inlineErrorStyle = {
+  marginTop: 6, fontSize: '0.78rem', color: P.terra, fontWeight: 600,
 }
 
 const selectStyle = {
