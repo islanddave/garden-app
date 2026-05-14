@@ -6,14 +6,8 @@ import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 import { hapticDouble, hapticTriple } from '../lib/haptic.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
-
-function HarvestReadyTilePlaceholder() {
-  return <div style={{ padding: 16, color: '#888', fontStyle: 'italic' }}>Tile loading...</div>
-}
-
-function HeadsUpTilePlaceholder() {
-  return <div style={{ padding: 16, color: '#888', fontStyle: 'italic' }}>Tile loading...</div>
-}
+import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
+import HeadsUpTile from '../components/HeadsUpTile.jsx'
 
 function DashboardFallback({ error, retry } = {}) {
   const ts = new Date().toLocaleString()
@@ -100,6 +94,8 @@ export default function Dashboard() {
   const [userStats,     setUserStats]     = useState({ current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0 })
   const [waterDue,      setWaterDue]      = useState([])
   const [inactiveCount, setInactiveCount] = useState(0)
+  const [harvestReady,  setHarvestReady]  = useState(undefined)
+  const [headsUp,       setHeadsUp]       = useState(undefined)
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState(null)
   const [streakModalOpen, setStreakModalOpen] = useState(false)
@@ -123,6 +119,8 @@ export default function Dashboard() {
       setUserStats(dashData.user_stats ?? { current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0 })
       setWaterDue(dashData.water_due ?? [])
       setInactiveCount(dashData.inactive_projects_count ?? 0)
+      setHarvestReady(dashData.harvest_ready ?? [])
+      setHeadsUp(dashData.heads_up ?? [])
 
       const memMap = {}
       activeProjects.forEach(p => {
@@ -317,9 +315,11 @@ export default function Dashboard() {
           {/* Tile 2: Water me — non-hide primer + multi-overdue list */}
           <WaterMeTile waterDue={waterDue} hasProjects={projects.length > 0} />
 
-          {/* W2/W3 tiles — placeholders until real components land */}
-          <HarvestReadyTilePlaceholder />
-          <HeadsUpTilePlaceholder />
+          {/* Tile 3: Harvest ready — projects in 'harvesting' status (V1.2a-2 S3 W2) */}
+          <HarvestReadyTile harvestReady={harvestReady} onDataRefresh={() => loadDashboard(true)} />
+
+          {/* Tile 4: Heads up — flagged + stale projects (V1.2a-2 S3 W2) */}
+          <HeadsUpTile headsUp={headsUp} onDataRefresh={() => loadDashboard(true)} />
 
           {/* Footer link to inactive projects surface (V1.2a-2 S3) */}
           {inactiveCount > 0 && (
