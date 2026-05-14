@@ -290,6 +290,7 @@ export const handler = async (event) => {
             e.event_type, e.event_date, e.notes, e.private_notes,
             e.quantity, e.is_public, e.logged_by, e.created_at,
             e.metadata,
+            e.flagged_as_issue, e.severity, e.resolved_at,
             pp.name AS project_name
           FROM event_log e
           JOIN plant_projects pp ON pp.id = e.project_id

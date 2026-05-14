@@ -203,6 +203,27 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state, loadDashboard, navigate])
 
+  // Handle issue-resolve return from EventDetail: refresh data, queue achievement
+  // toasts. No undo toast — that's only for the logged-event flow.
+  useEffect(() => {
+    if (!location.state?.refreshDashboard) return
+
+    let isMounted = true
+    loadDashboard(isMounted)
+
+    const earned = location.state?.newly_earned_achievements
+    if (earned?.length) {
+      setAchievementQueue(q => [...q, ...earned])
+      hapticTriple()
+    }
+
+    // Clear navigation state so refresh on tab-revisit doesn't re-fire.
+    navigate(location.pathname, { replace: true, state: null })
+
+    return () => { isMounted = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, loadDashboard, navigate])
+
   // Auto-dismiss undo toast.
   useEffect(() => {
     if (!undoState) return
