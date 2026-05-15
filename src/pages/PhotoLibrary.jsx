@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { formatQty } from '../lib/format.js'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 
@@ -224,7 +225,7 @@ export default function PhotoLibrary() {
                     <option value="">— All plants (project level) —</option>
                     {plantsForUpload.map(pl => (
                       <option key={pl.id} value={pl.id}>
-                        {pl.name}{pl.quantity > 1 ? ` ×${pl.quantity}` : ''}{pl.variety ? ` — ${pl.variety}` : ''}
+                        {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety ? ` — ${pl.variety}` : ''}
                       </option>
                     ))}
                   </select>

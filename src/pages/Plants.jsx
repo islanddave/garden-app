@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { formatQty } from '../lib/format.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
@@ -328,7 +329,7 @@ export default function Plants() {
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontWeight: 600, color: P.dark }}>🌿 {plant.name}</span>
-                {plant.quantity > 1 && <span style={{ fontSize: '0.78rem', color: P.green, fontWeight: 600 }}>×{plant.quantity}</span>}
+                {plant.quantity > 1 && <span style={{ fontSize: '0.78rem', color: P.green, fontWeight: 600 }}>×{formatQty(plant.quantity)}</span>}
                 {plant.status && <span style={{ fontSize: '0.72rem', backgroundColor: P.greenPale, color: P.green, padding: '2px 8px', borderRadius: 20 }}>{plant.status}</span>}
                 <FavoriteToggle entityType="plant" entityId={plant.id} />
               </div>
