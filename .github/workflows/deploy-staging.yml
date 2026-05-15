@@ -104,6 +104,35 @@ jobs:
           [[ "$STATE" == "Active" ]] || { echo "FATAL: $FN state=$STATE (expected Active)"; exit 1; }
           echo "✅ $FN is $STATE"
 
+      - name: Ensure S3_PHOTOS_BUCKET env for ${{ matrix.function }}-staging
+        # Idempotent: only updates if value differs. Mirrors deploy-lambda.yml step.
+        # Required for photo-enriching Lambdas that sign S3 GET URLs for
+        # featured_photo_view_url. Historical gap: create-function above sets only
+        # SECRET_NAME, so a net-new photo-aware staging Lambda would silently return
+        # view_url=null for every featured photo. Patched manually 2026-05-15;
+        # this step makes it self-healing for future deploys.
+        if: contains(fromJSON('["plants","projects","locations","inventory-items","photos"]'), matrix.function)
+        run: |
+          FN="garden-${{ matrix.function }}-staging"
+          EXPECTED="garden-photos-staging"
+          CURRENT=$(aws lambda get-function-configuration \
+            --function-name "$FN" \
+            --query 'Environment.Variables.S3_PHOTOS_BUCKET' --output text 2>/dev/null || echo "None")
+          if [[ "$CURRENT" == "$EXPECTED" ]]; then
+            echo "S3_PHOTOS_BUCKET already correct on $FN"
+          else
+            echo "Setting S3_PHOTOS_BUCKET=$EXPECTED on $FN (was: $CURRENT)"
+            EXISTING=$(aws lambda get-function-configuration \
+              --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+            UPDATED=$(echo "$EXISTING" | jq --arg b "$EXPECTED" '. + {S3_PHOTOS_BUCKET: $b}')
+            echo "{\"Variables\": $UPDATED}" > /tmp/env-photos-bucket.json
+            aws lambda update-function-configuration \
+              --function-name "$FN" \
+              --environment file:///tmp/env-photos-bucket.json >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "S3_PHOTOS_BUCKET=$EXPECTED on $FN"
+          fi
+
       - name: Ensure Function URL exists for ${{ matrix.function }}-staging
         # First-deploy support: mirror deploy-lambda.yml Function URL creation step.
         # Existing URLs unchanged; missing URLs created with public access (handler owns CORS).

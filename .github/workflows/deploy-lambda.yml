@@ -76,6 +76,35 @@ jobs:
             --function-name "garden-${{ matrix.function }}"
           echo "garden-${{ matrix.function }} is active"
 
+      - name: Ensure S3_PHOTOS_BUCKET env for ${{ matrix.function }}
+        # Idempotent: only updates if value differs. Required for photo-enriching
+        # Lambdas that sign S3 GET URLs for featured_photo_view_url. Historical gap:
+        # create-function below sets ZERO env vars, so a net-new photo-aware Lambda
+        # would silently return view_url=null for every featured photo. Bug landed
+        # in V2-PHOTO F1 S2 (2026-05-13, PR #36) and was patched manually 2026-05-15;
+        # this step makes it self-healing for future deploys.
+        if: contains(fromJSON('["plants","projects","locations","inventory-items","photos"]'), matrix.function)
+        run: |
+          FN="garden-${{ matrix.function }}"
+          EXPECTED="garden-photos-prod"
+          CURRENT=$(aws lambda get-function-configuration \
+            --function-name "$FN" \
+            --query 'Environment.Variables.S3_PHOTOS_BUCKET' --output text 2>/dev/null || echo "None")
+          if [[ "$CURRENT" == "$EXPECTED" ]]; then
+            echo "S3_PHOTOS_BUCKET already correct on $FN"
+          else
+            echo "Setting S3_PHOTOS_BUCKET=$EXPECTED on $FN (was: $CURRENT)"
+            EXISTING=$(aws lambda get-function-configuration \
+              --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+            UPDATED=$(echo "$EXISTING" | jq --arg b "$EXPECTED" '. + {S3_PHOTOS_BUCKET: $b}')
+            echo "{\"Variables\": $UPDATED}" > /tmp/env-photos-bucket.json
+            aws lambda update-function-configuration \
+              --function-name "$FN" \
+              --environment file:///tmp/env-photos-bucket.json >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "S3_PHOTOS_BUCKET=$EXPECTED on $FN"
+          fi
+
       - name: Ensure Function URL exists for ${{ matrix.function }}
         if: matrix.function != 'xp-reconcile'  # xp-reconcile is EventBridge-invoked, no Function URL
         continue-on-error: true  # requires lambda:CreateFunctionUrlConfig + lambda:GetFunctionUrlConfig + lambda:AddPermission on deploy role
