@@ -47,9 +47,16 @@ export default function Favorites() {
         if (items.length) resolvedSections.push({ type: 'project', items })
       }
 
-      // Locations — cross-reference with Lambda result
+      // Locations — cross-reference with Lambda result.
+      // /api/locations returns an ENVELOPE { locations, locations_with_path } — NOT a bare array.
+      // Normalize defensively: prefer the .locations key; fall back to array-shape; else [].
+      // (Fix for V1.2a-3 surface #3 crash: `(envelope ?? []).filter` blew up because ?? doesn't
+      //  unwrap a non-null object; the LHS object passes through and .filter is undefined on it.)
       if (byType.location) {
-        const items = (allLocations ?? []).filter(l => byType.location.includes(l.id))
+        const locsArr = Array.isArray(allLocations)
+          ? allLocations
+          : (allLocations?.locations ?? [])
+        const items = locsArr.filter(l => byType.location.includes(l.id))
         if (items.length) resolvedSections.push({ type: 'location', items })
       }
 

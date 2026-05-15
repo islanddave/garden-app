@@ -3,7 +3,7 @@
 // - Reads ?source_inventory_item_id and ?variety_id query params (deep-link from InventoryDetail).
 // - Submits variety_id (canonical) AND legacy flat variety text (Lambda dual-read compat per S2).
 // - Schema columns confirmed present in prod 2026-05-13 (variety_id, source_inventory_item_id, metadata).
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -56,6 +56,19 @@ export default function Plants() {
       setLoading(false)
     }).catch(() => { if (mounted) setLoading(false) })
     return () => { mounted = false }
+  }, [fetch])
+
+  // V1.2a-3 surface #4 fix: after a per-plant photo upload, refetch the plants list so the
+  // new featured_photo_view_url (server-side auto-promote populated plants.featured_photo_id +
+  // plants Lambda enrichment signs the S3 GET URL) flows into local state and the thumbnail
+  // renders without a page reload. Cheap full refetch — list is small for foreseeable scale.
+  const refetchPlants = useCallback(async () => {
+    try {
+      const fresh = await fetch('/api/plants')
+      setPlants(fresh ?? [])
+    } catch {
+      /* non-fatal — stale list heals on next page mount */
+    }
   }, [fetch])
 
   // Deep-link side effects: query params → open Add form, prefill variety + name from source packet.
@@ -346,6 +359,7 @@ export default function Plants() {
                 buttonLabel="📷"
                 showPreview={false}
                 inputId={`plant-list-photo-${plant.id}`}
+                onUploadComplete={refetchPlants}
                 buttonStyle={{
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   width: 34, height: 34, padding: 0,
