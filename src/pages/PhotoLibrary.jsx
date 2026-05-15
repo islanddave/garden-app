@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import PhotoUpload from '../components/PhotoUpload.jsx'
+import ErrorBoundary from '../components/ErrorBoundary.jsx'
 
 // ---- Photo Library ----
 // Browse all photos, upload standalone photos (event_id = null),
@@ -345,19 +346,30 @@ export default function PhotoLibrary() {
       </div>
 
       {/* ── Modal ── */}
+      {/* V1.2a-3 Increment A (I1/I4): the tag modal is wrapped in an ErrorBoundary so a
+          render-time fault (bad photo shape, malformed linkage) degrades to a dismissable
+          card instead of white-screening the whole Photo Library. The 405-string bug
+          itself (I1) is fixed in the photos Lambda PUT route; this is the defensive net. */}
       {modal && (
-        <PhotoModal
-          photo={modal}
-          tagForm={tagForm}
-          setTagForm={setTagForm}
-          plantsForModal={plantsForModal}
-          onSave={handleTag}
-          onClose={() => setModal(null)}
-          tagging={tagging}
-          tagErr={tagErr}
-          projects={projects}
-          locations={locations}
-        />
+        <ErrorBoundary
+          scope="photo-tag-modal"
+          fallback={(err, retry) => (
+            <PhotoModalErrorFallback error={err} retry={retry} onClose={() => setModal(null)} />
+          )}
+        >
+          <PhotoModal
+            photo={modal}
+            tagForm={tagForm}
+            setTagForm={setTagForm}
+            plantsForModal={plantsForModal}
+            onSave={handleTag}
+            onClose={() => setModal(null)}
+            tagging={tagging}
+            tagErr={tagErr}
+            projects={projects}
+            locations={locations}
+          />
+        </ErrorBoundary>
       )}
     </div>
   )
@@ -525,6 +537,43 @@ function ErrBanner({ msg }) {
       fontSize: '0.82rem', color: '#7a2a10',
     }}>
       {msg}
+    </div>
+  )
+}
+
+// ErrorBoundary fallback for the photo-tag modal. Modal-shaped so a render fault
+// still reads as "the modal broke" rather than dumping the user back to the grid
+// with no explanation. Friendly copy only — never the raw error string.
+function PhotoModalErrorFallback({ retry, onClose }) {
+  return (
+    <div
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200, boxSizing: 'border-box',
+        backgroundColor: 'rgba(0,0,0,0.72)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 'env(safe-area-inset-top) 16px env(safe-area-inset-bottom) 16px',
+      }}
+    >
+      <div style={{
+        backgroundColor: P.white, borderRadius: 12, maxWidth: 420, width: '100%',
+        padding: '24px 22px', textAlign: 'center',
+      }}>
+        <div style={{ fontSize: '2rem', marginBottom: 10 }}>⚠️</div>
+        <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '0.95rem' }}>
+          This photo couldn’t open
+        </p>
+        <p style={{ margin: '0 0 18px', color: P.mid, fontSize: '0.85rem' }}>
+          Something went wrong loading the tag editor. Your photo is safe — try again, or close and reopen it.
+        </p>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+          <button type="button" onClick={retry} style={primaryBtn(false)}>Try again</button>
+          <button type="button" onClick={onClose} style={{
+            backgroundColor: 'transparent', color: P.mid, border: `1px solid ${P.border}`,
+            borderRadius: 8, padding: '11px 24px', fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer',
+          }}>Close</button>
+        </div>
+      </div>
     </div>
   )
 }

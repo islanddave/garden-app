@@ -4,6 +4,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
+import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 
 const EVENT_ICONS = {
@@ -364,6 +365,9 @@ export default function ProjectDetail() {
             {project.name}
           </h1>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* V1.2a-3 Increment A (I3-affordance): projects were the one favoritable
+                entity type with no star control anywhere. */}
+            <FavoriteToggle entityType="project" entityId={project.id} />
             <span style={{
               backgroundColor: sc.bg, color: sc.text, border: `1px solid ${sc.border}`,
               fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600,
@@ -566,7 +570,19 @@ export default function ProjectDetail() {
                 borderRadius: 8, padding: '12px 16px',
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               }}>
-                <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {/* V1.2a-3 Increment A (I2a-display): the plant's featured photo.
+                      Read-back surface for the photo→plant linkage that already worked. */}
+                  {plant.featured_photo_view_url && (
+                    <img
+                      src={plant.featured_photo_view_url}
+                      alt={`${plant.name} photo`}
+                      loading="lazy"
+                      style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover',
+                               flexShrink: 0, border: `1px solid ${P.border}` }}
+                    />
+                  )}
+                  <div>
                   <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
                     🌿 {plant.name}
                     {plant.quantity > 1 && (
@@ -579,6 +595,7 @@ export default function ProjectDetail() {
                   {plant.variety && (
                     <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>{plant.variety}</div>
                   )}
+                  </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   {plant.status && (

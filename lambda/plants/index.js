@@ -203,11 +203,21 @@ export const handler = async (event) => {
 
     if (method === 'GET') {
       const projectId = event.queryStringParameters?.project_id ?? null;
+      // V1.2a-3 Increment A (I2a-display): the list query now also selects
+      // featured_photo_id + joins photos, mirroring the by-id GET path, so list
+      // surfaces (Plants page, ProjectDetail plant rows) can render a thumbnail.
+      // Before this, a photo uploaded to a plant linked correctly + auto-promoted
+      // plants.featured_photo_id, but no list surface ever read it back — the
+      // "photo never appears on the plant" half of bug I2a.
+      // Forward-compatible with V3 PHOTO-MULTI: featured_photo_id becomes the
+      // "primary photo" and this is a documented single-view_url consumer for
+      // the V3-PHOTO-CONSUMER-AUDIT.
       const rows = projectId
         ? await sql`
             SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
                    p.status, p.notes, p.project_id,
                    p.variety_id, p.source_inventory_item_id, p.metadata,
+                   p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
                    p.created_at,
                    pp.name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
@@ -225,6 +235,7 @@ export const handler = async (event) => {
             FROM plants p
             JOIN plant_projects pp ON pp.id = p.project_id
             LEFT JOIN plant_varieties pv ON pv.id = p.variety_id AND pv.deleted_at IS NULL
+            LEFT JOIN photos fp ON fp.id = p.featured_photo_id
             WHERE pp.created_by = ${userId}
               AND p.project_id = ${projectId}
               AND p.deleted_at IS NULL
@@ -234,6 +245,7 @@ export const handler = async (event) => {
             SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
                    p.status, p.notes, p.project_id,
                    p.variety_id, p.source_inventory_item_id, p.metadata,
+                   p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
                    p.created_at,
                    pp.name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
@@ -251,11 +263,18 @@ export const handler = async (event) => {
             FROM plants p
             JOIN plant_projects pp ON pp.id = p.project_id
             LEFT JOIN plant_varieties pv ON pv.id = p.variety_id AND pv.deleted_at IS NULL
+            LEFT JOIN photos fp ON fp.id = p.featured_photo_id
             WHERE pp.created_by = ${userId}
               AND p.deleted_at IS NULL
             ORDER BY p.created_at DESC
           `;
-      return resp(200, rows);
+      // Sign each featured photo's S3 URL (900s), strip the raw storage_path.
+      const enriched = await Promise.all(rows.map(async (row) => {
+        const featured_photo_view_url = await getFeaturedPhotoViewUrl(row.featured_photo_storage_path);
+        const { featured_photo_storage_path: _ignore, ...rest } = row;
+        return { ...rest, featured_photo_view_url };
+      }));
+      return resp(200, enriched);
     }
 
     if (method === 'POST') {
