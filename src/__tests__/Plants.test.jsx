@@ -377,3 +377,22 @@ describe('Plants — V2-PHOTO-F1 S2 per-plant upload trigger', () => {
     expect(linkage.project_id).toBe('proj-1')
   })
 })
+
+describe('Plants — V1.2a-3 Increment A (I2a-display)', () => {
+  it('renders the featured photo thumbnail when the plant has one', async () => {
+    primeMountFetches({
+      plants: [{ ...SAMPLE_PLANT, featured_photo_view_url: 'https://example/plant-1.jpg' }],
+    })
+    render(<Plants />)
+    const img = await screen.findByAltText('Cherry Tomato photo')
+    expect(img.getAttribute('src')).toBe('https://example/plant-1.jpg')
+  })
+
+  it('renders no thumbnail when the plant has no featured photo', async () => {
+    primeMountFetches({ plants: [SAMPLE_PLANT] })
+    render(<Plants />)
+    await waitFor(() => screen.getByText((_c, el) =>
+      el?.tagName === 'SPAN' && /Cherry Tomato/.test(el?.textContent || '')))
+    expect(screen.queryByAltText('Cherry Tomato photo')).toBeNull()
+  })
+})

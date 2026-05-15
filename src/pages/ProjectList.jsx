@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import FavoriteToggle from '../components/FavoriteToggle.jsx'
 
 const STATUS_COLORS = {
   planning:  { bg: '#fff8e6', text: '#7a5c00', border: '#c9a84c' },
@@ -136,6 +137,12 @@ function ProjectCard({ project: p, depth }) {
               </div>
             )}
           </div>
+
+          {/* Favorite toggle — V1.2a-3 Increment A (I3-affordance): projects were the
+              one favoritable entity type with no star control. FavoriteToggle's onClick
+              does preventDefault + stopPropagation, so it sits inside the card's <Link>
+              without hijacking the navigate tap target. */}
+          <FavoriteToggle entityType="project" entityId={p.id} />
 
           {/* Status badge */}
           <span style={{

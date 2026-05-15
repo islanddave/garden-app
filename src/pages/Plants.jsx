@@ -298,6 +298,20 @@ export default function Plants() {
       ) : plants.map(plant => (
         <div key={plant.id} style={card}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+            {/* V1.2a-3 Increment A (I2a-display): the plant's featured photo. The
+                photo→plant linkage + auto-promote already worked; this is the
+                read-back surface that was missing — a photo uploaded to a plant
+                now actually shows on the plant. Conditional render = no layout
+                shift when a plant has no photo yet. */}
+            {plant.featured_photo_view_url && (
+              <img
+                src={plant.featured_photo_view_url}
+                alt={`${plant.name} photo`}
+                loading="lazy"
+                style={{ width: 44, height: 44, borderRadius: 8, objectFit: 'cover',
+                         flexShrink: 0, border: `1px solid ${P.border}` }}
+              />
+            )}
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontWeight: 600, color: P.dark }}>🌿 {plant.name}</span>

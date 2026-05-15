@@ -141,4 +141,40 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     })
     await waitFor(() => expect(screen.getByText(/mock failure/)).toBeDefined())
   })
+
+  // V1.2a-3 Increment A (I1): the tag modal's Save must PUT to /api/photos/:id.
+  // Before the photos Lambda PUT route existed this 405'd and the raw
+  // "Method not allowed" string surfaced in the modal.
+  it('saving tags on a photo PUTs to /api/photos/:id', async () => {
+    primeMount({
+      photos: [{
+        id: 'photo-9', caption: 'tag me',
+        view_url: 'https://example/p.jpg',
+        project_id: 'proj-1', location_id: null, plant_id: null,
+      }],
+    })
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
+
+    // Opening the modal (openModal) seeds tagForm.project_id from the photo,
+    // which fires the modal's plants-for-project effect — prime that fetch.
+    fetchSpy.mockResolvedValueOnce([])
+    await act(async () => {
+      fireEvent.click(screen.getByAltText('tag me').closest('button'))
+    })
+    expect(screen.getByText('Save tags')).toBeDefined()
+
+    // PUT response
+    fetchSpy.mockResolvedValueOnce({ id: 'photo-9', project_id: 'proj-1' })
+    await act(async () => {
+      fireEvent.click(screen.getByText('Save tags'))
+    })
+
+    const putCall = fetchSpy.mock.calls.find(
+      c => c[0] === '/api/photos/photo-9' && c[1]?.method === 'PUT'
+    )
+    expect(putCall).toBeDefined()
+    const body = JSON.parse(putCall[1].body)
+    expect(body.project_id).toBe('proj-1')
+  })
 })

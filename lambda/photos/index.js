@@ -246,6 +246,34 @@ export const handler = async (event) => {
       return resp(201, inserted);
     }
 
+    // PUT|PATCH /api/photos/:id — re-tag an existing photo: update project / location /
+    // plant linkage + caption. Owner-scoped (only the uploader can re-tag). Backs the
+    // Photo Library tag modal. The ABSENCE of this route was bug I1 — a re-tag PUT fell
+    // through to the 405 below and the raw "Method not allowed" string surfaced in the
+    // modal. Full-replace semantics (not partial-merge): the tag modal submits the full
+    // {project_id, location_id, plant_id, caption} set every save, so a missing field
+    // means "cleared", not "unchanged".
+    // Does NOT re-run featured-photo auto-promote: auto-promote is a first-upload
+    // behavior (POST); a re-tag is a correction, not a new deposit. (V1.2a-3 Increment A
+    // scope decision — revisit if re-tag-to-unfeatured-parent UX is wanted later.)
+    const idMatch = rawPath.match(/^\/api\/photos\/([^/]+)$/);
+    if (idMatch && (method === 'PUT' || method === 'PATCH')) {
+      const photoId = idMatch[1];
+      const body = JSON.parse(event.body ?? '{}');
+      const updatedRows = await sql`
+        UPDATE photos
+           SET project_id  = ${body.project_id ?? null},
+               location_id = ${body.location_id ?? null},
+               plant_id    = ${body.plant_id ?? null},
+               caption     = ${body.caption ?? null}
+         WHERE id = ${photoId}
+           AND uploaded_by = ${userId}
+        RETURNING *
+      `;
+      if (!updatedRows.length) return resp(404, { error: 'Photo not found' });
+      return resp(200, updatedRows[0]);
+    }
+
     return resp(405, { error: 'Method not allowed' });
 
   } catch (err) {
