@@ -4,9 +4,9 @@ import { P } from '../lib/constants.js'
 // Falls back to '0.1.0' in dev if define hasn't been configured yet.
 const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.0.0'
 
-// Page load time — captured once when the module is first imported.
-// This is a module-level constant so it doesn't re-render on every route change.
-const PAGE_LOADED_AT = new Date()
+// I10-timestamp fix (2026-05-18, V1.2a-3 Increment C / PR-C2):
+// dropped "Loaded HH:MM:SS" — raw page-load wall-clock looked like dev debug output to users.
+// fmtTime + FetchedAt remain available for per-page data-freshness indicators where relevant.
 
 function fmtTime(date) {
   return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
@@ -30,8 +30,6 @@ export default function Footer() {
       <span>© {new Date().getFullYear()} FutureisHere.NET</span>
       <Dot />
       <span>v{APP_VERSION}</span>
-      <Dot />
-      <span>Loaded {fmtTime(PAGE_LOADED_AT)}</span>
     </footer>
   )
 }

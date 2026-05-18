@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { getStatusColors } from '../lib/status.js'
 import { formatQty } from '../lib/format.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
@@ -311,7 +312,11 @@ export default function Plants() {
         <p style={{ color: P.light, textAlign: 'center', marginTop: 40 }}>No plants yet — add one above.</p>
       ) : plants.map(plant => (
         <div key={plant.id} style={card}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+          {/* I9 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): alignItems 'flex-start' → 'center'
+              so the camera + Edit buttons stay vertically centered against the content block,
+              not pinned to the top. This stops the layout from "shifting" when a plant name
+              wraps to two lines. */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             {/* V1.2a-3 Increment A (I2a-display): the plant's featured photo. The
                 photo→plant linkage + auto-promote already worked; this is the
                 read-back surface that was missing — a photo uploaded to a plant
@@ -327,10 +332,24 @@ export default function Plants() {
               />
             )}
             <div style={{ flex: 1 }}>
+              {/* I7 + I9 fix (2026-05-18): use the unified status-color map so the badge
+                  matches Dashboard / ProjectList / ProjectDetail. flexWrap is kept (long plant
+                  names get a clean wrap to a new line), but action buttons on the outer row
+                  now center-align so the camera button doesn't appear to shift. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontWeight: 600, color: P.dark }}>🌿 {plant.name}</span>
                 {plant.quantity > 1 && <span style={{ fontSize: '0.78rem', color: P.green, fontWeight: 600 }}>×{formatQty(plant.quantity)}</span>}
-                {plant.status && <span style={{ fontSize: '0.72rem', backgroundColor: P.greenPale, color: P.green, padding: '2px 8px', borderRadius: 20 }}>{plant.status}</span>}
+                {plant.status && (() => {
+                  const sc = getStatusColors(plant.status)
+                  return (
+                    <span style={{
+                      fontSize: '0.72rem',
+                      backgroundColor: sc.bg, color: sc.text,
+                      border: `1px solid ${sc.border}`,
+                      padding: '2px 8px', borderRadius: 20,
+                    }}>{plant.status}</span>
+                  )
+                })()}
                 <FavoriteToggle entityType="plant" entityId={plant.id} />
               </div>
               {(plant.genus || plant.species) && (

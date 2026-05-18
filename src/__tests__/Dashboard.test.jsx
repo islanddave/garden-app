@@ -1,0 +1,160 @@
+/**
+ * src/__tests__/Dashboard.test.jsx
+ * V1.2a-3 Increment C / PR-C2 (2026-05-18) — paired test for the Dashboard.jsx polish batch.
+ *
+ * Covers:
+ *  - I10-greeting: greeting uses first name only when display_name is a full name (L-063).
+ *  - I10-greeting: fallback to "Dave" when display_name is missing.
+ *  - DASH-LOC-REDUNDANT: the "WHERE ARE YOU?" zone-link card is no longer rendered.
+ *  - DASH-ORDER-HARVEST-GATE: HarvestReadyTile hidden when no project is fruiting/flowering.
+ *  - DASH-ORDER-HARVEST-GATE: HarvestReadyTile visible when at least one project is fruiting/flowering.
+ *
+ * Child tile components are mocked to simple data-testid stubs so the test focuses on
+ * Dashboard's own composition logic, not the tile internals (which have their own tests).
+ */
+
+import React from 'react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+
+const { fetchSpy, authMock, zoneMock, locationRef, navigateSpy } = vi.hoisted(() => ({
+  fetchSpy:    vi.fn(),
+  authMock:    { profile: { display_name: 'Dave Nichols' } },
+  zoneMock:    { activeZone: null },
+  locationRef: { pathname: '/dashboard', state: null },
+  navigateSpy: vi.fn(),
+}))
+
+vi.mock('react-router-dom', () => ({
+  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+  useLocation: () => locationRef,
+  useNavigate: () => navigateSpy,
+}))
+
+vi.mock('../context/AuthContext.jsx', () => ({ useAuth: () => authMock }))
+vi.mock('../context/ZoneContext.jsx', () => ({ useZone: () => zoneMock }))
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
+vi.mock('../lib/haptic.js', () => ({ hapticDouble: vi.fn(), hapticTriple: vi.fn() }))
+
+vi.mock('../components/HarvestReadyTile.jsx', () => ({
+  default: () => <div data-testid="harvest-ready-tile">HarvestReadyTile</div>,
+}))
+vi.mock('../components/HeadsUpTile.jsx', () => ({
+  default: () => <div data-testid="heads-up-tile">HeadsUpTile</div>,
+}))
+vi.mock('../components/NotifyButton.jsx', () => ({
+  default: () => <div data-testid="notify-button">NotifyButton</div>,
+}))
+vi.mock('../components/ErrorBoundary.jsx', () => ({
+  default: ({ children }) => <>{children}</>,
+}))
+
+import Dashboard from '../pages/Dashboard.jsx'
+
+const BASE_DASH = {
+  active_projects: [],
+  recent_events: [],
+  user_stats: { current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0 },
+  water_due: [],
+  inactive_projects_count: 0,
+  harvest_ready: [],
+  heads_up: [],
+}
+
+function primeDash(overrides = {}) {
+  fetchSpy.mockResolvedValueOnce({ ...BASE_DASH, ...overrides })
+}
+
+beforeEach(() => {
+  fetchSpy.mockReset()
+  authMock.profile = { display_name: 'Dave Nichols' }
+  zoneMock.activeZone = null
+  locationRef.state = null
+})
+
+describe('Dashboard — I10-greeting (first-name only per L-063)', () => {
+  it('renders first name only when display_name is a full name', async () => {
+    primeDash()
+    render(<Dashboard />)
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
+    const heading = screen.getByRole('heading', { level: 1 })
+    expect(heading.textContent).toMatch(/Welcome back, Dave/)
+    expect(heading.textContent).not.toMatch(/Nichols/)
+  })
+
+  it('handles single-name display_name without surname', async () => {
+    authMock.profile = { display_name: 'Jen' }
+    primeDash()
+    render(<Dashboard />)
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/Welcome back, Jen/)
+  })
+
+  it('falls back to "Dave" when display_name is missing', async () => {
+    authMock.profile = {}
+    primeDash()
+    render(<Dashboard />)
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/Welcome back, Dave/)
+  })
+})
+
+describe('Dashboard — DASH-LOC-REDUNDANT', () => {
+  it('does NOT render the "WHERE ARE YOU?" zone link (covered by TopBar pill)', async () => {
+    primeDash()
+    render(<Dashboard />)
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
+    expect(screen.queryByText(/WHERE ARE YOU/i)).toBeNull()
+  })
+})
+
+describe('Dashboard — DASH-ORDER-HARVEST-GATE', () => {
+  it('hides HarvestReadyTile when no project is fruiting/flowering', async () => {
+    primeDash({
+      active_projects: [
+        { id: 'p1', name: 'Basil', status: 'growing' },
+        { id: 'p2', name: 'Tomato', status: 'seeding' },
+      ],
+    })
+    render(<Dashboard />)
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
+    expect(screen.queryByTestId('harvest-ready-tile')).toBeNull()
+    // HeadsUp still renders
+    expect(screen.getByTestId('heads-up-tile')).toBeDefined()
+  })
+
+  it('shows HarvestReadyTile when at least one project is fruiting', async () => {
+    primeDash({
+      active_projects: [
+        { id: 'p1', name: 'Basil', status: 'growing' },
+        { id: 'p2', name: 'Tomato', status: 'fruiting' },
+      ],
+    })
+    render(<Dashboard />)
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
+    expect(screen.getByTestId('harvest-ready-tile')).toBeDefined()
+  })
+
+  it('shows HarvestReadyTile when at least one project is flowering', async () => {
+    primeDash({
+      active_projects: [
+        { id: 'p1', name: 'Basil', status: 'flowering' },
+      ],
+    })
+    render(<Dashboard />)
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
+    expect(screen.getByTestId('harvest-ready-tile')).toBeDefined()
+  })
+
+  it('renders HarvestReadyTile BEFORE HeadsUpTile when both present (order check)', async () => {
+    primeDash({
+      active_projects: [{ id: 'p1', name: 'Tomato', status: 'fruiting' }],
+    })
+    render(<Dashboard />)
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
+    const harvest = screen.getByTestId('harvest-ready-tile')
+    const headsUp = screen.getByTestId('heads-up-tile')
+    // DOM order: harvest precedes heads-up
+    expect(harvest.compareDocumentPosition(headsUp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
