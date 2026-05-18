@@ -2,14 +2,13 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { getStatusColors } from '../lib/status.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 
-const STATUS_COLORS = {
-  planning:  { bg: '#fff8e6', text: '#7a5c00', border: '#c9a84c' },
-  active:    { bg: '#d8f3dc', text: '#2d6a4f', border: '#52b788' },
-  harvested: { bg: '#eee',    text: '#4a4a4a', border: '#d4c9be' },
-  ended:     { bg: '#eee',    text: '#777',    border: '#d4c9be' },
-}
+// I7 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): STATUS_COLORS now sourced from
+// src/lib/status.js. The inline map here only covered {planning,active,harvested,ended},
+// so growing/sprouting/flowering/fruiting fell through to `planning` (gold) — while
+// Dashboard rendered them green. Symptom: same project's badge color flipped between surfaces.
 
 // Build a display-ordered list: root projects first, then their children immediately after,
 // with depth tracked for indentation. Orphaned children (parent deleted/missing) render as root.
@@ -89,7 +88,7 @@ export default function ProjectList() {
 }
 
 function ProjectCard({ project: p, depth }) {
-  const sc = STATUS_COLORS[p.status] ?? STATUS_COLORS.planning
+  const sc = getStatusColors(p.status)
   // V1.2a-3 I6-glyph fix (2026-05-15): replace the broken `└` pseudo-tree glyph
   // (rendered outside the card in a proportional font, looked like a literal
   // letter "L") with a clean left-border accent on child cards + larger indent

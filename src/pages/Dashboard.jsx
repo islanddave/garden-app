@@ -4,11 +4,24 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useZone } from '../context/ZoneContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
+import { getStatusColors } from '../lib/status.js'
 import { hapticDouble, hapticTriple } from '../lib/haptic.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
 import HeadsUpTile from '../components/HeadsUpTile.jsx'
 import NotifyButton from '../components/NotifyButton.jsx'
+
+// First-name extraction (I10-greeting fix, L-063, 2026-05-18). profile.display_name may be a full
+// name like "Dave Nichols"; we render greetings with first name only.
+function firstName(displayName) {
+  if (!displayName || typeof displayName !== 'string') return null
+  const token = displayName.trim().split(/\s+/)[0]
+  return token || null
+}
+
+// DASH-ORDER-HARVEST-GATE (2026-05-18, V1.2a-3 Increment C / PR-C2):
+// HarvestReadyTile renders only when at least one active project is in fruiting or flowering.
+const HARVEST_GATE_STATUSES = new Set(['fruiting', 'flowering'])
 
 function DashboardFallback({ error, retry } = {}) {
   const ts = new Date().toLocaleString()
@@ -283,11 +296,14 @@ export default function Dashboard() {
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream, position: 'relative' }}>
       <div style={{ maxWidth: '720px', margin: '0 auto', padding: '32px 20px' }}>
 
-        {/* Header — Welcome + Streak counter top-right */}
+        {/* Header — Welcome + Streak counter top-right.
+             I10-greeting (2026-05-18): first-name only per CLAUDE.md L-063.
+             DASH-LOC-REDUNDANT (2026-05-18): removed the "WHERE ARE YOU?" zone link below.
+             The TopBar zone pill is the single source of truth for zone display + change. */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 20 }}>
           <div>
             <h1 style={{ color: P.green, fontSize: '1.4rem', fontWeight: 700, margin: '0 0 4px' }}>
-              Welcome back, {profile?.display_name ?? 'Dave'} 🌿
+              Welcome back, {firstName(profile?.display_name) ?? 'Dave'} 🌿
             </h1>
             <p style={{ color: P.light, fontSize: '0.875rem', margin: 0 }}>{today}</p>
           </div>
@@ -298,35 +314,11 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Zone strip */}
-        <Link to={`/zone?from=${encodeURIComponent(location.pathname)}`} style={{ textDecoration: 'none', display: 'block', marginBottom: '16px' }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '12px 16px',
-            backgroundColor: activeZone ? P.greenPale : P.white,
-            border: `1.5px solid ${activeZone ? P.green : P.border}`,
-            borderRadius: '10px',
-            cursor: 'pointer',
-            transition: 'border-color 150ms',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span style={{ fontSize: '1.2rem' }}>📍</span>
-              <div>
-                <div style={{ fontSize: '0.75rem', color: P.mid, fontWeight: 500, marginBottom: '1px' }}>
-                  WHERE ARE YOU?
-                </div>
-                <div style={{ fontWeight: 700, color: activeZone ? P.green : P.dark, fontSize: '0.95rem' }}>
-                  {activeZone ? activeZone.name : 'Everywhere'}
-                </div>
-              </div>
-            </div>
-            <span style={{ fontSize: '0.8rem', color: P.mid }}>Change →</span>
-          </div>
-        </Link>
-
-        {/* Dashboard tile region — wrapped in ErrorBoundary so tile crashes don't blank the page */}
+        {/* Dashboard tile region — wrapped in ErrorBoundary so tile crashes don't blank the page.
+             DASH-ORDER-HARVEST-GATE (2026-05-18, V1.2a-3 Increment C / PR-C2):
+               (1) Give Attention To, (2) Water Me, (3) Harvest Ready [conditional on
+               ≥1 fruiting/flowering project; else hidden entirely — not shown empty],
+               (4) Heads Up. HarvestReady slots between Water Me and Heads Up when active. */}
         <ErrorBoundary scope="dashboard" fallback={<DashboardFallback />}>
           {/* Tile 1: Give attention to — non-hide zero state */}
           <GiveAttentionTile
@@ -337,8 +329,11 @@ export default function Dashboard() {
           {/* Tile 2: Water me — non-hide primer + multi-overdue list */}
           <WaterMeTile waterDue={waterDue} hasProjects={projects.length > 0} />
 
-          {/* Tile 3: Harvest ready — projects in 'harvesting' status (V1.2a-2 S3 W2) */}
-          <HarvestReadyTile harvestReady={harvestReady} onDataRefresh={() => loadDashboard(true)} />
+          {/* Tile 3: Harvest ready — only when there's at least one fruiting/flowering project.
+               When no project is at that stage, the tile is hidden entirely (not shown empty). */}
+          {projects.some(p => HARVEST_GATE_STATUSES.has(p.status)) && (
+            <HarvestReadyTile harvestReady={harvestReady} onDataRefresh={() => loadDashboard(true)} />
+          )}
 
           {/* Tile 4: Heads up — flagged + stale projects (V1.2a-2 S3 W2) */}
           <HeadsUpTile headsUp={headsUp} onDataRefresh={() => loadDashboard(true)} />
@@ -981,18 +976,9 @@ function relativeTime(isoStr) {
 }
 
 function StatusBadge({ status }) {
-  const colors = {
-    planning:  { bg: P.warn,      text: '#7a5c00', border: P.warnBorder },
-    active:    { bg: P.greenPale, text: P.green,   border: P.greenLight },
-    seeding:   { bg: P.greenPale, text: P.green,   border: P.greenLight },
-    sprouting: { bg: P.greenPale, text: P.green,   border: P.greenLight },
-    growing:   { bg: P.greenPale, text: P.green,   border: P.greenLight },
-    flowering: { bg: P.greenPale, text: P.green,   border: P.greenLight },
-    fruiting:  { bg: P.greenPale, text: P.green,   border: P.greenLight },
-    harvested: { bg: '#eee',      text: P.mid,     border: P.border },
-    ended:     { bg: '#eee',      text: P.light,   border: P.border },
-  }
-  const c = colors[status] ?? colors.planning
+  // I7 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): use unified status colors from
+  // src/lib/status.js so badge color is consistent across Dashboard / ProjectList / ProjectDetail.
+  const c = getStatusColors(status)
   return (
     <span style={{
       backgroundColor: c.bg,

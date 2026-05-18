@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
+import { getStatusColors } from '../lib/status.js'
 import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
@@ -56,12 +57,9 @@ function generateSlug(name, startDate) {
   return `${slugify(name)}-${year}`
 }
 
-const STATUS_COLORS = {
-  planning:  { bg: '#fff8e6', text: '#7a5c00', border: '#c9a84c' },
-  active:    { bg: '#d8f3dc', text: '#2d6a4f', border: '#52b788' },
-  harvested: { bg: '#eee',    text: '#4a4a4a', border: '#d4c9be' },
-  ended:     { bg: '#eee',    text: '#777',    border: '#d4c9be' },
-}
+// I7 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): STATUS_COLORS replaced by
+// shared getStatusColors() from src/lib/status.js (single source of truth across
+// Dashboard / ProjectList / ProjectDetail).
 
 export default function ProjectDetail() {
   const { id }   = useParams()
@@ -341,7 +339,7 @@ export default function ProjectDetail() {
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
   if (!project) return null
 
-  const sc = STATUS_COLORS[project.status] ?? STATUS_COLORS.planning
+  const sc = getStatusColors(project.status)
 
   return (
     <Shell>
