@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
+import { formatQty } from '../lib/format.js'
 import { hapticShort } from '../lib/haptic.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
@@ -661,7 +662,7 @@ export default function EventNew() {
                 <option value="">— All plants (project level) —</option>
                 {plantsForProject.map(pl => (
                   <option key={pl.id} value={pl.id}>
-                    {pl.name}{pl.quantity > 1 ? ` ×${pl.quantity}` : ''}{pl.variety ? ` — ${pl.variety}` : ''}
+                    {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety ? ` — ${pl.variety}` : ''}
                   </option>
                 ))}
               </select>

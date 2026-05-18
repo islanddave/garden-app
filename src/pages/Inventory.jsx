@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
+import { formatQty } from '../lib/format.js'
 
 // ── Enums (must match inventory_items schema) ─────────────────────────────────
 const CATEGORY_LABELS = {
@@ -315,7 +316,7 @@ function InventoryRow({ item, onAdjust }) {
                 aria-label="Decrease quantity"
               >−</button>
               <span style={{ fontWeight: 700, fontSize: '1rem', minWidth: 40, textAlign: 'center' }}>
-                {item.quantity_on_hand ?? 0}
+                {formatQty(item.quantity_on_hand ?? 0)}
                 {item.unit
                   ? <span style={{ fontWeight: 400, fontSize: '0.78rem', color: P.mid }}> {item.unit}</span>
                   : null}
@@ -336,7 +337,7 @@ function InventoryRow({ item, onAdjust }) {
           {/* Durable qty + condition */}
           {item.type === 'durable' && (
             <div style={{ paddingTop: 14, fontSize: '0.88rem', color: P.mid }}>
-              Qty: <strong style={{ color: P.dark }}>{item.quantity}</strong>
+              Qty: <strong style={{ color: P.dark }}>{formatQty(item.quantity)}</strong>
               {item.condition && (
                 <span style={{ marginLeft: 12 }}>
                   Condition: <strong style={{ color: P.dark }}>{item.condition}</strong>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
+import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
@@ -588,7 +589,7 @@ export default function ProjectDetail() {
                     {plant.quantity > 1 && (
                       <span style={{ marginLeft: 8, fontSize: '0.78rem', color: P.mid,
                         backgroundColor: P.greenPale, borderRadius: 10, padding: '1px 7px' }}>
-                        ×{plant.quantity}
+                        ×{formatQty(plant.quantity)}
                       </span>
                     )}
                   </div>

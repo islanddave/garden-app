@@ -90,18 +90,19 @@ export default function ProjectList() {
 
 function ProjectCard({ project: p, depth }) {
   const sc = STATUS_COLORS[p.status] ?? STATUS_COLORS.planning
-  const indent = depth * 16
+  // V1.2a-3 I6-glyph fix (2026-05-15): replace the broken `└` pseudo-tree glyph
+  // (rendered outside the card in a proportional font, looked like a literal
+  // letter "L") with a clean left-border accent on child cards + larger indent
+  // per depth level. Full accordion redesign is deferred to PROJ-NAV (V1.2b/V2).
+  const indent = depth * 24
+  const isChild = depth > 0
   return (
     <div style={{ paddingLeft: indent }}>
-      {depth > 0 && (
-        <span style={{ color: P.light, fontSize: '0.85rem', marginRight: 6, display: 'inline-block', marginBottom: -2 }}>
-          └
-        </span>
-      )}
       <Link to={`/projects/${p.id}`} style={{ textDecoration: 'none', display: 'block' }}>
         <div style={{
           backgroundColor: P.white,
           border: `1px solid ${P.border}`,
+          borderLeft: isChild ? `3px solid ${P.greenLight}` : `1px solid ${P.border}`,
           borderRadius: 8,
           padding: '14px 18px',
           display: 'flex',
@@ -111,7 +112,10 @@ function ProjectCard({ project: p, depth }) {
           transition: 'border-color 0.15s',
         }}
           onMouseEnter={e => e.currentTarget.style.borderColor = P.greenLight}
-          onMouseLeave={e => e.currentTarget.style.borderColor = P.border}
+          onMouseLeave={e => {
+            e.currentTarget.style.borderColor = P.border
+            if (isChild) e.currentTarget.style.borderLeftColor = P.greenLight
+          }}
         >
           {/* Name + meta */}
           <div style={{ flex: 1, minWidth: 0 }}>
