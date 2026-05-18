@@ -14,7 +14,8 @@
 //   - PUT replaces editable fields server-side (Lambda is "complete payload" pattern).
 //     updateItem() merges {currentItem, ...changes} client-side before sending.
 //     If caller has full payload (e.g. InventoryDetail.buildChanges), pass it directly.
-//   - adjustQuantity is consumable-only; no-op for durables.
+//   - adjustQuantity is type-aware: consumables update `quantity_on_hand`,
+//     durables update `quantity` (P4, V1.2a-3 Increment C / PR-C1, 2026-05-18).
 //   - lowStockCount = consumables where quantity_on_hand <= reorder_threshold AND threshold is set.
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -103,18 +104,21 @@ export function useInventory() {
 
   const adjustQuantity = useCallback(async (id, delta) => {
     const current = items.find(i => i.id === id)
-    if (!current || current.type !== 'consumable') return
-    const prevValue = Number(current.quantity_on_hand ?? 0)
+    if (!current) return
+    // Type-aware column selection (P4, 2026-05-18): consumables track quantity_on_hand,
+    // durables track quantity. Both are numeric(N,3) on the server.
+    const col = current.type === 'durable' ? 'quantity' : 'quantity_on_hand'
+    const prevValue = Number(current[col] ?? 0)
     const newValue = Math.max(0, prevValue + Number(delta))
     if (newValue === prevValue) return
 
     // Optimistic update
-    setItems(prev => prev.map(i => i.id === id ? { ...i, quantity_on_hand: newValue } : i))
+    setItems(prev => prev.map(i => i.id === id ? { ...i, [col]: newValue } : i))
 
     try {
       const updated = await fetch('/api/inventory-items/' + id, {
         method: 'PUT',
-        body: JSON.stringify({ ...current, quantity_on_hand: newValue }),
+        body: JSON.stringify({ ...current, [col]: newValue }),
       })
       setItems(prev => prev.map(i => i.id === id ? updated : i))
       showToast({
@@ -127,7 +131,7 @@ export function useInventory() {
       })
     } catch (err) {
       // Revert optimistic change
-      setItems(prev => prev.map(i => i.id === id ? { ...i, quantity_on_hand: prevValue } : i))
+      setItems(prev => prev.map(i => i.id === id ? { ...i, [col]: prevValue } : i))
       showToast({ msg: "Couldn't save — please try again" })
     }
   }, [fetch, items, showToast])

@@ -1,44 +1,56 @@
-import { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import React, { useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext.jsx'
 import { P } from '../lib/constants.js'
 
-// BottomNav — 5-tab mobile navigation
+// BottomNav — NAV-IA-1 layout (V1.2a-3 Increment C / PR-C1, 2026-05-18)
+// Tabs: Projects · Plants · (centered LOG+) · Inventory · (… More menu)
+// Dashboard dropped — reachable via the "Gardens at Home" TopBar banner.
+// More menu (NOW scope): Sign Out only, with inline confirmation step.
+//   - Sign Out moved here from TopBar (top-nav More button replaced with Favorites icon).
+//   - Confirmation step is a hard gate per reconciliation plan §2 — session-ending
+//     action must not be an impulsive-mistap target.
+// Overflow is a V3 IA-revision concern, explicitly out of NAV-IA-1 scope.
 
 const TABS = [
-  { to: '/dashboard', label: 'Dashboard', icon: '🏠' },
   { to: '/projects',  label: 'Projects',  icon: '🌱' },
+  { to: '/plants',    label: 'Plants',    icon: '🌿' },
   { to: '/log',       label: '+Log',      icon: '+',  highlight: true },
-  { to: '/locations', label: 'Locations', icon: '📍' },
-]
-
-const MORE_ITEMS = [
-  { to: '/photos',       label: 'Photos',       icon: '📷' },
-  { to: '/inventory',    label: 'Inventory',    icon: '📦' },
-  { to: '/favorites',    label: 'Favorites',    icon: '★'  },
-  { to: '/plants',       label: 'Plants',       icon: '🌿' },
-  { to: '/achievements', label: 'Achievements', icon: '🏆' },
+  { to: '/inventory', label: 'Inventory', icon: '📦' },
 ]
 
 export default function BottomNav() {
-  const location  = useLocation()
-  const [showMore, setShowMore] = useState(false)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { profile, signOut } = useAuth()
+  const [showMore, setShowMore]               = useState(false)
+  const [confirmSignOut, setConfirmSignOut]   = useState(false)
 
   function isActive(path) {
     return location.pathname === path || location.pathname.startsWith(path + '/')
   }
 
-  const moreActive = MORE_ITEMS.some(i => isActive(i.to))
+  function closeMore() {
+    setShowMore(false)
+    setConfirmSignOut(false)
+  }
+
+  async function handleSignOutConfirmed() {
+    closeMore()
+    await signOut()
+    navigate('/', { replace: true })
+  }
 
   return (
     <>
       {showMore && (
-        <div onClick={() => setShowMore(false)}
+        <div onClick={closeMore}
           style={{ position: 'fixed', inset: 0, zIndex: 90, backgroundColor: 'rgba(0,0,0,0.3)' }}
         />
       )}
 
       {showMore && (
-        <div style={{
+        <div role="dialog" aria-label="More navigation options" style={{
           position: 'fixed',
           bottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom))',
           left: 0, right: 0,
@@ -46,24 +58,71 @@ export default function BottomNav() {
           borderRadius: '16px 16px 0 0',
           boxShadow: '0 -4px 20px rgba(0,0,0,0.14)',
           zIndex: 100,
-          paddingTop: 8, paddingBottom: 4,
+          paddingTop: 8, paddingBottom: 12,
         }}>
-          <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: P.border, margin: '0 auto 12px' }} />
-          {MORE_ITEMS.map(item => (
-            <Link key={item.to} to={item.to} onClick={() => setShowMore(false)}
+          <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: P.border, margin: '0 auto 8px' }} />
+
+          {/* Signed-in identity row */}
+          <div style={{
+            padding: '10px 24px 14px',
+            borderBottom: `1px solid ${P.border}`,
+            fontSize: '0.8rem',
+            color: P.light,
+          }}>
+            {profile?.display_name || profile?.email || 'Signed in'}
+          </div>
+
+          {/* Sign Out — inline confirmation */}
+          {!confirmSignOut ? (
+            <button
+              onClick={() => setConfirmSignOut(true)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 16,
+                width: '100%',
                 padding: '14px 24px',
-                textDecoration: 'none',
-                color: isActive(item.to) ? P.green : P.dark,
-                fontSize: '1rem', fontWeight: isActive(item.to) ? 700 : 500,
-                backgroundColor: isActive(item.to) ? P.greenPale : 'transparent',
+                background: 'none', border: 'none', textAlign: 'left',
+                cursor: 'pointer',
+                color: P.dark, fontSize: '1rem', fontWeight: 500,
+                fontFamily: 'inherit',
+                minHeight: 48,
               }}
             >
-              <span style={{ fontSize: '1.4rem' }}>{item.icon}</span>
-              {item.label}
-            </Link>
-          ))}
+              <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>↪</span>
+              Sign out
+            </button>
+          ) : (
+            <div style={{ padding: '14px 24px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <p style={{ margin: 0, fontSize: '0.92rem', color: P.dark, fontWeight: 500 }}>
+                Sign out of your account?
+              </p>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  onClick={() => setConfirmSignOut(false)}
+                  style={{
+                    flex: 1, minHeight: 44,
+                    border: `1px solid ${P.border}`, borderRadius: 8,
+                    background: P.cream, color: P.dark,
+                    fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSignOutConfirmed}
+                  style={{
+                    flex: 1, minHeight: 44,
+                    border: 'none', borderRadius: 8,
+                    background: P.terra, color: P.white,
+                    fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  Yes, sign out
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -80,7 +139,7 @@ export default function BottomNav() {
           const active = isActive(tab.to)
           if (tab.highlight) return (
             <Link key={tab.to} to={tab.to} aria-label="Log an event"
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2 }}>
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, minHeight: 44 }}>
               <span style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 width: 44, height: 44, backgroundColor: P.green, borderRadius: '50%',
@@ -92,7 +151,7 @@ export default function BottomNav() {
           )
           return (
             <Link key={tab.to} to={tab.to}
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light }}>
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44 }}>
               <span style={{ fontSize: '1.25rem', lineHeight: 1 }}>{tab.icon}</span>
               <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400 }}>{tab.label}</span>
             </Link>
@@ -104,10 +163,10 @@ export default function BottomNav() {
           style={{
             flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
             gap: 2, background: 'none', border: 'none', cursor: 'pointer',
-            color: (showMore || moreActive) ? P.green : P.light, padding: 0,
+            color: showMore ? P.green : P.light, padding: 0, minHeight: 44,
           }}>
           <span style={{ fontSize: '1.25rem', lineHeight: 1, letterSpacing: '-1px' }}>•••</span>
-          <span style={{ fontSize: '0.62rem', fontWeight: (showMore || moreActive) ? 700 : 400 }}>More</span>
+          <span style={{ fontSize: '0.62rem', fontWeight: showMore ? 700 : 400 }}>More</span>
         </button>
       </nav>
     </>

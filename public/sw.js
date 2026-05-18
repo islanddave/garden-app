@@ -2,7 +2,7 @@
 // Cache-first for static assets, network-first for Lambda API calls.
 // CACHE_VERSION should be updated with each deploy for cache-busting.
 
-const CACHE_VERSION = 'v14-20260501'
+const CACHE_VERSION = 'v15-20260518' // NAV-IA-1 (BottomNav/TopBar shell touch) — V1.2a-3 Increment C PR-C1
 const STATIC_CACHE  = `static-${CACHE_VERSION}`
 const API_CACHE     = `api-${CACHE_VERSION}`
 

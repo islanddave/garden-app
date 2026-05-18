@@ -251,13 +251,42 @@ describe('useInventory — adjustQuantity', () => {
     expect(result.current.items[0].quantity_on_hand).toBe(0)
   })
 
-  it('no-ops on durable items', async () => {
+  it('adjusts `quantity` column for durables (P4, 2026-05-18)', async () => {
     fetchSpy.mockResolvedValueOnce([SAMPLE_DURABLE])
     const { result } = renderHook(() => useInventory())
     await waitFor(() => expect(result.current.loading).toBe(false))
 
+    const serverUpdated = { ...SAMPLE_DURABLE, quantity: 2 }
+    fetchSpy.mockResolvedValueOnce(serverUpdated)
+
     await act(async () => { await result.current.adjustQuantity('item-2', 1) })
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(result.current.items[0].quantity).toBe(2)
+    // Verify body targets `quantity`, NOT `quantity_on_hand`
+    const lastCall = fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1]
+    const body = JSON.parse(lastCall[1].body)
+    expect(body.quantity).toBe(2)
+    expect(body.quantity_on_hand).toBeUndefined()
+  })
+
+  it('clamps durable quantity to 0', async () => {
+    fetchSpy.mockResolvedValueOnce([SAMPLE_DURABLE])
+    const { result } = renderHook(() => useInventory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    fetchSpy.mockResolvedValueOnce({ ...SAMPLE_DURABLE, quantity: 0 })
+    await act(async () => { await result.current.adjustQuantity('item-2', -100) })
+    expect(result.current.items[0].quantity).toBe(0)
+  })
+
+  it('reverts durable optimistic update on server error', async () => {
+    fetchSpy.mockResolvedValueOnce([SAMPLE_DURABLE])
+    const { result } = renderHook(() => useInventory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    fetchSpy.mockRejectedValueOnce(new Error('500 Server Error'))
+    await act(async () => { await result.current.adjustQuantity('item-2', 1) })
+    expect(result.current.items[0].quantity).toBe(1)
+    expect(result.current.toast?.msg).toMatch(/couldn't save/i)
   })
 
   it('no-ops on unknown id', async () => {

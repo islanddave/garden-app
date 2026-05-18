@@ -1,0 +1,122 @@
+/**
+ * src/__tests__/BottomNav.test.jsx
+ * NAV-IA-1 (V1.2a-3 Increment C / PR-C1, 2026-05-18) tests.
+ *
+ * Verifies the new 5-slot bottom-nav layout (Projects · Plants · LOG+ · Inventory · More)
+ * plus the Sign Out confirmation flow that moved from TopBar into BottomNav's More menu.
+ */
+
+import React from 'react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, act } from '@testing-library/react'
+
+const { signOutSpy, navigateSpy, locationRef } = vi.hoisted(() => ({
+  signOutSpy: vi.fn(() => Promise.resolve()),
+  navigateSpy: vi.fn(),
+  locationRef: { pathname: '/dashboard' },
+}))
+
+vi.mock('react-router-dom', () => ({
+  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+  useLocation: () => locationRef,
+  useNavigate: () => navigateSpy,
+}))
+
+vi.mock('../context/AuthContext.jsx', () => ({
+  useAuth: () => ({
+    user:    { id: 'user-1' },
+    profile: { display_name: 'Dave', email: 'islanddave@gmail.com' },
+    signOut: signOutSpy,
+  }),
+}))
+
+import BottomNav from '../components/BottomNav.jsx'
+
+beforeEach(() => {
+  signOutSpy.mockClear()
+  navigateSpy.mockClear()
+  locationRef.pathname = '/dashboard'
+})
+
+describe('BottomNav — NAV-IA-1 layout', () => {
+  it('renders the 4 tab destinations + LOG+ + More button', () => {
+    render(<BottomNav />)
+    expect(screen.getByText('Projects')).toBeDefined()
+    expect(screen.getByText('Plants')).toBeDefined()
+    expect(screen.getByText('+Log')).toBeDefined()
+    expect(screen.getByText('Inventory')).toBeDefined()
+    expect(screen.getByText('More')).toBeDefined()
+  })
+
+  it('does NOT render Dashboard in the bottom nav (dropped per 2026-05-15 adjustment)', () => {
+    render(<BottomNav />)
+    expect(screen.queryByText('Dashboard')).toBeNull()
+  })
+
+  it('does NOT render Favorites in the bottom nav (moved to TopBar)', () => {
+    render(<BottomNav />)
+    expect(screen.queryByText('Favorites')).toBeNull()
+  })
+
+  it('tab links point to correct routes', () => {
+    render(<BottomNav />)
+    expect(screen.getByText('Projects').closest('a').getAttribute('href')).toBe('/projects')
+    expect(screen.getByText('Plants').closest('a').getAttribute('href')).toBe('/plants')
+    expect(screen.getByText('Inventory').closest('a').getAttribute('href')).toBe('/inventory')
+    // LOG+ has aria-label "Log an event" — search by that since +Log label is also on the +Log span
+    expect(screen.getByLabelText('Log an event').getAttribute('href')).toBe('/log')
+  })
+})
+
+describe('BottomNav — More menu', () => {
+  it('More menu is closed by default', () => {
+    render(<BottomNav />)
+    expect(screen.queryByText('Sign out')).toBeNull()
+  })
+
+  it('clicking More opens the menu and shows Sign out', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    expect(screen.getByText('Sign out')).toBeDefined()
+  })
+
+  it('shows signed-in identity in the More menu', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    expect(screen.getByText('Dave')).toBeDefined()
+  })
+})
+
+describe('BottomNav — Sign Out confirmation flow', () => {
+  it('first click on Sign out shows confirmation, does NOT sign out', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    fireEvent.click(screen.getByText('Sign out'))
+    expect(screen.getByText('Sign out of your account?')).toBeDefined()
+    expect(screen.getByText('Cancel')).toBeDefined()
+    expect(screen.getByText('Yes, sign out')).toBeDefined()
+    expect(signOutSpy).not.toHaveBeenCalled()
+  })
+
+  it('Cancel reverts confirmation, leaves user signed in', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    fireEvent.click(screen.getByText('Sign out'))
+    fireEvent.click(screen.getByText('Cancel'))
+    expect(screen.queryByText('Sign out of your account?')).toBeNull()
+    expect(signOutSpy).not.toHaveBeenCalled()
+    // After cancel, Sign out button should be back
+    expect(screen.getByText('Sign out')).toBeDefined()
+  })
+
+  it('confirming Yes, sign out calls signOut and navigates to /', async () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    fireEvent.click(screen.getByText('Sign out'))
+    await act(async () => {
+      fireEvent.click(screen.getByText('Yes, sign out'))
+    })
+    expect(signOutSpy).toHaveBeenCalledTimes(1)
+    expect(navigateSpy).toHaveBeenCalledWith('/', { replace: true })
+  })
+})
