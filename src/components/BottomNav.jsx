@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { P } from '../lib/constants.js'
+import CatchUpBadge from './CatchUpBadge.jsx'
 
 // BottomNav — NAV-IA-1 layout (V1.2a-3 Increment C / PR-C1, 2026-05-18)
 // Tabs: Projects · Plants · (centered LOG+) · Inventory · (… More menu)
@@ -70,6 +71,12 @@ export default function BottomNav() {
             color: P.light,
           }}>
             {profile?.display_name || profile?.email || 'Signed in'}
+          </div>
+
+          {/* V1.2a-4 S1: Catch-up badge surfaces plants with missing lifecycle dates.
+              Render owned here, not on Dashboard (V102 §5.1 #8 + UX item 11). */}
+          <div onClick={closeMore} style={{ padding: '12px 24px 4px' }}>
+            <CatchUpBadge />
           </div>
 
           {/* Sign Out — inline confirmation */}

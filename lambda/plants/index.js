@@ -143,6 +143,21 @@ export const handler = async (event) => {
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
 
+        // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation for the new
+        // lifecycle/source/lineage fields. Mirrors DB CHECK constraints; NULL allowed.
+        const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
+        const ALLOWED_SOURCE = ['seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'unknown'];
+        const ALLOWED_DIVERGENCE = ['mutation', 'cross', 'selection', 'unknown'];
+        if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
+          return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
+        }
+        if (body.source_type != null && !ALLOWED_SOURCE.includes(body.source_type)) {
+          return resp(400, { error: `source_type must be one of ${ALLOWED_SOURCE.join(', ')} or null` });
+        }
+        if (body.divergence_type != null && !ALLOWED_DIVERGENCE.includes(body.divergence_type)) {
+          return resp(400, { error: `divergence_type must be one of ${ALLOWED_DIVERGENCE.join(', ')} or null` });
+        }
+
         // V2-PHOTO-F1: strict validation for featured_photo_id (linkage = photos.plant_id).
         const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
         if (hasFeatured && body.featured_photo_id != null) {
@@ -173,7 +188,29 @@ export const handler = async (event) => {
             featured_photo_id        = CASE
               WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
               ELSE p.featured_photo_id
-            END
+            END,
+            -- V1.2a-4 S1 (PROJ-RESCOPE / V102 §4.1): lifecycle / attrition / source / lineage / succession columns.
+            sown_at                  = COALESCE(${body.sown_at ?? null}, p.sown_at),
+            sown_at_approx           = COALESCE(${body.sown_at_approx ?? null}, p.sown_at_approx),
+            germinated_at            = COALESCE(${body.germinated_at ?? null}, p.germinated_at),
+            germinated_at_approx     = COALESCE(${body.germinated_at_approx ?? null}, p.germinated_at_approx),
+            transplanted_at          = COALESCE(${body.transplanted_at ?? null}, p.transplanted_at),
+            transplanted_at_approx   = COALESCE(${body.transplanted_at_approx ?? null}, p.transplanted_at_approx),
+            planted_out_at           = COALESCE(${body.planted_out_at ?? null}, p.planted_out_at),
+            planted_out_at_approx    = COALESCE(${body.planted_out_at_approx ?? null}, p.planted_out_at_approx),
+            qty_initial              = COALESCE(${body.qty_initial ?? null}, p.qty_initial),
+            qty_current              = COALESCE(${body.qty_current ?? null}, p.qty_current),
+            qty_harvested            = COALESCE(${body.qty_harvested ?? null}, p.qty_harvested),
+            qty_lost                 = COALESCE(${body.qty_lost ?? null}, p.qty_lost),
+            loss_cause               = COALESCE(${body.loss_cause ?? null}, p.loss_cause),
+            source_type              = COALESCE(${body.source_type ?? null}, p.source_type),
+            source_ref               = COALESCE(${body.source_ref ?? null}, p.source_ref),
+            source_generation        = COALESCE(${body.source_generation ?? null}, p.source_generation),
+            parent_plant_id          = COALESCE(${body.parent_plant_id ?? null}, p.parent_plant_id),
+            divergence_type          = COALESCE(${body.divergence_type ?? null}, p.divergence_type),
+            lineage_note             = COALESCE(${body.lineage_note ?? null}, p.lineage_note),
+            succession_group_id      = COALESCE(${body.succession_group_id ?? null}, p.succession_group_id),
+            succession_order         = COALESCE(${body.succession_order ?? null}, p.succession_order)
           FROM plant_projects pp
           WHERE p.id = ${plantId}
             AND p.project_id = pp.id
@@ -281,28 +318,92 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.name) return resp(400, { error: 'name is required' });
       if (!body.project_id) return resp(400, { error: 'project_id is required' });
+
+      // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation. NULL allowed.
+      const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
+      const ALLOWED_SOURCE = ['seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'unknown'];
+      const ALLOWED_DIVERGENCE = ['mutation', 'cross', 'selection', 'unknown'];
+      if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
+        return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
+      }
+      if (body.source_type != null && !ALLOWED_SOURCE.includes(body.source_type)) {
+        return resp(400, { error: `source_type must be one of ${ALLOWED_SOURCE.join(', ')} or null` });
+      }
+      if (body.divergence_type != null && !ALLOWED_DIVERGENCE.includes(body.divergence_type)) {
+        return resp(400, { error: `divergence_type must be one of ${ALLOWED_DIVERGENCE.join(', ')} or null` });
+      }
+
       const qty = parseInt(body.quantity, 10);
-      const rows = await sql`
+      const qtyVal = isNaN(qty) || qty < 1 ? 1 : qty;
+      // qty_initial defaults to quantity (per V102 §5.1 #4 + B.2 frontend default).
+      const qtyInitialRaw = parseInt(body.qty_initial, 10);
+      const qtyInitial = isNaN(qtyInitialRaw) || qtyInitialRaw < 1 ? qtyVal : qtyInitialRaw;
+
+      const inserted = await sql`
         INSERT INTO plants
           (project_id, name, genus, species, variety, quantity, status, notes, created_by,
-           variety_id, source_inventory_item_id, metadata)
+           variety_id, source_inventory_item_id, metadata,
+           sown_at, sown_at_approx, germinated_at, germinated_at_approx,
+           transplanted_at, transplanted_at_approx, planted_out_at, planted_out_at_approx,
+           qty_initial, qty_current, qty_harvested, qty_lost, loss_cause,
+           source_type, source_ref, source_generation,
+           parent_plant_id, divergence_type, lineage_note,
+           succession_group_id, succession_order)
         VALUES (
           ${body.project_id},
           ${body.name},
           ${body.genus ?? null},
           ${body.species ?? null},
           ${body.variety ?? null},
-          ${isNaN(qty) || qty < 1 ? 1 : qty},
+          ${qtyVal},
           ${body.status ?? null},
           ${body.notes ?? null},
           ${userId},
           ${body.variety_id ?? null},
           ${body.source_inventory_item_id ?? null},
-          ${body.metadata ?? null}
+          ${body.metadata ?? null},
+          ${body.sown_at ?? null},
+          ${body.sown_at_approx ?? false},
+          ${body.germinated_at ?? null},
+          ${body.germinated_at_approx ?? false},
+          ${body.transplanted_at ?? null},
+          ${body.transplanted_at_approx ?? false},
+          ${body.planted_out_at ?? null},
+          ${body.planted_out_at_approx ?? false},
+          ${qtyInitial},
+          ${body.qty_current ?? null},
+          ${body.qty_harvested ?? 0},
+          ${body.qty_lost ?? 0},
+          ${body.loss_cause ?? null},
+          ${body.source_type ?? null},
+          ${body.source_ref ?? null},
+          ${body.source_generation ?? null},
+          ${body.parent_plant_id ?? null},
+          ${body.divergence_type ?? null},
+          ${body.lineage_note ?? null},
+          ${body.succession_group_id ?? null},
+          ${body.succession_order ?? null}
         )
         RETURNING *
       `;
-      return resp(201, rows[0]);
+      const newPlant = inserted[0];
+
+      // V1.2a-4 S1 (P3 / V102 §4.1 head-of-chain convention LOCKED): if caller
+      // did not supply succession_group_id AND no parent_plant_id is set, this is
+      // the head of a new succession chain — set succession_group_id = self.id.
+      // Postgres cannot DEFAULT a self-reference; canonical pattern is INSERT then
+      // UPDATE WHERE succession_group_id IS NULL.
+      if (body.succession_group_id == null && body.parent_plant_id == null) {
+        const updated = await sql`
+          UPDATE plants
+          SET succession_group_id = id
+          WHERE id = ${newPlant.id}
+            AND succession_group_id IS NULL
+          RETURNING *
+        `;
+        if (updated.length) return resp(201, updated[0]);
+      }
+      return resp(201, newPlant);
     }
 
     return resp(405, { error: 'Method not allowed' });

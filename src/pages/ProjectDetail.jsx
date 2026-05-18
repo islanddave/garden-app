@@ -96,7 +96,16 @@ export default function ProjectDetail() {
   const [plants,        setPlants]        = useState([])
   const [plantsLoading, setPlantsLoading] = useState(true)
   const [showAddPlant,  setShowAddPlant]  = useState(false)
-  const [plantForm,     setPlantForm]     = useState({ name: '', variety: '', quantity: '1', notes: '' })
+  // V1.2a-4 S1 (PROJ-RESCOPE / V102 §5.1 #4): plantForm shape extended with
+  // optional lifecycle/source/lineage fields. All NULL-tolerant server-side.
+  // sown_at_approx toggles whether sown_at is treated as an exact date.
+  const [plantForm,     setPlantForm]     = useState({
+    name: '', variety: '', quantity: '1', notes: '',
+    sown_at: '', sown_at_approx: false,
+    qty_initial: '',
+    source_type: '', source_ref: '', source_generation: '',
+    lineage_note: '',
+  })
   const [addingPlant,   setAddingPlant]   = useState(false)
   const [plantErr,      setPlantErr]      = useState(null)
 
@@ -162,6 +171,11 @@ export default function ProjectDetail() {
     setAddingPlant(true)
     setPlantErr(null)
     const qty = parseInt(plantForm.quantity, 10)
+    const qtyInitialRaw = parseInt(plantForm.qty_initial, 10)
+    // qty_initial defaults to quantity if blank/invalid (per V102 §5.1 #4 + B.2).
+    const qtyInitial = isNaN(qtyInitialRaw) || qtyInitialRaw < 1
+      ? (isNaN(qty) || qty < 1 ? 1 : qty)
+      : qtyInitialRaw
     try {
       const data = await fetch('/api/plants', {
         method: 'POST',
@@ -171,10 +185,24 @@ export default function ProjectDetail() {
           variety:    plantForm.variety.trim()  || null,
           quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
           notes:      plantForm.notes.trim()   || null,
+          // V1.2a-4 S1: lifecycle/source/lineage extension. All optional.
+          sown_at:           plantForm.sown_at         || null,
+          sown_at_approx:    !!plantForm.sown_at_approx,
+          qty_initial:       qtyInitial,
+          source_type:       plantForm.source_type    || null,
+          source_ref:        plantForm.source_ref.trim()        || null,
+          source_generation: plantForm.source_generation.trim() || null,
+          lineage_note:      plantForm.lineage_note.trim()      || null,
         }),
       })
       setPlants(p => [...p, data])
-      setPlantForm({ name: '', variety: '', quantity: '1', notes: '' })
+      setPlantForm({
+        name: '', variety: '', quantity: '1', notes: '',
+        sown_at: '', sown_at_approx: false,
+        qty_initial: '',
+        source_type: '', source_ref: '', source_generation: '',
+        lineage_note: '',
+      })
       setShowAddPlant(false)
     } catch (err) {
       setPlantErr(err.message)
@@ -544,6 +572,74 @@ export default function ProjectDetail() {
                 placeholder="Anything distinctive about this plant or group"
                 style={inputStyle} />
             </FormRow>
+
+            {/* V1.2a-4 S1 (PROJ-RESCOPE / V102 §5.1 #4): grouped optional lifecycle / source / lineage fields. */}
+            <details data-testid="planting-details" style={{ marginBottom: 14 }}>
+              <summary style={{ cursor: 'pointer', fontSize: '0.85rem', color: P.mid, fontWeight: 600, padding: '6px 0' }}>
+                Planting details — optional
+              </summary>
+              <div style={{ paddingTop: 10 }}>
+                <FormRow label="Sown date (optional)">
+                  <input type="date" value={plantForm.sown_at}
+                    onChange={e => setPlantForm(f => ({ ...f, sown_at: e.target.value }))}
+                    style={inputStyle} />
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 6, fontSize: '0.78rem', color: P.mid, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!plantForm.sown_at_approx}
+                      onChange={e => setPlantForm(f => ({ ...f, sown_at_approx: e.target.checked }))}
+                      data-testid="sown-at-approx"
+                      style={{ width: 14, height: 14, cursor: 'pointer' }}
+                    />
+                    Approximate date
+                  </label>
+                </FormRow>
+
+                <FormRow label="Initial quantity">
+                  <input type="number" min="1" value={plantForm.qty_initial}
+                    onChange={e => setPlantForm(f => ({ ...f, qty_initial: e.target.value }))}
+                    placeholder="defaults to quantity above"
+                    style={inputStyle} />
+                </FormRow>
+
+                <FormRow label="Source">
+                  <select value={plantForm.source_type}
+                    onChange={e => setPlantForm(f => ({ ...f, source_type: e.target.value }))}
+                    style={inputStyle}>
+                    <option value="">— Not specified —</option>
+                    <option value="seed_packet">Seed packet</option>
+                    <option value="nursery_transplant">Bought as transplant</option>
+                    <option value="division">Divided from another plant</option>
+                    <option value="volunteer">Volunteer / self-sown</option>
+                    <option value="gift">Gift</option>
+                    <option value="saved_seed">Saved seed</option>
+                    <option value="unknown">Not sure</option>
+                  </select>
+                </FormRow>
+
+                <FormRow label="Source reference (optional)">
+                  <input value={plantForm.source_ref}
+                    onChange={e => setPlantForm(f => ({ ...f, source_ref: e.target.value }))}
+                    placeholder="e.g. Johnny's Lot 4421"
+                    style={inputStyle} />
+                </FormRow>
+
+                <FormRow label="Generation (optional)">
+                  <input value={plantForm.source_generation}
+                    onChange={e => setPlantForm(f => ({ ...f, source_generation: e.target.value }))}
+                    placeholder="e.g. F2, third gen saved"
+                    style={inputStyle} />
+                </FormRow>
+
+                <FormRow label="Lineage note (optional)">
+                  <textarea value={plantForm.lineage_note}
+                    onChange={e => setPlantForm(f => ({ ...f, lineage_note: e.target.value }))}
+                    placeholder="e.g. Dave's Glass Gem F4 selection"
+                    style={{ ...inputStyle, height: 52, resize: 'vertical' }} />
+                </FormRow>
+              </div>
+            </details>
+
             <div style={{ display: 'flex', gap: 12, paddingTop: 14, borderTop: `1px solid ${P.border}` }}>
               <button type="submit" disabled={addingPlant} style={primaryBtn(addingPlant)}>
                 {addingPlant ? 'Adding…' : 'Add plant'}

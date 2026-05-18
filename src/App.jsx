@@ -24,6 +24,7 @@ import PhotoLibrary from './pages/PhotoLibrary.jsx'
 import Favorites from './pages/Favorites.jsx'
 import ProjectTypes from './pages/ProjectTypes.jsx'
 import Plants from './pages/Plants.jsx'
+import PlantsCatchUp from './pages/PlantsCatchUp.jsx'
 import LocationDetail from './pages/LocationDetail.jsx'
 import EventDetail from './pages/EventDetail.jsx'
 import Achievements from './pages/Achievements.jsx'
@@ -102,6 +103,7 @@ function AppRoutes() {
               <Route path="/favorites"     element={<Protected><Favorites /></Protected>} />
               <Route path="/project-types" element={<Protected><ProjectTypes /></Protected>} />
               <Route path="/plants"        element={<Protected><Plants /></Protected>} />
+              <Route path="/plants/catch-up" element={<Protected><PlantsCatchUp /></Protected>} />
               <Route path="/projects/:id/events/:eventId" element={<Protected><EventDetail /></Protected>} />
               <Route path="/achievements" element={<Protected><Achievements /></Protected>} />
               <Route path="*"             element={<Navigate to="/dashboard" replace />} />

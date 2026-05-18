@@ -145,6 +145,9 @@ export const handler = async (event) => {
                    to_char(pp.start_date, 'YYYY-MM-DD') AS start_date,
                    pp.is_public, pp.location_id, pp.created_at, pp.updated_at, pp.created_by,
                    pp.parent_project_id, pp.featured_photo_id,
+                   pp.kind,
+                   to_char(pp.target_end_date, 'YYYY-MM-DD') AS target_end_date,
+                   pp.kind_set_at,
                    p.name AS parent_project_name,
                    fp.storage_path AS featured_photo_storage_path
             FROM plant_projects pp
@@ -187,6 +190,14 @@ export const handler = async (event) => {
           return resp(400, { error: 'A project cannot be its own parent' });
         }
 
+        // V1.2a-4 S1 (PROJ-RESCOPE): validate kind enum server-side. Mirrors
+        // the DB CHECK (kind IN ('campaign','category','cultivar') OR kind IS NULL).
+        const ALLOWED_KINDS = ['campaign', 'category', 'cultivar'];
+        const hasKind = Object.prototype.hasOwnProperty.call(body, 'kind');
+        if (hasKind && body.kind != null && !ALLOWED_KINDS.includes(body.kind)) {
+          return resp(400, { error: `kind must be one of ${ALLOWED_KINDS.join(', ')} or null` });
+        }
+
         // V2-PHOTO-F1: strict validation for featured_photo_id.
         // If the field is present AND non-null, the photo must exist AND be
         // linked to this project via photos.project_id. Otherwise return 400.
@@ -204,6 +215,8 @@ export const handler = async (event) => {
           }
         }
 
+        // V1.2a-4 S1: when kind transitions NULL -> non-NULL, stamp kind_set_at = NOW().
+        // Otherwise leave kind_set_at alone. Handled inline in the UPDATE using CASE.
         const rows = await sql`
           UPDATE plant_projects
           SET
@@ -221,14 +234,26 @@ export const handler = async (event) => {
             featured_photo_id = CASE
               WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
               ELSE featured_photo_id
-            END
+            END,
+            kind = CASE
+              WHEN ${hasKind} THEN ${body.kind ?? null}
+              ELSE kind
+            END,
+            kind_set_at = CASE
+              WHEN ${hasKind} AND ${body.kind ?? null} IS NOT NULL AND kind IS NULL THEN NOW()
+              ELSE kind_set_at
+            END,
+            target_end_date = COALESCE(${body.target_end_date ?? null}, target_end_date)
           WHERE id = ${projectId}
             AND created_by = ${userId}
             AND deleted_at IS NULL
           RETURNING id, name, slug, status, variety, description,
                     to_char(start_date, 'YYYY-MM-DD') AS start_date,
                     is_public, location_id, created_at, updated_at, created_by,
-                    parent_project_id, featured_photo_id
+                    parent_project_id, featured_photo_id,
+                    kind,
+                    to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
+                    kind_set_at
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
@@ -259,7 +284,8 @@ export const handler = async (event) => {
         rows = await sql`
           SELECT id, name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
-                 is_public, location_id, created_at, updated_at, parent_project_id
+                 is_public, location_id, created_at, updated_at, parent_project_id,
+                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date
           FROM plant_projects
           WHERE created_by = ${userId}
             AND deleted_at IS NULL
@@ -270,7 +296,8 @@ export const handler = async (event) => {
         rows = await sql`
           SELECT id, name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
-                 is_public, location_id, created_at, updated_at, parent_project_id
+                 is_public, location_id, created_at, updated_at, parent_project_id,
+                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date
           FROM plant_projects
           WHERE created_by = ${userId}
             AND deleted_at IS NULL
@@ -281,7 +308,8 @@ export const handler = async (event) => {
         rows = await sql`
           SELECT id, name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
-                 is_public, location_id, created_at, updated_at, parent_project_id
+                 is_public, location_id, created_at, updated_at, parent_project_id,
+                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date
           FROM plant_projects
           WHERE created_by = ${userId}
             AND deleted_at IS NULL
@@ -294,10 +322,16 @@ export const handler = async (event) => {
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.name) return resp(400, { error: 'name is required' });
+      // V1.2a-4 S1 (PROJ-RESCOPE): validate kind enum server-side. NULL allowed.
+      const ALLOWED_KINDS = ['campaign', 'category', 'cultivar'];
+      if (body.kind != null && !ALLOWED_KINDS.includes(body.kind)) {
+        return resp(400, { error: `kind must be one of ${ALLOWED_KINDS.join(', ')} or null` });
+      }
       // Validate parent_project_id is not self-referential (can't know id yet, but guard against explicit self-reference attempts via name matching — full guard at PUT)
       const rows = await sql`
         INSERT INTO plant_projects
-          (name, slug, status, variety, description, start_date, is_public, location_id, created_by, parent_project_id)
+          (name, slug, status, variety, description, start_date, is_public, location_id, created_by, parent_project_id,
+           kind, target_end_date, kind_set_at)
         VALUES (
           ${body.name},
           ${body.slug ?? body.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-')},
@@ -308,12 +342,18 @@ export const handler = async (event) => {
           ${body.is_public ?? false},
           ${body.location_id ?? null},
           ${userId},
-          ${body.parent_project_id ?? null}
+          ${body.parent_project_id ?? null},
+          ${body.kind ?? null},
+          ${body.target_end_date ?? null},
+          ${body.kind != null ? new Date().toISOString() : null}
         )
         RETURNING id, name, slug, status, variety, description,
                   to_char(start_date, 'YYYY-MM-DD') AS start_date,
                   is_public, location_id, created_at, updated_at, created_by,
-                  parent_project_id
+                  parent_project_id,
+                  kind,
+                  to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
+                  kind_set_at
       `;
       return resp(201, rows[0]);
     }
