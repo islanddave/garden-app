@@ -1,26 +1,20 @@
-import { useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import React from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useZone } from '../context/ZoneContext.jsx'
 import { P, APP_NAME } from '../lib/constants.js'
 
-// TopBar — sticky top bar replacing Nav.jsx
-// Displays: app name (APP_NAME from constants.js), zone pill, More menu (username + sign out).
-// Page title is provisionally the app name; route-level metadata planned for APP-a.
-// Tasks are hidden from all nav in V1.
+// TopBar — sticky top bar.
+// Layout (NAV-IA-1, V1.2a-3 Increment C / PR-C1, 2026-05-18):
+//   left:  app name (clickable home → "Gardens at Home" banner)
+//   right: zone pill · Favorites star icon (replaces previous "More" dropdown)
+// Sign Out moved from this component into BottomNav's More menu (with confirmation).
+// "More" dropdown removed entirely.
 
 export default function TopBar() {
-  const { user, profile, signOut } = useAuth()
-  const { activeZone }             = useZone()
-  const location                   = useLocation()
-  const navigate                   = useNavigate()
-  const [menuOpen, setMenuOpen]    = useState(false)
-
-  async function handleSignOut() {
-    setMenuOpen(false)
-    await signOut()
-    navigate('/', { replace: true })
-  }
+  const { user }       = useAuth()
+  const { activeZone } = useZone()
+  const location       = useLocation()
 
   return (
     <header style={{
@@ -38,7 +32,7 @@ export default function TopBar() {
       boxSizing: 'border-box',
     }}>
 
-      {/* App name / home link */}
+      {/* App name / home link → "Gardens at Home" Dashboard */}
       <Link
         to={user ? '/dashboard' : '/'}
         style={{
@@ -81,78 +75,25 @@ export default function TopBar() {
           </Link>
         )}
 
-        {/* More dropdown — authenticated only */}
+        {/* Favorites star icon — authenticated only, persistent shortcut to /favorites */}
         {user && (
-          <div style={{ position: 'relative' }}>
-            <button
-              onClick={() => setMenuOpen(s => !s)}
-              aria-expanded={menuOpen}
-              aria-label="More options"
-              style={{
-                backgroundColor: 'rgba(248,245,240,0.15)',
-                border: '1px solid rgba(248,245,240,0.3)',
-                color: P.cream,
-                borderRadius: 6,
-                padding: '5px 12px',
-                cursor: 'pointer',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-              }}
-            >
-              More
-            </button>
-
-            {menuOpen && (
-              <>
-                {/* Click-away backdrop */}
-                <div
-                  onClick={() => setMenuOpen(false)}
-                  style={{ position: 'fixed', inset: 0, zIndex: 79 }}
-                />
-                {/* Dropdown card */}
-                <div style={{
-                  position: 'absolute',
-                  top: 'calc(100% + 8px)',
-                  right: 0,
-                  backgroundColor: P.white,
-                  borderRadius: 10,
-                  boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-                  minWidth: 190,
-                  zIndex: 80,
-                  overflow: 'hidden',
-                }}>
-                  {/* Username row */}
-                  <div style={{
-                    padding: '12px 16px',
-                    borderBottom: `1px solid ${P.border}`,
-                    fontSize: '0.82rem',
-                    color: P.light,
-                  }}>
-                    {profile?.display_name || profile?.email || 'Signed in'}
-                  </div>
-
-                  {/* Sign out */}
-                  <button
-                    onClick={handleSignOut}
-                    style={{
-                      display: 'block',
-                      width: '100%',
-                      textAlign: 'left',
-                      padding: '12px 16px',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: '0.9rem',
-                      color: P.dark,
-                      fontFamily: 'inherit',
-                    }}
-                  >
-                    Sign out
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+          <Link
+            to="/favorites"
+            aria-label="Favorites"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: P.cream,
+              textDecoration: 'none',
+              backgroundColor: 'rgba(248,245,240,0.15)',
+              border: '1px solid rgba(248,245,240,0.3)',
+              borderRadius: 8,
+              width: 36, height: 36,
+              fontSize: '1.1rem',
+              fontWeight: 700,
+            }}
+          >
+            ★
+          </Link>
         )}
 
         {/* Sign in — unauthenticated only */}
@@ -173,4 +114,3 @@ export default function TopBar() {
     </header>
   )
 }
-

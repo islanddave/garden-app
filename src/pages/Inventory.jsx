@@ -70,7 +70,8 @@ export default function Inventory() {
 
   return (
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 120px' }}>
+      {/* P2 fix: bottom padding raised to clear cost-bar + nav (was 120, now 180). */}
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 180px' }}>
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -144,9 +145,14 @@ export default function Inventory() {
 
       </div>
 
-      {/* ── Cost summary bar (sticky bottom, above nav) ── */}
+      {/* ── Cost summary bar (sticky bottom, ABOVE BottomNav) ──
+           P2 fix (2026-05-18, V1.2a-3 Increment C / PR-C1): moved up by
+           --bottom-nav-height + safe-area-inset-bottom so it sits on top
+           of BottomNav instead of being hidden behind it. */}
       <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0,
+        position: 'fixed',
+        bottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom))',
+        left: 0, right: 0,
         backgroundColor: P.cream,
         borderTop: `1px solid ${P.gold}`,
         padding: '10px 20px',
@@ -192,10 +198,14 @@ export default function Inventory() {
         )}
       </div>
 
-      {/* ── Undo / error toast ── */}
+      {/* ── Undo / error toast ──
+           P2 fix (2026-05-18): floats above the cost-summary bar (which now
+           sits above BottomNav). Stacks: BottomNav (var) + safe-area + cost-bar (~60px). */}
       {toast && (
         <div role="status" aria-live="polite" style={{
-          position: 'fixed', bottom: 60, left: '50%', transform: 'translateX(-50%)',
+          position: 'fixed',
+          bottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + 60px)',
+          left: '50%', transform: 'translateX(-50%)',
           backgroundColor: P.dark, color: P.white,
           padding: '11px 20px', borderRadius: 8,
           fontSize: '0.875rem', fontWeight: 500,
@@ -334,14 +344,32 @@ function InventoryRow({ item, onAdjust }) {
             </div>
           )}
 
-          {/* Durable qty + condition */}
+          {/* Durable qty adjust + condition
+               P4 fix (2026-05-18, V1.2a-3 Increment C / PR-C1): exposes ± buttons
+               from the list (was read-only, forcing a detail-page round-trip).
+               Hook is type-aware — durables adjust `quantity` column. */}
           {item.type === 'durable' && (
-            <div style={{ paddingTop: 14, fontSize: '0.88rem', color: P.mid }}>
-              Qty: <strong style={{ color: P.dark }}>{formatQty(item.quantity)}</strong>
-              {item.condition && (
-                <span style={{ marginLeft: 12 }}>
-                  Condition: <strong style={{ color: P.dark }}>{item.condition}</strong>
+            <div style={{ paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: '0.82rem', color: P.mid, flexShrink: 0 }}>Qty:</span>
+                <button
+                  onClick={() => onAdjust(item.id, -1)}
+                  style={qtyBtn}
+                  aria-label="Decrease quantity"
+                >−</button>
+                <span style={{ fontWeight: 700, fontSize: '1rem', minWidth: 40, textAlign: 'center' }}>
+                  {formatQty(item.quantity)}
                 </span>
+                <button
+                  onClick={() => onAdjust(item.id, +1)}
+                  style={qtyBtn}
+                  aria-label="Increase quantity"
+                >+</button>
+              </div>
+              {item.condition && (
+                <div style={{ fontSize: '0.82rem', color: P.mid }}>
+                  Condition: <strong style={{ color: P.dark }}>{item.condition}</strong>
+                </div>
               )}
             </div>
           )}
