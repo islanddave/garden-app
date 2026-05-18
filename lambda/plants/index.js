@@ -106,12 +106,25 @@ export const handler = async (event) => {
       const plantId = idMatch[1];
 
       if (method === 'GET') {
+        // V1.2a-4 S1.A-hotfix: extend SELECT to include the 21 PROJ-RESCOPE
+        // columns landed by proj-rescope-s1-0a-additive.sql (V102 §4.1).
+        // Pairs with the POST/PATCH write paths shipped in S1; this restores
+        // write→read symmetry the original S1 ship missed (Anomaly #A,
+        // v12a4-s1-chrome-smoke-verdict-20260518.md).
         const rows = await sql`
           SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
                  p.status, p.notes, p.project_id,
                  p.variety_id, p.source_inventory_item_id, p.metadata,
                  p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
                  p.created_at, p.updated_at,
+                 p.sown_at, p.sown_at_approx,
+                 p.germinated_at, p.germinated_at_approx,
+                 p.transplanted_at, p.transplanted_at_approx,
+                 p.planted_out_at, p.planted_out_at_approx,
+                 p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+                 p.source_type, p.source_ref, p.source_generation,
+                 p.parent_plant_id, p.divergence_type, p.lineage_note,
+                 p.succession_group_id, p.succession_order,
                  pp.name AS project_name,
                  CASE WHEN pv.id IS NOT NULL THEN
                    jsonb_build_object(
@@ -249,6 +262,9 @@ export const handler = async (event) => {
       // Forward-compatible with V3 PHOTO-MULTI: featured_photo_id becomes the
       // "primary photo" and this is a documented single-view_url consumer for
       // the V3-PHOTO-CONSUMER-AUDIT.
+      // V1.2a-4 S1.A-hotfix: list SELECTs extended to include the 21 PROJ-RESCOPE
+      // columns landed by proj-rescope-s1-0a-additive.sql (V102 §4.1) — matches
+      // by-id GET above. Pairs with POST/PATCH write paths shipped in S1.
       const rows = projectId
         ? await sql`
             SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
@@ -256,6 +272,14 @@ export const handler = async (event) => {
                    p.variety_id, p.source_inventory_item_id, p.metadata,
                    p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
                    p.created_at,
+                   p.sown_at, p.sown_at_approx,
+                   p.germinated_at, p.germinated_at_approx,
+                   p.transplanted_at, p.transplanted_at_approx,
+                   p.planted_out_at, p.planted_out_at_approx,
+                   p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+                   p.source_type, p.source_ref, p.source_generation,
+                   p.parent_plant_id, p.divergence_type, p.lineage_note,
+                   p.succession_group_id, p.succession_order,
                    pp.name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(
@@ -284,6 +308,14 @@ export const handler = async (event) => {
                    p.variety_id, p.source_inventory_item_id, p.metadata,
                    p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
                    p.created_at,
+                   p.sown_at, p.sown_at_approx,
+                   p.germinated_at, p.germinated_at_approx,
+                   p.transplanted_at, p.transplanted_at_approx,
+                   p.planted_out_at, p.planted_out_at_approx,
+                   p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+                   p.source_type, p.source_ref, p.source_generation,
+                   p.parent_plant_id, p.divergence_type, p.lineage_note,
+                   p.succession_group_id, p.succession_order,
                    pp.name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(

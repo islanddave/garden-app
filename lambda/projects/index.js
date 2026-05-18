@@ -279,13 +279,17 @@ export const handler = async (event) => {
       // ?parent_id=null returns only root-level projects
       const parentIdFilter = qs.parent_id;
 
+      // V1.2a-4 S1.A-hotfix: add kind_set_at to LIST SELECTs to match by-id +
+      // POST/PUT response shape. kind + target_end_date already returned by S1
+      // ship; kind_set_at was the gap. Pairs with PROJ-RESCOPE §4.1 columns.
       let rows;
       if (parentIdFilter === 'null' || parentIdFilter === '') {
         rows = await sql`
           SELECT id, name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
                  is_public, location_id, created_at, updated_at, parent_project_id,
-                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date
+                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
+                 kind_set_at
           FROM plant_projects
           WHERE created_by = ${userId}
             AND deleted_at IS NULL
@@ -297,7 +301,8 @@ export const handler = async (event) => {
           SELECT id, name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
                  is_public, location_id, created_at, updated_at, parent_project_id,
-                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date
+                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
+                 kind_set_at
           FROM plant_projects
           WHERE created_by = ${userId}
             AND deleted_at IS NULL
@@ -309,7 +314,8 @@ export const handler = async (event) => {
           SELECT id, name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
                  is_public, location_id, created_at, updated_at, parent_project_id,
-                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date
+                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
+                 kind_set_at
           FROM plant_projects
           WHERE created_by = ${userId}
             AND deleted_at IS NULL
