@@ -223,12 +223,35 @@ export const handler = async (event) => {
       const verr = validateBody(body, { requireName: true });
       if (verr) return resp(400, { error: verr });
 
+      // V1.2a-4 S6 admin classify inline-create: when caller passes
+      // source_proj_rescope_project_id, treat POST as idempotent on that key.
+      // If a variety already exists for this source project, return it (200);
+      // skip the name/species fuzzy-match check (admin is authoritative).
+      // Per design proj-rescope-s6-design-V001-20260519.1625.md §4 Q3 + §5.3 #6.
+      const sourceProjId = body.source_proj_rescope_project_id ?? null;
+      if (sourceProjId) {
+        const existing = await sql`
+          SELECT id, name, species, genus,
+                 days_to_maturity_min, days_to_maturity_max,
+                 care_notes, soil_notes, sun_requirements,
+                 common_diseases, expected_yield_notes,
+                 photo_id, source_url, created_by, created_at, updated_at,
+                 source_proj_rescope_project_id
+          FROM public.plant_varieties
+          WHERE source_proj_rescope_project_id = ${sourceProjId}
+            AND deleted_at IS NULL
+          LIMIT 1
+        `;
+        if (existing.length) return resp(200, existing[0]);
+      }
+
       const allowed = await checkRateLimit(sql, userId, 'plant_varieties.create', 60);
       if (!allowed) return resp(429, { error: 'Rate limit exceeded — 60/hour for plant_varieties.create' });
 
       // Fuzzy-match warning (advisory). Frontend may show "similar exists, override?"
       // by re-POSTing with allow_duplicate=true. Backend honors the override.
-      if (!body.allow_duplicate) {
+      // Skipped when sourceProjId is present — admin idempotent-by-source-id is authoritative.
+      if (!body.allow_duplicate && !sourceProjId) {
         const similar = await sql`
           SELECT id, name, species, genus FROM public.plant_varieties
           WHERE deleted_at IS NULL
@@ -253,7 +276,8 @@ export const handler = async (event) => {
             days_to_maturity_min, days_to_maturity_max,
             care_notes, soil_notes, sun_requirements,
             common_diseases, expected_yield_notes,
-            photo_id, source_url, created_by
+            photo_id, source_url, created_by,
+            source_proj_rescope_project_id
           ) VALUES (
             ${body.name.trim()},
             ${body.species ?? null},
@@ -267,7 +291,8 @@ export const handler = async (event) => {
             ${body.expected_yield_notes ?? null},
             ${body.photo_id ?? null},
             ${body.source_url ?? null},
-            ${userId}
+            ${userId},
+            ${sourceProjId}
           ) RETURNING *
         `,
       ]);

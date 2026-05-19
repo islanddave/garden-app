@@ -183,6 +183,76 @@ export const handler = async (event) => {
         });
       }
 
+      // V1.2a-4 S6: admin classify route — PATCH /api/projects/:id
+      // ADMIN_CLERK_SUBS env var allowlist (fail-closed). Transactional audit + UPDATE
+      // via single CTE so audit row only commits when UPDATE matches a live row.
+      // Per design proj-rescope-s6-design-V001-20260519.1625.md §5.1.
+      if (method === 'PATCH') {
+        const ADMIN_CLERK_SUBS = (process.env.ADMIN_CLERK_SUBS ?? '')
+          .split(',').map(s => s.trim()).filter(Boolean);
+        if (ADMIN_CLERK_SUBS.length === 0) {
+          return resp(403, { error: 'Admin route not configured' });
+        }
+        if (!ADMIN_CLERK_SUBS.includes(userId)) {
+          return resp(403, { error: 'Not authorized' });
+        }
+
+        const body = JSON.parse(event.body ?? '{}');
+        const ALLOWED_KINDS = ['campaign', 'category', 'cultivar'];
+        const hasKind = Object.prototype.hasOwnProperty.call(body, 'kind');
+        if (hasKind && body.kind != null && !ALLOWED_KINDS.includes(body.kind)) {
+          return resp(400, { error: `kind must be one of ${ALLOWED_KINDS.join(', ')} or null` });
+        }
+        const hasParent = Object.prototype.hasOwnProperty.call(body, 'parent_project_id');
+        if (hasParent && body.parent_project_id === projectId) {
+          return resp(400, { error: 'A project cannot be its own parent' });
+        }
+        if (!hasKind && !hasParent) {
+          return resp(400, { error: 'PATCH body must include kind and/or parent_project_id' });
+        }
+
+        // Single CTE: audit INSERT pulls pre_state from plant_projects, UPDATE
+        // changes it. If WHERE matches no row, both CTEs return empty → no
+        // orphan audit. WHERE has no `created_by = userId` — admin overrides ownership.
+        const rows = await sql`
+          WITH pre AS (
+            SELECT id, kind, parent_project_id, name,
+                   target_end_date, kind_set_at
+            FROM plant_projects
+            WHERE id = ${projectId} AND deleted_at IS NULL
+          ),
+          audit AS (
+            INSERT INTO proj_rescope_events
+              (project_id, action, pre_state, pre_state_schema_version, actor)
+            SELECT id, 'admin_classify',
+                   jsonb_build_object(
+                     'kind', kind,
+                     'parent_project_id', parent_project_id,
+                     'name', name
+                   ),
+                   1, ${userId}
+            FROM pre
+            RETURNING project_id
+          )
+          UPDATE plant_projects
+          SET
+            kind = CASE WHEN ${hasKind} THEN ${body.kind ?? null} ELSE kind END,
+            kind_set_at = CASE
+              WHEN ${hasKind} AND ${body.kind ?? null} IS NOT NULL AND kind IS NULL THEN NOW()
+              ELSE kind_set_at
+            END,
+            parent_project_id = CASE
+              WHEN ${hasParent} THEN ${body.parent_project_id ?? null}
+              ELSE parent_project_id
+            END
+          WHERE id = ${projectId} AND deleted_at IS NULL
+            AND id IN (SELECT id FROM pre)
+          RETURNING id, name, slug, kind, kind_set_at, parent_project_id
+        `;
+        if (!rows.length) return resp(404, { error: 'Not found or soft-deleted' });
+        return resp(200, rows[0]);
+      }
+
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
         // Prevent self-reference
@@ -275,6 +345,33 @@ export const handler = async (event) => {
 
     // --- /api/projects ---
     if (method === 'GET') {
+      // V1.2a-4 S6: admin extension — ?admin=1 returns ALL alive rows regardless
+      // of ownership. Allowlist same as PATCH (ADMIN_CLERK_SUBS). Fail-closed.
+      // Per design proj-rescope-s6-design-V001-20260519.1625.md §5.4.
+      const adminMode = qs.admin === '1';
+      if (adminMode) {
+        const ADMIN_CLERK_SUBS = (process.env.ADMIN_CLERK_SUBS ?? '')
+          .split(',').map(s => s.trim()).filter(Boolean);
+        if (ADMIN_CLERK_SUBS.length === 0) {
+          return resp(403, { error: 'Admin route not configured' });
+        }
+        if (!ADMIN_CLERK_SUBS.includes(userId)) {
+          return resp(403, { error: 'Not authorized' });
+        }
+        const rows = await sql`
+          SELECT id, name, slug, status, variety,
+                 to_char(start_date, 'YYYY-MM-DD') AS start_date,
+                 is_public, location_id, created_at, updated_at, created_by,
+                 parent_project_id,
+                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
+                 kind_set_at
+          FROM plant_projects
+          WHERE deleted_at IS NULL
+          ORDER BY parent_project_id NULLS FIRST, name ASC
+        `;
+        return resp(200, rows);
+      }
+
       // Optional filter: ?parent_id=<uuid> returns only children of that parent
       // ?parent_id=null returns only root-level projects
       const parentIdFilter = qs.parent_id;
