@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
+import { VARIETY_REF_UI_SHIPPED } from '../lib/featureFlags.js'
 
 function slugify(str) {
   return str.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -26,6 +27,9 @@ export default function ProjectNew() {
     name: '', slug: '', variety: '', species: '', description: '',
     status: 'planning', start_date: today, is_public: true, location_id: '',
     project_type_id: '', parent_project_id: '',
+    // V1.2a-4 S1 (PROJ-RESCOPE / V102 §5.1): kind is optional in S1
+    // (NOT NULL added §5.4 post-backfill). Empty string → null on POST.
+    kind: '', target_end_date: '',
   })
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState(null)
@@ -79,6 +83,9 @@ export default function ProjectNew() {
           location_id:      form.location_id        || null,
           project_type_id:  form.project_type_id    || null,
           parent_project_id: form.parent_project_id || null,
+          // V1.2a-4 S1: kind + target_end_date land additive; older clients omit them.
+          kind:             form.kind              || null,
+          target_end_date:  form.target_end_date   || null,
         }),
       })
       navigate(`/projects/${data.id}`)
@@ -152,6 +159,39 @@ export default function ProjectNew() {
           <FormRow label="Project name *">
             <input required value={form.name} onChange={e => handleNameChange(e.target.value)} style={inputStyle}
               placeholder={selectedType ? `e.g. ${selectedType.name} 2026` : 'e.g. Peppers 2026'} />
+          </FormRow>
+
+          {/* V1.2a-4 S1 (PROJ-RESCOPE / V102 §5.1 #2): project kind classifier.
+              cultivar option is gated behind VARIETY_REF_UI_SHIPPED — flips true when
+              VARIETY-REF S4 lands the Cultivar-as-first-class flow. */}
+          <FormRow label="What kind of project is this?">
+            <select
+              value={form.kind}
+              onChange={e => setForm(f => ({ ...f, kind: e.target.value }))}
+              style={inputStyle}
+            >
+              <option value="">— Not sure yet —</option>
+              <option value="campaign">Growing this season</option>
+              <option value="category">Folder for organizing</option>
+              {VARIETY_REF_UI_SHIPPED && (
+                <option value="cultivar">Cultivar reference</option>
+              )}
+            </select>
+            {!VARIETY_REF_UI_SHIPPED && (
+              <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
+                Just a planting for now — cultivars get a better home soon.
+              </small>
+            )}
+          </FormRow>
+
+          {/* V1.2a-4 S1: target_end_date is optional and only meaningful for campaigns. */}
+          <FormRow label="Target end date (optional)">
+            <input type="date" value={form.target_end_date}
+              onChange={e => setForm(f => ({ ...f, target_end_date: e.target.value }))}
+              style={inputStyle} />
+            <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
+              When do you expect this to wrap? Leave blank if open-ended.
+            </small>
           </FormRow>
 
           {/* ── Parent project picker ── */}

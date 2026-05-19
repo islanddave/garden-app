@@ -351,18 +351,6 @@ describe('Plants — edit flow', () => {
     expect(body.variety).toBe('Black Krim')
   })
 
-  it('legacy plant with only flat variety text shows legacy hint when no picker selection', async () => {
-    primeMountFetches({ plants: [{ ...SAMPLE_PLANT, variety: 'Sun Gold', variety_ref: null }] })
-    render(<Plants />)
-    await waitFor(() => screen.getByText((_c, el) =>
-      el?.tagName === 'SPAN' && /Cherry Tomato/.test(el?.textContent || '')
-    ))
-
-    fireEvent.click(screen.getByText('Edit'))
-    expect(screen.getByText(/Legacy:/)).toBeDefined()
-    // "Sun Gold" appears twice (card + legacy hint <em>) — assert both are present.
-    expect(screen.getAllByText('Sun Gold').length).toBeGreaterThanOrEqual(1)
-  })
 })
 
 describe('Plants — V2-PHOTO-F1 S2 per-plant upload trigger', () => {

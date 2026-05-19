@@ -48,28 +48,6 @@ function resp(statusCode, body) {
   };
 }
 
-// Shared SELECT clause — list + by-id share columns and JOIN shape.
-// Build variety_ref as JSONB object on the SQL side; LEFT JOIN preserves rows
-// where variety_id is NULL or the linked variety is soft-deleted.
-const SELECT_COLS = `
-  p.id, p.name, p.genus, p.species, p.variety, p.quantity,
-  p.status, p.notes, p.project_id,
-  p.variety_id, p.source_inventory_item_id, p.metadata,
-  p.created_at, p.updated_at,
-  pp.name AS project_name,
-  CASE WHEN pv.id IS NOT NULL THEN
-    jsonb_build_object(
-      'id', pv.id, 'name', pv.name, 'species', pv.species, 'genus', pv.genus,
-      'days_to_maturity_min', pv.days_to_maturity_min,
-      'days_to_maturity_max', pv.days_to_maturity_max,
-      'care_notes', pv.care_notes, 'soil_notes', pv.soil_notes,
-      'sun_requirements', pv.sun_requirements,
-      'common_diseases', pv.common_diseases,
-      'expected_yield_notes', pv.expected_yield_notes,
-      'photo_id', pv.photo_id, 'source_url', pv.source_url
-    )
-  ELSE NULL END AS variety_ref
-`;
 
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -106,12 +84,25 @@ export const handler = async (event) => {
       const plantId = idMatch[1];
 
       if (method === 'GET') {
+        // V1.2a-4 S1.A-hotfix: extend SELECT to include the 21 PROJ-RESCOPE
+        // columns landed by proj-rescope-s1-0a-additive.sql (V102 §4.1).
+        // Pairs with the POST/PATCH write paths shipped in S1; this restores
+        // write→read symmetry the original S1 ship missed (Anomaly #A,
+        // v12a4-s1-chrome-smoke-verdict-20260518.md).
         const rows = await sql`
-          SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
+          SELECT p.id, p.name, p.quantity,
                  p.status, p.notes, p.project_id,
                  p.variety_id, p.source_inventory_item_id, p.metadata,
                  p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
                  p.created_at, p.updated_at,
+                 p.sown_at, p.sown_at_approx,
+                 p.germinated_at, p.germinated_at_approx,
+                 p.transplanted_at, p.transplanted_at_approx,
+                 p.planted_out_at, p.planted_out_at_approx,
+                 p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+                 p.source_type, p.source_ref, p.source_generation,
+                 p.parent_plant_id, p.divergence_type, p.lineage_note,
+                 p.succession_group_id, p.succession_order,
                  pp.name AS project_name,
                  CASE WHEN pv.id IS NOT NULL THEN
                    jsonb_build_object(
@@ -143,6 +134,21 @@ export const handler = async (event) => {
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
 
+        // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation for the new
+        // lifecycle/source/lineage fields. Mirrors DB CHECK constraints; NULL allowed.
+        const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
+        const ALLOWED_SOURCE = ['seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'unknown'];
+        const ALLOWED_DIVERGENCE = ['mutation', 'cross', 'selection', 'unknown'];
+        if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
+          return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
+        }
+        if (body.source_type != null && !ALLOWED_SOURCE.includes(body.source_type)) {
+          return resp(400, { error: `source_type must be one of ${ALLOWED_SOURCE.join(', ')} or null` });
+        }
+        if (body.divergence_type != null && !ALLOWED_DIVERGENCE.includes(body.divergence_type)) {
+          return resp(400, { error: `divergence_type must be one of ${ALLOWED_DIVERGENCE.join(', ')} or null` });
+        }
+
         // V2-PHOTO-F1: strict validation for featured_photo_id (linkage = photos.plant_id).
         const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
         if (hasFeatured && body.featured_photo_id != null) {
@@ -161,9 +167,6 @@ export const handler = async (event) => {
           UPDATE plants p
           SET
             name                     = COALESCE(${body.name ?? null}, p.name),
-            genus                    = COALESCE(${body.genus ?? null}, p.genus),
-            species                  = COALESCE(${body.species ?? null}, p.species),
-            variety                  = COALESCE(${body.variety ?? null}, p.variety),
             quantity                 = COALESCE(${body.quantity ?? null}, p.quantity),
             status                   = COALESCE(${body.status ?? null}, p.status),
             notes                    = COALESCE(${body.notes ?? null}, p.notes),
@@ -173,7 +176,29 @@ export const handler = async (event) => {
             featured_photo_id        = CASE
               WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
               ELSE p.featured_photo_id
-            END
+            END,
+            -- V1.2a-4 S1 (PROJ-RESCOPE / V102 §4.1): lifecycle / attrition / source / lineage / succession columns.
+            sown_at                  = COALESCE(${body.sown_at ?? null}, p.sown_at),
+            sown_at_approx           = COALESCE(${body.sown_at_approx ?? null}, p.sown_at_approx),
+            germinated_at            = COALESCE(${body.germinated_at ?? null}, p.germinated_at),
+            germinated_at_approx     = COALESCE(${body.germinated_at_approx ?? null}, p.germinated_at_approx),
+            transplanted_at          = COALESCE(${body.transplanted_at ?? null}, p.transplanted_at),
+            transplanted_at_approx   = COALESCE(${body.transplanted_at_approx ?? null}, p.transplanted_at_approx),
+            planted_out_at           = COALESCE(${body.planted_out_at ?? null}, p.planted_out_at),
+            planted_out_at_approx    = COALESCE(${body.planted_out_at_approx ?? null}, p.planted_out_at_approx),
+            qty_initial              = COALESCE(${body.qty_initial ?? null}, p.qty_initial),
+            qty_current              = COALESCE(${body.qty_current ?? null}, p.qty_current),
+            qty_harvested            = COALESCE(${body.qty_harvested ?? null}, p.qty_harvested),
+            qty_lost                 = COALESCE(${body.qty_lost ?? null}, p.qty_lost),
+            loss_cause               = COALESCE(${body.loss_cause ?? null}, p.loss_cause),
+            source_type              = COALESCE(${body.source_type ?? null}, p.source_type),
+            source_ref               = COALESCE(${body.source_ref ?? null}, p.source_ref),
+            source_generation        = COALESCE(${body.source_generation ?? null}, p.source_generation),
+            parent_plant_id          = COALESCE(${body.parent_plant_id ?? null}, p.parent_plant_id),
+            divergence_type          = COALESCE(${body.divergence_type ?? null}, p.divergence_type),
+            lineage_note             = COALESCE(${body.lineage_note ?? null}, p.lineage_note),
+            succession_group_id      = COALESCE(${body.succession_group_id ?? null}, p.succession_group_id),
+            succession_order         = COALESCE(${body.succession_order ?? null}, p.succession_order)
           FROM plant_projects pp
           WHERE p.id = ${plantId}
             AND p.project_id = pp.id
@@ -212,13 +237,24 @@ export const handler = async (event) => {
       // Forward-compatible with V3 PHOTO-MULTI: featured_photo_id becomes the
       // "primary photo" and this is a documented single-view_url consumer for
       // the V3-PHOTO-CONSUMER-AUDIT.
+      // V1.2a-4 S1.A-hotfix: list SELECTs extended to include the 21 PROJ-RESCOPE
+      // columns landed by proj-rescope-s1-0a-additive.sql (V102 §4.1) — matches
+      // by-id GET above. Pairs with POST/PATCH write paths shipped in S1.
       const rows = projectId
         ? await sql`
-            SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
+            SELECT p.id, p.name, p.quantity,
                    p.status, p.notes, p.project_id,
                    p.variety_id, p.source_inventory_item_id, p.metadata,
                    p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
                    p.created_at,
+                   p.sown_at, p.sown_at_approx,
+                   p.germinated_at, p.germinated_at_approx,
+                   p.transplanted_at, p.transplanted_at_approx,
+                   p.planted_out_at, p.planted_out_at_approx,
+                   p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+                   p.source_type, p.source_ref, p.source_generation,
+                   p.parent_plant_id, p.divergence_type, p.lineage_note,
+                   p.succession_group_id, p.succession_order,
                    pp.name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(
@@ -242,11 +278,19 @@ export const handler = async (event) => {
             ORDER BY p.created_at DESC
           `
         : await sql`
-            SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
+            SELECT p.id, p.name, p.quantity,
                    p.status, p.notes, p.project_id,
                    p.variety_id, p.source_inventory_item_id, p.metadata,
                    p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
                    p.created_at,
+                   p.sown_at, p.sown_at_approx,
+                   p.germinated_at, p.germinated_at_approx,
+                   p.transplanted_at, p.transplanted_at_approx,
+                   p.planted_out_at, p.planted_out_at_approx,
+                   p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+                   p.source_type, p.source_ref, p.source_generation,
+                   p.parent_plant_id, p.divergence_type, p.lineage_note,
+                   p.succession_group_id, p.succession_order,
                    pp.name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(
@@ -281,28 +325,89 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.name) return resp(400, { error: 'name is required' });
       if (!body.project_id) return resp(400, { error: 'project_id is required' });
+
+      // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation. NULL allowed.
+      const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
+      const ALLOWED_SOURCE = ['seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'unknown'];
+      const ALLOWED_DIVERGENCE = ['mutation', 'cross', 'selection', 'unknown'];
+      if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
+        return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
+      }
+      if (body.source_type != null && !ALLOWED_SOURCE.includes(body.source_type)) {
+        return resp(400, { error: `source_type must be one of ${ALLOWED_SOURCE.join(', ')} or null` });
+      }
+      if (body.divergence_type != null && !ALLOWED_DIVERGENCE.includes(body.divergence_type)) {
+        return resp(400, { error: `divergence_type must be one of ${ALLOWED_DIVERGENCE.join(', ')} or null` });
+      }
+
       const qty = parseInt(body.quantity, 10);
-      const rows = await sql`
+      const qtyVal = isNaN(qty) || qty < 1 ? 1 : qty;
+      // qty_initial defaults to quantity (per V102 §5.1 #4 + B.2 frontend default).
+      const qtyInitialRaw = parseInt(body.qty_initial, 10);
+      const qtyInitial = isNaN(qtyInitialRaw) || qtyInitialRaw < 1 ? qtyVal : qtyInitialRaw;
+
+      const inserted = await sql`
         INSERT INTO plants
-          (project_id, name, genus, species, variety, quantity, status, notes, created_by,
-           variety_id, source_inventory_item_id, metadata)
+          (project_id, name, quantity, status, notes, created_by,
+           variety_id, source_inventory_item_id, metadata,
+           sown_at, sown_at_approx, germinated_at, germinated_at_approx,
+           transplanted_at, transplanted_at_approx, planted_out_at, planted_out_at_approx,
+           qty_initial, qty_current, qty_harvested, qty_lost, loss_cause,
+           source_type, source_ref, source_generation,
+           parent_plant_id, divergence_type, lineage_note,
+           succession_group_id, succession_order)
         VALUES (
           ${body.project_id},
           ${body.name},
-          ${body.genus ?? null},
-          ${body.species ?? null},
-          ${body.variety ?? null},
-          ${isNaN(qty) || qty < 1 ? 1 : qty},
+          ${qtyVal},
           ${body.status ?? null},
           ${body.notes ?? null},
           ${userId},
           ${body.variety_id ?? null},
           ${body.source_inventory_item_id ?? null},
-          ${body.metadata ?? null}
+          ${body.metadata ?? null},
+          ${body.sown_at ?? null},
+          ${body.sown_at_approx ?? false},
+          ${body.germinated_at ?? null},
+          ${body.germinated_at_approx ?? false},
+          ${body.transplanted_at ?? null},
+          ${body.transplanted_at_approx ?? false},
+          ${body.planted_out_at ?? null},
+          ${body.planted_out_at_approx ?? false},
+          ${qtyInitial},
+          ${body.qty_current ?? null},
+          ${body.qty_harvested ?? 0},
+          ${body.qty_lost ?? 0},
+          ${body.loss_cause ?? null},
+          ${body.source_type ?? null},
+          ${body.source_ref ?? null},
+          ${body.source_generation ?? null},
+          ${body.parent_plant_id ?? null},
+          ${body.divergence_type ?? null},
+          ${body.lineage_note ?? null},
+          ${body.succession_group_id ?? null},
+          ${body.succession_order ?? null}
         )
         RETURNING *
       `;
-      return resp(201, rows[0]);
+      const newPlant = inserted[0];
+
+      // V1.2a-4 S1 (P3 / V102 §4.1 head-of-chain convention LOCKED): if caller
+      // did not supply succession_group_id AND no parent_plant_id is set, this is
+      // the head of a new succession chain — set succession_group_id = self.id.
+      // Postgres cannot DEFAULT a self-reference; canonical pattern is INSERT then
+      // UPDATE WHERE succession_group_id IS NULL.
+      if (body.succession_group_id == null && body.parent_plant_id == null) {
+        const updated = await sql`
+          UPDATE plants
+          SET succession_group_id = id
+          WHERE id = ${newPlant.id}
+            AND succession_group_id IS NULL
+          RETURNING *
+        `;
+        if (updated.length) return resp(201, updated[0]);
+      }
+      return resp(201, newPlant);
     }
 
     return resp(405, { error: 'Method not allowed' });

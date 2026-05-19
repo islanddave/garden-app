@@ -330,6 +330,38 @@ jobs:
           CLERK_SECRET_KEY_STAGING: ${{ secrets.CLERK_SECRET_KEY_STAGING }}
           CLERK_TEST_USER_ID:       ${{ secrets.CLERK_TEST_USER_ID }}
 
+      - name: L-058 smoke-test row hygiene cleanup
+        # Hard-delete any rows matching '%smoke%' in staging plant_projects.
+        # Per CLAUDE.md Migration Authoring Rule "Smoke-test row hygiene":
+        # smoke-test rows MUST be hard-deleted (not soft-deleted) after tests
+        # pass. Naming convention is a hint, not enforcement — VALIDATE will
+        # trip on soft-deleted rows regardless (L-058).
+        # The smoke script inserts 'smoke-test-{UUID}' into plant_projects via
+        # API. Its trap-based cleanup does an API DELETE which is a soft-delete
+        # (sets deleted_at) — that IS the residue source. This step is the
+        # hard-delete safety net. Runs with if: always() so residue is cleaned
+        # even when smoke-tests fail (root cause of 2026-05-18 anomaly #B
+        # accumulation: prior smoke runs left 4 soft-deleted rows in staging).
+        if: always()
+        env:
+          NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
+        run: |
+          if [[ -z "$NEON_STAGING_URL" ]]; then
+            echo "⚠ NEON_STAGING_URL secret not set — skipping L-058 cleanup"
+            exit 0
+          fi
+          sudo apt-get update -qq >/dev/null 2>&1
+          sudo apt-get install -y -qq postgresql-client >/dev/null 2>&1
+          echo "🧹 L-058 cleanup sweep starting against staging Neon..."
+          DELETED=$(psql "$NEON_STAGING_URL" -At -c "DELETE FROM plant_projects WHERE name ILIKE '%smoke%' RETURNING id;" | wc -l | tr -d ' ')
+          echo "  plant_projects: $DELETED row(s) hard-deleted (pattern: name ILIKE '%smoke%')"
+          REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%';")
+          if [[ "$REMAINING" != "0" ]]; then
+            echo "⚠ WARN: $REMAINING smoke rows still in plant_projects after sweep — possible FK constraint preventing delete"
+            exit 1
+          fi
+          echo "✅ L-058 cleanup complete — 0 smoke residue rows in plant_projects"
+
   # ── E2E advisory (non-blocking) ───────────────────────────────────────────
   # Playwright rejected as merge gate: 250MB browser binaries per cold runner,
   # trace triage requires human. This job is the future hook for optional nightly

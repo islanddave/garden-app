@@ -30,6 +30,12 @@ vi.mock('../context/AuthContext.jsx', () => ({
   }),
 }))
 
+// V1.2a-4 S1: CatchUpBadge child uses useApiFetch (Clerk-dependent). Stub it here;
+// CatchUpBadge has its own test suite.
+vi.mock('../components/CatchUpBadge.jsx', () => ({
+  default: () => null,
+}))
+
 import BottomNav from '../components/BottomNav.jsx'
 
 beforeEach(() => {
