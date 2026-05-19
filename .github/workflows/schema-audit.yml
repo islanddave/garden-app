@@ -1,0 +1,73 @@
+name: L-081 Schema Audit (Pre-merge)
+
+# Pre-flight gate before any dev->main squash-merge.
+# Verifies columns asserted in lambda/**/select-columns.test.js are present
+# in prod Neon's information_schema.columns.
+# Catches the L-081 bug class (local_3f62f153 2026-05-19 prod incident):
+# lambda code references columns that exist in staging but not prod, deploy
+# succeeds, every endpoint 500s.
+#
+# Currently runs in advisory mode (failure does NOT block PR merge). Once
+# validated across a few PRs, flip to required check via branch protection.
+#
+# Audit script source: claude-ops/scripts/dev-main-schema-audit.py
+# Fetched from raw.githubusercontent.com at run time (no garden-app duplication).
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: schema-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Audit lambda column refs vs prod Neon schema
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout garden-app
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # setup-python pinned to major version v5 — advisory workflow, not deploy-tier discipline.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg2-binary
+        run: pip install psycopg2-binary
+
+      - name: Fetch L-081 audit script from claude-ops
+        run: |
+          curl -sf -o dev-main-schema-audit.py \
+            https://raw.githubusercontent.com/islanddave/claude-ops/main/scripts/dev-main-schema-audit.py
+          test -s dev-main-schema-audit.py || { echo "::error::audit script empty or missing"; exit 1; }
+          head -1 dev-main-schema-audit.py | grep -q python3 || { echo "::error::audit script header malformed"; exit 1; }
+
+      - name: Run L-081 schema audit
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          if [[ -z "$NEON_DATABASE_URL" ]]; then
+            echo "::warning title=L-081 audit not configured::NEON_DATABASE_URL secret not set on this repo. Audit cannot run."
+            echo "::warning::Add NEON_DATABASE_URL to Settings -> Secrets and variables -> Actions to enable the gate."
+            echo "Skipping audit. This run will not block the PR. Manual audit still required per L-081 until secret is configured."
+            exit 0
+          fi
+          python3 dev-main-schema-audit.py --repo-root . --verbose | tee audit-output.txt
+          AUDIT_EXIT=${PIPESTATUS[0]}
+          if [[ "$AUDIT_EXIT" -eq 0 ]]; then
+            echo "::notice title=L-081 audit PASS::All lambda column refs present in prod Neon. Squash-merge safe per L-081."
+          elif [[ "$AUDIT_EXIT" -eq 1 ]]; then
+            echo "::error title=L-081 audit FAIL::Lambda code references columns missing in prod Neon. HALT squash-merge. Apply additive migration to prod first."
+            exit 1
+          else
+            echo "::warning title=L-081 audit inconclusive::Script exited $AUDIT_EXIT (config/connection/parse failure). Investigate before merging."
+            exit 0
+          fi
