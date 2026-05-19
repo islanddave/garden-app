@@ -662,7 +662,7 @@ export default function EventNew() {
                 <option value="">— All plants (project level) —</option>
                 {plantsForProject.map(pl => (
                   <option key={pl.id} value={pl.id}>
-                    {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety ? ` — ${pl.variety}` : ''}
+                    {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety_ref?.name ? ` — ${pl.variety_ref.name}` : ''}
                   </option>
                 ))}
               </select>

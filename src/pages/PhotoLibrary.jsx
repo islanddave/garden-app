@@ -225,7 +225,7 @@ export default function PhotoLibrary() {
                     <option value="">— All plants (project level) —</option>
                     {plantsForUpload.map(pl => (
                       <option key={pl.id} value={pl.id}>
-                        {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety ? ` — ${pl.variety}` : ''}
+                        {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety_ref?.name ? ` — ${pl.variety_ref.name}` : ''}
                       </option>
                     ))}
                   </select>
@@ -500,7 +500,7 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
                     <option value="">— All plants (project level) —</option>
                     {plantsForModal.map(pl => (
                       <option key={pl.id} value={pl.id}>
-                        {pl.name}{pl.quantity > 1 ? ` ×${pl.quantity}` : ''}{pl.variety ? ` — ${pl.variety}` : ''}
+                        {pl.name}{pl.quantity > 1 ? ` ×${pl.quantity}` : ''}{pl.variety_ref?.name ? ` — ${pl.variety_ref.name}` : ''}
                       </option>
                     ))}
                   </select>

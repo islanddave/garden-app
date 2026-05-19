@@ -69,4 +69,20 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
       }
     });
   }
+
+  // Lambda 2.0.5 cleanup — VARIETY-REF S3 prep.
+  // The 3 legacy text columns are removed from every SELECT clause in 2.0.5;
+  // the subsequent VARIETY-REF S3 destructive DDL drops them from the table
+  // entirely. This assertion catches a regression where a future edit (e.g.,
+  // copy-paste from an old branch) reintroduces legacy columns to a SELECT
+  // and would 500 every plants endpoint post-DDL.
+  const LEGACY_COLUMNS_REMOVED_IN_2_0_5 = ['genus', 'species', 'variety'];
+  for (const col of LEGACY_COLUMNS_REMOVED_IN_2_0_5) {
+    it(`every SELECT block has dropped legacy p.${col}`, () => {
+      for (const [idx, block] of selectBlocks.entries()) {
+        const present = new RegExp(`\\bp\\.${col}\\b`).test(block);
+        expect(present, `SELECT block #${idx} still references p.${col}`).toBe(false);
+      }
+    });
+  }
 });

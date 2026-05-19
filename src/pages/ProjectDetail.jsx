@@ -687,8 +687,8 @@ export default function ProjectDetail() {
                       </span>
                     )}
                   </div>
-                  {plant.variety && (
-                    <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>{plant.variety}</div>
+                  {plant.variety_ref?.name && (
+                    <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>{plant.variety_ref.name}</div>
                   )}
                   </div>
                 </div>
@@ -995,8 +995,8 @@ function DeleteDialog({ childProjects, onArchive, onDelete, onCancel }) {
 
 function Fields({ project: p, locPath }) {
   const rows = [
-    ['Variety',     p.variety],
-    ['Species',     p.species],
+    ['Variety',     p.variety_ref?.name],
+    ['Species',     p.variety_ref?.species],
     ['Start date',  p.start_date ? new Date(p.start_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null],
     ['Location',    locPath ? `📍 ${locPath}` : null],
     ['Slug',        `/garden/${p.slug}`],

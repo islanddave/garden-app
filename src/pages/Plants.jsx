@@ -159,10 +159,10 @@ export default function Plants() {
     // (legacy plants will keep their flat variety text in the locked-out path until manual change).
     setEditForm({
       name:     plant.name,
-      genus:    plant.genus ?? '',
-      species:  plant.species ?? '',
+      genus:    plant.variety_ref?.genus ?? '',
+      species:  plant.variety_ref?.species ?? '',
       variety:  plant.variety_ref ?? null,
-      varietyText: plant.variety ?? '', // legacy fallback display
+      varietyText: plant.variety_ref?.name ?? '',
       quantity: String(plant.quantity ?? 1),
       notes:    plant.notes ?? '',
       status:   plant.status ?? '',
@@ -352,14 +352,14 @@ export default function Plants() {
                 })()}
                 <FavoriteToggle entityType="plant" entityId={plant.id} />
               </div>
-              {(plant.genus || plant.species) && (
+              {(plant.variety_ref?.genus || plant.variety_ref?.species) && (
                 <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2, fontStyle: 'italic' }}>
-                  {[plant.genus, plant.species].filter(Boolean).join(' ')}
+                  {[plant.variety_ref?.genus, plant.variety_ref?.species].filter(Boolean).join(' ')}
                 </div>
               )}
-              {(plant.variety_ref?.name || plant.variety) && (
+              {plant.variety_ref?.name && (
                 <div style={{ fontSize: '0.8rem', color: P.light, marginTop: 2 }}>
-                  {plant.variety_ref?.name ?? plant.variety}
+                  {plant.variety_ref.name}
                 </div>
               )}
               <div style={{ fontSize: '0.75rem', marginTop: 4 }}>
@@ -419,11 +419,6 @@ export default function Plants() {
                     onChange={(variety) => setEditForm(f => ({ ...f, variety }))}
                     placeholder="Search or create a variety…"
                   />
-                  {!editForm.variety && editForm.varietyText && (
-                    <div style={{ marginTop: 4, fontSize: '0.72rem', color: P.light }}>
-                      Legacy: <em>{editForm.varietyText}</em> — picking a variety above replaces this on save.
-                    </div>
-                  )}
                 </div>
                 <div>
                   <label htmlFor="plant-edit-qty" style={lbl}>Qty</label>

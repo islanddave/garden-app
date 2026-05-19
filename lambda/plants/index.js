@@ -48,28 +48,6 @@ function resp(statusCode, body) {
   };
 }
 
-// Shared SELECT clause — list + by-id share columns and JOIN shape.
-// Build variety_ref as JSONB object on the SQL side; LEFT JOIN preserves rows
-// where variety_id is NULL or the linked variety is soft-deleted.
-const SELECT_COLS = `
-  p.id, p.name, p.genus, p.species, p.variety, p.quantity,
-  p.status, p.notes, p.project_id,
-  p.variety_id, p.source_inventory_item_id, p.metadata,
-  p.created_at, p.updated_at,
-  pp.name AS project_name,
-  CASE WHEN pv.id IS NOT NULL THEN
-    jsonb_build_object(
-      'id', pv.id, 'name', pv.name, 'species', pv.species, 'genus', pv.genus,
-      'days_to_maturity_min', pv.days_to_maturity_min,
-      'days_to_maturity_max', pv.days_to_maturity_max,
-      'care_notes', pv.care_notes, 'soil_notes', pv.soil_notes,
-      'sun_requirements', pv.sun_requirements,
-      'common_diseases', pv.common_diseases,
-      'expected_yield_notes', pv.expected_yield_notes,
-      'photo_id', pv.photo_id, 'source_url', pv.source_url
-    )
-  ELSE NULL END AS variety_ref
-`;
 
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -112,7 +90,7 @@ export const handler = async (event) => {
         // write→read symmetry the original S1 ship missed (Anomaly #A,
         // v12a4-s1-chrome-smoke-verdict-20260518.md).
         const rows = await sql`
-          SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
+          SELECT p.id, p.name, p.quantity,
                  p.status, p.notes, p.project_id,
                  p.variety_id, p.source_inventory_item_id, p.metadata,
                  p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
@@ -189,9 +167,6 @@ export const handler = async (event) => {
           UPDATE plants p
           SET
             name                     = COALESCE(${body.name ?? null}, p.name),
-            genus                    = COALESCE(${body.genus ?? null}, p.genus),
-            species                  = COALESCE(${body.species ?? null}, p.species),
-            variety                  = COALESCE(${body.variety ?? null}, p.variety),
             quantity                 = COALESCE(${body.quantity ?? null}, p.quantity),
             status                   = COALESCE(${body.status ?? null}, p.status),
             notes                    = COALESCE(${body.notes ?? null}, p.notes),
@@ -267,7 +242,7 @@ export const handler = async (event) => {
       // by-id GET above. Pairs with POST/PATCH write paths shipped in S1.
       const rows = projectId
         ? await sql`
-            SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
+            SELECT p.id, p.name, p.quantity,
                    p.status, p.notes, p.project_id,
                    p.variety_id, p.source_inventory_item_id, p.metadata,
                    p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
@@ -303,7 +278,7 @@ export const handler = async (event) => {
             ORDER BY p.created_at DESC
           `
         : await sql`
-            SELECT p.id, p.name, p.genus, p.species, p.variety, p.quantity,
+            SELECT p.id, p.name, p.quantity,
                    p.status, p.notes, p.project_id,
                    p.variety_id, p.source_inventory_item_id, p.metadata,
                    p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
@@ -373,7 +348,7 @@ export const handler = async (event) => {
 
       const inserted = await sql`
         INSERT INTO plants
-          (project_id, name, genus, species, variety, quantity, status, notes, created_by,
+          (project_id, name, quantity, status, notes, created_by,
            variety_id, source_inventory_item_id, metadata,
            sown_at, sown_at_approx, germinated_at, germinated_at_approx,
            transplanted_at, transplanted_at_approx, planted_out_at, planted_out_at_approx,
@@ -384,9 +359,6 @@ export const handler = async (event) => {
         VALUES (
           ${body.project_id},
           ${body.name},
-          ${body.genus ?? null},
-          ${body.species ?? null},
-          ${body.variety ?? null},
           ${qtyVal},
           ${body.status ?? null},
           ${body.notes ?? null},
