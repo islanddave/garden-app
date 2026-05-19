@@ -10,8 +10,8 @@ name: L-081 Schema Audit (Pre-merge)
 # Currently runs in advisory mode (failure does NOT block PR merge). Once
 # validated across a few PRs, flip to required check via branch protection.
 #
-# Audit script source: claude-ops/scripts/dev-main-schema-audit.py
-# Fetched from raw.githubusercontent.com at run time (no garden-app duplication).
+# Audit script: scripts/dev-main-schema-audit.py (canonical here in garden-app/).
+# A reference copy lives in claude-ops/scripts/ for local sandbox invocation. Keep in sync.
 
 on:
   pull_request:
@@ -43,12 +43,10 @@ jobs:
       - name: Install psycopg2-binary
         run: pip install psycopg2-binary
 
-      - name: Fetch L-081 audit script from claude-ops
+      - name: Verify audit script present
         run: |
-          curl -sf -o dev-main-schema-audit.py \
-            https://raw.githubusercontent.com/islanddave/claude-ops/main/scripts/dev-main-schema-audit.py
-          test -s dev-main-schema-audit.py || { echo "::error::audit script empty or missing"; exit 1; }
-          head -1 dev-main-schema-audit.py | grep -q python3 || { echo "::error::audit script header malformed"; exit 1; }
+          test -s scripts/dev-main-schema-audit.py || { echo "::error::scripts/dev-main-schema-audit.py missing or empty"; exit 1; }
+          head -1 scripts/dev-main-schema-audit.py | grep -q python3 || { echo "::error::audit script header malformed"; exit 1; }
 
       - name: Run L-081 schema audit
         env:
@@ -60,7 +58,7 @@ jobs:
             echo "Skipping audit. This run will not block the PR. Manual audit still required per L-081 until secret is configured."
             exit 0
           fi
-          python3 dev-main-schema-audit.py --repo-root . --verbose | tee audit-output.txt
+          python3 scripts/dev-main-schema-audit.py --repo-root . --verbose | tee audit-output.txt
           AUDIT_EXIT=${PIPESTATUS[0]}
           if [[ "$AUDIT_EXIT" -eq 0 ]]; then
             echo "::notice title=L-081 audit PASS::All lambda column refs present in prod Neon. Squash-merge safe per L-081."
