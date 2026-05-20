@@ -240,7 +240,7 @@ export const handler = async (event) => {
               ELSE kind
             END,
             kind_set_at = CASE
-              WHEN ${hasKind} AND ${body.kind ?? null} IS NOT NULL AND kind IS NULL THEN NOW()
+              WHEN ${hasKind && body.kind != null} AND kind IS NULL THEN NOW()
               ELSE kind_set_at
             END,
             target_end_date = COALESCE(${body.target_end_date ?? null}, target_end_date)
