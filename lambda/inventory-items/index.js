@@ -158,6 +158,9 @@ export const handler = async (event) => {
 
         // PUT replaces all editable fields. Frontend sends complete payload.
         // type-discrimination enforced by nullifying off-type fields server-side.
+        // HOUSEHOLD-MODE TODO: concurrent quantity edits have a lost-update window — PUT writes an
+        // absolute quantity (client read-modify-write; no optimistic updated_at/expected guard).
+        // Backend-safe today; revisit as a fast-follow if both members adjust counts concurrently.
         const rows = await sql`
           UPDATE inventory_items SET
             name              = ${body.name ?? null},
@@ -177,7 +180,6 @@ export const handler = async (event) => {
             quantity_on_hand  = ${isConsumable ? (body.quantity_on_hand ?? null) : null},
             reorder_threshold = ${isConsumable ? (body.reorder_threshold ?? null) : null},
             reorder_quantity  = ${isConsumable ? (body.reorder_quantity ?? null) : null},
-            // HOUSEHOLD-MODE TODO: lost-update window on concurrent quantity edits — fast-follow
             quantity          = ${isDurable ? (body.quantity ?? null) : null},
             condition         = ${isDurable ? (body.condition ?? null) : null},
             brand             = ${body.brand ?? null},

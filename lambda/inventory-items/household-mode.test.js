@@ -36,7 +36,7 @@ describe('inventory-items Lambda — Household Mode scope widening', () => {
   });
 
   it('documents the concurrent-quantity lost-update window as a fast-follow TODO', () => {
-    expect(SRC).toMatch(/HOUSEHOLD-MODE TODO: lost-update window on concurrent quantity edits/);
+    expect(SRC).toMatch(/HOUSEHOLD-MODE TODO:[\s\S]*lost-update window/);
   });
 
   it('no array spread (42P18 guard)', () => {
