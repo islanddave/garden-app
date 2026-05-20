@@ -3,6 +3,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { householdScope } from '../household.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // S3 client for featured-photo view URL enrichment.
@@ -90,6 +91,8 @@ export const handler = async (event) => {
 
   try {
     const sql = neon(secrets.NEON_DATABASE_URL);
+    // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+    const householdIds = householdScope(userId);
 
     // --- /api/projects/types/:id ---
     if (typesItemMatch) {
@@ -154,7 +157,7 @@ export const handler = async (event) => {
             LEFT JOIN plant_projects p ON p.id = pp.parent_project_id AND p.deleted_at IS NULL
             LEFT JOIN photos fp ON fp.id = pp.featured_photo_id
             WHERE pp.id = ${projectId}
-              AND pp.created_by = ${userId}
+              AND pp.created_by = ANY(${householdIds})
               AND pp.deleted_at IS NULL
           `,
           sql`
@@ -278,7 +281,7 @@ export const handler = async (event) => {
             SELECT 1 FROM photos
              WHERE id = ${body.featured_photo_id}
                AND project_id = ${projectId}
-               AND uploaded_by = ${userId}
+               AND created_by = ANY(${householdIds})
           `;
           if (!linkRows.length) {
             return resp(400, { error: 'featured_photo_id must be a photo linked to this project' });
@@ -315,7 +318,7 @@ export const handler = async (event) => {
             END,
             target_end_date = COALESCE(${body.target_end_date ?? null}, target_end_date)
           WHERE id = ${projectId}
-            AND created_by = ${userId}
+            AND created_by = ANY(${householdIds})
             AND deleted_at IS NULL
           RETURNING id, name, slug, status, variety, description,
                     to_char(start_date, 'YYYY-MM-DD') AS start_date,
@@ -334,7 +337,7 @@ export const handler = async (event) => {
           UPDATE plant_projects
           SET deleted_at = NOW()
           WHERE id = ${projectId}
-            AND created_by = ${userId}
+            AND created_by = ANY(${householdIds})
             AND deleted_at IS NULL
         `;
         return resp(200, { ok: true });
@@ -388,7 +391,7 @@ export const handler = async (event) => {
                  kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at
           FROM plant_projects
-          WHERE created_by = ${userId}
+          WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
             AND parent_project_id IS NULL
           ORDER BY start_date DESC NULLS LAST, created_at DESC
@@ -401,7 +404,7 @@ export const handler = async (event) => {
                  kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at
           FROM plant_projects
-          WHERE created_by = ${userId}
+          WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
             AND parent_project_id = ${parentIdFilter}
           ORDER BY start_date DESC NULLS LAST, created_at DESC
@@ -414,7 +417,7 @@ export const handler = async (event) => {
                  kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at
           FROM plant_projects
-          WHERE created_by = ${userId}
+          WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
           ORDER BY start_date DESC NULLS LAST, created_at DESC
         `;

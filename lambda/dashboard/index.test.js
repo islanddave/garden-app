@@ -83,6 +83,22 @@ beforeEach(() => {
   sqlResults.length = 0;
 });
 
+// HOUSEHOLD-MODE: ownership filters now bind householdScope(userId) — an ARRAY — via
+// `created_by = ANY(${householdIds})`. With GARDEN_HOUSEHOLD_IDS unset (test default),
+// householdScope('user_alpha') === ['user_alpha'], so the bound value is the array
+// ['user_alpha'], NOT the bare string. Per-user surfaces (user_id, dismissal INSERT)
+// still bind the bare string. These helpers count a userId bind in either form.
+function bindsUserArray(values, uid) {
+  return values.some(v => Array.isArray(v) && v.length === 1 && v[0] === uid);
+}
+function bindsUserAnyForm(values, uid) {
+  return values.includes(uid) || bindsUserArray(values, uid);
+}
+function countUserBinds(values, uid) {
+  return values.filter(v => v === uid || (Array.isArray(v) && v.length === 1 && v[0] === uid)).length;
+}
+
+
 // ---- classifyRoute / resp / optionsResp ----------------------------------
 
 describe('classifyRoute — pure routing', () => {
@@ -314,7 +330,8 @@ describe('handleDashboard — aggregation', () => {
     // Every parameterized query should contain 'user_alpha' as a bound value.
     // All 9 builders bind userId at least once (locations sub-count rides inside
     // the counts query which DOES bind userId for the outer projects + plants sub-counts).
-    const userBound = sqlCalls.filter(c => c.values.includes('user_alpha'));
+    // HOUSEHOLD-MODE: 7 ownership builders bind ['user_alpha'] (array); favorites + userStats bind the bare string.
+    const userBound = sqlCalls.filter(c => bindsUserAnyForm(c.values, 'user_alpha'));
     expect(userBound.length).toBe(9);
   });
 });
@@ -339,8 +356,10 @@ describe('handleGetInactive — GET /api/projects/inactive', () => {
 
     const q = sqlCalls[0];
     expect(q.resolved).toMatch(/pp\.status IN \('harvested','ended'\)/);
-    expect(q.resolved).toMatch(/pp\.created_by\s*=\s*\$\d+/);
-    expect(q.values).toContain('user_alpha');
+    // HOUSEHOLD-MODE: created_by now widened to ANY(${householdIds}); the dismissals
+    // LEFT JOIN still binds d.user_id = ${userId} (bare string).
+    expect(q.resolved).toMatch(/pp\.created_by\s*=\s*ANY\(\$\d+\)/);
+    expect(bindsUserAnyForm(q.values, 'user_alpha')).toBe(true);
     expect(q.resolved).toMatch(/ORDER BY d\.dismissed_at IS NULL DESC,\s*em\.last_event_at DESC NULLS LAST/);
     expect(q.resolved).not.toMatch(/LIMIT/);
   });
@@ -358,7 +377,9 @@ describe('handleDismissInactive — POST /api/projects/inactive/:projectId/dismi
 
     const q = sqlCalls[0];
     expect(q.resolved).toMatch(/WITH owned AS/);
-    expect(q.resolved).toMatch(/created_by\s*=\s*\$\d+/);
+    // HOUSEHOLD-MODE: owned-existence check widened to created_by = ANY(${householdIds});
+    // dismissal INSERT + COALESCE subquery still bind user_id = ${userId} (bare string).
+    expect(q.resolved).toMatch(/created_by\s*=\s*ANY\(\$\d+\)/);
     expect(q.resolved).toMatch(/ON CONFLICT \(user_id, project_id\) DO NOTHING/);
     expect(q.values).toContain('user_alpha');
     expect(q.values).toContain(VALID_UUID);
@@ -404,12 +425,14 @@ describe('handleDismissInactive — POST /api/projects/inactive/:projectId/dismi
 describe('per-query builders bind userId correctly', () => {
   it('queryRecentEvents binds userId', async () => {
     await queryRecentEvents(makeSql(), 'user_alpha');
-    expect(sqlCalls[0].values).toContain('user_alpha');
+    // HOUSEHOLD-MODE: pp.created_by widened to ANY(['user_alpha']).
+    expect(bindsUserAnyForm(sqlCalls[0].values, 'user_alpha')).toBe(true);
     expect(sqlCalls[0].resolved).toMatch(/LIMIT 5/);
   });
-  it('queryCounts binds userId twice (projects + plants sub-counts)', async () => {
+  it('queryCounts binds householdScope twice (projects + plants sub-counts)', async () => {
     await queryCounts(makeSql(), 'user_alpha');
-    expect(sqlCalls[0].values.filter(v => v === 'user_alpha').length).toBe(2);
+    // HOUSEHOLD-MODE: both ownership sub-counts widened to ANY(['user_alpha']).
+    expect(countUserBinds(sqlCalls[0].values, 'user_alpha')).toBe(2);
   });
   it('queryFavoriteCount binds userId', async () => {
     await queryFavoriteCount(makeSql(), 'user_alpha');
@@ -417,7 +440,7 @@ describe('per-query builders bind userId correctly', () => {
   });
   it('queryActiveProjects binds userId', async () => {
     await queryActiveProjects(makeSql(), 'user_alpha');
-    expect(sqlCalls[0].values).toContain('user_alpha');
+    expect(bindsUserAnyForm(sqlCalls[0].values, 'user_alpha')).toBe(true);
   });
   it('queryUserStats binds userId', async () => {
     await queryUserStats(makeSql(), 'user_alpha');
@@ -425,29 +448,39 @@ describe('per-query builders bind userId correctly', () => {
   });
   it('queryWaterDue binds userId', async () => {
     await queryWaterDue(makeSql(), 'user_alpha');
-    expect(sqlCalls[0].values).toContain('user_alpha');
+    expect(bindsUserAnyForm(sqlCalls[0].values, 'user_alpha')).toBe(true);
   });
   it('queryHarvestReady binds userId', async () => {
     await queryHarvestReady(makeSql(), 'user_alpha');
-    expect(sqlCalls[0].values).toContain('user_alpha');
+    expect(bindsUserAnyForm(sqlCalls[0].values, 'user_alpha')).toBe(true);
   });
   it('queryHeadsUp binds userId', async () => {
     await queryHeadsUp(makeSql(), 'user_alpha');
-    expect(sqlCalls[0].values).toContain('user_alpha');
+    // HOUSEHOLD-MODE: both flagged + stale CTE ownership joins widened to ANY(['user_alpha']).
+    expect(countUserBinds(sqlCalls[0].values, 'user_alpha')).toBe(2);
   });
-  it('queryInactiveCount binds userId twice (outer filter + dismissals sub-NOT-EXISTS)', async () => {
+  it('queryInactiveCount binds twice — household array (created_by) + bare string (dismissals NOT EXISTS)', async () => {
     await queryInactiveCount(makeSql(), 'user_alpha');
-    expect(sqlCalls[0].values.filter(v => v === 'user_alpha').length).toBe(2);
+    // HOUSEHOLD-MODE: outer created_by -> ANY(['user_alpha']); dismissals d.user_id stays bare string.
+    expect(countUserBinds(sqlCalls[0].values, 'user_alpha')).toBe(2);
+    expect(sqlCalls[0].values).toContain('user_alpha'); // dismissal guard still per-user (string)
+    expect(bindsUserArray(sqlCalls[0].values, 'user_alpha')).toBe(true); // created_by widened (array)
   });
-  it('queryInactiveList binds userId twice (LEFT JOIN dismissals + WHERE created_by)', async () => {
+  it('queryInactiveList binds twice — bare string (dismissals JOIN) + household array (WHERE created_by)', async () => {
     await queryInactiveList(makeSql(), 'user_alpha');
-    expect(sqlCalls[0].values.filter(v => v === 'user_alpha').length).toBe(2);
+    // HOUSEHOLD-MODE: dismissals LEFT JOIN d.user_id stays bare string; created_by -> ANY(['user_alpha']).
+    expect(countUserBinds(sqlCalls[0].values, 'user_alpha')).toBe(2);
+    expect(sqlCalls[0].values).toContain('user_alpha'); // dismissal join still per-user (string)
+    expect(bindsUserArray(sqlCalls[0].values, 'user_alpha')).toBe(true); // created_by widened (array)
   });
   it('queryDismissInactive binds projectId twice (CTE + ::uuid cast) and userId three times', async () => {
     const VALID_UUID = '11111111-2222-3333-4444-555555555555';
     sqlResults.push([{ status: 'dismissed', dismissed_at: '2026-05-13T12:00:00Z' }]);
     await queryDismissInactive(makeSql(), 'user_alpha', VALID_UUID);
     expect(sqlCalls[0].values).toContain(VALID_UUID);
+    // HOUSEHOLD-MODE: owned-check created_by -> ANY(['user_alpha']) (array); the dismissal
+    // INSERT + COALESCE subquery still bind user_id = ${userId} (>=2 bare-string binds).
     expect(sqlCalls[0].values.filter(v => v === 'user_alpha').length).toBeGreaterThanOrEqual(2);
+    expect(bindsUserArray(sqlCalls[0].values, 'user_alpha')).toBe(true);
   });
 });

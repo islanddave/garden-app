@@ -23,6 +23,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validatePostBody, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE } from './validators.js';
+import { householdScope } from '../household.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -79,6 +80,8 @@ export const handler = async (event) => {
   }
 
   const sql = neon(secrets.NEON_DATABASE_URL);
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown (event ENTITY reads/writes only; achievement/XP/streak queries stay per-user)
+  const householdIds = householdScope(userId);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/events';
 
@@ -157,7 +160,7 @@ export const handler = async (event) => {
             AND el.flagged_as_issue = true
             AND el.deleted_at IS NULL
             AND pp.id = el.project_id
-            AND pp.created_by = ${userId}
+            AND pp.created_by = ANY(${householdIds})
             AND pp.deleted_at IS NULL
           RETURNING
             el.id, el.project_id, el.event_type, el.flagged_as_issue,
@@ -296,7 +299,7 @@ export const handler = async (event) => {
           JOIN plant_projects pp ON pp.id = e.project_id
           WHERE e.id = ${eventId}
             AND e.deleted_at IS NULL
-            AND pp.created_by = ${userId}
+            AND pp.created_by = ANY(${householdIds})
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
@@ -320,7 +323,7 @@ export const handler = async (event) => {
               pp.name AS project_name
             FROM event_log e
             JOIN plant_projects pp ON pp.id = e.project_id
-            WHERE pp.created_by = ${userId}
+            WHERE pp.created_by = ANY(${householdIds})
               AND e.project_id = ${projectId}
               AND e.deleted_at IS NULL
             ORDER BY e.event_date DESC, e.created_at DESC
@@ -335,7 +338,7 @@ export const handler = async (event) => {
               pp.name AS project_name
             FROM event_log e
             JOIN plant_projects pp ON pp.id = e.project_id
-            WHERE pp.created_by = ${userId}
+            WHERE pp.created_by = ANY(${householdIds})
               AND e.deleted_at IS NULL
             ORDER BY e.event_date DESC, e.created_at DESC
             LIMIT ${limit}

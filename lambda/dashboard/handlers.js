@@ -17,6 +17,8 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 // ---- Pure validators ------------------------------------------------------
 
+import { householdScope } from '../household.js';
+
 export function isValidUuid(s) {
   return typeof s === 'string' && UUID_RE.test(s);
 }
@@ -77,6 +79,8 @@ export function optionsResp() {
 // to the test mock via the tagged-template signature.
 
 export function queryRecentEvents(sql, userId) {
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  const householdIds = householdScope(userId);
   return sql`
       SELECT
         e.id, e.event_type, e.event_date, e.created_at,
@@ -85,7 +89,7 @@ export function queryRecentEvents(sql, userId) {
       FROM event_log e
       JOIN plant_projects pp ON pp.id = e.project_id
       LEFT JOIN profiles pr ON pr.id = e.logged_by
-      WHERE pp.created_by = ${userId}
+      WHERE pp.created_by = ANY(${householdIds})
         AND e.deleted_at IS NULL
       ORDER BY e.created_at DESC
       LIMIT 5
@@ -93,18 +97,20 @@ export function queryRecentEvents(sql, userId) {
 }
 
 export function queryCounts(sql, userId) {
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  const householdIds = householdScope(userId);
   return sql`
       SELECT
         (
           SELECT COUNT(*)::int
           FROM plant_projects
-          WHERE created_by = ${userId} AND deleted_at IS NULL
+          WHERE created_by = ANY(${householdIds}) AND deleted_at IS NULL
         ) AS project_count,
         (
           SELECT COUNT(*)::int
           FROM plants p
           JOIN plant_projects pp ON pp.id = p.project_id
-          WHERE pp.created_by = ${userId} AND p.deleted_at IS NULL
+          WHERE pp.created_by = ANY(${householdIds}) AND p.deleted_at IS NULL
         ) AS plant_count,
         (
           SELECT COUNT(*)::int
@@ -123,6 +129,8 @@ export function queryFavoriteCount(sql, userId) {
 }
 
 export function queryActiveProjects(sql, userId) {
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  const householdIds = householdScope(userId);
   return sql`
       SELECT
         pp.id, pp.name, pp.status, pp.variety, pp.start_date,
@@ -131,7 +139,7 @@ export function queryActiveProjects(sql, userId) {
         em.next_water_at, em.location_type, em.watering_interval_days
       FROM plant_projects pp
       LEFT JOIN entity_memory em ON em.project_id = pp.id
-      WHERE pp.created_by = ${userId}
+      WHERE pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
       ORDER BY pp.created_at DESC
     `;
@@ -146,6 +154,8 @@ export function queryUserStats(sql, userId) {
 }
 
 export function queryWaterDue(sql, userId) {
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  const householdIds = householdScope(userId);
   return sql`
       SELECT
         em.project_id, pp.name AS project_name,
@@ -153,7 +163,7 @@ export function queryWaterDue(sql, userId) {
         em.location_type, em.watering_interval_days
       FROM entity_memory em
       JOIN plant_projects pp ON pp.id = em.project_id
-      WHERE pp.created_by = ${userId}
+      WHERE pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
         AND em.next_water_at IS NOT NULL
         AND em.next_water_at < NOW()
@@ -164,6 +174,8 @@ export function queryWaterDue(sql, userId) {
 // §A Tile 3 — harvest_ready (status='harvesting', sort oldest last_observed_at).
 // F1: days_since_obs computed via calendar-day arithmetic. May be NULL.
 export function queryHarvestReady(sql, userId) {
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  const householdIds = householdScope(userId);
   return sql`
       SELECT pp.id AS project_id, pp.name, pp.status,
              em.last_observed_at,
@@ -171,7 +183,7 @@ export function queryHarvestReady(sql, userId) {
       FROM plant_projects pp
       LEFT JOIN entity_memory em ON em.project_id = pp.id
       WHERE pp.status = 'harvesting'
-        AND pp.created_by = ${userId}
+        AND pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
       ORDER BY em.last_observed_at ASC NULLS LAST
       LIMIT 5
@@ -184,6 +196,8 @@ export function queryHarvestReady(sql, userId) {
 // SQL-layer NOT EXISTS dedup ensures a project surfaces ONCE (as 'flagged' if it has both).
 // ORDER BY severity DESC NULLS LAST → severity=3 sorts before severity=1; stale (NULL severity) last.
 export function queryHeadsUp(sql, userId) {
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  const householdIds = householdScope(userId);
   return sql`
       WITH flagged AS (
         SELECT DISTINCT ON (el.project_id)
@@ -195,7 +209,7 @@ export function queryHeadsUp(sql, userId) {
           (NOW()::date - el.created_at::date)::int AS days_stale
         FROM event_log el
         JOIN plant_projects pp ON pp.id = el.project_id
-          AND pp.created_by = ${userId} AND pp.deleted_at IS NULL
+          AND pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL
         WHERE el.flagged_as_issue = true
           AND el.resolved_at IS NULL
           AND el.deleted_at IS NULL
@@ -211,7 +225,7 @@ export function queryHeadsUp(sql, userId) {
         FROM plant_projects pp
         LEFT JOIN entity_memory em ON em.project_id = pp.id
         WHERE pp.status IN ('sprouting','growing','flowering','fruiting')
-          AND pp.created_by = ${userId}
+          AND pp.created_by = ANY(${householdIds})
           AND pp.deleted_at IS NULL
           AND (
             (em.last_observed_at IS NULL
@@ -236,11 +250,13 @@ export function queryHeadsUp(sql, userId) {
 
 // §C inactive_projects_count — harvested/ended status, NOT dismissed by this user.
 export function queryInactiveCount(sql, userId) {
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  const householdIds = householdScope(userId);
   return sql`
       SELECT COUNT(*)::int AS count
       FROM plant_projects pp
       WHERE pp.status IN ('harvested','ended')
-        AND pp.created_by = ${userId}
+        AND pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM inactive_project_dismissals d
@@ -254,6 +270,8 @@ export function queryInactiveCount(sql, userId) {
 // Sort: undismissed first (d.dismissed_at IS NULL DESC), then by last_event_at DESC.
 // No pagination — acceptable at <100 inactive projects/user; revisit at V2 multi-user.
 export function queryInactiveList(sql, userId) {
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  const householdIds = householdScope(userId);
   return sql`
     SELECT pp.id, pp.name, pp.variety, pp.status,
            pp.start_date,
@@ -266,7 +284,7 @@ export function queryInactiveList(sql, userId) {
     LEFT JOIN inactive_project_dismissals d
       ON d.project_id = pp.id AND d.user_id = ${userId}
     WHERE pp.status IN ('harvested','ended')
-      AND pp.created_by = ${userId}
+      AND pp.created_by = ANY(${householdIds})
       AND pp.deleted_at IS NULL
     ORDER BY d.dismissed_at IS NULL DESC, em.last_event_at DESC NULLS LAST
   `;
@@ -278,11 +296,13 @@ export function queryInactiveList(sql, userId) {
 // status='not_found' (no owned row) → 404 — matches existence-oblivious cross-tenant pattern.
 // status='dismissed' → 200 with { dismissed: true, dismissed_at }.
 export function queryDismissInactive(sql, userId, projectId) {
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  const householdIds = householdScope(userId);
   return sql`
     WITH owned AS (
       SELECT id FROM plant_projects
       WHERE id = ${projectId}::uuid
-        AND created_by = ${userId}
+        AND created_by = ANY(${householdIds})
         AND status IN ('harvested','ended')
         AND deleted_at IS NULL
       LIMIT 1

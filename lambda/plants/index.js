@@ -9,6 +9,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { householdScope } from '../household.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -74,6 +75,8 @@ export const handler = async (event) => {
   }
 
   const sql = neon(secrets.NEON_DATABASE_URL);
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  const householdIds = householdScope(userId);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/plants';
 
@@ -122,7 +125,7 @@ export const handler = async (event) => {
           LEFT JOIN photos fp ON fp.id = p.featured_photo_id
           WHERE p.id = ${plantId}
             AND p.deleted_at IS NULL
-            AND pp.created_by = ${userId}
+            AND pp.created_by = ANY(${householdIds})
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         const row = rows[0];
@@ -156,7 +159,7 @@ export const handler = async (event) => {
             SELECT 1 FROM photos
              WHERE id = ${body.featured_photo_id}
                AND plant_id = ${plantId}
-               AND uploaded_by = ${userId}
+               AND created_by = ANY(${householdIds})
           `;
           if (!linkRows.length) {
             return resp(400, { error: 'featured_photo_id must be a photo linked to this plant' });
@@ -202,7 +205,7 @@ export const handler = async (event) => {
           FROM plant_projects pp
           WHERE p.id = ${plantId}
             AND p.project_id = pp.id
-            AND pp.created_by = ${userId}
+            AND pp.created_by = ANY(${householdIds})
             AND p.deleted_at IS NULL
           RETURNING p.*
         `;
@@ -217,7 +220,7 @@ export const handler = async (event) => {
           FROM plant_projects pp
           WHERE p.id = ${plantId}
             AND p.project_id = pp.id
-            AND pp.created_by = ${userId}
+            AND pp.created_by = ANY(${householdIds})
             AND p.deleted_at IS NULL
         `;
         return resp(200, { ok: true });
@@ -272,7 +275,7 @@ export const handler = async (event) => {
             JOIN plant_projects pp ON pp.id = p.project_id
             LEFT JOIN plant_varieties pv ON pv.id = p.variety_id AND pv.deleted_at IS NULL
             LEFT JOIN photos fp ON fp.id = p.featured_photo_id
-            WHERE pp.created_by = ${userId}
+            WHERE pp.created_by = ANY(${householdIds})
               AND p.project_id = ${projectId}
               AND p.deleted_at IS NULL
             ORDER BY p.created_at DESC
@@ -308,7 +311,7 @@ export const handler = async (event) => {
             JOIN plant_projects pp ON pp.id = p.project_id
             LEFT JOIN plant_varieties pv ON pv.id = p.variety_id AND pv.deleted_at IS NULL
             LEFT JOIN photos fp ON fp.id = p.featured_photo_id
-            WHERE pp.created_by = ${userId}
+            WHERE pp.created_by = ANY(${householdIds})
               AND p.deleted_at IS NULL
             ORDER BY p.created_at DESC
           `;

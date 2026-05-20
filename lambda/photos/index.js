@@ -3,6 +3,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { householdScope } from '../household.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // requestChecksumCalculation/responseChecksumValidation: newer SDK v3 versions (3.679+) default
@@ -79,6 +80,8 @@ export const handler = async (event) => {
   }
 
   const sql = neon(secrets.NEON_DATABASE_URL);
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown (photos scope SWITCHED uploaded_by -> created_by)
+  const householdIds = householdScope(userId);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/photos';
 
@@ -101,7 +104,7 @@ export const handler = async (event) => {
       const rows = await sql`
         SELECT storage_path FROM photos
         WHERE id = ${photoId}
-          AND uploaded_by = ${userId}
+          AND created_by = ANY(${householdIds})
       `;
       if (!rows.length) return resp(404, { error: 'Not found' });
       const viewUrl = await getViewUrl(rows[0].storage_path);
@@ -121,7 +124,7 @@ export const handler = async (event) => {
               pp.name AS project_name
             FROM photos p
             LEFT JOIN plant_projects pp ON pp.id = p.project_id
-            WHERE p.uploaded_by = ${userId}
+            WHERE p.created_by = ANY(${householdIds})
               AND p.project_id = ${projectId}
             ORDER BY p.created_at DESC
             LIMIT ${limit}
@@ -133,7 +136,7 @@ export const handler = async (event) => {
               pp.name AS project_name
             FROM photos p
             LEFT JOIN plant_projects pp ON pp.id = p.project_id
-            WHERE p.uploaded_by = ${userId}
+            WHERE p.created_by = ANY(${householdIds})
             ORDER BY p.created_at DESC
             LIMIT ${limit}
           `;
@@ -203,7 +206,7 @@ export const handler = async (event) => {
             UPDATE plant_projects
                SET featured_photo_id = ${inserted.id}
              WHERE id = ${inserted.project_id}
-               AND created_by = ${userId}
+               AND created_by = ANY(${householdIds})
                AND featured_photo_id IS NULL
                AND deleted_at IS NULL
           `;
@@ -215,7 +218,7 @@ export const handler = async (event) => {
               FROM plant_projects pp
              WHERE p.id = ${inserted.plant_id}
                AND p.project_id = pp.id
-               AND pp.created_by = ${userId}
+               AND pp.created_by = ANY(${householdIds})
                AND p.featured_photo_id IS NULL
                AND p.deleted_at IS NULL
           `;
@@ -234,7 +237,7 @@ export const handler = async (event) => {
             UPDATE inventory_items
                SET featured_photo_id = ${inserted.id}
              WHERE id = ${inserted.inventory_item_id}
-               AND created_by = ${userId}
+               AND created_by = ANY(${householdIds})
                AND featured_photo_id IS NULL
                AND deleted_at IS NULL
           `;
@@ -267,7 +270,7 @@ export const handler = async (event) => {
                plant_id    = ${body.plant_id ?? null},
                caption     = ${body.caption ?? null}
          WHERE id = ${photoId}
-           AND uploaded_by = ${userId}
+           AND created_by = ANY(${householdIds})
         RETURNING *
       `;
       if (!updatedRows.length) return resp(404, { error: 'Photo not found' });
