@@ -425,11 +425,18 @@ export const handler = async (event) => {
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.name) return resp(400, { error: 'name is required' });
-      // V1.2a-4 S1 (PROJ-RESCOPE): validate kind enum server-side. NULL allowed.
+      // V1.2a-4 S1 (PROJ-RESCOPE): validate kind enum server-side. A null/absent
+      // kind is coalesced to a default below (S6) so alive rows are never kind=NULL.
       const ALLOWED_KINDS = ['campaign', 'category', 'cultivar'];
       if (body.kind != null && !ALLOWED_KINDS.includes(body.kind)) {
         return resp(400, { error: `kind must be one of ${ALLOWED_KINDS.join(', ')} or null` });
       }
+      // V1.2a-4 S6 (PROJ-RESCOPE): an alive plant_projects row must never have
+      // kind=NULL or the s6-0a CHECK (kind IS NOT NULL OR deleted_at IS NOT NULL)
+      // 500s every such create (e.g. ProjectNew's "Not sure yet" default sends
+      // null). Coalesce a missing kind to 'campaign' (dominant new-project type);
+      // /admin/classify can reclassify later. Server-side backstop for ALL callers.
+      const effectiveKind = body.kind ?? 'campaign';
       // Validate parent_project_id is not self-referential (can't know id yet, but guard against explicit self-reference attempts via name matching — full guard at PUT)
       const rows = await sql`
         INSERT INTO plant_projects
@@ -446,9 +453,9 @@ export const handler = async (event) => {
           ${body.location_id ?? null},
           ${userId},
           ${body.parent_project_id ?? null},
-          ${body.kind ?? null},
+          ${effectiveKind},
           ${body.target_end_date ?? null},
-          ${body.kind != null ? new Date().toISOString() : null}
+          ${new Date().toISOString()}
         )
         RETURNING id, name, slug, status, variety, description,
                   to_char(start_date, 'YYYY-MM-DD') AS start_date,
