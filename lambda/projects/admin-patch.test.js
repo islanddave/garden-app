@@ -86,7 +86,7 @@ describe('projects Lambda admin PATCH route (S6 static-source guard)', () => {
     const patchEnd = SRC.indexOf("if (method === 'PUT')", patchStart);
     const patchBlock = SRC.slice(patchStart, patchEnd);
     expect(patchBlock).toMatch(/kind_set_at = CASE/);
-    // L-085: WHEN operand must be a JS-computed boolean, NOT a bare `${param} IS NOT NULL`
+    // L-086: WHEN operand must be a JS-computed boolean, NOT a bare `${param} IS NOT NULL`
     // (type-indeterminate at parse -> 42P18). Equivalent guard: hasKind && body.kind != null.
     expect(patchBlock).toMatch(/WHEN \$\{hasKind && body\.kind != null\} AND kind IS NULL THEN NOW\(\)/);
   });

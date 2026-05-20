@@ -1,4 +1,4 @@
-// L-085 regression guard — Postgres 42P18 "could not determine data type of parameter".
+// L-086 regression guard — Postgres 42P18 "could not determine data type of parameter".
 //
 // Root cause (prod incident 2026-05-19, project edit/rename returned 500): the PUT
 // and S6 admin PATCH UPDATE statements stamped kind_set_at with
@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
-describe('projects Lambda parameter typing (L-085 / 42P18 guard)', () => {
+describe('projects Lambda parameter typing (L-086 / 42P18 guard)', () => {
   it('no tagged-template parameter is used solely in `IS NOT NULL`', () => {
     // Matches `${ ... }` immediately followed by IS NOT NULL — the exact
     // type-indeterminate shape that triggered 42P18.
