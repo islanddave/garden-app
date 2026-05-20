@@ -2,13 +2,31 @@
 """
 dev-main-schema-audit.py - L-081 enforcement (canonical home: garden-app/scripts/)
 
-Verifies every column asserted in `lambda/**/select-columns.test.js` is present
-in prod Neon's information_schema.columns. Catches the L-081 bug class
-(local_3f62f153 2026-05-19 prod incident E-local_3f62f153-001): code references
-columns that exist in staging but not prod, deploy succeeds, every endpoint 500s.
+Verifies that lambda code's column references resolve against prod Neon's
+information_schema.columns. Catches the L-081 bug class (local_3f62f153
+2026-05-19 prod incident E-local_3f62f153-001): code references columns that
+exist in staging but not prod, deploy succeeds, every endpoint 500s.
+
+Two phases (both run; failure in either fails the audit):
+
+  Phase 1 - select-columns.test.js assertions.
+    Every column asserted in `lambda/**/select-columns.test.js` arrays must
+    exist in prod. Covers SELECT/RETURNING response-shape columns that have a
+    static-source contract test.
+
+  Phase 2 - INSERT column lists (added 2026-05-19, local_ba595ceb).
+    Every column named in an `INSERT INTO <table> ( ... ) VALUES|SELECT`
+    column list across `lambda/**/index.js` must exist in prod. This is the
+    write-path blind spot Phase 1 missed: PATCH/POST handlers that INSERT into
+    a column the prod schema lacks would 500 (or violate a constraint) with no
+    select-columns.test.js coverage. Scope is deliberately limited to the
+    parenthesized column list immediately preceding VALUES/SELECT - the
+    unambiguous, regex-tractable subset of inline SQL. Column refs buried in
+    SELECT/WHERE/SET/jsonb_build_object/RETURNING are NOT audited here (full
+    SQL parse is a separate, fragility-prone effort - intentionally deferred).
 
 Pre-flight gate. Run before any dev->main squash-merge on garden-app.
-Returns PASS / FAIL with specific missing (file, table, column) tuples on FAIL.
+Returns PASS / FAIL with specific (file, table, column) tuples on FAIL.
 Wired into `.github/workflows/schema-audit.yml` as an advisory PR check.
 
 Usage:
@@ -20,14 +38,12 @@ Default env-file:  {repo-root}/.env.local  (reads NEON_DATABASE_URL per L-067)
 Env var:          NEON_DATABASE_URL takes precedence over .env.local (CI path)
 
 Exit codes:
-    0 = PASS  (all expected columns present in prod)
+    0 = PASS  (all referenced columns present in prod)
     1 = FAIL  (one or more columns missing in prod -- halt squash-merge)
     2 = error (config / connection / parse failure -- inconclusive)
 
 Related: L-081 in /Users/davenichols/AI/Claude/learning/lessons.md
-Sync: a reference copy lives at ~/AI/Claude/claude-ops/scripts/. This garden-app
-location is canonical for CI and local invocation against garden-app. Keep in sync
-when modifying behavior.
+Canonical home: garden-app/scripts/ (CI + local invocation against garden-app).
 """
 import argparse
 import glob
@@ -52,7 +68,8 @@ def load_neon_url(env_path: Path | None) -> str | None:
 
 
 def parse_test_file(path: Path) -> list[tuple[str, list[str]]]:
-    """Returns [(table, [columns]), ...] tuples from a select-columns.test.js file.
+    """Phase 1. Returns [(table, [columns]), ...] tuples from a
+    select-columns.test.js file.
 
     Strategy: extract target table from the extractSelectBlocks regex pattern
     (e.g., FROM\\s+plants), then collect every `const X_COLUMNS = ['...', '...']`
@@ -78,6 +95,41 @@ def parse_test_file(path: Path) -> list[tuple[str, list[str]]]:
         cols = re.findall(r"['\"]([a-zA-Z_][a-zA-Z0-9_]*)['\"]", cols_text)
         if cols:
             results.append((table, cols))
+    return results
+
+
+# Identifiers that appear inside INSERT column-list parens but are NOT columns.
+# Defensive guard; column lists are normally bare identifiers only.
+_INSERT_NONCOL = set()
+
+
+def parse_insert_blocks(path: Path) -> list[tuple[str, list[str], int]]:
+    """Phase 2. Returns [(table, [columns], approx_line), ...] from
+    `INSERT INTO [public.]<table> ( <cols> ) VALUES|SELECT` statements in a
+    Lambda handler .js file.
+
+    Only the parenthesized column list immediately preceding VALUES or SELECT
+    is parsed. `[^)]*` for the column body is safe because a column list never
+    contains nested parens (function calls / VALUES tuples live AFTER the list).
+    ON CONFLICT (...) clauses are not matched (they follow VALUES, not precede).
+    """
+    src = path.read_text()
+    results = []
+    pattern = re.compile(
+        r"INSERT\s+INTO\s+(?:public\.)?(\w+)\s*\(([^)]*)\)\s*(?:VALUES|SELECT)\b",
+        re.IGNORECASE,
+    )
+    for m in pattern.finditer(src):
+        table = m.group(1)
+        cols_text = m.group(2)
+        # Bare identifiers only. A column list is comma-separated identifiers;
+        # anything with a non-identifier char (a SQL expr) wouldn't be valid
+        # here, so plain \b token extraction is correct + low-false-positive.
+        raw = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", cols_text)
+        cols = [c for c in raw if c.lower() not in _INSERT_NONCOL]
+        approx_line = src[: m.start()].count("\n") + 1
+        if cols:
+            results.append((table, cols, approx_line))
     return results
 
 
@@ -131,9 +183,12 @@ def main() -> int:
     test_files = sorted(
         glob.glob(str(repo / "lambda" / "**" / "select-columns.test.js"), recursive=True)
     )
-    if not test_files:
+    handler_files = sorted(
+        glob.glob(str(repo / "lambda" / "**" / "index.js"), recursive=True)
+    )
+    if not test_files and not handler_files:
         print(
-            f"FAIL: no select-columns.test.js files under {repo}/lambda",
+            f"FAIL: no select-columns.test.js or index.js files under {repo}/lambda",
             file=sys.stderr,
         )
         return 2
@@ -141,58 +196,71 @@ def main() -> int:
     if args.verbose:
         print(f"# repo: {repo}")
         print(f"# env:  {env_path}")
-        print(f"# found {len(test_files)} test file(s):")
-        for tf in test_files:
-            print(f"#   - {Path(tf).relative_to(repo)}")
+        print(f"# Phase 1: {len(test_files)} select-columns.test.js file(s)")
+        print(f"# Phase 2: {len(handler_files)} handler index.js file(s)")
         print()
 
     conn = psycopg2.connect(neon_url)
 
     table_cache: dict[str, set[str]] = {}
-    missing: list[tuple[str, str, str]] = []
-    total_cols = 0
-    asserted: list[tuple[str, str, str]] = []  # (rel_file, table, col)
 
+    def cols_for(table: str) -> set[str]:
+        if table not in table_cache:
+            table_cache[table] = query_prod_columns(conn, table)
+        return table_cache[table]
+
+    # (phase, rel_file, table, col) for asserted + missing
+    asserted: list[tuple[str, str, str, str]] = []
+    missing: list[tuple[str, str, str, str]] = []
+
+    # --- Phase 1: select-columns.test.js assertions ---
     for tf in test_files:
         rel = str(Path(tf).relative_to(repo))
         parsed = parse_test_file(Path(tf))
         if not parsed:
-            print(
-                f"WARN: could not parse table/columns from {rel} -- skipping",
-                file=sys.stderr,
-            )
+            print(f"WARN: could not parse table/columns from {rel} -- skipping", file=sys.stderr)
             continue
         for table, cols in parsed:
-            if table not in table_cache:
-                table_cache[table] = query_prod_columns(conn, table)
-            prod_cols = table_cache[table]
+            prod_cols = cols_for(table)
             for col in cols:
-                total_cols += 1
-                asserted.append((rel, table, col))
+                asserted.append(("P1", rel, table, col))
                 if col not in prod_cols:
-                    missing.append((rel, table, col))
+                    missing.append(("P1", rel, table, col))
+
+    # --- Phase 2: INSERT column lists in handler files ---
+    for hf in handler_files:
+        rel = str(Path(hf).relative_to(repo))
+        for table, cols, line in parse_insert_blocks(Path(hf)):
+            prod_cols = cols_for(table)
+            for col in cols:
+                ref = f"{rel}:{line}"
+                asserted.append(("P2", ref, table, col))
+                if col not in prod_cols:
+                    missing.append(("P2", ref, table, col))
 
     conn.close()
 
     if args.verbose:
-        for rel, table, col in asserted:
-            status = "MISS" if col not in table_cache[table] else "OK"
-            print(f"{status:4s}  {table}.{col}  ({rel})")
+        for phase, ref, table, col in asserted:
+            status = "MISS" if col not in table_cache.get(table, set()) else "OK"
+            print(f"{status:4s}  [{phase}] {table}.{col}  ({ref})")
         print()
 
+    total = len(asserted)
     if missing:
+        p1 = sum(1 for m in missing if m[0] == "P1")
+        p2 = sum(1 for m in missing if m[0] == "P2")
         print(
-            f"FAIL: {len(missing)} of {total_cols} columns asserted in lambda tests "
-            f"are MISSING in prod Neon:"
+            f"FAIL: {len(missing)} of {total} column refs are MISSING in prod Neon "
+            f"(Phase 1: {p1}, Phase 2: {p2}):"
         )
-        # Group by table for readability.
-        by_table: dict[str, list[tuple[str, str]]] = {}
-        for rel, table, col in missing:
-            by_table.setdefault(table, []).append((col, rel))
+        by_table: dict[str, list[tuple[str, str, str]]] = {}
+        for phase, ref, table, col in missing:
+            by_table.setdefault(table, []).append((col, ref, phase))
         for table in sorted(by_table):
             print(f"  {table}:")
-            for col, rel in by_table[table]:
-                print(f"    - {col}  ({rel})")
+            for col, ref, phase in by_table[table]:
+                print(f"    - {col}  [{phase}] ({ref})")
         print()
         print(
             "L-081 enforcement: HALT before squash-merge. Apply the additive migration "
@@ -201,7 +269,8 @@ def main() -> int:
         return 1
 
     print(
-        f"PASS: {total_cols} columns across {len(test_files)} test file(s) all present in prod Neon."
+        f"PASS: {total} column refs "
+        f"(Phase 1 select-columns + Phase 2 INSERT lists) all present in prod Neon."
     )
     print(f"Tables verified: {', '.join(sorted(table_cache.keys()))}")
     return 0
