@@ -220,7 +220,7 @@ describe('ProjectsAdminClassify — ready-to-migrate copy block', () => {
     await act(async () => { render(<ProjectsAdminClassify />) })
     await waitFor(() => expect(screen.getByText(/Ready to migrate/i)).toBeDefined())
     expect(screen.getByText(/apply-prod-migrations\.py/)).toBeDefined()
-    expect(screen.getByText(/--pattern s6-0a/)).toBeDefined()
+    expect(screen.getByText(/proj-rescope\/s6-0a/)).toBeDefined()
   })
 
   it('hides the ready block when rows remain unclassified', async () => {

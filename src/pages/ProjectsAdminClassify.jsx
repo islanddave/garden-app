@@ -23,7 +23,7 @@ const KIND_OPTIONS = [
   { value: 'cultivar', label: 'Cultivar (variety reference)' },
 ]
 
-const MIGRATE_CMD = 'python3 claude-ops/scripts/apply-prod-migrations.py --target prod --mig-dir claude-ops/scripts/proj-rescope --pattern s6-0a'
+const MIGRATE_CMD = 'python3 claude-ops/scripts/apply-prod-migrations.py --target prod --mig-dir claude-ops/scripts/proj-rescope/s6-0a'
 
 export default function ProjectsAdminClassify() {
   const [isDesktop, setIsDesktop] = useState(
