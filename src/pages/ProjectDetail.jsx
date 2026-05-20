@@ -533,14 +533,14 @@ export default function ProjectDetail() {
       <div style={{ marginTop: 28 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: P.dark }}>
-            Plants
+            Plantings
             {plants.length > 0 && (
               <span style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.82rem', color: P.light }}>({plants.length})</span>
             )}
           </h2>
           <button onClick={() => { setShowAddPlant(v => !v); setPlantErr(null) }}
             style={showAddPlant ? ghostBtn : outlineBtn}>
-            {showAddPlant ? 'Cancel' : '+ Add plant'}
+            {showAddPlant ? 'Cancel' : '+ Add planting'}
           </button>
         </div>
 
@@ -642,7 +642,7 @@ export default function ProjectDetail() {
 
             <div style={{ display: 'flex', gap: 12, paddingTop: 14, borderTop: `1px solid ${P.border}` }}>
               <button type="submit" disabled={addingPlant} style={primaryBtn(addingPlant)}>
-                {addingPlant ? 'Adding…' : 'Add plant'}
+                {addingPlant ? 'Adding…' : 'Add planting'}
               </button>
               <button type="button" onClick={() => { setShowAddPlant(false); setPlantErr(null) }} style={ghostBtn}>
                 Cancel
@@ -655,7 +655,7 @@ export default function ProjectDetail() {
           <div style={{ padding: '16px 0', color: P.light, fontSize: '0.875rem' }}>Loading…</div>
         ) : plants.length === 0 ? (
           <div style={{ padding: '24px 20px', textAlign: 'center', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8, color: P.light, fontSize: '0.875rem' }}>
-            No plants yet — add individuals or groups above.
+            No plantings yet — add individuals or groups above.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

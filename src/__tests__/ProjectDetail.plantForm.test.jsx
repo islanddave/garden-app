@@ -79,9 +79,9 @@ beforeEach(() => {
 })
 
 async function openAddPlantForm() {
-  await waitFor(() => expect(screen.getByText('+ Add plant')).toBeDefined())
+  await waitFor(() => expect(screen.getByText('+ Add planting')).toBeDefined())
   await act(async () => {
-    fireEvent.click(screen.getByText('+ Add plant'))
+    fireEvent.click(screen.getByText('+ Add planting'))
   })
 }
 
