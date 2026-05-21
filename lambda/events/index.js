@@ -23,7 +23,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validatePostBody, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE } from './validators.js';
-import { householdScope } from '../household.js';
+import { householdScope } from './household.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 

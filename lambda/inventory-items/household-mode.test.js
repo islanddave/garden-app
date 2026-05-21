@@ -13,7 +13,7 @@ const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
 describe('inventory-items Lambda — Household Mode scope widening', () => {
   it('imports householdScope + computes householdIds', () => {
-    expect(SRC).toMatch(/import \{ householdScope \} from '\.\.\/household\.js'/);
+    expect(SRC).toMatch(/import \{ householdScope \} from '\.\/household\.js'/);
     expect(SRC).toMatch(/const householdIds = householdScope\(userId\)/);
   });
 

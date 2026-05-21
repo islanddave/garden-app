@@ -13,7 +13,7 @@ const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
 describe('photos Lambda — Household Mode uploaded_by -> created_by switch', () => {
   it('imports householdScope + computes householdIds', () => {
-    expect(SRC).toMatch(/import \{ householdScope \} from '\.\.\/household\.js'/);
+    expect(SRC).toMatch(/import \{ householdScope \} from '\.\/household\.js'/);
     expect(SRC).toMatch(/const householdIds = householdScope\(userId\)/);
   });
 

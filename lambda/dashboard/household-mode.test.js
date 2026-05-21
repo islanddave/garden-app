@@ -13,7 +13,7 @@ const SRC = readFileSync(resolve(__dirname, 'handlers.js'), 'utf8');
 
 describe('dashboard handlers — Household Mode scope widening', () => {
   it('imports householdScope from ../household.js (pure module, env-only)', () => {
-    expect(SRC).toMatch(/import \{ householdScope \} from '\.\.\/household\.js'/);
+    expect(SRC).toMatch(/import \{ householdScope \} from '\.\/household\.js'/);
   });
 
   it('handlers.js remains free of @neondatabase/serverless import (still pure)', () => {

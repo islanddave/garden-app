@@ -3,7 +3,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { householdScope } from '../household.js';
+import { householdScope } from './household.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // requestChecksumCalculation/responseChecksumValidation: newer SDK v3 versions (3.679+) default

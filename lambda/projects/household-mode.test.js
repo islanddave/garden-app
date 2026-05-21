@@ -14,7 +14,7 @@ const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
 describe('projects Lambda — Household Mode scope widening', () => {
   it('imports householdScope from ../household.js', () => {
-    expect(SRC).toMatch(/import \{ householdScope \} from '\.\.\/household\.js'/);
+    expect(SRC).toMatch(/import \{ householdScope \} from '\.\/household\.js'/);
   });
 
   it('computes householdIds after the neon() client', () => {

@@ -33,7 +33,7 @@ const OUT_OF_SCOPE = [
   'dashboard/index.js', // wrapper — householdScope is computed inside builders, not the wrapper
 ];
 
-const IMPORT_RE = /import \{[^}]*\bhouseholdScope\b[^}]*\} from '\.\.\/household\.js'/;
+const IMPORT_RE = /import \{[^}]*\bhouseholdScope\b[^}]*\} from '\.\/household\.js'/;
 
 function read(rel) {
   return readFileSync(resolve(LAMBDA_ROOT, rel), 'utf8');

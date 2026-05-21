@@ -17,7 +17,7 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 // ---- Pure validators ------------------------------------------------------
 
-import { householdScope } from '../household.js';
+import { householdScope } from './household.js';
 
 export function isValidUuid(s) {
   return typeof s === 'string' && UUID_RE.test(s);
