@@ -1,8 +1,11 @@
 import { P } from '../lib/constants.js'
 
 // ── App version injected by vite.config.js at build time ──
-// Falls back to '0.1.0' in dev if define hasn't been configured yet.
-const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.0.0'
+// Uses __APP_VERSION__ global (defined via vite.config.js `define`) — reliable in Vite 8/Rolldown.
+// import.meta.env.VITE_APP_VERSION is NOT used: no .env entry exists and Rolldown's
+// handling of define-overriding import.meta.env.* is inconsistent vs classic Vite.
+// Falls back to '0.0.0' in case the build config is missing the define.
+const APP_VERSION = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null) || '0.0.0'
 
 // I10-timestamp fix (2026-05-18, V1.2a-3 Increment C / PR-C2):
 // dropped "Loaded HH:MM:SS" — raw page-load wall-clock looked like dev debug output to users.
