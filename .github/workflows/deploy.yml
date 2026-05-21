@@ -132,7 +132,7 @@ jobs:
         # commit that creates it via deploy-lambda.yml — SPA deploy.yml may run first and find the function
         # not yet provisioned). Fixed 2026-05-12 (3f27c817 V1.2a-1 Session 2 first-deploy of garden-app-events).
         run: |
-          CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
+          CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","PATCH","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
           for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events garden-achievements; do
             if aws lambda get-function --function-name "$fn" >/dev/null 2>&1; then
               echo -n "CORS $fn: "
