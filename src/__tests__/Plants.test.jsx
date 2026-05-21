@@ -124,6 +124,7 @@ beforeEach(() => {
   navigateSpy.mockReset()
   setSearchParamsSpy.mockClear()
   searchParamsRef.current = new URLSearchParams()
+  try { localStorage.clear() } catch (e) {}
 })
 
 // Helper that primes the initial /api/plants + /api/projects mount fetches.
@@ -137,9 +138,9 @@ describe('Plants — initial load', () => {
     primeMountFetches()
     render(<Plants />)
     await waitFor(() => {
-      expect(screen.getByText(/No plants yet/)).toBeDefined()
+      expect(screen.getByText(/No plantings yet/)).toBeDefined()
     })
-    expect(screen.getByText(/Plants/)).toBeDefined()
+    expect(screen.getByText(/🌿 Plantings/)).toBeDefined()
   })
 
   it('lists plants from /api/plants', async () => {
@@ -165,7 +166,7 @@ describe('Plants — add new plant', () => {
   it('opens add form when "+ New Plant" clicked', async () => {
     primeMountFetches()
     render(<Plants />)
-    await waitFor(() => screen.getByText(/No plants yet/))
+    await waitFor(() => screen.getByText(/No plantings yet/))
     fireEvent.click(screen.getByText(/\+ New Plant/))
     // Form header (div) AND submit button (button) both contain "Add plant" — assert both exist.
     expect(screen.getAllByText(/Add plant/i).length).toBeGreaterThan(0)
@@ -175,7 +176,7 @@ describe('Plants — add new plant', () => {
   it('submits with variety_id and dual-write variety text when variety picked', async () => {
     primeMountFetches()
     render(<Plants />)
-    await waitFor(() => screen.getByText(/No plants yet/))
+    await waitFor(() => screen.getByText(/No plantings yet/))
 
     fireEvent.click(screen.getByText(/\+ New Plant/))
     fireEvent.change(screen.getByLabelText(/Name \*/i), { target: { value: 'New Plant' } })
@@ -191,7 +192,7 @@ describe('Plants — add new plant', () => {
     })
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /^Add plant$/i }))
+      fireEvent.click(screen.getByRole('button', { name: /^Add planting$/i }))
     })
 
     const postCall = fetchSpy.mock.calls.find(c => c[0] === '/api/plants' && c[1]?.method === 'POST')
@@ -208,7 +209,7 @@ describe('Plants — add new plant', () => {
   it('submits with variety_id=null when no variety picked', async () => {
     primeMountFetches()
     render(<Plants />)
-    await waitFor(() => screen.getByText(/No plants yet/))
+    await waitFor(() => screen.getByText(/No plantings yet/))
 
     fireEvent.click(screen.getByText(/\+ New Plant/))
     fireEvent.change(screen.getByLabelText(/Name \*/i), { target: { value: 'Plain Plant' } })
@@ -216,7 +217,7 @@ describe('Plants — add new plant', () => {
     fetchSpy.mockResolvedValueOnce({ id: 'plant-new', name: 'Plain Plant', project_id: 'proj-1' })
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /^Add plant$/i }))
+      fireEvent.click(screen.getByRole('button', { name: /^Add planting$/i }))
     })
 
     const postCall = fetchSpy.mock.calls.find(c => c[0] === '/api/plants' && c[1]?.method === 'POST')
@@ -270,7 +271,7 @@ describe('Plants — Plant-from-packet deep link', () => {
     })
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /^Add plant$/i }))
+      fireEvent.click(screen.getByRole('button', { name: /^Add planting$/i }))
     })
 
     const postCall = fetchSpy.mock.calls.find(c => c[0] === '/api/plants' && c[1]?.method === 'POST')
@@ -382,5 +383,28 @@ describe('Plants — V1.2a-3 Increment A (I2a-display)', () => {
     await waitFor(() => screen.getByText((_c, el) =>
       el?.tagName === 'SPAN' && /Cherry Tomato/.test(el?.textContent || '')))
     expect(screen.queryByAltText('Cherry Tomato photo')).toBeNull()
+  })
+})
+
+describe('Plants — Plant→Planting rename notice (S5)', () => {
+  it('shows the ambient rename notice on first visit, then dismisses persistently', async () => {
+    try { localStorage.removeItem('plantings-rename-note-dismissed') } catch (e) {}
+    primeMountFetches()
+    render(<Plants />)
+    await waitFor(() => screen.getByText(/No plantings yet/))
+    const note = screen.getByRole('status')
+    expect(note).toBeDefined()
+    expect(/calling these/i.test(note.textContent || '')).toBe(true)
+    fireEvent.click(screen.getByLabelText('Dismiss'))
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(localStorage.getItem('plantings-rename-note-dismissed')).toBe('1')
+  })
+
+  it('stays hidden once dismissed', async () => {
+    try { localStorage.setItem('plantings-rename-note-dismissed', '1') } catch (e) {}
+    primeMountFetches()
+    render(<Plants />)
+    await waitFor(() => screen.getByText(/No plantings yet/))
+    expect(screen.queryByRole('status')).toBeNull()
   })
 })

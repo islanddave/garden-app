@@ -3,6 +3,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { householdScope } from './household.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -105,6 +106,8 @@ export const handler = async (event) => {
   }
 
   const sql = neon(secrets.NEON_DATABASE_URL);
+  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  const householdIds = householdScope(userId);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/inventory-items';
 
@@ -120,7 +123,7 @@ export const handler = async (event) => {
           FROM inventory_items i
           LEFT JOIN photos fp ON fp.id = i.featured_photo_id
           WHERE i.id = ${itemId}
-            AND i.created_by = ${userId}
+            AND i.created_by = ANY(${householdIds})
             AND i.deleted_at IS NULL
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
@@ -142,7 +145,7 @@ export const handler = async (event) => {
             SELECT 1 FROM photos
              WHERE id = ${body.featured_photo_id}
                AND inventory_item_id = ${itemId}
-               AND uploaded_by = ${userId}
+               AND created_by = ANY(${householdIds})
           `;
           if (!linkRows.length) {
             return resp(400, { error: 'featured_photo_id must be a photo linked to this inventory item' });
@@ -155,6 +158,9 @@ export const handler = async (event) => {
 
         // PUT replaces all editable fields. Frontend sends complete payload.
         // type-discrimination enforced by nullifying off-type fields server-side.
+        // HOUSEHOLD-MODE TODO: concurrent quantity edits have a lost-update window — PUT writes an
+        // absolute quantity (client read-modify-write; no optimistic updated_at/expected guard).
+        // Backend-safe today; revisit as a fast-follow if both members adjust counts concurrently.
         const rows = await sql`
           UPDATE inventory_items SET
             name              = ${body.name ?? null},
@@ -185,7 +191,7 @@ export const handler = async (event) => {
               ELSE featured_photo_id
             END
           WHERE id = ${itemId}
-            AND created_by = ${userId}
+            AND created_by = ANY(${householdIds})
             AND deleted_at IS NULL
           RETURNING *
         `;
@@ -198,7 +204,7 @@ export const handler = async (event) => {
           UPDATE inventory_items
           SET deleted_at = NOW()
           WHERE id = ${itemId}
-            AND created_by = ${userId}
+            AND created_by = ANY(${householdIds})
             AND deleted_at IS NULL
           RETURNING id
         `;
@@ -212,7 +218,7 @@ export const handler = async (event) => {
     if (method === 'GET') {
       const rows = await sql`
         SELECT * FROM inventory_items
-        WHERE created_by = ${userId}
+        WHERE created_by = ANY(${householdIds})
           AND deleted_at IS NULL
         ORDER BY created_at DESC
       `;

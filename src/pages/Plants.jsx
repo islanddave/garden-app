@@ -39,6 +39,7 @@ export default function Plants() {
   const [editSaving, setEditSaving] = useState(false)
   const [editErr,    setEditErr]    = useState(null)
   const [deleting,   setDeleting]   = useState(null)
+  const [showRenameNote, setShowRenameNote] = useState(() => { try { return localStorage.getItem('plantings-rename-note-dismissed') !== '1' } catch (e) { return false } })
 
   // Source-packet preview (when deep-linked from InventoryDetail).
   const [sourcePacket, setSourcePacket] = useState(null)
@@ -224,16 +225,23 @@ export default function Plants() {
   return (
     <div style={{ maxWidth: 640, margin: '0 auto', padding: '16px 16px 32px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-        <h1 style={{ margin: 0, fontSize: '1.4rem', color: P.dark }}>🌿 Plants</h1>
+        <h1 style={{ margin: 0, fontSize: '1.4rem', color: P.dark }}>🌿 Plantings</h1>
         <button onClick={() => { setShowAdd(v => !v); setErr(null) }}
           style={showAdd ? gBtn : { ...pBtn(false), fontSize: '0.85rem', padding: '8px 14px' }}>
-          {showAdd ? 'Cancel' : '+ New Plant'}
+          {showAdd ? 'Cancel' : '+ New Planting'}
         </button>
       </div>
 
+      {showRenameNote && (
+        <div role="status" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: P.greenPale, border: `1px solid ${P.green}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '0.85rem', color: P.dark }}>
+          <span>{"We're calling these "}<strong>Plantings</strong>{" now — more coming."}</span>
+          <button type="button" aria-label="Dismiss" onClick={() => { setShowRenameNote(false); try { localStorage.setItem('plantings-rename-note-dismissed', '1') } catch (e) {} }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '1.1rem', lineHeight: 1, padding: '0 4px' }}>×</button>
+        </div>
+      )}
+
       {showAdd && (
         <form onSubmit={handleAdd} style={{ ...card, marginBottom: 20 }}>
-          <div style={{ fontWeight: 600, marginBottom: 12, color: P.green }}>Add plant</div>
+          <div style={{ fontWeight: 600, marginBottom: 12, color: P.green }}>Add planting</div>
           {sourcePacket && (
             <div style={{
               backgroundColor: P.greenPale, border: `1px solid ${P.green}`,
@@ -300,7 +308,7 @@ export default function Plants() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button type="submit" disabled={saving} style={pBtn(saving)}>{saving ? 'Adding…' : 'Add plant'}</button>
+            <button type="submit" disabled={saving} style={pBtn(saving)}>{saving ? 'Adding…' : 'Add planting'}</button>
             <button type="button" onClick={() => { setShowAdd(false); clearQueryParams() }} style={gBtn}>Cancel</button>
           </div>
         </form>
@@ -309,7 +317,7 @@ export default function Plants() {
       {loading ? (
         <p style={{ color: P.light, textAlign: 'center', marginTop: 40 }}>Loading…</p>
       ) : plants.length === 0 ? (
-        <p style={{ color: P.light, textAlign: 'center', marginTop: 40 }}>No plants yet — add one above.</p>
+        <p style={{ color: P.light, textAlign: 'center', marginTop: 40 }}>No plantings yet — add one above.</p>
       ) : plants.map(plant => (
         <div key={plant.id} style={card}>
           {/* I9 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): alignItems 'flex-start' → 'center'
