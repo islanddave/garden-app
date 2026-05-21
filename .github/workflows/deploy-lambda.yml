@@ -150,7 +150,7 @@ jobs:
           aws lambda update-function-url-config \
             --function-name "garden-${{ matrix.function }}" \
             --region us-east-1 \
-            --cors '{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}' \
+            --cors '{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","PATCH","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}' \
             --query 'Cors.AllowOrigins[0]' --output text
           echo "CORS restored for garden-${{ matrix.function }}"
 
