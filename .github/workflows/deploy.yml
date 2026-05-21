@@ -5,12 +5,11 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      version_bump:
-        description: 'Version bump applied before build (patch|minor|major|none). Defaults to patch on push triggers.'
+      skip_version_bump:
+        description: 'Skip auto-bump (use when package.json was manually set to a specific version, e.g. v2.0.0 or a named release bucket)'
         required: false
-        default: 'patch'
-        type: choice
-        options: [patch, minor, major, none]
+        default: false
+        type: boolean
 
 permissions:
   id-token: write
@@ -37,16 +36,24 @@ jobs:
 
       - name: Bump version
         run: |
-          BUMP="${{ github.event.inputs.version_bump }}"
-          BUMP="${BUMP:-patch}"
-          if [[ "$BUMP" == "none" ]]; then
-            echo "Version bump skipped (none)."
+          # Auto-versioning rubric (no Dave input needed except for majors):
+          #   patch  — default; bug fixes, backend changes, CI, schema migrations, small UI tweaks
+          #   minor  — include [minor] in PR title or merge commit for new user-facing features/surfaces
+          #   major  — Dave sets package.json manually on dev before the PR; use skip_version_bump on dispatch
+          if [[ "${{ github.event.inputs.skip_version_bump }}" == "true" ]]; then
+            echo "Version bump skipped (manual override — preserving package.json version)."
             exit 0
+          fi
+          MSG=$(git log -1 --pretty=%B)
+          if echo "$MSG" | grep -qi '\[minor\]'; then
+            BUMP=minor
+          else
+            BUMP=patch
           fi
           OLD=$(node -p "require('./package.json').version")
           npm version "$BUMP" --no-git-tag-version
           NEW=$(node -p "require('./package.json').version")
-          echo "Version: $OLD → $NEW"
+          echo "Version: $OLD → $NEW ($BUMP bump)"
           echo "NEW_VERSION=$NEW" >> "$GITHUB_ENV"
 
       - name: Validate env vars
