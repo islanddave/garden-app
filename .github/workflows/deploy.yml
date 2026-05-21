@@ -4,10 +4,17 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump applied before build (patch|minor|major|none). Defaults to patch on push triggers.'
+        required: false
+        default: 'patch'
+        type: choice
+        options: [patch, minor, major, none]
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
 
 concurrency:
   group: production-deploy
@@ -27,6 +34,20 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
+
+      - name: Bump version
+        run: |
+          BUMP="${{ github.event.inputs.version_bump }}"
+          BUMP="${BUMP:-patch}"
+          if [[ "$BUMP" == "none" ]]; then
+            echo "Version bump skipped (none)."
+            exit 0
+          fi
+          OLD=$(node -p "require('./package.json').version")
+          npm version "$BUMP" --no-git-tag-version
+          NEW=$(node -p "require('./package.json').version")
+          echo "Version: $OLD → $NEW"
+          echo "NEW_VERSION=$NEW" >> "$GITHUB_ENV"
 
       - name: Validate env vars
         run: |
@@ -132,7 +153,7 @@ jobs:
         # commit that creates it via deploy-lambda.yml — SPA deploy.yml may run first and find the function
         # not yet provisioned). Fixed 2026-05-12 (3f27c817 V1.2a-1 Session 2 first-deploy of garden-app-events).
         run: |
-          CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","PATCH","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
+          CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
           for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events garden-achievements; do
             if aws lambda get-function --function-name "$fn" >/dev/null 2>&1; then
               echo -n "CORS $fn: "
@@ -167,3 +188,22 @@ jobs:
             fi
           done
           [[ "$HEALTH_FAIL" -eq 0 ]] || { echo "FATAL: $HEALTH_FAIL Lambda(s) not Active post-deploy"; exit 1; }
+
+      - name: Commit version bump to dev
+        if: env.NEW_VERSION != ''
+        # Writes the bumped package.json back to dev so future builds start from the new version.
+        # Uses GITHUB_TOKEN (contents: write). If dev branch protection blocks it, set GH_PAT_GARDEN
+        # secret (fine-grained, contents:write on garden-app) and swap token below.
+        run: |
+          SHA=$(curl -s \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/contents/package.json?ref=dev" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])")
+          CONTENT=$(base64 -w 0 package.json)
+          curl -s -X PUT \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${{ github.repository }}/contents/package.json" \
+            -d "{\"message\":\"chore: bump version to ${{ env.NEW_VERSION }} [deploy auto]\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\",\"branch\":\"dev\"}" \
+            | python3 -c "import json,sys; r=json.load(sys.stdin); print('✅ v${{ env.NEW_VERSION }} committed to dev:', r['commit']['sha'][:12])" \
+            || echo "⚠️ Version commit to dev failed — bump package.json manually on dev"
