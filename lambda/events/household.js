@@ -1,7 +1,10 @@
 // household.js — Household Mode scope helper (V2 multi-user bridge).
 // HOUSEHOLD-MODE: remove at V3-ROLES (DB-layer RLS via current_user_role() replaces this).
 // Returns the set of owner Clerk IDs whose rows a request may see/modify.
-// Fail-closed: empty/unset/whitespace env -> just the requesting user (single-user behavior).
+//
+// MEMBERSHIP-GATED: widen to the configured household ONLY when the requester is a member
+// of it; otherwise return just their own id. A non-member who authenticates must NEVER see
+// the household's data. Fail-closed: empty/unset/whitespace env -> [userId] (single-user).
 //
 // DEPLOY NOTE: each Lambda is zipped from its OWN directory (deploy-lambda.yml / deploy-staging.yml:
 // `cd lambda/<fn> && zip -r ../<fn>.zip .`), so a `../household.js` import is NOT packaged and the
@@ -10,7 +13,7 @@
 // source + unit-test target; copies are kept byte-identical by lambda/household-copies-sync.test.js.
 export function householdScope(userId) {
   const raw = (process.env.GARDEN_HOUSEHOLD_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean);
-  return raw.length ? raw : [userId];
+  return raw.includes(userId) ? raw : [userId];
 }
 export function householdActive() {
   const raw = (process.env.GARDEN_HOUSEHOLD_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean);

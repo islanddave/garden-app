@@ -40,20 +40,30 @@ describe('householdScope — fail-closed single-user reversibility', () => {
   });
 });
 
-describe('householdScope — populated env widens the set', () => {
-  it('"a,b" -> ["a","b"]', () => {
+describe('householdScope — membership-gated widening (leak-free)', () => {
+  it('member requester: "a,b" + requester "a" -> ["a","b"]', () => {
     setEnv('a,b');
-    expect(householdScope('user_A')).toEqual(['a', 'b']);
+    expect(householdScope('a')).toEqual(['a', 'b']);
   });
 
-  it('" a , b ,," -> ["a","b"] (trims + drops empties)', () => {
+  it('member requester: " a , b ,," + requester "b" -> ["a","b"] (trims + drops empties)', () => {
     setEnv(' a , b ,,');
-    expect(householdScope('user_A')).toEqual(['a', 'b']);
+    expect(householdScope('b')).toEqual(['a', 'b']);
   });
 
-  it('single populated id -> [that id] (does NOT fall back to userId)', () => {
+  it('NON-member requester: "a,b" + requester "user_X" -> ["user_X"] (no leak)', () => {
+    setEnv('a,b');
+    expect(householdScope('user_X')).toEqual(['user_X']);
+  });
+
+  it('single id + that same requester -> [that id]', () => {
     setEnv('only_owner');
-    expect(householdScope('user_A')).toEqual(['only_owner']);
+    expect(householdScope('only_owner')).toEqual(['only_owner']);
+  });
+
+  it('single id + different requester -> [requester] (no leak)', () => {
+    setEnv('only_owner');
+    expect(householdScope('user_A')).toEqual(['user_A']);
   });
 });
 
