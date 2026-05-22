@@ -57,16 +57,19 @@ describe('TopBar — NAV-IA-1 layout', () => {
     expect(screen.queryByText('Sign out')).toBeNull()
   })
 
-  it('renders the zone pill', () => {
+  // Zone pill DISABLED pre-V2 (2026-05-22): zone switching is a no-op for now, so the
+  // entry-point pill is commented out in TopBar.jsx. These tests assert it stays hidden.
+  it('does NOT render the zone pill (disabled pre-V2 — zone switching is a no-op for now)', () => {
     render(<TopBar />)
-    // Pin text appears as `📍 ` + `Everywhere` siblings inside the <a> — normalize via regex.
-    expect(screen.getByText(/Everywhere/)).toBeDefined()
+    expect(screen.queryByText(/Everywhere/)).toBeNull()
+    const links = screen.queryAllByRole('link')
+    expect(links.some(a => (a.getAttribute('href') || '').startsWith('/zone'))).toBe(false)
   })
 
-  it('shows active zone name when set', () => {
+  it('does NOT render an active zone name even when one is set in context', () => {
     zoneMock.activeZone = { name: 'Bedroom Tray' }
     render(<TopBar />)
-    expect(screen.getByText(/Bedroom Tray/)).toBeDefined()
+    expect(screen.queryByText(/Bedroom Tray/)).toBeNull()
   })
 
   it('renders Sign in link for unauthenticated users (and hides Favorites)', () => {
