@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>New England cottontail — Sylvilagus transitionalis</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-22" cy="40" rx="10" ry="5" fill="#8a6038"/>
+<ellipse cx="0" cy="22" rx="22" ry="20" fill="#8a6038"/>
+<ellipse cx="0" cy="26" rx="14" ry="10" fill="#f4ead6"/>
+<circle cx="22" cy="34" r="6" fill="#ffffff"/>
+<circle cx="0" cy="-12" r="22" fill="#8a6038"/>
+<ellipse cx="-10" cy="-30" rx="5" ry="16" fill="#8a6038" transform="rotate(-10 -10 -30)"/>
+<ellipse cx="10" cy="-30" rx="5" ry="16" fill="#8a6038" transform="rotate(10 10 -30)"/>
+<ellipse cx="-10" cy="-30" rx="2.5" ry="10" fill="#f4b6b6" transform="rotate(-10 -10 -30)"/>
+<ellipse cx="10" cy="-30" rx="2.5" ry="10" fill="#f4b6b6" transform="rotate(10 10 -30)"/>
+<path d="M -22 -22 L -10 -22" stroke="#1a1a1a" stroke-width="2"/>
+<circle cx="-8" cy="-12" r="5.5" fill="#ffffff"/>
+<circle cx="8" cy="-12" r="5.5" fill="#ffffff"/>
+<circle cx="-8" cy="-11" r="4" fill="#0ea5e9"/>
+<circle cx="8" cy="-11" r="4" fill="#0ea5e9"/>
+<circle cx="-8" cy="-10" r="2.3" fill="#0d0d0d"/>
+<circle cx="8" cy="-10" r="2.3" fill="#0d0d0d"/>
+<circle cx="-7" cy="-13" r="1.4" fill="#ffffff"/>
+<circle cx="10" cy="-13" r="1.4" fill="#ffffff"/>
+<path d="M -2 0 L 2 0 L 0 4 Z" fill="#f4b6b6"/>
+<path d="M 0 4 Q -2 6 -3 7 M 0 4 Q 2 6 3 7" stroke="#1a1a1a" stroke-width="0.8" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

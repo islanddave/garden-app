@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Marbled salamander — Ambystoma opacum</title>
+<g transform="translate(100, 100)">
+<ellipse cx="6" cy="0" rx="34" ry="11" fill="#0d0d0d"/>
+<path d="M 40 0 Q 52 -2 56 -4 Q 52 4 40 6 Z" fill="#0d0d0d"/>
+<path d="M -18 -8 L 18 -8 M -18 -2 L 18 -2 M -18 4 L 18 4" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+<ellipse cx="-14" cy="12" rx="3.5" ry="3" fill="#0d0d0d"/>
+<ellipse cx="-2" cy="12" rx="3.5" ry="3" fill="#0d0d0d"/>
+<ellipse cx="14" cy="12" rx="3.5" ry="3" fill="#0d0d0d"/>
+<ellipse cx="26" cy="12" rx="3.5" ry="3" fill="#0d0d0d"/>
+<ellipse cx="-30" cy="-1" rx="15" ry="12" fill="#0d0d0d"/>
+<path d="M -42 -6 L -32 -2" stroke="#ffffff" stroke-width="1.8"/>
+<circle cx="-36" cy="-3" r="4.5" fill="#ffffff"/>
+<circle cx="-24" cy="-3" r="4.5" fill="#ffffff"/>
+<circle cx="-36" cy="-2" r="3.2" fill="#ca8a04"/>
+<circle cx="-24" cy="-2" r="3.2" fill="#ca8a04"/>
+<circle cx="-36" cy="-1" r="1.8" fill="#0d0d0d"/>
+<circle cx="-24" cy="-1" r="1.8" fill="#0d0d0d"/>
+<circle cx="-35" cy="-4" r="1.1" fill="#ffffff"/>
+<circle cx="-23" cy="-4" r="1.1" fill="#ffffff"/>
+<path d="M -40 5 Q -30 9 -20 5" stroke="#3a3a3a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

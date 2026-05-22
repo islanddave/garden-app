@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Orange-crowned warbler — Leiothlypis celata</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-32" cy="6" rx="26" ry="11" fill="#e8f0f5" opacity="0.6" transform="rotate(-25 -32 6)" stroke="#9aa5ab" stroke-width="0.5"/>
+<ellipse cx="-32" cy="8" rx="23" ry="8" fill="#7a9468" opacity="0.4" transform="rotate(-18 -32 8)"/>
+<ellipse cx="32" cy="6" rx="26" ry="11" fill="#e8f0f5" opacity="0.6" transform="rotate(25 32 6)" stroke="#9aa5ab" stroke-width="0.5"/>
+<ellipse cx="32" cy="8" rx="23" ry="8" fill="#7a9468" opacity="0.4" transform="rotate(18 32 8)"/>
+<ellipse cx="0" cy="24" rx="22" ry="25" fill="#fef9c3"/>
+<ellipse cx="0" cy="14" rx="22" ry="14" fill="#7a9468"/>
+<line x1="-5" y1="46" x2="-5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="22" fill="#7a9468"/>
+<ellipse cx="0" cy="-30" rx="10" ry="3" fill="#fb923c" opacity="0.7"/>
+<circle cx="-9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="-9" cy="-13" r="4.5" fill="#ec4899"/>
+<circle cx="9" cy="-13" r="4.5" fill="#ec4899"/>
+<circle cx="-9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+<path d="M -3 -3 L 5 -2 Q 7 0 5 2 L -3 3 Z" fill="#2a2a2a"/>
+<path d="M -4 8 Q 0 11 4 8" stroke="#3a3a3a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

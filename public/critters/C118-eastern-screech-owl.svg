@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Eastern screech-owl — Megascops asio</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-30" cy="14" rx="22" ry="12" fill="#a89476" opacity="0.85" transform="rotate(-20 -30 14)" stroke="#5a4820" stroke-width="0.5"/>
+<path d="M -38 8 L -34 10 M -38 16 L -34 18" stroke="#3a2a18" stroke-width="0.8" stroke-linecap="round"/>
+<ellipse cx="30" cy="14" rx="22" ry="12" fill="#a89476" opacity="0.85" transform="rotate(20 30 14)" stroke="#5a4820" stroke-width="0.5"/>
+<path d="M 38 8 L 34 10 M 38 16 L 34 18" stroke="#3a2a18" stroke-width="0.8" stroke-linecap="round"/>
+<ellipse cx="0" cy="28" rx="22" ry="18" fill="#f0e4cc"/>
+<path d="M -14 22 L 14 22 M -16 28 L 16 28 M -14 34 L 14 34" stroke="#5a4020" stroke-width="2" stroke-linecap="round"/>
+<line x1="-5" y1="44" x2="-5" y2="52" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="44" x2="5" y2="52" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="0" cy="-10" r="25" fill="#a89476"/>
+<path d="M -22 -28 L -16 -38 L -14 -22 Z" fill="#a89476"/>
+<path d="M 22 -28 L 16 -38 L 14 -22 Z" fill="#a89476"/>
+<ellipse cx="-10" cy="-10" r="8" fill="#fef3c7"/>
+<ellipse cx="10" cy="-10" r="8" fill="#fef3c7"/>
+<circle cx="-10" cy="-10" r="6.5" fill="#ffffff"/>
+<circle cx="10" cy="-10" r="6.5" fill="#ffffff"/>
+<circle cx="-10" cy="-9" r="5" fill="#eab308"/>
+<circle cx="10" cy="-9" r="5" fill="#eab308"/>
+<circle cx="-10" cy="-8" r="3" fill="#0d0d0d"/>
+<circle cx="10" cy="-8" r="3" fill="#0d0d0d"/>
+<circle cx="-8" cy="-11" r="1.5" fill="#ffffff"/>
+<circle cx="12" cy="-11" r="1.5" fill="#ffffff"/>
+<path d="M -3 2 L 3 2 L 0 7 Z" fill="#5a3818"/>
+</g>
+</svg>

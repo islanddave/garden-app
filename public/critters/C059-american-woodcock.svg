@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>American woodcock — Scolopax minor</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-32" cy="10" rx="26" ry="13" fill="#a8826a" opacity="0.85" transform="rotate(-25 -32 10)" stroke="#6a4828" stroke-width="0.5"/>
+<ellipse cx="-32" cy="12" rx="23" ry="9" fill="#6a4828" opacity="0.5" transform="rotate(-18 -32 12)"/>
+<ellipse cx="32" cy="10" rx="26" ry="13" fill="#a8826a" opacity="0.85" transform="rotate(25 32 10)" stroke="#6a4828" stroke-width="0.5"/>
+<ellipse cx="32" cy="12" rx="23" ry="9" fill="#6a4828" opacity="0.5" transform="rotate(18 32 12)"/>
+<ellipse cx="0" cy="22" rx="26" ry="22" fill="#a8826a"/>
+<path d="M -16 14 Q -14 18 -12 22 M 14 12 Q 16 16 18 20 M -6 28 Q -4 32 -2 36 M 6 30 Q 8 34 10 38" stroke="#5a3818" stroke-width="0.8" stroke-linecap="round"/>
+<line x1="-5" y1="42" x2="-5" y2="48" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="42" x2="5" y2="48" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="0" cy="-10" r="18" fill="#a8826a"/>
+<path d="M -10 -22 L 0 -16 L 10 -22 Z" fill="#7a5028"/>
+<circle cx="-8" cy="-10" r="4.5" fill="#ffffff"/>
+<circle cx="8" cy="-10" r="4.5" fill="#ffffff"/>
+<circle cx="-8" cy="-9" r="3.2" fill="#f43f5e"/>
+<circle cx="8" cy="-9" r="3.2" fill="#f43f5e"/>
+<circle cx="-8" cy="-8" r="1.8" fill="#0d0d0d"/>
+<circle cx="8" cy="-8" r="1.8" fill="#0d0d0d"/>
+<circle cx="-7" cy="-11" r="1.2" fill="#ffffff"/>
+<circle cx="9" cy="-11" r="1.2" fill="#ffffff"/>
+<path d="M -2 -2 L 30 0 L 32 1 L 30 2 L -2 2 Z" fill="#2a2a2a"/>
+<line x1="-2" y1="0.5" x2="30" y2="0.5" stroke="#4a4a4a" stroke-width="0.4"/>
+</g>
+</svg>

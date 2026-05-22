@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Red fox — Vulpes vulpes</title>
+<g transform="translate(100, 100)">
+<path d="M 24 8 Q 48 -10 50 18 Q 44 40 26 36 Q 30 18 24 8 Z" fill="#c2410c"/>
+<ellipse cx="40" cy="-2" rx="6" ry="4" fill="#ffffff"/>
+<ellipse cx="0" cy="24" rx="22" ry="25" fill="#c2410c"/>
+<ellipse cx="0" cy="30" rx="13" ry="14" fill="#ffffff"/>
+<ellipse cx="-12" cy="46" rx="4" ry="3" fill="#1a1a1a"/>
+<ellipse cx="12" cy="46" rx="4" ry="3" fill="#1a1a1a"/>
+<circle cx="0" cy="-12" r="22" fill="#c2410c"/>
+<path d="M -18 -28 L -10 -42 L -6 -20 Z" fill="#c2410c"/>
+<path d="M 18 -28 L 10 -42 L 6 -20 Z" fill="#c2410c"/>
+<path d="M -15 -30 L -10 -38 L -8 -24 Z" fill="#1a1a1a"/>
+<path d="M 15 -30 L 10 -38 L 8 -24 Z" fill="#1a1a1a"/>
+<circle cx="-8" cy="-12" r="5.5" fill="#ffffff"/>
+<circle cx="8" cy="-12" r="5.5" fill="#ffffff"/>
+<circle cx="-8" cy="-11" r="4" fill="#fbbf24"/>
+<circle cx="8" cy="-11" r="4" fill="#fbbf24"/>
+<ellipse cx="-8" cy="-11" rx="2" ry="3.2" fill="#0d0d0d"/>
+<ellipse cx="8" cy="-11" rx="2" ry="3.2" fill="#0d0d0d"/>
+<circle cx="-7" cy="-14" r="1.4" fill="#ffffff"/>
+<circle cx="10" cy="-14" r="1.4" fill="#ffffff"/>
+<path d="M -4 -2 L 4 -2 L 0 4 Z" fill="#1a1a1a"/>
+<path d="M -5 8 Q 0 12 5 8" stroke="#1a1a1a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Eastern tiger swallowtail — Papilio glaucus</title>
+<g transform="translate(-366, -150)">
+<path d="M 466 252 Q 438 222 422 238 Q 418 254 436 262 Q 452 260 466 256 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="2"/>
+<path d="M 466 256 Q 448 268 436 282 Q 438 294 454 290 Q 466 282 466 268 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="2"/>
+<path d="M 466 252 Q 494 222 510 238 Q 514 254 496 262 Q 480 260 466 256 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="2"/>
+<path d="M 466 256 Q 484 268 496 282 Q 494 294 478 290 Q 466 282 466 268 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="2"/>
+<path d="M 444 290 L 440 304 L 452 294 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="1.5"/>
+<path d="M 488 290 L 492 304 L 480 294 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="1.5"/>
+<line x1="432" y1="234" x2="432" y2="256" stroke="#1a1a1a" stroke-width="2.5"/>
+<line x1="442" y1="230" x2="442" y2="258" stroke="#1a1a1a" stroke-width="2.5"/>
+<line x1="452" y1="232" x2="452" y2="258" stroke="#1a1a1a" stroke-width="2.5"/>
+<line x1="480" y1="232" x2="480" y2="258" stroke="#1a1a1a" stroke-width="2.5"/>
+<line x1="490" y1="230" x2="490" y2="258" stroke="#1a1a1a" stroke-width="2.5"/>
+<line x1="500" y1="234" x2="500" y2="256" stroke="#1a1a1a" stroke-width="2.5"/>
+<line x1="448" y1="270" x2="446" y2="286" stroke="#1a1a1a" stroke-width="2"/>
+<line x1="484" y1="270" x2="486" y2="286" stroke="#1a1a1a" stroke-width="2"/>
+<circle cx="450" cy="282" r="3" fill="#0077b6"/>
+<circle cx="482" cy="282" r="3" fill="#0077b6"/>
+<ellipse cx="466" cy="264" rx="5" ry="20" fill="#1a1a1a"/>
+<circle cx="466" cy="240" r="14" fill="#1a1a1a"/>
+<circle cx="460" cy="238" r="4" fill="#ffffff"/>
+<circle cx="472" cy="238" r="4" fill="#ffffff"/>
+<circle cx="460" cy="239" r="2.2" fill="#1a1a1a"/>
+<circle cx="472" cy="239" r="2.2" fill="#1a1a1a"/>
+<circle cx="461" cy="238" r="0.9" fill="#ffffff"/>
+<circle cx="473" cy="238" r="0.9" fill="#ffffff"/>
+<path d="M 462 245 Q 466 248 470 245" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<path d="M 460 228 Q 452 220 450 210 Q 452 207 454 209" stroke="#1a1a1a" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+<path d="M 472 228 Q 480 220 482 210 Q 480 207 478 209" stroke="#1a1a1a" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

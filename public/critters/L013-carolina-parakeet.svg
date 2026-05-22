@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Carolina Parakeet — Conuropsis carolinensis (Legacy)</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-38" cy="0" rx="26" ry="20" fill="#3a8a3a" opacity="0.5"/>
+<ellipse cx="38" cy="0" rx="26" ry="20" fill="#3a8a3a" opacity="0.5"/>
+<ellipse cx="0" cy="25" rx="34" ry="38" fill="#4aaa4a"/>
+<circle cx="0" cy="-15" r="34" fill="#f5c542"/>
+<path d="M -28,-30 Q -32,-42 -22,-40 Q -18,-32 -22,-25 Z" fill="#e85a25"/>
+<path d="M 28,-30 Q 32,-42 22,-40 Q 18,-32 22,-25 Z" fill="#e85a25"/>
+<ellipse cx="0" cy="-12" rx="22" ry="16" fill="#f0a020"/>
+<circle cx="-13" cy="-18" r="8" fill="#fff"/>
+<circle cx="13" cy="-18" r="8" fill="#fff"/>
+<circle cx="-12" cy="-17" r="5" fill="#5a8c8c"/>
+<circle cx="14" cy="-17" r="5" fill="#5a8c8c"/>
+<circle cx="-11" cy="-18" r="2.5" fill="#000"/>
+<circle cx="15" cy="-18" r="2.5" fill="#000"/>
+<circle cx="-9" cy="-20" r="1.2" fill="#fff"/>
+<circle cx="17" cy="-20" r="1.2" fill="#fff"/>
+<path d="M -8,-2 Q -10,4 -4,8 L 8,8 Q 12,4 8,-2 Q 4,-4 0,-2 Q -4,-4 -8,-2 Z" fill="#f5f0e6"/>
+<path d="M -4,2 Q 0,6 4,2" stroke="#3a3530" stroke-width="0.8" fill="none"/>
+</g>
+</svg>

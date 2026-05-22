@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Convergent ladybug — Hippodamia convergens</title>
+<g transform="translate(12, 20)">
+<ellipse cx="58" cy="98" rx="22" ry="9" fill="#cfd8dc" opacity="0.7" transform="rotate(-25 58 98)"/>
+<ellipse cx="118" cy="98" rx="22" ry="9" fill="#cfd8dc" opacity="0.7" transform="rotate(25 118 98)"/>
+<ellipse cx="64" cy="102" rx="18" ry="9" fill="#d92f2f" transform="rotate(-18 64 102)"/>
+<ellipse cx="112" cy="102" rx="18" ry="9" fill="#d92f2f" transform="rotate(18 112 102)"/>
+<circle cx="60" cy="100" r="2" fill="#1a1a1a"/>
+<circle cx="68" cy="105" r="2" fill="#1a1a1a"/>
+<circle cx="116" cy="100" r="2" fill="#1a1a1a"/>
+<circle cx="108" cy="105" r="2" fill="#1a1a1a"/>
+<circle cx="88" cy="78" r="26" fill="#1a1a1a"/>
+<circle cx="79" cy="76" r="7" fill="#ffffff"/>
+<circle cx="97" cy="76" r="7" fill="#ffffff"/>
+<circle cx="79" cy="78" r="4" fill="#1a1a1a"/>
+<circle cx="97" cy="78" r="4" fill="#1a1a1a"/>
+<circle cx="81" cy="76" r="1.5" fill="#ffffff"/>
+<circle cx="99" cy="76" r="1.5" fill="#ffffff"/>
+<path d="M 83 88 Q 88 92 93 88" stroke="#ffffff" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+<path d="M 78 55 Q 72 47 70 41" stroke="#1a1a1a" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+<path d="M 98 55 Q 104 47 106 41" stroke="#1a1a1a" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+<circle cx="70" cy="41" r="2.5" fill="#d92f2f"/>
+<circle cx="106" cy="41" r="2.5" fill="#d92f2f"/>
+</g>
+</svg>

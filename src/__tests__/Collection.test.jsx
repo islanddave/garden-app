@@ -1,24 +1,26 @@
 import React from 'react'
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import roster from '../data/critters-roster.json'
 import Collection from '../pages/Collection.jsx'
 
-describe('Collection — Pokédex preview dex (Phase 1)', () => {
-  it('renders the collection heading + discovered count', () => {
+describe('Collection — Pokédex preview dex (Phase 1, full roster)', () => {
+  it('renders the heading + discovered count over the full roster', () => {
     render(<Collection />)
     expect(screen.getByText('Critter Collection')).toBeDefined()
-    expect(screen.getByText(/0 of 5 discovered/i)).toBeDefined()
+    expect(screen.getByText(new RegExp(`0 of ${roster.length} discovered`, 'i'))).toBeDefined()
   })
 
-  it('shows every critter as an undiscovered silhouette (??? labels, no real names leaked)', () => {
+  it('renders one undiscovered silhouette per roster entry (??? + generic alt, no name leak)', () => {
     render(<Collection />)
-    expect(screen.getAllByText('???').length).toBe(5)
-    expect(screen.queryByText('Honeybee')).toBeNull()
-    expect(screen.queryByText('Green Lacewing')).toBeNull()
+    expect(screen.getAllByText('???').length).toBe(roster.length)
+    expect(screen.getAllByAltText(/undiscovered critter/i).length).toBe(roster.length)
   })
 
-  it('uses a generic alt for undiscovered critters (no name leak to screen readers)', () => {
+  it('groups into wild / legacy / cryptid only (Special excluded; no tier jargon)', () => {
     render(<Collection />)
-    expect(screen.getAllByRole('img', { name: /undiscovered critter/i }).length).toBe(5)
+    expect(screen.getByText('Around the garden')).toBeDefined()
+    expect(screen.getByText('Legacy')).toBeDefined()
+    expect(screen.getByText('Curiosities')).toBeDefined()
   })
 })

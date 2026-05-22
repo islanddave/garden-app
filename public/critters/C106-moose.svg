@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Moose — Alces alces</title>
+<g transform="translate(100, 100)">
+<ellipse cx="0" cy="20" rx="32" ry="20" fill="#3a2818"/>
+<line x1="-18" y1="38" x2="-18" y2="56" stroke="#3a2818" stroke-width="4" stroke-linecap="round"/>
+<line x1="-8" y1="40" x2="-8" y2="56" stroke="#3a2818" stroke-width="4" stroke-linecap="round"/>
+<line x1="8" y1="40" x2="8" y2="56" stroke="#3a2818" stroke-width="4" stroke-linecap="round"/>
+<line x1="18" y1="38" x2="18" y2="56" stroke="#3a2818" stroke-width="4" stroke-linecap="round"/>
+<circle cx="0" cy="-12" r="24" fill="#3a2818"/>
+<ellipse cx="0" cy="6" rx="12" ry="14" fill="#3a2818"/>
+<path d="M -22 -28 L -32 -42 L -28 -22 L -36 -32 L -30 -16 Z" fill="#5a4028"/>
+<path d="M 22 -28 L 32 -42 L 28 -22 L 36 -32 L 30 -16 Z" fill="#5a4028"/>
+<ellipse cx="-14" cy="-26" rx="4" ry="6" fill="#3a2818"/>
+<ellipse cx="14" cy="-26" rx="4" ry="6" fill="#3a2818"/>
+<circle cx="-8" cy="-14" r="5.5" fill="#ffffff"/>
+<circle cx="8" cy="-14" r="5.5" fill="#ffffff"/>
+<circle cx="-8" cy="-13" r="4" fill="#fbbf24"/>
+<circle cx="8" cy="-13" r="4" fill="#fbbf24"/>
+<circle cx="-8" cy="-12" r="2.3" fill="#0d0d0d"/>
+<circle cx="8" cy="-12" r="2.3" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.4" fill="#ffffff"/>
+<circle cx="10" cy="-15" r="1.4" fill="#ffffff"/>
+<ellipse cx="0" cy="8" rx="6" ry="3" fill="#1a1a1a"/>
+<path d="M -4 16 L 0 20 L 4 16" stroke="#5a4028" stroke-width="2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

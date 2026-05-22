@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Red-shouldered hawk — Buteo lineatus</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-32" cy="6" rx="28" ry="13" fill="#a8552a" opacity="0.85" transform="rotate(-25 -32 6)" stroke="#6a3010" stroke-width="0.5"/>
+<ellipse cx="-32" cy="8" rx="24" ry="9" fill="#5a2a10" opacity="0.5" transform="rotate(-18 -32 8)"/>
+<path d="M -42 0 L -36 2 M -42 8 L -36 10 M -42 16 L -36 18" stroke="#3a1810" stroke-width="0.8" stroke-linecap="round"/>
+<ellipse cx="32" cy="6" rx="28" ry="13" fill="#a8552a" opacity="0.85" transform="rotate(25 32 6)" stroke="#6a3010" stroke-width="0.5"/>
+<ellipse cx="32" cy="8" rx="24" ry="9" fill="#5a2a10" opacity="0.5" transform="rotate(18 32 8)"/>
+<path d="M 42 0 L 36 2 M 42 8 L 36 10 M 42 16 L 36 18" stroke="#3a1810" stroke-width="0.8" stroke-linecap="round"/>
+<ellipse cx="0" cy="24" rx="22" ry="25" fill="#fce7d4"/>
+<path d="M -18 10 L 18 10 M -18 18 L 18 18 M -18 26 L 18 26 M -16 34 L 16 34" stroke="#c2410c" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="-5" y1="46" x2="-5" y2="54" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="54" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="24" fill="#6a3818"/>
+<ellipse cx="-12" cy="-2" rx="6" ry="8" fill="#c2410c"/>
+<ellipse cx="12" cy="-2" rx="6" ry="8" fill="#c2410c"/>
+<circle cx="-9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="-9" cy="-13" r="4.5" fill="#ea580c"/>
+<circle cx="9" cy="-13" r="4.5" fill="#ea580c"/>
+<circle cx="-9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+<path d="M -2 -4 L 8 -3 Q 11 0 8 3 L -2 4 Z" fill="#fbbf24" stroke="#0d0d0d" stroke-width="0.5"/>
+<path d="M 6 -2 L 11 0 L 6 2 Z" fill="#0d0d0d"/>
+</g>
+</svg>
