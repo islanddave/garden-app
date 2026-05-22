@@ -14,7 +14,7 @@ Two phases (both run; failure in either fails the audit):
     exist in prod. Covers SELECT/RETURNING response-shape columns that have a
     static-source contract test.
 
-  Phase 2 - INSERT column lists (added 2026-05-19, local_ba595ceb).
+  Phase 3 - soft-delete column presence (added 2026-05-22, L-096).\n    Every table soft-deleted via `UPDATE <table> SET ... deleted_at` must have a\n    deleted_at column in prod. Catches the project_types.deleted_at class that\n    Phases 1/2 miss (SET/WHERE refs). Narrow by design (UPDATE write target only).\n\n  Phase 2 - INSERT column lists (added 2026-05-19, local_ba595ceb).
     Every column named in an `INSERT INTO <table> ( ... ) VALUES|SELECT`
     column list across `lambda/**/index.js` must exist in prod. This is the
     write-path blind spot Phase 1 missed: PATCH/POST handlers that INSERT into
@@ -133,6 +133,33 @@ def parse_insert_blocks(path: Path) -> list[tuple[str, list[str], int]]:
     return results
 
 
+# Phase 3 (added 2026-05-22, L-096 project_types.deleted_at prod incident).
+# A handler that soft-deletes a table (`UPDATE <table> SET ... deleted_at ...`) requires
+# <table>.deleted_at to exist in prod, or the write 500s. This is the SET/WHERE blind spot
+# the module docstring flags as deferred: Phase 1 (select-columns) + Phase 2 (INSERT lists)
+# never see it. Scope is deliberately narrow + low-false-positive: only the UPDATE...SET...
+# deleted_at write target (UPDATE names exactly one table; unambiguous). Read-only
+# `WHERE deleted_at` filters with JOINs/aliases are NOT parsed here (same join-fragility
+# rationale as the SELECT/WHERE deferral above) — but a table that is soft-delete-WRITTEN
+# is invariably also filtered, so this catches the whole class in practice (it would have
+# caught project_types: `UPDATE project_types SET deleted_at = NOW()`).
+_SOFT_DELETE_UPDATE = re.compile(
+    r"UPDATE\s+(?:public\.)?(\w+)\s+SET\b[^;`]*?\bdeleted_at\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def parse_soft_delete_tables(path: Path) -> list[tuple[str, int]]:
+    """Phase 3. Returns [(table, approx_line), ...] for tables the handler
+    soft-deletes via `UPDATE <table> SET ... deleted_at ...`. Each MUST have a
+    deleted_at column in prod."""
+    src = path.read_text()
+    out = []
+    for m in _SOFT_DELETE_UPDATE.finditer(src):
+        out.append((m.group(1), src[: m.start()].count("\n") + 1))
+    return out
+
+
 def query_prod_columns(conn, table: str) -> set[str]:
     cur = conn.cursor()
     cur.execute(
@@ -238,6 +265,20 @@ def main() -> int:
                 if col not in prod_cols:
                     missing.append(("P2", ref, table, col))
 
+    # --- Phase 3: soft-delete column presence (UPDATE ... SET deleted_at) ---
+    seen_p3: set[tuple[str, str]] = set()
+    for hf in handler_files:
+        rel = str(Path(hf).relative_to(repo))
+        for table, line in parse_soft_delete_tables(Path(hf)):
+            key = (rel, table)
+            if key in seen_p3:
+                continue
+            seen_p3.add(key)
+            ref = f"{rel}:{line}"
+            asserted.append(("P3", ref, table, "deleted_at"))
+            if "deleted_at" not in cols_for(table):
+                missing.append(("P3", ref, table, "deleted_at"))
+
     conn.close()
 
     if args.verbose:
@@ -250,9 +291,10 @@ def main() -> int:
     if missing:
         p1 = sum(1 for m in missing if m[0] == "P1")
         p2 = sum(1 for m in missing if m[0] == "P2")
+        p3 = sum(1 for m in missing if m[0] == "P3")
         print(
             f"FAIL: {len(missing)} of {total} column refs are MISSING in prod Neon "
-            f"(Phase 1: {p1}, Phase 2: {p2}):"
+            f"(Phase 1: {p1}, Phase 2: {p2}, Phase 3 soft-delete: {p3}):"
         )
         by_table: dict[str, list[tuple[str, str, str]]] = {}
         for phase, ref, table, col in missing:
@@ -270,7 +312,7 @@ def main() -> int:
 
     print(
         f"PASS: {total} column refs "
-        f"(Phase 1 select-columns + Phase 2 INSERT lists) all present in prod Neon."
+        f"(Phase 1 select-columns + Phase 2 INSERT lists + Phase 3 soft-delete) all present in prod Neon."
     )
     print(f"Tables verified: {', '.join(sorted(table_cache.keys()))}")
     return 0
