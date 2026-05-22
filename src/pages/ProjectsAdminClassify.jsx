@@ -9,8 +9,8 @@
 //   - Cultivar row reveals inline variety-name input.
 //   - Save-per-row: POST /api/varieties (cultivar only, idempotent on
 //     source_proj_rescope_project_id) → PATCH /api/projects/:id with kind.
-//   - Progress bar X of N + client-side chain-terminates check.
-//   - When all classified AND chain-OK: copy-ready apply-prod-migrations
+//   - Progress bar X of N.
+//   - When all classified: copy-ready apply-prod-migrations
 //     command (Dave runs from terminal — no in-app DDL surface).
 
 import React, { useState, useEffect, useCallback } from 'react'
@@ -100,8 +100,7 @@ export default function ProjectsAdminClassify() {
 
   const classified = projects.filter((p) => p.kind != null).length
   const total = projects.length
-  const chainCheck = checkChainTerminates(projects)
-  const allDone = total > 0 && classified === total && chainCheck.ok
+  const allDone = total > 0 && classified === total
 
   const setRowKind = (id, kind) =>
     setRowState((s) => ({ ...s, [id]: { ...s[id], kind, saved: false, error: null } }))
@@ -135,10 +134,6 @@ export default function ProjectsAdminClassify() {
     }
   }
 
-  const violationNames = chainCheck.violations
-    .map((id) => byId[id]?.name)
-    .filter(Boolean)
-
   return (
     <Shell>
       <h1 style={{ marginTop: 0, fontSize: '1.4rem' }}>Admin Classify — plant_projects.kind</h1>
@@ -147,11 +142,6 @@ export default function ProjectsAdminClassify() {
       </p>
       <p style={{ color: '#666', marginTop: 0 }}>
         {classified} of {total} classified.
-        {violationNames.length > 0 && (
-          <span style={{ color: '#b94a3a' }}>
-            {' '}— {violationNames.length} chain-terminates violation(s): {violationNames.join(', ')}.
-          </span>
-        )}
       </p>
       <ProgressBar n={classified} total={total} />
 
@@ -176,33 +166,10 @@ export default function ProjectsAdminClassify() {
         <PendingMigrationBlock
           classified={classified}
           total={total}
-          violationNames={violationNames}
         />
       )}
     </Shell>
   )
-}
-
-function checkChainTerminates(projects) {
-  const byId = {}
-  projects.forEach((p) => { byId[p.id] = p })
-  const violations = []
-  for (const p of projects) {
-    if (p.kind !== 'category') continue
-    let cur = p
-    let safety = 0
-    let terminates = false
-    while (cur.parent_project_id && byId[cur.parent_project_id] && safety < 12) {
-      cur = byId[cur.parent_project_id]
-      safety++
-      if (cur.kind === 'campaign') {
-        terminates = true
-        break
-      }
-    }
-    if (!terminates) violations.push(p.id)
-  }
-  return { ok: violations.length === 0, violations }
 }
 
 function Shell({ children }) {
@@ -304,16 +271,12 @@ function RowCard({ project: p, depth, breadcrumb, rowState, onKindChange, onVari
   )
 }
 
-function PendingMigrationBlock({ classified, total, violationNames }) {
+function PendingMigrationBlock({ classified, total }) {
   return (
     <div style={{ marginTop: 24, padding: 16, background: '#fffbe5', border: '1px solid #e0d090', borderRadius: 6 }}>
       <strong>Migration not yet runnable.</strong>
       <p style={{ marginBottom: 0, fontSize: '0.9rem' }}>
-        Need {total - classified} more row(s) classified
-        {violationNames.length > 0
-          ? ` and ${violationNames.length} chain-terminates violation(s) resolved`
-          : ''}
-        .
+        Need {total - classified} more row(s) classified.
       </p>
     </div>
   )
@@ -324,7 +287,7 @@ function ReadyToMigrateBlock() {
     <div style={{ marginTop: 24, padding: 16, background: '#eaf5e9', border: '1px solid #4a7c59', borderRadius: 6 }}>
       <strong style={{ color: '#4a7c59' }}>Ready to migrate.</strong>
       <p style={{ marginBottom: 8, fontSize: '0.9rem' }}>
-        All rows classified and every category chain terminates at a campaign. Run from your terminal:
+        All rows classified. Run from your terminal:
       </p>
       <pre style={{
         background: '#111',
