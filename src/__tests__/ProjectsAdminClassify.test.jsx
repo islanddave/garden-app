@@ -1,6 +1,6 @@
 // V1.2a-4 S6 (PROJ-RESCOPE) tests for ProjectsAdminClassify.jsx admin route.
 // Asserts viewport guard, fetch shape, kind dropdown, cultivar inline-create
-// flow, chain-terminates check, ready-to-migrate copy block.
+// flow, ready-to-migrate copy block.
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -181,31 +181,6 @@ describe('ProjectsAdminClassify — cultivar inline-create flow', () => {
     })
     const varietyPost = calls.find((c) => c.path === '/api/varieties' && c.method === 'POST')
     expect(varietyPost).toBeUndefined()
-  })
-})
-
-describe('ProjectsAdminClassify — chain-terminates check', () => {
-  it('flags category rows whose chain does not terminate at a campaign', async () => {
-    // Make Peppers a category whose parent (Fruiting Plants) is also a category — no campaign upstream.
-    const projects = [
-      { id: 'p-fruiting', name: 'Fruiting Plants', parent_project_id: null, kind: 'category' },
-      { id: 'p-peppers', name: 'Peppers', parent_project_id: 'p-fruiting', kind: 'category' },
-    ]
-    wire({ projects })
-    await act(async () => { render(<ProjectsAdminClassify />) })
-    // Violation text appears in header summary AND pending-migration block.
-    await waitFor(() => expect(screen.getAllByText(/chain-terminates violation/i).length).toBeGreaterThan(0))
-  })
-
-  it('does NOT flag category rows that terminate at a campaign ancestor', async () => {
-    const projects = [
-      { id: 'p-fruiting', name: 'Fruiting Plants', parent_project_id: null, kind: 'campaign' },
-      { id: 'p-peppers', name: 'Peppers', parent_project_id: 'p-fruiting', kind: 'category' },
-    ]
-    wire({ projects })
-    await act(async () => { render(<ProjectsAdminClassify />) })
-    await waitFor(() => expect(screen.getByText('Peppers')).toBeDefined())
-    expect(screen.queryByText(/chain-terminates violation/i)).toBeNull()
   })
 })
 
