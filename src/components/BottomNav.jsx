@@ -103,6 +103,27 @@ export default function BottomNav() {
             Achievements
           </Link>
 
+          {/* Critter Collection — preview dex (Phase 1). Reward surface; ambient nav entry.
+              /collection route + Collection.jsx. Spec: critter-collection-page-spec-V001. */}
+          <Link
+            to="/collection"
+            onClick={closeMore}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 16,
+              width: '100%',
+              padding: '14px 24px',
+              borderTop: `1px solid ${P.border}`,
+              background: 'none', textAlign: 'left',
+              cursor: 'pointer', textDecoration: 'none',
+              color: P.dark, fontSize: '1rem', fontWeight: 500,
+              fontFamily: 'inherit',
+              minHeight: 48,
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🦋</span>
+            Critters
+          </Link>
+
           {/* Sign Out — inline confirmation */}
           {!confirmSignOut ? (
             <button
