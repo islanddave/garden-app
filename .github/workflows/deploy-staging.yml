@@ -162,7 +162,7 @@ jobs:
 
       - name: Restore staging Lambda CORS
         run: |
-          CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","PATCH","DELETE"],"AllowOrigins":["${{ env.STAGING_CF_ORIGIN }}"],"ExposeHeaders":[],"MaxAge":300}'
+          CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE","PATCH"],"AllowOrigins":["${{ env.STAGING_CF_ORIGIN }}"],"ExposeHeaders":[],"MaxAge":300}'
           aws lambda update-function-url-config \
             --function-name "garden-${{ matrix.function }}-staging" \
             --region us-east-1 \

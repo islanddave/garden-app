@@ -20,6 +20,7 @@ const IN_SCOPE = [
   'inventory-items/index.js',
   'photos/index.js',
   'dashboard/handlers.js',
+  'locations/index.js',
 ];
 
 // Out-of-scope: must NOT import householdScope.
@@ -28,7 +29,6 @@ const OUT_OF_SCOPE = [
   'favorites/index.js',
   'xp-reconcile/index.js',
   'varieties/index.js',
-  'locations/index.js',
   'app-events/index.js',
   'dashboard/index.js', // wrapper — householdScope is computed inside builders, not the wrapper
 ];

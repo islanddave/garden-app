@@ -3,6 +3,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { householdScope } from './household.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -82,6 +83,7 @@ export const handler = async (event) => {
   const sql = neon(secrets.NEON_DATABASE_URL);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/locations';
+  const householdIds = householdScope(userId);
 
   // entity-tags routes
   if (rawPath === '/api/entity-tags') {
@@ -152,7 +154,7 @@ export const handler = async (event) => {
                  l.featured_photo_id, fp.storage_path AS featured_photo_storage_path
           FROM locations l
           LEFT JOIN photos fp ON fp.id = l.featured_photo_id
-          WHERE (l.slug = ${locId} OR l.id::text = ${locId}) AND l.deleted_at IS NULL
+          WHERE (l.slug = ${locId} OR l.id::text = ${locId}) AND l.deleted_at IS NULL AND l.created_by = ANY(${householdIds})
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         const row = rows[0];
@@ -170,7 +172,7 @@ export const handler = async (event) => {
         if (Object.prototype.hasOwnProperty.call(body, 'featured_photo_id')) {
           const idRows = await sql`
             SELECT id::text AS id FROM locations
-             WHERE (slug = ${locId} OR id::text = ${locId}) AND deleted_at IS NULL
+             WHERE (slug = ${locId} OR id::text = ${locId}) AND deleted_at IS NULL AND created_by = ANY(${householdIds})
           `;
           if (!idRows.length) return resp(404, { error: 'Not found' });
           actualLocationId = idRows[0].id;
@@ -179,7 +181,7 @@ export const handler = async (event) => {
               SELECT 1 FROM photos
                WHERE id = ${body.featured_photo_id}
                  AND location_id = ${actualLocationId}
-                 AND uploaded_by = ${userId}
+                 AND uploaded_by = ANY(${householdIds})
             `;
             if (!linkRows.length) {
               return resp(400, { error: 'featured_photo_id must be a photo linked to this location' });
@@ -202,6 +204,7 @@ export const handler = async (event) => {
             END
           WHERE (slug = ${locId} OR id::text = ${locId})
             AND deleted_at IS NULL
+            AND created_by = ANY(${householdIds})
           RETURNING *
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
@@ -214,6 +217,7 @@ export const handler = async (event) => {
           SET deleted_at = NOW()
           WHERE id = ${locId}
             AND deleted_at IS NULL
+            AND created_by = ANY(${householdIds})
         `;
         return resp(200, { ok: true });
       }
@@ -227,13 +231,14 @@ export const handler = async (event) => {
           SELECT id, name, slug, level, type_label, parent_id, sort_order,
                  description, is_active, created_at
           FROM locations
-          WHERE deleted_at IS NULL
+          WHERE deleted_at IS NULL AND created_by = ANY(${householdIds})
           ORDER BY level, sort_order, name
         `,
         sql`
           SELECT id, full_path, level, is_active
           FROM locations_with_path
           WHERE deleted_at IS NULL
+            AND id IN (SELECT id FROM locations WHERE deleted_at IS NULL AND created_by = ANY(${householdIds}))
           ORDER BY full_path
         `,
       ]);
@@ -247,7 +252,7 @@ export const handler = async (event) => {
       let level = 0;
       if (body.parent_id) {
         const parentRows = await sql`
-          SELECT level FROM locations WHERE id = ${body.parent_id} AND deleted_at IS NULL
+          SELECT level FROM locations WHERE id = ${body.parent_id} AND deleted_at IS NULL AND created_by = ANY(${householdIds})
         `;
         if (parentRows.length) level = Math.min(parentRows[0].level + 1, 3);
       }
@@ -257,7 +262,7 @@ export const handler = async (event) => {
 
       const rows = await sql`
         INSERT INTO locations
-          (name, slug, level, type_label, parent_id, sort_order, description)
+          (name, slug, level, type_label, parent_id, sort_order, description, created_by)
         VALUES (
           ${body.name},
           ${slug},
@@ -265,7 +270,8 @@ export const handler = async (event) => {
           ${body.type_label ?? null},
           ${body.parent_id ?? null},
           ${body.sort_order ?? 0},
-          ${body.description ?? null}
+          ${body.description ?? null},
+          ${userId}
         )
         RETURNING *
       `;
