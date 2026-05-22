@@ -1,0 +1,31 @@
+# gates.yml
+# V1.3 — project_types.deleted_at additive column.
+#
+# L-058 SWEEP: empty by design — nullable column, no CHECK / NOT VALID / VALIDATE step.
+# Pre-gate confirms project_types exists. Post-gates confirm the column landed (timestamptz)
+# and the schema_version row is recorded.
+
+pre:
+  - name: project_types_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='project_types'
+    expect: rowcount_eq
+    value: 1
+
+sweep: []
+
+post:
+  - name: project_types_deleted_at_column
+    sql: |
+      SELECT data_type FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='project_types'
+         AND column_name='deleted_at'
+    expect: scalar_eq
+    value: timestamp with time zone
+
+  - name: schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='1.3.0-project-types-deleted-at'
+    expect: rowcount_eq
+    value: 1
