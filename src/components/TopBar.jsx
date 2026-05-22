@@ -1,7 +1,7 @@
 import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
-import { useZone } from '../context/ZoneContext.jsx'
+// import { useZone } from '../context/ZoneContext.jsx' // DISABLED pre-V2 (2026-05-22): zone pill commented out below
 import { P, APP_NAME } from '../lib/constants.js'
 
 // TopBar — sticky top bar.
@@ -13,7 +13,7 @@ import { P, APP_NAME } from '../lib/constants.js'
 
 export default function TopBar() {
   const { user }       = useAuth()
-  const { activeZone } = useZone()
+  // const { activeZone } = useZone() // DISABLED pre-V2 (2026-05-22): zone pill commented out below
   const location       = useLocation()
 
   return (
@@ -54,7 +54,12 @@ export default function TopBar() {
       {/* Right side controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
 
-        {/* Zone pill — authenticated only */}
+        {/* Zone / location switcher pill — TEMPORARILY DISABLED pre-V2 (2026-05-22, Dave directive).
+             Hidden because zone selection is currently a no-op: activeZone is only displayed
+             here, never used to filter dashboard/list data (nothing for the switch to do yet).
+             Future enhancement — re-enable when zone-scoped filtering ships. The /zone route +
+             ZonePicker page stay intact; only this entry-point link is hidden.
+             TO RESTORE: uncomment this block AND the useZone import + activeZone destructure above.
         {user && (
           <Link
             to={`/zone?from=${encodeURIComponent(location.pathname)}`}
@@ -74,6 +79,7 @@ export default function TopBar() {
             📍 {activeZone ? activeZone.name : 'Everywhere'}
           </Link>
         )}
+        */}
 
         {/* Favorites star icon — authenticated only, persistent shortcut to /favorites */}
         {user && (
