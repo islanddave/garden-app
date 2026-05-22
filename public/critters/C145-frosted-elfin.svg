@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Frosted elfin — Callophrys irus</title>
+<g transform="translate(100, 100)">
+<path d="M -10 -4 Q -30 -14 -36 6 Q -30 22 -16 16 Q -14 8 -10 0 Z" fill="#7a5828"/>
+<path d="M -16 14 L -22 24 L -18 22 Z" fill="#7a5828"/>
+<path d="M -26 4 Q -30 -2 -34 0" stroke="#a89878" stroke-width="1" fill="none"/>
+<path d="M -28 14 Q -30 20 -22 22" stroke="#d4c8a8" stroke-width="1.2" fill="none"/>
+<path d="M 10 -4 Q 30 -14 36 6 Q 30 22 16 16 Q 14 8 10 0 Z" fill="#7a5828"/>
+<path d="M 16 14 L 22 24 L 18 22 Z" fill="#7a5828"/>
+<path d="M 26 4 Q 30 -2 34 0" stroke="#a89878" stroke-width="1" fill="none"/>
+<path d="M 28 14 Q 30 20 22 22" stroke="#d4c8a8" stroke-width="1.2" fill="none"/>
+<ellipse cx="0" cy="6" rx="8" ry="14" fill="#5a4020"/>
+<ellipse cx="0" cy="-4" rx="6" ry="5" fill="#3a2818"/>
+<path d="M -4 -10 Q -8 -16 -10 -22" stroke="#0d0d0d" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<path d="M 4 -10 Q 8 -16 10 -22" stroke="#0d0d0d" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<circle cx="-3" cy="-4" r="2.5" fill="#ffffff"/>
+<circle cx="3" cy="-4" r="2.5" fill="#ffffff"/>
+<circle cx="-3" cy="-3" r="1.6" fill="#84cc16"/>
+<circle cx="3" cy="-3" r="1.6" fill="#84cc16"/>
+<circle cx="-3" cy="-2" r="1" fill="#0d0d0d"/>
+<circle cx="3" cy="-2" r="1" fill="#0d0d0d"/>
+</g>
+</svg>

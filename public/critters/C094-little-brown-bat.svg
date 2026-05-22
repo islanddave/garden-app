@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Little brown bat — Myotis lucifugus</title>
+<g transform="translate(100, 100)">
+<path d="M -38 -4 Q -50 8 -42 28 Q -32 32 -18 18 Q -24 8 -38 -4 Z" fill="#92704a"/>
+<path d="M -34 4 L -28 12 M -30 16 L -22 22 M -38 14 L -32 24" stroke="#5a4020" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M 38 -4 Q 50 8 42 28 Q 32 32 18 18 Q 24 8 38 -4 Z" fill="#92704a"/>
+<path d="M 34 4 L 28 12 M 30 16 L 22 22 M 38 14 L 32 24" stroke="#5a4020" stroke-width="0.8" stroke-linecap="round"/>
+<ellipse cx="0" cy="22" rx="18" ry="20" fill="#a8826a"/>
+<line x1="-5" y1="42" x2="-5" y2="48" stroke="#5a3818" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="42" x2="5" y2="48" stroke="#5a3818" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="20" fill="#a8826a"/>
+<path d="M -16 -30 L -8 -40 L -6 -22 Z" fill="#a8826a"/>
+<path d="M 16 -30 L 8 -40 L 6 -22 Z" fill="#a8826a"/>
+<circle cx="-8" cy="-14" r="5.5" fill="#ffffff"/>
+<circle cx="8" cy="-14" r="5.5" fill="#ffffff"/>
+<circle cx="-8" cy="-13" r="4" fill="#fb923c"/>
+<circle cx="8" cy="-13" r="4" fill="#fb923c"/>
+<circle cx="-8" cy="-12" r="2.3" fill="#0d0d0d"/>
+<circle cx="8" cy="-12" r="2.3" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.4" fill="#ffffff"/>
+<circle cx="10" cy="-15" r="1.4" fill="#ffffff"/>
+<ellipse cx="0" cy="0" rx="2" ry="1.5" fill="#1a1a1a"/>
+<path d="M -4 6 Q 0 9 4 6" stroke="#1a1a1a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

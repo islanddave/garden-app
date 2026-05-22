@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Spring peeper — Pseudacris crucifer</title>
+<g transform="translate(100, 100)">
+<ellipse cx="0" cy="18" rx="22" ry="18" fill="#d4a878"/>
+<path d="M -10 -2 L -2 12 L 6 -4 L 12 14" stroke="#3a2418" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<ellipse cx="-18" cy="32" rx="6" ry="3" fill="#a87a48" transform="rotate(-20 -18 32)"/>
+<ellipse cx="18" cy="32" rx="6" ry="3" fill="#a87a48" transform="rotate(20 18 32)"/>
+<circle cx="-22" cy="36" r="2" fill="#a87a48"/>
+<circle cx="-18" cy="38" r="2" fill="#a87a48"/>
+<circle cx="-14" cy="36" r="2" fill="#a87a48"/>
+<circle cx="22" cy="36" r="2" fill="#a87a48"/>
+<circle cx="18" cy="38" r="2" fill="#a87a48"/>
+<circle cx="14" cy="36" r="2" fill="#a87a48"/>
+<ellipse cx="-12" cy="-6" rx="9" ry="9" fill="#d4a878"/>
+<ellipse cx="12" cy="-6" rx="9" ry="9" fill="#d4a878"/>
+<circle cx="-12" cy="-6" r="7" fill="#ffffff"/>
+<circle cx="12" cy="-6" r="7" fill="#ffffff"/>
+<circle cx="-12" cy="-5" r="5" fill="#a3e635"/>
+<circle cx="12" cy="-5" r="5" fill="#a3e635"/>
+<ellipse cx="-12" cy="-5" rx="2" ry="4" fill="#0d0d0d"/>
+<ellipse cx="12" cy="-5" rx="2" ry="4" fill="#0d0d0d"/>
+<circle cx="-10" cy="-8" r="1.6" fill="#ffffff"/>
+<circle cx="14" cy="-8" r="1.6" fill="#ffffff"/>
+<path d="M -14 6 Q 0 14 14 6" stroke="#0d0d0d" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

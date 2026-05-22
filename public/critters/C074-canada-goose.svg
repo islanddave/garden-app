@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Canada goose — Branta canadensis</title>
+<g transform="translate(100, 100)">
+<ellipse cx="36" cy="40" rx="12" ry="5" fill="#5a3818"/>
+<ellipse cx="-36" cy="40" rx="12" ry="5" fill="#5a3818"/>
+<ellipse cx="0" cy="32" rx="26" ry="14" fill="#7a5028"/>
+<ellipse cx="0" cy="36" rx="22" ry="8" fill="#fef3c7" opacity="0.6"/>
+<line x1="-5" y1="44" x2="-5" y2="50" stroke="#1a1a1a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="44" x2="5" y2="50" stroke="#1a1a1a" stroke-width="1.6" stroke-linecap="round"/>
+<ellipse cx="0" cy="10" rx="10" ry="20" fill="#0d0d0d"/>
+<circle cx="0" cy="-12" r="14" fill="#0d0d0d"/>
+<ellipse cx="0" cy="0" rx="9" ry="3" fill="#ffffff"/>
+<circle cx="-5" cy="-12" r="3.5" fill="#ffffff"/>
+<circle cx="5" cy="-12" r="3.5" fill="#ffffff"/>
+<circle cx="-5" cy="-11" r="2.4" fill="#fb7185"/>
+<circle cx="5" cy="-11" r="2.4" fill="#fb7185"/>
+<circle cx="-5" cy="-10" r="1.4" fill="#0d0d0d"/>
+<circle cx="5" cy="-10" r="1.4" fill="#0d0d0d"/>
+<circle cx="-4" cy="-13" r="0.9" fill="#ffffff"/>
+<circle cx="6" cy="-13" r="0.9" fill="#ffffff"/>
+<path d="M -2 -4 L 5 -3 L 7 -2 L 5 -1 L -2 -1 Z" fill="#1a1a1a"/>
+</g>
+</svg>

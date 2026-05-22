@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Eastern chipmunk — Tamias striatus</title>
+<g transform="translate(-114, -150)">
+<path d="M 238 270 Q 254 244 246 224 Q 238 220 234 240 Q 232 258 230 268 Z" fill="#8b6f47"/>
+<path d="M 240 268 Q 252 246 244 228" stroke="#5c4a30" stroke-width="0.8" fill="none"/>
+<ellipse cx="214" cy="272" rx="22" ry="16" fill="#a88158"/>
+<path d="M 200 266 L 222 266" stroke="#1a1a1a" stroke-width="1.5"/>
+<path d="M 200 272 L 222 272" stroke="#f0e6d8" stroke-width="1.2"/>
+<path d="M 200 278 L 222 278" stroke="#1a1a1a" stroke-width="1.5"/>
+<ellipse cx="198" cy="288" rx="4" ry="3" fill="#a88158"/>
+<ellipse cx="226" cy="288" rx="4" ry="3" fill="#a88158"/>
+<circle cx="214" cy="250" r="22" fill="#a88158"/>
+<circle cx="201" cy="262" r="7" fill="#b89168"/>
+<circle cx="227" cy="262" r="7" fill="#b89168"/>
+<circle cx="202" cy="232" r="5" fill="#a88158"/>
+<circle cx="226" cy="232" r="5" fill="#a88158"/>
+<circle cx="202" cy="232" r="2.5" fill="#f4b6b6"/>
+<circle cx="226" cy="232" r="2.5" fill="#f4b6b6"/>
+<circle cx="206" cy="246" r="5" fill="#ffffff"/>
+<circle cx="222" cy="246" r="5" fill="#ffffff"/>
+<circle cx="206" cy="248" r="3" fill="#1a1a1a"/>
+<circle cx="222" cy="248" r="3" fill="#1a1a1a"/>
+<circle cx="207" cy="246" r="1.2" fill="#ffffff"/>
+<circle cx="223" cy="246" r="1.2" fill="#ffffff"/>
+<ellipse cx="214" cy="256" rx="2" ry="1.5" fill="#1a1a1a"/>
+</g>
+</svg>

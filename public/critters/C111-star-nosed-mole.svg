@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Star-nosed mole — Condylura cristata</title>
+<g transform="translate(100, 100)">
+<ellipse cx="0" cy="20" rx="24" ry="20" fill="#3a3030"/>
+<ellipse cx="0" cy="14" rx="22" ry="12" fill="#5a4848" opacity="0.5"/>
+<path d="M -26 18 L -34 18 Q -38 22 -34 26 L -26 26 Z" fill="#f0d8c0"/>
+<path d="M 26 18 L 34 18 Q 38 22 34 26 L 26 26 Z" fill="#f0d8c0"/>
+<line x1="-5" y1="38" x2="-5" y2="44" stroke="#f4b6b6" stroke-width="1.4" stroke-linecap="round"/>
+<line x1="5" y1="38" x2="5" y2="44" stroke="#f4b6b6" stroke-width="1.4" stroke-linecap="round"/>
+<circle cx="0" cy="-10" r="20" fill="#3a3030"/>
+<circle cx="0" cy="4" r="11" fill="#f4b6b6"/>
+<line x1="0" y1="4" x2="-10" y2="0" stroke="#e85d6d" stroke-width="2" stroke-linecap="round"/>
+<line x1="0" y1="4" x2="-9" y2="6" stroke="#e85d6d" stroke-width="2" stroke-linecap="round"/>
+<line x1="0" y1="4" x2="-6" y2="10" stroke="#e85d6d" stroke-width="2" stroke-linecap="round"/>
+<line x1="0" y1="4" x2="-2" y2="14" stroke="#e85d6d" stroke-width="2" stroke-linecap="round"/>
+<line x1="0" y1="4" x2="2" y2="14" stroke="#e85d6d" stroke-width="2" stroke-linecap="round"/>
+<line x1="0" y1="4" x2="6" y2="10" stroke="#e85d6d" stroke-width="2" stroke-linecap="round"/>
+<line x1="0" y1="4" x2="9" y2="6" stroke="#e85d6d" stroke-width="2" stroke-linecap="round"/>
+<line x1="0" y1="4" x2="10" y2="0" stroke="#e85d6d" stroke-width="2" stroke-linecap="round"/>
+<circle cx="0" cy="4" r="3" fill="#dc2626"/>
+<circle cx="-6" cy="-12" r="3" fill="#ffffff"/>
+<circle cx="6" cy="-12" r="3" fill="#ffffff"/>
+<circle cx="-6" cy="-11" r="2" fill="#06b6d4"/>
+<circle cx="6" cy="-11" r="2" fill="#06b6d4"/>
+<circle cx="-6" cy="-10" r="1" fill="#0d0d0d"/>
+<circle cx="6" cy="-10" r="1" fill="#0d0d0d"/>
+</g>
+</svg>

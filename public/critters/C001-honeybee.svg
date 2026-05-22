@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Honeybee — Apis mellifera</title>
+<g transform="translate(-114, 20)">
+<ellipse cx="186" cy="92" rx="22" ry="14" fill="#e8f0f5" opacity="0.7" transform="rotate(-25 186 92)" stroke="#9aa5ab" stroke-width="0.5"/>
+<ellipse cx="242" cy="92" rx="22" ry="14" fill="#e8f0f5" opacity="0.7" transform="rotate(25 242 92)" stroke="#9aa5ab" stroke-width="0.5"/>
+<ellipse cx="214" cy="108" rx="20" ry="15" fill="#f4c430"/>
+<path d="M 200 102 L 228 102" stroke="#1a1a1a" stroke-width="3" stroke-linecap="round"/>
+<path d="M 198 110 L 230 110" stroke="#1a1a1a" stroke-width="3" stroke-linecap="round"/>
+<path d="M 202 118 L 226 118" stroke="#1a1a1a" stroke-width="3" stroke-linecap="round"/>
+<circle cx="214" cy="78" r="26" fill="#1a1a1a"/>
+<circle cx="205" cy="76" r="7" fill="#ffffff"/>
+<circle cx="223" cy="76" r="7" fill="#ffffff"/>
+<circle cx="205" cy="78" r="4" fill="#1a1a1a"/>
+<circle cx="223" cy="78" r="4" fill="#1a1a1a"/>
+<circle cx="207" cy="76" r="1.5" fill="#ffffff"/>
+<circle cx="225" cy="76" r="1.5" fill="#ffffff"/>
+<path d="M 209 88 Q 214 92 219 88" stroke="#ffffff" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+<path d="M 204 55 Q 198 47 196 41" stroke="#1a1a1a" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+<path d="M 224 55 Q 230 47 232 41" stroke="#1a1a1a" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+<circle cx="196" cy="41" r="2" fill="#1a1a1a"/>
+<circle cx="232" cy="41" r="2" fill="#1a1a1a"/>
+</g>
+</svg>

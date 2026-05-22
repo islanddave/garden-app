@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Eastern garter snake — Thamnophis sirtalis</title>
+<g transform="translate(100, 100)">
+<path d="M -32 36 Q -10 50 26 36 Q 40 24 30 12 Q 18 -2 -2 4 Q -10 8 -20 16" stroke="#2a3a2a" stroke-width="13" fill="none" stroke-linecap="round"/>
+<path d="M -32 32 Q -10 46 26 32" stroke="#fde047" stroke-width="1.4" fill="none"/>
+<path d="M -30 40 Q -8 54 24 40" stroke="#fde047" stroke-width="1.4" fill="none"/>
+<ellipse cx="-26" cy="-2" rx="20" ry="14" fill="#2a3a2a"/>
+<line x1="-40" y1="-4" x2="-12" y2="-4" stroke="#fde047" stroke-width="1.4"/>
+<circle cx="-32" cy="-4" r="5" fill="#ffffff"/>
+<circle cx="-18" cy="-4" r="5" fill="#ffffff"/>
+<circle cx="-32" cy="-3" r="3.6" fill="#ef4444"/>
+<circle cx="-18" cy="-3" r="3.6" fill="#ef4444"/>
+<ellipse cx="-32" cy="-3" rx="1.6" ry="3.5" fill="#0d0d0d"/>
+<ellipse cx="-18" cy="-3" rx="1.6" ry="3.5" fill="#0d0d0d"/>
+<circle cx="-30" cy="-5" r="1.2" fill="#ffffff"/>
+<circle cx="-16" cy="-5" r="1.2" fill="#ffffff"/>
+<path d="M -42 4 L -50 2 M -42 4 L -50 6" stroke="#ef4444" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+<path d="M -38 4 L -42 4" stroke="#ef4444" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+<path d="M -32 6 Q -26 9 -20 6" stroke="#1a1a1a" stroke-width="0.8" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

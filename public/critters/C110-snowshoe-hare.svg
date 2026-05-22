@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Snowshoe hare — Lepus americanus</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-22" cy="44" rx="12" ry="6" fill="#ffffff" stroke="#d1d5db" stroke-width="0.5"/>
+<ellipse cx="22" cy="44" rx="12" ry="6" fill="#ffffff" stroke="#d1d5db" stroke-width="0.5"/>
+<ellipse cx="0" cy="22" rx="24" ry="20" fill="#ffffff"/>
+<ellipse cx="0" cy="26" rx="14" ry="10" fill="#f4ead6"/>
+<circle cx="22" cy="34" r="5" fill="#ffffff"/>
+<circle cx="0" cy="-12" r="22" fill="#ffffff"/>
+<ellipse cx="-12" cy="-30" rx="6" ry="18" fill="#ffffff" stroke="#d1d5db" stroke-width="0.5" transform="rotate(-10 -12 -30)"/>
+<ellipse cx="12" cy="-30" rx="6" ry="18" fill="#ffffff" stroke="#d1d5db" stroke-width="0.5" transform="rotate(10 12 -30)"/>
+<path d="M -14 -42 L -12 -46" stroke="#0d0d0d" stroke-width="2" stroke-linecap="round"/>
+<path d="M 14 -42 L 12 -46" stroke="#0d0d0d" stroke-width="2" stroke-linecap="round"/>
+<circle cx="-8" cy="-12" r="5.5" fill="#ffffff"/>
+<circle cx="8" cy="-12" r="5.5" fill="#ffffff"/>
+<circle cx="-8" cy="-11" r="4" fill="#fb923c"/>
+<circle cx="8" cy="-11" r="4" fill="#fb923c"/>
+<circle cx="-8" cy="-10" r="2.3" fill="#0d0d0d"/>
+<circle cx="8" cy="-10" r="2.3" fill="#0d0d0d"/>
+<circle cx="-7" cy="-13" r="1.4" fill="#ffffff"/>
+<circle cx="10" cy="-13" r="1.4" fill="#ffffff"/>
+<path d="M -2 0 L 2 0 L 0 4 Z" fill="#f4b6b6"/>
+<path d="M 0 4 Q -2 6 -3 7 M 0 4 Q 2 6 3 7" stroke="#1a1a1a" stroke-width="0.8" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

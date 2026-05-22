@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Monarch butterfly — Danaus plexippus</title>
+<g transform="translate(-240, 20)">
+<path d="M 340 82 Q 308 50 290 66 Q 286 82 306 92 Q 325 92 340 86 Z" fill="#e87b0f" stroke="#1a1a1a" stroke-width="2"/>
+<path d="M 340 86 Q 322 96 310 110 Q 310 122 326 118 Q 340 110 340 96 Z" fill="#e87b0f" stroke="#1a1a1a" stroke-width="2"/>
+<path d="M 340 82 Q 372 50 390 66 Q 394 82 374 92 Q 355 92 340 86 Z" fill="#e87b0f" stroke="#1a1a1a" stroke-width="2"/>
+<path d="M 340 86 Q 358 96 370 110 Q 370 122 354 118 Q 340 110 340 96 Z" fill="#e87b0f" stroke="#1a1a1a" stroke-width="2"/>
+<circle cx="300" cy="72" r="2" fill="#ffffff"/>
+<circle cx="312" cy="60" r="1.5" fill="#ffffff"/>
+<circle cx="380" cy="72" r="2" fill="#ffffff"/>
+<circle cx="368" cy="60" r="1.5" fill="#ffffff"/>
+<circle cx="320" cy="113" r="1.5" fill="#ffffff"/>
+<circle cx="360" cy="113" r="1.5" fill="#ffffff"/>
+<ellipse cx="340" cy="92" rx="5" ry="22" fill="#1a1a1a"/>
+<circle cx="340" cy="68" r="14" fill="#1a1a1a"/>
+<circle cx="334" cy="66" r="4" fill="#ffffff"/>
+<circle cx="346" cy="66" r="4" fill="#ffffff"/>
+<circle cx="334" cy="67" r="2.2" fill="#1a1a1a"/>
+<circle cx="346" cy="67" r="2.2" fill="#1a1a1a"/>
+<circle cx="335" cy="66" r="0.9" fill="#ffffff"/>
+<circle cx="347" cy="66" r="0.9" fill="#ffffff"/>
+<path d="M 336 73 Q 340 76 344 73" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+<path d="M 334 56 Q 326 48 324 38 Q 326 35 328 37" stroke="#1a1a1a" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+<path d="M 346 56 Q 354 48 356 38 Q 354 35 352 37" stroke="#1a1a1a" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

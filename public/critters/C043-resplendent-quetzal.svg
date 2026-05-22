@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Resplendent quetzal — Pharomachrus mocinno</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-32" cy="6" rx="26" ry="11" fill="#10b981" opacity="0.9" transform="rotate(-25 -32 6)" stroke="#047857" stroke-width="0.5"/>
+<ellipse cx="-32" cy="8" rx="23" ry="8" fill="#047857" opacity="0.7" transform="rotate(-18 -32 8)"/>
+<ellipse cx="32" cy="6" rx="26" ry="11" fill="#10b981" opacity="0.9" transform="rotate(25 32 6)" stroke="#047857" stroke-width="0.5"/>
+<ellipse cx="32" cy="8" rx="23" ry="8" fill="#047857" opacity="0.7" transform="rotate(18 32 8)"/>
+<path d="M 0 32 Q -4 60 -8 80 M 0 32 Q 4 60 8 80" stroke="#10b981" stroke-width="3" fill="none" stroke-linecap="round"/>
+<path d="M -8 78 Q -10 84 -8 90 M 8 78 Q 10 84 8 90" stroke="#10b981" stroke-width="2" fill="none" stroke-linecap="round"/>
+<ellipse cx="0" cy="24" rx="22" ry="25" fill="#dc2626"/>
+<ellipse cx="0" cy="14" rx="22" ry="14" fill="#10b981"/>
+<line x1="-5" y1="46" x2="-5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="22" fill="#10b981"/>
+<path d="M -6 -32 L 0 -42 L 6 -32" stroke="#047857" stroke-width="4" fill="#10b981" stroke-linejoin="round"/>
+<circle cx="-9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="-9" cy="-13" r="4.5" fill="#fde047"/>
+<circle cx="9" cy="-13" r="4.5" fill="#fde047"/>
+<circle cx="-9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+<path d="M -3 -4 L 7 -3 Q 9 0 7 3 L -3 4 Z" fill="#fbbf24"/>
+</g>
+</svg>

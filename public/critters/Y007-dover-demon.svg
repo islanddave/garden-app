@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Dover Demon — Dover MA humanoid (Cryptid)</title>
+<g transform="translate(100, 100)">
+<ellipse cx="22" cy="45" rx="30" ry="22" fill="#d4c5a8"/>
+<line x1="-4" y1="20" x2="-10" y2="50" stroke="#d4c5a8" stroke-width="4"/>
+<line x1="6" y1="20" x2="14" y2="50" stroke="#d4c5a8" stroke-width="4"/>
+<line x1="-8" y1="55" x2="-10" y2="70" stroke="#d4c5a8" stroke-width="5"/>
+<line x1="14" y1="55" x2="18" y2="70" stroke="#d4c5a8" stroke-width="5"/>
+<circle cx="-22" cy="-15" r="42" fill="#e6d8b8"/>
+<ellipse cx="-32" cy="-18" rx="14" ry="18" fill="#1a1a1a"/>
+<ellipse cx="-8" cy="-22" rx="14" ry="18" fill="#1a1a1a"/>
+<ellipse cx="-32" cy="-15" rx="11" ry="14" fill="#f5a623"/>
+<ellipse cx="-8" cy="-19" rx="11" ry="14" fill="#f5a623"/>
+<ellipse cx="-32" cy="-18" rx="9" ry="12" fill="#fffacd"/>
+<ellipse cx="-8" cy="-22" rx="9" ry="12" fill="#fffacd"/>
+<ellipse cx="-32" cy="-20" rx="5" ry="9" fill="#000"/>
+<ellipse cx="-8" cy="-24" rx="5" ry="9" fill="#000"/>
+<circle cx="-30" cy="-23" r="2" fill="#fff"/>
+<circle cx="-6" cy="-27" r="2" fill="#fff"/>
+<line x1="-22" y1="8" x2="-18" y2="12" stroke="#5a3a2a" stroke-width="1.5"/>
+</g>
+</svg>

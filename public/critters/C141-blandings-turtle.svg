@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Blanding's turtle — Emydoidea blandingii</title>
+<g transform="translate(100, 100)">
+<ellipse cx="0" cy="14" rx="32" ry="24" fill="#2a3818"/>
+<ellipse cx="0" cy="6" rx="28" ry="18" fill="#4a5828"/>
+<circle cx="-14" cy="6" r="2" fill="#fde047"/>
+<circle cx="-2" cy="2" r="2" fill="#fde047"/>
+<circle cx="10" cy="6" r="2" fill="#fde047"/>
+<circle cx="18" cy="14" r="2" fill="#fde047"/>
+<circle cx="-18" cy="14" r="2" fill="#fde047"/>
+<circle cx="6" cy="18" r="2" fill="#fde047"/>
+<ellipse cx="-22" cy="38" rx="6" ry="4" fill="#2a3818"/>
+<ellipse cx="22" cy="38" rx="6" ry="4" fill="#2a3818"/>
+<ellipse cx="-26" cy="-8" rx="18" ry="14" fill="#4a5828"/>
+<ellipse cx="-22" cy="0" rx="20" ry="6" fill="#fde047"/>
+<circle cx="-34" cy="-10" r="4" fill="#ffffff"/>
+<circle cx="-22" cy="-12" r="4" fill="#ffffff"/>
+<circle cx="-34" cy="-9" r="2.8" fill="#fb923c"/>
+<circle cx="-22" cy="-11" r="2.8" fill="#fb923c"/>
+<circle cx="-34" cy="-8" r="1.6" fill="#0d0d0d"/>
+<circle cx="-22" cy="-10" r="1.6" fill="#0d0d0d"/>
+<circle cx="-33" cy="-11" r="1" fill="#ffffff"/>
+<circle cx="-21" cy="-13" r="1" fill="#ffffff"/>
+<path d="M -30 4 Q -22 8 -14 4" stroke="#1a1a1a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

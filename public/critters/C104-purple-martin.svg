@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Purple martin — Progne subis</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-34" cy="2" rx="30" ry="13" fill="#3a1a4a" opacity="0.9" transform="rotate(-25 -34 2)" stroke="#1a0a2a" stroke-width="0.5"/>
+<ellipse cx="-34" cy="4" rx="26" ry="10" fill="#5a2a6a" opacity="0.7" transform="rotate(-18 -34 4)"/>
+<ellipse cx="34" cy="2" rx="30" ry="13" fill="#3a1a4a" opacity="0.9" transform="rotate(25 34 2)" stroke="#1a0a2a" stroke-width="0.5"/>
+<ellipse cx="34" cy="4" rx="26" ry="10" fill="#5a2a6a" opacity="0.7" transform="rotate(18 34 4)"/>
+<ellipse cx="0" cy="22" rx="22" ry="24" fill="#2a0a3a"/>
+<ellipse cx="-4" cy="14" rx="14" ry="5" fill="#7a3a9a" opacity="0.5"/>
+<ellipse cx="-3" cy="22" rx="10" ry="3" fill="#9a4abf" opacity="0.4"/>
+<line x1="-5" y1="44" x2="-5" y2="52" stroke="#1a0a2a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="44" x2="5" y2="52" stroke="#1a0a2a" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="22" fill="#2a0a3a"/>
+<ellipse cx="-4" cy="-24" rx="12" ry="4" fill="#7a3a9a" opacity="0.5"/>
+<circle cx="-9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="-9" cy="-13" r="4.5" fill="#d1d5db"/>
+<circle cx="9" cy="-13" r="4.5" fill="#d1d5db"/>
+<circle cx="-9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+<path d="M -3 -4 L 5 -3 Q 7 0 5 3 L -3 4 Z" fill="#1a0a2a"/>
+<path d="M -4 8 Q 0 11 4 8" stroke="#7a3a9a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

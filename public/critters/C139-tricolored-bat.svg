@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Tricolored bat — Perimyotis subflavus</title>
+<g transform="translate(100, 100)">
+<path d="M -38 -4 Q -50 8 -42 28 Q -32 32 -18 18 Q -24 8 -38 -4 Z" fill="#a8826a"/>
+<path d="M 38 -4 Q 50 8 42 28 Q 32 32 18 18 Q 24 8 38 -4 Z" fill="#a8826a"/>
+<ellipse cx="0" cy="22" rx="16" ry="20" fill="#c4a07c"/>
+<line x1="-5" y1="42" x2="-5" y2="48" stroke="#5a3818" stroke-width="1.4" stroke-linecap="round"/>
+<line x1="5" y1="42" x2="5" y2="48" stroke="#5a3818" stroke-width="1.4" stroke-linecap="round"/>
+<path d="M -16 14 L 16 14" stroke="#5a3818" stroke-width="3" stroke-linecap="round"/>
+<path d="M -14 20 L 14 20" stroke="#fef3c7" stroke-width="3" stroke-linecap="round"/>
+<path d="M -12 26 L 12 26" stroke="#5a3818" stroke-width="3" stroke-linecap="round"/>
+<circle cx="0" cy="-12" r="18" fill="#a8826a"/>
+<path d="M -18 -32 L -12 -42 L -8 -22 Z" fill="#a8826a"/>
+<path d="M 18 -32 L 12 -42 L 8 -22 Z" fill="#a8826a"/>
+<circle cx="-9" cy="-12" r="5.5" fill="#ffffff"/>
+<circle cx="9" cy="-12" r="5.5" fill="#ffffff"/>
+<circle cx="-9" cy="-11" r="4" fill="#6ee7b7"/>
+<circle cx="9" cy="-11" r="4" fill="#6ee7b7"/>
+<circle cx="-9" cy="-10" r="2.3" fill="#0d0d0d"/>
+<circle cx="9" cy="-10" r="2.3" fill="#0d0d0d"/>
+<circle cx="-7" cy="-13" r="1.4" fill="#ffffff"/>
+<circle cx="10" cy="-13" r="1.4" fill="#ffffff"/>
+<path d="M -2 0 L 2 0 L 0 4 Z" fill="#1a1a1a"/>
+<path d="M -5 8 Q 0 12 5 8" stroke="#1a1a1a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Cecropia moth — Hyalophora cecropia</title>
+<g transform="translate(100, 100)">
+<path d="M -10 0 Q -44 -12 -46 14 Q -42 32 -22 28 Q -16 14 -10 6 Z" fill="#7a4028"/>
+<path d="M -42 -8 Q -44 -2 -38 4" stroke="#a85028" stroke-width="2" fill="none"/>
+<path d="M -36 16 Q -30 22 -22 22" stroke="#dca888" stroke-width="2" fill="none"/>
+<circle cx="-32" cy="2" r="3" fill="#0d0d0d"/>
+<circle cx="-32" cy="2" r="1.5" fill="#ffffff"/>
+<path d="M 10 0 Q 44 -12 46 14 Q 42 32 22 28 Q 16 14 10 6 Z" fill="#7a4028"/>
+<path d="M 42 -8 Q 44 -2 38 4" stroke="#a85028" stroke-width="2" fill="none"/>
+<path d="M 36 16 Q 30 22 22 22" stroke="#dca888" stroke-width="2" fill="none"/>
+<circle cx="32" cy="2" r="3" fill="#0d0d0d"/>
+<circle cx="32" cy="2" r="1.5" fill="#ffffff"/>
+<ellipse cx="0" cy="4" rx="11" ry="18" fill="#a85028"/>
+<path d="M -5 -8 Q -12 -16 -14 -22" stroke="#0d0d0d" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+<path d="M 5 -8 Q 12 -16 14 -22" stroke="#0d0d0d" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+<circle cx="-5" cy="-8" r="4" fill="#ffffff"/>
+<circle cx="5" cy="-8" r="4" fill="#ffffff"/>
+<circle cx="-5" cy="-7" r="2.8" fill="#b91c1c"/>
+<circle cx="5" cy="-7" r="2.8" fill="#b91c1c"/>
+<circle cx="-5" cy="-6" r="1.6" fill="#0d0d0d"/>
+<circle cx="5" cy="-6" r="1.6" fill="#0d0d0d"/>
+<circle cx="-4" cy="-9" r="1" fill="#ffffff"/>
+<circle cx="6" cy="-9" r="1" fill="#ffffff"/>
+<path d="M -3 2 Q 0 4 3 2" stroke="#0d0d0d" stroke-width="1" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

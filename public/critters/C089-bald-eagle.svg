@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Bald eagle — Haliaeetus leucocephalus</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-36" cy="6" rx="30" ry="14" fill="#5a3818" opacity="0.9" transform="rotate(-25 -36 6)" stroke="#3a2010" stroke-width="0.5"/>
+<ellipse cx="-36" cy="8" rx="26" ry="11" fill="#3a2010" opacity="0.75" transform="rotate(-18 -36 8)"/>
+<ellipse cx="36" cy="6" rx="30" ry="14" fill="#5a3818" opacity="0.9" transform="rotate(25 36 6)" stroke="#3a2010" stroke-width="0.5"/>
+<ellipse cx="36" cy="8" rx="26" ry="11" fill="#3a2010" opacity="0.75" transform="rotate(18 36 8)"/>
+<ellipse cx="0" cy="26" rx="27" ry="28" fill="#5a3818"/>
+<ellipse cx="0" cy="46" rx="18" ry="6" fill="#ffffff"/>
+<line x1="-7" y1="50" x2="-7" y2="56" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round"/>
+<line x1="7" y1="50" x2="7" y2="56" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="26" fill="#ffffff"/>
+<circle cx="-9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="-9" cy="-13" r="4.5" fill="#eab308"/>
+<circle cx="9" cy="-13" r="4.5" fill="#eab308"/>
+<circle cx="-9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+<path d="M -3 -4 L 12 -3 L 16 0 L 12 3 L -3 4 Z" fill="#fbbf24" stroke="#0d0d0d" stroke-width="0.5"/>
+<path d="M 10 -2 L 16 0 L 10 2 Z" fill="#3a2010"/>
+</g>
+</svg>
