@@ -91,6 +91,19 @@ describe('BottomNav — More menu', () => {
     fireEvent.click(screen.getByLabelText('More navigation options'))
     expect(screen.getByText('Dave')).toBeDefined()
   })
+
+  it('Achievements is not visible until More is opened (NAV-REGRESSION restore, 2026-05-22)', () => {
+    render(<BottomNav />)
+    expect(screen.queryByText('Achievements')).toBeNull()
+  })
+
+  it('More menu shows the Achievements link pointing to /achievements', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    const link = screen.getByText('Achievements').closest('a')
+    expect(link).not.toBeNull()
+    expect(link.getAttribute('href')).toBe('/achievements')
+  })
 })
 
 describe('BottomNav — Sign Out confirmation flow', () => {
