@@ -28,6 +28,7 @@ import PlantsCatchUp from './pages/PlantsCatchUp.jsx'
 import LocationDetail from './pages/LocationDetail.jsx'
 import EventDetail from './pages/EventDetail.jsx'
 import Achievements from './pages/Achievements.jsx'
+import Collection from './pages/Collection.jsx'
 import InactiveProjects from './pages/InactiveProjects.jsx'
 import ProjectsAdminClassify from './pages/ProjectsAdminClassify.jsx'
 
@@ -107,6 +108,7 @@ function AppRoutes() {
               <Route path="/plants/catch-up" element={<Protected><PlantsCatchUp /></Protected>} />
               <Route path="/projects/:id/events/:eventId" element={<Protected><EventDetail /></Protected>} />
               <Route path="/achievements" element={<Protected><Achievements /></Protected>} />
+              <Route path="/collection" element={<Protected><Collection /></Protected>} />
               {/* V1.2a-4 S6 admin classify route. Jen-invisible (no nav link).
                   Desktop-only viewport guard inside the component. Lambda-side
                   ADMIN_CLERK_SUBS allowlist is the real security; this route
