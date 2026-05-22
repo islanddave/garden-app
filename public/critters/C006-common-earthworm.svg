@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Common earthworm — Lumbricus terrestris</title>
+<g transform="translate(17, -159)">
+<path d="M 50 290 Q 42 282 56 268 Q 76 256 92 250 Q 108 244 102 232" stroke="#d9a092" stroke-width="18" fill="none" stroke-linecap="round"/>
+<line x1="56" y1="290" x2="48" y2="292" stroke="#b07d72" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="55" y1="278" x2="48" y2="276" stroke="#b07d72" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="64" y1="264" x2="60" y2="258" stroke="#b07d72" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="80" y1="253" x2="82" y2="246" stroke="#b07d72" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="96" y1="246" x2="100" y2="240" stroke="#b07d72" stroke-width="1.2" stroke-linecap="round"/>
+<circle cx="102" cy="232" r="14" fill="#d9a092"/>
+<circle cx="98" cy="230" r="3.5" fill="#ffffff"/>
+<circle cx="108" cy="230" r="3.5" fill="#ffffff"/>
+<circle cx="98" cy="231" r="2" fill="#1a1a1a"/>
+<circle cx="108" cy="231" r="2" fill="#1a1a1a"/>
+<circle cx="99" cy="229" r="0.9" fill="#ffffff"/>
+<circle cx="109" cy="229" r="0.9" fill="#ffffff"/>
+<path d="M 99 239 Q 103 242 107 239" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

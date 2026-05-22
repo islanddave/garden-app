@@ -1,0 +1,1178 @@
+[
+{
+"id": "C001",
+"slug": "honeybee",
+"name": "Honeybee",
+"group": "wild",
+"image_url": "/critters/C001-honeybee.svg"
+},
+{
+"id": "C002",
+"slug": "monarch-butterfly",
+"name": "Monarch Butterfly",
+"group": "wild",
+"image_url": "/critters/C002-monarch-butterfly.svg"
+},
+{
+"id": "C003",
+"slug": "convergent-ladybug",
+"name": "Convergent Ladybug",
+"group": "wild",
+"image_url": "/critters/C003-convergent-ladybug.svg"
+},
+{
+"id": "C004",
+"slug": "big-dipper-firefly",
+"name": "Big Dipper Firefly",
+"group": "wild",
+"image_url": "/critters/C004-big-dipper-firefly.svg"
+},
+{
+"id": "C005",
+"slug": "green-lacewing",
+"name": "Green Lacewing",
+"group": "wild",
+"image_url": "/critters/C005-green-lacewing.svg"
+},
+{
+"id": "C006",
+"slug": "common-earthworm",
+"name": "Common Earthworm",
+"group": "wild",
+"image_url": "/critters/C006-common-earthworm.svg"
+},
+{
+"id": "C007",
+"slug": "ruby-throated-hummingbird",
+"name": "Ruby Throated Hummingbird",
+"group": "wild",
+"image_url": "/critters/C007-ruby-throated-hummingbird.svg"
+},
+{
+"id": "C008",
+"slug": "common-green-darner",
+"name": "Common Green Darner",
+"group": "wild",
+"image_url": "/critters/C008-common-green-darner.svg"
+},
+{
+"id": "C009",
+"slug": "eastern-tiger-swallowtail",
+"name": "Eastern Tiger Swallowtail",
+"group": "wild",
+"image_url": "/critters/C009-eastern-tiger-swallowtail.svg"
+},
+{
+"id": "C010",
+"slug": "eastern-cottontail",
+"name": "Eastern Cottontail",
+"group": "wild",
+"image_url": "/critters/C010-eastern-cottontail.svg"
+},
+{
+"id": "C011",
+"slug": "northern-cardinal",
+"name": "Northern Cardinal",
+"group": "wild",
+"image_url": "/critters/C011-northern-cardinal.svg"
+},
+{
+"id": "C012",
+"slug": "black-capped-chickadee",
+"name": "Black Capped Chickadee",
+"group": "wild",
+"image_url": "/critters/C012-black-capped-chickadee.svg"
+},
+{
+"id": "C013",
+"slug": "american-robin",
+"name": "American Robin",
+"group": "wild",
+"image_url": "/critters/C013-american-robin.svg"
+},
+{
+"id": "C014",
+"slug": "eastern-bluebird",
+"name": "Eastern Bluebird",
+"group": "wild",
+"image_url": "/critters/C014-eastern-bluebird.svg"
+},
+{
+"id": "C015",
+"slug": "eastern-chipmunk",
+"name": "Eastern Chipmunk",
+"group": "wild",
+"image_url": "/critters/C015-eastern-chipmunk.svg"
+},
+{
+"id": "C016",
+"slug": "red-squirrel",
+"name": "Red Squirrel",
+"group": "wild",
+"image_url": "/critters/C016-red-squirrel.svg"
+},
+{
+"id": "C017",
+"slug": "gray-treefrog",
+"name": "Gray Treefrog",
+"group": "wild",
+"image_url": "/critters/C017-gray-treefrog.svg"
+},
+{
+"id": "C018",
+"slug": "eastern-garter-snake",
+"name": "Eastern Garter Snake",
+"group": "wild",
+"image_url": "/critters/C018-eastern-garter-snake.svg"
+},
+{
+"id": "C019",
+"slug": "white-tailed-deer",
+"name": "White Tailed Deer",
+"group": "wild",
+"image_url": "/critters/C019-white-tailed-deer.svg"
+},
+{
+"id": "C020",
+"slug": "red-fox",
+"name": "Red Fox",
+"group": "wild",
+"image_url": "/critters/C020-red-fox.svg"
+},
+{
+"id": "C022",
+"slug": "woodchuck",
+"name": "Woodchuck",
+"group": "wild",
+"image_url": "/critters/C022-woodchuck.svg"
+},
+{
+"id": "C023",
+"slug": "northern-raccoon",
+"name": "Northern Raccoon",
+"group": "wild",
+"image_url": "/critters/C023-northern-raccoon.svg"
+},
+{
+"id": "C024",
+"slug": "barred-owl",
+"name": "Barred Owl",
+"group": "wild",
+"image_url": "/critters/C024-barred-owl.svg"
+},
+{
+"id": "C027",
+"slug": "black-bear",
+"name": "Black Bear",
+"group": "wild",
+"image_url": "/critters/C027-black-bear.svg"
+},
+{
+"id": "C028",
+"slug": "bobcat",
+"name": "Bobcat",
+"group": "wild",
+"image_url": "/critters/C028-bobcat.svg"
+},
+{
+"id": "C029",
+"slug": "american-goldfinch",
+"name": "American Goldfinch",
+"group": "wild",
+"image_url": "/critters/C029-american-goldfinch.svg"
+},
+{
+"id": "C030",
+"slug": "downy-woodpecker",
+"name": "Downy Woodpecker",
+"group": "wild",
+"image_url": "/critters/C030-downy-woodpecker.svg"
+},
+{
+"id": "C031",
+"slug": "mallard",
+"name": "Mallard",
+"group": "wild",
+"image_url": "/critters/C031-mallard.svg"
+},
+{
+"id": "C039",
+"slug": "polyphemus-moth",
+"name": "Polyphemus Moth",
+"group": "wild",
+"image_url": "/critters/C039-polyphemus-moth.svg"
+},
+{
+"id": "C040",
+"slug": "giant-panda",
+"name": "Giant Panda",
+"group": "wild",
+"image_url": "/critters/C040-giant-panda.svg"
+},
+{
+"id": "C041",
+"slug": "american-flamingo",
+"name": "American Flamingo",
+"group": "wild",
+"image_url": "/critters/C041-american-flamingo.svg"
+},
+{
+"id": "C042",
+"slug": "galapagos-tortoise",
+"name": "Galapagos Tortoise",
+"group": "wild",
+"image_url": "/critters/C042-galapagos-tortoise.svg"
+},
+{
+"id": "C043",
+"slug": "resplendent-quetzal",
+"name": "Resplendent Quetzal",
+"group": "wild",
+"image_url": "/critters/C043-resplendent-quetzal.svg"
+},
+{
+"id": "C044",
+"slug": "bengal-tiger",
+"name": "Bengal Tiger",
+"group": "wild",
+"image_url": "/critters/C044-bengal-tiger.svg"
+},
+{
+"id": "C045",
+"slug": "snow-leopard",
+"name": "Snow Leopard",
+"group": "wild",
+"image_url": "/critters/C045-snow-leopard.svg"
+},
+{
+"id": "C046",
+"slug": "tufted-titmouse",
+"name": "Tufted Titmouse",
+"group": "wild",
+"image_url": "/critters/C046-tufted-titmouse.svg"
+},
+{
+"id": "C047",
+"slug": "american-crow",
+"name": "American Crow",
+"group": "wild",
+"image_url": "/critters/C047-american-crow.svg"
+},
+{
+"id": "C048",
+"slug": "red-bellied-woodpecker",
+"name": "Red Bellied Woodpecker",
+"group": "wild",
+"image_url": "/critters/C048-red-bellied-woodpecker.svg"
+},
+{
+"id": "C049",
+"slug": "mourning-dove",
+"name": "Mourning Dove",
+"group": "wild",
+"image_url": "/critters/C049-mourning-dove.svg"
+},
+{
+"id": "C050",
+"slug": "blue-jay",
+"name": "Blue Jay",
+"group": "wild",
+"image_url": "/critters/C050-blue-jay.svg"
+},
+{
+"id": "C051",
+"slug": "white-breasted-nuthatch",
+"name": "White Breasted Nuthatch",
+"group": "wild",
+"image_url": "/critters/C051-white-breasted-nuthatch.svg"
+},
+{
+"id": "C052",
+"slug": "eastern-gray-squirrel",
+"name": "Eastern Gray Squirrel",
+"group": "wild",
+"image_url": "/critters/C052-eastern-gray-squirrel.svg"
+},
+{
+"id": "C053",
+"slug": "striped-skunk",
+"name": "Striped Skunk",
+"group": "wild",
+"image_url": "/critters/C053-striped-skunk.svg"
+},
+{
+"id": "C054",
+"slug": "american-green-frog",
+"name": "American Green Frog",
+"group": "wild",
+"image_url": "/critters/C054-american-green-frog.svg"
+},
+{
+"id": "C055",
+"slug": "american-toad",
+"name": "American Toad",
+"group": "wild",
+"image_url": "/critters/C055-american-toad.svg"
+},
+{
+"id": "C056",
+"slug": "redback-salamander",
+"name": "Redback Salamander",
+"group": "wild",
+"image_url": "/critters/C056-redback-salamander.svg"
+},
+{
+"id": "C057",
+"slug": "wild-turkey",
+"name": "Wild Turkey",
+"group": "wild",
+"image_url": "/critters/C057-wild-turkey.svg"
+},
+{
+"id": "C058",
+"slug": "common-raven",
+"name": "Common Raven",
+"group": "wild",
+"image_url": "/critters/C058-common-raven.svg"
+},
+{
+"id": "C059",
+"slug": "american-woodcock",
+"name": "American Woodcock",
+"group": "wild",
+"image_url": "/critters/C059-american-woodcock.svg"
+},
+{
+"id": "C060",
+"slug": "dark-eyed-junco",
+"name": "Dark Eyed Junco",
+"group": "wild",
+"image_url": "/critters/C060-dark-eyed-junco.svg"
+},
+{
+"id": "C061",
+"slug": "hairy-woodpecker",
+"name": "Hairy Woodpecker",
+"group": "wild",
+"image_url": "/critters/C061-hairy-woodpecker.svg"
+},
+{
+"id": "C062",
+"slug": "yellow-bellied-sapsucker",
+"name": "Yellow Bellied Sapsucker",
+"group": "wild",
+"image_url": "/critters/C062-yellow-bellied-sapsucker.svg"
+},
+{
+"id": "C063",
+"slug": "pileated-woodpecker",
+"name": "Pileated Woodpecker",
+"group": "wild",
+"image_url": "/critters/C063-pileated-woodpecker.svg"
+},
+{
+"id": "C064",
+"slug": "virginia-opossum",
+"name": "Virginia Opossum",
+"group": "wild",
+"image_url": "/critters/C064-virginia-opossum.svg"
+},
+{
+"id": "C065",
+"slug": "big-brown-bat",
+"name": "Big Brown Bat",
+"group": "wild",
+"image_url": "/critters/C065-big-brown-bat.svg"
+},
+{
+"id": "C066",
+"slug": "hairy-tailed-mole",
+"name": "Hairy Tailed Mole",
+"group": "wild",
+"image_url": "/critters/C066-hairy-tailed-mole.svg"
+},
+{
+"id": "C067",
+"slug": "north-american-porcupine",
+"name": "North American Porcupine",
+"group": "wild",
+"image_url": "/critters/C067-north-american-porcupine.svg"
+},
+{
+"id": "C068",
+"slug": "deer-mouse",
+"name": "Deer Mouse",
+"group": "wild",
+"image_url": "/critters/C068-deer-mouse.svg"
+},
+{
+"id": "C069",
+"slug": "meadow-vole",
+"name": "Meadow Vole",
+"group": "wild",
+"image_url": "/critters/C069-meadow-vole.svg"
+},
+{
+"id": "C070",
+"slug": "common-snapping-turtle",
+"name": "Common Snapping Turtle",
+"group": "wild",
+"image_url": "/critters/C070-common-snapping-turtle.svg"
+},
+{
+"id": "C071",
+"slug": "spring-peeper",
+"name": "Spring Peeper",
+"group": "wild",
+"image_url": "/critters/C071-spring-peeper.svg"
+},
+{
+"id": "C072",
+"slug": "eastern-milk-snake",
+"name": "Eastern Milk Snake",
+"group": "wild",
+"image_url": "/critters/C072-eastern-milk-snake.svg"
+},
+{
+"id": "C073",
+"slug": "northern-water-snake",
+"name": "Northern Water Snake",
+"group": "wild",
+"image_url": "/critters/C073-northern-water-snake.svg"
+},
+{
+"id": "C074",
+"slug": "canada-goose",
+"name": "Canada Goose",
+"group": "wild",
+"image_url": "/critters/C074-canada-goose.svg"
+},
+{
+"id": "C075",
+"slug": "great-horned-owl",
+"name": "Great Horned Owl",
+"group": "wild",
+"image_url": "/critters/C075-great-horned-owl.svg"
+},
+{
+"id": "C076",
+"slug": "indigo-bunting",
+"name": "Indigo Bunting",
+"group": "wild",
+"image_url": "/critters/C076-indigo-bunting.svg"
+},
+{
+"id": "C077",
+"slug": "scarlet-tanager",
+"name": "Scarlet Tanager",
+"group": "wild",
+"image_url": "/critters/C077-scarlet-tanager.svg"
+},
+{
+"id": "C078",
+"slug": "cedar-waxwing",
+"name": "Cedar Waxwing",
+"group": "wild",
+"image_url": "/critters/C078-cedar-waxwing.svg"
+},
+{
+"id": "C079",
+"slug": "baltimore-oriole",
+"name": "Baltimore Oriole",
+"group": "wild",
+"image_url": "/critters/C079-baltimore-oriole.svg"
+},
+{
+"id": "C080",
+"slug": "american-kestrel",
+"name": "American Kestrel",
+"group": "wild",
+"image_url": "/critters/C080-american-kestrel.svg"
+},
+{
+"id": "C081",
+"slug": "peregrine-falcon",
+"name": "Peregrine Falcon",
+"group": "wild",
+"image_url": "/critters/C081-peregrine-falcon.svg"
+},
+{
+"id": "C082",
+"slug": "coopers-hawk",
+"name": "Coopers Hawk",
+"group": "wild",
+"image_url": "/critters/C082-coopers-hawk.svg"
+},
+{
+"id": "C083",
+"slug": "ring-necked-duck",
+"name": "Ring Necked Duck",
+"group": "wild",
+"image_url": "/critters/C083-ring-necked-duck.svg"
+},
+{
+"id": "C084",
+"slug": "willow-flycatcher",
+"name": "Willow Flycatcher",
+"group": "wild",
+"image_url": "/critters/C084-willow-flycatcher.svg"
+},
+{
+"id": "C085",
+"slug": "ruffed-grouse",
+"name": "Ruffed Grouse",
+"group": "wild",
+"image_url": "/critters/C085-ruffed-grouse.svg"
+},
+{
+"id": "C086",
+"slug": "yellow-billed-cuckoo",
+"name": "Yellow Billed Cuckoo",
+"group": "wild",
+"image_url": "/critters/C086-yellow-billed-cuckoo.svg"
+},
+{
+"id": "C087",
+"slug": "ovenbird",
+"name": "Ovenbird",
+"group": "wild",
+"image_url": "/critters/C087-ovenbird.svg"
+},
+{
+"id": "C088",
+"slug": "eastern-racer",
+"name": "Eastern Racer",
+"group": "wild",
+"image_url": "/critters/C088-eastern-racer.svg"
+},
+{
+"id": "C089",
+"slug": "bald-eagle",
+"name": "Bald Eagle",
+"group": "wild",
+"image_url": "/critters/C089-bald-eagle.svg"
+},
+{
+"id": "C090",
+"slug": "gray-fox",
+"name": "Gray Fox",
+"group": "wild",
+"image_url": "/critters/C090-gray-fox.svg"
+},
+{
+"id": "C091",
+"slug": "north-american-beaver",
+"name": "North American Beaver",
+"group": "wild",
+"image_url": "/critters/C091-north-american-beaver.svg"
+},
+{
+"id": "C092",
+"slug": "american-mink",
+"name": "American Mink",
+"group": "wild",
+"image_url": "/critters/C092-american-mink.svg"
+},
+{
+"id": "C093",
+"slug": "long-tailed-weasel",
+"name": "Long Tailed Weasel",
+"group": "wild",
+"image_url": "/critters/C093-long-tailed-weasel.svg"
+},
+{
+"id": "C094",
+"slug": "little-brown-bat",
+"name": "Little Brown Bat",
+"group": "wild",
+"image_url": "/critters/C094-little-brown-bat.svg"
+},
+{
+"id": "C095",
+"slug": "summer-tanager",
+"name": "Summer Tanager",
+"group": "wild",
+"image_url": "/critters/C095-summer-tanager.svg"
+},
+{
+"id": "C096",
+"slug": "yellow-bellied-flycatcher",
+"name": "Yellow Bellied Flycatcher",
+"group": "wild",
+"image_url": "/critters/C096-yellow-bellied-flycatcher.svg"
+},
+{
+"id": "C097",
+"slug": "cerulean-warbler",
+"name": "Cerulean Warbler",
+"group": "wild",
+"image_url": "/critters/C097-cerulean-warbler.svg"
+},
+{
+"id": "C098",
+"slug": "common-nighthawk",
+"name": "Common Nighthawk",
+"group": "wild",
+"image_url": "/critters/C098-common-nighthawk.svg"
+},
+{
+"id": "C099",
+"slug": "red-headed-woodpecker",
+"name": "Red Headed Woodpecker",
+"group": "wild",
+"image_url": "/critters/C099-red-headed-woodpecker.svg"
+},
+{
+"id": "C100",
+"slug": "grasshopper-sparrow",
+"name": "Grasshopper Sparrow",
+"group": "wild",
+"image_url": "/critters/C100-grasshopper-sparrow.svg"
+},
+{
+"id": "C101",
+"slug": "black-billed-cuckoo",
+"name": "Black Billed Cuckoo",
+"group": "wild",
+"image_url": "/critters/C101-black-billed-cuckoo.svg"
+},
+{
+"id": "C102",
+"slug": "orange-crowned-warbler",
+"name": "Orange Crowned Warbler",
+"group": "wild",
+"image_url": "/critters/C102-orange-crowned-warbler.svg"
+},
+{
+"id": "C103",
+"slug": "merlin",
+"name": "Merlin",
+"group": "wild",
+"image_url": "/critters/C103-merlin.svg"
+},
+{
+"id": "C104",
+"slug": "purple-martin",
+"name": "Purple Martin",
+"group": "wild",
+"image_url": "/critters/C104-purple-martin.svg"
+},
+{
+"id": "C105",
+"slug": "orchard-oriole",
+"name": "Orchard Oriole",
+"group": "wild",
+"image_url": "/critters/C105-orchard-oriole.svg"
+},
+{
+"id": "C106",
+"slug": "moose",
+"name": "Moose",
+"group": "wild",
+"image_url": "/critters/C106-moose.svg"
+},
+{
+"id": "C107",
+"slug": "fisher",
+"name": "Fisher",
+"group": "wild",
+"image_url": "/critters/C107-fisher.svg"
+},
+{
+"id": "C108",
+"slug": "american-ermine",
+"name": "American Ermine",
+"group": "wild",
+"image_url": "/critters/C108-american-ermine.svg"
+},
+{
+"id": "C109",
+"slug": "eastern-red-bat",
+"name": "Eastern Red Bat",
+"group": "wild",
+"image_url": "/critters/C109-eastern-red-bat.svg"
+},
+{
+"id": "C110",
+"slug": "snowshoe-hare",
+"name": "Snowshoe Hare",
+"group": "wild",
+"image_url": "/critters/C110-snowshoe-hare.svg"
+},
+{
+"id": "C111",
+"slug": "star-nosed-mole",
+"name": "Star Nosed Mole",
+"group": "wild",
+"image_url": "/critters/C111-star-nosed-mole.svg"
+},
+{
+"id": "C112",
+"slug": "eastern-wood-pewee",
+"name": "Eastern Wood Pewee",
+"group": "wild",
+"image_url": "/critters/C112-eastern-wood-pewee.svg"
+},
+{
+"id": "C113",
+"slug": "eastern-phoebe",
+"name": "Eastern Phoebe",
+"group": "wild",
+"image_url": "/critters/C113-eastern-phoebe.svg"
+},
+{
+"id": "C114",
+"slug": "veery",
+"name": "Veery",
+"group": "wild",
+"image_url": "/critters/C114-veery.svg"
+},
+{
+"id": "C115",
+"slug": "hermit-thrush",
+"name": "Hermit Thrush",
+"group": "wild",
+"image_url": "/critters/C115-hermit-thrush.svg"
+},
+{
+"id": "C116",
+"slug": "northern-parula",
+"name": "Northern Parula",
+"group": "wild",
+"image_url": "/critters/C116-northern-parula.svg"
+},
+{
+"id": "C117",
+"slug": "blue-headed-vireo",
+"name": "Blue Headed Vireo",
+"group": "wild",
+"image_url": "/critters/C117-blue-headed-vireo.svg"
+},
+{
+"id": "C118",
+"slug": "eastern-screech-owl",
+"name": "Eastern Screech Owl",
+"group": "wild",
+"image_url": "/critters/C118-eastern-screech-owl.svg"
+},
+{
+"id": "C119",
+"slug": "red-shouldered-hawk",
+"name": "Red Shouldered Hawk",
+"group": "wild",
+"image_url": "/critters/C119-red-shouldered-hawk.svg"
+},
+{
+"id": "C120",
+"slug": "wood-frog",
+"name": "Wood Frog",
+"group": "wild",
+"image_url": "/critters/C120-wood-frog.svg"
+},
+{
+"id": "C121",
+"slug": "red-eft",
+"name": "Red Eft",
+"group": "wild",
+"image_url": "/critters/C121-red-eft.svg"
+},
+{
+"id": "C122",
+"slug": "pickerel-frog",
+"name": "Pickerel Frog",
+"group": "wild",
+"image_url": "/critters/C122-pickerel-frog.svg"
+},
+{
+"id": "C123",
+"slug": "black-throated-blue-warbler",
+"name": "Black Throated Blue Warbler",
+"group": "wild",
+"image_url": "/critters/C123-black-throated-blue-warbler.svg"
+},
+{
+"id": "C124",
+"slug": "northern-saw-whet-owl",
+"name": "Northern Saw Whet Owl",
+"group": "wild",
+"image_url": "/critters/C124-northern-saw-whet-owl.svg"
+},
+{
+"id": "C125",
+"slug": "whip-poor-will",
+"name": "Whip Poor Will",
+"group": "wild",
+"image_url": "/critters/C125-whip-poor-will.svg"
+},
+{
+"id": "C126",
+"slug": "wood-turtle",
+"name": "Wood Turtle",
+"group": "wild",
+"image_url": "/critters/C126-wood-turtle.svg"
+},
+{
+"id": "C127",
+"slug": "smooth-green-snake",
+"name": "Smooth Green Snake",
+"group": "wild",
+"image_url": "/critters/C127-smooth-green-snake.svg"
+},
+{
+"id": "C128",
+"slug": "spotted-salamander",
+"name": "Spotted Salamander",
+"group": "wild",
+"image_url": "/critters/C128-spotted-salamander.svg"
+},
+{
+"id": "C129",
+"slug": "southern-flying-squirrel",
+"name": "Southern Flying Squirrel",
+"group": "wild",
+"image_url": "/critters/C129-southern-flying-squirrel.svg"
+},
+{
+"id": "C130",
+"slug": "luna-moth",
+"name": "Luna Moth",
+"group": "wild",
+"image_url": "/critters/C130-luna-moth.svg"
+},
+{
+"id": "C131",
+"slug": "cecropia-moth",
+"name": "Cecropia Moth",
+"group": "wild",
+"image_url": "/critters/C131-cecropia-moth.svg"
+},
+{
+"id": "C132",
+"slug": "wheel-bug",
+"name": "Wheel Bug",
+"group": "wild",
+"image_url": "/critters/C132-wheel-bug.svg"
+},
+{
+"id": "C133",
+"slug": "bobolink",
+"name": "Bobolink",
+"group": "wild",
+"image_url": "/critters/C133-bobolink.svg"
+},
+{
+"id": "C134",
+"slug": "eastern-meadowlark",
+"name": "Eastern Meadowlark",
+"group": "wild",
+"image_url": "/critters/C134-eastern-meadowlark.svg"
+},
+{
+"id": "C135",
+"slug": "golden-winged-warbler",
+"name": "Golden Winged Warbler",
+"group": "wild",
+"image_url": "/critters/C135-golden-winged-warbler.svg"
+},
+{
+"id": "C136",
+"slug": "northern-goshawk",
+"name": "Northern Goshawk",
+"group": "wild",
+"image_url": "/critters/C136-northern-goshawk.svg"
+},
+{
+"id": "C137",
+"slug": "olive-sided-flycatcher",
+"name": "Olive Sided Flycatcher",
+"group": "wild",
+"image_url": "/critters/C137-olive-sided-flycatcher.svg"
+},
+{
+"id": "C138",
+"slug": "northern-long-eared-bat",
+"name": "Northern Long Eared Bat",
+"group": "wild",
+"image_url": "/critters/C138-northern-long-eared-bat.svg"
+},
+{
+"id": "C139",
+"slug": "tricolored-bat",
+"name": "Tricolored Bat",
+"group": "wild",
+"image_url": "/critters/C139-tricolored-bat.svg"
+},
+{
+"id": "C140",
+"slug": "new-england-cottontail",
+"name": "New England Cottontail",
+"group": "wild",
+"image_url": "/critters/C140-new-england-cottontail.svg"
+},
+{
+"id": "C141",
+"slug": "blandings-turtle",
+"name": "Blandings Turtle",
+"group": "wild",
+"image_url": "/critters/C141-blandings-turtle.svg"
+},
+{
+"id": "C142",
+"slug": "marbled-salamander",
+"name": "Marbled Salamander",
+"group": "wild",
+"image_url": "/critters/C142-marbled-salamander.svg"
+},
+{
+"id": "C143",
+"slug": "rusty-patched-bumblebee",
+"name": "Rusty Patched Bumblebee",
+"group": "wild",
+"image_url": "/critters/C143-rusty-patched-bumblebee.svg"
+},
+{
+"id": "C144",
+"slug": "puritan-tiger-beetle",
+"name": "Puritan Tiger Beetle",
+"group": "wild",
+"image_url": "/critters/C144-puritan-tiger-beetle.svg"
+},
+{
+"id": "C145",
+"slug": "frosted-elfin",
+"name": "Frosted Elfin",
+"group": "wild",
+"image_url": "/critters/C145-frosted-elfin.svg"
+},
+{
+"id": "C146",
+"slug": "common-eastern-bumblebee",
+"name": "Common Eastern Bumblebee",
+"group": "wild",
+"image_url": "/critters/C146-common-eastern-bumblebee.svg"
+},
+{
+"id": "C147",
+"slug": "eastern-carpenter-bee",
+"name": "Eastern Carpenter Bee",
+"group": "wild",
+"image_url": "/critters/C147-eastern-carpenter-bee.svg"
+},
+{
+"id": "C148",
+"slug": "paper-wasp",
+"name": "Paper Wasp",
+"group": "wild",
+"image_url": "/critters/C148-paper-wasp.svg"
+},
+{
+"id": "C149",
+"slug": "hover-fly",
+"name": "Hover Fly",
+"group": "wild",
+"image_url": "/critters/C149-hover-fly.svg"
+},
+{
+"id": "C150",
+"slug": "bald-faced-hornet",
+"name": "Bald Faced Hornet",
+"group": "wild",
+"image_url": "/critters/C150-bald-faced-hornet.svg"
+},
+{
+"id": "C151",
+"slug": "mud-dauber-wasp",
+"name": "Mud Dauber Wasp",
+"group": "wild",
+"image_url": "/critters/C151-mud-dauber-wasp.svg"
+},
+{
+"id": "C152",
+"slug": "great-golden-digger-wasp",
+"name": "Great Golden Digger Wasp",
+"group": "wild",
+"image_url": "/critters/C152-great-golden-digger-wasp.svg"
+},
+{
+"id": "C153",
+"slug": "leafcutter-bee",
+"name": "Leafcutter Bee",
+"group": "wild",
+"image_url": "/critters/C153-leafcutter-bee.svg"
+},
+{
+"id": "C154",
+"slug": "garden-snail",
+"name": "Garden Snail",
+"group": "wild",
+"image_url": "/critters/C154-garden-snail.svg"
+},
+{
+"id": "L001",
+"slug": "american-marten",
+"name": "American Marten",
+"group": "legacy",
+"image_url": "/critters/L001-american-marten.svg"
+},
+{
+"id": "L002",
+"slug": "eastern-wolf",
+"name": "Eastern Wolf",
+"group": "legacy",
+"image_url": "/critters/L002-eastern-wolf.svg"
+},
+{
+"id": "L003",
+"slug": "passenger-pigeon",
+"name": "Passenger Pigeon",
+"group": "legacy",
+"image_url": "/critters/L003-passenger-pigeon.svg"
+},
+{
+"id": "L004",
+"slug": "heath-hen",
+"name": "Heath Hen",
+"group": "legacy",
+"image_url": "/critters/L004-heath-hen.svg"
+},
+{
+"id": "L005",
+"slug": "eastern-wild-turkey-ghost",
+"name": "Eastern Wild Turkey Ghost",
+"group": "legacy",
+"image_url": "/critters/L005-eastern-wild-turkey-ghost.svg"
+},
+{
+"id": "L006",
+"slug": "eastern-elk",
+"name": "Eastern Elk",
+"group": "legacy",
+"image_url": "/critters/L006-eastern-elk.svg"
+},
+{
+"id": "L007",
+"slug": "woodland-caribou",
+"name": "Woodland Caribou",
+"group": "legacy",
+"image_url": "/critters/L007-woodland-caribou.svg"
+},
+{
+"id": "L008",
+"slug": "wild-atlantic-salmon",
+"name": "Wild Atlantic Salmon",
+"group": "legacy",
+"image_url": "/critters/L008-wild-atlantic-salmon.svg"
+},
+{
+"id": "L009",
+"slug": "sea-mink",
+"name": "Sea Mink",
+"group": "legacy",
+"image_url": "/critters/L009-sea-mink.svg"
+},
+{
+"id": "L010",
+"slug": "great-auk",
+"name": "Great Auk",
+"group": "legacy",
+"image_url": "/critters/L010-great-auk.svg"
+},
+{
+"id": "L011",
+"slug": "labrador-duck",
+"name": "Labrador Duck",
+"group": "legacy",
+"image_url": "/critters/L011-labrador-duck.svg"
+},
+{
+"id": "L012",
+"slug": "eskimo-curlew",
+"name": "Eskimo Curlew",
+"group": "legacy",
+"image_url": "/critters/L012-eskimo-curlew.svg"
+},
+{
+"id": "L013",
+"slug": "carolina-parakeet",
+"name": "Carolina Parakeet",
+"group": "legacy",
+"image_url": "/critters/L013-carolina-parakeet.svg"
+},
+{
+"id": "Y001",
+"slug": "eastern-cougar",
+"name": "Eastern Cougar",
+"group": "cryptid",
+"image_url": "/critters/Y001-eastern-cougar.svg"
+},
+{
+"id": "Y002",
+"slug": "melanistic-bobcat",
+"name": "Melanistic Bobcat",
+"group": "cryptid",
+"image_url": "/critters/Y002-melanistic-bobcat.svg"
+},
+{
+"id": "Y003",
+"slug": "wolverine",
+"name": "Wolverine",
+"group": "cryptid",
+"image_url": "/critters/Y003-wolverine.svg"
+},
+{
+"id": "Y004",
+"slug": "white-squirrel",
+"name": "White Squirrel",
+"group": "cryptid",
+"image_url": "/critters/Y004-white-squirrel.svg"
+},
+{
+"id": "Y005",
+"slug": "lake-monster-champ",
+"name": "Lake Monster Champ",
+"group": "cryptid",
+"image_url": "/critters/Y005-lake-monster-champ.svg"
+},
+{
+"id": "Y006",
+"slug": "pukwudgie",
+"name": "Pukwudgie",
+"group": "cryptid",
+"image_url": "/critters/Y006-pukwudgie.svg"
+},
+{
+"id": "Y007",
+"slug": "dover-demon",
+"name": "Dover Demon",
+"group": "cryptid",
+"image_url": "/critters/Y007-dover-demon.svg"
+},
+{
+"id": "Y008",
+"slug": "glawackus",
+"name": "Glawackus",
+"group": "cryptid",
+"image_url": "/critters/Y008-glawackus.svg"
+},
+{
+"id": "Y009",
+"slug": "gloucester-sea-serpent",
+"name": "Gloucester Sea Serpent",
+"group": "cryptid",
+"image_url": "/critters/Y009-gloucester-sea-serpent.svg"
+},
+{
+"id": "Y010",
+"slug": "pioneer-valley-visitor",
+"name": "Pioneer Valley Visitor",
+"group": "cryptid",
+"image_url": "/critters/Y010-pioneer-valley-visitor.svg"
+},
+{
+"id": "Y011",
+"slug": "memphre",
+"name": "Memphre",
+"group": "cryptid",
+"image_url": "/critters/Y011-memphre.svg"
+}
+]

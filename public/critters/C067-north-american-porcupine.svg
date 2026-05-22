@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>North American porcupine — Erethizon dorsatum</title>
+<g transform="translate(100, 100)">
+<ellipse cx="0" cy="24" rx="28" ry="24" fill="#5a3818"/>
+<line x1="-22" y1="-2" x2="-26" y2="-10" stroke="#8a6028" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="-14" y1="-6" x2="-16" y2="-16" stroke="#8a6028" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="-4" y1="-8" x2="-4" y2="-18" stroke="#8a6028" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="6" y1="-8" x2="6" y2="-18" stroke="#8a6028" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="16" y1="-6" x2="18" y2="-16" stroke="#8a6028" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="24" y1="-2" x2="28" y2="-10" stroke="#8a6028" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="-18" y1="12" x2="-26" y2="6" stroke="#8a6028" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="-22" y1="24" x2="-30" y2="22" stroke="#8a6028" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="18" y1="12" x2="26" y2="6" stroke="#8a6028" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="22" y1="24" x2="30" y2="22" stroke="#8a6028" stroke-width="1.5" stroke-linecap="round"/>
+<ellipse cx="-12" cy="44" rx="5" ry="3" fill="#3a2010"/>
+<ellipse cx="12" cy="44" rx="5" ry="3" fill="#3a2010"/>
+<ellipse cx="0" cy="14" rx="18" ry="16" fill="#7a5028"/>
+<circle cx="-7" cy="10" r="4.5" fill="#ffffff"/>
+<circle cx="7" cy="10" r="4.5" fill="#ffffff"/>
+<circle cx="-7" cy="11" r="3.2" fill="#15803d"/>
+<circle cx="7" cy="11" r="3.2" fill="#15803d"/>
+<circle cx="-7" cy="12" r="1.8" fill="#0d0d0d"/>
+<circle cx="7" cy="12" r="1.8" fill="#0d0d0d"/>
+<circle cx="-6" cy="9" r="1" fill="#ffffff"/>
+<circle cx="8" cy="9" r="1" fill="#ffffff"/>
+<ellipse cx="0" cy="22" rx="2.5" ry="1.8" fill="#1a1a1a"/>
+<path d="M -3 26 Q 0 29 3 26" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

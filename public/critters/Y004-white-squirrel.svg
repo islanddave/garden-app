@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>White Squirrel — Sciurus carolinensis (leucistic) (Cryptid)</title>
+<g transform="translate(100, 100)">
+<path d="M 25,55 Q 50,25 70,30 Q 80,55 65,75 Q 50,68 40,60 Z" fill="#f5f5f5"/>
+<path d="M 30,50 Q 50,30 65,38 Q 70,55 55,68 Q 45,62 38,55 Z" fill="#fafafa"/>
+<ellipse cx="22" cy="35" rx="38" ry="28" fill="#fafafa"/>
+<circle cx="-22" cy="-10" r="38" fill="#ffffff"/>
+<path d="M -46,-32 Q -52,-50 -38,-42 Q -42,-38 -46,-32 Z" fill="#fafafa"/>
+<path d="M 0,-32 Q 6,-50 -10,-42 Q -2,-38 0,-32 Z" fill="#fafafa"/>
+<ellipse cx="-22" cy="3" rx="18" ry="12" fill="#fff"/>
+<ellipse cx="-33" cy="-14" rx="9" ry="11" fill="#fff" stroke="#ddd" stroke-width="0.8"/>
+<ellipse cx="-11" cy="-16" rx="9" ry="11" fill="#fff" stroke="#ddd" stroke-width="0.8"/>
+<circle cx="-32" cy="-12" r="6" fill="#e8b8b8"/>
+<circle cx="-10" cy="-14" r="6" fill="#e8b8b8"/>
+<circle cx="-31" cy="-13" r="3" fill="#c43030"/>
+<circle cx="-9" cy="-15" r="3" fill="#c43030"/>
+<circle cx="-29" cy="-15" r="1.4" fill="#fff"/>
+<circle cx="-7" cy="-17" r="1.4" fill="#fff"/>
+<ellipse cx="-22" cy="0" rx="3" ry="2" fill="#c4847a"/>
+<path d="M -26,7 Q -22,11 -18,7" stroke="#5a3a3a" stroke-width="1.5" fill="none"/>
+<rect x="-24" y="9" width="2.5" height="5" fill="#fff" stroke="#ccc" stroke-width="0.5"/>
+<rect x="-21" y="9" width="2.5" height="5" fill="#fff" stroke="#ccc" stroke-width="0.5"/>
+</g>
+</svg>

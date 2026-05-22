@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Deer mouse — Peromyscus maniculatus</title>
+<g transform="translate(100, 100)">
+<ellipse cx="22" cy="36" rx="3" ry="14" fill="#dca888" transform="rotate(-15 22 36)"/>
+<ellipse cx="22" cy="40" rx="2" ry="14" fill="#ffffff" transform="rotate(-15 22 40)"/>
+<ellipse cx="0" cy="22" rx="18" ry="20" fill="#a8826a"/>
+<ellipse cx="0" cy="28" rx="11" ry="14" fill="#f4ead6"/>
+<line x1="-5" y1="42" x2="-5" y2="48" stroke="#f4b6b6" stroke-width="1.4" stroke-linecap="round"/>
+<line x1="5" y1="42" x2="5" y2="48" stroke="#f4b6b6" stroke-width="1.4" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="18" fill="#a8826a"/>
+<circle cx="-16" cy="-30" r="8" fill="#a8826a"/>
+<circle cx="16" cy="-30" r="8" fill="#a8826a"/>
+<circle cx="-16" cy="-30" r="5" fill="#f4b6b6"/>
+<circle cx="16" cy="-30" r="5" fill="#f4b6b6"/>
+<circle cx="-9" cy="-14" r="6.5" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="6.5" fill="#ffffff"/>
+<circle cx="-9" cy="-13" r="5" fill="#a78bfa"/>
+<circle cx="9" cy="-13" r="5" fill="#a78bfa"/>
+<circle cx="-9" cy="-12" r="3" fill="#0d0d0d"/>
+<circle cx="9" cy="-12" r="3" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+<ellipse cx="0" cy="0" rx="2.2" ry="1.6" fill="#f4b6b6"/>
+<line x1="-2" y1="2" x2="-8" y2="4" stroke="#1a1a1a" stroke-width="0.5" stroke-linecap="round"/>
+<line x1="2" y1="2" x2="8" y2="4" stroke="#1a1a1a" stroke-width="0.5" stroke-linecap="round"/>
+<path d="M -4 6 Q 0 9 4 6" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Common raven — Corvus corax</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-36" cy="6" rx="30" ry="14" fill="#1a1a2a" opacity="0.9" transform="rotate(-25 -36 6)" stroke="#2a2a3a" stroke-width="0.5"/>
+<ellipse cx="-36" cy="8" rx="26" ry="11" fill="#0d0d0d" opacity="0.75" transform="rotate(-18 -36 8)"/>
+<ellipse cx="36" cy="6" rx="30" ry="14" fill="#1a1a2a" opacity="0.9" transform="rotate(25 36 6)" stroke="#2a2a3a" stroke-width="0.5"/>
+<ellipse cx="36" cy="8" rx="26" ry="11" fill="#0d0d0d" opacity="0.75" transform="rotate(18 36 8)"/>
+<ellipse cx="0" cy="26" rx="27" ry="28" fill="#0d0d0d"/>
+<ellipse cx="-4" cy="12" rx="16" ry="6" fill="#4a3b9a" opacity="0.35"/>
+<ellipse cx="-3" cy="20" rx="12" ry="3" fill="#6a3b9a" opacity="0.25"/>
+<path d="M -12 -6 Q -8 -4 -4 -8 Q 0 -4 4 -8 Q 8 -4 12 -6" stroke="#0d0d0d" stroke-width="3" fill="none" stroke-linecap="round"/>
+<line x1="-7" y1="50" x2="-7" y2="56" stroke="#2a2a2a" stroke-width="1.8" stroke-linecap="round"/>
+<line x1="7" y1="50" x2="7" y2="56" stroke="#2a2a2a" stroke-width="1.8" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="26" fill="#0d0d0d"/>
+<ellipse cx="-5" cy="-26" rx="14" ry="5" fill="#4a3b9a" opacity="0.4"/>
+<circle cx="-9" cy="-14" r="7" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="7" fill="#ffffff"/>
+<circle cx="-9" cy="-13" r="5.5" fill="#7c3aed"/>
+<circle cx="9" cy="-13" r="5.5" fill="#7c3aed"/>
+<circle cx="-9" cy="-12" r="3" fill="#0d0d0d"/>
+<circle cx="9" cy="-12" r="3" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.8" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.8" fill="#ffffff"/>
+<path d="M -3 -7 L 22 -4 L 30 0 L 22 4 L -3 7 Z" fill="#0d0d0d"/>
+<line x1="-3" y1="0" x2="28" y2="0" stroke="#2a2a3a" stroke-width="0.6"/>
+<path d="M 24 -3 L 30 0 L 24 3 Z" fill="#2a2a3a"/>
+<path d="M -4 6 Q 0 8 5 7" stroke="#4a3b6a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

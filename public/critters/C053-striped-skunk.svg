@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Striped skunk — Mephitis mephitis</title>
+<g transform="translate(100, 100)">
+<path d="M 26 14 Q 42 -8 38 22 Q 32 40 22 36 Q 28 22 26 14 Z" fill="#0d0d0d"/>
+<path d="M 26 14 Q 38 -2 34 18" stroke="#ffffff" stroke-width="2" fill="none" stroke-linecap="round"/>
+<ellipse cx="0" cy="24" rx="22" ry="26" fill="#0d0d0d"/>
+<path d="M -10 -8 Q -12 24 -10 46" stroke="#ffffff" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+<path d="M 10 -8 Q 12 24 10 46" stroke="#ffffff" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+<line x1="-5" y1="48" x2="-5" y2="54" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round"/>
+<line x1="5" y1="48" x2="5" y2="54" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="20" fill="#0d0d0d"/>
+<path d="M 0 -34 Q -2 -22 -2 -16" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round"/>
+<ellipse cx="-14" cy="-28" rx="4" ry="5" fill="#0d0d0d"/>
+<ellipse cx="14" cy="-28" rx="4" ry="5" fill="#0d0d0d"/>
+<circle cx="-8" cy="-14" r="5.5" fill="#ffffff"/>
+<circle cx="8" cy="-14" r="5.5" fill="#ffffff"/>
+<circle cx="-8" cy="-13" r="4" fill="#6ee7b7"/>
+<circle cx="8" cy="-13" r="4" fill="#6ee7b7"/>
+<circle cx="-8" cy="-12" r="2.3" fill="#0d0d0d"/>
+<circle cx="8" cy="-12" r="2.3" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.5" fill="#ffffff"/>
+<circle cx="9" cy="-15" r="1.5" fill="#ffffff"/>
+<circle cx="-9" cy="-11" r="0.8" fill="#ffffff"/>
+<circle cx="7" cy="-11" r="0.8" fill="#ffffff"/>
+<ellipse cx="0" cy="0" rx="2.5" ry="1.8" fill="#e85d6d"/>
+<path d="M -3 5 Q 0 8 3 5" stroke="#5a5a5a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Veery — Catharus fuscescens</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-32" cy="6" rx="26" ry="11" fill="#e8d8c8" opacity="0.6" transform="rotate(-25 -32 6)" stroke="#a89888" stroke-width="0.5"/>
+<ellipse cx="-32" cy="8" rx="23" ry="8" fill="#8a5a3a" opacity="0.4" transform="rotate(-18 -32 8)"/>
+<ellipse cx="32" cy="6" rx="26" ry="11" fill="#e8d8c8" opacity="0.6" transform="rotate(25 32 6)" stroke="#a89888" stroke-width="0.5"/>
+<ellipse cx="32" cy="8" rx="23" ry="8" fill="#8a5a3a" opacity="0.4" transform="rotate(18 32 8)"/>
+<ellipse cx="0" cy="24" rx="22" ry="25" fill="#f4ead6"/>
+<ellipse cx="0" cy="14" rx="22" ry="14" fill="#a8662a"/>
+<circle cx="-10" cy="28" r="1.5" fill="#5a3818"/>
+<circle cx="-2" cy="34" r="1.5" fill="#5a3818"/>
+<circle cx="8" cy="32" r="1.5" fill="#5a3818"/>
+<circle cx="4" cy="40" r="1.5" fill="#5a3818"/>
+<line x1="-5" y1="46" x2="-5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="22" fill="#a8662a"/>
+<circle cx="-9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="-9" cy="-13" r="4.5" fill="#f97316"/>
+<circle cx="9" cy="-13" r="4.5" fill="#f97316"/>
+<circle cx="-9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+<path d="M -3 -3 L 5 -2 Q 7 0 5 2 L -3 3 Z" fill="#2a2a2a"/>
+<path d="M -4 8 Q 0 11 4 8" stroke="#3a1a08" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>American Marten — Martes americana (Legacy)</title>
+<g transform="translate(100, 100)">
+<ellipse cx="0" cy="35" rx="35" ry="20" fill="#8b5a2b"/>
+<circle cx="0" cy="-5" r="42" fill="#a06f3a"/>
+<path d="M -32,-30 L -38,-48 L -22,-38 Z" fill="#8b5a2b"/>
+<path d="M 32,-30 L 38,-48 L 22,-38 Z" fill="#8b5a2b"/>
+<ellipse cx="0" cy="15" rx="20" ry="14" fill="#f5deb3"/>
+<circle cx="-15" cy="-5" r="9" fill="#fff"/>
+<circle cx="15" cy="-5" r="9" fill="#fff"/>
+<circle cx="-14" cy="-4" r="6" fill="#d4801f"/>
+<circle cx="16" cy="-4" r="6" fill="#d4801f"/>
+<circle cx="-13" cy="-5" r="3" fill="#000"/>
+<circle cx="17" cy="-5" r="3" fill="#000"/>
+<circle cx="-11" cy="-7" r="1.5" fill="#fff"/>
+<circle cx="19" cy="-7" r="1.5" fill="#fff"/>
+<ellipse cx="0" cy="14" rx="4" ry="2.5" fill="#000"/>
+<path d="M -6,21 Q 0,27 6,21" stroke="#000" stroke-width="2" fill="none"/>
+</g>
+</svg>

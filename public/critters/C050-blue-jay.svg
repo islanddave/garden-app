@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Blue jay — Cyanocitta cristata</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-32" cy="6" rx="26" ry="12" fill="#4a87d9" opacity="0.9" transform="rotate(-25 -32 6)" stroke="#1a3a6a" stroke-width="0.5"/>
+<ellipse cx="-32" cy="8" rx="22" ry="9" fill="#2563eb" opacity="0.7" transform="rotate(-18 -32 8)"/>
+<ellipse cx="32" cy="6" rx="26" ry="12" fill="#4a87d9" opacity="0.9" transform="rotate(25 32 6)" stroke="#1a3a6a" stroke-width="0.5"/>
+<ellipse cx="32" cy="8" rx="22" ry="9" fill="#2563eb" opacity="0.7" transform="rotate(18 32 8)"/>
+<line x1="-46" y1="-2" x2="-38" y2="2" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/>
+<line x1="-48" y1="6" x2="-40" y2="10" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/>
+<line x1="-44" y1="14" x2="-36" y2="18" stroke="#0d0d0d" stroke-width="1.8" stroke-linecap="round"/>
+<line x1="46" y1="-2" x2="38" y2="2" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/>
+<line x1="48" y1="6" x2="40" y2="10" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/>
+<line x1="44" y1="14" x2="36" y2="18" stroke="#0d0d0d" stroke-width="1.8" stroke-linecap="round"/>
+<ellipse cx="0" cy="24" rx="23" ry="25" fill="#ffffff"/>
+<ellipse cx="0" cy="14" rx="23" ry="14" fill="#2563eb"/>
+<line x1="-5" y1="46" x2="-5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="25" fill="#ffffff"/>
+<path d="M -25 -16 Q -25 -36 0 -42 Q 25 -36 25 -16 Q 0 -24 -25 -16 Z" fill="#2563eb"/>
+<path d="M -13 -36 L 0 -56 L 13 -36 Z" fill="#2563eb"/>
+<circle cx="-9" cy="-14" r="6.5" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="6.5" fill="#ffffff"/>
+<circle cx="-9" cy="-13" r="4.5" fill="#84cc16"/>
+<circle cx="9" cy="-13" r="4.5" fill="#84cc16"/>
+<circle cx="-11" cy="-13" r="2.6" fill="#0d0d0d"/>
+<circle cx="7" cy="-13" r="2.6" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="-12" cy="-11" r="0.9" fill="#ffffff"/>
+<circle cx="6" cy="-11" r="0.9" fill="#ffffff"/>
+<path d="M 0 -5 L -8 -4 L -12 -1 L -14 0 L -12 1 L -8 4 L 0 5 Z" fill="#1a1a1a"/>
+<line x1="-12" y1="0" x2="0" y2="0" stroke="#3a3a3a" stroke-width="0.5"/>
+<path d="M -10 -2 L -14 0 L -10 2 Z" fill="#0d0d0d"/>
+<path d="M -3 11 Q 0 14 3 11" stroke="#0d0d0d" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

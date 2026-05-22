@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>C154 Garden snail (Cornu aspersum)</title>
+<g transform="translate(-356, -150)">
+<ellipse cx="452" cy="282" rx="34" ry="10" fill="#f4c8a8"/>
+<circle cx="432" cy="278" r="11" fill="#f4c8a8"/>
+<circle cx="476" cy="262" r="22" fill="#c98d52"/>
+<path d="M 476 248 Q 488 252 488 262 Q 488 272 478 270 Q 470 266 472 260 Q 474 256 478 260" stroke="#7a5a3a" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+<ellipse cx="468" cy="252" rx="4" ry="2" fill="#e8b07a" opacity="0.7"/>
+<line x1="427" y1="272" x2="420" y2="254" stroke="#f4c8a8" stroke-width="3" stroke-linecap="round"/>
+<line x1="437" y1="270" x2="440" y2="250" stroke="#f4c8a8" stroke-width="3" stroke-linecap="round"/>
+<circle cx="420" cy="252" r="4" fill="#ffffff"/>
+<circle cx="440" cy="248" r="4" fill="#ffffff"/>
+<circle cx="420" cy="253" r="2.2" fill="#1a1a1a"/>
+<circle cx="440" cy="249" r="2.2" fill="#1a1a1a"/>
+<circle cx="421" cy="252" r="1" fill="#ffffff"/>
+<circle cx="441" cy="248" r="1" fill="#ffffff"/>
+<path d="M 427 284 Q 432 287 437 284" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

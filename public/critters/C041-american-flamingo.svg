@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>American flamingo — Phoenicopterus ruber</title>
+<g transform="translate(100, 100)">
+<ellipse cx="-32" cy="6" rx="26" ry="11" fill="#fb7185" opacity="0.85" transform="rotate(-25 -32 6)" stroke="#dc2626" stroke-width="0.5"/>
+<ellipse cx="-32" cy="8" rx="23" ry="8" fill="#dc2626" opacity="0.55" transform="rotate(-18 -32 8)"/>
+<ellipse cx="32" cy="6" rx="26" ry="11" fill="#fb7185" opacity="0.85" transform="rotate(25 32 6)" stroke="#dc2626" stroke-width="0.5"/>
+<ellipse cx="32" cy="8" rx="23" ry="8" fill="#dc2626" opacity="0.55" transform="rotate(18 32 8)"/>
+<ellipse cx="0" cy="24" rx="22" ry="25" fill="#fb7185"/>
+<line x1="-5" y1="46" x2="-5" y2="58" stroke="#fb7185" stroke-width="2" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="58" stroke="#fb7185" stroke-width="2" stroke-linecap="round"/>
+<path d="M 0 -2 Q -2 -16 0 -36" stroke="#fb7185" stroke-width="12" fill="none" stroke-linecap="round"/>
+<circle cx="0" cy="-40" r="14" fill="#fb7185"/>
+<circle cx="-5" cy="-40" r="4" fill="#ffffff"/>
+<circle cx="5" cy="-40" r="4" fill="#ffffff"/>
+<circle cx="-5" cy="-39" r="2.8" fill="#fde047"/>
+<circle cx="5" cy="-39" r="2.8" fill="#fde047"/>
+<circle cx="-5" cy="-38" r="1.6" fill="#0d0d0d"/>
+<circle cx="5" cy="-38" r="1.6" fill="#0d0d0d"/>
+<circle cx="-4" cy="-41" r="1" fill="#ffffff"/>
+<circle cx="6" cy="-41" r="1" fill="#ffffff"/>
+<path d="M -2 -32 L 8 -28 Q 12 -24 8 -20 L -2 -28 Z" fill="#fbbf24" stroke="#0d0d0d" stroke-width="0.5"/>
+<path d="M 6 -26 L 10 -22 L 6 -22 Z" fill="#1a1a1a"/>
+</g>
+</svg>
