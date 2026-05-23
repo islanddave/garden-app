@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { P } from '../lib/constants.js'
 import CatchUpBadge from './CatchUpBadge.jsx'
+import { CATCH_UP_EDITOR_SHIPPED } from '../lib/featureFlags.js'
 
 // BottomNav — NAV-IA-1 layout (V1.2a-3 Increment C / PR-C1, 2026-05-18)
 // Tabs: Projects · Plants · (centered LOG+) · Inventory · (… More menu)
@@ -74,10 +75,16 @@ export default function BottomNav() {
           </div>
 
           {/* V1.2a-4 S1: Catch-up badge surfaces plants with missing lifecycle dates.
-              Render owned here, not on Dashboard (V102 §5.1 #8 + UX item 11). */}
-          <div onClick={closeMore} style={{ padding: '12px 24px 4px' }}>
-            <CatchUpBadge />
-          </div>
+              Render owned here, not on Dashboard (V102 §5.1 #8 + UX item 11).
+              HIDDEN 2.0.1 (gifted-busy-thompson): badge linked to /plants/catch-up, whose
+              S1.1 editor was never built — it shipped into V2 as a "coming soon" dead-end.
+              Gated behind CATCH_UP_EDITOR_SHIPPED; flip true when the S1.1 editor lands
+              (planned 2.1). See v2-increment-audit-2.0.1-to-2.1-V001. */}
+          {CATCH_UP_EDITOR_SHIPPED && (
+            <div data-testid="catch-up-nav-item" onClick={closeMore} style={{ padding: '12px 24px 4px' }}>
+              <CatchUpBadge />
+            </div>
+          )}
 
           {/* Photos — restored to More menu (NAV-REGRESSION fix, 2026-05-23).
               /photos route + PhotoLibrary.jsx shipped V2-PHOTO-F1; nav entry was

@@ -112,6 +112,12 @@ describe('BottomNav — More menu', () => {
     expect(link).not.toBeNull()
     expect(link.getAttribute('href')).toBe('/photos')
   })
+
+  it('does NOT render the Catch-up badge container (hidden 2.0.1 until S1.1 editor ships)', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    expect(screen.queryByTestId('catch-up-nav-item')).toBeNull()
+  })
 })
 
 describe('BottomNav — Sign Out confirmation flow', () => {
