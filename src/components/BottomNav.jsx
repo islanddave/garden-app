@@ -14,9 +14,11 @@ import { CATCH_UP_EDITOR_SHIPPED } from '../lib/featureFlags.js'
 //     action must not be an impulsive-mistap target.
 // Overflow is a V3 IA-revision concern, explicitly out of NAV-IA-1 scope.
 
+// Increment 1 (post-V2 UX overhaul): Projects + Plants unified into one "Garden" tab
+// (nested accordion tree). Nav = Garden · +LOG · Inventory · More; the freed 5th slot
+// is reserved for Tasks/Care (Increment 3+). /projects + /plants stay routable.
 const TABS = [
-  { to: '/projects',  label: 'Projects',  icon: '🌱' },
-  { to: '/plants',    label: 'Plants',    icon: '🌿' },
+  { to: '/garden',    label: 'Garden',    icon: '🌳' },
   { to: '/log',       label: '+Log',      icon: '+',  highlight: true },
   { to: '/inventory', label: 'Inventory', icon: '📦' },
 ]
