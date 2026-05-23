@@ -79,6 +79,29 @@ export default function BottomNav() {
             <CatchUpBadge />
           </div>
 
+          {/* Photos — restored to More menu (NAV-REGRESSION fix, 2026-05-23).
+              /photos route + PhotoLibrary.jsx shipped V2-PHOTO-F1; nav entry was
+              dropped by the NAV-IA-1 rework (PR-C1, 2026-05-18) — same regression
+              class as Achievements. Restores access to the standalone photo library. */}
+          <Link
+            to="/photos"
+            onClick={closeMore}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 16,
+              width: '100%',
+              padding: '14px 24px',
+              borderTop: `1px solid ${P.border}`,
+              background: 'none', textAlign: 'left',
+              cursor: 'pointer', textDecoration: 'none',
+              color: P.dark, fontSize: '1rem', fontWeight: 500,
+              fontFamily: 'inherit',
+              minHeight: 48,
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📷</span>
+            Photos
+          </Link>
+
           {/* Achievements — restored to More menu (NAV-REGRESSION fix, 2026-05-22).
               Route + page shipped V1.2a-1 S4; nav entry was dropped by the NAV-IA-1
               rework (PR-C1, 2026-05-18). Restores access per the V1.2 NAV-REGRESSION
