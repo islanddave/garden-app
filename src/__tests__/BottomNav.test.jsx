@@ -104,6 +104,14 @@ describe('BottomNav — More menu', () => {
     expect(link).not.toBeNull()
     expect(link.getAttribute('href')).toBe('/achievements')
   })
+
+  it('More menu shows the Photos link pointing to /photos (NAV-REGRESSION restore, 2026-05-23)', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    const link = screen.getByText('Photos').closest('a')
+    expect(link).not.toBeNull()
+    expect(link.getAttribute('href')).toBe('/photos')
+  })
 })
 
 describe('BottomNav — Sign Out confirmation flow', () => {
