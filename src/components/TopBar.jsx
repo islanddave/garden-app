@@ -65,7 +65,7 @@ export default function TopBar() {
             to={`/zone?from=${encodeURIComponent(location.pathname)}`}
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
-              color: P.cream,
+              color: '#c9a84c', // BUG-04: favorites nav star gold (matches FavoriteToggle favorited state)
               textDecoration: 'none',
               backgroundColor: 'rgba(248,245,240,0.15)',
               border: '1px solid rgba(248,245,240,0.3)',
@@ -88,7 +88,7 @@ export default function TopBar() {
             aria-label="Favorites"
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: P.cream,
+              color: '#c9a84c', // BUG-04: favorites nav star gold (matches FavoriteToggle favorited state)
               textDecoration: 'none',
               backgroundColor: 'rgba(248,245,240,0.15)',
               border: '1px solid rgba(248,245,240,0.3)',

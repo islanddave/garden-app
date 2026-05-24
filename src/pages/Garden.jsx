@@ -5,6 +5,7 @@ import { P } from '../lib/constants.js'
 import { getStatusColors } from '../lib/status.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded } from '../lib/projectTree.js'
+import { formatQty } from '../lib/format.js'
 
 // Garden — Increment 1 of the post-V2 UX overhaul. Unifies the old Projects + Plants
 // tabs into ONE nested accordion: projects form a parent/child tree; each project's
@@ -170,7 +171,7 @@ function PlantingRow({ planting: pl, depth, level }) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{pl.name}</span>
-              {pl.quantity > 1 && <span style={{ fontSize: '0.76rem', color: P.green, fontWeight: 600 }}>×{pl.quantity}</span>}
+              {pl.quantity > 1 && <span style={{ fontSize: '0.76rem', color: P.green, fontWeight: 600 }}>×{formatQty(pl.quantity)}</span>}
               {variety && <span style={{ fontSize: '0.76rem', color: P.mid }}>{variety}</span>}
             </div>
           </div>

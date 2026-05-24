@@ -7,6 +7,7 @@ import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
+import VarietyPicker from '../components/VarietyPicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 
 const EVENT_ICONS = {
@@ -100,7 +101,7 @@ export default function ProjectDetail() {
   // optional lifecycle/source/lineage fields. All NULL-tolerant server-side.
   // sown_at_approx toggles whether sown_at is treated as an exact date.
   const [plantForm,     setPlantForm]     = useState({
-    name: '', variety: '', quantity: '1', notes: '',
+    name: '', variety: null, quantity: '1', notes: '',
     sown_at: '', sown_at_approx: false,
     qty_initial: '',
     source_type: '', source_ref: '', source_generation: '',
@@ -182,7 +183,8 @@ export default function ProjectDetail() {
         body: JSON.stringify({
           project_id: id,
           name:       plantForm.name.trim(),
-          variety:    plantForm.variety.trim()  || null,
+          variety:    plantForm.variety?.name ?? null, // BUG-02/03: dual-write legacy name + canonical id
+          variety_id: plantForm.variety?.id ?? null,
           quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
           notes:      plantForm.notes.trim()   || null,
           // V1.2a-4 S1: lifecycle/source/lineage extension. All optional.
@@ -197,7 +199,7 @@ export default function ProjectDetail() {
       })
       setPlants(p => [...p, data])
       setPlantForm({
-        name: '', variety: '', quantity: '1', notes: '',
+        name: '', variety: null, quantity: '1', notes: '',
         sown_at: '', sown_at_approx: false,
         qty_initial: '',
         source_type: '', source_ref: '', source_generation: '',
@@ -281,8 +283,6 @@ export default function ProjectDetail() {
     setForm({
       name:              project.name,
       slug:              project.slug,
-      variety:           project.variety     ?? '',
-      species:           project.species     ?? '',
       description:       project.description ?? '',
       status:            project.status,
       start_date:        project.start_date  ?? '',
@@ -304,8 +304,6 @@ export default function ProjectDetail() {
         body: JSON.stringify({
           name:              form.name.trim(),
           slug:              form.slug.trim(),
-          variety:           form.variety.trim()     || null,
-          species:           form.species.trim()     || null,
           description:       form.description.trim() || null,
           status:            form.status,
           start_date:        form.start_date         || null,
@@ -454,18 +452,16 @@ export default function ProjectDetail() {
               style={inputStyle} />
           </FormRow>
 
-          <FormRow label="Slug  ·  /garden/{slug}">
-            <input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value }))} style={inputStyle} />
-          </FormRow>
+          {/* BUG-08 (2.1.1): Slug input hidden from the edit form — humans don't need it now.
+              Slug is still auto-generated from name/start_date (generateSlug calls below) and
+              saved silently via handleSave (form.slug). Only the UI control is removed. */}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <FormRow label="Variety">
-              <input value={form.variety} onChange={e => setForm(f => ({ ...f, variety: e.target.value }))} style={inputStyle} />
-            </FormRow>
-            <FormRow label="Species">
-              <input value={form.species} onChange={e => setForm(f => ({ ...f, species: e.target.value }))} style={inputStyle} />
-            </FormRow>
-          </div>
+          {/* BUG-02 (variety-ref model): Variety/Species removed from the project-edit form.
+              Taxonomy lives on PLANTINGS (variety_id, set via VarietyPicker in Add-Plant), not on
+              plant_projects (which has no variety_id and no species column — species was silently
+              dropped, variety text never displayed). Removed rather than wired to avoid duplicating
+              variety attachment at two levels. Existing project.variety text is preserved (PUT no
+              longer sends it, so COALESCE keeps it) but is no longer user-editable here. */}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <FormRow label="Start date">
@@ -561,10 +557,14 @@ export default function ProjectDetail() {
               </FormRow>
             </div>
             <FormRow label="Variety (optional)">
-              <input value={plantForm.variety}
-                onChange={e => setPlantForm(f => ({ ...f, variety: e.target.value }))}
-                placeholder="e.g. Jalapeno Gigante"
-                style={inputStyle} />
+              {/* BUG-02/03 (VARIETY-REF UI): VarietyPicker replaces free-text variety so the
+                  selection persists as variety_id (the plants Lambda read-strips legacy free-text).
+                  Mirrors the shipped Plants.jsx / InventoryAdd integration. */}
+              <VarietyPicker
+                value={plantForm.variety}
+                onChange={(variety) => setPlantForm(f => ({ ...f, variety }))}
+                placeholder="Search or create a variety…"
+              />
             </FormRow>
             <FormRow label="Notes (optional)">
               <input value={plantForm.notes}
@@ -999,7 +999,7 @@ function Fields({ project: p, locPath }) {
     ['Species',     p.variety_ref?.species],
     ['Start date',  p.start_date ? new Date(p.start_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null],
     ['Location',    locPath ? `📍 ${locPath}` : null],
-    ['Slug',        `/garden/${p.slug}`],
+    // BUG-08 (2.1.1): Slug line hidden from detail display (humans don't need it; still populated in DB).
     ['Description', p.description],
   ].filter(([, v]) => v)
 

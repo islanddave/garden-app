@@ -193,6 +193,9 @@ jobs:
       - name: Build (staging)
         id: build
         run: |
+          # SW staleness fix (2.1.1): unique CACHE_VERSION per staging build (forces SW update -> purge old caches)
+          sed -i -E "s/const CACHE_VERSION = '[^']*'/const CACHE_VERSION = 'vstg-$(git rev-parse --short HEAD)'/" public/sw.js
+          grep -n "CACHE_VERSION" public/sw.js | head -1
           npm run build
           ARTIFACT_HASH=$(sha256sum dist/index.html | awk '{print $1}')
           ASSET_FILE=$(ls dist/assets/index-*.js 2>/dev/null | head -1 | xargs -r basename || echo "")

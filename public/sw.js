@@ -2,7 +2,7 @@
 // Cache-first for static assets, network-first for Lambda API calls.
 // CACHE_VERSION should be updated with each deploy for cache-busting.
 
-const CACHE_VERSION = 'v15-20260518' // NAV-IA-1 (BottomNav/TopBar shell touch) — V1.2a-3 Increment C PR-C1
+const CACHE_VERSION = 'v16-20260524' // base default — deploy workflows rewrite this to v{version}-{sha} per deploy for cache-busting (deploy.yml / deploy-staging.yml). Frozen value caused stale-footer bug (2.1.1 fix).
 const STATIC_CACHE  = `static-${CACHE_VERSION}`
 const API_CACHE     = `api-${CACHE_VERSION}`
 

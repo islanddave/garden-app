@@ -696,31 +696,11 @@ function WaterMeTile({ waterDue, hasProjects }) {
 
   if (!hasProjects) return null
 
-  // Zero state primer (non-hide)
-  if (waterDue.length === 0) {
-    return (
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-        padding: '14px 16px',
-        backgroundColor: P.white,
-        border: `1.5px solid ${P.border}`,
-        borderRadius: '10px',
-        marginBottom: '28px',
-      }}>
-        <span style={{ fontSize: '1.4rem' }}>💧</span>
-        <div>
-          <div style={{ fontSize: '0.75rem', color: P.mid, fontWeight: 500, marginBottom: '1px' }}>
-            WATER ME
-          </div>
-          <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
-            Tap a project to set a watering rhythm
-          </div>
-        </div>
-      </div>
-    )
-  }
+  // BUG-05a (2.1.1): hide the "set a watering rhythm" dead-end primer.
+  // There is no watering-schedule UI to set yet (planting-level schedule = BUG-05b /
+  // Care Profiles, unbuilt). Advertising an unbuildable action is a Catch-up-class
+  // dead-end, so render nothing when no watering is actually due.
+  if (waterDue.length === 0) return null
 
   function goToLog(projectId) {
     navigate(`/log?project=${projectId}&event_type=watering`)
