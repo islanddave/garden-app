@@ -216,9 +216,9 @@ export const handler = async (event) => {
             CASE WHEN ${eventType} = 'fertilization' THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'pruning'       THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'observation'   THEN ${eventDate}::timestamptz ELSE NULL END,
-            NULL,
+            NULL::timestamptz,
             CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
-            NULL
+            NULL::timestamptz
           FROM plants p WHERE p.id = ANY(${plantIds})
           ON CONFLICT (project_id) DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
