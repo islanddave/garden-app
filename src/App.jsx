@@ -25,6 +25,7 @@ import Favorites from './pages/Favorites.jsx'
 import ProjectTypes from './pages/ProjectTypes.jsx'
 import Plants from './pages/Plants.jsx'
 import Garden from './pages/Garden.jsx'
+import LogMany from './pages/LogMany.jsx'
 import PlantsCatchUp from './pages/PlantsCatchUp.jsx'
 import LocationDetail from './pages/LocationDetail.jsx'
 import EventDetail from './pages/EventDetail.jsx'
@@ -103,6 +104,7 @@ function AppRoutes() {
               <Route path="/inventory/add" element={<Protected><InventoryAdd /></Protected>} />
               <Route path="/inventory/:id" element={<Protected><InventoryDetail /></Protected>} />
               <Route path="/log"           element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><EventNew /></ErrorBoundary></Protected>} />
+              <Route path="/log/many"      element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><LogMany /></ErrorBoundary></Protected>} />
               <Route path="/photos"        element={<Protected><PhotoLibrary /></Protected>} />
               <Route path="/favorites"     element={<Protected><Favorites /></Protected>} />
               <Route path="/project-types" element={<Protected><ProjectTypes /></Protected>} />

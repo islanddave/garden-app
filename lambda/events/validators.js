@@ -77,3 +77,47 @@ export function validatePostBody(body) {
 
 // F9 UUID regex — applied before any SQL fires so Postgres never sees a malformed UUID.
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ── Bulk "Quick Log" / Unit A (2026-05-24) ──────────────────────────────────
+// Side-effect-free types only. Vocabulary mirrors EventNew EVENT_TYPES_UI values
+// (so event_log.event_type matches the single-event path). Harvest is excluded
+// (single-event harvest dual-writes harvest_log; batch would skip that side-effect).
+export const BATCH_EVENT_TYPES = ['watering', 'fertilizing', 'observation', 'pruning'];
+
+// Returns null on success, or { status, error } on validation failure.
+export function validateBatchBody(body) {
+  if (body.dry_run !== true && (!body.idempotency_key || typeof body.idempotency_key !== 'string')) {
+    return { status: 400, error: 'idempotency_key is required' };
+  }
+  if (!body.event_type) return { status: 400, error: 'event_type is required' };
+  if (!BATCH_EVENT_TYPES.includes(body.event_type)) {
+    return { status: 400, error: `event_type must be one of: ${BATCH_EVENT_TYPES.join(', ')} (harvest not supported in batch)` };
+  }
+  if (body.event_date != null) {
+    const ed = new Date(body.event_date);
+    if (!Number.isFinite(ed.getTime())) return { status: 400, error: 'event_date invalid' };
+    const now = Date.now();
+    if (ed.getTime() < now - PAST_BOUND_MS) return { status: 400, error: 'event_date too far in past' };
+    if (ed.getTime() > now + FUTURE_BOUND_MS) return { status: 400, error: 'event_date in future' };
+  }
+  const s = body.scope;
+  if (!s || typeof s !== 'object') return { status: 400, error: 'scope is required' };
+  if (!['all', 'project', 'space'].includes(s.type)) {
+    return { status: 400, error: 'scope.type must be all, project, or space' };
+  }
+  if (s.type === 'project' && !UUID_RE.test(s.project_id ?? '')) {
+    return { status: 400, error: 'scope.project_id must be a UUID when scope.type=project' };
+  }
+  if (s.type === 'space' && !UUID_RE.test(s.location_id ?? '')) {
+    return { status: 400, error: 'scope.location_id must be a UUID when scope.type=space' };
+  }
+  if (body.exclude_plant_ids != null) {
+    if (!Array.isArray(body.exclude_plant_ids)) {
+      return { status: 400, error: 'exclude_plant_ids must be an array' };
+    }
+    if (body.exclude_plant_ids.some((id) => !UUID_RE.test(id))) {
+      return { status: 400, error: 'exclude_plant_ids must all be UUIDs' };
+    }
+  }
+  return null;
+}
