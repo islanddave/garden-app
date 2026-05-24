@@ -56,6 +56,19 @@ jobs:
           echo "Version: $OLD → $NEW ($BUMP bump)"
           echo "NEW_VERSION=$NEW" >> "$GITHUB_ENV"
 
+      - name: Cache-bust service worker
+        # SW staleness fix (2.1.1): public/sw.js CACHE_VERSION must change every deploy, or the
+        # browser never sees new SW bytes -> never re-activates -> old caches never purge -> a stale
+        # shell/bundle (e.g. footer version) is served. Tie it to version + short SHA for uniqueness.
+        # Runs after Bump (NEW_VERSION set) and before Build (vite copies public/ verbatim to dist/).
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          NEWVER="${NEW_VERSION:-$(node -p "require('./package.json').version")}"
+          CV="v${NEWVER}-${SHORT_SHA}"
+          sed -i -E "s/const CACHE_VERSION = '[^']*'/const CACHE_VERSION = '${CV}'/" public/sw.js
+          echo "Service worker cache version -> ${CV}"
+          grep -n "CACHE_VERSION" public/sw.js | head -1
+
       - name: Validate env vars
         run: |
           for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD VITE_API_INVENTORY; do
