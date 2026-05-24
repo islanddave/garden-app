@@ -283,8 +283,6 @@ export default function ProjectDetail() {
     setForm({
       name:              project.name,
       slug:              project.slug,
-      variety:           project.variety     ?? '',
-      species:           project.species     ?? '',
       description:       project.description ?? '',
       status:            project.status,
       start_date:        project.start_date  ?? '',
@@ -306,8 +304,6 @@ export default function ProjectDetail() {
         body: JSON.stringify({
           name:              form.name.trim(),
           slug:              form.slug.trim(),
-          variety:           form.variety.trim()     || null,
-          species:           form.species.trim()     || null,
           description:       form.description.trim() || null,
           status:            form.status,
           start_date:        form.start_date         || null,
@@ -460,14 +456,12 @@ export default function ProjectDetail() {
               Slug is still auto-generated from name/start_date (generateSlug calls below) and
               saved silently via handleSave (form.slug). Only the UI control is removed. */}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <FormRow label="Variety">
-              <input value={form.variety} onChange={e => setForm(f => ({ ...f, variety: e.target.value }))} style={inputStyle} />
-            </FormRow>
-            <FormRow label="Species">
-              <input value={form.species} onChange={e => setForm(f => ({ ...f, species: e.target.value }))} style={inputStyle} />
-            </FormRow>
-          </div>
+          {/* BUG-02 (variety-ref model): Variety/Species removed from the project-edit form.
+              Taxonomy lives on PLANTINGS (variety_id, set via VarietyPicker in Add-Plant), not on
+              plant_projects (which has no variety_id and no species column — species was silently
+              dropped, variety text never displayed). Removed rather than wired to avoid duplicating
+              variety attachment at two levels. Existing project.variety text is preserved (PUT no
+              longer sends it, so COALESCE keeps it) but is no longer user-editable here. */}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <FormRow label="Start date">
