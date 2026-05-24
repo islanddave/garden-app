@@ -45,13 +45,14 @@ beforeEach(() => {
 })
 
 describe('BottomNav — NAV-IA-1 layout', () => {
-  it('renders the 4 tab destinations + LOG+ + More button', () => {
+  it('renders Garden + LOG+ + Inventory + More (Projects+Plants unified into Garden)', () => {
     render(<BottomNav />)
-    expect(screen.getByText('Projects')).toBeDefined()
-    expect(screen.getByText('Plants')).toBeDefined()
+    expect(screen.getByText('Garden')).toBeDefined()
     expect(screen.getByText('+Log')).toBeDefined()
     expect(screen.getByText('Inventory')).toBeDefined()
     expect(screen.getByText('More')).toBeDefined()
+    expect(screen.queryByText('Projects')).toBeNull()
+    expect(screen.queryByText('Plants')).toBeNull()
   })
 
   it('does NOT render Dashboard in the bottom nav (dropped per 2026-05-15 adjustment)', () => {
@@ -66,8 +67,7 @@ describe('BottomNav — NAV-IA-1 layout', () => {
 
   it('tab links point to correct routes', () => {
     render(<BottomNav />)
-    expect(screen.getByText('Projects').closest('a').getAttribute('href')).toBe('/projects')
-    expect(screen.getByText('Plants').closest('a').getAttribute('href')).toBe('/plants')
+    expect(screen.getByText('Garden').closest('a').getAttribute('href')).toBe('/garden')
     expect(screen.getByText('Inventory').closest('a').getAttribute('href')).toBe('/inventory')
     // LOG+ has aria-label "Log an event" — search by that since +Log label is also on the +Log span
     expect(screen.getByLabelText('Log an event').getAttribute('href')).toBe('/log')
