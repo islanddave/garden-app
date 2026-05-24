@@ -213,7 +213,7 @@ export const handler = async (event) => {
           SELECT DISTINCT p.project_id,
             ${eventDate}::timestamptz,
             CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz ELSE NULL END,
-            CASE WHEN ${eventType} = 'fertilization' THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} = 'fertilizing' THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'pruning'       THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'observation'   THEN ${eventDate}::timestamptz ELSE NULL END,
             NULL::timestamptz,
@@ -223,7 +223,7 @@ export const handler = async (event) => {
           ON CONFLICT (project_id) DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
             last_watered_at    = CASE WHEN ${eventType} = 'watering'      THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
-            last_fertilized_at = CASE WHEN ${eventType} = 'fertilization' THEN GREATEST(COALESCE(entity_memory.last_fertilized_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_fertilized_at END,
+            last_fertilized_at = CASE WHEN ${eventType} = 'fertilizing' THEN GREATEST(COALESCE(entity_memory.last_fertilized_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_fertilized_at END,
             last_pruned_at     = CASE WHEN ${eventType} = 'pruning'       THEN GREATEST(COALESCE(entity_memory.last_pruned_at,     ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_pruned_at     END,
             last_observed_at   = CASE WHEN ${eventType} = 'observation'   THEN GREATEST(COALESCE(entity_memory.last_observed_at,   ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_observed_at   END,
             next_water_at      = CASE WHEN ${eventType} = 'watering'
@@ -546,7 +546,7 @@ export const handler = async (event) => {
       // F3 quantity_numeric synced for harvest events. F15 explicit RETURNING allow-list (no *).
       // F12 JS extraction: harvest_row stripped from row, exposed as `harvest` key.
       // Statement 3: entity_memory UPSERT with last_issue_at (F2 — present in INSERT col list, VALUES,
-      // and ON CONFLICT branch). B1 prod vocabulary: 'watering' / 'fertilization' / 'pruning' /
+      // and ON CONFLICT branch). B1 prod vocabulary: 'watering' / 'fertilizing' / 'pruning' /
       // 'observation' / 'harvest' verbatim.
       const txResult = await sql.transaction([
         sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
@@ -609,7 +609,7 @@ export const handler = async (event) => {
             ${projectId},
             ${eventDate}::timestamptz,
             CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz ELSE NULL END,
-            CASE WHEN ${eventType} = 'fertilization' THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} = 'fertilizing' THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'pruning'       THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'observation'   THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'harvest'       THEN ${eventDate}::timestamptz ELSE NULL END,
@@ -619,7 +619,7 @@ export const handler = async (event) => {
           ON CONFLICT (project_id) DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
             last_watered_at    = CASE WHEN ${eventType} = 'watering'      THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
-            last_fertilized_at = CASE WHEN ${eventType} = 'fertilization' THEN GREATEST(COALESCE(entity_memory.last_fertilized_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_fertilized_at END,
+            last_fertilized_at = CASE WHEN ${eventType} = 'fertilizing' THEN GREATEST(COALESCE(entity_memory.last_fertilized_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_fertilized_at END,
             last_pruned_at     = CASE WHEN ${eventType} = 'pruning'       THEN GREATEST(COALESCE(entity_memory.last_pruned_at,     ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_pruned_at     END,
             last_observed_at   = CASE WHEN ${eventType} = 'observation'   THEN GREATEST(COALESCE(entity_memory.last_observed_at,   ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_observed_at   END,
             last_harvested_at  = CASE WHEN ${eventType} = 'harvest'       THEN GREATEST(COALESCE(entity_memory.last_harvested_at,  ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_harvested_at  END,
