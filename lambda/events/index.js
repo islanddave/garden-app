@@ -22,8 +22,9 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE } from './validators.js';
+import { validatePostBody, validateBatchBody, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE } from './validators.js';
 import { householdScope } from './household.js';
+import { randomUUID } from 'node:crypto';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -134,6 +135,171 @@ export const handler = async (event) => {
       }
 
       return resp(200, rows[0]);
+    }
+
+    // ── Bulk "Quick Log" / Unit A (2026-05-24): batch routes BEFORE the /:id regex ──────────────
+    // POST /api/events/batch — apply one event_type to many plantings (one event per planting).
+    if (rawPath === '/api/events/batch' && method === 'POST') {
+      const body = JSON.parse(event.body ?? '{}');
+      const vErr = validateBatchBody(body);
+      if (vErr) return resp(vErr.status, { error: vErr.error });
+
+      const eventType = body.event_type;
+      const eventDate = body.event_date
+        ? new Date(body.event_date).toISOString()
+        : new Date().toISOString();
+      const key = body.idempotency_key;
+      const scope = body.scope;
+      const scopeType = scope.type;
+      const projectId = scope.project_id ?? null;
+      const locationId = scope.location_id ?? null;
+      const excludeIds = Array.isArray(body.exclude_plant_ids) ? body.exclude_plant_ids : [];
+      const dryRun = body.dry_run === true;
+
+      // (1) Idempotency fast-path: same key (same owner) returns the prior batch, no re-insert.
+      const prior = await sql`
+        SELECT id, item_count FROM event_batches
+        WHERE idempotency_key = ${key} AND created_by = ${userId}
+      `;
+      if (prior.length) {
+        return resp(200, { batch_id: prior[0].id, count: prior[0].item_count, idempotent: true });
+      }
+
+      // (2) Resolve scope server-side → owner-scoped, alive plantings (never trust a client list).
+      const resolved = await sql`
+        SELECT p.id AS plant_id, p.name AS plant_name
+        FROM plants p JOIN plant_projects pp ON pp.id = p.project_id
+        WHERE p.deleted_at IS NULL AND pp.deleted_at IS NULL
+          AND pp.created_by = ANY(${householdIds})
+          AND CASE ${scopeType}
+                WHEN 'all'     THEN true
+                WHEN 'project' THEN pp.id = ${projectId}
+                WHEN 'space'   THEN pp.location_id = ${locationId}
+                ELSE false
+              END
+          AND NOT (p.id = ANY(${excludeIds}))
+        LIMIT 501
+      `;
+      const capped = resolved.length > 500;
+      const previewRows = resolved.slice(0, 500).map((r) => ({ id: r.plant_id, name: r.plant_name }));
+      const plantIds = resolved.slice(0, 500).map((r) => r.plant_id);
+      // dry_run: server-accurate preview (count + plantings), no write, no idempotency needed.
+      if (dryRun) return resp(200, { count: plantIds.length, capped, plantings: previewRows });
+      if (plantIds.length === 0) return resp(400, { error: 'No plantings matched the scope' });
+      if (capped) return resp(400, { error: 'Too many plantings (>500) — narrow the scope' });
+      const batchId = randomUUID();
+      const scopeJson = JSON.stringify(scope);
+
+      // (3) One transaction: batch row + resolve-and-insert events + per-project entity_memory.
+      await sql.transaction([
+        sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+        sql`INSERT INTO event_batches
+              (id, idempotency_key, created_by, event_type, scope_json, event_date, item_count, status)
+            VALUES (${batchId}, ${key}, ${userId}, ${eventType}, ${scopeJson}::jsonb,
+                    ${eventDate}::timestamptz::date, ${plantIds.length}, 'complete')`,
+        sql`INSERT INTO event_log
+              (project_id, location_id, plant_id, event_type, event_date, is_public,
+               logged_by, created_by, metadata)
+            SELECT p.project_id, pp.location_id, p.id, ${eventType}, ${eventDate}::timestamptz, true,
+                   ${userId}, ${userId},
+                   jsonb_build_object('batch_id', ${batchId}::text, 'batch_v', 1)
+            FROM plants p JOIN plant_projects pp ON pp.id = p.project_id
+            WHERE p.id = ANY(${plantIds})`,
+        sql`
+          INSERT INTO entity_memory
+            (project_id, last_event_at,
+             last_watered_at, last_fertilized_at, last_pruned_at, last_observed_at, last_harvested_at,
+             next_water_at, last_issue_at)
+          SELECT DISTINCT p.project_id,
+            ${eventDate}::timestamptz,
+            CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} = 'fertilization' THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} = 'pruning'       THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} = 'observation'   THEN ${eventDate}::timestamptz ELSE NULL END,
+            NULL,
+            CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
+            NULL
+          FROM plants p WHERE p.id = ANY(${plantIds})
+          ON CONFLICT (project_id) DO UPDATE SET
+            last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
+            last_watered_at    = CASE WHEN ${eventType} = 'watering'      THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
+            last_fertilized_at = CASE WHEN ${eventType} = 'fertilization' THEN GREATEST(COALESCE(entity_memory.last_fertilized_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_fertilized_at END,
+            last_pruned_at     = CASE WHEN ${eventType} = 'pruning'       THEN GREATEST(COALESCE(entity_memory.last_pruned_at,     ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_pruned_at     END,
+            last_observed_at   = CASE WHEN ${eventType} = 'observation'   THEN GREATEST(COALESCE(entity_memory.last_observed_at,   ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_observed_at   END,
+            next_water_at      = CASE WHEN ${eventType} = 'watering'
+              THEN GREATEST(COALESCE(entity_memory.last_watered_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz)
+                   + (COALESCE(entity_memory.watering_interval_days,
+                       CASE entity_memory.location_type
+                         WHEN 'indoor_seedling'   THEN 1
+                         WHEN 'outdoor_container' THEN 2
+                         WHEN 'outdoor_bed'       THEN 4
+                         WHEN 'outdoor_inground'  THEN 5
+                         WHEN 'indoor_mature'     THEN 5
+                         ELSE 4
+                       END)::int * INTERVAL '1 day')
+              ELSE entity_memory.next_water_at
+            END,
+            updated_at = NOW()
+        `,
+      ]);
+      return resp(200, { batch_id: batchId, count: plantIds.length });
+    }
+
+    // GET /api/events/batches — recent (non-undone) batches for the durable Undo affordance.
+    if (rawPath === '/api/events/batches' && method === 'GET') {
+      const rows = await sql`
+        SELECT id, event_type, scope_json, item_count, event_date, created_at
+        FROM event_batches
+        WHERE created_by = ${userId} AND undone_at IS NULL AND status = 'complete'
+        ORDER BY created_at DESC LIMIT 10
+      `;
+      return resp(200, { batches: rows });
+    }
+
+    // DELETE /api/events/batch/:id — undo a batch (soft-delete its events + recompute watering memory).
+    const batchUndo = rawPath.match(/^\/api\/events\/batch\/([^/]+)$/);
+    if (batchUndo && method === 'DELETE') {
+      const batchId = batchUndo[1];
+      if (!UUID_RE.test(batchId)) return resp(404, { error: 'Not found' });
+      const owned = await sql`
+        SELECT id FROM event_batches
+        WHERE id = ${batchId} AND created_by = ${userId} AND undone_at IS NULL
+      `;
+      if (!owned.length) return resp(404, { error: 'Not found' });
+
+      await sql.transaction([
+        sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+        sql`UPDATE event_log SET deleted_at = NOW(), updated_at = NOW()
+            WHERE metadata->>'batch_id' = ${batchId} AND deleted_at IS NULL`,
+        sql`
+          WITH affected AS (
+            SELECT DISTINCT project_id FROM event_log WHERE metadata->>'batch_id' = ${batchId}
+          ),
+          surv AS (
+            SELECT a.project_id,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.project_id = a.project_id AND e.event_type = 'watering' AND e.deleted_at IS NULL) AS mw
+            FROM affected a
+          )
+          UPDATE entity_memory em SET
+            last_watered_at = surv.mw,
+            next_water_at = CASE WHEN surv.mw IS NULL THEN NULL ELSE
+              surv.mw + (COALESCE(em.watering_interval_days,
+                CASE em.location_type
+                  WHEN 'indoor_seedling'   THEN 1
+                  WHEN 'outdoor_container' THEN 2
+                  WHEN 'outdoor_bed'       THEN 4
+                  WHEN 'outdoor_inground'  THEN 5
+                  WHEN 'indoor_mature'     THEN 5
+                  ELSE 4
+                END)::int * INTERVAL '1 day')
+            END,
+            updated_at = NOW()
+          FROM surv WHERE em.project_id = surv.project_id
+        `,
+        sql`UPDATE event_batches SET undone_at = NOW() WHERE id = ${batchId}`,
+      ]);
+      return resp(200, { undone: true, batch_id: batchId });
     }
 
     // ── Route 2/3 (F10 precedence): /api/events/:id (PATCH then GET) ──────────────────────────
