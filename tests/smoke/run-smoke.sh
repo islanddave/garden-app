@@ -7,9 +7,18 @@
 #   Fails on 5xx, connection timeout, or DNS error.
 #
 # Phase 2 — Authenticated CRUD (requires Clerk secrets):
-#   Mints a Clerk JWT, creates a test project, verifies fetch, deletes it.
-#   Skipped if CLERK_SECRET_KEY_STAGING or CLERK_TEST_USER_ID are unset.
-#   Dave action: add these as GHA secrets to enable Phase 2.
+#   Mints a REAL Clerk session JWT via the Backend API (create a session for
+#   CLERK_TEST_USER_ID, then issue a short-lived ~60s session token), uses it as
+#   Bearer to create a test project, ASSERT the persisted name + a PUT'd
+#   description round-trip (L-108 write-path coverage), then deletes it.
+#   Skipped only if CLERK_SECRET_KEY_STAGING or CLERK_TEST_USER_ID are unset.
+#
+# URL convention: the Lambda Function URLs route on /api/{entity} for list/create
+#   and /api/{entity}/{id} for by-id GET/PUT/DELETE (matches the frontend
+#   resolveUrl() in src/lib/api.js). STAGING_API_* are bare Function-URL hosts,
+#   so by-id ops are built as "${BASE%/}/api/projects/${id}". A bare-base id path
+#   ("${BASE}${id}") is NOT a real route — it returns empty/405. (Confirmed
+#   against the live sk_test staging instance + staging Lambdas, 2026-05-25.)
 #
 # All test data uses TEST_RUN_ID prefix. Cleanup runs on exit (trap).
 
@@ -25,6 +34,7 @@ TEST_RUN_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/nul
 CREATED_PROJECT_ID=""
 DATA_CREATED=false
 CLERK_JWT=""
+CLERK_SESSION_ID=""
 PASS=0
 FAIL=0
 
@@ -36,9 +46,17 @@ cleanup() {
       -X DELETE \
       -H "Authorization: Bearer $CLERK_JWT" \
       -H "Content-Type: application/json" \
-      "${STAGING_API_PROJECTS}${CREATED_PROJECT_ID}" \
+      "${STAGING_API_PROJECTS%/}/api/projects/${CREATED_PROJECT_ID}" \
       -o /dev/null 2>&1 && echo "✅ Cleanup: test project deleted" \
       || echo "WARNING: cleanup DELETE failed — manual cleanup may be needed (id: $CREATED_PROJECT_ID)"
+  fi
+  # Revoke the Clerk test session we created (best-effort hygiene).
+  if [[ -n "${CLERK_SESSION_ID:-}" && -n "${CLERK_SECRET_KEY_STAGING:-}" ]]; then
+    curl -s --max-time 15 --connect-timeout 10 \
+      -X POST \
+      -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" \
+      "https://api.clerk.com/v1/sessions/${CLERK_SESSION_ID}/revoke" \
+      -o /dev/null 2>&1 && echo "✅ Cleanup: Clerk test session revoked" || true
   fi
 }
 trap cleanup INT TERM EXIT
@@ -109,6 +127,18 @@ auth_request() {
   fi
 }
 
+# ── Helper: (re)issue a fresh ~60s Clerk session token ───────────────────────
+# Reuses the session created in Phase 2; emits the bare JWT on stdout (or empty).
+mint_session_token() {
+  curl -s --max-time 30 --connect-timeout 10 \
+    -X POST \
+    -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" \
+    -H "Content-Type: application/json" \
+    -d '{}' \
+    "https://api.clerk.com/v1/sessions/${CLERK_SESSION_ID}/tokens" \
+    | jq -r '.jwt // empty' 2>/dev/null || echo ""
+}
+
 # ════════════════════════════════════════════════════════════════════════════
 echo "=== Smoke tests — commit: ${COMMIT_SHA:-unknown} ==="
 echo "=== Test run ID: $TEST_RUN_ID ==="
@@ -134,52 +164,45 @@ if [[ -z "${CLERK_SECRET_KEY_STAGING:-}" ]] || [[ -z "${CLERK_TEST_USER_ID:-}" ]
 else
   echo "--- Phase 2: Authenticated CRUD ---"
 
-  # Mint Clerk JWT
-  echo "Minting Clerk JWT for $CLERK_TEST_USER_ID..."
-  MINT_RESPONSE=$(curl -sf --max-time 30 --connect-timeout 10 \
+  # ── Mint a REAL Clerk session JWT (Backend API) ──────────────────────────────
+  # testing_tokens / sign_in_tokens do NOT yield a Bearer-usable JWT (they issue
+  # 1-part client tokens). The Backend API session-token flow does: create a
+  # session for the test user, then issue a short-lived (~60s) session token.
+  # The whole Phase-2 sequence completes well inside the token lifetime; we also
+  # re-mint right before the CRUD write path for headroom.
+  echo "Minting Clerk session JWT for $CLERK_TEST_USER_ID..."
+
+  CLERK_SESSION_ID=$(curl -s --max-time 30 --connect-timeout 10 \
     -X POST \
     -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" \
     -H "Content-Type: application/json" \
-    "https://api.clerk.com/v1/testing_tokens" \
-    2>&1) || MINT_RESPONSE=""
+    -d "{\"user_id\": \"$CLERK_TEST_USER_ID\"}" \
+    "https://api.clerk.com/v1/sessions" \
+    | jq -r '.id // empty' 2>/dev/null) || CLERK_SESSION_ID=""
 
-  # testing_tokens returns { token: "..." }
-  CLERK_JWT=$(echo "$MINT_RESPONSE" | jq -r '.token // empty' 2>/dev/null || echo "")
-
-  if [[ -z "$CLERK_JWT" ]]; then
-    echo "WARNING: JWT mint via /v1/testing_tokens failed — trying /v1/sign_in_tokens..."
-    MINT_RESPONSE=$(curl -sf --max-time 30 --connect-timeout 10 \
-      -X POST \
-      -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" \
-      -H "Content-Type: application/json" \
-      "https://api.clerk.com/v1/sign_in_tokens" \
-      -d "{\"user_id\": \"$CLERK_TEST_USER_ID\"}" \
-      2>&1) || MINT_RESPONSE=""
-    CLERK_JWT=$(echo "$MINT_RESPONSE" | jq -r '.token // empty' 2>/dev/null || echo "")
-  fi
-
-  if [[ -z "$CLERK_JWT" ]]; then
-    echo "WARNING [jwt-mint]: Could not acquire Clerk JWT — skipping Phase 2"
-    echo "   Response: ${MINT_RESPONSE:0:300}"
-    echo "   (Phase 2 requires a real Clerk session JWT; testing_tokens issues client tokens)"
+  if [[ -z "$CLERK_SESSION_ID" ]]; then
+    echo "WARNING [jwt-mint]: could not create a Clerk session for $CLERK_TEST_USER_ID — skipping Phase 2"
+    echo "   (Verify CLERK_TEST_USER_ID is a real user in the staging Clerk instance and"
+    echo "    CLERK_SECRET_KEY_STAGING is that instance's sk_test_ secret key.)"
     echo ""
     echo "=== Smoke tests: $PASS passed, $FAIL failed ==="
     [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1
   fi
+
+  CLERK_JWT=$(mint_session_token)
 
   # Validate JWT format: must be three base64url parts (header.payload.signature)
   JWT_PARTS=$(echo "$CLERK_JWT" | tr '.' '\n' | wc -l)
-  if [[ "$JWT_PARTS" -ne 3 ]]; then
-    echo "WARNING [jwt-mint]: Token is not a JWT (got ${JWT_PARTS}-part format, expected 3)"
-    echo "   Token: ${CLERK_JWT:0:40}..."
-    echo "   Clerk testing_tokens issues client tokens — they cannot be used as Bearer JWTs."
-    echo "   Phase 2 skipped. Set CLERK_SESSION_JWT secret with a real session JWT to enable."
+  if [[ -z "$CLERK_JWT" ]] || [[ "$JWT_PARTS" -ne 3 ]]; then
+    echo "WARNING [jwt-mint]: did not receive a valid 3-part session JWT (got ${JWT_PARTS}-part)"
+    echo "   Token prefix: ${CLERK_JWT:0:20}..."
+    echo "   Phase 2 skipped."
     echo ""
     echo "=== Smoke tests: $PASS passed, $FAIL failed ==="
     [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1
   fi
 
-  echo "✅ JWT minted (valid 3-part format)"
+  echo "✅ Clerk session JWT minted (valid 3-part format, ~60s lifetime)"
   echo ""
 
   # Authenticated GET — list endpoints
@@ -189,6 +212,9 @@ else
   auth_request "auth:GET /events"    "$STAGING_API_EVENTS"    "GET" || true
   auth_request "auth:GET /dashboard" "$STAGING_API_DASHBOARD" "GET" || true
   echo ""
+
+  # Refresh the session token so the write path runs on a full ~60s lifetime.
+  CLERK_JWT=$(mint_session_token)
 
   # CRUD test: create → fetch → delete
   echo "--- CRUD: POST /projects ---"
@@ -212,7 +238,7 @@ else
       echo "   Created project id: $CREATED_PROJECT_ID"
       # Fetch it back
       auth_request "crud:GET /projects/$CREATED_PROJECT_ID" \
-        "${STAGING_API_PROJECTS}${CREATED_PROJECT_ID}" "GET" || true
+        "${STAGING_API_PROJECTS%/}/api/projects/${CREATED_PROJECT_ID}" "GET" || true
 
       # ── L-108 write-path assertions: write → read-back → ASSERT the stored value ──
       # Phase-1 reachability and bare-2xx CRUD checks cannot catch SILENT write bugs
@@ -222,6 +248,9 @@ else
       # See lessons.md L-108. NEXT EXTENSION (highest value — the actual bug surfaces):
       # add the same write→read-back→assert against events (bare-date → stored date)
       # and plants (variety_id set→clear) once a test planting/event is created here.
+      # Blockers for those (open, see Task #2): varieties list endpoint returns
+      # {"Message":null} (no runtime variety_id source) and the events Lambda has no
+      # DELETE route (test events would orphan; L-058 hygiene sweeps plant_projects only).
       assert_readback() {
         local label="$1" url="$2" jq_path="$3" expected="$4"
         local TMP CODE BODY GOT
@@ -243,16 +272,16 @@ else
 
       # A) CREATE persisted correctly — the name we POSTed must read back verbatim.
       assert_readback "write:create-name-readback" \
-        "${STAGING_API_PROJECTS}${CREATED_PROJECT_ID}" ".name" "smoke-test-$TEST_RUN_ID"
+        "${STAGING_API_PROJECTS%/}/api/projects/${CREATED_PROJECT_ID}" ".name" "smoke-test-$TEST_RUN_ID"
 
       # B) UPDATE write-path round-trips — PUT a sentinel, read it back, assert it took.
       #    This is the PUT surface class that BUG-12 / variety-clear live on.
       WRITE_SENTINEL="l108-write-check-$TEST_RUN_ID"
       auth_request "write:PUT /projects/$CREATED_PROJECT_ID" \
-        "${STAGING_API_PROJECTS}${CREATED_PROJECT_ID}" "PUT" \
+        "${STAGING_API_PROJECTS%/}/api/projects/${CREATED_PROJECT_ID}" "PUT" \
         "{\"description\": \"$WRITE_SENTINEL\"}" >/dev/null || true
       assert_readback "write:update-description-readback" \
-        "${STAGING_API_PROJECTS}${CREATED_PROJECT_ID}" ".description" "$WRITE_SENTINEL"
+        "${STAGING_API_PROJECTS%/}/api/projects/${CREATED_PROJECT_ID}" ".description" "$WRITE_SENTINEL"
     else
       echo "   WARNING: POST succeeded but no id in response — skipping fetch (response: ${CREATE_RESPONSE:0:200})"
     fi
