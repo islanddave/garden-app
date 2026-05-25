@@ -13,7 +13,7 @@
 //   Invalid harvest unit          — 400 ✓ (atomicity is integration concern)
 
 import { describe, it, expect } from 'vitest';
-import { validatePostBody, HARVEST_UNITS, MAX_PLAUSIBLE } from './validators.js';
+import { validatePostBody, HARVEST_UNITS, MAX_PLAUSIBLE, normalizeEventDate } from './validators.js';
 
 const ok = (body) => expect(validatePostBody(body)).toBeNull();
 const bad = (body, msg) => {
@@ -213,5 +213,23 @@ describe('validatePostBody — combined flag + harvest', () => {
       },
       /severity required/,
     );
+  });
+});
+
+
+describe('normalizeEventDate — event-date off-by-one fix (2.1.x)', () => {
+  it('noon-anchors a date-only string (prevents midnight-UTC day-early display)', () => {
+    expect(normalizeEventDate('2026-05-24')).toBe('2026-05-24T12:00:00.000Z');
+  });
+  it('passes a full datetime through unchanged (edit path already sends one)', () => {
+    expect(normalizeEventDate('2026-05-24T16:00:00.000Z')).toBe('2026-05-24T16:00:00.000Z');
+  });
+  it('returns null for empty/nullish (caller falls back to now())', () => {
+    expect(normalizeEventDate('')).toBeNull();
+    expect(normalizeEventDate(null)).toBeNull();
+    expect(normalizeEventDate(undefined)).toBeNull();
+  });
+  it('returns null for an unparseable value', () => {
+    expect(normalizeEventDate('not-a-date')).toBeNull();
   });
 });
