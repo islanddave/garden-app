@@ -3,7 +3,7 @@
  * Component tests for the /inactive page (V1.2a-2 S3 W4).
  * Covers: Active + Dismissed section rendering, client-side dismissed_at DESC sort,
  * the dismiss -> undo-toast -> (undo restores, no POST) / (window elapses, POST fires)
- * flow, the Restore "coming soon" no-op toast, relative-date formatting, and the
+ * flow, the no-Restore-affordance + "coming soon" caption, relative-date formatting, and the
  * empty state.
  *
  * useApiFetch is mocked so no network / Clerk dependency is needed. Fake timers
@@ -116,8 +116,9 @@ describe('InactiveProjects — dismiss / undo flow', () => {
     expect(screen.getByText(/Dismissed Black Krim/)).toBeTruthy()
     expect(screen.getByText('Undo')).toBeTruthy()
 
-    // Row now sits under Dismissed (has a Restore button).
-    expect(screen.getByText('Restore')).toBeTruthy()
+    // Row now sits under Dismissed (caption appears; no Restore button).
+    expect(screen.getByText(/Restoring dismissed projects is coming soon/i)).toBeTruthy()
+    expect(screen.queryByText('Restore')).toBeNull()
     // No POST fired yet.
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
@@ -160,16 +161,18 @@ describe('InactiveProjects — dismiss / undo flow', () => {
   })
 })
 
-describe('InactiveProjects — restore no-op', () => {
-  it('clicking Restore shows the "coming soon" notice and fires no request', async () => {
+describe('InactiveProjects — dismissed rows have no Restore affordance', () => {
+  it('renders no Restore button and shows the "coming soon" caption', async () => {
     fetchSpy.mockResolvedValueOnce([DISMISSED_OLD])
     renderPage()
 
     await screen.findByText('Old Basil')
-    act(() => { screen.getByText('Restore').click() })
 
-    expect(screen.getByText('Restore coming soon')).toBeTruthy()
-    // Only the mount load — no restore endpoint hit.
+    // No fake Restore affordance on dismissed rows.
+    expect(screen.queryByText('Restore')).toBeNull()
+    // Caption signposts the future capability.
+    expect(screen.getByText(/Restoring dismissed projects is coming soon/i)).toBeTruthy()
+    // Only the mount load — no endpoint hit.
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 })
