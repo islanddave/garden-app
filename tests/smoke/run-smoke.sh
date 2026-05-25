@@ -172,22 +172,31 @@ else
   # re-mint right before the CRUD write path for headroom.
   echo "Minting Clerk session JWT for $CLERK_TEST_USER_ID..."
 
-  CLERK_SESSION_ID=$(curl -s --max-time 30 --connect-timeout 10 \
+  SESS_TMP=$(mktemp)
+  SESS_CODE=$(curl -s --max-time 30 --connect-timeout 10 \
     -X POST \
     -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" \
     -H "Content-Type: application/json" \
     -d "{\"user_id\": \"$CLERK_TEST_USER_ID\"}" \
-    "https://api.clerk.com/v1/sessions" \
-    | jq -r '.id // empty' 2>/dev/null) || CLERK_SESSION_ID=""
+    -o "$SESS_TMP" -w "%{http_code}" \
+    "https://api.clerk.com/v1/sessions") || SESS_CODE="000"
+  CLERK_SESSION_ID=$(jq -r '.id // empty' "$SESS_TMP" 2>/dev/null || echo "")
 
   if [[ -z "$CLERK_SESSION_ID" ]]; then
-    echo "WARNING [jwt-mint]: could not create a Clerk session for $CLERK_TEST_USER_ID — skipping Phase 2"
-    echo "   (Verify CLERK_TEST_USER_ID is a real user in the staging Clerk instance and"
-    echo "    CLERK_SECRET_KEY_STAGING is that instance's sk_test_ secret key.)"
+    # Sanitized diagnostics (no secret leak: GHA masks secret substrings; we print
+    # only HTTP codes + Clerk's error code/message + a key-validity probe).
+    echo "WARNING [jwt-mint]: could not create a Clerk session — skipping Phase 2 (HTTP $SESS_CODE)"
+    echo "   Clerk error: $(jq -r '.errors[0].code // "?"' "$SESS_TMP" 2>/dev/null) — $(jq -r '.errors[0].message // "?"' "$SESS_TMP" 2>/dev/null)"
+    KEYPROBE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 --connect-timeout 10 \
+      -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" "https://api.clerk.com/v1/users?limit=1")
+    echo "   secret-key probe GET /v1/users -> HTTP $KEYPROBE (200 => key valid, so check CLERK_TEST_USER_ID; 401 => key invalid/wrong instance)"
+    echo "   (Verify CLERK_TEST_USER_ID is a real user in the CLERK_SECRET_KEY_STAGING instance.)"
+    rm -f "$SESS_TMP"
     echo ""
     echo "=== Smoke tests: $PASS passed, $FAIL failed ==="
     [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1
   fi
+  rm -f "$SESS_TMP"
 
   CLERK_JWT=$(mint_session_token)
 
