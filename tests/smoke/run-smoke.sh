@@ -500,6 +500,48 @@ else
         echo "❌ FAIL [crud:POST /favorites] HTTP $FAV_HTTP"
         FAIL=$((FAIL+1))
       fi
+
+      # ── H) Bulk Quick-Log batch (/api/events/batch) write→read-back (riskiest write path) ─────
+      # The batch path dual-writes event_log (INSERT…SELECT over resolved plantings) + entity_memory;
+      # it threw a prod 42804 (two bare NULLs) once. POST a project-scoped batch (resolves the test
+      # plant from D), assert it persisted (count + read-back in the batches list), then UNDO via the
+      # batch DELETE route (also cleans the events it wrote). Gated on the test plant existing.
+      if [[ -n "$CREATED_PLANT_ID" ]]; then
+        CLERK_JWT=$(mint_session_token)
+        BATCH_BODY=$(mktemp)
+        BATCH_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+          -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$BATCH_BODY" -w "%{http_code}" "${STAGING_API_EVENTS%/}/api/events/batch" \
+          -d "{\"idempotency_key\": \"smoke-batch-$TEST_RUN_ID\", \"event_type\": \"watering\", \"scope\": {\"type\": \"project\", \"project_id\": \"$CREATED_PROJECT_ID\"}}") || BATCH_HTTP="000"
+        BATCH_ID=$(jq -r '.batch_id // empty' "$BATCH_BODY" 2>/dev/null || echo "")
+        BATCH_COUNT=$(jq -r '.count // 0' "$BATCH_BODY" 2>/dev/null || echo "0")
+        rm -f "$BATCH_BODY"
+        if [[ "${BATCH_HTTP:0:1}" == "2" && -n "$BATCH_ID" && "$BATCH_COUNT" -ge 1 ]]; then
+          echo "✅ PASS [crud:POST /events/batch] HTTP $BATCH_HTTP (batch_id: $BATCH_ID, count: $BATCH_COUNT)"
+          PASS=$((PASS+1))
+          # read-back: the batch must appear in the recent-batches list under its id.
+          assert_readback "write:batch-readback" \
+            "${STAGING_API_EVENTS%/}/api/events/batches" "([.batches[] | select(.id==\"$BATCH_ID\")] | length | tostring)" "1"
+          # undo (also cleans the batch's event_log rows) and assert it took.
+          UNDO_BODY=$(mktemp)
+          UNDO_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -X DELETE \
+            -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$UNDO_BODY" -w "%{http_code}" "${STAGING_API_EVENTS%/}/api/events/batch/${BATCH_ID}") || UNDO_HTTP="000"
+          UNDONE=$(jq -r '.undone // false' "$UNDO_BODY" 2>/dev/null || echo "false"); rm -f "$UNDO_BODY"
+          if [[ "${UNDO_HTTP:0:1}" == "2" && "$UNDONE" == "true" ]]; then
+            echo "✅ PASS [crud:DELETE /events/batch (undo)] HTTP $UNDO_HTTP"
+            PASS=$((PASS+1))
+          else
+            echo "❌ FAIL [crud:DELETE /events/batch (undo)] HTTP $UNDO_HTTP undone=$UNDONE"
+            FAIL=$((FAIL+1))
+          fi
+        else
+          echo "❌ FAIL [crud:POST /events/batch] HTTP $BATCH_HTTP (count=$BATCH_COUNT)"
+          FAIL=$((FAIL+1))
+        fi
+      else
+        echo "⚠️  WARN [write:batch] no test planting (block D skipped) — batch assert NOT run"
+      fi
     else
       echo "   WARNING: POST succeeded but no id in response — skipping fetch (response: ${CREATE_RESPONSE:0:200})"
     fi
