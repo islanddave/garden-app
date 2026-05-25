@@ -154,6 +154,10 @@ export const handler = async (event) => {
 
         // V2-PHOTO-F1: strict validation for featured_photo_id (linkage = photos.plant_id).
         const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
+        // Presence-sentinel for variety_id: lets a caller CLEAR a variety (send variety_id:null).
+        // COALESCE can SET but not unset (NULL collapses to the existing value); mirror the
+        // featured_photo_id CASE pattern below. No explicit casts — same proven-in-prod shape.
+        const hasVariety = Object.prototype.hasOwnProperty.call(body, 'variety_id');
         if (hasFeatured && body.featured_photo_id != null) {
           const linkRows = await sql`
             SELECT 1 FROM photos
@@ -173,7 +177,10 @@ export const handler = async (event) => {
             quantity                 = COALESCE(${body.quantity ?? null}, p.quantity),
             status                   = COALESCE(${body.status ?? null}, p.status),
             notes                    = COALESCE(${body.notes ?? null}, p.notes),
-            variety_id               = COALESCE(${body.variety_id ?? null}, p.variety_id),
+            variety_id               = CASE
+              WHEN ${hasVariety} THEN ${body.variety_id ?? null}
+              ELSE p.variety_id
+            END,
             source_inventory_item_id = COALESCE(${body.source_inventory_item_id ?? null}, p.source_inventory_item_id),
             metadata                 = COALESCE(${body.metadata ?? null}, p.metadata),
             featured_photo_id        = CASE
