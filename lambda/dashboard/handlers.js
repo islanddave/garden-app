@@ -18,6 +18,7 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 // ---- Pure validators ------------------------------------------------------
 
 import { householdScope } from './household.js';
+import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 
 export function isValidUuid(s) {
   return typeof s === 'string' && UUID_RE.test(s);
@@ -150,6 +151,29 @@ export function queryUserStats(sql, userId) {
       SELECT current_streak, longest_streak, last_active_date, total_events, xp
       FROM user_stats
       WHERE user_id = ${userId}
+    `;
+}
+
+// V1.2-streak-fix (2026-05-25): DISTINCT activity days (by event_date in the user's TZ) + today,
+// for live streak recompute via the pure helper. Per-USER (created_by) — a streak is the user's
+// own activity, not household-scoped. Recomputing here means the displayed streak is never stale.
+export function queryActivityDays(sql, userId) {
+  return sql`
+      WITH z AS (
+        SELECT COALESCE((SELECT user_timezone FROM profiles WHERE id = ${userId}), 'America/New_York') AS tz
+      )
+      SELECT
+        to_char((NOW() AT TIME ZONE (SELECT tz FROM z))::date, 'YYYY-MM-DD') AS today,
+        COALESCE((
+          SELECT json_agg(d ORDER BY d DESC) FROM (
+            SELECT DISTINCT (e.event_date AT TIME ZONE (SELECT tz FROM z))::date AS d
+            FROM event_log e
+            WHERE e.created_by = ${userId}
+              AND e.deleted_at IS NULL
+              AND (e.event_date AT TIME ZONE (SELECT tz FROM z))::date
+                  <= (NOW() AT TIME ZONE (SELECT tz FROM z))::date
+          ) days
+        ), '[]'::json) AS days
     `;
 }
 
@@ -329,7 +353,8 @@ export function queryDismissInactive(sql, userId, projectId) {
 // import neon/Clerk — they accept `sql` from the caller.
 
 export async function handleDashboard(sql, userId) {
-  // §D Promise.all parallelization — all 9 queries fire concurrently.
+  // §D Promise.all parallelization — all aggregation queries fire concurrently.
+  // V1.2-streak-fix: + queryActivityDays (appended LAST) feeds the live streak recompute.
   const [
     recentEvents,
     counts,
@@ -340,6 +365,7 @@ export async function handleDashboard(sql, userId) {
     harvestReady,
     headsUp,
     inactiveCountRows,
+    activityDaysRows,
   ] = await Promise.all([
     queryRecentEvents(sql, userId),
     queryCounts(sql, userId),
@@ -350,14 +376,27 @@ export async function handleDashboard(sql, userId) {
     queryHarvestReady(sql, userId),
     queryHeadsUp(sql, userId),
     queryInactiveCount(sql, userId),
+    queryActivityDays(sql, userId),
   ]);
 
-  const userStats = userStatsRows[0] ?? {
+  const storedStats = userStatsRows[0] ?? {
     current_streak: 0,
     longest_streak: 0,
     last_active_date: null,
     total_events: 0,
     xp: 0,
+  };
+  // V1.2-streak-fix (2026-05-25): recompute the streak live from activity days so a stale streak
+  // never lingers (the old value only changed on POST). longest never regresses below the stored
+  // value; xp / total_events still come from the stored row. See streak.js for the model.
+  const act = activityDaysRows?.[0] ?? { today: null, days: [] };
+  const activityDays = (act.days ?? []).map((d) => String(d).slice(0, 10));
+  const computedStreak = computeStreak(activityDays, act.today, STREAK_GRACE_DAYS);
+  const userStats = {
+    ...storedStats,
+    current_streak: computedStreak.current,
+    longest_streak: Math.max(computedStreak.longest, storedStats.longest_streak ?? 0),
+    last_active_date: activityDays.length ? activityDays[0] : storedStats.last_active_date,
   };
 
   return resp(200, {

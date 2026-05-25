@@ -295,10 +295,10 @@ describe('handleDashboard — aggregation', () => {
     expect(countSql.resolved).toMatch(/d\.user_id\s*=\s*\$\d+/);
   });
 
-  it('T19: Promise.all parallelization — all 9 aggregation queries fire', async () => {
+  it('T19: Promise.all parallelization — all 10 aggregation queries fire', async () => {
     queueAggregationResults();
     await handleDashboard(makeSql(), 'user_alpha');
-    expect(sqlCalls.length).toBe(9);
+    expect(sqlCalls.length).toBe(10);
   });
 
   it('userStats defaults when no row present', async () => {
@@ -312,6 +312,19 @@ describe('handleDashboard — aggregation', () => {
       total_events: 0,
       xp: 0,
     });
+  });
+
+  it('V1.2-streak-fix: streak is recomputed LIVE from activity days, not read from the stored row', async () => {
+    // stored row claims streak 99; activity shows two consecutive days ending today -> live = 2
+    queueAggregationResults({ stats: [{ current_streak: 99, longest_streak: 99, last_active_date: '2020-01-01', total_events: 5, xp: 50 }] });
+    sqlResults.push([{ today: '2026-05-25', days: ['2026-05-25', '2026-05-24'] }]); // 10th query = queryActivityDays
+    const res = await handleDashboard(makeSql(), 'user_alpha');
+    const body = parseBody(res);
+    expect(body.user_stats.current_streak).toBe(2);            // recomputed, stored 99 ignored
+    expect(body.user_stats.last_active_date).toBe('2026-05-25');
+    expect(body.user_stats.longest_streak).toBe(99);           // never regresses below stored
+    expect(body.user_stats.xp).toBe(50);                       // xp/total_events still from stored row
+    expect(body.user_stats.total_events).toBe(5);
   });
 
   it('counts wires aggregated project/plant/location values', async () => {
@@ -332,7 +345,7 @@ describe('handleDashboard — aggregation', () => {
     // the counts query which DOES bind userId for the outer projects + plants sub-counts).
     // HOUSEHOLD-MODE: 7 ownership builders bind ['user_alpha'] (array); favorites + userStats bind the bare string.
     const userBound = sqlCalls.filter(c => bindsUserAnyForm(c.values, 'user_alpha'));
-    expect(userBound.length).toBe(9);
+    expect(userBound.length).toBe(10);
   });
 });
 
