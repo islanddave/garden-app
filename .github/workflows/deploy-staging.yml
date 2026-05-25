@@ -30,7 +30,7 @@ env:
   # V1.2a-1 Session 2: provisioned 2026-05-12.
   STAGING_API_APP_EVENTS: https://m3lvka5lzswyqkl6uzpkof24y40hoqki.lambda-url.us-east-1.on.aws/
   # ux-events: placeholder until first staging deploy creates the Function URL (then this is updated to the real URL).
-  STAGING_API_UX_EVENTS: https://placeholder-set-after-first-staging-deploy.lambda-url.us-east-1.on.aws/
+  STAGING_API_UX_EVENTS: https://ggrsrryarrkw2y5eaxm6r26cc40czzje.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
