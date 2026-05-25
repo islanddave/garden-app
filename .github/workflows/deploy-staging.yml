@@ -354,7 +354,7 @@ jobs:
         # → plant_varieties → locations → plant_projects. RESTRICT edges that force this order:
         # plants.variety_id→plant_varieties, plants.source_inventory_item_id→inventory_items,
         # harvest_log.event_id→event_log, inventory_items.location_id/event_log.location_id→locations.
-        # favorites.entity_id has no FK (polymorphic) — swept by smoke-project id. FK-safe order
+        # favorites.entity_id + event_batches.scope_json have no FK — swept by smoke-project id. FK-safe order
         # validated live against the staging Neon branch 2026-05-25 (extended for E/F/G surfaces).
         if: always()
         env:
@@ -372,12 +372,13 @@ jobs:
             -c "DELETE FROM event_log      WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM entity_memory  WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM favorites      WHERE entity_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM event_batches  WHERE scope_json->>'project_id' IN (SELECT id::text FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM plants         WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM inventory_items WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM plant_varieties WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM locations      WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM plant_projects  WHERE name ILIKE '%smoke%';"
-          echo "  swept: harvest_log, event_log, entity_memory, favorites, plants, inventory_items, plant_varieties, locations, plant_projects"
+          echo "  swept: harvest_log, event_log, entity_memory, favorites, event_batches, plants, inventory_items, plant_varieties, locations, plant_projects"
           REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT (SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plant_varieties WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plants WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM locations WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM inventory_items WHERE name ILIKE '%smoke%');")
           if [[ "$REMAINING" != "0" ]]; then
             echo "⚠ WARN: $REMAINING smoke residue row(s) remain after sweep — possible FK constraint preventing delete"
