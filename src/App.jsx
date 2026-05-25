@@ -33,6 +33,7 @@ import Achievements from './pages/Achievements.jsx'
 import Collection from './pages/Collection.jsx'
 import InactiveProjects from './pages/InactiveProjects.jsx'
 import ProjectsAdminClassify from './pages/ProjectsAdminClassify.jsx'
+import GardenActivity from './pages/GardenActivity.jsx'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -118,6 +119,10 @@ function AppRoutes() {
                   ADMIN_CLERK_SUBS allowlist is the real security; this route
                   shows a placard to non-admins / mobile. */}
               <Route path="/admin/classify" element={<Protected><ProjectsAdminClassify /></Protected>} />
+              {/* Inc 0 success-metric diagnostic. Jen-invisible (no nav link).
+                  Lambda-side ADMIN_CLERK_SUBS allowlist is the real security;
+                  non-admins see a neutral placard. */}
+              <Route path="/admin/garden-activity" element={<Protected><GardenActivity /></Protected>} />
               <Route path="*"             element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </div>
