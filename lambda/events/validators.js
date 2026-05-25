@@ -121,3 +121,19 @@ export function validateBatchBody(body) {
   }
   return null;
 }
+
+
+// ── Event-date normalization (2.1.x event-date off-by-one fix) ──────────────
+// Date-only values ("YYYY-MM-DD") from the create forms must be NOON-anchored.
+// Otherwise `new Date("2026-05-24")` is parsed as MIDNIGHT UTC, which renders a
+// day early in behind-UTC timezones (EDT) — the bug Dave hit logging a fert.
+// Noon UTC stays the same calendar date across all real-world offsets. Full
+// datetimes (the edit path already sends one) pass through unchanged.
+// Returns an ISO string, or null for empty/invalid (caller falls back to now()).
+export function normalizeEventDate(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).trim();
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s + 'T12:00:00Z' : s;
+  const d = new Date(iso);
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+}

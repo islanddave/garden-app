@@ -22,7 +22,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE } from './validators.js';
+import { validatePostBody, validateBatchBody, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate } from './validators.js';
 import { householdScope } from './household.js';
 import { randomUUID } from 'node:crypto';
 
@@ -145,9 +145,7 @@ export const handler = async (event) => {
       if (vErr) return resp(vErr.status, { error: vErr.error });
 
       const eventType = body.event_type;
-      const eventDate = body.event_date
-        ? new Date(body.event_date).toISOString()
-        : new Date().toISOString();
+      const eventDate = normalizeEventDate(body.event_date) ?? new Date().toISOString();
       const key = body.idempotency_key;
       const scope = body.scope;
       const scopeType = scope.type;
@@ -517,9 +515,7 @@ export const handler = async (event) => {
       const vErr = validatePostBody(body);
       if (vErr) return resp(vErr.status, { error: vErr.error });
 
-      const eventDate = body.event_date
-        ? new Date(body.event_date).toISOString()
-        : new Date().toISOString();
+      const eventDate = normalizeEventDate(body.event_date) ?? new Date().toISOString();
       const eventType = body.event_type;
       const projectId = body.project_id;
       const metadata = body.metadata ?? null;
