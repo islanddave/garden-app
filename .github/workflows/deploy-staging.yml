@@ -339,12 +339,20 @@ jobs:
         # smoke-test rows MUST be hard-deleted (not soft-deleted) after tests
         # pass. Naming convention is a hint, not enforcement — VALIDATE will
         # trip on soft-deleted rows regardless (L-058).
-        # The smoke script inserts 'smoke-test-{UUID}' into plant_projects via
-        # API. Its trap-based cleanup does an API DELETE which is a soft-delete
-        # (sets deleted_at) — that IS the residue source. This step is the
-        # hard-delete safety net. Runs with if: always() so residue is cleaned
-        # even when smoke-tests fail (root cause of 2026-05-18 anomaly #B
-        # accumulation: prior smoke runs left 4 soft-deleted rows in staging).
+        # The smoke script inserts 'smoke-test-{UUID}' rows via API. Its trap-based
+        # cleanup does API DELETEs which are soft-deletes (set deleted_at) — that IS
+        # the residue source. This step is the hard-delete safety net. Runs with
+        # if: always() so residue is cleaned even when smoke-tests fail (root cause of
+        # 2026-05-18 anomaly #B: prior smoke runs left 4 soft-deleted rows in staging).
+        #
+        # 2026-05-25 (exciting-charming-newton): the smoke's Phase-2 write-path asserts
+        # now also create an event, a throwaway variety, and a plant under the same
+        # project. The event has NO API DELETE route, so the sweep must clean those
+        # tables at the DB level. Deletes run FK-safe (children before parents):
+        # harvest_log → event_log → entity_memory → plants → plant_varieties → plant_projects
+        # (plants.variety_id is ON DELETE RESTRICT to plant_varieties; harvest_log.event_id
+        # is RESTRICT to event_log — so parents must go last). FK-safe order validated live
+        # against the staging Neon branch 2026-05-25.
         if: always()
         env:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
@@ -355,15 +363,21 @@ jobs:
           fi
           sudo apt-get update -qq >/dev/null 2>&1
           sudo apt-get install -y -qq postgresql-client >/dev/null 2>&1
-          echo "🧹 L-058 cleanup sweep starting against staging Neon..."
-          DELETED=$(psql "$NEON_STAGING_URL" -At -c "DELETE FROM plant_projects WHERE name ILIKE '%smoke%' RETURNING id;" | wc -l | tr -d ' ')
-          echo "  plant_projects: $DELETED row(s) hard-deleted (pattern: name ILIKE '%smoke%')"
-          REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%';")
+          echo "🧹 L-058 cleanup sweep starting against staging Neon (FK-safe order)..."
+          psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 \
+            -c "DELETE FROM harvest_log    WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM event_log      WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM entity_memory  WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM plants         WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM plant_varieties WHERE name ILIKE '%smoke%';" \
+            -c "DELETE FROM plant_projects  WHERE name ILIKE '%smoke%';"
+          echo "  swept: harvest_log, event_log, entity_memory, plants, plant_varieties, plant_projects"
+          REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT (SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plant_varieties WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plants WHERE name ILIKE '%smoke%');")
           if [[ "$REMAINING" != "0" ]]; then
-            echo "⚠ WARN: $REMAINING smoke rows still in plant_projects after sweep — possible FK constraint preventing delete"
+            echo "⚠ WARN: $REMAINING smoke residue row(s) remain after sweep — possible FK constraint preventing delete"
             exit 1
           fi
-          echo "✅ L-058 cleanup complete — 0 smoke residue rows in plant_projects"
+          echo "✅ L-058 cleanup complete — 0 smoke residue rows (plant_projects + plant_varieties + plants)"
 
   # ── E2E advisory (non-blocking) ───────────────────────────────────────────
   # Playwright rejected as merge gate: 250MB browser binaries per cold runner,
