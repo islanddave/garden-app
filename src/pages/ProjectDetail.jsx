@@ -9,6 +9,7 @@ import PhotoUpload from '../components/PhotoUpload.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
+import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 
 const EVENT_ICONS = {
   sowing:        '🌱',
@@ -66,8 +67,20 @@ export default function ProjectDetail() {
   const { id }   = useParams()
   const navigate = useNavigate()
   const { fetch } = useApiFetch()
+  // M1 telemetry (Inc 0) — reach_planting. Fire-and-forget.
+  const ux = useUxFlow(FLOWS.REACH_PLANTING)
+  const reachedRef = useRef(false)
 
   const [project,      setProject]      = useState(null)
+  // Fires once when the project (and its plantings) load. Proxy signal: ProjectDetail is
+  // the surface where plantings are viewed (no dedicated planting route yet). Precise
+  // taps-from-app-open is a cross-route refinement (deferred per tap-fidelity note).
+  useEffect(() => {
+    if (project && !reachedRef.current) {
+      reachedRef.current = true
+      ux.step(0, 'reached', { project_id: project.id })
+    }
+  }, [project])  // eslint-disable-line react-hooks/exhaustive-deps
   const [locPath,      setLocPath]      = useState(null)
   const [locations,    setLocations]    = useState([])
   const [allProjects,  setAllProjects]  = useState([])
