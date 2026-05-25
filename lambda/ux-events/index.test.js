@@ -79,6 +79,16 @@ describe('ux-events GET admin aggregates (static-source guards)', () => {
     expect(SRC).toMatch(/to_regclass\('public\.tasks'\)/);
     expect(SRC).toMatch(/canary_threshold: 0\.40/);
   });
+
+  it('M3 tolerates tasks-table shape drift (try/catch degrades, never 500s the panel)', () => {
+    // A pre-Inc-3 tasks table (present but missing agent_proposed/accepted_at) must NOT
+    // 500 the admin GET. The tasks query is wrapped so it degrades to not-available.
+    const m3start = SRC.indexOf('let m3 =');
+    const block = SRC.slice(m3start, SRC.indexOf('return resp(200', m3start));
+    expect(block).toMatch(/try \{/);
+    expect(block).toMatch(/\} catch \{/);
+    expect(block).toMatch(/missing agent-proposal columns/);
+  });
 });
 
 describe('ux-events CORS discipline', () => {

@@ -142,27 +142,35 @@ export const handler = async (event) => {
         ORDER BY 1
       `;
 
-      // M3 — agent-proposal accept-rate. Lives on the Inc-3 `tasks` table, which does
-      // not exist yet. Reported as not-yet-available so the panel renders an empty gauge
-      // with the 40% canary line drawn (client-side).
+      // M3 — agent-proposal accept-rate. Lives on the Inc-3 `tasks` table. The table may
+      // not exist yet, OR a differently-shaped `tasks` table may already exist (pre-Inc-3)
+      // WITHOUT the agent_proposed/accepted_at columns. Either case must degrade to
+      // "not available" — never 500 the whole admin panel. Wrapped in try/catch so column
+      // shape drift on `tasks` is tolerated. (Caught on staging: a pre-Inc-3 tasks table
+      // exists, so to_regclass is non-null but the column query errored.)
       let m3 = { available: false, reason: 'tasks table not yet created (Increment 3)', accept_rate: null, canary_threshold: 0.40 };
-      const taskTbl = await sql`SELECT to_regclass('public.tasks') AS t`;
-      if (taskTbl[0]?.t) {
-        const r = await sql`
-          SELECT COUNT(*) FILTER (WHERE agent_proposed)                            AS proposed,
-                 COUNT(*) FILTER (WHERE agent_proposed AND accepted_at IS NOT NULL) AS accepted
-          FROM tasks
-          WHERE created_at >= now() - interval '30 days'
-        `;
-        const proposed = Number(r[0]?.proposed ?? 0);
-        const accepted = Number(r[0]?.accepted ?? 0);
-        m3 = {
-          available: proposed > 0,
-          reason: proposed > 0 ? null : 'no agent-proposed tasks in window',
-          accept_rate: proposed > 0 ? Number((accepted / proposed).toFixed(4)) : null,
-          proposed, accepted,
-          canary_threshold: 0.40,
-        };
+      try {
+        const taskTbl = await sql`SELECT to_regclass('public.tasks') AS t`;
+        if (taskTbl[0]?.t) {
+          const r = await sql`
+            SELECT COUNT(*) FILTER (WHERE agent_proposed)                            AS proposed,
+                   COUNT(*) FILTER (WHERE agent_proposed AND accepted_at IS NOT NULL) AS accepted
+            FROM tasks
+            WHERE created_at >= now() - interval '30 days'
+          `;
+          const proposed = Number(r[0]?.proposed ?? 0);
+          const accepted = Number(r[0]?.accepted ?? 0);
+          m3 = {
+            available: proposed > 0,
+            reason: proposed > 0 ? null : 'no agent-proposed tasks in window',
+            accept_rate: proposed > 0 ? Number((accepted / proposed).toFixed(4)) : null,
+            proposed, accepted,
+            canary_threshold: 0.40,
+          };
+        }
+      } catch {
+        // tasks table present but missing the Inc-3 agent-proposal columns (shape drift) — degrade.
+        m3 = { available: false, reason: 'tasks table present but missing agent-proposal columns (pre-Inc-3 shape)', accept_rate: null, canary_threshold: 0.40 };
       }
 
       return resp(200, {
