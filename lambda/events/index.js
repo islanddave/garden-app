@@ -23,6 +23,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validatePostBody, validateBatchBody, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate } from './validators.js';
+import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope } from './household.js';
 import { randomUUID } from 'node:crypto';
 
@@ -649,33 +650,42 @@ export const handler = async (event) => {
       newEvent.harvest = harvest;
       const eventId = newEvent.id;
 
-      // ── Step 3a: user_stats UPSERT with timezone-aware streak math ──────────────────────────
+      // ── Step 3a: user_stats streak — recompute from DISTINCT activity days ──────────────────
+      // V1.2-streak-fix (2026-05-25): the streak counts DISTINCT calendar days with activity, keyed
+      // on event_date in the user's TZ — NOT the logging moment. This is why bulk/backfilled
+      // consecutive days now count (old NOW()-based math credited only the day you pressed log).
+      // The pure helper (./streak.js) owns the math; the dashboard recomputes the same way at read
+      // time so a stale streak never lingers. Break-recovery: graceDays=1 forgives one missed day.
       let achievementResult = { newly_earned: [], current_streak: null, total_events: null };
       try {
+        const actRows = await sql`
+          WITH z AS (SELECT ${userTz}::text AS tz)
+          SELECT
+            to_char((NOW() AT TIME ZONE (SELECT tz FROM z))::date, 'YYYY-MM-DD') AS today,
+            COALESCE((
+              SELECT json_agg(d ORDER BY d DESC) FROM (
+                SELECT DISTINCT (e.event_date AT TIME ZONE (SELECT tz FROM z))::date AS d
+                FROM event_log e
+                WHERE e.created_by = ${userId}
+                  AND e.deleted_at IS NULL
+                  AND (e.event_date AT TIME ZONE (SELECT tz FROM z))::date
+                      <= (NOW() AT TIME ZONE (SELECT tz FROM z))::date
+              ) days
+            ), '[]'::json) AS days
+        `;
+        const todayStr = actRows[0]?.today ?? null;
+        const activityDays = (actRows[0]?.days ?? []).map((d) => String(d).slice(0, 10));
+        const { current, longest } = computeStreak(activityDays, todayStr, STREAK_GRACE_DAYS);
+        const latestDay = activityDays.length ? activityDays[0] : todayStr;
+
         const statsRows = await sql`
-          WITH today_in_tz AS (
-            SELECT (NOW() AT TIME ZONE ${userTz})::date AS today_date
-          ),
-          new_streak_calc AS (
-            SELECT
-              CASE
-                WHEN s.last_active_date = (SELECT today_date FROM today_in_tz)
-                  THEN s.current_streak
-                WHEN s.last_active_date = (SELECT today_date FROM today_in_tz) - INTERVAL '1 day'
-                  THEN s.current_streak + 1
-                WHEN s.last_active_date = (SELECT today_date FROM today_in_tz) - INTERVAL '2 days'
-                  THEN s.current_streak + 1
-                ELSE 1
-              END AS streak_val
-            FROM user_stats s WHERE s.user_id = ${userId}
-          )
           INSERT INTO user_stats (user_id, total_events, last_active_date, current_streak, longest_streak)
-          VALUES (${userId}, 1, (SELECT today_date FROM today_in_tz), 1, 1)
+          VALUES (${userId}, 1, ${latestDay}::date, ${current}, ${longest})
           ON CONFLICT (user_id) DO UPDATE SET
             total_events     = user_stats.total_events + 1,
-            current_streak   = (SELECT streak_val FROM new_streak_calc),
-            longest_streak   = GREATEST(user_stats.longest_streak, (SELECT streak_val FROM new_streak_calc)),
-            last_active_date = (SELECT today_date FROM today_in_tz),
+            current_streak   = ${current},
+            longest_streak   = GREATEST(user_stats.longest_streak, ${longest}),
+            last_active_date = ${latestDay}::date,
             updated_at       = NOW()
           RETURNING current_streak, total_events
         `;
@@ -684,7 +694,7 @@ export const handler = async (event) => {
           achievementResult.total_events   = statsRows[0].total_events;
         }
       } catch (statsErr) {
-        console.warn('user_stats upsert failed (non-fatal)', statsErr.message);
+        console.warn('user_stats streak upsert failed (non-fatal)', statsErr.message);
       }
 
       // ── Step 3b: inline achievement evaluation for existing trigger types ────────────────────
