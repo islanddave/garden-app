@@ -13,8 +13,9 @@
 //   returns to Active and no POST fires. If the window elapses, THEN the hook's
 //   dismiss(projectId) fires the actual POST.
 //
-// Restore (Dismissed rows): no-op-with-toast for this session. Restore-from-dismissed
-// is a V1.2a-2.1 backlog item — there is no server un-dismiss endpoint yet.
+// Restore (Dismissed rows): no affordance yet. A muted "coming soon" caption under the
+// Dismissed header signposts it; restore-from-dismissed is a V1.2a-2.1 backlog item —
+// there is no server un-dismiss endpoint yet, so no Restore button is shown.
 
 import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
@@ -31,18 +32,15 @@ export default function InactiveProjects() {
   // (with a local dismissed_at) but no POST has fired.
   const [pendingDismissed, setPendingDismissed] = useState({}) // { [id]: dismissed_at iso }
   const [undoState, setUndoState] = useState(null) // { projectId, projectName }
-  const [restoreNotice, setRestoreNotice] = useState(false)
 
   // Timer handles, keyed so unmount cleanup can clear everything.
   const dismissTimerRef = useRef(null)
-  const restoreTimerRef = useRef(null)
 
   // Clean up any pending timers on unmount so a dismiss/restore timer can't
   // fire after navigation away from the page.
   useEffect(() => {
     return () => {
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current)
-      if (restoreTimerRef.current) clearTimeout(restoreTimerRef.current)
     }
   }, [])
 
@@ -88,17 +86,6 @@ export default function InactiveProjects() {
       })
     }
     setUndoState(null)
-  }
-
-  function handleRestore() {
-    // V1.2a-2.1 backlog: restore-from-dismissed has no server endpoint yet.
-    // For this session, Restore is a no-op that just shows a brief notice.
-    setRestoreNotice(true)
-    if (restoreTimerRef.current) clearTimeout(restoreTimerRef.current)
-    restoreTimerRef.current = setTimeout(() => {
-      restoreTimerRef.current = null
-      setRestoreNotice(false)
-    }, 2500)
   }
 
   // Build the two sections, applying the local pendingDismissed overlay.
@@ -194,13 +181,16 @@ export default function InactiveProjects() {
             {/* Dismissed section */}
             <section>
               <h2 style={sectionHeadStyle}>Dismissed</h2>
+              {dismissedRows.length > 0 && (
+                <p style={{ color: P.light, fontSize: '0.78rem', margin: '0 0 12px' }}>
+                  Restoring dismissed projects is coming soon.
+                </p>
+              )}
               {dismissedRows.length === 0 ? (
                 <EmptySectionNote text="Nothing dismissed yet." />
               ) : (
                 dismissedRows.map(project => (
-                  <ProjectRow key={project.id} project={project} muted>
-                    <RowButton onClick={handleRestore} label="Restore" />
-                  </ProjectRow>
+                  <ProjectRow key={project.id} project={project} muted />
                 ))
               )}
             </section>
@@ -217,8 +207,6 @@ export default function InactiveProjects() {
         />
       )}
 
-      {/* Restore "coming soon" no-op notice */}
-      {restoreNotice && <RestoreNotice />}
     </div>
   )
 }
@@ -346,30 +334,6 @@ function UndoToast({ state, onUndo, onDismiss }) {
       >
         ✕
       </button>
-    </div>
-  )
-}
-
-function RestoreNotice() {
-  return (
-    <div
-      role="status"
-      style={{
-        position: 'fixed',
-        bottom: 70,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        backgroundColor: P.dark,
-        color: P.white,
-        borderRadius: 10,
-        padding: '10px 18px',
-        boxShadow: '0 6px 18px rgba(0,0,0,0.3)',
-        fontSize: '0.88rem',
-        zIndex: 1000,
-        maxWidth: 'calc(100% - 32px)',
-      }}
-    >
-      Restore coming soon
     </div>
   )
 }

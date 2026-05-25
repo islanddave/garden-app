@@ -209,6 +209,86 @@ jobs:
           done
           [[ "$HEALTH_FAIL" -eq 0 ]] || { echo "FATAL: $HEALTH_FAIL Lambda(s) not Active post-deploy"; exit 1; }
 
+      - name: Post-deploy HTTP smoke (prod, read-only)
+        # Data-plane verification — complements the control-plane "Lambda health check" above.
+        # A Lambda can report State=Active yet 502 on invoke, and the health check never touches
+        # CloudFront/SPA. This step hits the live prod surface over HTTPS with NO auth and NO writes
+        # (zero prod-DB mutation; L-108 authed write→read-back asserts stay on staging only):
+        #   - each Function URL /api/{entity} GET, unauthed -> must be 401 (auth gate live = healthy;
+        #     catches 5xx bad-zip/module-load, 000 DNS/TLS, 404 routing break, 200 auth-disabled regression)
+        #   - SPA https://garden.futureishere.net/ -> 200 + body contains id="root" (real index, not error page)
+        # Verified ground truth 2026-05-25 (modest-funny-allen): all 11 endpoints 401, SPA 200 w/ id="root".
+        # Required vars must be set + 401; optional (varieties/app-events/achievements) loud-skip if unset (L-109).
+        # One retry per check (sleep 3) absorbs Lambda cold-start / CF cold-edge flake. Read-only, so a
+        # false-fail yields a red run but never a broken prod (S3+CF already updated by the steps above).
+        env:
+          VITE_API_PROJECTS:     ${{ vars.VITE_API_PROJECTS }}
+          VITE_API_PLANTS:       ${{ vars.VITE_API_PLANTS }}
+          VITE_API_LOCATIONS:    ${{ vars.VITE_API_LOCATIONS }}
+          VITE_API_EVENTS:       ${{ vars.VITE_API_EVENTS }}
+          VITE_API_FAVORITES:    ${{ vars.VITE_API_FAVORITES }}
+          VITE_API_PHOTOS:       ${{ vars.VITE_API_PHOTOS }}
+          VITE_API_DASHBOARD:    ${{ vars.VITE_API_DASHBOARD }}
+          VITE_API_INVENTORY:    ${{ vars.VITE_API_INVENTORY }}
+          VITE_API_VARIETIES:    ${{ vars.VITE_API_VARIETIES }}
+          VITE_API_APP_EVENTS:   ${{ vars.VITE_API_APP_EVENTS }}
+          VITE_API_ACHIEVEMENTS: ${{ vars.VITE_API_ACHIEVEMENTS }}
+        run: |
+          set -uo pipefail
+          SMOKE_FAIL=0
+          SPA_URL="https://garden.futureishere.net"
+          probe_api() {
+            local label="$1" base="$2" entity="$3" required="$4"
+            if [[ -z "$base" ]]; then
+              if [[ "$required" == "yes" ]]; then
+                echo "FAIL $label: REQUIRED var unset"; SMOKE_FAIL=$((SMOKE_FAIL+1))
+              else
+                echo "SKIP $label: optional var unset"
+              fi
+              return
+            fi
+            local url="${base%/}/api/${entity}" code="000"
+            for attempt in 1 2; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 --connect-timeout 10 "$url") || code="000"
+              [[ "$code" == "401" ]] && break
+              [[ "$attempt" -eq 1 ]] && sleep 3
+            done
+            if [[ "$code" == "401" ]]; then
+              echo "PASS $label: HTTP 401 (auth gate live)"
+            else
+              echo "FAIL $label: HTTP $code (expected 401) -> $url"; SMOKE_FAIL=$((SMOKE_FAIL+1))
+            fi
+          }
+          probe_api projects     "$VITE_API_PROJECTS"     projects        yes
+          probe_api plants       "$VITE_API_PLANTS"       plants          yes
+          probe_api locations    "$VITE_API_LOCATIONS"    locations       yes
+          probe_api events       "$VITE_API_EVENTS"       events          yes
+          probe_api favorites    "$VITE_API_FAVORITES"    favorites       yes
+          probe_api photos       "$VITE_API_PHOTOS"       photos          yes
+          probe_api dashboard    "$VITE_API_DASHBOARD"    dashboard       yes
+          probe_api inventory    "$VITE_API_INVENTORY"    inventory-items yes
+          probe_api varieties    "$VITE_API_VARIETIES"    varieties       no
+          probe_api app-events   "$VITE_API_APP_EVENTS"   app-events      no
+          probe_api achievements "$VITE_API_ACHIEVEMENTS" achievements    no
+          SPA_CODE="000"; SPA_BODY=""
+          for attempt in 1 2; do
+            SPA_BODY=$(curl -s --max-time 25 --connect-timeout 10 -w $'\n%{http_code}' "$SPA_URL/") || SPA_BODY=$'\n000'
+            SPA_CODE="${SPA_BODY##*$'\n'}"
+            [[ "$SPA_CODE" == "200" ]] && break
+            [[ "$attempt" -eq 1 ]] && sleep 3
+          done
+          if [[ "$SPA_CODE" == "200" ]] && grep -q 'id="root"' <<< "$SPA_BODY"; then
+            echo "PASS SPA: HTTP 200 + id=\"root\" present"
+          else
+            echo "FAIL SPA: HTTP $SPA_CODE (expected 200 with id=\"root\") -> $SPA_URL"; SMOKE_FAIL=$((SMOKE_FAIL+1))
+          fi
+          echo "----"
+          if [[ "$SMOKE_FAIL" -eq 0 ]]; then
+            echo "✅ Prod HTTP smoke passed"
+          else
+            echo "FATAL: $SMOKE_FAIL prod smoke check(s) failed"; exit 1
+          fi
+
       - name: Commit version bump to dev
         if: env.NEW_VERSION != ''
         # Writes the bumped package.json back to dev so future builds start from the new version.
