@@ -113,6 +113,14 @@ describe('BottomNav — More menu', () => {
     expect(link.getAttribute('href')).toBe('/photos')
   })
 
+  it('More menu shows the Plants link pointing to /plants (NAV-REGRESSION restore / BUG-13, 2026-05-24)', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    const link = screen.getByText('Plants').closest('a')
+    expect(link).not.toBeNull()
+    expect(link.getAttribute('href')).toBe('/plants')
+  })
+
   it('does NOT render the Catch-up badge container (hidden 2.0.1 until S1.1 editor ships)', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('More navigation options'))
