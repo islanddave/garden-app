@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useZone } from '../context/ZoneContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
+import { severityTier, SEVERITY_STYLES } from '../lib/waterDue.js'
 import { getStatusColors } from '../lib/status.js'
 import { hapticDouble, hapticTriple } from '../lib/haptic.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
@@ -79,20 +80,7 @@ function getProjectActivity(p) {
 // V002 §C-V1.2a-1-D Tile 2 severity tier: green=on-time, gold=due today,
 // terra=1-2 days over, terra-bold=3+ days over OR indoor_seedling >24h over.
 // Tile 2 query only returns next_water_at < NOW(), so daysOver > 0 always.
-function severityTier(nextWaterAtIso, locationType) {
-  const daysOver = (Date.now() - new Date(nextWaterAtIso).getTime()) / 86400000
-  if (locationType === 'indoor_seedling' && daysOver >= 1) return 'terra-bold'
-  if (daysOver >= 3) return 'terra-bold'
-  if (daysOver >= 1) return 'terra'
-  return 'gold'
-}
 
-const SEVERITY_STYLES = {
-  green:        { bg: P.greenPale, border: P.greenLight, text: P.green },
-  gold:         { bg: P.warn,      border: P.warnBorder, text: '#7a5c00' },
-  terra:        { bg: '#fde8e0',   border: P.terra,      text: P.terra },
-  'terra-bold': { bg: '#fcd7c4',   border: P.terra,      text: '#7a2a10' },
-}
 
 export default function Dashboard() {
   const { profile }       = useAuth()
