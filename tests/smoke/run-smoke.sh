@@ -14,8 +14,12 @@
 #   write→read-back asserts (L-108 write-path coverage):
 #     C) events bare-date → NOON-anchored stored date (BUG-12 off-by-one guard)
 #     D) plants variety_id set→clear (the can't-clear COALESCE origin bug)
+#     E) locations create → read-back name
+#     F) inventory-items create → read-back name (durable+tools dodges the L-058 seeds CHECK)
+#     G) favorites toggle → assert favorited on, then off
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
+#   Per L-108 (ratified 2026-05-25): every write-path surface gets a write→read-back assert.
 #
 # URL convention: the Lambda Function URLs route on /api/{entity} for list/create
 #   and /api/{entity}/{id} for by-id GET/PUT/DELETE (matches the frontend
@@ -39,6 +43,9 @@ CREATED_PROJECT_ID=""
 CREATED_EVENT_ID=""
 CREATED_VARIETY_ID=""
 CREATED_PLANT_ID=""
+CREATED_LOCATION_ID=""
+CREATED_INV_ID=""
+CREATED_FAVORITE_DONE=false
 DATA_CREATED=false
 CLERK_JWT=""
 CLERK_SESSION_ID=""
@@ -71,6 +78,26 @@ cleanup() {
         "${STAGING_API_PROJECTS%/}/api/projects/${CREATED_PROJECT_ID}" -o /dev/null 2>&1 \
         && echo "✅ Cleanup: test project deleted" \
         || echo "WARNING: project cleanup failed (id: $CREATED_PROJECT_ID)"
+    fi
+    if [[ -n "$CREATED_LOCATION_ID" ]]; then
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        "${STAGING_API_LOCATIONS%/}/api/locations/${CREATED_LOCATION_ID}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: test location deleted" \
+        || echo "WARNING: location cleanup failed (id: $CREATED_LOCATION_ID)"
+    fi
+    if [[ -n "$CREATED_INV_ID" ]]; then
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_INV_ID}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: test inventory item deleted" \
+        || echo "WARNING: inventory cleanup failed (id: $CREATED_INV_ID)"
+    fi
+    if [[ "$CREATED_FAVORITE_DONE" == "true" && -n "$CREATED_PROJECT_ID" ]]; then
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        "${STAGING_API_FAVORITES%/}?entity_type=project&entity_id=${CREATED_PROJECT_ID}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: test favorite removed" || true
     fi
     # The test event has NO DELETE route; it (+ its entity_memory row) is hard-swept by the
     # workflow's L-058 'if: always()' DB step (deploy-staging.yml). The API deletes above are
@@ -390,6 +417,88 @@ else
       else
         echo "⚠️  WARN [write:plant-variety] STAGING_API_VARIETIES unset — variety set/clear assert NOT run"
         echo "     (legit skip only if the varieties endpoint is unconfigured; the staging workflow DOES set it)"
+      fi
+
+      # Refresh the token for the back half of the write path (E/F/G add more round trips).
+      CLERK_JWT=$(mint_session_token)
+
+      # ── E) Locations create → read-back name (core entity; household-scoped) ────────────────
+      LOC_BODY=$(mktemp)
+      LOC_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+        -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        -o "$LOC_BODY" -w "%{http_code}" "$STAGING_API_LOCATIONS" \
+        -d "{\"name\": \"smoke-test-loc-$TEST_RUN_ID\"}") || LOC_HTTP="000"
+      CREATED_LOCATION_ID=$(jq -r '.id // empty' "$LOC_BODY" 2>/dev/null || echo "")
+      rm -f "$LOC_BODY"
+      if [[ "${LOC_HTTP:0:1}" == "2" && -n "$CREATED_LOCATION_ID" ]]; then
+        echo "✅ PASS [crud:POST /locations] HTTP $LOC_HTTP (id: $CREATED_LOCATION_ID)"
+        PASS=$((PASS+1))
+        assert_readback "write:location-name" \
+          "${STAGING_API_LOCATIONS%/}/api/locations/${CREATED_LOCATION_ID}" ".name" "smoke-test-loc-$TEST_RUN_ID"
+      else
+        echo "❌ FAIL [crud:POST /locations] HTTP $LOC_HTTP"
+        FAIL=$((FAIL+1))
+      fi
+
+      # ── F) Inventory-items create → read-back name ──────────────────────────────
+      # type=durable + category=tools deliberately AVOIDS the L-058 seeds CHECK
+      # (category='seeds' would require variety_id NOT NULL).
+      if [[ -n "${STAGING_API_INVENTORY:-}" ]]; then
+        INV_BODY=$(mktemp)
+        INV_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+          -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$INV_BODY" -w "%{http_code}" "$STAGING_API_INVENTORY" \
+          -d "{\"name\": \"smoke-test-inv-$TEST_RUN_ID\", \"type\": \"durable\", \"category\": \"tools\", \"quantity\": 1}") || INV_HTTP="000"
+        CREATED_INV_ID=$(jq -r '.id // empty' "$INV_BODY" 2>/dev/null || echo "")
+        rm -f "$INV_BODY"
+        if [[ "${INV_HTTP:0:1}" == "2" && -n "$CREATED_INV_ID" ]]; then
+          echo "✅ PASS [crud:POST /inventory-items] HTTP $INV_HTTP (id: $CREATED_INV_ID)"
+          PASS=$((PASS+1))
+          assert_readback "write:inventory-name" \
+            "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_INV_ID}" ".name" "smoke-test-inv-$TEST_RUN_ID"
+        else
+          echo "❌ FAIL [crud:POST /inventory-items] HTTP $INV_HTTP"
+          FAIL=$((FAIL+1))
+        fi
+      else
+        echo "⚠️  WARN [write:inventory] STAGING_API_INVENTORY unset — inventory assert NOT run (the staging workflow sets it)"
+      fi
+
+      # ── G) Favorites toggle round-trip (POST favorite → assert on → DELETE → assert off) ─────
+      # Reuses the test project as the favorited entity (favorites.entity_id has no FK).
+      # NOTE: a dedicated check is used (not assert_readback) because jq's `// empty`
+      # collapses a boolean false to empty — so .favorited==false would mis-read as "".
+      fav_check() {
+        local label="$1" expected="$2" TMP CODE GOT
+        TMP=$(mktemp)
+        CODE=$(curl -s --max-time 30 --connect-timeout 10 \
+          -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$TMP" -w "%{http_code}" \
+          "${STAGING_API_FAVORITES%/}?entity_type=project&entity_id=${CREATED_PROJECT_ID}") || CODE="000"
+        GOT=$(jq -r '.favorited' "$TMP" 2>/dev/null || echo "?"); rm -f "$TMP"
+        if [[ "$GOT" == "$expected" ]]; then
+          echo "✅ PASS [$label] favorited == $expected"; PASS=$((PASS+1))
+        else
+          echo "❌ FAIL [$label] favorited: expected $expected, got $GOT (HTTP $CODE)"; FAIL=$((FAIL+1))
+        fi
+      }
+      FAV_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+        -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        -o /dev/null -w "%{http_code}" "$STAGING_API_FAVORITES" \
+        -d "{\"entity_type\": \"project\", \"entity_id\": \"$CREATED_PROJECT_ID\"}") || FAV_HTTP="000"
+      if [[ "${FAV_HTTP:0:1}" == "2" ]]; then
+        echo "✅ PASS [crud:POST /favorites] HTTP $FAV_HTTP"
+        PASS=$((PASS+1))
+        CREATED_FAVORITE_DONE=true
+        fav_check "write:favorite-on" "true"
+        curl -s --max-time 30 --connect-timeout 10 -X DELETE \
+          -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          "${STAGING_API_FAVORITES%/}?entity_type=project&entity_id=${CREATED_PROJECT_ID}" -o /dev/null || true
+        fav_check "write:favorite-off" "false"
+        CREATED_FAVORITE_DONE=false   # toggled off — nothing left for cleanup
+      else
+        echo "❌ FAIL [crud:POST /favorites] HTTP $FAV_HTTP"
+        FAIL=$((FAIL+1))
       fi
     else
       echo "   WARNING: POST succeeded but no id in response — skipping fetch (response: ${CREATE_RESPONSE:0:200})"
