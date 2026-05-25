@@ -67,7 +67,7 @@ jobs:
           CV="v${NEWVER}-${SHORT_SHA}"
           sed -i -E "s/const CACHE_VERSION = '[^']*'/const CACHE_VERSION = '${CV}'/" public/sw.js
           echo "Service worker cache version -> ${CV}"
-          grep -n "CACHE_VERSION" public/sw.js | head -1
+          grep -nE "^const CACHE_VERSION" public/sw.js
 
       - name: Validate env vars
         run: |
