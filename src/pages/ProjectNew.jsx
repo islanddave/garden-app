@@ -4,6 +4,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 import { VARIETY_REF_UI_SHIPPED } from '../lib/featureFlags.js'
+import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 
 function slugify(str) {
   return str.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -18,6 +19,10 @@ export default function ProjectNew() {
   const { fetch } = useApiFetch()
   const navigate  = useNavigate()
   const today = new Date().toISOString().split('T')[0]
+  // M1 telemetry (Inc 0) — create_project flow. Fire-and-forget; never affects UX.
+  // Taps counted: start-capture (first name entry) + submit. complete() fires on success.
+  const ux = useUxFlow(FLOWS.CREATE_PROJECT)
+  useEffect(() => { ux.reset() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const [projectTypes, setProjectTypes] = useState([])
   const [locations, setLocations]       = useState([])
@@ -58,6 +63,7 @@ export default function ProjectNew() {
   }
 
   function handleNameChange(name) {
+    if (!form.name && name) { ux.tap(); ux.step(1, 'start_capture') }  // first real keystroke = capture started
     setForm(f => ({ ...f, name, slug: generateSlug(name, f.start_date) }))
   }
   function handleDateChange(start_date) {
@@ -68,6 +74,7 @@ export default function ProjectNew() {
     e.preventDefault()
     setSaving(true)
     setError(null)
+    ux.tap()  // submit tap
     try {
       const data = await fetch('/api/projects', {
         method: 'POST',
@@ -88,6 +95,7 @@ export default function ProjectNew() {
           target_end_date:  form.target_end_date   || null,
         }),
       })
+      ux.complete({ outcome: 'created' })
       navigate(`/projects/${data.id}`)
     } catch (err) {
       const msg = err.message ?? ''

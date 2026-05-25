@@ -18,6 +18,7 @@
 //   /api/inventory-items    → VITE_API_INVENTORY     inventory CRUD
 //   /api/varieties          → VITE_API_VARIETIES     variety reference data
 //   /api/achievements       → VITE_API_ACHIEVEMENTS  achievements list
+//   /api/ux-events          → VITE_API_UX_EVENTS     UX success-metric sink (Inc 0; admin-read + telemetry write)
 
 import { useAuth } from '@clerk/react'
 import { useCallback } from 'react'
@@ -35,6 +36,7 @@ const FUNCTION_URLS = {
   '/api/inventory-items':   import.meta.env.VITE_API_INVENTORY     ?? '',
   '/api/varieties':         import.meta.env.VITE_API_VARIETIES     ?? '',
   '/api/achievements':      import.meta.env.VITE_API_ACHIEVEMENTS  ?? '',
+  '/api/ux-events':         import.meta.env.VITE_API_UX_EVENTS     ?? '',
 }
 
 export function resolveUrl(path, urls = FUNCTION_URLS) {
@@ -67,5 +69,8 @@ export function useApiFetch() {
     const token = await getToken()
     return apiFetch(path, options, token)
   }, [getToken])
-  return { fetch }
+  // getToken is also returned so fire-and-forget telemetry (uxEvents) can route token
+  // acquisition through this same seam — component tests mock useApiFetch, which keeps
+  // the Clerk dependency out of every consumer's test.
+  return { fetch, getToken }
 }

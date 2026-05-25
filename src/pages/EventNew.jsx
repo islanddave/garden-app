@@ -6,6 +6,7 @@ import { formatQty } from '../lib/format.js'
 import { hapticShort } from '../lib/haptic.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
+import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 
 const EVENT_TYPES_UI = [
   { value: 'watering',    label: 'Watered',                emoji: '💧' },
@@ -281,6 +282,9 @@ export default function EventNew() {
   const preselectedProjectId = searchParams.get('project') || ''
   const preselectedEventType = searchParams.get('event_type') || ''
   const { fetch: apiFetch } = useApiFetch()
+  // M1 telemetry (Inc 0) — log_watering flow. Only counts when the event is a watering.
+  // Fire-and-forget; never affects the save flow.
+  const ux = useUxFlow(FLOWS.LOG_WATERING)
 
   const voice = useVoiceInput()
 
@@ -345,6 +349,13 @@ export default function EventNew() {
     setSeverityError(null)
     setSeverityShake(false)
   }, [form.event_type])
+
+  // M1 telemetry: reset the flow on mount; mark start-capture the first time the
+  // event type is set to watering (the "started a watering log" signal).
+  useEffect(() => { ux.reset() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (form.event_type === 'watering') { ux.tap(); ux.step(1, 'start_capture') }
+  }, [form.event_type])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load plants when project selection changes
   useEffect(() => {
@@ -438,6 +449,7 @@ export default function EventNew() {
     }
     setSeverityError(null)
 
+    if (form.event_type === 'watering') ux.tap()  // submit tap (watering flow only)
     setSaving(true)
     setError(null)
 
@@ -519,6 +531,7 @@ export default function EventNew() {
     }
 
     setSaving(false)
+    if (form.event_type === 'watering') ux.complete({ outcome: 'logged' })  // M1 watering complete
     // V1.2a-1 §C-V1.2a-1-D: skip success screen, navigate straight to dashboard.
     // Dashboard reads location.state.logged → refetches data + renders achievement toasts + 5s undo toast.
     const projectRow = projects.find(p => p.id === form.project_id)
