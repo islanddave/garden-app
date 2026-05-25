@@ -206,6 +206,11 @@ check_reachable "lambda:locations" "$STAGING_API_LOCATIONS"
 check_reachable "lambda:events"    "$STAGING_API_EVENTS"
 check_reachable "lambda:favorites" "$STAGING_API_FAVORITES"
 check_reachable "lambda:dashboard" "$STAGING_API_DASHBOARD"
+if [[ -n "${STAGING_API_UX_EVENTS:-}" && "$STAGING_API_UX_EVENTS" != *placeholder* ]]; then
+  check_reachable "lambda:ux-events" "$STAGING_API_UX_EVENTS"
+else
+  echo "   (ux-events reachability skipped — STAGING_API_UX_EVENTS unset/placeholder)"
+fi
 # Photos Lambda handles multipart — skip reachability to avoid misleading error shape
 echo "   (photos Lambda skipped in reachability phase — multipart-only endpoint)"
 echo ""
@@ -541,6 +546,32 @@ else
         fi
       else
         echo "⚠️  WARN [write:batch] no test planting (block D skipped) — batch assert NOT run"
+      fi
+
+      # ── I) ux-events (Inc 0 M1 telemetry sink) write → read-back (L-108) ─────────
+      # POST appends a row; the server confirms via INSERT…RETURNING id (which exercises
+      # the ::jsonb / ::timestamptz casts — the real silent-bug risk on this append-only
+      # table). Then the admin GET reads it back (the staging test user is in
+      # garden-ux-events-staging ADMIN_CLERK_SUBS). Independent of the test project.
+      if [[ -n "${STAGING_API_UX_EVENTS:-}" && "$STAGING_API_UX_EVENTS" != *placeholder* ]]; then
+        CLERK_JWT=$(mint_session_token)
+        UX_BODY=$(mktemp)
+        UX_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -X POST \
+          -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$UX_BODY" -w "%{http_code}" "${STAGING_API_UX_EVENTS%/}/api/ux-events" \
+          -d "{\"flow_id\":\"create_project\",\"session_id\":\"smoke-ux-$TEST_RUN_ID\",\"step_name\":\"complete\",\"tap_count\":2}") || UX_HTTP="000"
+        UX_ID=$(jq -r '.id // empty' "$UX_BODY" 2>/dev/null || echo ""); rm -f "$UX_BODY"
+        if [[ "${UX_HTTP:0:1}" == "2" && -n "$UX_ID" ]]; then
+          echo "✅ PASS [crud:POST /ux-events] HTTP $UX_HTTP (id: $UX_ID)"
+          PASS=$((PASS+1))
+          assert_readback "write:ux-events-admin-readback" \
+            "${STAGING_API_UX_EVENTS%/}/api/ux-events?admin=1" "(.m1 | type)" "object"
+        else
+          echo "❌ FAIL [crud:POST /ux-events] HTTP $UX_HTTP (id=$UX_ID)"
+          FAIL=$((FAIL+1))
+        fi
+      else
+        echo "⚠️  WARN [write:ux-events] STAGING_API_UX_EVENTS unset/placeholder — ux-events assert NOT run"
       fi
     else
       echo "   WARNING: POST succeeded but no id in response — skipping fetch (response: ${CREATE_RESPONSE:0:200})"

@@ -87,6 +87,7 @@ jobs:
           # First prod deploy creates garden-achievements Lambda + Function URL; var gets set post-deploy.
           # Brief window where the Achievements page returns runtime error is acceptable—ship-then-wire.
           [[ -n "${VITE_API_ACHIEVEMENTS:-}" ]] || echo "WARN: VITE_API_ACHIEVEMENTS not set — Achievements page will not work until set"
+          [[ -n "${VITE_API_UX_EVENTS:-}" ]] || echo "WARN: VITE_API_UX_EVENTS not set — UX telemetry will not flow until set"
           [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_live_* ]] || {
             echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY must be pk_live_* for prod (got ${VITE_CLERK_PUBLISHABLE_KEY:0:12}...)"
             exit 1
@@ -105,6 +106,7 @@ jobs:
           VITE_API_VARIETIES:         ${{ vars.VITE_API_VARIETIES }}
           VITE_API_APP_EVENTS:        ${{ vars.VITE_API_APP_EVENTS }}
           VITE_API_ACHIEVEMENTS:      ${{ vars.VITE_API_ACHIEVEMENTS }}
+          VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
 
       - name: Build
         run: npm run build
@@ -121,6 +123,7 @@ jobs:
           VITE_API_VARIETIES:         ${{ vars.VITE_API_VARIETIES }}
           VITE_API_APP_EVENTS:        ${{ vars.VITE_API_APP_EVENTS }}
           VITE_API_ACHIEVEMENTS:      ${{ vars.VITE_API_ACHIEVEMENTS }}
+          VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
 
       - name: Verify build output
         run: |

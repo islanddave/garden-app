@@ -29,6 +29,8 @@ env:
   STAGING_API_VARIETIES: https://dlhj5pjej6alk6ynyih2ktbxca0uiorl.lambda-url.us-east-1.on.aws/
   # V1.2a-1 Session 2: provisioned 2026-05-12.
   STAGING_API_APP_EVENTS: https://m3lvka5lzswyqkl6uzpkof24y40hoqki.lambda-url.us-east-1.on.aws/
+  # ux-events: placeholder until first staging deploy creates the Function URL (then this is updated to the real URL).
+  STAGING_API_UX_EVENTS: https://placeholder-set-after-first-staging-deploy.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
@@ -41,7 +43,7 @@ jobs:
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     strategy:
       matrix:
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events]
       max-parallel: 4
       fail-fast: false
 
@@ -133,6 +135,24 @@ jobs:
             echo "S3_PHOTOS_BUCKET=$EXPECTED on $FN"
           fi
 
+      - name: Ensure ADMIN_CLERK_SUBS env for ux-events-staging
+        if: matrix.function == 'ux-events'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on staging deploy role
+        run: |
+          FN="garden-ux-events-staging"
+          EXPECTED="user_3D2gM0hIl03gjW3JM2DjtPzm0jI,${{ secrets.CLERK_TEST_USER_ID }}"
+          CURRENT=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables.ADMIN_CLERK_SUBS' --output text 2>/dev/null || echo "None")
+          if [[ "$CURRENT" == "$EXPECTED" ]]; then
+            echo "ADMIN_CLERK_SUBS already correct on $FN"
+          else
+            EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+            UPDATED=$(echo "$EXISTING" | jq --arg v "$EXPECTED" '. + {ADMIN_CLERK_SUBS: $v}')
+            echo "{\"Variables\": $UPDATED}" > /tmp/env-ux-admin-staging.json
+            aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-ux-admin-staging.json >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "ADMIN_CLERK_SUBS set on $FN"
+          fi
+
       - name: Ensure Function URL exists for ${{ matrix.function }}-staging
         # First-deploy support: mirror deploy-lambda.yml Function URL creation step.
         # Existing URLs unchanged; missing URLs created with public access (handler owns CORS).
@@ -218,6 +238,7 @@ jobs:
           VITE_API_INVENTORY:         ${{ env.STAGING_API_INVENTORY }}
           VITE_API_VARIETIES:         ${{ env.STAGING_API_VARIETIES }}
           VITE_API_APP_EVENTS:        ${{ env.STAGING_API_APP_EVENTS }}
+          VITE_API_UX_EVENTS:         ${{ env.STAGING_API_UX_EVENTS }}
 
       - name: Verify build output
         run: |
@@ -327,6 +348,7 @@ jobs:
           STAGING_API_VARIETIES: ${{ env.STAGING_API_VARIETIES }}
           STAGING_API_INVENTORY: ${{ env.STAGING_API_INVENTORY }}
           STAGING_API_APP_EVENTS: ${{ env.STAGING_API_APP_EVENTS }}
+          STAGING_API_UX_EVENTS: ${{ env.STAGING_API_UX_EVENTS }}
           COMMIT_SHA:            ${{ needs.deploy-frontend.outputs.commit-sha }}
           # Phase 2 (authenticated CRUD) — set these GHA secrets to enable:
           # CLERK_SECRET_KEY_STAGING = sk_test_... (Clerk dev instance secret key)
