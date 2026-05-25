@@ -23,8 +23,9 @@ jobs:
       matrix:
         # One job per Lambda function directory under lambda/
         function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, xp-reconcile]
-      # Deploy functions in parallel; reduce max-parallel if Lambda rate limits hit
-      max-parallel: 4
+      # No max-parallel cap: all 12 functions dispatch in one wave so the
+      # environment:production approval gate prompts ONCE (not 3 batches of 4).
+      # Re-add `max-parallel: N` here only if Lambda control-plane rate limits appear.
       fail-fast: false
 
     steps:

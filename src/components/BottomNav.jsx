@@ -88,6 +88,30 @@ export default function BottomNav() {
             </div>
           )}
 
+          {/* Plants — restored to More menu (NAV-REGRESSION fix / BUG-13, 2026-05-24).
+              /plants route + Plants.jsx remain routable (see TABS comment) but the nav
+              entry was dropped by the NAV-IA-1 rework (PR-C1, 2026-05-18) — same regression
+              class as Photos & Achievements below. Interim list-level restore; per-plant
+              detail (/plants/:id + PlantDetail.jsx) is the full V3-NAV-001 deliverable. */}
+          <Link
+            to="/plants"
+            onClick={closeMore}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 16,
+              width: '100%',
+              padding: '14px 24px',
+              borderTop: `1px solid ${P.border}`,
+              background: 'none', textAlign: 'left',
+              cursor: 'pointer', textDecoration: 'none',
+              color: P.dark, fontSize: '1rem', fontWeight: 500,
+              fontFamily: 'inherit',
+              minHeight: 48,
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🌱</span>
+            Plants
+          </Link>
+
           {/* Photos — restored to More menu (NAV-REGRESSION fix, 2026-05-23).
               /photos route + PhotoLibrary.jsx shipped V2-PHOTO-F1; nav entry was
               dropped by the NAV-IA-1 rework (PR-C1, 2026-05-18) — same regression

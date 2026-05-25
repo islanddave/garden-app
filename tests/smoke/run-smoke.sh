@@ -213,6 +213,46 @@ else
       # Fetch it back
       auth_request "crud:GET /projects/$CREATED_PROJECT_ID" \
         "${STAGING_API_PROJECTS}${CREATED_PROJECT_ID}" "GET" || true
+
+      # ── L-108 write-path assertions: write → read-back → ASSERT the stored value ──
+      # Phase-1 reachability and bare-2xx CRUD checks cannot catch SILENT write bugs
+      # where the request returns 2xx but persists the wrong value — e.g. BUG-12
+      # (event date stored a day early) or the plants variety_id clear-fix (PUT not
+      # clearing). These steps assert the persisted value equals what was written.
+      # See lessons.md L-108. NEXT EXTENSION (highest value — the actual bug surfaces):
+      # add the same write→read-back→assert against events (bare-date → stored date)
+      # and plants (variety_id set→clear) once a test planting/event is created here.
+      assert_readback() {
+        local label="$1" url="$2" jq_path="$3" expected="$4"
+        local TMP CODE BODY GOT
+        TMP=$(mktemp)
+        CODE=$(curl -s --max-time 30 --connect-timeout 10 \
+          -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$TMP" -w "%{http_code}" "$url") || CODE="000"
+        BODY=$(cat "$TMP" 2>/dev/null || echo ""); rm -f "$TMP"
+        GOT=$(echo "$BODY" | jq -r "$jq_path // empty" 2>/dev/null || echo "")
+        if [[ "$GOT" == "$expected" ]]; then
+          echo "✅ PASS [$label] read-back == '$expected'"
+          PASS=$((PASS+1))
+        else
+          echo "❌ FAIL [$label] read-back mismatch: expected '$expected', got '$GOT' (HTTP $CODE)"
+          echo "   Body: ${BODY:0:200}"
+          FAIL=$((FAIL+1))
+        fi
+      }
+
+      # A) CREATE persisted correctly — the name we POSTed must read back verbatim.
+      assert_readback "write:create-name-readback" \
+        "${STAGING_API_PROJECTS}${CREATED_PROJECT_ID}" ".name" "smoke-test-$TEST_RUN_ID"
+
+      # B) UPDATE write-path round-trips — PUT a sentinel, read it back, assert it took.
+      #    This is the PUT surface class that BUG-12 / variety-clear live on.
+      WRITE_SENTINEL="l108-write-check-$TEST_RUN_ID"
+      auth_request "write:PUT /projects/$CREATED_PROJECT_ID" \
+        "${STAGING_API_PROJECTS}${CREATED_PROJECT_ID}" "PUT" \
+        "{\"description\": \"$WRITE_SENTINEL\"}" >/dev/null || true
+      assert_readback "write:update-description-readback" \
+        "${STAGING_API_PROJECTS}${CREATED_PROJECT_ID}" ".description" "$WRITE_SENTINEL"
     else
       echo "   WARNING: POST succeeded but no id in response — skipping fetch (response: ${CREATE_RESPONSE:0:200})"
     fi
