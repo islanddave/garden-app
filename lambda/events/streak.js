@@ -18,18 +18,21 @@
 //     event's `event_date` in the user's timezone — NOT the moment it was logged. Backfill counts.
 //   - Break-recovery (required by CLAUDE.md Streaks rule): a run tolerates up to `graceDays` missed
 //     days between activity days. In calendar terms, two activity days stay in the same run when the
-//     gap between them is <= graceDays + 1. Default graceDays = 1 (one missed day forgiven).
+//     gap between them is <= graceDays + 1. Default graceDays = 0 (STRICT — any missed day breaks
+//     the streak; recovery is by back-dating a log for the missed day, not auto-grace — Dave 2026-05-25).
 //   - `current` = length of the run ending at the most-recent activity day, reported only if that day
 //     is within the grace window of `today` (today - latest <= graceDays + 1). Otherwise 0. This is
 //     what makes a stale streak read 0 with NO write/cron needed — callers recompute live.
 //   - `longest` = the longest such run across all of history.
 //   - Future-dated activity days (> today) are ignored.
 //
-// GRACE KNOB: graceDays = 1 forgives a single missed day. Trade-off: it also lets an every-other-day
-// cadence sustain a streak (each gap is 1 missed day). For STRICT consecutive-days (any miss breaks
-// it) set STREAK_GRACE_DAYS = 0. This is a product call — see the session report.
+// GRACE KNOB: STREAK_GRACE_DAYS = 0 (Dave decision 2026-05-25) — STRICT consecutive days; any missed
+// day breaks the streak. No automatic grace, because the user can already "catch up" by logging an
+// event for a PAST date: the streak is event_date-based, so a back-dated entry fills the gap and
+// reconnects the run. Set to 1+ to auto-forgive that many missed days (1 lets every-other-day sustain,
+// which is why it is NOT the default).
 
-export const STREAK_GRACE_DAYS = 1;
+export const STREAK_GRACE_DAYS = 0;
 
 // Convert a 'YYYY-MM-DD' string (or a Date / ISO timestamp) to an integer day index (days since
 // the Unix epoch, UTC). Calendar-only — no time component, no local-TZ shift.
