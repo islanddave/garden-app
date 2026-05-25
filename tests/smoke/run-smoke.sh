@@ -10,8 +10,12 @@
 #   Mints a REAL Clerk session JWT via the Backend API (create a session for
 #   CLERK_TEST_USER_ID, then issue a short-lived ~60s session token), uses it as
 #   Bearer to create a test project, ASSERT the persisted name + a PUT'd
-#   description round-trip (L-108 write-path coverage), then deletes it.
-#   Skipped only if CLERK_SECRET_KEY_STAGING or CLERK_TEST_USER_ID are unset.
+#   description round-trip, then exercises the two real bug surfaces with
+#   write→read-back asserts (L-108 write-path coverage):
+#     C) events bare-date → NOON-anchored stored date (BUG-12 off-by-one guard)
+#     D) plants variety_id set→clear (the can't-clear COALESCE origin bug)
+#   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
+#   CLERK_TEST_USER_ID are unset.
 #
 # URL convention: the Lambda Function URLs route on /api/{entity} for list/create
 #   and /api/{entity}/{id} for by-id GET/PUT/DELETE (matches the frontend
@@ -32,6 +36,9 @@ done
 
 TEST_RUN_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "ci-$(date +%s)")
 CREATED_PROJECT_ID=""
+CREATED_EVENT_ID=""
+CREATED_VARIETY_ID=""
+CREATED_PLANT_ID=""
 DATA_CREATED=false
 CLERK_JWT=""
 CLERK_SESSION_ID=""
@@ -39,16 +46,36 @@ PASS=0
 FAIL=0
 
 cleanup() {
-  if [[ "$DATA_CREATED" == "true" && -n "$CREATED_PROJECT_ID" && -n "$CLERK_JWT" ]]; then
+  if [[ "$DATA_CREATED" == "true" && -n "$CLERK_JWT" ]]; then
     echo ""
-    echo "Cleanup: deleting test project $CREATED_PROJECT_ID..."
-    curl -sf --max-time 30 --connect-timeout 10 \
-      -X DELETE \
-      -H "Authorization: Bearer $CLERK_JWT" \
-      -H "Content-Type: application/json" \
-      "${STAGING_API_PROJECTS%/}/api/projects/${CREATED_PROJECT_ID}" \
-      -o /dev/null 2>&1 && echo "✅ Cleanup: test project deleted" \
-      || echo "WARNING: cleanup DELETE failed — manual cleanup may be needed (id: $CREATED_PROJECT_ID)"
+    echo "Cleanup: deleting smoke test data (best-effort API soft-deletes)..."
+    # Order: plant before variety (plants.variety_id is ON DELETE RESTRICT to plant_varieties;
+    # the plant's variety_id was cleared above, but delete the plant first regardless).
+    if [[ -n "$CREATED_PLANT_ID" ]]; then
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        "${STAGING_API_PLANTS%/}/api/plants/${CREATED_PLANT_ID}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: test plant deleted" \
+        || echo "WARNING: plant cleanup failed (id: $CREATED_PLANT_ID)"
+    fi
+    if [[ -n "$CREATED_VARIETY_ID" ]]; then
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        "${STAGING_API_VARIETIES%/}/api/varieties/${CREATED_VARIETY_ID}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: test variety deleted" \
+        || echo "WARNING: variety cleanup failed (id: $CREATED_VARIETY_ID)"
+    fi
+    if [[ -n "$CREATED_PROJECT_ID" ]]; then
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        "${STAGING_API_PROJECTS%/}/api/projects/${CREATED_PROJECT_ID}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: test project deleted" \
+        || echo "WARNING: project cleanup failed (id: $CREATED_PROJECT_ID)"
+    fi
+    # The test event has NO DELETE route; it (+ its entity_memory row) is hard-swept by the
+    # workflow's L-058 'if: always()' DB step (deploy-staging.yml). The API deletes above are
+    # soft-deletes and the ~60s Clerk token may have expired by now — the workflow DB sweep is
+    # the AUTHORITATIVE cleanup; these are best-effort hygiene only.
   fi
   # Revoke the Clerk test session we created (best-effort hygiene).
   if [[ -n "${CLERK_SESSION_ID:-}" && -n "${CLERK_SECRET_KEY_STAGING:-}" ]]; then
@@ -254,12 +281,11 @@ else
       # where the request returns 2xx but persists the wrong value — e.g. BUG-12
       # (event date stored a day early) or the plants variety_id clear-fix (PUT not
       # clearing). These steps assert the persisted value equals what was written.
-      # See lessons.md L-108. NEXT EXTENSION (highest value — the actual bug surfaces):
-      # add the same write→read-back→assert against events (bare-date → stored date)
-      # and plants (variety_id set→clear) once a test planting/event is created here.
-      # Blockers for those (open, see Task #2): varieties list endpoint returns
-      # {"Message":null} (no runtime variety_id source) and the events Lambda has no
-      # DELETE route (test events would orphan; L-058 hygiene sweeps plant_projects only).
+      # See lessons.md L-108. Blocks C and D below extend this to the two real bug
+      # surfaces: events bare-date (BUG-12 noon-anchor) and plants variety_id set→clear
+      # (the origin bug). Both reuse this test project as parent. The throwaway variety
+      # is POSTed fresh (no dependency on staging seed data); the event has no DELETE
+      # route so its row + entity_memory are hard-swept by the workflow L-058 DB step.
       assert_readback() {
         local label="$1" url="$2" jq_path="$3" expected="$4"
         local TMP CODE BODY GOT
@@ -291,6 +317,80 @@ else
         "{\"description\": \"$WRITE_SENTINEL\"}" >/dev/null || true
       assert_readback "write:update-description-readback" \
         "${STAGING_API_PROJECTS%/}/api/projects/${CREATED_PROJECT_ID}" ".description" "$WRITE_SENTINEL"
+
+      # Refresh the token — the asserts below add several round trips; stay inside ~60s.
+      CLERK_JWT=$(mint_session_token)
+
+      # ── C) Events bare-date → NOON-anchor read-back (BUG-12 regression guard) ──────────────
+      # A bare "YYYY-MM-DD" must persist noon-anchored (…T12:00:00.000Z). The off-by-one bug
+      # stored midnight (…T00:00:00.000Z), which renders a day early in EDT. normalizeEventDate()
+      # in lambda/events/validators.js is the unit under test. A PAST date (7 days ago) dodges
+      # the +1h future bound in validatePostBody. Exact stored format confirmed live 2026-05-25.
+      BARE_DATE=$(date -u -d '7 days ago' +%Y-%m-%d)
+      EVENT_BODY=$(mktemp)
+      EVENT_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+        -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        -o "$EVENT_BODY" -w "%{http_code}" "$STAGING_API_EVENTS" \
+        -d "{\"project_id\": \"$CREATED_PROJECT_ID\", \"event_type\": \"observation\", \"event_date\": \"$BARE_DATE\", \"notes\": \"CI smoke — safe to delete\"}") || EVENT_HTTP="000"
+      CREATED_EVENT_ID=$(jq -r '.id // empty' "$EVENT_BODY" 2>/dev/null || echo "")
+      rm -f "$EVENT_BODY"
+      if [[ "${EVENT_HTTP:0:1}" == "2" && -n "$CREATED_EVENT_ID" ]]; then
+        echo "✅ PASS [crud:POST /events] HTTP $EVENT_HTTP (id: $CREATED_EVENT_ID)"
+        PASS=$((PASS+1))
+        assert_readback "write:event-date-noon-anchor" \
+          "${STAGING_API_EVENTS%/}/api/events/${CREATED_EVENT_ID}" ".event_date" "${BARE_DATE}T12:00:00.000Z"
+      else
+        echo "❌ FAIL [crud:POST /events] HTTP $EVENT_HTTP"
+        FAIL=$((FAIL+1))
+      fi
+
+      # ── D) Plants variety_id set→clear read-back (this thread's origin bug) ─────────────────
+      # The PUT used COALESCE, which can SET a variety but never CLEAR one (null collapses to the
+      # existing value). The presence-sentinel CASE fix lets an explicit null clear it. POST a
+      # throwaway variety for a real id, attach it to a test plant, assert it set, clear it, assert
+      # null. Gated on STAGING_API_VARIETIES (the staging workflow sets it; a loud skip otherwise).
+      if [[ -n "${STAGING_API_VARIETIES:-}" ]]; then
+        VAR_BODY=$(mktemp)
+        VAR_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+          -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$VAR_BODY" -w "%{http_code}" "$STAGING_API_VARIETIES" \
+          -d "{\"name\": \"smoke-test-variety-$TEST_RUN_ID\"}") || VAR_HTTP="000"
+        CREATED_VARIETY_ID=$(jq -r '.id // empty' "$VAR_BODY" 2>/dev/null || echo "")
+        rm -f "$VAR_BODY"
+        if [[ "${VAR_HTTP:0:1}" == "2" && -n "$CREATED_VARIETY_ID" ]]; then
+          echo "✅ PASS [crud:POST /varieties] HTTP $VAR_HTTP (id: $CREATED_VARIETY_ID)"
+          PASS=$((PASS+1))
+          PLANT_BODY=$(mktemp)
+          PLANT_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+            -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$PLANT_BODY" -w "%{http_code}" "$STAGING_API_PLANTS" \
+            -d "{\"project_id\": \"$CREATED_PROJECT_ID\", \"name\": \"smoke-test-plant-$TEST_RUN_ID\", \"variety_id\": \"$CREATED_VARIETY_ID\"}") || PLANT_HTTP="000"
+          CREATED_PLANT_ID=$(jq -r '.id // empty' "$PLANT_BODY" 2>/dev/null || echo "")
+          rm -f "$PLANT_BODY"
+          if [[ "${PLANT_HTTP:0:1}" == "2" && -n "$CREATED_PLANT_ID" ]]; then
+            echo "✅ PASS [crud:POST /plants] HTTP $PLANT_HTTP (id: $CREATED_PLANT_ID)"
+            PASS=$((PASS+1))
+            # set worked? read-back variety_id must equal the variety we attached.
+            assert_readback "write:plant-variety-set" \
+              "${STAGING_API_PLANTS%/}/api/plants/${CREATED_PLANT_ID}" ".variety_id" "$CREATED_VARIETY_ID"
+            # clear it (explicit null) — the bug-fix path — then assert it actually cleared.
+            auth_request "write:PUT /plants/$CREATED_PLANT_ID (clear variety)" \
+              "${STAGING_API_PLANTS%/}/api/plants/${CREATED_PLANT_ID}" "PUT" \
+              "{\"variety_id\": null}" >/dev/null || true
+            assert_readback "write:plant-variety-clear" \
+              "${STAGING_API_PLANTS%/}/api/plants/${CREATED_PLANT_ID}" ".variety_id" ""
+          else
+            echo "❌ FAIL [crud:POST /plants] HTTP $PLANT_HTTP"
+            FAIL=$((FAIL+1))
+          fi
+        else
+          echo "❌ FAIL [crud:POST /varieties] HTTP $VAR_HTTP"
+          FAIL=$((FAIL+1))
+        fi
+      else
+        echo "⚠️  WARN [write:plant-variety] STAGING_API_VARIETIES unset — variety set/clear assert NOT run"
+        echo "     (legit skip only if the varieties endpoint is unconfigured; the staging workflow DOES set it)"
+      fi
     else
       echo "   WARNING: POST succeeded but no id in response — skipping fetch (response: ${CREATE_RESPONSE:0:200})"
     fi
