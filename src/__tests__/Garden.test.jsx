@@ -4,6 +4,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react'
 
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+  useNavigate: () => () => {},
 }))
 const fetchMock = vi.fn()
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))

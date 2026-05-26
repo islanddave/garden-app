@@ -5,6 +5,7 @@ import { P } from '../lib/constants.js'
 import { getStatusColors } from '../lib/status.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded } from '../lib/projectTree.js'
+import GardenTodayStrip from '../components/GardenTodayStrip.jsx'
 import { formatQty } from '../lib/format.js'
 
 // Garden — Increment 1 of the post-V2 UX overhaul. Unifies the old Projects + Plants
@@ -24,6 +25,7 @@ export default function Garden() {
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
   const [expanded, setExpanded] = useState(() => loadExpanded())
+  const [waterDue, setWaterDue] = useState([])
 
   useEffect(() => {
     let on = true
@@ -35,6 +37,10 @@ export default function Garden() {
         setLoading(false)
       })
       .catch(err => { if (!on) return; setError(err.message); setLoading(false) })
+    // Today strip data — supplementary; a dashboard failure never blocks the tree.
+    fetch('/api/dashboard')
+      .then(dash => { if (on) setWaterDue(dash?.water_due ?? []) })
+      .catch(() => { if (on) setWaterDue([]) })
     return () => { on = false }
   }, [fetch])
 
@@ -63,6 +69,8 @@ export default function Garden() {
           <Link to="/projects/new" style={btnLink}>+ Project</Link>
         </div>
       </div>
+
+      <GardenTodayStrip waterDue={waterDue} />
 
       {tree.length === 0 ? (
         <EmptyState />
