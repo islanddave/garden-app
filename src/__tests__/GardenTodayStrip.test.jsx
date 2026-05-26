@@ -13,29 +13,44 @@ const overdue3 = new Date(Date.now() - 3 * 86400000).toISOString()
 const overdue1 = new Date(Date.now() - 1 * 86400000).toISOString()
 
 describe('GardenTodayStrip', () => {
-  it('renders nothing when no watering is overdue', () => {
-    const { container } = render(<GardenTodayStrip waterDue={[]} />)
+  it('renders nothing when nothing needs attention', () => {
+    const { container } = render(<GardenTodayStrip dashboard={{ water_due: [], harvest_ready: [], heads_up: [] }} />)
     expect(container.firstChild).toBeNull()
   })
-  it('renders nothing when waterDue is undefined', () => {
+  it('renders nothing when dashboard is null/undefined', () => {
     const { container } = render(<GardenTodayStrip />)
     expect(container.firstChild).toBeNull()
   })
-  it('shows the single overdue project with an overdue label', () => {
-    render(<GardenTodayStrip waterDue={[{ project_id: 'a', project_name: 'Tomatoes', next_water_at: overdue3, location_type: 'outdoor' }]} />)
+  it('shows an overdue watering row with reason-label + overdue detail', () => {
+    render(<GardenTodayStrip dashboard={{ water_due: [{ project_id: 'a', project_name: 'Tomatoes', next_water_at: overdue3, location_type: 'outdoor' }] }} />)
     expect(screen.getByText('Tomatoes')).toBeDefined()
+    expect(screen.getByText('NEEDS WATER')).toBeDefined()
     expect(screen.getByText(/3 days overdue/)).toBeDefined()
   })
-  it('shows "+N more" when multiple are overdue', () => {
-    render(<GardenTodayStrip waterDue={[
-      { project_id: 'a', project_name: 'Tomatoes', next_water_at: overdue3, location_type: 'outdoor' },
-      { project_id: 'b', project_name: 'Basil', next_water_at: overdue1, location_type: 'outdoor' },
-    ]} />)
-    expect(screen.getByText('Tomatoes + 1 more')).toBeDefined()
+  it('surfaces non-watering attention: harvest-ready + needs-a-look', () => {
+    render(<GardenTodayStrip dashboard={{
+      harvest_ready: [{ project_id: 'h', name: 'Beans', days_since_obs: 4 }],
+      heads_up: [{ project_id: 'f', name: 'Squash', reason: 'flagged', severity: 2 }],
+    }} />)
+    expect(screen.getByText('READY TO HARVEST')).toBeDefined()
+    expect(screen.getByText('Beans')).toBeDefined()
+    expect(screen.getByText('NEEDS A LOOK')).toBeDefined()
+    expect(screen.getByText('Squash')).toBeDefined()
   })
-  it('tapping logs watering for the top project', () => {
-    render(<GardenTodayStrip waterDue={[{ project_id: 'a', project_name: 'Tomatoes', next_water_at: overdue3, location_type: 'outdoor' }]} />)
+  it('caps rendered rows at 5 and shows a "+N more" count', () => {
+    const harvest_ready = Array.from({ length: 7 }, (_, i) => ({ project_id: 'p' + i, name: 'P' + i, days_since_obs: i }))
+    render(<GardenTodayStrip dashboard={{ harvest_ready }} />)
+    expect(screen.getAllByRole('button')).toHaveLength(5)
+    expect(screen.getByText(/2 more in your garden/)).toBeDefined()
+  })
+  it('tapping a watering row logs watering for that project', () => {
+    render(<GardenTodayStrip dashboard={{ water_due: [{ project_id: 'a', project_name: 'Tomatoes', next_water_at: overdue3, location_type: 'outdoor' }] }} />)
     fireEvent.click(screen.getByRole('button'))
     expect(navigateMock).toHaveBeenCalledWith('/log?project=a&event_type=watering')
+  })
+  it('tapping a harvest-ready row routes to a harvest log', () => {
+    render(<GardenTodayStrip dashboard={{ harvest_ready: [{ project_id: 'h', name: 'Beans', days_since_obs: 4 }] }} />)
+    fireEvent.click(screen.getByRole('button'))
+    expect(navigateMock).toHaveBeenCalledWith('/log?project=h&event_type=harvest')
   })
 })

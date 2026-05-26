@@ -25,7 +25,7 @@ export default function Garden() {
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
   const [expanded, setExpanded] = useState(() => loadExpanded())
-  const [waterDue, setWaterDue] = useState([])
+  const [dash, setDash] = useState(null)
 
   useEffect(() => {
     let on = true
@@ -39,8 +39,8 @@ export default function Garden() {
       .catch(err => { if (!on) return; setError(err.message); setLoading(false) })
     // Today strip data — supplementary; a dashboard failure never blocks the tree.
     fetch('/api/dashboard')
-      .then(dash => { if (on) setWaterDue(dash?.water_due ?? []) })
-      .catch(() => { if (on) setWaterDue([]) })
+      .then(d => { if (on) setDash(d ?? null) })
+      .catch(() => { if (on) setDash(null) })
     return () => { on = false }
   }, [fetch])
 
@@ -70,7 +70,7 @@ export default function Garden() {
         </div>
       </div>
 
-      <GardenTodayStrip waterDue={waterDue} />
+      <GardenTodayStrip dashboard={dash} />
 
       {tree.length === 0 ? (
         <EmptyState />
