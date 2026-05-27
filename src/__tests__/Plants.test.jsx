@@ -408,3 +408,27 @@ describe('Plants — Plant→Planting rename notice (S5)', () => {
     expect(screen.queryByRole('status')).toBeNull()
   })
 })
+
+describe('Plants — +LOG FAB ?add=1 entry', () => {
+  it('auto-opens the Add Planting form when ?add=1 is present, then strips the param', async () => {
+    searchParamsRef.current = new URLSearchParams('add=1')
+    primeMountFetches()
+    render(<Plants />)
+    await waitFor(() => {
+      expect(screen.getAllByText(/Add plant/i).length).toBeGreaterThan(0)
+    })
+    expect(screen.getByTestId('variety-picker')).toBeDefined()
+    // Param is stripped via setSearchParams(replace) so a later ?add=1 re-triggers cleanly.
+    expect(setSearchParamsSpy).toHaveBeenCalled()
+    const lastArg = setSearchParamsSpy.mock.calls.at(-1)[0]
+    const usp = lastArg instanceof URLSearchParams ? lastArg : new URLSearchParams(lastArg)
+    expect(usp.get('add')).toBeNull()
+  })
+
+  it('does NOT auto-open the Add form without ?add=1', async () => {
+    primeMountFetches()
+    render(<Plants />)
+    await waitFor(() => screen.getByText(/No plantings yet/))
+    expect(screen.queryByTestId('variety-picker')).toBeNull()
+  })
+})

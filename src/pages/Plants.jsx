@@ -106,6 +106,19 @@ export default function Plants() {
     return () => { mounted = false }
   }, [sourceInventoryItemId, queryVarietyId, fetch])
 
+  // +LOG FAB create-sheet entry: /plants?add=1 opens the Add Planting form, then strips
+  // the param (replace, no history entry) so a subsequent ?add=1 — even from the same
+  // screen — is a real location change and re-triggers the open. Distinct from the
+  // source_inventory_item_id / variety_id deep-link prefill above.
+  useEffect(() => {
+    if (searchParams.get('add') === '1') {
+      setShowAdd(true)
+      const next = new URLSearchParams(searchParams)
+      next.delete('add')
+      setSearchParams(next, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
+
   function clearQueryParams() {
     if (sourceInventoryItemId || queryVarietyId) {
       const next = new URLSearchParams(searchParams)
