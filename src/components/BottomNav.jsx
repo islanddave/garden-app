@@ -328,15 +328,14 @@ export default function BottomNav() {
           if (tab.highlight) return (
             <button key={tab.to} type="button"
               onClick={() => { closeMore(); setShowCreate(s => !s) }}
-              aria-haspopup="true" aria-expanded={showCreate} aria-label="Log — open create menu"
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, background: 'none', border: 'none', cursor: 'pointer', padding: 0, minHeight: 44 }}>
+              aria-haspopup="true" aria-expanded={showCreate} aria-label="Create"
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: 0, minHeight: 44 }}>
               <span style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 width: 44, height: 44, backgroundColor: P.green, borderRadius: '50%',
                 color: '#fff', fontSize: '1.5rem', fontWeight: 700,
-                boxShadow: '0 2px 8px rgba(45,106,79,0.35)', marginTop: -10,
+                boxShadow: '0 2px 8px rgba(45,106,79,0.35)',
               }}>+</span>
-              <span style={{ fontSize: '0.62rem', color: showCreate ? P.green : P.light, fontWeight: showCreate ? 700 : 400, marginTop: 1 }}>{tab.label}</span>
             </button>
           )
           return (
