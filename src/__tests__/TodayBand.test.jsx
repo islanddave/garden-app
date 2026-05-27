@@ -51,7 +51,9 @@ describe('TodayBand (global, above-nav)', () => {
       heads_up: [{ project_id: 'f', name: 'Basil', reason: 'flagged', severity: 3 }],
     })
     render(<TodayBand />)
-    fireEvent.click(await screen.findByRole('button', { name: /Show all 3 items/ }))
+    // collapsed chip must count items hidden behind the top row (total-1), not cap-overflow
+    expect(await screen.findByText(/\+2 more/)).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: /Show all 3 items/ }))
     expect(await screen.findByText('Beans')).toBeDefined()
     expect(screen.getByText('Basil')).toBeDefined()
   })

@@ -74,6 +74,11 @@ export default function TodayBand() {
             filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.14))',
           }}>
             {visible.map(it => <Row key={it.key} it={it} onAct={() => navigate(it.to)} />)}
+            {more > 0 && (
+              <div style={{ fontSize: '0.72rem', color: P.light, textAlign: 'center', padding: '4px 0' }}>
+                + {more} more in your garden
+              </div>
+            )}
           </div>
         )}
 
@@ -93,7 +98,7 @@ export default function TodayBand() {
                 fontSize: '0.78rem', fontWeight: 700, color: P.mid,
               }}
             >
-              {open ? 'Close' : `+${more} more`}
+              {open ? 'Close' : `+${total - 1} more`}
               <span aria-hidden="true" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>▾</span>
             </button>
           )}
