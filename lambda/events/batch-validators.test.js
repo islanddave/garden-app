@@ -23,7 +23,7 @@ describe('validateBatchBody', () => {
 
   it('rejects missing idempotency_key (non-dry-run)', () => bad({ event_type: 'watering', scope: { type: 'all' } }, /idempotency_key/));
   it('rejects missing event_type', () => bad({ idempotency_key: 'k', scope: { type: 'all' } }, /event_type is required/));
-  it('rejects harvest (side-effect type)', () => bad(base({ event_type: 'harvest' }), /harvest not supported/));
+  it('rejects harvest (side-effect type)', () => bad(base({ event_type: 'harvest' }), /not supported in batch/));
   it('rejects unknown event_type', () => bad(base({ event_type: 'frobnicate' }), /must be one of/));
   it('rejects missing scope', () => bad({ idempotency_key: 'k', event_type: 'watering' }, /scope is required/));
   it('rejects bad scope.type', () => bad(base({ scope: { type: 'galaxy' } }), /scope.type/));

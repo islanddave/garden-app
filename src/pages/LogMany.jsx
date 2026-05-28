@@ -8,12 +8,44 @@ import { P } from '../lib/constants.js'
 // By Space. Server resolves the set (POST /api/events/batch); dry_run powers the
 // server-accurate preview. Durable undo via /api/events/batches. V100: ambient, no interrupt.
 
+// Primary event types — the 4 most common bulk operations stay above the fold.
 const EVENT_TYPES = [
   { value: 'watering',    label: 'Watered',    emoji: '💧' },
   { value: 'fertilizing', label: 'Fertilized', emoji: '🌿' },
   { value: 'observation', label: 'Observed',   emoji: '👁️' },
   { value: 'pruning',     label: 'Pruned',     emoji: '✂️' },
 ]
+
+// Secondary event types — revealed via "More event types" expand. Curated for batch:
+// side-effect-free types only (harvest/first_harvest excluded — they require quantity;
+// photo excluded — it requires a file). Order + grouping mirrors EventNew (Log one).
+// Vocabulary MUST match the Lambda BATCH_EVENT_TYPES allowlist in lambda/events/validators.js.
+const SECONDARY_GROUPS = [
+  ['Growth & Training', [
+    { value: 'sowing',         label: 'Sowed',         emoji: '🌰' },
+    { value: 'seed_soak',      label: 'Seed soak',     emoji: '💦' },
+    { value: 'germination',    label: 'Germination',   emoji: '🌿' },
+    { value: 'thinning',       label: 'Thinned',       emoji: '🪓' },
+    { value: 'potting_up',     label: 'Potted up',     emoji: '🪴' },
+    { value: 'transplant',     label: 'Transplanted',  emoji: '🌱' },
+    { value: 'hardening_off',  label: 'Hardening off', emoji: '☀️' },
+  ]],
+  ['Pest & Health', [
+    { value: 'pest_treatment', label: 'Pest treatment', emoji: '🐛' },
+  ]],
+  ['Environmental', [
+    { value: 'cover',          label: 'Covered',       emoji: '🌂' },
+    { value: 'uncover',        label: 'Uncovered',     emoji: '🌤️' },
+    { value: 'other',          label: 'Other',         emoji: '📝' },
+  ]],
+]
+
+// Flat lookup so the meta-by-value resolver covers both primary + secondary.
+const ALL_TYPES = [
+  ...EVENT_TYPES,
+  ...SECONDARY_GROUPS.flatMap(([, types]) => types),
+]
+
 const SCOPE_KEY = 'quicklog.lastScope'
 
 function genKey() {
@@ -32,6 +64,7 @@ export default function LogMany() {
   const [loadErr, setLoadErr] = useState(null)
 
   const [eventType, setEventType] = useState('watering')
+  const [showMoreTypes, setShowMoreTypes] = useState(false)
   const [scope, setScope]   = useState({ type: 'all' })
   const [preview, setPreview]   = useState(null)   // { count, capped, plantings:[{id,name}] }
   const [excluded, setExcluded] = useState(() => new Set())
@@ -41,6 +74,13 @@ export default function LogMany() {
   const [error, setError]   = useState(null)
   const [showList, setShowList] = useState(false)
   const idemRef = useRef(null)
+
+  // If the user reopens the page with a previously-selected secondary type
+  // saved in eventType (e.g. via "Log more"), keep the More panel open so
+  // their selection stays visible.
+  useEffect(() => {
+    if (!EVENT_TYPES.some(t => t.value === eventType)) setShowMoreTypes(true)
+  }, [eventType])
 
   // Load projects + locations; restore last scope (validated against live data); seed from ?project_id / ?location_id.
   useEffect(() => {
@@ -83,7 +123,7 @@ export default function LogMany() {
     setExcluded(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
   }, [])
 
-  const evMeta = EVENT_TYPES.find(t => t.value === eventType) || EVENT_TYPES[0]
+  const evMeta = ALL_TYPES.find(t => t.value === eventType) || EVENT_TYPES[0]
   const verbLabel = evMeta.label.toLowerCase()
   const committed = preview ? preview.plantings.filter(p => !excluded.has(p.id)) : []
   const scopeLabel = scope.type === 'all' ? 'all active plantings'
@@ -156,6 +196,44 @@ export default function LogMany() {
             </Chip>
           ))}
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowMoreTypes(s => !s)}
+          aria-expanded={showMoreTypes}
+          style={{
+            marginTop: 12, background: 'none', border: 'none',
+            cursor: 'pointer', color: P.green, fontSize: '0.82rem',
+            fontWeight: 600, padding: '4px 0',
+            display: 'flex', alignItems: 'center', gap: 5,
+          }}
+        >
+          <span aria-hidden="true">{showMoreTypes ? '▾' : '▸'}</span>
+          <span>More event types</span>
+        </button>
+
+        {showMoreTypes && (
+          <div style={{ marginTop: 8 }}>
+            {SECONDARY_GROUPS.map(([category, types]) => (
+              <div key={category} style={{ marginBottom: 14 }}>
+                <div style={{
+                  fontSize: '0.7rem', fontWeight: 700, color: P.light,
+                  letterSpacing: '0.4px', textTransform: 'uppercase',
+                  marginBottom: 8,
+                }}>
+                  {category}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {types.map(t => (
+                    <Chip key={t.value} active={eventType === t.value} onClick={() => setEventType(t.value)}>
+                      <span aria-hidden="true">{t.emoji}</span> {t.label}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </Section>
 
       <Section label="To which plantings?">
