@@ -34,7 +34,7 @@ env:
   # critter: placeholder until first staging deploy creates the Function URL (then this is updated to the real URL).
   # Per mvp-critter-pre-build-revision-V001-20260528 §2.6: smoke gracefully skips while placeholder is in place
   # (first-deploy bootstrap); HARD-FAILs once Lambda is deployed and Dave updates this to the real URL.
-  STAGING_API_CRITTERS: https://placeholder-set-after-first-staging-deploy.lambda-url.us-east-1.on.aws/
+  STAGING_API_CRITTERS: https://nqq6b5kkf76mtvjmtqybk5jene0efzuk.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
