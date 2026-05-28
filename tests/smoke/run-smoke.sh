@@ -573,6 +573,79 @@ else
       else
         echo "⚠️  WARN [write:ux-events] STAGING_API_UX_EVENTS unset/placeholder — ux-events assert NOT run"
       fi
+
+      # ── J) Critter award flow (write→read-back + idempotency) ─────────────────────
+      # POST /api/critters awards a critter row anchored to a plant-bearing event.
+      # Per mvp-critter-pre-build-revision-V001-20260528 §2 (Lambda) + §3.27 (UNIQUE INDEX
+      # idempotency). species_id=255 is the SMOKE_SENTINEL (revision §2.6) — out of the
+      # MVP 1-8 pool so future CHECK constraints catch leakage. L-058 sweep below also
+      # nukes species_id=255 rows.
+      # Gating per revision §2.6 / L-109: HARD-FAIL once Lambda is deployed; graceful skip
+      # only on first-deploy (placeholder URL) so the wiring round-trip can complete.
+      if [[ -n "${STAGING_API_CRITTERS:-}" && "$STAGING_API_CRITTERS" != *placeholder* ]]; then
+        if [[ -n "$CREATED_PLANT_ID" ]]; then
+          CLERK_JWT=$(mint_session_token)
+          # Step 1: create a plant-anchored event (the critter\'s source_event_id must have plant_id != NULL).
+          C_EV_BODY=$(mktemp)
+          C_EV_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+            -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$C_EV_BODY" -w "%{http_code}" "$STAGING_API_EVENTS" \
+            -d "{\"project_id\": \"$CREATED_PROJECT_ID\", \"plant_id\": \"$CREATED_PLANT_ID\", \"event_type\": \"watering\", \"notes\": \"smoke critter source\"}") || C_EV_HTTP="000"
+          CRITTER_SRC_EVENT_ID=$(jq -r '.id // empty' "$C_EV_BODY" 2>/dev/null || echo "")
+          rm -f "$C_EV_BODY"
+          if [[ "${C_EV_HTTP:0:1}" == "2" && -n "$CRITTER_SRC_EVENT_ID" ]]; then
+            echo "✅ PASS [crud:POST /events (critter source)] HTTP $C_EV_HTTP"
+            PASS=$((PASS+1))
+
+            # Step 2: POST /api/critters — first call should 201.
+            C_BODY=$(mktemp)
+            C_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+              -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+              -o "$C_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters" \
+              -d "{\"source_event_id\": \"$CRITTER_SRC_EVENT_ID\", \"plant_id\": \"$CREATED_PLANT_ID\", \"species_id\": 255}") || C_HTTP="000"
+            CRITTER_ID=$(jq -r '.critter.id // empty' "$C_BODY" 2>/dev/null || echo "")
+            rm -f "$C_BODY"
+            if [[ "$C_HTTP" == "201" && -n "$CRITTER_ID" ]]; then
+              echo "✅ PASS [crud:POST /critters] HTTP $C_HTTP (id: $CRITTER_ID)"
+              PASS=$((PASS+1))
+
+              # Step 3: GET /api/critters/:id → assert species_id == 255 (sentinel) + target_id == plant
+              assert_readback "write:critter-species-readback" \
+                "${STAGING_API_CRITTERS%/}/api/critters/${CRITTER_ID}" ".critter.species_id" "255"
+              assert_readback "write:critter-target-readback" \
+                "${STAGING_API_CRITTERS%/}/api/critters/${CRITTER_ID}" ".critter.target_id" "$CREATED_PLANT_ID"
+
+              # Step 4: idempotency — POST again with SAME source_event_id → 200 + idempotent flag.
+              # Per revision §3.27 + Lambda 23505 catch path. Closes the multi-user concurrent-write race surface.
+              C_IDEM_BODY=$(mktemp)
+              C_IDEM_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+                -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+                -o "$C_IDEM_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters" \
+                -d "{\"source_event_id\": \"$CRITTER_SRC_EVENT_ID\", \"plant_id\": \"$CREATED_PLANT_ID\", \"species_id\": 255}") || C_IDEM_HTTP="000"
+              IDEM=$(jq -r '.idempotent // false' "$C_IDEM_BODY" 2>/dev/null || echo "false")
+              IDEM_ID=$(jq -r '.critter.id // empty' "$C_IDEM_BODY" 2>/dev/null || echo "")
+              rm -f "$C_IDEM_BODY"
+              if [[ "$C_IDEM_HTTP" == "200" && "$IDEM" == "true" && "$IDEM_ID" == "$CRITTER_ID" ]]; then
+                echo "✅ PASS [write:critter-idempotency] same source_event_id returns SAME row (id=$IDEM_ID, idempotent=true)"
+                PASS=$((PASS+1))
+              else
+                echo "❌ FAIL [write:critter-idempotency] HTTP $C_IDEM_HTTP idempotent=$IDEM id=$IDEM_ID (expected $CRITTER_ID)"
+                FAIL=$((FAIL+1))
+              fi
+            else
+              echo "❌ FAIL [crud:POST /critters] HTTP $C_HTTP (id=$CRITTER_ID)"
+              FAIL=$((FAIL+1))
+            fi
+          else
+            echo "❌ FAIL [crud:POST /events (critter source)] HTTP $C_EV_HTTP"
+            FAIL=$((FAIL+1))
+          fi
+        else
+          echo "⚠️  WARN [write:critter] no test planting (block D failed) — critter assert NOT run"
+        fi
+      else
+        echo "⚠️  WARN [write:critter] STAGING_API_CRITTERS unset/placeholder — critter assert NOT run (first-deploy graceful skip)"
+      fi
     else
       echo "   WARNING: POST succeeded but no id in response — skipping fetch (response: ${CREATE_RESPONSE:0:200})"
     fi
