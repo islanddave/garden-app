@@ -4,7 +4,6 @@ import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { ZoneProvider } from './context/ZoneContext.jsx'
 import TopBar from './components/TopBar.jsx'
 import BottomNav from './components/BottomNav.jsx'
-import TodayBand from './components/TodayBand.jsx'
 import Footer from './components/Footer.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import Login from './pages/Login.jsx'
@@ -35,6 +34,7 @@ import Collection from './pages/Collection.jsx'
 import InactiveProjects from './pages/InactiveProjects.jsx'
 import ProjectsAdminClassify from './pages/ProjectsAdminClassify.jsx'
 import GardenActivity from './pages/GardenActivity.jsx'
+import GardenHelper from './pages/GardenHelper.jsx'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -84,7 +84,7 @@ function AppRoutes() {
         <TopBar />
         <div style={{
           display: 'flex', flexDirection: 'column', minHeight: '100dvh',
-          paddingBottom: user ? 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))' : 0,
+          paddingBottom: user ? 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom))' : 0,
         }}>
           <div style={{ flex: 1 }}>
             <Routes>
@@ -124,12 +124,16 @@ function AppRoutes() {
                   Lambda-side ADMIN_CLERK_SUBS allowlist is the real security;
                   non-admins see a neutral placard. */}
               <Route path="/admin/garden-activity" element={<Protected><GardenActivity /></Protected>} />
+              {/* Post-V2 UX overhaul Inc 2 Bite 1: Rung-1 advisory helper-prompt.
+                  Non-recording scaffold (no DB writes); composes a prompt with a
+                  C4 untrusted-data fence and copies/shares to Claude.
+                  See postv2-ux-overhaul-inc2-bite-decomposition-V001-20260528.1145.md */}
+              <Route path="/helper"        element={<Protected><GardenHelper /></Protected>} />
               <Route path="*"             element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </div>
           <Footer />
         </div>
-        {user && <TodayBand />}
         {user && <BottomNav />}
       </ErrorBoundary>
     </BrowserRouter>
