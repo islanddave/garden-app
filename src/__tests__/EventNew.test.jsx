@@ -43,7 +43,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
   }),
 }))
 
-vi.mock('../lib/haptic.js', () => ({ hapticShort: vi.fn() }))
 
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => (

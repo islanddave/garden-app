@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
 import { formatQty } from '../lib/format.js'
-import { hapticShort } from '../lib/haptic.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
@@ -511,7 +510,8 @@ export default function EventNew() {
 
     // V1.2a-1 Lambda 2.1.x response shape: event_row fields at top level + updated_streak / xp_gained / newly_earned_achievements / daily_xp_remaining.
     const { id: eventId, updated_streak, xp_gained, newly_earned_achievements } = result
-    hapticShort() // V002 §C-V1.2a-1-D: log save haptic
+    // V-4 removed (reward-ux-conformance-audit V001 §V-4, ratified jolly-fervent-ritchie):
+    // log-save haptic was a banned channel on a reward-signal path. Save still completes.
 
     // 2 — Upload photo via shared hook (non-fatal — errorMode='swallow')
     // The hook runs the same 3-step presign → S3 PUT → POST /api/photos dance.
