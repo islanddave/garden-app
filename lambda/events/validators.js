@@ -78,11 +78,33 @@ export function validatePostBody(body) {
 // F9 UUID regex — applied before any SQL fires so Postgres never sees a malformed UUID.
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// ── Bulk "Quick Log" / Unit A (2026-05-24) ──────────────────────────────────
-// Side-effect-free types only. Vocabulary mirrors EventNew EVENT_TYPES_UI values
-// (so event_log.event_type matches the single-event path). Harvest is excluded
-// (single-event harvest dual-writes harvest_log; batch would skip that side-effect).
-export const BATCH_EVENT_TYPES = ['watering', 'fertilizing', 'observation', 'pruning'];
+// ── Bulk "Quick Log" / Unit A (2026-05-24, expanded 2026-05-28) ───────────
+// Side-effect-free types only. Vocabulary mirrors EventNew EVENT_TYPES_UI + the
+// SECONDARY_GROUPS in src/pages/LogMany.jsx (so event_log.event_type matches the
+// single-event path). Excluded by design:
+//   - harvest / first_harvest — require quantity+unit (dual-write to harvest_log)
+//   - photo                    — requires a file upload (no bulk semantics)
+export const BATCH_EVENT_TYPES = [
+  // Primary (always visible in Log Many)
+  'watering',
+  'fertilizing',
+  'observation',
+  'pruning',
+  // Secondary — Growth & Training
+  'sowing',
+  'seed_soak',
+  'germination',
+  'thinning',
+  'potting_up',
+  'transplant',
+  'hardening_off',
+  // Secondary — Pest & Health
+  'pest_treatment',
+  // Secondary — Environmental
+  'cover',
+  'uncover',
+  'other',
+];
 
 // Returns null on success, or { status, error } on validation failure.
 export function validateBatchBody(body) {
@@ -91,7 +113,7 @@ export function validateBatchBody(body) {
   }
   if (!body.event_type) return { status: 400, error: 'event_type is required' };
   if (!BATCH_EVENT_TYPES.includes(body.event_type)) {
-    return { status: 400, error: `event_type must be one of: ${BATCH_EVENT_TYPES.join(', ')} (harvest not supported in batch)` };
+    return { status: 400, error: `event_type must be one of: ${BATCH_EVENT_TYPES.join(', ')} (harvest/first_harvest/photo not supported in batch)` };
   }
   if (body.event_date != null) {
     const ed = new Date(body.event_date);
