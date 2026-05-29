@@ -48,7 +48,7 @@ describe('BottomNav — NAV-IA-1 layout', () => {
   it('renders Garden + LOG+ + Inventory + More (Projects+Plants unified into Garden)', () => {
     render(<BottomNav />)
     expect(screen.getByText('Garden')).toBeDefined()
-    expect(screen.getByText('+Log')).toBeDefined()
+    expect(screen.getByLabelText('Create')).toBeDefined()
     expect(screen.getByText('Inventory')).toBeDefined()
     expect(screen.getByText('More')).toBeDefined()
     expect(screen.queryByText('Projects')).toBeNull()
@@ -69,8 +69,10 @@ describe('BottomNav — NAV-IA-1 layout', () => {
     render(<BottomNav />)
     expect(screen.getByText('Garden').closest('a').getAttribute('href')).toBe('/garden')
     expect(screen.getByText('Inventory').closest('a').getAttribute('href')).toBe('/inventory')
-    // LOG+ has aria-label "Log an event" — search by that since +Log label is also on the +Log span
-    expect(screen.getByLabelText('Log an event').getAttribute('href')).toBe('/log')
+    // +LOG is no longer a direct link — it's a button that opens the create action sheet.
+    const logBtn = screen.getByLabelText('Create')
+    expect(logBtn.tagName).toBe('BUTTON')
+    expect(logBtn.getAttribute('aria-haspopup')).toBe('true')
   })
 })
 
@@ -121,6 +123,7 @@ describe('BottomNav — More menu', () => {
     expect(link.getAttribute('href')).toBe('/plants')
   })
 
+
   it('More menu shows the Garden Helper link pointing to /helper (Post-V2 UX overhaul Inc 2 Bite 1, 2026-05-28)', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('More navigation options'))
@@ -167,5 +170,57 @@ describe('BottomNav — Sign Out confirmation flow', () => {
     })
     expect(signOutSpy).toHaveBeenCalledTimes(1)
     expect(navigateSpy).toHaveBeenCalledWith('/', { replace: true })
+  })
+})
+
+describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
+  it('create sheet is closed by default', () => {
+    render(<BottomNav />)
+    expect(screen.queryByText('Add a planting')).toBeNull()
+    expect(screen.getByLabelText('Create').getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('clicking +LOG opens the sheet with all four create options', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    expect(screen.getByText('Log an event')).toBeDefined()
+    expect(screen.getByText('Add a planting')).toBeDefined()
+    expect(screen.getByText('New project')).toBeDefined()
+    expect(screen.getByText('Add inventory')).toBeDefined()
+    expect(screen.getByLabelText('Create').getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('each create option points to the correct route', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    expect(screen.getByText('Log an event').closest('a').getAttribute('href')).toBe('/log')
+    expect(screen.getByText('Add a planting').closest('a').getAttribute('href')).toBe('/plants?add=1')
+    expect(screen.getByText('New project').closest('a').getAttribute('href')).toBe('/projects/new')
+    expect(screen.getByText('Add inventory').closest('a').getAttribute('href')).toBe('/inventory/add')
+  })
+
+  it('selecting an option closes the sheet', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    fireEvent.click(screen.getByText('New project'))
+    expect(screen.queryByText('Add a planting')).toBeNull()
+  })
+
+  it('opening More closes the create sheet (mutually exclusive)', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    expect(screen.getByText('Add a planting')).toBeDefined()
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    expect(screen.queryByText('Add a planting')).toBeNull()
+    expect(screen.getByText('Sign out')).toBeDefined()
+  })
+
+  it('opening create closes the More menu (mutually exclusive)', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    expect(screen.getByText('Sign out')).toBeDefined()
+    fireEvent.click(screen.getByLabelText('Create'))
+    expect(screen.queryByText('Sign out')).toBeNull()
+    expect(screen.getByText('Add a planting')).toBeDefined()
   })
 })

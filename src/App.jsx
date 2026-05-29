@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { ZoneProvider } from './context/ZoneContext.jsx'
 import TopBar from './components/TopBar.jsx'
 import BottomNav from './components/BottomNav.jsx'
+import TodayBand from './components/TodayBand.jsx'
 import Footer from './components/Footer.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import Login from './pages/Login.jsx'
@@ -84,7 +85,7 @@ function AppRoutes() {
         <TopBar />
         <div style={{
           display: 'flex', flexDirection: 'column', minHeight: '100dvh',
-          paddingBottom: user ? 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom))' : 0,
+          paddingBottom: user ? 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))' : 0,
         }}>
           <div style={{ flex: 1 }}>
             <Routes>
@@ -134,6 +135,7 @@ function AppRoutes() {
           </div>
           <Footer />
         </div>
+        {user && <TodayBand />}
         {user && <BottomNav />}
       </ErrorBoundary>
     </BrowserRouter>
