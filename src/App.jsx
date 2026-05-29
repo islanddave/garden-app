@@ -37,6 +37,7 @@ import InactiveProjects from './pages/InactiveProjects.jsx'
 import ProjectsAdminClassify from './pages/ProjectsAdminClassify.jsx'
 import GardenActivity from './pages/GardenActivity.jsx'
 import GardenHelper from './pages/GardenHelper.jsx'
+import FieldCapture from './pages/FieldCapture.jsx'
 import Settings from './pages/Settings.jsx'
 import SettingsNotifications from './pages/SettingsNotifications.jsx'
 
@@ -140,6 +141,12 @@ function AppRoutes() {
                   See mvp-critter-pre-build-revision-V001-20260528.md §3.17/§3.23/§3.24. */}
               <Route path="/settings"      element={<Protected><Settings /></Protected>} />
               <Route path="/settings/notifications" element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SettingsNotifications /></ErrorBoundary></Protected>} />
+              {/* Post-V2 UX overhaul Inc 2 Bite 3: Field capture surface MVP.
+                  Glove-and-glare mic UI + tap-to-type fallback + queued-count
+                  indicator. Gated on useMode()==='field'; Desk-mode visits
+                  redirect to /dashboard. SURFACE ONLY — Bite 4 wires real
+                  getUserMedia + IndexedDB. */}
+              <Route path="/field"         element={<Protected><FieldCapture /></Protected>} />
               <Route path="*"             element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </div>

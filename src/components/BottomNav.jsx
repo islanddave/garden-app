@@ -6,6 +6,7 @@ import CatchUpBadge from './CatchUpBadge.jsx'
 import { CATCH_UP_EDITOR_SHIPPED } from '../lib/featureFlags.js'
 import { useApiFetch } from '../lib/api.js'
 import BottomNavDot from './BottomNavDot.jsx'
+import { useMode } from '../lib/mode.js'
 
 // BottomNav — NAV-IA-1 layout (V1.2a-3 Increment C / PR-C1, 2026-05-18)
 // Tabs: Projects · Plants · (centered LOG+) · Inventory · (… More menu)
@@ -48,6 +49,9 @@ export default function BottomNav() {
   const navigate = useNavigate()
   const { profile, signOut } = useAuth()
   const { getToken } = useApiFetch()
+  // Post-V2 UX overhaul Inc 2 Bite 3: Field-mode swaps the +LOG center button
+  // for a mic affordance that navigates to /field. Desk-mode unchanged.
+  const { isField } = useMode()
   const [showMore, setShowMore]               = useState(false)
   const [showCreate, setShowCreate]           = useState(false)
   const [confirmSignOut, setConfirmSignOut]   = useState(false)
@@ -364,7 +368,25 @@ export default function BottomNav() {
       }}>
         {TABS.map(tab => {
           const active = isActive(tab.to)
-          if (tab.highlight) return (
+          if (tab.highlight) {
+            // Field mode (Bite 3): center button becomes a mic affordance that
+            // navigates to /field — no FAB action sheet. Desk mode (default):
+            // unchanged +LOG FAB that opens the create action sheet.
+            if (isField) return (
+              <Link key={tab.to} to="/field"
+                onClick={() => { closeMore(); closeCreate() }}
+                data-testid="bottomnav-field-mic"
+                aria-label="Go to field capture"
+                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', padding: 0, minHeight: 44 }}>
+                <span style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: 44, height: 44, backgroundColor: P.terra, borderRadius: '50%',
+                  color: '#fff', fontSize: '1.3rem', fontWeight: 700,
+                  boxShadow: '0 2px 8px rgba(183,83,42,0.35)',
+                }} aria-hidden="true">🎤</span>
+              </Link>
+            )
+            return (
             <button key={tab.to} type="button"
               onClick={() => { closeMore(); setShowCreate(s => !s) }}
               aria-haspopup="true" aria-expanded={showCreate} aria-label="Create"
@@ -376,7 +398,7 @@ export default function BottomNav() {
                 boxShadow: '0 2px 8px rgba(45,106,79,0.35)',
               }}>+</span>
             </button>
-          )
+          )}
           return (
             <Link key={tab.to} to={tab.to}
               style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44, position: 'relative' }}>
