@@ -37,6 +37,7 @@ import InactiveProjects from './pages/InactiveProjects.jsx'
 import ProjectsAdminClassify from './pages/ProjectsAdminClassify.jsx'
 import GardenActivity from './pages/GardenActivity.jsx'
 import GardenHelper from './pages/GardenHelper.jsx'
+import FieldCapture from './pages/FieldCapture.jsx'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -131,6 +132,12 @@ function AppRoutes() {
                   C4 untrusted-data fence and copies/shares to Claude.
                   See postv2-ux-overhaul-inc2-bite-decomposition-V001-20260528.1145.md */}
               <Route path="/helper"        element={<Protected><GardenHelper /></Protected>} />
+              {/* Post-V2 UX overhaul Inc 2 Bite 3: Field capture surface MVP.
+                  Glove-and-glare mic UI + tap-to-type fallback + queued-count
+                  indicator. Gated on useMode()==='field'; Desk-mode visits
+                  redirect to /dashboard. SURFACE ONLY — Bite 4 wires real
+                  getUserMedia + IndexedDB. */}
+              <Route path="/field"         element={<Protected><FieldCapture /></Protected>} />
               <Route path="*"             element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </div>
