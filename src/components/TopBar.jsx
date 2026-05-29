@@ -2,19 +2,32 @@ import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 // import { useZone } from '../context/ZoneContext.jsx' // DISABLED pre-V2 (2026-05-22): zone pill commented out below
+import { useMode } from '../context/ModeContext.jsx'
+import { MODE } from '../lib/mode.js'
 import { P, APP_NAME } from '../lib/constants.js'
 
 // TopBar — sticky top bar.
 // Layout (NAV-IA-1, V1.2a-3 Increment C / PR-C1, 2026-05-18):
 //   left:  app name (clickable home → "Gardens at Home" banner)
-//   right: zone pill · Favorites star icon (replaces previous "More" dropdown)
+//   right: mode chip · zone pill · Favorites star icon
 // Sign Out moved from this component into BottomNav's More menu (with confirmation).
 // "More" dropdown removed entirely.
+//
+// 2026-05-28 (Post-V2 UX overhaul Inc 2 Bite 2): added Field/Desk mode chip.
+// Authenticated-only (mirrors favorites/zone pattern). Color-independent state
+// (icon + text label + aria-label per Reward UX V100 §7 floor — color is NOT
+// the sole signal). Tap to toggle. WCAG AA: cream text on a tonal cream-tinted
+// pill against P.green background = sufficient contrast.
 
 export default function TopBar() {
   const { user }       = useAuth()
   // const { activeZone } = useZone() // DISABLED pre-V2 (2026-05-22): zone pill commented out below
+  const { mode, toggleMode, isField } = useMode()
   const location       = useLocation()
+
+  const modeLabel = isField ? 'Field' : 'Desk'
+  const modeIcon  = isField ? '🌿' : '💻'
+  const nextLabel = isField ? 'Desk' : 'Field'
 
   return (
     <header style={{
@@ -53,6 +66,37 @@ export default function TopBar() {
 
       {/* Right side controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+
+        {/* Field/Desk mode chip — authenticated only. Tap to toggle.
+            Bite 2 scaffold only: visible status (H1) so the toggle is
+            discoverable; downstream bites (B3+) branch on `useMode()`. */}
+        {user && (
+          <button
+            type="button"
+            onClick={toggleMode}
+            data-testid="mode-chip"
+            data-mode={mode}
+            aria-label={`Mode: ${modeLabel}. Tap to switch to ${nextLabel}.`}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              color: P.cream,
+              backgroundColor: 'rgba(248,245,240,0.15)',
+              border: '1px solid rgba(248,245,240,0.3)',
+              borderRadius: 20,
+              padding: '4px 10px',
+              minHeight: 32,
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              lineHeight: 1.2,
+            }}
+          >
+            <span aria-hidden="true">{modeIcon}</span>
+            <span>{modeLabel}</span>
+          </button>
+        )}
 
         {/* Zone / location switcher pill — TEMPORARILY DISABLED pre-V2 (2026-05-22, Dave directive).
              Hidden because zone selection is currently a no-op: activeZone is only displayed

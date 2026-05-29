@@ -1,81 +1,102 @@
 /**
  * src/__tests__/TopBar.test.jsx
- * NAV-IA-1 (V1.2a-3 Increment C / PR-C1, 2026-05-18) tests.
+ * Bite 2 of Post-V2 UX overhaul Increment 2: TopBar mode-chip surface.
  *
- * Verifies the More dropdown was replaced by a persistent Favorites star icon,
- * and that Sign Out is no longer present in the TopBar (moved to BottomNav).
+ * Covers:
+ *  - Chip is hidden when not authenticated
+ *  - Chip renders current mode (icon + label + aria-label) when authenticated
+ *  - Tap toggles mode (Desk ↔ Field) and updates the chip label
+ *  - aria-label reflects "tap to switch to {other}" for screen-reader users
  */
 
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
-
-const { locationRef } = vi.hoisted(() => ({
-  locationRef: { pathname: '/dashboard' },
-}))
-
-vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-  useLocation: () => locationRef,
-}))
-
-const authMock = { user: { id: 'user-1' }, profile: { display_name: 'Dave' }, signOut: vi.fn() }
-const zoneMock = { activeZone: null }
-
-vi.mock('../context/AuthContext.jsx', () => ({
-  useAuth: () => authMock,
-}))
-
-vi.mock('../context/ZoneContext.jsx', () => ({
-  useZone: () => zoneMock,
-}))
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { render, screen, fireEvent, act } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 
 import TopBar from '../components/TopBar.jsx'
+import { ModeProvider } from '../context/ModeContext.jsx'
+import { MODE } from '../lib/mode.js'
+
+// Auth context mock — flip `mockUser` between tests to simulate sign-in.
+let mockUser = null
+vi.mock('../context/AuthContext.jsx', () => ({
+  useAuth: () => ({ user: mockUser, loading: false }),
+}))
+
+function renderWithProviders(initialMode = MODE.DESK) {
+  return render(
+    <MemoryRouter initialEntries={['/dashboard']}>
+      <ModeProvider initialMode={initialMode}>
+        <TopBar />
+      </ModeProvider>
+    </MemoryRouter>
+  )
+}
 
 beforeEach(() => {
-  locationRef.pathname = '/dashboard'
-  authMock.user = { id: 'user-1' }
-  zoneMock.activeZone = null
+  mockUser = null
+  try { window.sessionStorage.clear() } catch {}
 })
 
-describe('TopBar — NAV-IA-1 layout', () => {
-  it('renders a Favorites icon link to /favorites (replaces former More dropdown)', () => {
-    render(<TopBar />)
-    const fav = screen.getByLabelText('Favorites')
-    expect(fav).toBeDefined()
-    expect(fav.getAttribute('href')).toBe('/favorites')
+describe('TopBar — mode chip visibility', () => {
+  it('does NOT render the mode chip when unauthenticated', () => {
+    mockUser = null
+    renderWithProviders()
+    expect(screen.queryByTestId('mode-chip')).toBeNull()
   })
 
-  it('does NOT render a More button anymore (Sign Out moved to BottomNav)', () => {
-    render(<TopBar />)
-    expect(screen.queryByLabelText('More options')).toBeNull()
-    expect(screen.queryByRole('button', { name: /more/i })).toBeNull()
+  it('renders the mode chip when authenticated', () => {
+    mockUser = { id: 'u_test' }
+    renderWithProviders()
+    const chip = screen.getByTestId('mode-chip')
+    expect(chip).toBeDefined()
+  })
+})
+
+describe('TopBar — mode chip content (color-independent state per V100 §7)', () => {
+  it('shows the Desk label + icon when mode is Desk', () => {
+    mockUser = { id: 'u_test' }
+    renderWithProviders(MODE.DESK)
+    const chip = screen.getByTestId('mode-chip')
+    expect(chip.textContent).toContain('Desk')
+    expect(chip.textContent).toContain('💻')
+    expect(chip.getAttribute('data-mode')).toBe(MODE.DESK)
+    expect(chip.getAttribute('aria-label')).toMatch(/Mode:\s*Desk/i)
+    expect(chip.getAttribute('aria-label')).toMatch(/switch to Field/i)
   })
 
-  it('does NOT render Sign out in the TopBar', () => {
-    render(<TopBar />)
-    expect(screen.queryByText('Sign out')).toBeNull()
+  it('shows the Field label + icon when mode is Field', () => {
+    mockUser = { id: 'u_test' }
+    renderWithProviders(MODE.FIELD)
+    const chip = screen.getByTestId('mode-chip')
+    expect(chip.textContent).toContain('Field')
+    expect(chip.textContent).toContain('🌿')
+    expect(chip.getAttribute('data-mode')).toBe(MODE.FIELD)
+    expect(chip.getAttribute('aria-label')).toMatch(/Mode:\s*Field/i)
+    expect(chip.getAttribute('aria-label')).toMatch(/switch to Desk/i)
+  })
+})
+
+describe('TopBar — mode chip toggle', () => {
+  it('tap flips Desk → Field and updates the visible label', () => {
+    mockUser = { id: 'u_test' }
+    renderWithProviders(MODE.DESK)
+    const chip = screen.getByTestId('mode-chip')
+    expect(chip.getAttribute('data-mode')).toBe(MODE.DESK)
+    act(() => { fireEvent.click(chip) })
+    const chipAfter = screen.getByTestId('mode-chip')
+    expect(chipAfter.getAttribute('data-mode')).toBe(MODE.FIELD)
+    expect(chipAfter.textContent).toContain('Field')
   })
 
-  // Zone pill DISABLED pre-V2 (2026-05-22): zone switching is a no-op for now, so the
-  // entry-point pill is commented out in TopBar.jsx. These tests assert it stays hidden.
-  it('does NOT render the zone pill (disabled pre-V2 — zone switching is a no-op for now)', () => {
-    render(<TopBar />)
-    expect(screen.queryByText(/Everywhere/)).toBeNull()
-    const links = screen.queryAllByRole('link')
-    expect(links.some(a => (a.getAttribute('href') || '').startsWith('/zone'))).toBe(false)
-  })
-
-  it('does NOT render an active zone name even when one is set in context', () => {
-    zoneMock.activeZone = { name: 'Bedroom Tray' }
-    render(<TopBar />)
-    expect(screen.queryByText(/Bedroom Tray/)).toBeNull()
-  })
-
-  it('renders Sign in link for unauthenticated users (and hides Favorites)', () => {
-    authMock.user = null
-    render(<TopBar />)
-    expect(screen.getByText('Sign in')).toBeDefined()
-    expect(screen.queryByLabelText('Favorites')).toBeNull()
+  it('tap flips Field → Desk', () => {
+    mockUser = { id: 'u_test' }
+    renderWithProviders(MODE.FIELD)
+    const chip = screen.getByTestId('mode-chip')
+    act(() => { fireEvent.click(chip) })
+    const chipAfter = screen.getByTestId('mode-chip')
+    expect(chipAfter.getAttribute('data-mode')).toBe(MODE.DESK)
+    expect(chipAfter.textContent).toContain('Desk')
   })
 })

@@ -2,6 +2,7 @@ import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { ZoneProvider } from './context/ZoneContext.jsx'
+import { ModeProvider } from './context/ModeContext.jsx'
 import TopBar from './components/TopBar.jsx'
 import BottomNav from './components/BottomNav.jsx'
 import TodayBand from './components/TodayBand.jsx'
@@ -143,11 +144,18 @@ function AppRoutes() {
 }
 
 export default function App() {
+  // ModeProvider — Field/Desk mode scaffold (Post-V2 UX overhaul Inc 2 Bite 2).
+  // Global app-state (Open Q #2 → global, not per-page). Sits inside Auth so
+  // it can later read user prefs if needed, outside Zone so the mode chip
+  // remains stable as zones change. Session-persistent via sessionStorage.
   return (
     <AuthProvider>
-      <ZoneProvider>
-        <AppRoutes />
-      </ZoneProvider>
+      <ModeProvider>
+        <ZoneProvider>
+          <AppRoutes />
+        </ZoneProvider>
+      </ModeProvider>
     </AuthProvider>
   )
 }
+
