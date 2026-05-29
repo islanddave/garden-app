@@ -234,3 +234,72 @@ describe('patchSpeciesPrefs (D-INV-1)', () => {
     expect(res).toBeNull()
   })
 })
+
+describe('markCrittersViewed — Session 3.5 actuallySeenCritterIds (§3.26)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetModules() })
+
+  async function fresh() {
+    vi.stubEnv('VITE_API_CRITTERS', 'https://critter.test/')
+    vi.resetModules()
+    return await import('../lib/critterClient.js')
+  }
+
+  it('does NOT send body when actuallySeenCritterIds is null (bulk fallback)', async () => {
+    const { markCrittersViewed } = await fresh()
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ marked_viewed_ids: ['x'] }) })
+    vi.stubGlobal('fetch', fetchSpy)
+    await markCrittersViewed({ getToken: () => Promise.resolve('tok') })
+    const [, opts] = fetchSpy.mock.calls[0]
+    expect(opts.body).toBeUndefined()
+    expect(opts.headers['Content-Type']).toBeUndefined()
+  })
+
+  it('does NOT send body when actuallySeenCritterIds is empty array (bulk fallback)', async () => {
+    const { markCrittersViewed } = await fresh()
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ marked_viewed_ids: [] }) })
+    vi.stubGlobal('fetch', fetchSpy)
+    await markCrittersViewed({ getToken: () => Promise.resolve('tok'), actuallySeenCritterIds: [] })
+    const [, opts] = fetchSpy.mock.calls[0]
+    expect(opts.body).toBeUndefined()
+    expect(opts.headers['Content-Type']).toBeUndefined()
+  })
+
+  it('SENDS body when actuallySeenCritterIds is a non-empty array', async () => {
+    const { markCrittersViewed } = await fresh()
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ marked_viewed_ids: ['c1', 'c2'] }) })
+    vi.stubGlobal('fetch', fetchSpy)
+    const ids = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222']
+    const res = await markCrittersViewed({
+      getToken: () => Promise.resolve('tok'),
+      openedAt: '2026-05-29T17:00:00.000Z',
+      actuallySeenCritterIds: ids,
+    })
+    expect(res).toEqual(['c1', 'c2'])
+    const [url, opts] = fetchSpy.mock.calls[0]
+    expect(url).toBe('https://critter.test/api/critters/viewed')
+    expect(opts.method).toBe('PATCH')
+    expect(opts.headers['x-garden-view-opened-at']).toBe('2026-05-29T17:00:00.000Z')
+    expect(opts.headers['Content-Type']).toBe('application/json')
+    const body = JSON.parse(opts.body)
+    expect(body.actually_seen_critter_ids).toEqual(ids)
+  })
+
+  it('sets keepalive:true on the fetch init (survives unmount/visibility-change)', async () => {
+    const { markCrittersViewed } = await fresh()
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ marked_viewed_ids: [] }) })
+    vi.stubGlobal('fetch', fetchSpy)
+    await markCrittersViewed({ getToken: () => Promise.resolve('tok') })
+    const [, opts] = fetchSpy.mock.calls[0]
+    expect(opts.keepalive).toBe(true)
+  })
+
+  it('NEVER rejects when fetch throws — returns []', async () => {
+    const { markCrittersViewed } = await fresh()
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
+    const res = await markCrittersViewed({
+      getToken: () => Promise.resolve('tok'),
+      actuallySeenCritterIds: ['11111111-1111-1111-1111-111111111111'],
+    })
+    expect(res).toEqual([])
+  })
+})

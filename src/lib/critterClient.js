@@ -122,19 +122,29 @@ export async function fetchActiveCritters({ getToken } = {}) {
 
 // markCrittersViewed — PATCHes /api/critters/viewed with race-window header.
 // Returns array of marked-viewed ids, [] on no-op or failure.
-export async function markCrittersViewed({ getToken, openedAt = null } = {}) {
+//
+// Session 3.5 (revision §3.26): optional actuallySeenCritterIds (string[] of UUIDs).
+// - When omitted / null / empty array → no body sent; Lambda bulk-marks (legacy path).
+// - When non-empty → POSTs body { actually_seen_critter_ids: [...] }; Lambda marks ONLY those.
+//
+// keepalive: true survives unmount-on-route-change and visibility-change-on-tab-hide
+// (same flag pattern as awardCritter).
+export async function markCrittersViewed({ getToken, openedAt = null, actuallySeenCritterIds = null } = {}) {
   if (!CRITTER_BASE) return []
   try {
     const token = await (typeof getToken === 'function' ? getToken() : null)
     if (!token) return []
     const gate = openedAt ?? new Date().toISOString()
-    const res = await fetch(`${CRITTER_BASE}/api/critters/viewed`, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'x-garden-view-opened-at': gate,
-      },
-    })
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'x-garden-view-opened-at': gate,
+    }
+    const init = { method: 'PATCH', headers, keepalive: true }
+    if (Array.isArray(actuallySeenCritterIds) && actuallySeenCritterIds.length > 0) {
+      headers['Content-Type'] = 'application/json'
+      init.body = JSON.stringify({ actually_seen_critter_ids: actuallySeenCritterIds })
+    }
+    const res = await fetch(`${CRITTER_BASE}/api/critters/viewed`, init)
     if (!res.ok) return []
     const json = await res.json().catch(() => null)
     return (json && Array.isArray(json.marked_viewed_ids)) ? json.marked_viewed_ids : []

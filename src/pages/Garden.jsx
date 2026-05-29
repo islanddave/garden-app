@@ -34,6 +34,14 @@ export default function Garden() {
   // D-INV-1 long-press popover state. anchorEl is the long-pressed sprite DOM node.
   const [popover, setPopover] = useState({ open: false, critter: null, anchorEl: null })
 
+  // Session 3.5 (§3.26): per-sprite actually-seen accumulator.
+  // CritterSprite fires onIntersect ONCE per id when IO-gate trips (sprite enters viewport).
+  // Drained on Garden unmount (route change) AND on visibilitychange → hidden (tab background).
+  const seenIdsRef = useRef(new Set())
+  const onSpriteIntersect = useCallback((critter) => {
+    if (critter && critter.id) seenIdsRef.current.add(critter.id)
+  }, [])
+
   useEffect(() => {
     let on = true
     Promise.all([fetch('/api/projects'), fetch('/api/plants')])
@@ -60,17 +68,38 @@ export default function Garden() {
     return () => { on = false; document.removeEventListener('visibilitychange', onVis) }
   }, [getToken])
 
-  // MVP-Critter Session 3: on Garden unmount (or initial mount with critters present)
-  // mark unviewed critters as viewed via bulk PATCH /api/critters/viewed with
-  // x-garden-view-opened-at race-window header. Per-sprite IO-marking is a Session 3.5
-  // refinement (revision §3.26 actually_seen_critter_ids).
+  // MVP-Critter Session 3 + 3.5: mark unviewed critters as viewed.
+  // Session 3 path = bulk PATCH /api/critters/viewed (legacy, still supported when no sprites IO'd).
+  // Session 3.5 path = drain seenIdsRef and pass actuallySeenCritterIds → Lambda marks ONLY those.
+  // Race-window header (x-garden-view-opened-at) preserved in both paths.
+  //
+  // Flush boundaries:
+  //   • Garden unmount (route change out)
+  //   • document visibilitychange → hidden (tab background; iOS PWA app switch)
+  // Both flushes drain + clear the ref so re-mount/re-foreground starts fresh.
   const gardenOpenedAtRef = useRef(new Date().toISOString())
-  useEffect(() => {
-    // Mark viewed on unmount (route change out of Garden).
-    return () => {
-      markCrittersViewed({ getToken, openedAt: gardenOpenedAtRef.current })
-    }
+  const flushSeen = useCallback(() => {
+    const ids = Array.from(seenIdsRef.current)
+    seenIdsRef.current.clear()
+    // Pass null when no sprites IO'd → Lambda falls back to bulk-mark (preserves Stage 3 dot clear).
+    markCrittersViewed({
+      getToken,
+      openedAt: gardenOpenedAtRef.current,
+      actuallySeenCritterIds: ids.length > 0 ? ids : null,
+    })
   }, [getToken])
+
+  useEffect(() => {
+    function onVis() {
+      if (document.visibilityState === 'hidden') flushSeen()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      // Unmount flush — route change out of Garden.
+      flushSeen()
+    }
+  }, [flushSeen])
 
   // Long-press handler — opens popover anchored to the long-pressed sprite element.
   const onSpriteLongPress = useCallback((critter, e) => {
@@ -140,7 +169,9 @@ export default function Garden() {
         <div role="tree" aria-label="Garden" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {tree.map(node => (
             <TreeNode key={node.project.id} node={node} expanded={expanded} onToggle={toggle} level={1}
-              crittersByPlantId={crittersByPlantId} onSpriteLongPress={onSpriteLongPress} />
+              crittersByPlantId={crittersByPlantId}
+              onSpriteLongPress={onSpriteLongPress}
+              onSpriteIntersect={onSpriteIntersect} />
           ))}
         </div>
       )}
@@ -158,7 +189,7 @@ export default function Garden() {
   )
 }
 
-function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSpriteLongPress }) {
+function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSpriteLongPress, onSpriteIntersect }) {
   const { project: p, depth, children, plantings } = node
   const hasKids = nodeHasChildren(node)
   const isOpen  = hasKids && expanded.has(p.id)
@@ -228,9 +259,13 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
       {isOpen && (
         <div role="group" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
           {plantings.map(pl => <PlantingRow key={pl.id} planting={pl} depth={depth + 1} level={level + 1}
-            critters={crittersByPlantId?.get(pl.id) ?? []} onSpriteLongPress={onSpriteLongPress} />)}
+            critters={crittersByPlantId?.get(pl.id) ?? []}
+            onSpriteLongPress={onSpriteLongPress}
+            onSpriteIntersect={onSpriteIntersect} />)}
           {children.map(c => <TreeNode key={c.project.id} node={c} expanded={expanded} onToggle={onToggle} level={level + 1}
-            crittersByPlantId={crittersByPlantId} onSpriteLongPress={onSpriteLongPress} />)}
+            crittersByPlantId={crittersByPlantId}
+            onSpriteLongPress={onSpriteLongPress}
+            onSpriteIntersect={onSpriteIntersect} />)}
         </div>
       )}
     </div>
@@ -238,7 +273,7 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
 }
 
 // Planting leaf — whole row OPENS (navigates to its owning project, where plantings live).
-function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPress = null }) {
+function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPress = null, onSpriteIntersect = null }) {
   const sc = getStatusColors(pl.status)
   const variety = pl.variety_ref?.name
   return (
@@ -249,7 +284,7 @@ function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPr
       {critters.length > 0 && (
         <div style={{ position: 'absolute', top: 4, right: 6, display: 'flex', gap: 4, zIndex: 5 }}>
           {critters.map(c => (
-            <CritterSprite key={c.id} critter={c} onLongPress={onSpriteLongPress} spriteSize={28} />
+            <CritterSprite key={c.id} critter={c} onLongPress={onSpriteLongPress} onIntersect={onSpriteIntersect} spriteSize={28} />
           ))}
         </div>
       )}

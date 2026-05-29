@@ -26,6 +26,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { householdScope } from './household.js'
 import {
   validateCritterPostBody, validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
+  validateMarkViewedPatchBody,
   UUID_RE, MVP_SPECIES_MIN, MVP_SPECIES_MAX, SMOKE_SENTINEL_SPECIES_ID,
 } from './validators.js'
 
@@ -247,28 +248,57 @@ export const handler = async (event) => {
     }
 
     // ── Route 4: PATCH /api/critters/viewed (Stage 3 dot clear) ─────────
+    // Session 3.5 (revision §3.26): accepts optional { actually_seen_critter_ids: [uuid...] }.
+    // Non-empty → mark ONLY those ids (per-sprite IO-gated marking). Missing/empty → bulk fallback.
+    // Race-window guard (revision §2.5) preserved in both branches.
     if (rawPath === '/api/critters/viewed' && method === 'PATCH') {
-      // Race-window guard per revision §2.5: critters earned post-open don't get marked viewed.
       const gateHeader = headers['x-garden-view-opened-at'] ?? headers['X-Garden-View-Opened-At']
       const gate = gateHeader ?? new Date().toISOString()
-      const upd = await sql`
-        UPDATE public.critter_state
-           SET viewed_at = now()
-         WHERE created_by = ANY(${householdIds})
-           AND viewed_at IS NULL
-           AND deleted_at IS NULL
-           AND earned_at < ${gate}::timestamptz
-           AND id IN (
-             SELECT id FROM public.critter_state
-              WHERE created_by = ANY(${householdIds})
-                AND viewed_at IS NULL
-                AND deleted_at IS NULL
-                AND earned_at < ${gate}::timestamptz
-              ORDER BY earned_at DESC
-              LIMIT 50
-           )
-        RETURNING id
-      `
+      // Body is OPTIONAL on this route (legacy callers send no body for bulk path).
+      let actuallySeenIds = null
+      if (event.body) {
+        let parsed
+        try { parsed = JSON.parse(event.body) } catch { return resp(400, { error: 'malformed JSON body' }) }
+        const vErr = validateMarkViewedPatchBody(parsed)
+        if (vErr) return resp(vErr.status, { error: vErr.error })
+        if (parsed && Array.isArray(parsed.actually_seen_critter_ids) && parsed.actually_seen_critter_ids.length > 0) {
+          actuallySeenIds = parsed.actually_seen_critter_ids
+        }
+      }
+      let upd
+      if (actuallySeenIds) {
+        // Per-sprite path: scope-bound + race-window-guarded, but limited to the supplied id set.
+        upd = await sql`
+          UPDATE public.critter_state
+             SET viewed_at = now()
+           WHERE created_by = ANY(${householdIds})
+             AND viewed_at IS NULL
+             AND deleted_at IS NULL
+             AND earned_at < ${gate}::timestamptz
+             AND id = ANY(${actuallySeenIds}::uuid[])
+          RETURNING id
+        `
+      } else {
+        // Bulk fallback (legacy behavior).
+        upd = await sql`
+          UPDATE public.critter_state
+             SET viewed_at = now()
+           WHERE created_by = ANY(${householdIds})
+             AND viewed_at IS NULL
+             AND deleted_at IS NULL
+             AND earned_at < ${gate}::timestamptz
+             AND id IN (
+               SELECT id FROM public.critter_state
+                WHERE created_by = ANY(${householdIds})
+                  AND viewed_at IS NULL
+                  AND deleted_at IS NULL
+                  AND earned_at < ${gate}::timestamptz
+                ORDER BY earned_at DESC
+                LIMIT 50
+             )
+          RETURNING id
+        `
+      }
       return resp(200, { marked_viewed_ids: upd.map(r => r.id) })
     }
 

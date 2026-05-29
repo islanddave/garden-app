@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   validateCritterPostBody, validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
+  validateMarkViewedPatchBody, MAX_MARK_VIEWED_BATCH,
   UUID_RE, MVP_SPECIES_MIN, MVP_SPECIES_MAX, SMOKE_SENTINEL_SPECIES_ID,
 } from './validators.js'
 
@@ -108,5 +109,54 @@ describe('validateSpeciesPrefsPatchBody (D-INV-1 Option A)', () => {
     expect(validateSpeciesPrefsPatchBody({ species_id: 3, weight: 100 })?.status).toBe(400)
     expect(validateSpeciesPrefsPatchBody({ species_id: 3, weight: NaN })?.status).toBe(400)
     expect(validateSpeciesPrefsPatchBody({ species_id: 3, weight: 'two' })?.status).toBe(400)
+  })
+})
+
+describe('validateMarkViewedPatchBody (Session 3.5 §3.26)', () => {
+  it('accepts null/undefined body (bulk-fallback path)', () => {
+    expect(validateMarkViewedPatchBody(null)).toBeNull()
+    expect(validateMarkViewedPatchBody(undefined)).toBeNull()
+  })
+  it('accepts empty object (no actually_seen_critter_ids key → bulk fallback)', () => {
+    expect(validateMarkViewedPatchBody({})).toBeNull()
+  })
+  it('accepts empty array (still bulk fallback at handler — validator allows)', () => {
+    expect(validateMarkViewedPatchBody({ actually_seen_critter_ids: [] })).toBeNull()
+  })
+  it('accepts single valid UUID', () => {
+    expect(validateMarkViewedPatchBody({ actually_seen_critter_ids: [VALID_UUID] })).toBeNull()
+  })
+  it('accepts multiple valid UUIDs', () => {
+    expect(validateMarkViewedPatchBody({ actually_seen_critter_ids: [VALID_UUID, OTHER_UUID] })).toBeNull()
+  })
+  it('rejects non-object body', () => {
+    expect(validateMarkViewedPatchBody('string')?.status).toBe(400)
+    expect(validateMarkViewedPatchBody(42)?.status).toBe(400)
+  })
+  it('rejects top-level array (not a plain object)', () => {
+    expect(validateMarkViewedPatchBody([])?.status).toBe(400)
+    expect(validateMarkViewedPatchBody([VALID_UUID])?.status).toBe(400)
+  })
+  it('rejects non-array actually_seen_critter_ids', () => {
+    expect(validateMarkViewedPatchBody({ actually_seen_critter_ids: VALID_UUID })?.status).toBe(400)
+    expect(validateMarkViewedPatchBody({ actually_seen_critter_ids: { 0: VALID_UUID } })?.status).toBe(400)
+  })
+  it('rejects non-UUID items', () => {
+    expect(validateMarkViewedPatchBody({ actually_seen_critter_ids: ['not-a-uuid'] })?.status).toBe(400)
+    expect(validateMarkViewedPatchBody({ actually_seen_critter_ids: [VALID_UUID, 'bad'] })?.status).toBe(400)
+    expect(validateMarkViewedPatchBody({ actually_seen_critter_ids: [123] })?.status).toBe(400)
+  })
+  it('rejects oversize batch (> MAX_MARK_VIEWED_BATCH)', () => {
+    const big = new Array(MAX_MARK_VIEWED_BATCH + 1).fill(VALID_UUID)
+    expect(validateMarkViewedPatchBody({ actually_seen_critter_ids: big })?.status).toBe(400)
+  })
+  it('accepts batch at MAX_MARK_VIEWED_BATCH', () => {
+    const right_at_max = new Array(MAX_MARK_VIEWED_BATCH).fill(VALID_UUID)
+    expect(validateMarkViewedPatchBody({ actually_seen_critter_ids: right_at_max })).toBeNull()
+  })
+  it('MAX_MARK_VIEWED_BATCH constant is exported and reasonable (≥50, ≤1000)', () => {
+    expect(Number.isInteger(MAX_MARK_VIEWED_BATCH)).toBe(true)
+    expect(MAX_MARK_VIEWED_BATCH).toBeGreaterThanOrEqual(50)
+    expect(MAX_MARK_VIEWED_BATCH).toBeLessThanOrEqual(1000)
   })
 })

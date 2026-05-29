@@ -79,3 +79,30 @@ export function validateSpeciesPrefsPatchBody(body) {
   if (w < 0.1 || w > 10) return { status: 400, error: 'weight must be between 0.1 and 10' }
   return null
 }
+
+// PATCH /api/critters/viewed body validator (Session 3.5 §3.26 per-sprite mark)
+// Body is OPTIONAL: absent body OR missing key → bulk-mark fallback (current behavior).
+// Non-empty actually_seen_critter_ids → mark ONLY those ids.
+// Sanity cap MAX_MARK_VIEWED_BATCH to prevent abuse.
+export const MAX_MARK_VIEWED_BATCH = 200
+
+export function validateMarkViewedPatchBody(body) {
+  if (body == null) return null
+  if (typeof body !== 'object' || Array.isArray(body)) {
+    return { status: 400, error: 'body must be a plain object' }
+  }
+  if (body.actually_seen_critter_ids == null) return null
+  const ids = body.actually_seen_critter_ids
+  if (!Array.isArray(ids)) {
+    return { status: 400, error: 'actually_seen_critter_ids must be an array' }
+  }
+  if (ids.length > MAX_MARK_VIEWED_BATCH) {
+    return { status: 400, error: `actually_seen_critter_ids exceeds max ${MAX_MARK_VIEWED_BATCH}` }
+  }
+  for (const id of ids) {
+    if (typeof id !== 'string' || !UUID_RE.test(id)) {
+      return { status: 400, error: 'actually_seen_critter_ids items must be UUID strings' }
+    }
+  }
+  return null
+}
