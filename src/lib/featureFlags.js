@@ -8,3 +8,12 @@ export const VARIETY_REF_UI_SHIPPED = false // Flips true when VARIETY-REF S4 sh
 // "coming soon" dead-end. Badge is hidden until the editor ships. Flip true when the
 // S1.1 catch-up editor lands (planned 2.1). See v2-increment-audit-2.0.1-to-2.1-V001.
 export const CATCH_UP_EDITOR_SHIPPED = false
+
+// MVP-Critter Session 4 (revision §3.24 + §6 deferred note): SYSTEM (push) notifications
+// option in Settings → Notifications tri-state toggle. Bi-state literal const — when
+// false, the SYSTEM radio option is hidden entirely (UI collapses to OFF / IN-APP ONLY).
+// Flips true post-V2.x when iOS PWA push delivery is wired (Web Push + service worker
+// subscription + Lambda push-send path). Per revision §3.24, even when this is true,
+// SYSTEM-option render-time MUST gate on PWA-installed state (matchMedia standalone OR
+// navigator.standalone) — installation is a separate prereq from the bi-state flag.
+export const SYSTEM_NOTIFICATIONS_ENABLED = false

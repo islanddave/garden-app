@@ -238,3 +238,34 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
     expect(screen.getByText('Add a planting')).toBeDefined()
   })
 })
+
+// MVP-Critter Session 4 Phase A — Settings entry placement.
+describe('Settings entry in More menu', () => {
+  it('renders Settings link between Garden Helper and Sign out', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    const settings = screen.getByText('Settings')
+    expect(settings).toBeDefined()
+    expect(settings.closest('a').getAttribute('href')).toBe('/settings')
+
+    // Order check: in DOM order Garden Helper precedes Settings precedes Sign out.
+    const helperEl = screen.getByText('Garden Helper')
+    const signoutEl = screen.getByText('Sign out')
+    const all = Array.from(document.querySelectorAll('a, button'))
+    const helperIdx = all.findIndex(el => el.contains(helperEl))
+    const settingsIdx = all.findIndex(el => el.contains(settings))
+    const signoutIdx = all.findIndex(el => el.contains(signoutEl))
+    expect(helperIdx).toBeGreaterThan(-1)
+    expect(settingsIdx).toBeGreaterThan(helperIdx)
+    expect(signoutIdx).toBeGreaterThan(settingsIdx)
+  })
+
+  it('clicking Settings closes the More menu', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    expect(screen.getByText('Settings')).toBeDefined()
+    fireEvent.click(screen.getByText('Settings'))
+    // Sign out vanishes when menu closes (deterministic signal the menu collapsed).
+    expect(screen.queryByText('Sign out')).toBeNull()
+  })
+})

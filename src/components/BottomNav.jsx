@@ -276,6 +276,29 @@ export default function BottomNav() {
             Garden Helper
           </Link>
 
+          {/* MVP-Critter Session 4 Phase A — Settings entry.
+              /settings parent permissively redirects to /settings/notifications
+              per revision §3.23. Placed between Garden Helper and Sign Out per
+              handoff Pending #1 (mvp-critter-pre-build-revision-V001 §3.23). */}
+          <Link
+            to="/settings"
+            onClick={closeMore}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 16,
+              width: '100%',
+              padding: '14px 24px',
+              borderTop: `1px solid ${P.border}`,
+              background: 'none', textAlign: 'left',
+              cursor: 'pointer', textDecoration: 'none',
+              color: P.dark, fontSize: '1rem', fontWeight: 500,
+              fontFamily: 'inherit',
+              minHeight: 48,
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>⚙</span>
+            Settings
+          </Link>
+
           {/* Sign Out — inline confirmation */}
           {!confirmSignOut ? (
             <button
