@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
+import { awardCritter } from '../lib/critterClient.js'
 import { P, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
 import { formatQty } from '../lib/format.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
@@ -280,7 +281,7 @@ export default function EventNew() {
   const [searchParams] = useSearchParams()
   const preselectedProjectId = searchParams.get('project') || ''
   const preselectedEventType = searchParams.get('event_type') || ''
-  const { fetch: apiFetch } = useApiFetch()
+  const { fetch: apiFetch, getToken } = useApiFetch()
   // M1 telemetry (Inc 0) — log_watering flow. Only counts when the event is a watering.
   // Fire-and-forget; never affects the save flow.
   const ux = useUxFlow(FLOWS.LOG_WATERING)
@@ -513,6 +514,28 @@ export default function EventNew() {
     // V-4 removed (reward-ux-conformance-audit V001 §V-4, ratified jolly-fervent-ritchie):
     // log-save haptic was a banned channel on a reward-signal path. Save still completes.
 
+    // MVP-Critter Stage 1 (Session 2): fire-and-forget critter award. Spec: revision §2.7
+    // (events Lambda → critter Lambda hook) + §3.10 (failure mode — log + swallow + defer
+    // to server-side backfill on garden-view open). Race award with a 1500ms timeout so a
+    // slow critter Lambda never delays nav. critterClient swallows ALL errors; never throws.
+    // Server scope-cut: 204 on no plant_id → result.critter null → no Stage 1 render.
+    let stage1Critter = null
+    if (form.plant_id) {
+      try {
+        const awardP = awardCritter({
+          getToken,
+          sourceEventId: eventId,
+          plantId: form.plant_id,
+          eventCreatedAt: eventDateStr,
+        })
+        const timeoutP = new Promise(r => setTimeout(() => r(null), 1500))
+        const raceResult = await Promise.race([awardP, timeoutP])
+        stage1Critter = raceResult?.critter ?? null
+      } catch {
+        /* awardCritter contract: never throws. Defensive catch is no-op. */
+      }
+    }
+
     // 2 — Upload photo via shared hook (non-fatal — errorMode='swallow')
     // The hook runs the same 3-step presign → S3 PUT → POST /api/photos dance.
     // We pass keyPrefix='events' + parentId=eventId so the key resolves to
@@ -538,6 +561,7 @@ export default function EventNew() {
     navigate('/dashboard', {
       replace: true,
       state: {
+        critter: stage1Critter,
         logged: {
           id: eventId,
           project_id:                form.project_id,

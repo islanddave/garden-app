@@ -10,6 +10,7 @@ import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
 import HeadsUpTile from '../components/HeadsUpTile.jsx'
 import NotifyButton from '../components/NotifyButton.jsx'
+import CritterAnnouncement from '../components/CritterAnnouncement.jsx'
 
 // First-name extraction (I10-greeting fix, L-063, 2026-05-18). profile.display_name may be a full
 // name like "Dave Nichols"; we render greetings with first name only.
@@ -98,6 +99,7 @@ export default function Dashboard() {
   const [error,         setError]         = useState(null)
   const [streakModalOpen, setStreakModalOpen] = useState(false)
   const [undoState, setUndoState] = useState(null) // { eventId, projectName, expiresAt }
+  const [stage1Critter, setStage1Critter] = useState(null) // MVP-Critter Stage 1 from EventNew nav state
 
   // Pulse trigger keyed on streak value — increments cause animation re-fire.
   const prevStreakRef = useRef(null)
@@ -171,6 +173,9 @@ export default function Dashboard() {
   useEffect(() => {
     const logged = location.state?.logged
     if (!logged) return
+    // MVP-Critter Stage 1 (Session 2): consume critter passed from EventNew via nav state.
+    // Per revision §3.9 first-critter UI sequence: Stage 1 fires inline (ambient, no overlay).
+    if (location.state?.critter) setStage1Critter(location.state.critter)
 
     // Refresh dashboard data (cache invalidation pattern — replace React Query in V1.3+).
     let isMounted = true
@@ -436,6 +441,15 @@ export default function Dashboard() {
           stats={userStats}
           onClose={() => setStreakModalOpen(false)}
         />
+      )}
+
+      {/* MVP-Critter Stage 1 (Session 2): ambient inline announcement when an event with
+          plant_id was just logged. Renders nothing when critter is null. Self-fades after 6s.
+          Spec: revision §3.9 (first-critter UI sequence — Stage 1 inline only) + V100 §5. */}
+      {stage1Critter && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 'calc(var(--bottom-nav-height) + 60px + env(safe-area-inset-bottom))', display: 'flex', justifyContent: 'center', pointerEvents: 'none', zIndex: 50 }}>
+          <CritterAnnouncement critter={stage1Critter} onFade={() => setStage1Critter(null)} />
+        </div>
       )}
 
       {/* Undo toast (bottom, 5s) */}

@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { P } from '../lib/constants.js'
 import CatchUpBadge from './CatchUpBadge.jsx'
 import { CATCH_UP_EDITOR_SHIPPED } from '../lib/featureFlags.js'
+import { useApiFetch } from '../lib/api.js'
+import BottomNavDot from './BottomNavDot.jsx'
 
 // BottomNav — NAV-IA-1 layout (V1.2a-3 Increment C / PR-C1, 2026-05-18)
 // Tabs: Projects · Plants · (centered LOG+) · Inventory · (… More menu)
@@ -45,6 +47,7 @@ export default function BottomNav() {
   const location = useLocation()
   const navigate = useNavigate()
   const { profile, signOut } = useAuth()
+  const { getToken } = useApiFetch()
   const [showMore, setShowMore]               = useState(false)
   const [showCreate, setShowCreate]           = useState(false)
   const [confirmSignOut, setConfirmSignOut]   = useState(false)
@@ -353,9 +356,10 @@ export default function BottomNav() {
           )
           return (
             <Link key={tab.to} to={tab.to}
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44 }}>
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44, position: 'relative' }}>
               <span style={{ fontSize: '1.25rem', lineHeight: 1 }}>{tab.icon}</span>
               <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400 }}>{tab.label}</span>
+              {tab.to === '/garden' && <BottomNavDot getToken={getToken} />}
             </Link>
           )
         })}

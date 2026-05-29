@@ -36,6 +36,20 @@ vi.mock('../components/CatchUpBadge.jsx', () => ({
   default: () => null,
 }))
 
+// MVP-Critter Session 2: BottomNavDot child fetches /api/critters/active — stubbed here
+// to keep BottomNav tests focused. BottomNavDot has its own test suite.
+vi.mock('../components/BottomNavDot.jsx', () => ({
+  default: () => null,
+}))
+
+// useApiFetch wraps Clerk; stub returns a no-op getToken so BottomNav can mount in tests.
+vi.mock('../lib/api.js', () => ({
+  useApiFetch: () => ({
+    fetch: () => Promise.resolve(null),
+    getToken: () => Promise.resolve(null),
+  }),
+}))
+
 import BottomNav from '../components/BottomNav.jsx'
 
 beforeEach(() => {
