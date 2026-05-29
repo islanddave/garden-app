@@ -1,9 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { getStatusColors } from '../lib/status.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
+import CritterSprite from '../components/CritterSprite.jsx'
+import LoveMehPopover from '../components/LoveMehPopover.jsx'
+import BaselineResidents from '../components/BaselineResidents.jsx'
+import { fetchActiveCritters, markCrittersViewed, patchSpeciesPrefs } from '../lib/critterClient.js'
+import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded } from '../lib/projectTree.js'
 import { formatQty } from '../lib/format.js'
 
@@ -18,12 +23,16 @@ import { formatQty } from '../lib/format.js'
 // Frontend-only: composes /api/projects + /api/plants (no backend/schema change).
 
 export default function Garden() {
-  const { fetch } = useApiFetch()
+  const { fetch, getToken } = useApiFetch()
   const [projects, setProjects] = useState([])
   const [plants,   setPlants]   = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
   const [expanded, setExpanded] = useState(() => loadExpanded())
+  // MVP-Critter Session 3: active critters for this household, grouped by plant_id.
+  const [critters, setCritters] = useState([])
+  // D-INV-1 long-press popover state. anchorEl is the long-pressed sprite DOM node.
+  const [popover, setPopover] = useState({ open: false, critter: null, anchorEl: null })
 
   useEffect(() => {
     let on = true
@@ -38,6 +47,51 @@ export default function Garden() {
     return () => { on = false }
   }, [fetch])
 
+  // MVP-Critter Session 3: fetch active critters on mount + visibilitychange.
+  // critterClient is fire-and-forget — silent no-op when VITE_API_CRITTERS unset.
+  useEffect(() => {
+    let on = true
+    function refresh() {
+      fetchActiveCritters({ getToken }).then(list => { if (on) setCritters(list) })
+    }
+    refresh()
+    function onVis() { if (document.visibilityState === 'visible') refresh() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { on = false; document.removeEventListener('visibilitychange', onVis) }
+  }, [getToken])
+
+  // MVP-Critter Session 3: on Garden unmount (or initial mount with critters present)
+  // mark unviewed critters as viewed via bulk PATCH /api/critters/viewed with
+  // x-garden-view-opened-at race-window header. Per-sprite IO-marking is a Session 3.5
+  // refinement (revision §3.26 actually_seen_critter_ids).
+  const gardenOpenedAtRef = useRef(new Date().toISOString())
+  useEffect(() => {
+    // Mark viewed on unmount (route change out of Garden).
+    return () => {
+      markCrittersViewed({ getToken, openedAt: gardenOpenedAtRef.current })
+    }
+  }, [getToken])
+
+  // Long-press handler — opens popover anchored to the long-pressed sprite element.
+  const onSpriteLongPress = useCallback((critter, e) => {
+    const anchorEl = e?.currentTarget ?? null
+    setPopover({ open: true, critter, anchorEl })
+  }, [])
+
+  // Popover pick handler — translate action → weight via D-INV-1 mapping (§3.29).
+  const onPrefsPick = useCallback((action) => {
+    if (!popover.critter) return
+    const weight = action === 'love' ? 2.0 : action === 'meh' ? 0.5 : action === 'reset' ? 1.0 : null
+    if (weight != null) {
+      patchSpeciesPrefs({ getToken, speciesId: popover.critter.species_id, weight })
+      // Fire-and-forget; no toast per §3.29. Pulse confirmation is already inside popover.
+    }
+  }, [getToken, popover.critter])
+
+  const closePopover = useCallback(() => {
+    setPopover({ open: false, critter: null, anchorEl: null })
+  }, [])
+
   const toggle = useCallback((id) => {
     setExpanded(prev => {
       const next = new Set(prev)
@@ -48,6 +102,18 @@ export default function Garden() {
     })
   }, [])
 
+  // Group critters by plant_id (target_id falls back to plant_id) for O(1) lookup in PlantingRow.
+  const crittersByPlantId = useMemo(() => {
+    const m = new Map()
+    for (const c of critters) {
+      const key = c.plant_id ?? c.target_id
+      if (!key) continue
+      if (!m.has(key)) m.set(key, [])
+      m.get(key).push(c)
+    }
+    return m
+  }, [critters])
+
   if (loading) return <Shell><Spinner /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
@@ -55,6 +121,10 @@ export default function Garden() {
 
   return (
     <Shell>
+      {/* MVP-Critter Session 3: Day-1 always-present residents (robin + honeybee).
+          Decorative, aria-hidden, never persisted to critter_state. Per revision §3.14. */}
+      <BaselineResidents />
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Garden</h1>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -69,15 +139,26 @@ export default function Garden() {
       ) : (
         <div role="tree" aria-label="Garden" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {tree.map(node => (
-            <TreeNode key={node.project.id} node={node} expanded={expanded} onToggle={toggle} level={1} />
+            <TreeNode key={node.project.id} node={node} expanded={expanded} onToggle={toggle} level={1}
+              crittersByPlantId={crittersByPlantId} onSpriteLongPress={onSpriteLongPress} />
           ))}
         </div>
       )}
+
+      {/* MVP-Critter Session 3 D-INV-1: long-press species-prefs popover.
+          Anchored to long-pressed sprite. Single instance at a time. */}
+      <LoveMehPopover
+        open={popover.open}
+        anchorRef={{ current: popover.anchorEl }}
+        species={popover.critter ? SPECIES_BY_ID[popover.critter.species_id] : null}
+        onPick={onPrefsPick}
+        onClose={closePopover}
+      />
     </Shell>
   )
 }
 
-function TreeNode({ node, expanded, onToggle, level }) {
+function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSpriteLongPress }) {
   const { project: p, depth, children, plantings } = node
   const hasKids = nodeHasChildren(node)
   const isOpen  = hasKids && expanded.has(p.id)
@@ -146,8 +227,10 @@ function TreeNode({ node, expanded, onToggle, level }) {
 
       {isOpen && (
         <div role="group" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-          {plantings.map(pl => <PlantingRow key={pl.id} planting={pl} depth={depth + 1} level={level + 1} />)}
-          {children.map(c => <TreeNode key={c.project.id} node={c} expanded={expanded} onToggle={onToggle} level={level + 1} />)}
+          {plantings.map(pl => <PlantingRow key={pl.id} planting={pl} depth={depth + 1} level={level + 1}
+            critters={crittersByPlantId?.get(pl.id) ?? []} onSpriteLongPress={onSpriteLongPress} />)}
+          {children.map(c => <TreeNode key={c.project.id} node={c} expanded={expanded} onToggle={onToggle} level={level + 1}
+            crittersByPlantId={crittersByPlantId} onSpriteLongPress={onSpriteLongPress} />)}
         </div>
       )}
     </div>
@@ -155,11 +238,21 @@ function TreeNode({ node, expanded, onToggle, level }) {
 }
 
 // Planting leaf — whole row OPENS (navigates to its owning project, where plantings live).
-function PlantingRow({ planting: pl, depth, level }) {
+function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPress = null }) {
   const sc = getStatusColors(pl.status)
   const variety = pl.variety_ref?.name
   return (
-    <div role="treeitem" aria-level={level} style={{ paddingLeft: depth * 20 }}>
+    <div role="treeitem" aria-level={level} style={{ paddingLeft: depth * 20, position: 'relative' }}>
+      {/* MVP-Critter Session 3: in-tile Stage 2 sprites (per §3.26 IO-gated reveal).
+          Rendered as siblings of the Link so they get their own pointer-event surface
+          (long-press without triggering nav). Absolute-positioned top-right of the row. */}
+      {critters.length > 0 && (
+        <div style={{ position: 'absolute', top: 4, right: 6, display: 'flex', gap: 4, zIndex: 5 }}>
+          {critters.map(c => (
+            <CritterSprite key={c.id} critter={c} onLongPress={onSpriteLongPress} spriteSize={28} />
+          ))}
+        </div>
+      )}
       <Link to={`/projects/${pl.project_id}`} aria-label={`Open ${pl.name}`} style={{ textDecoration: 'none', display: 'block' }}>
         <div style={{
           backgroundColor: P.cream, border: `1px solid ${P.border}`, borderLeft: `3px solid ${P.greenLight}`,
@@ -189,8 +282,8 @@ function PlantingRow({ planting: pl, depth, level }) {
 
 function Shell({ children }) {
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px' }}>{children}</div>
+    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream, position: 'relative' }}>
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px', position: 'relative' }}>{children}</div>
     </div>
   )
 }

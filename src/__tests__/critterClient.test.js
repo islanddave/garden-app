@@ -170,3 +170,67 @@ describe('markCrittersViewed', () => {
     expect(opts.headers['x-garden-view-opened-at']).toBe(opened)
   })
 })
+
+describe('patchSpeciesPrefs (D-INV-1)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetModules() })
+
+  it('returns null when endpoint unset', async () => {
+    const { patchSpeciesPrefs } = await import('../lib/critterClient.js')
+    const res = await patchSpeciesPrefs({ getToken: () => Promise.resolve('tok'), speciesId: 3, weight: 2.0 })
+    expect(res).toBeNull()
+  })
+
+  it('returns null on invalid speciesId (out of [1,8])', async () => {
+    vi.stubEnv('VITE_API_CRITTERS', 'https://critter.test/')
+    vi.resetModules()
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    const { patchSpeciesPrefs } = await import('../lib/critterClient.js')
+    expect(await patchSpeciesPrefs({ getToken: () => Promise.resolve('tok'), speciesId: 9, weight: 2.0 })).toBeNull()
+    expect(await patchSpeciesPrefs({ getToken: () => Promise.resolve('tok'), speciesId: 0, weight: 2.0 })).toBeNull()
+    expect(await patchSpeciesPrefs({ getToken: () => Promise.resolve('tok'), speciesId: 'x', weight: 2.0 })).toBeNull()
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('returns null on invalid weight (≤0 or non-finite)', async () => {
+    vi.stubEnv('VITE_API_CRITTERS', 'https://critter.test/')
+    vi.resetModules()
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    const { patchSpeciesPrefs } = await import('../lib/critterClient.js')
+    expect(await patchSpeciesPrefs({ getToken: () => Promise.resolve('tok'), speciesId: 3, weight: 0 })).toBeNull()
+    expect(await patchSpeciesPrefs({ getToken: () => Promise.resolve('tok'), speciesId: 3, weight: -1 })).toBeNull()
+    expect(await patchSpeciesPrefs({ getToken: () => Promise.resolve('tok'), speciesId: 3, weight: NaN })).toBeNull()
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('PATCHes /api/critters/species-prefs with body + auth header', async () => {
+    vi.stubEnv('VITE_API_CRITTERS', 'https://critter.test/')
+    vi.resetModules()
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ species_id: 3, weight: 2.0, set_at: '2026-05-28T00:00:00Z' }),
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+    const { patchSpeciesPrefs } = await import('../lib/critterClient.js')
+    const res = await patchSpeciesPrefs({ getToken: () => Promise.resolve('tok-abc'), speciesId: 3, weight: 2.0 })
+    expect(res.species_id).toBe(3)
+    expect(res.weight).toBe(2.0)
+    const [url, opts] = fetchSpy.mock.calls[0]
+    expect(url).toBe('https://critter.test/api/critters/species-prefs')
+    expect(opts.method).toBe('PATCH')
+    expect(opts.headers.Authorization).toBe('Bearer tok-abc')
+    const body = JSON.parse(opts.body)
+    expect(body.species_id).toBe(3)
+    expect(body.weight).toBe(2.0)
+  })
+
+  it('NEVER rejects on fetch error', async () => {
+    vi.stubEnv('VITE_API_CRITTERS', 'https://critter.test/')
+    vi.resetModules()
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
+    const { patchSpeciesPrefs } = await import('../lib/critterClient.js')
+    const res = await patchSpeciesPrefs({ getToken: () => Promise.resolve('tok'), speciesId: 5, weight: 0.5 })
+    expect(res).toBeNull()
+  })
+})

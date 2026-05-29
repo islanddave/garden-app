@@ -142,3 +142,36 @@ export async function markCrittersViewed({ getToken, openedAt = null } = {}) {
     return []
   }
 }
+
+// patchSpeciesPrefs — D-INV-1 Option A long-press love/meh weight write.
+// Spec: revision §3.29 (Investment loop). Mirrors uxEvents fire-and-forget contract:
+// silent no-op when env unset, NEVER rejects, returns null on failure.
+//
+// Inputs:
+//   getToken   — async () => string | null
+//   speciesId  — integer in [1,8] (validated client-side; Lambda re-validates)
+//   weight     — number; 2.0 = love, 0.5 = meh, 1.0 = reset to default
+//
+// Resolves to the updated row { created_by, species_id, weight, set_at } or null.
+export async function patchSpeciesPrefs({ getToken, speciesId, weight } = {}) {
+  if (!CRITTER_BASE) return null
+  if (!Number.isInteger(speciesId) || speciesId < 1 || speciesId > 8) return null
+  if (typeof weight !== 'number' || !Number.isFinite(weight) || weight <= 0) return null
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return null
+    const res = await fetch(`${CRITTER_BASE}/api/critters/species-prefs`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ species_id: speciesId, weight }),
+    })
+    if (!res.ok) return null
+    return await res.json().catch(() => null)
+  } catch (err) {
+    console.warn('patchSpeciesPrefs failed:', err?.message ?? String(err))
+    return null
+  }
+}
