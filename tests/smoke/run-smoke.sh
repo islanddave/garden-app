@@ -604,9 +604,15 @@ else
               -o "$C_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters" \
               -d "{\"source_event_id\": \"$CRITTER_SRC_EVENT_ID\", \"plant_id\": \"$CREATED_PLANT_ID\", \"species_id\": 255}") || C_HTTP="000"
             CRITTER_ID=$(jq -r '.critter.id // empty' "$C_BODY" 2>/dev/null || echo "")
+            CRITTER_FIRST_IDEM=$(jq -r '.idempotent // false' "$C_BODY" 2>/dev/null || echo "false")
             rm -f "$C_BODY"
-            if [[ "$C_HTTP" == "201" && -n "$CRITTER_ID" ]]; then
-              echo "✅ PASS [crud:POST /critters] HTTP $C_HTTP (id: $CRITTER_ID)"
+            # Phase B++ (2026-05-30) added a server-side critter-award hook on POST /events
+            # with plant_id. Result: the events POST above already created the critter row,
+            # so this explicit POST hits the UNIQUE-INDEX idempotency path → HTTP 200 +
+            # .idempotent=true. Accept either shape; downstream species_id/target_id
+            # readback + second-POST same-row idempotency assertions still cover the contract.
+            if [[ "$C_HTTP" == "201" && -n "$CRITTER_ID" ]]                || [[ "$C_HTTP" == "200" && "$CRITTER_FIRST_IDEM" == "true" && -n "$CRITTER_ID" ]]; then
+              echo "✅ PASS [crud:POST /critters] HTTP $C_HTTP (id: $CRITTER_ID, idempotent=$CRITTER_FIRST_IDEM)"
               PASS=$((PASS+1))
 
               # Step 3: GET /api/critters/:id → assert species_id == 255 (sentinel) + target_id == plant
