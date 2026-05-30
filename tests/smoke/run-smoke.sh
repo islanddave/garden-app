@@ -615,9 +615,18 @@ else
               echo "✅ PASS [crud:POST /critters] HTTP $C_HTTP (id: $CRITTER_ID, idempotent=$CRITTER_FIRST_IDEM)"
               PASS=$((PASS+1))
 
-              # Step 3: GET /api/critters/:id → assert species_id == 255 (sentinel) + target_id == plant
-              assert_readback "write:critter-species-readback" \
-                "${STAGING_API_CRITTERS%/}/api/critters/${CRITTER_ID}" ".critter.species_id" "255"
+              # Step 3: GET /api/critters/:id → assert target_id == plant.
+              # Per Phase B++ (2026-05-30): if the first POST returned 200+idempotent=true the
+              # row was created by the server-side events-Lambda hook, which calls pickSpecies()
+              # and ignores caller-supplied species_id. Only assert species_id == 255 (smoke
+              # sentinel) on the legacy 201 path. The target_id assertion is the load-bearing
+              # check either way — verifies the critter is anchored to our smoke plant.
+              if [[ "$C_HTTP" == "201" ]]; then
+                assert_readback "write:critter-species-readback" \
+                  "${STAGING_API_CRITTERS%/}/api/critters/${CRITTER_ID}" ".critter.species_id" "255"
+              else
+                echo "ℹ️  SKIP [write:critter-species-readback] hook-created row uses pickSpecies — sentinel 255 not applicable"
+              fi
               assert_readback "write:critter-target-readback" \
                 "${STAGING_API_CRITTERS%/}/api/critters/${CRITTER_ID}" ".critter.target_id" "$CREATED_PLANT_ID"
 
