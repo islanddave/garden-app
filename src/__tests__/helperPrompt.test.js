@@ -90,3 +90,46 @@ describe('assembleHelperPrompt', () => {
     expect(out.indexOf(hostile)).toBeLessThan(out.indexOf(HELPER_PROMPT_FENCE.close))
   })
 })
+
+// ---- Bite 6: assembleFromEntry --------------------------------------------
+
+import { assembleFromEntry } from '../lib/helperPrompt.js'
+
+describe('assembleFromEntry (Bite 6 field-path entry point)', () => {
+  it('prefers entry.transcript when present (audio kind)', () => {
+    const entry = { kind: 'audio', transcript: 'aphids on tomatoes', text: 'older text', status: 'transcribed' }
+    const out = assembleFromEntry(entry)
+    expect(out).toContain(HELPER_PROMPT_FENCE.open)
+    expect(out).toContain('aphids on tomatoes')
+    expect(out).not.toContain('older text')
+  })
+
+  it('falls back to entry.text when transcript is null (text kind)', () => {
+    const entry = { kind: 'text', transcript: null, text: 'lettuce bolting fast', status: 'queued' }
+    const out = assembleFromEntry(entry)
+    expect(out).toContain('lettuce bolting fast')
+  })
+
+  it('returns null when entry is missing', () => {
+    expect(assembleFromEntry(null)).toBe(null)
+    expect(assembleFromEntry(undefined)).toBe(null)
+  })
+
+  it('returns null when both transcript and text are empty', () => {
+    expect(assembleFromEntry({ kind: 'audio', transcript: null, text: null })).toBe(null)
+    expect(assembleFromEntry({ kind: 'audio', transcript: '', text: '' })).toBe(null)
+    expect(assembleFromEntry({ kind: 'text', transcript: '   ', text: null })).toBe(null)
+  })
+
+  it('returns null for non-object input', () => {
+    expect(assembleFromEntry('a string')).toBe(null)
+    expect(assembleFromEntry(42)).toBe(null)
+  })
+
+  it('uses the same fence + preamble as the text-path assembleHelperPrompt', () => {
+    const entry = { kind: 'audio', transcript: 'test content', status: 'transcribed' }
+    const fromEntry = assembleFromEntry(entry)
+    const fromText  = assembleHelperPrompt('test content')
+    expect(fromEntry).toBe(fromText)
+  })
+})
