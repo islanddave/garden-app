@@ -149,3 +149,106 @@ describe('captureQueue (Inc 2 Bite 4)', () => {
     expect(fetched.mime).toBe('audio/webm')
   })
 })
+
+// ---- Bite 5 (transcription extension) -----------------------------------
+
+import {
+  setTranscript,
+  incrementTranscribeAttempt,
+  TRANSCRIPT_SOURCE,
+} from '../lib/captureQueue.js'
+
+describe('captureQueue (Inc 2 Bite 5 — transcription extension)', () => {
+  beforeEach(async () => { await resetDb() })
+
+  it('new records carry transcription columns initialized', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100 })
+    expect(rec.transcript).toBe(null)
+    expect(rec.transcribedAt).toBe(null)
+    expect(rec.transcribeAttempts).toBe(0)
+    expect(rec.transcriptSource).toBe(null)
+  })
+
+  it('setTranscript writes transcript + status=transcribed + manual source + increments attempts', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100 })
+    const updated = await setTranscript({ id: rec.id, transcript: 'aphids' })
+    expect(updated.transcript).toBe('aphids')
+    expect(updated.transcribeAttempts).toBe(1)
+    expect(updated.status).toBe(STATUS.TRANSCRIBED)
+    expect(updated.transcriptSource).toBe(TRANSCRIPT_SOURCE.MANUAL)
+    expect(updated.transcribedAt).toBeTruthy()
+  })
+
+  it('setTranscript with source=web-speech records the right source', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100 })
+    const updated = await setTranscript({
+      id: rec.id, transcript: 'tomato leaves curling',
+      source: TRANSCRIPT_SOURCE.WEB_SPEECH,
+    })
+    expect(updated.transcriptSource).toBe(TRANSCRIPT_SOURCE.WEB_SPEECH)
+  })
+
+  it('setTranscript rejects empty / non-string transcript', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100 })
+    await expect(setTranscript({ id: rec.id, transcript: '' })).rejects.toThrow()
+    await expect(setTranscript({ id: rec.id, transcript: null })).rejects.toThrow()
+    await expect(setTranscript({ id: rec.id })).rejects.toThrow()
+  })
+
+  it('setTranscript rejects unknown source', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100 })
+    await expect(setTranscript({ id: rec.id, transcript: 'x', source: 'lambda-stt' })).rejects.toThrow()
+  })
+
+  it('setTranscript returns null when id absent', async () => {
+    const result = await setTranscript({ id: 'no-such', transcript: 'x' })
+    expect(result).toBe(null)
+  })
+
+  it('incrementTranscribeAttempt bumps without touching transcript or status', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100 })
+    const after1 = await incrementTranscribeAttempt(rec.id)
+    expect(after1.transcribeAttempts).toBe(1)
+    expect(after1.transcript).toBe(null)
+    expect(after1.status).toBe(STATUS.RECORDED)
+    const after2 = await incrementTranscribeAttempt(rec.id)
+    expect(after2.transcribeAttempts).toBe(2)
+  })
+
+  it('legacy markTranscribed shim still works and marks via setTranscript path', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100 })
+    await markTranscribed(rec.id, 'tomatoes flowering')
+    const fetched = await get(rec.id)
+    expect(fetched.transcript).toBe('tomatoes flowering')
+    expect(fetched.transcribeAttempts).toBe(1)
+    expect(fetched.transcriptSource).toBe(TRANSCRIPT_SOURCE.MANUAL)
+  })
+
+  it('Bite 5 L-108 durability: transcript survives close + reopen', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100 })
+    await setTranscript({ id: rec.id, transcript: 'persisted transcript' })
+    // Second connection-cycle through get() proves the write committed.
+    const fetched = await get(rec.id)
+    expect(fetched.transcript).toBe('persisted transcript')
+    expect(fetched.transcribedAt).toBeTruthy()
+    expect(fetched.transcribeAttempts).toBe(1)
+  })
+
+  it('backward-compat: incrementTranscribeAttempt tolerates undefined attempt counter on legacy records', async () => {
+    // Simulate a Bite 4-era record lacking the new columns: enqueue then strip via update.
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100 })
+    // update lets us strip transcribeAttempts to undefined-equivalent
+    await update(rec.id, { transcribeAttempts: undefined })
+    const after = await incrementTranscribeAttempt(rec.id)
+    expect(after.transcribeAttempts).toBe(1)
+  })
+})
