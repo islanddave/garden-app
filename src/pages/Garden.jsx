@@ -8,6 +8,11 @@ import CritterSprite from '../components/CritterSprite.jsx'
 import LoveMehPopover from '../components/LoveMehPopover.jsx'
 import BaselineResidents from '../components/BaselineResidents.jsx'
 import { fetchActiveCritters, markCrittersViewed, patchSpeciesPrefs } from '../lib/critterClient.js'
+import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed } from '../lib/notificationPrefsClient.js'
+import CritterCoachmark from '../components/CritterCoachmark.jsx'
+import CritterOptInPrompt from '../components/CritterOptInPrompt.jsx'
+import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
+import { SYSTEM_NOTIFICATIONS_ENABLED } from '../lib/featureFlags.js'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded } from '../lib/projectTree.js'
 import { formatQty } from '../lib/format.js'
@@ -42,6 +47,11 @@ export default function Garden() {
     if (critter && critter.id) seenIdsRef.current.add(critter.id)
   }, [])
 
+  // Phase B (§3.7, §3.8, §3.9): coachmark + opt-in prompt state.
+  // prefs.last_garden_view_at READ here is the value BEFORE this visit's Route 6 POST —
+  // it reflects the user's PRIOR garden-view (used to detect "second visit" eligibility).
+  const [prefs, setPrefs] = useState(null)
+
   useEffect(() => {
     let on = true
     Promise.all([fetch('/api/projects'), fetch('/api/plants')])
@@ -64,6 +74,27 @@ export default function Garden() {
     }
     refresh()
     function onVis() { if (document.visibilityState === 'visible') refresh() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { on = false; document.removeEventListener('visibilitychange', onVis) }
+  }, [getToken])
+
+  // MVP-Critter Phase B (§3.7): fetch notification prefs + record garden-view-opened.
+  // ORDER MATTERS: fetch prefs FIRST (capturing prior last_garden_view_at — the "before this
+  // visit" signal that gates coachmark eligibility per §3.9 second-visit rule), THEN post
+  // Route 6 (updates server-side last_garden_view_at to now — next visit will see THIS value).
+  // Same fire-and-forget contract as critterClient — silent no-op when VITE_API_CRITTERS unset.
+  useEffect(() => {
+    let on = true
+    async function refreshPrefsAndRecord() {
+      const p = await fetchNotificationPrefs({ getToken })
+      if (on) setPrefs(p)
+      // Fire Route 6 AFTER capturing prev prefs (the post updates last_garden_view_at).
+      recordGardenViewOpened({ getToken })
+    }
+    refreshPrefsAndRecord()
+    function onVis() {
+      if (document.visibilityState === 'visible') refreshPrefsAndRecord()
+    }
     document.addEventListener('visibilitychange', onVis)
     return () => { on = false; document.removeEventListener('visibilitychange', onVis) }
   }, [getToken])
@@ -143,6 +174,58 @@ export default function Garden() {
     return m
   }, [critters])
 
+  // Phase B eligibility (§3.7, §3.9 step 3, §3.14 baseline exclusion).
+  // EXCLUDES baseline residents (species_id 1-2) from "first earned critter" count.
+  const nonBaselineCritters = useMemo(
+    () => critters.filter(c => Number.isInteger(c.species_id) && c.species_id > 2),
+    [critters]
+  )
+
+  const earliestNonBaselineEarnedAt = useMemo(() => {
+    let min = null
+    for (const c of nonBaselineCritters) {
+      const t = c.earned_at ? Date.parse(c.earned_at) : NaN
+      if (Number.isFinite(t) && (min === null || t < min)) min = t
+    }
+    return min
+  }, [nonBaselineCritters])
+
+  // Coachmark renders on SECOND garden-view visit after first non-baseline critter (§3.9 step 3).
+  // "Second visit" detected via: prev last_garden_view_at > earliestNonBaselineEarnedAt
+  //   (i.e., user has already visited Garden at least once SINCE the first non-baseline critter
+  //   was earned — that prior visit was the unmediated Stage 2 delight beat).
+  const coachmarkEligible = useMemo(() => {
+    if (!prefs) return false
+    if (prefs.coachmark_seen_at) return false
+    if (nonBaselineCritters.length === 0) return false
+    if (earliestNonBaselineEarnedAt === null) return false
+    const prev = prefs.last_garden_view_at ? Date.parse(prefs.last_garden_view_at) : NaN
+    if (!Number.isFinite(prev)) return false
+    return prev > earliestNonBaselineEarnedAt
+  }, [prefs, nonBaselineCritters, earliestNonBaselineEarnedAt])
+
+  // Opt-in renders only when SYSTEM_NOTIFICATIONS_ENABLED feature flag is true (currently false in V2.x).
+  // Phase B opt-in code ships dormant per §3.8 suppression-flag fix — when the flag flips post-V2.x,
+  // the prompt activates on first eligible critter event AFTER the flip (no permanent suppression).
+  const optInEligible = useMemo(() => {
+    if (!SYSTEM_NOTIFICATIONS_ENABLED) return false
+    if (!prefs) return false
+    if (!prefs.coachmark_seen_at) return false
+    if (prefs.opt_in_prompt_seen_at) return false
+    return nonBaselineCritters.length >= OPT_IN_CRITTER_THRESHOLD
+  }, [prefs, nonBaselineCritters])
+
+  // Dismiss callbacks — fire-and-forget POSTs (NEVER throw, NEVER block render).
+  // recordCoachmarkDismissed fires ONLY when CritterCoachmark's 1500ms min-visible gate passes.
+  // recordOptInDismissed fires ONLY when CritterOptInPrompt actually rendered (suppression-flag fix §3.8).
+  const onCoachmarkDismiss = useCallback(() => {
+    recordCoachmarkDismissed({ getToken })
+  }, [getToken])
+
+  const onOptInDismiss = useCallback(() => {
+    recordOptInDismissed({ getToken })
+  }, [getToken])
+
   if (loading) return <Shell><Spinner /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
@@ -153,6 +236,11 @@ export default function Garden() {
       {/* MVP-Critter Session 3: Day-1 always-present residents (robin + honeybee).
           Decorative, aria-hidden, never persisted to critter_state. Per revision §3.14. */}
       <BaselineResidents />
+
+      {/* MVP-Critter Phase B: coachmark (§3.7) + opt-in prompt (§3.8).
+          Both ambient inline strips, NEVER overlays. Render null when not eligible. */}
+      <CritterCoachmark eligible={coachmarkEligible} onDismiss={onCoachmarkDismiss} />
+      <CritterOptInPrompt eligible={optInEligible} onDismiss={onOptInDismiss} />
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Garden</h1>

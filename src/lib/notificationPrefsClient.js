@@ -74,3 +74,74 @@ export async function patchNotificationPrefs({
     return null
   }
 }
+
+// ─── Phase B — fire-and-forget POSTs (Routes 6, 9, 10) ───────────────────────
+// All three NEVER reject, NEVER throw, silent no-op when env unset.
+// keepalive:true survives unmount-on-route-change.
+
+// recordGardenViewOpened — Route 6 POST /api/notifications/garden-view-opened.
+// Spec: revision §3.7 (Phase B coachmark triggers on garden-view-enter, not critter-state-change).
+// Server updates last_garden_view_at = now() (upserts user_notification_prefs row if absent).
+// Caller pattern: fire on Garden mount AND on document visibilitychange→visible (Garden re-entry).
+// Returns the updated last_garden_view_at ISO string on success, null otherwise.
+export async function recordGardenViewOpened({ getToken } = {}) {
+  if (!CRITTER_BASE) return null
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return null
+    const res = await fetch(`${CRITTER_BASE}/api/notifications/garden-view-opened`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      keepalive: true,
+    })
+    if (!res.ok) return null
+    const json = await res.json().catch(() => null)
+    return json?.last_garden_view_at ?? null
+  } catch {
+    return null
+  }
+}
+
+// recordCoachmarkDismissed — Route 9 POST /api/notifications/coachmark-dismissed.
+// Spec: revision §3.7 (1500ms min-visible-time before writing coachmark_seen_at).
+// Idempotent on server (COALESCE preserves existing coachmark_seen_at).
+// Caller pattern: fire on Garden unmount IFF coachmark was visible ≥1500ms.
+export async function recordCoachmarkDismissed({ getToken } = {}) {
+  if (!CRITTER_BASE) return null
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return null
+    const res = await fetch(`${CRITTER_BASE}/api/notifications/coachmark-dismissed`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      keepalive: true,
+    })
+    if (!res.ok) return null
+    const json = await res.json().catch(() => null)
+    return json?.coachmark_seen_at ?? null
+  } catch {
+    return null
+  }
+}
+
+// recordOptInDismissed — Route 10 POST /api/notifications/opt-in-dismissed.
+// Spec: revision §3.8 (suppression-flag fix: opt_in_prompt_seen_at ONLY set after prompt ACTUALLY rendered).
+// Server is idempotent (COALESCE preserves existing).
+// Caller pattern: fire on Garden unmount IFF opt-in prompt was rendered.
+export async function recordOptInDismissed({ getToken } = {}) {
+  if (!CRITTER_BASE) return null
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return null
+    const res = await fetch(`${CRITTER_BASE}/api/notifications/opt-in-dismissed`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      keepalive: true,
+    })
+    if (!res.ok) return null
+    const json = await res.json().catch(() => null)
+    return json?.opt_in_prompt_seen_at ?? null
+  } catch {
+    return null
+  }
+}

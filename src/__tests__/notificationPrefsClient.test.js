@@ -136,3 +136,107 @@ describe('notificationPrefsClient', () => {
     })
   })
 })
+
+// ─── Phase B — fire-and-forget POST tests (Routes 6, 9, 10) ─────────────────
+
+describe('notificationPrefsClient — Phase B fire-and-forget POSTs', () => {
+  beforeEach(() => { global.fetch = vi.fn() })
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks() })
+
+  describe('recordGardenViewOpened (Route 6)', () => {
+    it('returns null when VITE_API_CRITTERS unset', async () => {
+      const { recordGardenViewOpened } = await loadModule(null)
+      const res = await recordGardenViewOpened({ getToken: () => Promise.resolve(TOKEN) })
+      expect(res).toBeNull()
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('returns null when getToken returns null (no auth)', async () => {
+      const { recordGardenViewOpened } = await loadModule('https://critter.test/')
+      const res = await recordGardenViewOpened({ getToken: () => Promise.resolve(null) })
+      expect(res).toBeNull()
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('POSTs /api/notifications/garden-view-opened with bearer + keepalive', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ last_garden_view_at: '2026-05-29T17:00:00Z' }),
+      })
+      const { recordGardenViewOpened } = await loadModule('https://critter.test/')
+      const res = await recordGardenViewOpened({ getToken: () => Promise.resolve(TOKEN) })
+      expect(res).toBe('2026-05-29T17:00:00Z')
+      const [url, opts] = global.fetch.mock.calls[0]
+      expect(url).toBe('https://critter.test/api/notifications/garden-view-opened')
+      expect(opts.method).toBe('POST')
+      expect(opts.headers.Authorization).toBe(`Bearer ${TOKEN}`)
+      expect(opts.keepalive).toBe(true)
+    })
+
+    it('returns null on non-OK response (no throw)', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+      const { recordGardenViewOpened } = await loadModule('https://critter.test/')
+      expect(await recordGardenViewOpened({ getToken: () => Promise.resolve(TOKEN) })).toBeNull()
+    })
+
+    it('NEVER rejects on fetch error', async () => {
+      global.fetch = vi.fn().mockRejectedValue(new Error('boom'))
+      const { recordGardenViewOpened } = await loadModule('https://critter.test/')
+      expect(await recordGardenViewOpened({ getToken: () => Promise.resolve(TOKEN) })).toBeNull()
+    })
+  })
+
+  describe('recordCoachmarkDismissed (Route 9)', () => {
+    it('returns null when env unset', async () => {
+      const { recordCoachmarkDismissed } = await loadModule(null)
+      expect(await recordCoachmarkDismissed({ getToken: () => Promise.resolve(TOKEN) })).toBeNull()
+    })
+
+    it('POSTs /api/notifications/coachmark-dismissed', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ coachmark_seen_at: '2026-05-29T17:00:01.5Z' }),
+      })
+      const { recordCoachmarkDismissed } = await loadModule('https://critter.test/')
+      const res = await recordCoachmarkDismissed({ getToken: () => Promise.resolve(TOKEN) })
+      expect(res).toBe('2026-05-29T17:00:01.5Z')
+      const [url, opts] = global.fetch.mock.calls[0]
+      expect(url).toBe('https://critter.test/api/notifications/coachmark-dismissed')
+      expect(opts.method).toBe('POST')
+      expect(opts.keepalive).toBe(true)
+    })
+
+    it('NEVER rejects', async () => {
+      global.fetch = vi.fn().mockRejectedValue(new Error('boom'))
+      const { recordCoachmarkDismissed } = await loadModule('https://critter.test/')
+      expect(await recordCoachmarkDismissed({ getToken: () => Promise.resolve(TOKEN) })).toBeNull()
+    })
+  })
+
+  describe('recordOptInDismissed (Route 10)', () => {
+    it('returns null when env unset', async () => {
+      const { recordOptInDismissed } = await loadModule(null)
+      expect(await recordOptInDismissed({ getToken: () => Promise.resolve(TOKEN) })).toBeNull()
+    })
+
+    it('POSTs /api/notifications/opt-in-dismissed', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ opt_in_prompt_seen_at: '2026-05-29T17:00:02Z' }),
+      })
+      const { recordOptInDismissed } = await loadModule('https://critter.test/')
+      const res = await recordOptInDismissed({ getToken: () => Promise.resolve(TOKEN) })
+      expect(res).toBe('2026-05-29T17:00:02Z')
+      const [url, opts] = global.fetch.mock.calls[0]
+      expect(url).toBe('https://critter.test/api/notifications/opt-in-dismissed')
+      expect(opts.method).toBe('POST')
+      expect(opts.keepalive).toBe(true)
+    })
+
+    it('NEVER rejects', async () => {
+      global.fetch = vi.fn().mockRejectedValue(new Error('boom'))
+      const { recordOptInDismissed } = await loadModule('https://critter.test/')
+      expect(await recordOptInDismissed({ getToken: () => Promise.resolve(TOKEN) })).toBeNull()
+    })
+  })
+})
