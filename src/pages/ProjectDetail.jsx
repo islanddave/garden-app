@@ -10,7 +10,6 @@ import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
-import { awardCritter } from '../lib/critterClient.js'
 
 const EVENT_ICONS = {
   sowing:        '🌱',
@@ -257,14 +256,9 @@ export default function ProjectDetail() {
         })
       }
 
-      // MVP-Critter Phase B+ (2026-05-30): fire awardCritter() fire-and-forget on every
-      // event create (Dave directive: "fire too often than too little"). ProjectDetail
-      // events are currently project-level (no plant_id) → Lambda 204's silently. Wire
-      // anyway so adding a plant picker later auto-activates the critter flow without
-      // a separate code change. Dashboard backfill renders the freshest active critter.
-      if (newEventId) {
-        awardCritter({ getToken, sourceEventId: newEventId })
-      }
+      // MVP-Critter — critters are awarded SERVER-SIDE by the events Lambda hook
+      // (Phase B++ refactor 2026-05-30). No client call needed; if a plant picker is added
+      // to this form later, the server-side hook auto-handles it.
 
       setEventForm(emptyEventForm())
       clearMiniPhoto()

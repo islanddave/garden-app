@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { awardCritter } from '../lib/critterClient.js'
 import { P, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
 import { formatQty } from '../lib/format.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
@@ -514,29 +513,11 @@ export default function EventNew() {
     // V-4 removed (reward-ux-conformance-audit V001 §V-4, ratified jolly-fervent-ritchie):
     // log-save haptic was a banned channel on a reward-signal path. Save still completes.
 
-    // MVP-Critter Stage 1: FIRE-AND-FORGET critter award (Phase B+ refactor 2026-05-30).
-    // Previous 1500ms race against the await was unwinnable on cold-start (~2-3s Node init +
-    // secrets-manager fetch + Neon connect + Clerk verifyToken). When the race won the timeout,
-    // stage1Critter was null and the Stage 1 banner never rendered — Jen tries it once, sees
-    // nothing, gives up. (Diagnosis: Dave 2026-05-30 staging test reproduced this.)
-    //
-    // Fix: kick off the POST with NO await + NO nav-state passing. The Stage 1 banner now
-    // renders via Dashboard.jsx backfill — Dashboard's existing fetchActiveCritters effect
-    // finds the freshest unviewed non-baseline critter (earned within last 30s) and renders
-    // the banner. Single canonical render path; works for ALL event-creation surfaces
-    // (EventNew + LogMany + ProjectDetail) per Dave directive "fire too often than too little".
-    //
-    // Lambda 204's silently on no-plant_id source events, so this is safe to fire even when
-    // form.plant_id is null — but we still skip the call in that case to avoid wasted RTT.
-    if (form.plant_id) {
-      // No await, no race, no try/catch — critterClient.awardCritter NEVER throws.
-      awardCritter({
-        getToken,
-        sourceEventId: eventId,
-        plantId: form.plant_id,
-        eventCreatedAt: eventDateStr,
-      })
-    }
+    // MVP-Critter Stage 1 — server-side hook (Phase B++ refactor 2026-05-30, replaces
+    // client-side awardCritter). The events Lambda awards the critter inline in the same
+    // POST /api/events transaction; critter_state row exists by the time this response
+    // arrives. Dashboard backfill on the next navigate finds it deterministically.
+    // No race, no per-surface wiring.
 
     // 2 — Upload photo via shared hook (non-fatal — errorMode='swallow')
     // The hook runs the same 3-step presign → S3 PUT → POST /api/photos dance.

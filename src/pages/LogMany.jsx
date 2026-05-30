@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import { awardCritter } from '../lib/critterClient.js'
 
 // Bulk "Quick Log" (Unit A). Apply ONE event type to MANY plantings at once —
 // one event per planting — without per-item tapping. Scope: All active / By Project /
@@ -55,7 +54,7 @@ function genKey() {
 }
 
 export default function LogMany() {
-  const { fetch, getToken } = useApiFetch()
+  const { fetch } = useApiFetch()
   const navigate = useNavigate()
   const [params] = useSearchParams()
 
@@ -141,16 +140,9 @@ export default function LogMany() {
         exclude_plant_ids: [...excluded],
       }) })
       try { localStorage.setItem(SCOPE_KEY, JSON.stringify(scope)) } catch (e) {}
-      // MVP-Critter Phase B+ (2026-05-30): fire awardCritter() for every plant-bearing event
-      // in the batch (Dave directive: "fire too often than too little"). Each call is
-      // fire-and-forget — Dashboard backfill picks up the freshest. Lambda 204's silently if
-      // the source event has no plant_id, so iterating ALL returned ids is safe.
-      // critter Lambda is UNIQUE-INDEX-protected on source_event_id (idempotent re-hits).
-      if (Array.isArray(r?.event_ids) && r.event_ids.length > 0) {
-        for (const evId of r.event_ids) {
-          awardCritter({ getToken, sourceEventId: evId })
-        }
-      }
+      // MVP-Critter — critters are awarded SERVER-SIDE by the events Lambda batch handler
+      // (Phase B++ refactor 2026-05-30). No client-side fan-out needed; Dashboard backfill
+      // surfaces the freshest via fetchActiveCritters.
       setResult(r)
     } catch (err) { setError(err.message) }
     setSaving(false)

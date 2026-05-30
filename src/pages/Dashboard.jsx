@@ -174,10 +174,10 @@ export default function Dashboard() {
   useEffect(() => {
     const logged = location.state?.logged
     if (!logged) return
-    // MVP-Critter Stage 1 — backfill effect below (`stage1Critter backfill`) is now the
-    // canonical render path. EventNew/LogMany/ProjectDetail all fire awardCritter fire-and-forget;
-    // Dashboard polls fetchActiveCritters and renders the freshest unviewed non-baseline critter
-    // earned within last 30s. Single render path; immune to cold-start latency.
+    // MVP-Critter Stage 1 — backfill effect below is the canonical render path.
+    // events Lambda awards critters SERVER-SIDE (Phase B++ refactor 2026-05-30); Dashboard
+    // polls fetchActiveCritters and renders the freshest unviewed non-baseline critter
+    // earned within last 30s. Race-free since the critter row exists before this fetch fires.
 
     // Refresh dashboard data (cache invalidation pattern — replace React Query in V1.3+).
     let isMounted = true
@@ -229,8 +229,8 @@ export default function Dashboard() {
   // sessionStorage clears on tab close → next session re-shows if critter is still <30s old
   // (almost never the case, but defensive).
   //
-  // Fire-and-forget critterClient.awardCritter from event-create paths means the critter row
-  // appears server-side asynchronously; this backfill catches it whenever it lands.
+  // events Lambda awards critters server-side inline with event_log INSERT (Phase B++).
+  // Critter row exists by the time POST /api/events returns, so this backfill is deterministic.
   useEffect(() => {
     let on = true
     async function backfill() {
