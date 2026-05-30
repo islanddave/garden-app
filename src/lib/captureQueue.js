@@ -2,36 +2,40 @@
  * src/lib/captureQueue.js
  *
  * Bite 4 of Post-V2 UX overhaul Increment 2: Field capture durable queue.
+ * Bite 5 extension: transcript columns + setTranscript / incrementTranscribeAttempt
+ * for the Web Speech / manual-fallback transcription flow.
  *
- * Wraps IndexedDB for the field-capture queue. Each record:
+ * Record schema:
  *   {
- *     id:          uuid string,
- *     mode:        'field' | 'desk',
- *     kind:        'audio' | 'text',
- *     blob:        Blob | null,         // present iff kind === 'audio'
- *     mime:        string | null,        // 'audio/webm' | 'audio/mp4' | null for text
- *     durationMs:  number | null,        // 0 or null for text
- *     text:        string | null,        // present iff kind === 'text' OR a transcript
- *     capturedAt:  ISO 8601 string,
- *     status:      'queued' | 'recorded' | 'transcribed' | 'handed_off',
- *     attemptCount: number,
+ *     id:                   uuid string,
+ *     mode:                 'field' | 'desk',
+ *     kind:                 'audio' | 'text',
+ *     blob:                 Blob | null,         // present iff kind === 'audio'
+ *     mime:                 string | null,        // 'audio/webm' | 'audio/mp4' | null for text
+ *     durationMs:           number | null,        // 0 or null for text
+ *     text:                 string | null,        // present iff kind === 'text'
+ *     capturedAt:           ISO 8601 string,
+ *     status:               'queued' | 'recorded' | 'transcribed' | 'handed_off',
+ *     attemptCount:         number,
+ *
+ *     // Bite 5 (transcription) — additive; legacy records read with these fields
+ *     // absent are tolerated (undefined treated as null / 0):
+ *     transcript:           string | null,        // the user-confirmed (or Web Speech) transcript
+ *     transcribedAt:        ISO 8601 string | null,
+ *     transcribeAttempts:   number,                // total attempts (manual or web-speech)
+ *     transcriptSource:     'manual' | 'web-speech' | null,
  *   }
  *
- * Retention policy (Dave-call this session): Bite 4 does NOT delete blobs.
- * Reason: "brain dump and lose it" is an adoption killer for Jen. Blobs persist
- * indefinitely until a future bite (post-Bite 6) introduces user-initiated
- * cleanup with audit guarantees. Bite 4 ships only the additive APIs:
- * enqueue / list / get / update. No delete / clear / prune in this bite.
+ * Retention policy (Dave-call from Bite 4): blobs persist indefinitely. No
+ * delete / clear / prune. User-initiated cleanup arrives post-Bite 6 once an
+ * audit surface exists.
  *
  * iOS quota landmine: navigator.storage.persist() is requested from
- * durableStorage.js on FieldCapture first-mount. Without persist(), iOS Safari
- * may evict the IndexedDB store. captureQueue itself does not retry or recover
- * from eviction — it surfaces quota errors via an `error: 'quota'` field on
- * the returned record so the caller can render a user-visible warning.
+ * durableStorage.js on FieldCapture first-mount. captureQueue itself surfaces
+ * quota errors via a string error code 'quota'.
  *
- * All exported functions are async. Internally we open a single connection
- * per call and let the browser cache it; no module-level handle so that
- * tests can swap in fake-indexeddb cleanly.
+ * All exported functions are async; each opens a single connection per call
+ * so tests can swap fake-indexeddb cleanly.
  */
 
 const DB_NAME    = 'gardenAppFieldCapture'
@@ -52,8 +56,13 @@ const KIND = Object.freeze({
 })
 export { KIND }
 
+const TRANSCRIPT_SOURCE = Object.freeze({
+  MANUAL:     'manual',
+  WEB_SPEECH: 'web-speech',
+})
+export { TRANSCRIPT_SOURCE }
+
 function generateId() {
-  // Fallback to Math.random + timestamp if crypto.randomUUID unavailable
   try {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
       return crypto.randomUUID()
@@ -66,11 +75,6 @@ function nowIso() {
   return new Date().toISOString()
 }
 
-/**
- * Open the IndexedDB connection. Returns a Promise<IDBDatabase> or rejects
- * with a string error code: 'unavailable' (no IDB), 'blocked' (open blocked),
- * 'failed' (open errored).
- */
 export function openDb() {
   return new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
@@ -128,24 +132,26 @@ function reqToPromise(req) {
 
 /**
  * Enqueue a recorded audio capture. Returns the stored record (with id).
- * `blob` should be a Blob; `mime` like 'audio/webm' or 'audio/mp4'; durationMs
- * a number (0 acceptable if duration unknown). `mode` defaults to 'field'.
  */
 export async function enqueueRecording({ blob, mime, durationMs, mode = 'field' } = {}) {
   if (!blob) throw new Error('enqueueRecording: blob required')
   const db = await openDb()
   try {
     const record = {
-      id:           generateId(),
+      id:                 generateId(),
       mode,
-      kind:         KIND.AUDIO,
+      kind:               KIND.AUDIO,
       blob,
-      mime:         mime || null,
-      durationMs:   typeof durationMs === 'number' ? durationMs : null,
-      text:         null,
-      capturedAt:   nowIso(),
-      status:       STATUS.RECORDED,
-      attemptCount: 0,
+      mime:               mime || null,
+      durationMs:         typeof durationMs === 'number' ? durationMs : null,
+      text:               null,
+      capturedAt:         nowIso(),
+      status:             STATUS.RECORDED,
+      attemptCount:       0,
+      transcript:         null,
+      transcribedAt:      null,
+      transcribeAttempts: 0,
+      transcriptSource:   null,
     }
     await runTx(db, 'readwrite', (store) => reqToPromise(store.add(record)))
     return record
@@ -155,24 +161,30 @@ export async function enqueueRecording({ blob, mime, durationMs, mode = 'field' 
 }
 
 /**
- * Enqueue a text-only entry (tap-fallback or imported note). Returns the
- * stored record (with id). `text` required.
+ * Enqueue a text-only entry. Returns the stored record (with id).
+ * Text entries are persisted with status='queued' and no transcript fields —
+ * the text itself IS the content, and Bite 6 can decide whether to treat
+ * the text as a transcript-equivalent at handoff time.
  */
 export async function enqueueText({ text, mode = 'field' } = {}) {
   if (!text || typeof text !== 'string') throw new Error('enqueueText: text required')
   const db = await openDb()
   try {
     const record = {
-      id:           generateId(),
+      id:                 generateId(),
       mode,
-      kind:         KIND.TEXT,
-      blob:         null,
-      mime:         null,
-      durationMs:   null,
+      kind:               KIND.TEXT,
+      blob:               null,
+      mime:               null,
+      durationMs:         null,
       text,
-      capturedAt:   nowIso(),
-      status:       STATUS.QUEUED,
-      attemptCount: 0,
+      capturedAt:         nowIso(),
+      status:             STATUS.QUEUED,
+      attemptCount:       0,
+      transcript:         null,
+      transcribedAt:      null,
+      transcribeAttempts: 0,
+      transcriptSource:   null,
     }
     await runTx(db, 'readwrite', (store) => reqToPromise(store.add(record)))
     return record
@@ -208,8 +220,8 @@ export async function get(id) {
 }
 
 /**
- * Update a record. `patch` is merged onto the existing record; non-mergeable
- * fields (id) are protected. Returns the updated record, or null if id absent.
+ * Update a record. Patch is merged onto the existing record; id is protected.
+ * Returns the updated record, or null if id absent.
  */
 export async function update(id, patch) {
   if (!id) throw new Error('update: id required')
@@ -229,10 +241,72 @@ export async function update(id, patch) {
 }
 
 /**
- * Mark a record as transcribed; convenience over update().
+ * Set the transcript for a record. Marks status='transcribed', records
+ * transcribedAt + transcriptSource, and increments transcribeAttempts.
+ *
+ * Backward-compat: legacy records (Bite 4 era) without transcribeAttempts read
+ * undefined; we initialize to 0 before incrementing.
+ */
+export async function setTranscript({ id, transcript, source = TRANSCRIPT_SOURCE.MANUAL } = {}) {
+  if (!id) throw new Error('setTranscript: id required')
+  if (typeof transcript !== 'string' || transcript.length === 0) {
+    throw new Error('setTranscript: non-empty transcript required')
+  }
+  if (source !== TRANSCRIPT_SOURCE.MANUAL && source !== TRANSCRIPT_SOURCE.WEB_SPEECH) {
+    throw new Error('setTranscript: source must be manual or web-speech')
+  }
+  const db = await openDb()
+  try {
+    return await runTx(db, 'readwrite', async (store) => {
+      const cur = await reqToPromise(store.get(id))
+      if (!cur) return null
+      const next = {
+        ...cur,
+        id:                 cur.id,
+        // Bite 5: transcript is the canonical field; also mirror into `text`
+        // so Bite 4 callers reading `text` post-transcription still see content.
+        transcript,
+        text:               transcript,
+        transcribedAt:      nowIso(),
+        transcriptSource:   source,
+        transcribeAttempts: (typeof cur.transcribeAttempts === 'number' ? cur.transcribeAttempts : 0) + 1,
+        status:             STATUS.TRANSCRIBED,
+      }
+      await reqToPromise(store.put(next))
+      return next
+    })
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * Increment transcribeAttempts on a failed attempt (Web Speech silent failure,
+ * no-speech timeout, denied permission). Does NOT change status or transcript.
+ */
+export async function incrementTranscribeAttempt(id) {
+  if (!id) throw new Error('incrementTranscribeAttempt: id required')
+  const db = await openDb()
+  try {
+    return await runTx(db, 'readwrite', async (store) => {
+      const cur = await reqToPromise(store.get(id))
+      if (!cur) return null
+      const cur_attempts = typeof cur.transcribeAttempts === 'number' ? cur.transcribeAttempts : 0
+      const next = { ...cur, id: cur.id, transcribeAttempts: cur_attempts + 1 }
+      await reqToPromise(store.put(next))
+      return next
+    })
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * LEGACY shim — Bite 4 callers used markTranscribed(id, text). Now delegates
+ * to setTranscript with source='manual'. Kept to avoid a flag-day rename.
  */
 export async function markTranscribed(id, text) {
-  return update(id, { status: STATUS.TRANSCRIBED, text })
+  return setTranscript({ id, transcript: text, source: TRANSCRIPT_SOURCE.MANUAL })
 }
 
 /**
@@ -266,6 +340,6 @@ export async function getOldestUnprocessedAgeMs() {
   const all = await list()
   const unprocessed = all.filter((r) => r.status !== STATUS.HANDED_OFF)
   if (unprocessed.length === 0) return null
-  const oldest = unprocessed[0]   // list() returns ascending by capturedAt
+  const oldest = unprocessed[0]
   return Date.now() - new Date(oldest.capturedAt).getTime()
 }

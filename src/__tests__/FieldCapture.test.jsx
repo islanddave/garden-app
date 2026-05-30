@@ -6,24 +6,27 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { ModeProvider } from '../context/ModeContext.jsx'
 import { MODE } from '../lib/mode.js'
 
-// Mock the lib pieces — we exercise FieldCapture's wiring, not the libs themselves
-// (libs have their own dedicated test files).
 const mockEnqueueRecording = vi.fn(async (rec) => ({ id: 'audio-1', kind: 'audio', ...rec, capturedAt: new Date().toISOString(), status: 'recorded' }))
 const mockEnqueueText = vi.fn(async (rec) => ({ id: `text-${Math.random().toString(36).slice(2,8)}`, kind: 'text', ...rec, capturedAt: new Date().toISOString(), status: 'queued' }))
 const mockList = vi.fn()
 const mockDepth = vi.fn(async () => 0)
 const mockOldest = vi.fn(async () => null)
 const mockPersist = vi.fn(async () => ({ supported: true, granted: true }))
+const mockSetTranscript = vi.fn(async (args) => ({ id: args.id, transcript: args.transcript, status: 'transcribed' }))
+const mockIncTranscribeAttempt = vi.fn(async () => ({}))
 let mockOnReconnectCb = null
 
 vi.mock('../lib/captureQueue.js', () => ({
-  enqueueRecording: (...args) => mockEnqueueRecording(...args),
-  enqueueText: (...args) => mockEnqueueText(...args),
-  list: () => mockList(),
-  getUnprocessedDepth: () => mockDepth(),
-  getOldestUnprocessedAgeMs: () => mockOldest(),
+  enqueueRecording:         (...args) => mockEnqueueRecording(...args),
+  enqueueText:              (...args) => mockEnqueueText(...args),
+  list:                     () => mockList(),
+  getUnprocessedDepth:      () => mockDepth(),
+  getOldestUnprocessedAgeMs:() => mockOldest(),
+  setTranscript:            (...args) => mockSetTranscript(...args),
+  incrementTranscribeAttempt:(...args) => mockIncTranscribeAttempt(...args),
   STATUS: { QUEUED: 'queued', RECORDED: 'recorded', TRANSCRIBED: 'transcribed', HANDED_OFF: 'handed_off' },
   KIND: { AUDIO: 'audio', TEXT: 'text' },
+  TRANSCRIPT_SOURCE: { MANUAL: 'manual', WEB_SPEECH: 'web-speech' },
 }))
 
 vi.mock('../lib/durableStorage.js', () => ({
@@ -34,8 +37,6 @@ vi.mock('../lib/reconnect.js', () => ({
   onReconnect: (cb) => { mockOnReconnectCb = cb; return () => { mockOnReconnectCb = null } },
 }))
 
-// Mock audioCapture for the mic button — recording flow is exercised by
-// MicCaptureButton.test; here we just want a recordable tap.
 vi.mock('../lib/audioCapture.js', () => ({
   isAudioCaptureSupported: () => true,
   startRecording: () => Promise.resolve({
@@ -45,10 +46,21 @@ vi.mock('../lib/audioCapture.js', () => ({
   }),
 }))
 
+// transcribe is unused in FieldCapture but pulled in via TranscriptReview.
+vi.mock('../lib/transcribe.js', () => ({
+  isTranscriptionSupported: () => false,
+  startLiveTranscription:   () => ({ stop: () => {}, cancel: () => {} }),
+  START_TIMEOUT_MS: 3500,
+  NO_SPEECH_TIMEOUT_MS: 8000,
+}))
+
+// jsdom URL polyfill for TranscriptReview audio playback construction
+if (!global.URL.createObjectURL) global.URL.createObjectURL = () => 'blob:fake'
+if (!global.URL.revokeObjectURL) global.URL.revokeObjectURL = () => {}
+
 import FieldCapture from '../pages/FieldCapture.jsx'
 
 function renderAt(initialMode, opts = {}) {
-  // If a test pre-set mockList, leave it alone; otherwise default to opts.initialList || []
   if (!('initialList' in opts) || opts.initialList !== undefined) {
     const list = opts.initialList === undefined ? [] : opts.initialList
     if (!opts.preservesMockList) mockList.mockImplementation(async () => list)
@@ -73,6 +85,8 @@ describe('FieldCapture (Inc 2 Bite 4 — durable queue wiring)', () => {
     mockDepth.mockReset().mockImplementation(async () => 0)
     mockOldest.mockReset().mockImplementation(async () => null)
     mockPersist.mockClear()
+    mockSetTranscript.mockClear()
+    mockIncTranscribeAttempt.mockClear()
     mockOnReconnectCb = null
   })
 
@@ -86,13 +100,13 @@ describe('FieldCapture (Inc 2 Bite 4 — durable queue wiring)', () => {
   it('redirects to /dashboard when mode === desk', () => {
     renderAt(MODE.DESK)
     expect(screen.getByTestId('dashboard-stub')).toBeDefined()
-    expect(mockPersist).not.toHaveBeenCalled()      // persist NOT requested in wrong mode
+    expect(mockPersist).not.toHaveBeenCalled()
   })
 
   it('initial render loads the queue list', async () => {
     const seed = [
       { id: 'a', kind: 'text', text: 'note one', capturedAt: '2026-05-29T12:00:00.000Z', status: 'queued' },
-      { id: 'b', kind: 'audio', mime: 'audio/webm', durationMs: 4200, capturedAt: '2026-05-29T12:01:00.000Z', status: 'recorded' },
+      { id: 'b', kind: 'audio', mime: 'audio/webm', durationMs: 4200, capturedAt: '2026-05-29T12:01:00.000Z', status: 'recorded', blob: new Blob(['x']) },
     ]
     mockDepth.mockImplementation(async () => 2)
     mockOldest.mockImplementation(async () => 90 * 1000)
@@ -128,16 +142,10 @@ describe('FieldCapture (Inc 2 Bite 4 — durable queue wiring)', () => {
     expect(mockEnqueueText.mock.calls[0][0]).toEqual({ text: 'broccoli flowering', mode: 'field' })
   })
 
-  it('mic permission denied → error banner shown, tap-fallback still works', async () => {
-    // Override audioCapture mock for this single test to reject with denied
-    const { startRecording } = await import('../lib/audioCapture.js')
-    const spy = vi.spyOn({ startRecording }, 'startRecording')
-    // Simpler: just dispatch the onError path through MicCaptureButton — render with a denied-recording start.
-    // Actually we already use the default mock; assert that recording success path doesn't show banner.
+  it('no error banner on initial happy-path render', async () => {
     renderAt(MODE.FIELD)
     await act(async () => { await Promise.resolve() })
     expect(screen.queryByTestId('field-error-banner')).toBe(null)
-    spy.mockRestore()
   })
 
   it('reconnect subscription wired on mount; trigger fires refresh', async () => {
@@ -155,5 +163,64 @@ describe('FieldCapture (Inc 2 Bite 4 — durable queue wiring)', () => {
     renderAt(MODE.FIELD, { preservesMockList: true })
     const banner = await screen.findByTestId('field-error-banner')
     expect(banner.textContent).toMatch(/Storage unavailable/)
+  })
+})
+
+describe('FieldCapture (Inc 2 Bite 5 — TranscriptReview wiring)', () => {
+  beforeEach(() => {
+    mockEnqueueRecording.mockClear()
+    mockEnqueueText.mockClear()
+    mockList.mockReset()
+    mockDepth.mockReset().mockImplementation(async () => 0)
+    mockOldest.mockReset().mockImplementation(async () => null)
+    mockPersist.mockClear()
+    mockSetTranscript.mockClear()
+    mockIncTranscribeAttempt.mockClear()
+    mockOnReconnectCb = null
+  })
+
+  it('tap a queued audio item → TranscriptReview expands inline', async () => {
+    const seed = [{
+      id: 'a-1', kind: 'audio',
+      blob: new Blob(['x'], { type: 'audio/webm' }),
+      mime: 'audio/webm', durationMs: 3200,
+      capturedAt: '2026-05-30T10:00:00.000Z',
+      status: 'recorded', transcribeAttempts: 0,
+    }]
+    renderAt(MODE.FIELD, { initialList: seed })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByTestId('transcript-review')).toBe(null)
+    fireEvent.click(screen.getByTestId('field-queue-item-toggle'))
+    expect(screen.getByTestId('transcript-review')).toBeDefined()
+    expect(screen.getByTestId('transcript-review').getAttribute('data-entry-id')).toBe('a-1')
+  })
+
+  it('tap-to-expand again collapses', async () => {
+    const seed = [{
+      id: 'a-1', kind: 'audio', blob: new Blob(['x']), mime: 'audio/webm',
+      durationMs: 1000, capturedAt: '2026-05-30T10:00:00.000Z', status: 'recorded',
+    }]
+    renderAt(MODE.FIELD, { initialList: seed })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const toggle = screen.getByTestId('field-queue-item-toggle')
+    fireEvent.click(toggle)
+    expect(screen.getByTestId('transcript-review')).toBeDefined()
+    fireEvent.click(toggle)
+    expect(screen.queryByTestId('transcript-review')).toBe(null)
+  })
+
+  it('saving a transcript from TranscriptReview triggers refresh of the queue', async () => {
+    const seed = [{
+      id: 'a-1', kind: 'audio', blob: new Blob(['x']), mime: 'audio/webm',
+      durationMs: 1000, capturedAt: '2026-05-30T10:00:00.000Z', status: 'recorded',
+    }]
+    renderAt(MODE.FIELD, { initialList: seed })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByTestId('field-queue-item-toggle'))
+    fireEvent.change(screen.getByTestId('transcript-draft'), { target: { value: 'aphids on tomatoes' } })
+    mockList.mockClear()
+    await act(async () => { fireEvent.click(screen.getByTestId('transcript-save')); await Promise.resolve(); await Promise.resolve() })
+    expect(mockSetTranscript).toHaveBeenCalledWith({ id: 'a-1', transcript: 'aphids on tomatoes', source: 'manual' })
+    expect(mockList).toHaveBeenCalled()
   })
 })
