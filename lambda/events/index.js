@@ -161,7 +161,19 @@ export const handler = async (event) => {
         WHERE idempotency_key = ${key} AND created_by = ${userId}
       `;
       if (prior.length) {
-        return resp(200, { batch_id: prior[0].id, count: prior[0].item_count, idempotent: true });
+        // Backfill event_ids from event_log for idempotent re-hits (Phase B+ critter wiring).
+        const priorEvents = await sql`
+          SELECT id FROM event_log
+           WHERE metadata->>'batch_id' = ${prior[0].id}::text
+             AND created_by = ${userId}
+             AND deleted_at IS NULL
+        `;
+        return resp(200, {
+          batch_id: prior[0].id,
+          count: prior[0].item_count,
+          event_ids: priorEvents.map(r => r.id),
+          idempotent: true,
+        });
       }
 
       // (2) Resolve scope server-side → owner-scoped, alive plantings (never trust a client list).
@@ -241,7 +253,19 @@ export const handler = async (event) => {
             updated_at = NOW()
         `,
       ]);
-      return resp(200, { batch_id: batchId, count: plantIds.length });
+      // Fetch the just-inserted event ids so the client can fire awardCritter for each
+      // (Phase B+ critter wiring — Dave directive 2026-05-30 "fire too often than too little").
+      const insertedEvents = await sql`
+        SELECT id FROM event_log
+         WHERE metadata->>'batch_id' = ${batchId}::text
+           AND created_by = ${userId}
+           AND deleted_at IS NULL
+      `;
+      return resp(200, {
+        batch_id: batchId,
+        count: plantIds.length,
+        event_ids: insertedEvents.map(r => r.id),
+      });
     }
 
     // GET /api/events/batches — recent (non-undone) batches for the durable Undo affordance.

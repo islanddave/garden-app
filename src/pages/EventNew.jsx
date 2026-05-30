@@ -514,26 +514,28 @@ export default function EventNew() {
     // V-4 removed (reward-ux-conformance-audit V001 §V-4, ratified jolly-fervent-ritchie):
     // log-save haptic was a banned channel on a reward-signal path. Save still completes.
 
-    // MVP-Critter Stage 1 (Session 2): fire-and-forget critter award. Spec: revision §2.7
-    // (events Lambda → critter Lambda hook) + §3.10 (failure mode — log + swallow + defer
-    // to server-side backfill on garden-view open). Race award with a 1500ms timeout so a
-    // slow critter Lambda never delays nav. critterClient swallows ALL errors; never throws.
-    // Server scope-cut: 204 on no plant_id → result.critter null → no Stage 1 render.
-    let stage1Critter = null
+    // MVP-Critter Stage 1: FIRE-AND-FORGET critter award (Phase B+ refactor 2026-05-30).
+    // Previous 1500ms race against the await was unwinnable on cold-start (~2-3s Node init +
+    // secrets-manager fetch + Neon connect + Clerk verifyToken). When the race won the timeout,
+    // stage1Critter was null and the Stage 1 banner never rendered — Jen tries it once, sees
+    // nothing, gives up. (Diagnosis: Dave 2026-05-30 staging test reproduced this.)
+    //
+    // Fix: kick off the POST with NO await + NO nav-state passing. The Stage 1 banner now
+    // renders via Dashboard.jsx backfill — Dashboard's existing fetchActiveCritters effect
+    // finds the freshest unviewed non-baseline critter (earned within last 30s) and renders
+    // the banner. Single canonical render path; works for ALL event-creation surfaces
+    // (EventNew + LogMany + ProjectDetail) per Dave directive "fire too often than too little".
+    //
+    // Lambda 204's silently on no-plant_id source events, so this is safe to fire even when
+    // form.plant_id is null — but we still skip the call in that case to avoid wasted RTT.
     if (form.plant_id) {
-      try {
-        const awardP = awardCritter({
-          getToken,
-          sourceEventId: eventId,
-          plantId: form.plant_id,
-          eventCreatedAt: eventDateStr,
-        })
-        const timeoutP = new Promise(r => setTimeout(() => r(null), 1500))
-        const raceResult = await Promise.race([awardP, timeoutP])
-        stage1Critter = raceResult?.critter ?? null
-      } catch {
-        /* awardCritter contract: never throws. Defensive catch is no-op. */
-      }
+      // No await, no race, no try/catch — critterClient.awardCritter NEVER throws.
+      awardCritter({
+        getToken,
+        sourceEventId: eventId,
+        plantId: form.plant_id,
+        eventCreatedAt: eventDateStr,
+      })
     }
 
     // 2 — Upload photo via shared hook (non-fatal — errorMode='swallow')
@@ -561,7 +563,7 @@ export default function EventNew() {
     navigate('/dashboard', {
       replace: true,
       state: {
-        critter: stage1Critter,
+        // Stage 1 critter is now rendered via Dashboard backfill, NOT location state.
         logged: {
           id: eventId,
           project_id:                form.project_id,

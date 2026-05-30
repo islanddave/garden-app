@@ -10,6 +10,7 @@ import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
+import { awardCritter } from '../lib/critterClient.js'
 
 const EVENT_ICONS = {
   sowing:        '🌱',
@@ -66,7 +67,7 @@ function generateSlug(name, startDate) {
 export default function ProjectDetail() {
   const { id }   = useParams()
   const navigate = useNavigate()
-  const { fetch } = useApiFetch()
+  const { fetch, getToken } = useApiFetch()
   // M1 telemetry (Inc 0) — reach_planting. Fire-and-forget.
   const ux = useUxFlow(FLOWS.REACH_PLANTING)
   const reachedRef = useRef(false)
@@ -254,6 +255,15 @@ export default function ProjectDetail() {
           linkage:   { project_id: id, event_id: newEventId },
           is_public: eventForm.is_public,
         })
+      }
+
+      // MVP-Critter Phase B+ (2026-05-30): fire awardCritter() fire-and-forget on every
+      // event create (Dave directive: "fire too often than too little"). ProjectDetail
+      // events are currently project-level (no plant_id) → Lambda 204's silently. Wire
+      // anyway so adding a plant picker later auto-activates the critter flow without
+      // a separate code change. Dashboard backfill renders the freshest active critter.
+      if (newEventId) {
+        awardCritter({ getToken, sourceEventId: newEventId })
       }
 
       setEventForm(emptyEventForm())

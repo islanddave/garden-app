@@ -11,6 +11,7 @@ import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
 import HeadsUpTile from '../components/HeadsUpTile.jsx'
 import NotifyButton from '../components/NotifyButton.jsx'
 import CritterAnnouncement from '../components/CritterAnnouncement.jsx'
+import { fetchActiveCritters } from '../lib/critterClient.js'
 
 // First-name extraction (I10-greeting fix, L-063, 2026-05-18). profile.display_name may be a full
 // name like "Dave Nichols"; we render greetings with first name only.
@@ -81,7 +82,7 @@ function getProjectActivity(p) {
 
 export default function Dashboard() {
   const { profile }       = useAuth()
-  const { fetch: apiFetch } = useApiFetch()
+  const { fetch: apiFetch, getToken } = useApiFetch()
   const { activeZone }    = useZone()
   const location          = useLocation()
   const navigate          = useNavigate()
@@ -173,9 +174,10 @@ export default function Dashboard() {
   useEffect(() => {
     const logged = location.state?.logged
     if (!logged) return
-    // MVP-Critter Stage 1 (Session 2): consume critter passed from EventNew via nav state.
-    // Per revision §3.9 first-critter UI sequence: Stage 1 fires inline (ambient, no overlay).
-    if (location.state?.critter) setStage1Critter(location.state.critter)
+    // MVP-Critter Stage 1 — backfill effect below (`stage1Critter backfill`) is now the
+    // canonical render path. EventNew/LogMany/ProjectDetail all fire awardCritter fire-and-forget;
+    // Dashboard polls fetchActiveCritters and renders the freshest unviewed non-baseline critter
+    // earned within last 30s. Single render path; immune to cold-start latency.
 
     // Refresh dashboard data (cache invalidation pattern — replace React Query in V1.3+).
     let isMounted = true
@@ -216,6 +218,48 @@ export default function Dashboard() {
     return () => { isMounted = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state, loadDashboard, navigate])
+
+  // MVP-Critter Stage 1 — backfill (Phase B+ refactor 2026-05-30, replaces nav-state passing).
+  // Polls /api/critters/active on mount + on every location change. Renders the freshest
+  // unviewed non-baseline critter (species_id > 2 per §3.14) earned within the last 30 seconds,
+  // IF that critter id has not yet been shown this session (sessionStorage de-dup, prevents
+  // re-show on tab refresh or in-app back-nav).
+  //
+  // The 30s window is generous: covers cold-start Lambda latency (2-3s) + nav delay + render.
+  // sessionStorage clears on tab close → next session re-shows if critter is still <30s old
+  // (almost never the case, but defensive).
+  //
+  // Fire-and-forget critterClient.awardCritter from event-create paths means the critter row
+  // appears server-side asynchronously; this backfill catches it whenever it lands.
+  useEffect(() => {
+    let on = true
+    async function backfill() {
+      const list = await fetchActiveCritters({ getToken })
+      if (!on || !Array.isArray(list) || list.length === 0) return
+      const cutoff = Date.now() - 30 * 1000
+      const candidates = list.filter(c => {
+        if (!Number.isInteger(c.species_id) || c.species_id <= 2) return false
+        if (c.viewed_at) return false
+        const t = c.earned_at ? Date.parse(c.earned_at) : NaN
+        return Number.isFinite(t) && t >= cutoff
+      })
+      if (candidates.length === 0) return
+      candidates.sort((a, b) => Date.parse(b.earned_at) - Date.parse(a.earned_at))
+      const freshest = candidates[0]
+      const shownKey = 'gardenApp.stage1ShownIds'
+      let shown = []
+      try { shown = JSON.parse(sessionStorage.getItem(shownKey) ?? '[]') } catch { shown = [] }
+      if (shown.includes(freshest.id)) return
+      setStage1Critter(freshest)
+      try {
+        shown.push(freshest.id)
+        if (shown.length > 50) shown = shown.slice(-50)
+        sessionStorage.setItem(shownKey, JSON.stringify(shown))
+      } catch { /* sessionStorage unavailable / quota — best-effort */ }
+    }
+    backfill()
+    return () => { on = false }
+  }, [getToken, location.pathname, location.state])
 
   // Auto-dismiss undo toast.
   useEffect(() => {
