@@ -6,6 +6,7 @@ import { ModeProvider } from './context/ModeContext.jsx'
 import TopBar from './components/TopBar.jsx'
 import BottomNav from './components/BottomNav.jsx'
 import TodayBand from './components/TodayBand.jsx'
+import CritterArrivalController from './components/CritterArrivalController.jsx'
 import Footer from './components/Footer.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import Login from './pages/Login.jsx'
@@ -154,6 +155,7 @@ function AppRoutes() {
         </div>
         {user && <TodayBand />}
         {user && <BottomNav />}
+        {user && <CritterArrivalController />}
       </ErrorBoundary>
     </BrowserRouter>
   )

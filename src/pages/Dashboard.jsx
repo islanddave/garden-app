@@ -10,8 +10,6 @@ import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
 import HeadsUpTile from '../components/HeadsUpTile.jsx'
 import NotifyButton from '../components/NotifyButton.jsx'
-import CritterAnnouncement from '../components/CritterAnnouncement.jsx'
-import { fetchActiveCritters } from '../lib/critterClient.js'
 
 // First-name extraction (I10-greeting fix, L-063, 2026-05-18). profile.display_name may be a full
 // name like "Dave Nichols"; we render greetings with first name only.
@@ -82,7 +80,7 @@ function getProjectActivity(p) {
 
 export default function Dashboard() {
   const { profile }       = useAuth()
-  const { fetch: apiFetch, getToken } = useApiFetch()
+  const { fetch: apiFetch } = useApiFetch()
   const { activeZone }    = useZone()
   const location          = useLocation()
   const navigate          = useNavigate()
@@ -100,7 +98,6 @@ export default function Dashboard() {
   const [error,         setError]         = useState(null)
   const [streakModalOpen, setStreakModalOpen] = useState(false)
   const [undoState, setUndoState] = useState(null) // { eventId, projectName, expiresAt }
-  const [stage1Critter, setStage1Critter] = useState(null) // MVP-Critter Stage 1 from EventNew nav state
 
   // Pulse trigger keyed on streak value — increments cause animation re-fire.
   const prevStreakRef = useRef(null)
@@ -174,10 +171,9 @@ export default function Dashboard() {
   useEffect(() => {
     const logged = location.state?.logged
     if (!logged) return
-    // MVP-Critter Stage 1 — backfill effect below is the canonical render path.
-    // events Lambda awards critters SERVER-SIDE (Phase B++ refactor 2026-05-30); Dashboard
-    // polls fetchActiveCritters and renders the freshest unviewed non-baseline critter
-    // earned within last 30s. Race-free since the critter row exists before this fetch fires.
+    // MVP-Critter Stage 1 — handled globally by CritterArrivalController mounted at App.jsx.
+    // (Phase B++ reward redesign 2026-05-30: fires on whatever route the user is on at award
+    // time, not gated by Dashboard navigation.)
 
     // Refresh dashboard data (cache invalidation pattern — replace React Query in V1.3+).
     let isMounted = true
@@ -218,48 +214,6 @@ export default function Dashboard() {
     return () => { isMounted = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state, loadDashboard, navigate])
-
-  // MVP-Critter Stage 1 — backfill (Phase B+ refactor 2026-05-30, replaces nav-state passing).
-  // Polls /api/critters/active on mount + on every location change. Renders the freshest
-  // unviewed non-baseline critter (species_id > 2 per §3.14) earned within the last 30 seconds,
-  // IF that critter id has not yet been shown this session (sessionStorage de-dup, prevents
-  // re-show on tab refresh or in-app back-nav).
-  //
-  // The 30s window is generous: covers cold-start Lambda latency (2-3s) + nav delay + render.
-  // sessionStorage clears on tab close → next session re-shows if critter is still <30s old
-  // (almost never the case, but defensive).
-  //
-  // events Lambda awards critters server-side inline with event_log INSERT (Phase B++).
-  // Critter row exists by the time POST /api/events returns, so this backfill is deterministic.
-  useEffect(() => {
-    let on = true
-    async function backfill() {
-      const list = await fetchActiveCritters({ getToken })
-      if (!on || !Array.isArray(list) || list.length === 0) return
-      const cutoff = Date.now() - 30 * 1000
-      const candidates = list.filter(c => {
-        if (!Number.isInteger(c.species_id) || c.species_id <= 2) return false
-        if (c.viewed_at) return false
-        const t = c.earned_at ? Date.parse(c.earned_at) : NaN
-        return Number.isFinite(t) && t >= cutoff
-      })
-      if (candidates.length === 0) return
-      candidates.sort((a, b) => Date.parse(b.earned_at) - Date.parse(a.earned_at))
-      const freshest = candidates[0]
-      const shownKey = 'gardenApp.stage1ShownIds'
-      let shown = []
-      try { shown = JSON.parse(sessionStorage.getItem(shownKey) ?? '[]') } catch { shown = [] }
-      if (shown.includes(freshest.id)) return
-      setStage1Critter(freshest)
-      try {
-        shown.push(freshest.id)
-        if (shown.length > 50) shown = shown.slice(-50)
-        sessionStorage.setItem(shownKey, JSON.stringify(shown))
-      } catch { /* sessionStorage unavailable / quota — best-effort */ }
-    }
-    backfill()
-    return () => { on = false }
-  }, [getToken, location.pathname, location.state])
 
   // Auto-dismiss undo toast.
   useEffect(() => {
@@ -487,14 +441,9 @@ export default function Dashboard() {
         />
       )}
 
-      {/* MVP-Critter Stage 1 (Session 2): ambient inline announcement when an event with
-          plant_id was just logged. Renders nothing when critter is null. Self-fades after 6s.
-          Spec: revision §3.9 (first-critter UI sequence — Stage 1 inline only) + V100 §5. */}
-      {stage1Critter && (
-        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 'calc(var(--bottom-nav-height) + 60px + env(safe-area-inset-bottom))', display: 'flex', justifyContent: 'center', pointerEvents: 'none', zIndex: 50 }}>
-          <CritterAnnouncement critter={stage1Critter} onFade={() => setStage1Critter(null)} />
-        </div>
-      )}
+      {/* MVP-Critter Stage 1 — moved to App.jsx global mount (CritterArrivalController + CritterArrival).
+          Fires on whatever route the user is on at award time (Dave directive 2026-05-30 evening:
+          "shouldn't require navigating to find"). */}
 
       {/* Undo toast (bottom, 5s) */}
       {undoState && <UndoToast state={undoState} onUndo={handleUndo} onDismiss={() => setUndoState(null)} />}

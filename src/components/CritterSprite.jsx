@@ -74,14 +74,16 @@ export default function CritterSprite({
     return () => clearTimeout(t)
   }, [isIntersecting, skipLanding, landingComplete])
 
-  // Clear fade when critter.viewed_at flips from null to a timestamp.
+  // Fade only on faded_at (the formal end-of-life marker — Dave directive 2026-05-30: sprites
+  // must NOT fade based on viewed_at, which only clears the Stage 3 BottomNav dot. Birds
+  // persist on tiles for the full freshness window for visual accumulation/collection feel).
   useEffect(() => {
-    if (critter?.viewed_at && !cleared) {
+    if (critter?.faded_at && !cleared) {
       const t = setTimeout(() => setCleared(true), FADE_MS)
       return () => clearTimeout(t)
     }
     return undefined
-  }, [critter?.viewed_at, cleared])
+  }, [critter?.faded_at, cleared])
 
   // Long-press handlers (works for touch + mouse).
   const startPress = useCallback((e) => {
@@ -137,7 +139,7 @@ export default function CritterSprite({
     ? { opacity: 1, transform: 'scale(1)', transition: 'opacity 600ms ease-out, transform 600ms cubic-bezier(0.34, 1.56, 0.64, 1)' }
     : animStyle
 
-  const fadeStyle = critter.viewed_at
+  const fadeStyle = critter.faded_at
     ? { opacity: 0, transition: `opacity ${FADE_MS}ms ease-out` }
     : {}
 

@@ -170,7 +170,15 @@ export async function awardCrittersForBatch({
   if (!Array.isArray(events) || events.length === 0) return []
   const eligible = events.filter(e => e && e.id && e.plant_id)
   if (eligible.length === 0) return []
-  // One prefs fetch for the whole batch.
+  // SINGLE roll per batch (Dave directive 2026-05-30: "one logging action = one shot at the
+  // reward"). Per V100 §7 burst rule + project CLAUDE.md Reward UX Rule. Deterministic
+  // event selection by sorted id so retries pick the same event (UNIQUE INDEX idempotency
+  // on critter_state.source_event_id makes this safe even on retry).
+  const sortedEligible = [...eligible].sort((a, b) => a.id.localeCompare(b.id))
+  const chosenEvent = sortedEligible[0]
+  // If the batch carried _skip_critter_award on the chosen event (smoke / admin), skip.
+  if (chosenEvent.metadata && chosenEvent.metadata._skip_critter_award === true) return []
+  // One prefs fetch for the (single) award attempt.
   let prefs = null
   let speciesPrefs = {}
   try {
@@ -179,24 +187,18 @@ export async function awardCrittersForBatch({
   } catch (err) {
     console.warn('awardCrittersForBatch prefs fetch failed (using defaults):', err?.message ?? String(err))
   }
-  const results = []
-  for (const e of eligible) {
-    // Per-event skipAward — honors metadata._skip_critter_award marker on the event row.
-    const perEventSkip = e.metadata && (e.metadata._skip_critter_award === true)
-    const row = await awardCritterServer({
-      sql,
-      userId,
-      eventId: e.id,
-      plantId: e.plant_id,
-      eventCreatedAt: e.created_at ?? null,
-      householdId,
-      tzOffsetMin,
-      prefs,
-      speciesPrefs,
-      speciesMultipliers,
-      skipAward: perEventSkip,
-    })
-    if (row) results.push(row)
-  }
-  return results
+  // pickSpecies decides probabilistically — may return null = no critter for this batch.
+  const row = await awardCritterServer({
+    sql,
+    userId,
+    eventId: chosenEvent.id,
+    plantId: chosenEvent.plant_id,
+    eventCreatedAt: chosenEvent.created_at ?? null,
+    householdId,
+    tzOffsetMin,
+    prefs,
+    speciesPrefs,
+    speciesMultipliers,
+  })
+  return row ? [row] : []
 }

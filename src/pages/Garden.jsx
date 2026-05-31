@@ -366,13 +366,15 @@ function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPr
   const variety = pl.variety_ref?.name
   return (
     <div role="treeitem" aria-level={level} style={{ paddingLeft: depth * 20, position: 'relative' }}>
-      {/* MVP-Critter Session 3: in-tile Stage 2 sprites (per §3.26 IO-gated reveal).
-          Rendered as siblings of the Link so they get their own pointer-event surface
-          (long-press without triggering nav). Absolute-positioned top-right of the row. */}
+      {/* MVP-Critter sprites (Stage 2 reveal + persistent accumulation).
+          Phase B++ redesign 2026-05-30 (Dave: "should not obscure text, links, etc on the item"):
+          positioned to peek above the row's top edge near the photo, NOT over the body/status/chevron.
+          Size 22px so multiple birds can sit shoulder-to-shoulder without crowding. zIndex 5 so they
+          stay visible above the row but never block tap targets (Link nav still works underneath). */}
       {critters.length > 0 && (
-        <div style={{ position: 'absolute', top: 4, right: 6, display: 'flex', gap: 4, zIndex: 5 }}>
+        <div style={{ position: 'absolute', top: -10, left: 16, display: 'flex', gap: 2, zIndex: 5, pointerEvents: 'auto' }}>
           {critters.map(c => (
-            <CritterSprite key={c.id} critter={c} onLongPress={onSpriteLongPress} onIntersect={onSpriteIntersect} spriteSize={28} />
+            <CritterSprite key={c.id} critter={c} onLongPress={onSpriteLongPress} onIntersect={onSpriteIntersect} spriteSize={22} />
           ))}
         </div>
       )}
