@@ -215,11 +215,18 @@ export const handler = async (event) => {
     }
 
     // ── Route 2: GET /api/critters/active ───────────────────────────────
+    // species_total_count: lifetime count of this species_id across household (incl. viewed/faded).
+    // Client uses this for the "first sighting" celebration badge (count == 1).
     if (rawPath === '/api/critters/active' && method === 'GET') {
       const rows = await sql`
         SELECT cs.id, cs.species_id, cs.target_kind, cs.target_id, cs.plant_id,
                cs.source_event_id, cs.earned_at, cs.viewed_at, cs.faded_at,
-               cs.dot_visible_after, cs.meta
+               cs.dot_visible_after, cs.meta,
+               (SELECT COUNT(*)::int FROM public.critter_state cs2
+                 WHERE cs2.created_by = ANY(${householdIds})
+                   AND cs2.species_id = cs.species_id
+                   AND cs2.deleted_at IS NULL
+               ) AS species_total_count
           FROM public.critter_state cs
          WHERE cs.created_by = ANY(${householdIds})
            AND cs.faded_at IS NULL
