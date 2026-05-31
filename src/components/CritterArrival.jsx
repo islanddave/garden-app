@@ -48,19 +48,23 @@ export default function CritterArrival({ critter, onDone = null }) {
   const spriteSrc = `/critters/${species.sprite_filename}`
   const speciesName = species.name
   // Stickerbook is per-USER (Dave 2026-05-31): "First sighting!" fires on the user's
-  // personal first-time-seeing-this-species moment, NOT household-first. The household-scoped
-  // count (species_household_count) is plumbed in the Lambda response for a future separate
-  // "Welcome to your garden, first visitor of this kind" surface but is not yet rendered here.
+  // personal first-time-seeing-this-species moment.
   const isFirstSighting = Number.isInteger(critter.species_user_count) && critter.species_user_count === 1
+  // Household-first: when this species has NEVER been earned by anyone in the household before.
+  // Strict subset of user-first (if I've never seen X, household may have via someone else;
+  // if household hasn't, I certainly haven't). Surfaces an EXTRA "🌿 New to your garden!"
+  // badge stacked below the personal one. Only fires when both conditions hold.
+  const isHouseholdFirst = Number.isInteger(critter.species_household_count) && critter.species_household_count === 1
 
   return (
     <div
       role="status"
       aria-live="polite"
-      aria-label={(isFirstSighting ? 'First sighting! ' : '') + speciesName + ' arriving in your garden'}
+      aria-label={(isFirstSighting && isHouseholdFirst ? 'First sighting — new to your garden! ' : isFirstSighting ? 'First sighting! ' : '') + speciesName + ' arriving in your garden'}
       data-testid="critter-arrival"
       data-critter-id={critterId ?? ''}
       data-first-sighting={isFirstSighting ? 'true' : 'false'}
+      data-household-first={isHouseholdFirst ? 'true' : 'false'}
       style={{
         position: 'fixed',
         top: 0, left: 0,
@@ -95,6 +99,13 @@ export default function CritterArrival({ critter, onDone = null }) {
           0%, 30%  { opacity: 0; transform: translate(-50%, 4px) scale(0.85); }
           38%      { opacity: 1; transform: translate(-50%, 0) scale(1.12); }
           46%      { opacity: 1; transform: translate(-50%, 0) scale(1); }
+          88%      { opacity: 1; transform: translate(-50%, 0) scale(1); }
+          100%     { opacity: 0; transform: translate(-50%, -4px) scale(1); }
+        }
+        @keyframes critter-arrival-householdbadge {
+          0%, 40%  { opacity: 0; transform: translate(-50%, 4px) scale(0.85); }
+          50%      { opacity: 1; transform: translate(-50%, 0) scale(1.14); }
+          58%      { opacity: 1; transform: translate(-50%, 0) scale(1); }
           88%      { opacity: 1; transform: translate(-50%, 0) scale(1); }
           100%     { opacity: 0; transform: translate(-50%, -4px) scale(1); }
         }
@@ -165,7 +176,7 @@ export default function CritterArrival({ critter, onDone = null }) {
         {speciesName}
       </div>
 
-      {/* First-sighting badge — second pill below the name, only when count==1 */}
+      {/* First-sighting badge (personal stickerbook) — fires when species_user_count==1 */}
       {isFirstSighting && (
         <div
           data-testid="critter-arrival-first-sighting"
@@ -189,6 +200,36 @@ export default function CritterArrival({ critter, onDone = null }) {
           }}
         >
           ✨ First sighting!
+        </div>
+      )}
+
+      {/* Household-first badge — strict subset of personal-first. Only when species_household_count==1,
+          i.e., no one in the household has ever earned this species before. Stacked below the personal
+          badge, green/garden-themed (vs purple for personal). Staggered to appear ~250ms after the
+          personal badge so the layered celebration reads as escalating recognition. */}
+      {isFirstSighting && isHouseholdFirst && (
+        <div
+          data-testid="critter-arrival-household-first"
+          style={{
+            position: 'absolute',
+            left: '50vw',
+            top: 'calc(38vh + 184px)',
+            transform: 'translate(-50%, 0)',
+            fontSize: '0.95rem',
+            fontWeight: 700,
+            color: '#fff',
+            background: 'linear-gradient(180deg, #6db069 0%, #3d7a3f 100%)',
+            padding: '5px 14px',
+            borderRadius: 999,
+            border: '2px solid rgba(255,255,255,0.5)',
+            boxShadow: '0 4px 16px rgba(61,122,63,0.5), 0 0 14px rgba(180,235,140,0.5)',
+            textShadow: '0 1px 2px rgba(0,0,0,0.25)',
+            whiteSpace: 'nowrap',
+            animation: `critter-arrival-householdbadge ${FLASH_TOTAL_MS}ms ease-out forwards`,
+            pointerEvents: 'none',
+          }}
+        >
+          🌿 New to your garden!
         </div>
       )}
     </div>
