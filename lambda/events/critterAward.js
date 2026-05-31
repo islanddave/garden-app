@@ -110,11 +110,21 @@ export async function awardCritterServer({
   tzOffsetMin = 0,
   prefs = null,
   speciesPrefs = {},
+  speciesMultipliers = {},   // future: season/milestone modulation (V4 blocker)
+  skipAward = false,          // smoke bypass — events Lambda passes true when event.metadata._skip_critter_award is set
 } = {}) {
+  if (skipAward) return null  // explicit caller bypass (smoke / admin)
   if (!plantId) return null  // MVP plant-only scope (§1.1)
   if (!userId || !eventId) return null
   const seed = buildSeed(eventId, eventCreatedAt, householdId ?? userId)
-  const speciesId = pickSpecies(seed, speciesPrefs)
+  // Probabilistic gate (Dave directive 2026-05-30): pickSpecies may return null = "no critter
+  // this event." Variable-ratio reward schedule — ~33% baseline chance, per-species variability
+  // already baked in via SPECIES_POOL.base_probability + opts.speciesMultipliers.
+  const speciesId = pickSpecies(seed, speciesPrefs, { speciesMultipliers })
+  if (speciesId == null) {
+    // Not awarded — by design. Deterministic from seed (same event always rolls the same way).
+    return null
+  }
   const copyVariantId = pickCopyVariant(seed, 10)
   const now = new Date()
   const quietStart = prefs?.quiet_hours_start ?? null
@@ -150,10 +160,13 @@ export async function awardCritterServer({
 export async function awardCrittersForBatch({
   sql,
   userId,
-  events,           // [{ id, plant_id, created_at }, ...]
+  events,                    // [{ id, plant_id, created_at, metadata? }, ...]
   householdId = null,
   tzOffsetMin = 0,
+  speciesMultipliers = {},
+  skipAward = false,
 } = {}) {
+  if (skipAward) return []
   if (!Array.isArray(events) || events.length === 0) return []
   const eligible = events.filter(e => e && e.id && e.plant_id)
   if (eligible.length === 0) return []
@@ -168,6 +181,8 @@ export async function awardCrittersForBatch({
   }
   const results = []
   for (const e of eligible) {
+    // Per-event skipAward — honors metadata._skip_critter_award marker on the event row.
+    const perEventSkip = e.metadata && (e.metadata._skip_critter_award === true)
     const row = await awardCritterServer({
       sql,
       userId,
@@ -178,6 +193,8 @@ export async function awardCrittersForBatch({
       tzOffsetMin,
       prefs,
       speciesPrefs,
+      speciesMultipliers,
+      skipAward: perEventSkip,
     })
     if (row) results.push(row)
   }

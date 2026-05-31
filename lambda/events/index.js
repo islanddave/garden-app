@@ -259,7 +259,7 @@ export const handler = async (event) => {
       // INLINE in the events Lambda (one prefs fetch reused across the whole batch).
       // Replaces the prior client-side fan-out (LogMany iterating event_ids).
       const insertedEvents = await sql`
-        SELECT id, plant_id, created_at FROM event_log
+        SELECT id, plant_id, created_at, metadata FROM event_log
          WHERE metadata->>'batch_id' = ${batchId}::text
            AND created_by = ${userId}
            AND deleted_at IS NULL
@@ -698,7 +698,10 @@ export const handler = async (event) => {
       // it deterministically (no race). Plant-only per MVP §1.1: silent no-op when plant_id null.
       // NEVER throws — internal try/catch + console.warn telemetry per spec §3.10.
       try {
-        if (newEvent.plant_id) {
+        // Smoke / admin can bypass server-side awarding by setting metadata._skip_critter_award: true.
+        // Production frontend NEVER sets this — it lets the hook do its thing.
+        const skipAward = newEvent.metadata && (newEvent.metadata._skip_critter_award === true);
+        if (!skipAward && newEvent.plant_id) {
           const tzOffsetHeader = parseInt(event.headers?.['x-client-tz-offset'] ?? event.headers?.['X-Client-Tz-Offset'] ?? '0', 10);
           // Fetch prefs + species prefs once for this event (cheap; one-row lookups).
           let critterPrefs = null;
@@ -719,6 +722,8 @@ export const handler = async (event) => {
             tzOffsetMin: Number.isFinite(tzOffsetHeader) ? tzOffsetHeader : 0,
             prefs: critterPrefs,
             speciesPrefs,
+            // speciesMultipliers: future season/milestone config (V4 blocker). Empty = use base_probability.
+            speciesMultipliers: {},
           });
         }
       } catch (critterErr) {
