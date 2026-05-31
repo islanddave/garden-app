@@ -91,6 +91,7 @@ export default function FieldCapture() {
       // empty if Web Speech was unsupported / silently failed — recording still
       // queues, and TranscriptReview's "Speak it now" is the redo path).
       await enqueueRecording({ blob, mime, durationMs, transcript, transcriptSource, mode })
+      setExpandedId(null)   // collapse any stale expanded entry; fresh capture shows at top
       await refresh()
     } catch (e) {
       const code = typeof e === 'string' ? e : 'failed'
@@ -245,7 +246,7 @@ export default function FieldCapture() {
             margin: 0, padding: 0, listStyle: 'none',
             display: 'flex', flexDirection: 'column', gap: 6,
           }}>
-            {queue.map((q) => {
+            {queue.slice().reverse().map((q) => {
               const expanded = expandedId === q.id
               return (
                 <li

@@ -266,6 +266,23 @@ describe('FieldCapture (Inc 2 Bite 7 — one-pass capture tile UX)', () => {
     expect(arg.mode).toBe('field')
   })
 
+  it('queue renders newest-first (fresh capture on top, stale empty one sinks)', async () => {
+    const seed = [
+      { id: 'old', kind: 'audio', blob: new Blob(['x']), mime: 'audio/webm', durationMs: 5000,
+        transcript: null, status: 'recorded', capturedAt: '2026-05-31T02:59:00.000Z',
+        transcribeAttempts: 0, transcriptSource: null },
+      { id: 'new', kind: 'audio', blob: new Blob(['y']), mime: 'audio/webm', durationMs: 3000,
+        transcript: 'absolutely love her boots', status: 'transcribed', capturedAt: '2026-05-31T03:51:00.000Z',
+        transcribeAttempts: 1, transcriptSource: 'web-speech' },
+    ]
+    renderAt(MODE.FIELD, { initialList: seed })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const items = screen.getAllByTestId('field-queue-item')
+    // newest (transcribed) first
+    expect(items[0].getAttribute('data-status')).toBe('transcribed')
+    expect(items[1].getAttribute('data-status')).toBe('recorded')
+  })
+
   it('audio tile with a transcript shows the transcript inline (not "Voice (Xs)")', async () => {
     const seed = [{
       id: 'a-1', kind: 'audio', blob: new Blob(['x']), mime: 'audio/webm',
