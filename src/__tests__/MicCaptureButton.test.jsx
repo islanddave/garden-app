@@ -226,6 +226,35 @@ describe('MicCaptureButton (Inc 2 Bite 7 — one-pass capture)', () => {
     expect(onRecorded.mock.calls[0][0].transcriptSource).toBe('web-speech')
   })
 
+  it('interim-only transcript that never finalizes is PRESERVED (empty-transcript bug fix)', async () => {
+    const onRecorded = vi.fn()
+    render(<MicCaptureButton onRecorded={onRecorded} queuedCount={0} />)
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve() })
+    // User speaks; Chrome only ever delivers INTERIM results (no isFinal) for the phrase.
+    act(() => {
+      liveCb.last.onResult({ transcript: 'check the', isFinal: false })
+      liveCb.last.onResult({ transcript: 'check the leeks', isFinal: false })
+    })
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => {
+      liveCb.last.onEnd({ finalTranscript: '' })   // recognizer ends with NO finalized segment
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(onRecorded).toHaveBeenCalledTimes(1)
+    expect(onRecorded.mock.calls[0][0].transcript).toBe('check the leeks')
+    expect(onRecorded.mock.calls[0][0].transcriptSource).toBe('web-speech')
+  })
+
+  it('live transcript is shown on screen while recording', async () => {
+    render(<MicCaptureButton onRecorded={() => {}} queuedCount={0} />)
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve() })
+    act(() => { liveCb.last.onResult({ transcript: 'beans need water', isFinal: false }) })
+    const live = screen.getByTestId('mic-live-transcript')
+    expect(live.textContent).toMatch(/beans need water/)
+  })
+
   it('Web Speech unsupported: recording still works, transcript empty, source null', async () => {
     mockTranscriptionSupported = () => false
     const onRecorded = vi.fn()

@@ -69,14 +69,16 @@ export default function MicCaptureButton({
 }) {
   const [state, setState]       = useState('idle')      // idle | recording | unsupported | denied | no-device | failed
   const [elapsedMs, setElapsed] = useState(0)
+  const [liveText, setLiveText] = useState('')   // interim transcript shown during recording
   const handleRef               = useRef(null)
   const tickRef                 = useRef(null)
   const startedAtRef            = useRef(0)
 
   // Bite 7: live-transcription handle + accumulators for the current capture.
   const liveHandleRef     = useRef(null)
-  const liveTranscriptRef = useRef('')   // latest combined (final + current interim)
+  const liveTranscriptRef = useRef('')   // best-so-far transcript (never shrinks)
   const finalTextRef      = useRef('')   // confirmed final segments only
+  const interimRef        = useRef('')   // latest interim (in-progress) segment
 
   // Bite 7.1: emit coordination — emit only when blob ready AND recognizer done.
   const blobRef        = useRef(null)
@@ -134,6 +136,8 @@ export default function MicCaptureButton({
       : { ...result, transcript: '', transcriptSource: null }
     liveTranscriptRef.current = ''
     finalTextRef.current = ''
+    interimRef.current = ''
+    setLiveText('')
     blobRef.current = null
     blobReadyRef.current = false
     if (onRecorded) onRecorded(enriched)
@@ -145,32 +149,41 @@ export default function MicCaptureButton({
   function startLiveCapture() {
     liveTranscriptRef.current = ''
     finalTextRef.current = ''
+    interimRef.current = ''
+    setLiveText('')
     if (!isTranscriptionSupported()) { recogDoneRef.current = true; return }
     recogDoneRef.current = false
     try {
       liveHandleRef.current = startLiveTranscription({
         languageCode: 'en-US',
         onResult: ({ transcript, isFinal }) => {
-          if (isFinal && transcript) {
-            finalTextRef.current = (finalTextRef.current + ' ' + transcript).trim()
+          // Confirmed segments append to finalText; the in-progress segment lives
+          // in interimRef and is REPLACED by its final when it lands. The combined
+          // view = finalText + current interim. Critically, a trailing interim that
+          // never finalizes is preserved (the empty-transcript bug was dropping it).
+          if (isFinal) {
+            if (transcript) finalTextRef.current = (finalTextRef.current + ' ' + transcript).trim()
+            interimRef.current = ''
+          } else {
+            interimRef.current = transcript || ''
           }
-          // Keep the latest combined view so a read at any moment has content,
-          // even mid-utterance before a final segment lands.
-          const interim = isFinal ? '' : (transcript || '')
-          liveTranscriptRef.current = (finalTextRef.current + ' ' + interim).trim()
+          liveTranscriptRef.current = (finalTextRef.current + ' ' + interimRef.current).trim()
+          setLiveText(liveTranscriptRef.current)   // show words as the user speaks
         },
         onError: () => {
-          // Web Speech failure does NOT block recording. Mark recognizer done so
-          // the capture can emit with whatever (possibly empty) transcript exists.
+          // Web Speech failure does NOT block recording. Keep whatever text we
+          // already captured; mark recognizer done so the capture can emit.
           liveHandleRef.current = null
           recogDoneRef.current = true
           maybeEmit()
         },
         onEnd: ({ finalTranscript }) => {
-          if (finalTranscript && finalTranscript.trim().length > finalTextRef.current.length) {
-            finalTextRef.current = finalTranscript.trim()
-          }
-          liveTranscriptRef.current = finalTextRef.current
+          // transcribe.js's finalTranscript holds only finalized segments. If it's
+          // ahead of our accumulated finals, adopt it; otherwise keep ours + any
+          // trailing interim (so an unfinalized last phrase is never lost).
+          const ft = (finalTranscript || '').trim()
+          if (ft.length > finalTextRef.current.length) finalTextRef.current = ft
+          liveTranscriptRef.current = (finalTextRef.current + ' ' + interimRef.current).trim()
           liveHandleRef.current = null
           recogDoneRef.current = true
           maybeEmit()
@@ -335,6 +348,22 @@ export default function MicCaptureButton({
           }}
         >
           {formatElapsed(elapsedMs)}
+        </div>
+      )}
+
+      {/* Live transcript — words appear as the user speaks (confirms capture,
+          self-diagnosing if the recognizer is silent). */}
+      {isRecording && liveText && (
+        <div
+          data-testid="mic-live-transcript"
+          aria-live="polite"
+          style={{
+            marginTop: 8, maxWidth: 320, textAlign: 'center',
+            fontSize: '0.9rem', color: P.dark, fontStyle: 'italic',
+            lineHeight: 1.3,
+          }}
+        >
+          “{liveText}”
         </div>
       )}
 
