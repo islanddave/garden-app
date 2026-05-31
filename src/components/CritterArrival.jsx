@@ -18,7 +18,7 @@
 // Pointer events: none — taps pass through to underlying UI.
 //
 // Props:
-//   critter — { id, species_id, species_total_count? } — full row from /api/critters/active.
+//   critter — { id, species_id, species_user_count?, species_household_count? } — full row from /api/critters/active.
 //   onDone  — callback when animation completes.
 
 import React, { useEffect, useState } from 'react'
@@ -47,7 +47,11 @@ export default function CritterArrival({ critter, onDone = null }) {
   if (!species) return null
   const spriteSrc = `/critters/${species.sprite_filename}`
   const speciesName = species.name
-  const isFirstSighting = Number.isInteger(critter.species_total_count) && critter.species_total_count === 1
+  // Stickerbook is per-USER (Dave 2026-05-31): "First sighting!" fires on the user's
+  // personal first-time-seeing-this-species moment, NOT household-first. The household-scoped
+  // count (species_household_count) is plumbed in the Lambda response for a future separate
+  // "Welcome to your garden, first visitor of this kind" surface but is not yet rendered here.
+  const isFirstSighting = Number.isInteger(critter.species_user_count) && critter.species_user_count === 1
 
   return (
     <div

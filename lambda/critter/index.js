@@ -215,18 +215,28 @@ export const handler = async (event) => {
     }
 
     // ── Route 2: GET /api/critters/active ───────────────────────────────
-    // species_total_count: lifetime count of this species_id across household (incl. viewed/faded).
-    // Client uses this for the "first sighting" celebration badge (count == 1).
+    // Two lifetime counts per species_id (incl. viewed/faded; excludes soft-deleted):
+    //   species_user_count      — scoped to THIS user (created_by = userId). Drives the
+    //                              "✨ First sighting!" celebration. Stickerbook is per-person
+    //                              per Dave 2026-05-31 (each user collects their own roster).
+    //   species_household_count — scoped to household (ANY(householdIds)). Plumbed but not
+    //                              yet surfaced — reserved for future "Welcome to your garden"
+    //                              household-milestone moment (separate from personal stickerbook).
     if (rawPath === '/api/critters/active' && method === 'GET') {
       const rows = await sql`
         SELECT cs.id, cs.species_id, cs.target_kind, cs.target_id, cs.plant_id,
                cs.source_event_id, cs.earned_at, cs.viewed_at, cs.faded_at,
                cs.dot_visible_after, cs.meta,
                (SELECT COUNT(*)::int FROM public.critter_state cs2
+                 WHERE cs2.created_by = ${userId}
+                   AND cs2.species_id = cs.species_id
+                   AND cs2.deleted_at IS NULL
+               ) AS species_user_count,
+               (SELECT COUNT(*)::int FROM public.critter_state cs2
                  WHERE cs2.created_by = ANY(${householdIds})
                    AND cs2.species_id = cs.species_id
                    AND cs2.deleted_at IS NULL
-               ) AS species_total_count
+               ) AS species_household_count
           FROM public.critter_state cs
          WHERE cs.created_by = ANY(${householdIds})
            AND cs.faded_at IS NULL
