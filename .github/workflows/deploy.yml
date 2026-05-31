@@ -88,6 +88,10 @@ jobs:
           # Brief window where the Achievements page returns runtime error is acceptable—ship-then-wire.
           [[ -n "${VITE_API_ACHIEVEMENTS:-}" ]] || echo "WARN: VITE_API_ACHIEVEMENTS not set — Achievements page will not work until set"
           [[ -n "${VITE_API_UX_EVENTS:-}" ]] || echo "WARN: VITE_API_UX_EVENTS not set — UX telemetry will not flow until set"
+          # VITE_API_CRITTERS — same first-deploy bootstrap (MVP-Critter Phase B ship 2026-05-31).
+          #   Critter Lambda is created automatically on first prod deploy via deploy-lambda.yml.
+          #   Dave then sets vars.VITE_API_CRITTERS to the new Function URL and next deploy bakes it in.
+          [[ -n "${VITE_API_CRITTERS:-}" ]] || echo "WARN: VITE_API_CRITTERS not set — critter rewards will not flow until set"
           [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_live_* ]] || {
             echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY must be pk_live_* for prod (got ${VITE_CLERK_PUBLISHABLE_KEY:0:12}...)"
             exit 1
@@ -106,6 +110,7 @@ jobs:
           VITE_API_VARIETIES:         ${{ vars.VITE_API_VARIETIES }}
           VITE_API_APP_EVENTS:        ${{ vars.VITE_API_APP_EVENTS }}
           VITE_API_ACHIEVEMENTS:      ${{ vars.VITE_API_ACHIEVEMENTS }}
+          VITE_API_CRITTERS:          ${{ vars.VITE_API_CRITTERS }}
           VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
 
       - name: Build
@@ -123,6 +128,7 @@ jobs:
           VITE_API_VARIETIES:         ${{ vars.VITE_API_VARIETIES }}
           VITE_API_APP_EVENTS:        ${{ vars.VITE_API_APP_EVENTS }}
           VITE_API_ACHIEVEMENTS:      ${{ vars.VITE_API_ACHIEVEMENTS }}
+          VITE_API_CRITTERS:          ${{ vars.VITE_API_CRITTERS }}
           VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
 
       - name: Verify build output
