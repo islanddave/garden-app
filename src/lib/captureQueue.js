@@ -133,8 +133,20 @@ function reqToPromise(req) {
 /**
  * Enqueue a recorded audio capture. Returns the stored record (with id).
  */
-export async function enqueueRecording({ blob, mime, durationMs, mode = 'field' } = {}) {
+export async function enqueueRecording({ blob, mime, durationMs, mode = 'field', transcript, transcriptSource } = {}) {
   if (!blob) throw new Error('enqueueRecording: blob required')
+  // Bite 7 (one-pass capture): a transcript may arrive AT creation time when
+  // Web Speech ran alongside the MediaRecorder. When present, the record is
+  // born 'transcribed' — skipping the separate review-time Save step entirely.
+  // Additive + backward-compatible: callers that omit transcript get the
+  // original Bite 4 behavior (status='recorded', no transcript).
+  const hasTranscript = typeof transcript === 'string' && transcript.trim().length > 0
+  const t = hasTranscript ? transcript.trim() : null
+  const src = hasTranscript
+    ? ((transcriptSource === TRANSCRIPT_SOURCE.MANUAL || transcriptSource === TRANSCRIPT_SOURCE.WEB_SPEECH)
+        ? transcriptSource
+        : TRANSCRIPT_SOURCE.WEB_SPEECH)
+    : null
   const db = await openDb()
   try {
     const record = {
@@ -144,14 +156,16 @@ export async function enqueueRecording({ blob, mime, durationMs, mode = 'field' 
       blob,
       mime:               mime || null,
       durationMs:         typeof durationMs === 'number' ? durationMs : null,
-      text:               null,
+      // Mirror transcript -> text for Bite 4 callers reading `text` (same
+      // mirroring setTranscript() does post-hoc).
+      text:               t,
       capturedAt:         nowIso(),
-      status:             STATUS.RECORDED,
+      status:             hasTranscript ? STATUS.TRANSCRIBED : STATUS.RECORDED,
       attemptCount:       0,
-      transcript:         null,
-      transcribedAt:      null,
-      transcribeAttempts: 0,
-      transcriptSource:   null,
+      transcript:         t,
+      transcribedAt:      hasTranscript ? nowIso() : null,
+      transcribeAttempts: hasTranscript ? 1 : 0,
+      transcriptSource:   src,
     }
     await runTx(db, 'readwrite', (store) => reqToPromise(store.add(record)))
     return record

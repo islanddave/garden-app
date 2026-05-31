@@ -14,6 +14,7 @@ import {
 } from '../lib/captureQueue.js'
 import { requestPersistence } from '../lib/durableStorage.js'
 import { onReconnect } from '../lib/reconnect.js'
+import { sendCaptureToClaude } from '../lib/sendCapture.js'
 
 /**
  * src/pages/FieldCapture.jsx
@@ -42,6 +43,7 @@ export default function FieldCapture() {
   const [errorBanner, setErrorBanner] = useState(null)
   const [loading,     setLoading]     = useState(true)
   const [expandedId,  setExpandedId]  = useState(null)
+  const [tileSend,    setTileSend]    = useState(null)  // { id, status, msg }
 
   const refresh = useCallback(async () => {
     try {
@@ -82,10 +84,13 @@ export default function FieldCapture() {
     return <Navigate to="/dashboard" replace />
   }
 
-  async function handleRecorded({ blob, mime, durationMs }) {
+  async function handleRecorded({ blob, mime, durationMs, transcript, transcriptSource }) {
     setErrorBanner(null)
     try {
-      await enqueueRecording({ blob, mime, durationMs, mode })
+      // Bite 7: transcript captured one-pass alongside the recording (may be
+      // empty if Web Speech was unsupported / silently failed — recording still
+      // queues, and TranscriptReview's "Speak it now" is the redo path).
+      await enqueueRecording({ blob, mime, durationMs, transcript, transcriptSource, mode })
       await refresh()
     } catch (e) {
       const code = typeof e === 'string' ? e : 'failed'
@@ -131,6 +136,28 @@ export default function FieldCapture() {
     : code === 'unavailable' ? 'Storage unavailable on this device. Transcript not saved.'
                              : 'Could not save the transcript.'
     )
+  }
+
+  // Bite 7: one-tap Send to Claude directly from a queued tile when a transcript
+  // is already present (the one-pass-capture happy path). Reuses the shared
+  // share -> clipboard -> manual chain via sendCaptureToClaude.
+  async function handleTileSend(entry) {
+    setErrorBanner(null)
+    setTileSend({ id: entry.id, status: 'sending', msg: null })
+    const result = await sendCaptureToClaude(entry, {
+      onError: () => {},
+    })
+    if (result.status === 'error') {
+      setTileSend({ id: entry.id, status: 'error', msg: 'Nothing to send.' })
+    } else if (result.status === 'manual') {
+      setTileSend({ id: entry.id, status: 'manual', msg: 'Could not share or copy automatically. Tap the entry to open it and copy manually.' })
+    } else {
+      setTileSend({
+        id: entry.id, status: 'sent',
+        msg: result.status === 'shared' ? 'Shared — pick Claude to continue.' : 'Copied — paste into Claude.',
+      })
+      await refresh()
+    }
   }
 
   return (
@@ -250,20 +277,68 @@ export default function FieldCapture() {
                       minHeight: 44,
                     }}
                   >
-                    <div>
+                    <div data-testid="field-queue-item-label">
                       <span aria-hidden="true" style={{ marginRight: 6 }}>
                         {q.kind === 'audio' ? '🎤' : '📝'}
                       </span>
+                      {/* Bite 7: when a one-pass transcript is present, show it
+                          inline as the primary label instead of "Voice (Xs)". */}
                       {q.kind === 'audio'
-                        ? `Voice (${q.durationMs ? Math.round(q.durationMs / 100) / 10 : '?'}s)`
+                        ? (q.transcript || `Voice (${q.durationMs ? Math.round(q.durationMs / 100) / 10 : '?'}s)`)
                         : (q.transcript || q.text || '')}
                     </div>
                     <div style={{ fontSize: '0.74rem', color: P.light }}>
                       {q.status}
                       {q.transcript ? ' · transcribed' : ''}
-                      {' · '}{expanded ? 'tap to collapse' : 'tap to transcribe'}
+                      {' · '}{expanded ? 'tap to collapse' : (q.transcript ? 'tap to edit' : 'tap to transcribe')}
                     </div>
                   </button>
+
+                  {/* Bite 7: direct Send-to-Claude on the tile when a transcript
+                      is present and the entry hasn't been handed off yet. No
+                      expand required for the common one-pass-capture path. */}
+                  {q.transcript && q.status !== 'handed_off' && (
+                    <div style={{ padding: '0 12px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <button
+                        type="button"
+                        data-testid="field-queue-item-send"
+                        onClick={() => handleTileSend(q)}
+                        disabled={tileSend && tileSend.id === q.id && tileSend.status === 'sending'}
+                        aria-label="Send to Claude"
+                        style={{
+                          alignSelf: 'flex-start',
+                          padding: '8px 14px',
+                          fontSize: '0.85rem', fontWeight: 700,
+                          color: '#fff', background: '#2d6a4f',
+                          border: '1px solid #2d6a4f', borderRadius: 6,
+                          cursor: 'pointer', minHeight: 44,
+                        }}
+                      >
+                        {tileSend && tileSend.id === q.id && tileSend.status === 'sending'
+                          ? 'Sending…' : 'Send to Claude'}
+                      </button>
+                      {tileSend && tileSend.id === q.id && tileSend.msg && (
+                        <div
+                          data-testid="field-queue-item-send-status"
+                          role={tileSend.status === 'manual' || tileSend.status === 'error' ? 'alert' : 'status'}
+                          style={{
+                            fontSize: '0.78rem', fontWeight: 600,
+                            color: tileSend.status === 'manual' || tileSend.status === 'error' ? P.terra : '#2d6a4f',
+                          }}
+                        >
+                          {tileSend.msg}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {q.status === 'handed_off' && (
+                    <div
+                      data-testid="field-queue-item-handed-off"
+                      style={{ padding: '0 12px 10px', fontSize: '0.78rem', color: P.light }}
+                    >
+                      Sent to Claude.
+                    </div>
+                  )}
                   {expanded && (
                     <div id={`transcript-${q.id}`} style={{ padding: '0 12px 12px' }}>
                       <TranscriptReview

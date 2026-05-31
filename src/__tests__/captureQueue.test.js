@@ -252,3 +252,58 @@ describe('captureQueue (Inc 2 Bite 5 — transcription extension)', () => {
     expect(after.transcribeAttempts).toBe(1)
   })
 })
+
+// ---- Bite 7 (one-pass capture: transcript at creation) -------------------
+
+describe('captureQueue (Inc 2 Bite 7 — enqueueRecording with transcript)', () => {
+  beforeEach(async () => { await resetDb() })
+
+  it('enqueueRecording with transcript is born transcribed (status + attempts + source + transcribedAt)', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({
+      blob, mime: 'audio/webm', durationMs: 2000,
+      transcript: 'tomatoes flowering', transcriptSource: TRANSCRIPT_SOURCE.WEB_SPEECH,
+    })
+    expect(rec.status).toBe(STATUS.TRANSCRIBED)
+    expect(rec.transcript).toBe('tomatoes flowering')
+    expect(rec.text).toBe('tomatoes flowering')            // mirrored for Bite 4 readers
+    expect(rec.transcribeAttempts).toBe(1)
+    expect(rec.transcriptSource).toBe(TRANSCRIPT_SOURCE.WEB_SPEECH)
+    expect(rec.transcribedAt).toBeTruthy()
+  })
+
+  it('enqueueRecording defaults transcriptSource to web-speech when transcript present but source omitted', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100, transcript: 'aphids' })
+    expect(rec.transcriptSource).toBe(TRANSCRIPT_SOURCE.WEB_SPEECH)
+    expect(rec.status).toBe(STATUS.TRANSCRIBED)
+  })
+
+  it('enqueueRecording trims transcript and treats whitespace-only as no transcript', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100, transcript: '   ' })
+    expect(rec.transcript).toBe(null)
+    expect(rec.status).toBe(STATUS.RECORDED)
+    expect(rec.transcribeAttempts).toBe(0)
+    expect(rec.transcriptSource).toBe(null)
+  })
+
+  it('backward-compat: enqueueRecording WITHOUT transcript keeps Bite 4 behavior', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100 })
+    expect(rec.status).toBe(STATUS.RECORDED)
+    expect(rec.transcript).toBe(null)
+    expect(rec.text).toBe(null)
+    expect(rec.transcribeAttempts).toBe(0)
+    expect(rec.transcriptSource).toBe(null)
+  })
+
+  it('Bite 7 durability: one-pass transcript survives close + reopen', async () => {
+    const blob = new Blob(['x'], { type: 'audio/webm' })
+    const rec = await enqueueRecording({ blob, mime: 'audio/webm', durationMs: 100, transcript: 'persisted one-pass' })
+    const fetched = await get(rec.id)
+    expect(fetched.transcript).toBe('persisted one-pass')
+    expect(fetched.status).toBe(STATUS.TRANSCRIBED)
+    expect(fetched.transcribeAttempts).toBe(1)
+  })
+})

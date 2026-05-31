@@ -1,20 +1,30 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { P } from '../lib/constants.js'
 import { startRecording, isAudioCaptureSupported } from '../lib/audioCapture.js'
+import { startLiveTranscription, isTranscriptionSupported } from '../lib/transcribe.js'
 
 /**
  * src/components/MicCaptureButton.jsx
  *
- * Bite 4 of Post-V2 UX overhaul Increment 2: REAL audio capture wired in.
+ * Bite 4: REAL audio capture wired in.
+ * Bite 7 (one-pass capture): Web Speech live transcription now fires ALONGSIDE
+ *   the MediaRecorder, in the SAME user-activation frame as the tap. The user
+ *   speaks ONCE — both the audio blob AND a live transcript are captured. This
+ *   replaces the Bite 5/6 "record, then re-speak into Web Speech at review time"
+ *   flow (Dave 2026-05-31: "There is no reason to record twice.").
  *
- * Replaces Bite 3's stub. iOS landmine: getUserMedia MUST be invoked
- * synchronously in the tap-handler call frame. We achieve this by calling
- * startRecording() directly from onClick (NOT through an async wrapper that
- * awaits before the call).
+ * iOS landmine: BOTH getUserMedia (inside startRecording) AND
+ * webkitSpeechRecognition.start() (inside startLiveTranscription) require the
+ * user-activation gesture. We invoke BOTH synchronously in the click handler
+ * with NO awaited boundary between them. If Web Speech silently fails (iOS
+ * silent-failure, denied, no-speech, unavailable), recording STILL succeeds;
+ * the entry queues without a transcript and TranscriptReview's "Speak it now"
+ * stays as the redo fallback.
  *
- * Two-tap model (chosen over press-and-hold for glove tolerance):
- *   tap 1 → start recording   (button shows "Recording... Tap to stop")
- *   tap 2 → stop recording    → blob handed to onRecorded callback
+ * Two-tap model (glove tolerance):
+ *   tap 1 → start recording + start live transcription
+ *   tap 2 → stop both → { blob, mime, durationMs, transcript, transcriptSource }
+ *           handed to onRecorded.
  *
  * Color-independent state per V100 §7: every state surfaces ICON + LABEL
  * + visible ring/border. Color is one of three signals, never the only one.
@@ -22,11 +32,11 @@ import { startRecording, isAudioCaptureSupported } from '../lib/audioCapture.js'
  * States: idle | recording | unsupported | denied | no-device | failed.
  *
  * Props:
- *   - onRecorded({blob, mime, durationMs})  fires when stop completes
- *   - onError(code)                          fires on capture errors
- *   - queuedCount   number                   from captureQueue.getUnprocessedDepth
- *   - oldestAgeMs   number | null            from captureQueue.getOldestUnprocessedAgeMs
- *   - disabled      boolean                  parent override (e.g., while persisting)
+ *   - onRecorded({blob, mime, durationMs, transcript, transcriptSource})
+ *   - onError(code)
+ *   - queuedCount   number
+ *   - oldestAgeMs   number | null
+ *   - disabled      boolean
  */
 
 function formatAge(ms) {
@@ -58,6 +68,10 @@ export default function MicCaptureButton({
   const tickRef                 = useRef(null)
   const startedAtRef            = useRef(0)
 
+  // Bite 7: live-transcription handle + accumulator for the current capture.
+  const liveHandleRef     = useRef(null)
+  const liveTranscriptRef = useRef('')
+
   // One-shot capability probe on mount (no permission prompt — just feature detection).
   useEffect(() => {
     if (!isAudioCaptureSupported()) setState('unsupported')
@@ -72,10 +86,57 @@ export default function MicCaptureButton({
     return () => { if (tickRef.current) clearInterval(tickRef.current) }
   }, [state])
 
-  // CRITICAL: do NOT await before invoking startRecording. iOS requires the
-  // getUserMedia call to live in the same user-activation frame as the tap.
-  // We invoke startRecording() (which calls getUserMedia internally) directly
-  // from the click handler; the returned Promise is consumed asynchronously.
+  // Cancel any in-flight live recognition on unmount.
+  useEffect(() => {
+    return () => {
+      if (liveHandleRef.current) {
+        try { liveHandleRef.current.cancel() } catch {}
+        liveHandleRef.current = null
+      }
+    }
+  }, [])
+
+  function cancelLive() {
+    if (liveHandleRef.current) {
+      try { liveHandleRef.current.cancel() } catch {}
+      liveHandleRef.current = null
+    }
+  }
+
+  // Bite 7: start live transcription in the SAME synchronous frame as the tap.
+  // Best-effort — any failure is swallowed here; the recorded audio remains the
+  // source of truth and the review-time "Speak it now" redo covers misses.
+  function startLiveCapture() {
+    liveTranscriptRef.current = ''
+    if (!isTranscriptionSupported()) return
+    try {
+      liveHandleRef.current = startLiveTranscription({
+        languageCode: 'en-US',
+        onResult: ({ transcript, isFinal }) => {
+          if (isFinal && transcript) {
+            liveTranscriptRef.current = (liveTranscriptRef.current + ' ' + transcript).trim()
+          }
+        },
+        onError: () => {
+          // Web Speech failure does NOT block recording. Drop the handle and
+          // leave whatever transcript accumulated (possibly empty).
+          liveHandleRef.current = null
+        },
+        onEnd: ({ finalTranscript }) => {
+          if (finalTranscript && finalTranscript.length > liveTranscriptRef.current.length) {
+            liveTranscriptRef.current = finalTranscript.trim()
+          }
+          liveHandleRef.current = null
+        },
+      })
+    } catch {
+      liveHandleRef.current = null
+    }
+  }
+
+  // CRITICAL: do NOT await before invoking startRecording / startLiveTranscription.
+  // iOS requires both getUserMedia and recognition.start() to live in the same
+  // user-activation frame as the tap. We invoke both synchronously here.
   function handleClick() {
     if (disabled) return
     if (state === 'recording') {
@@ -87,14 +148,20 @@ export default function MicCaptureButton({
     // Reset transient error states so the button is clickable again
     if (state !== 'idle') setState('idle')
 
-    // Synchronous invocation in the user-activation frame.
+    // Synchronous invocation in the user-activation frame — BOTH APIs, no await
+    // between them. startRecording() returns a promise; startLiveTranscription()
+    // is fully synchronous (calls recognition.start() inline).
     const p = startRecording()
+    startLiveCapture()
+
     p.then((handle) => {
       handleRef.current = handle
       startedAtRef.current = Date.now()
       setElapsed(0)
       setState('recording')
     }).catch((code) => {
+      // Recording failed to start — abandon the live recognizer too.
+      cancelLive()
       const errCode = (typeof code === 'string') ? code : 'failed'
       setState(errCode === 'denied' ? 'denied'
               : errCode === 'no-device' ? 'no-device'
@@ -106,14 +173,26 @@ export default function MicCaptureButton({
 
   function stopAndEmit() {
     const h = handleRef.current
+    // Stop live transcription first (sync). Transcript already accumulated in
+    // liveTranscriptRef via onResult; onEnd may append a final flush.
+    if (liveHandleRef.current) {
+      try { liveHandleRef.current.stop() } catch {}
+      liveHandleRef.current = null
+    }
     if (!h) { setState('idle'); return }
     h.stop().then((result) => {
       handleRef.current = null
       setState('idle')
       setElapsed(0)
-      if (onRecorded) onRecorded(result)
+      const transcript = (liveTranscriptRef.current || '').trim()
+      const enriched = transcript.length > 0
+        ? { ...result, transcript, transcriptSource: 'web-speech' }
+        : { ...result, transcript: '', transcriptSource: null }
+      liveTranscriptRef.current = ''
+      if (onRecorded) onRecorded(enriched)
     }).catch((code) => {
       handleRef.current = null
+      liveTranscriptRef.current = ''
       setState('failed')
       setElapsed(0)
       if (onError) onError(typeof code === 'string' ? code : 'failed')

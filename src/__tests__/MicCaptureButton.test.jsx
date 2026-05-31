@@ -10,6 +10,17 @@ vi.mock('../lib/audioCapture.js', () => ({
   startRecording: () => mockStartImpl(),
 }))
 
+// Bite 7: controllable Web Speech mock — fires alongside the recorder.
+let mockTranscriptionSupported = () => true
+const liveCb = { last: null }
+const mockStartLive = vi.fn((opts) => { liveCb.last = opts; return { stop: vi.fn(), cancel: vi.fn() } })
+vi.mock('../lib/transcribe.js', () => ({
+  isTranscriptionSupported: () => mockTranscriptionSupported(),
+  startLiveTranscription:   (opts) => mockStartLive(opts),
+  START_TIMEOUT_MS: 3500,
+  NO_SPEECH_TIMEOUT_MS: 8000,
+}))
+
 import MicCaptureButton from '../components/MicCaptureButton.jsx'
 
 function makeHandle({ stopResult = { blob: new Blob(['x']), mime: 'audio/webm', durationMs: 1234 }, stopFails = false } = {}) {
@@ -24,6 +35,9 @@ describe('MicCaptureButton (Inc 2 Bite 4 — real recorder)', () => {
   beforeEach(() => {
     mockSupportedImpl = () => true
     mockStartImpl = () => Promise.resolve(makeHandle())
+    mockTranscriptionSupported = () => true
+    mockStartLive.mockClear()
+    liveCb.last = null
   })
 
   it('idle state: aria-label = "Start voice capture"', () => {
@@ -132,5 +146,95 @@ describe('MicCaptureButton (Inc 2 Bite 4 — real recorder)', () => {
   it('disabled prop overrides idle state', () => {
     render(<MicCaptureButton onRecorded={() => {}} queuedCount={0} disabled />)
     expect(screen.getByTestId('mic-capture-button').disabled).toBe(true)
+  })
+})
+
+describe('MicCaptureButton (Inc 2 Bite 7 — one-pass capture)', () => {
+  beforeEach(() => {
+    mockSupportedImpl = () => true
+    mockStartImpl = () => Promise.resolve(makeHandle())
+    mockTranscriptionSupported = () => true
+    mockStartLive.mockClear()
+    liveCb.last = null
+  })
+
+  it('tap fires live transcription ALONGSIDE recording (same gesture frame)', async () => {
+    render(<MicCaptureButton onRecorded={() => {}} queuedCount={0} />)
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    // startLiveTranscription must be called synchronously in the click frame,
+    // before any awaited boundary.
+    expect(mockStartLive).toHaveBeenCalledTimes(1)
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByTestId('mic-capture-button').getAttribute('data-state')).toBe('recording')
+  })
+
+  it('accumulated transcript is passed through onRecorded on stop', async () => {
+    const onRecorded = vi.fn()
+    render(<MicCaptureButton onRecorded={onRecorded} queuedCount={0} />)
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve() })
+    // Simulate Web Speech delivering two final chunks during recording.
+    act(() => {
+      liveCb.last.onResult({ transcript: 'tomatoes are', isFinal: true })
+      liveCb.last.onResult({ transcript: 'flowering', isFinal: true })
+    })
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(onRecorded).toHaveBeenCalledTimes(1)
+    const arg = onRecorded.mock.calls[0][0]
+    expect(arg.transcript).toBe('tomatoes are flowering')
+    expect(arg.transcriptSource).toBe('web-speech')
+    expect(arg.blob).toBeTruthy()
+  })
+
+  it('interim (non-final) results are ignored in the accumulator', async () => {
+    const onRecorded = vi.fn()
+    render(<MicCaptureButton onRecorded={onRecorded} queuedCount={0} />)
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve() })
+    act(() => {
+      liveCb.last.onResult({ transcript: 'partial guess', isFinal: false })
+      liveCb.last.onResult({ transcript: 'aphids', isFinal: true })
+    })
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(onRecorded.mock.calls[0][0].transcript).toBe('aphids')
+  })
+
+  it('Web Speech unsupported: recording still works, transcript empty, source null', async () => {
+    mockTranscriptionSupported = () => false
+    const onRecorded = vi.fn()
+    render(<MicCaptureButton onRecorded={onRecorded} queuedCount={0} />)
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve() })
+    expect(mockStartLive).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(onRecorded).toHaveBeenCalledTimes(1)
+    expect(onRecorded.mock.calls[0][0].transcript).toBe('')
+    expect(onRecorded.mock.calls[0][0].transcriptSource).toBe(null)
+  })
+
+  it('Web Speech error mid-recording does NOT block the recording / onRecorded', async () => {
+    const onRecorded = vi.fn()
+    render(<MicCaptureButton onRecorded={onRecorded} queuedCount={0} />)
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve() })
+    act(() => { liveCb.last.onError('silent-failure') })
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(onRecorded).toHaveBeenCalledTimes(1)
+    expect(onRecorded.mock.calls[0][0].transcript).toBe('')
+    expect(onRecorded.mock.calls[0][0].blob).toBeTruthy()
+  })
+
+  it('recording start failure cancels the live recognizer (cancel called)', async () => {
+    mockStartImpl = () => Promise.reject('denied')
+    const cancel = vi.fn()
+    mockStartLive.mockImplementationOnce((opts) => { liveCb.last = opts; return { stop: vi.fn(), cancel } })
+    render(<MicCaptureButton onRecorded={() => {}} onError={() => {}} queuedCount={0} />)
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve() })
+    expect(cancel).toHaveBeenCalledTimes(1)
   })
 })
