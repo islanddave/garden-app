@@ -1,68 +1,69 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../lib/constants.js'
-import { setTranscript, incrementTranscribeAttempt, TRANSCRIPT_SOURCE } from '../lib/captureQueue.js'
+import {
+  setTranscript,
+  incrementTranscribeAttempt,
+  markHandedOff,
+  TRANSCRIPT_SOURCE,
+} from '../lib/captureQueue.js'
 import {
   isTranscriptionSupported,
   startLiveTranscription,
   START_TIMEOUT_MS,
   NO_SPEECH_TIMEOUT_MS,
 } from '../lib/transcribe.js'
+import { assembleFromEntry } from '../lib/helperPrompt.js'
 
 /**
  * src/components/TranscriptReview.jsx
  *
- * Bite 5: per-capture transcript review surface. Renders inline inside
- * FieldCapture's queue list when a user taps an audio capture to expand it.
+ * Bite 5: per-capture transcript review surface (audio playback, manual textarea,
+ *   conditional "Speak it now" live Web Speech CTA, manual save via setTranscript).
+ * Bite 6: "Send to Claude" CTA closes the loop — assembles a Rung-1 helper prompt
+ *   from the entry (transcript or text) via helperPrompt.assembleFromEntry, then
+ *   runs the navigator.share -> clipboard -> manual-copy fallback chain (reused
+ *   byte-for-byte from Bite 1's GardenHelper.jsx). On success, captureQueue
+ *   markHandedOff(id) is called so the entry transitions out of the unprocessed
+ *   queue.
  *
- * Two transcript paths:
- *   1. MANUAL (always available). Textarea pre-populated with any existing
- *      transcript; "Type what you said" placeholder otherwise. Save commits
- *      via captureQueue.setTranscript({source: 'manual'}).
- *   2. LIVE WEB SPEECH (conditional). If isTranscriptionSupported(), a "Speak
- *      it now" button starts a live recognition session. Interim results
- *      stream into the textarea; final results commit on stop. iOS silent
- *      failure (the start watchdog firing) and no-speech timeout both flip
- *      the surface to the manual-fallback message and increment
- *      transcribeAttempts.
- *
- * State (5 visually-distinct values, color-INDEPENDENT per V100 §7):
- *   - 'idle'             : not transcribing, textarea editable
- *   - 'transcribing'     : Web Speech live recognition active
- *   - 'transcribed'      : transcript saved to queue (just now)
- *   - 'silent-fallback'  : Web Speech .start() never fired any event;
- *                          surface explains "couldn't transcribe -- type it"
- *   - 'failed'           : Web Speech denied / no-device / no-speech / failed
- *
- * Each state surfaces distinct text labels + button-disabled + ARIA roles +
- * data-state attribute, NEVER color alone.
+ * State machine (6 color-INDEPENDENT values per V100 §7):
+ *   - 'idle'              : not transcribing, textarea editable
+ *   - 'transcribing'      : Web Speech live recognition active
+ *   - 'transcribed'       : transcript saved to queue (just now)
+ *   - 'silent-fallback'   : Web Speech .start() never fired any event
+ *   - 'failed'            : Web Speech denied / no-device / no-speech / failed
+ *   - 'handed-off'        : Bite 6 — prompt successfully shared or copied to clipboard
  *
  * Operational surface, not reward. No celebrations / badges / streaks.
  *
  * Props:
- *   entry            (required) -- the queue record
- *   onTranscriptSaved (optional) -- fired after a successful setTranscript
- *   onError          (optional) -- fired on captureQueue errors with the code
- *   isTranscriptionSupported (optional, test-only) -- inject for deterministic
- *                                                    test of the Web Speech CTA
- *
- * For text entries (kind === 'text'), the textarea pre-populates with the
- * original text; Save converts it into a transcript (status -> 'transcribed',
- * transcriptSource='manual'). This matches the design that text-tap captures
- * and audio captures both end up as transcript-text by handoff time.
+ *   entry             (required)  -- the queue record
+ *   onTranscriptSaved (optional)  -- fired after a successful setTranscript
+ *   onHandedOff       (optional)  -- fired after a successful markHandedOff (Bite 6)
+ *   onError           (optional)  -- fired on captureQueue / share errors with the code
+ *   isTranscriptionSupported (optional, test-only) -- inject for deterministic test
  */
 export default function TranscriptReview({
   entry,
   onTranscriptSaved,
+  onHandedOff,
   onError,
   isTranscriptionSupported: isSupportedInjected,
 }) {
   const isAudio = entry?.kind === 'audio'
   const seedTranscript = entry?.transcript || (isAudio ? '' : (entry?.text || ''))
+  const initialHandedOff = entry?.status === 'handed_off'
 
   const [draft,    setDraft]    = useState(seedTranscript)
-  const [state,    setState]    = useState(entry?.status === 'transcribed' ? 'transcribed' : 'idle')
-  const [feedback, setFeedback] = useState(null)
-  const [saving,   setSaving]   = useState(false)
+  const [state,    setState]    = useState(
+    initialHandedOff             ? 'handed-off'
+  : entry?.status === 'transcribed' ? 'transcribed'
+                                 : 'idle'
+  )
+  const [feedback,    setFeedback]    = useState(null)
+  const [saving,      setSaving]      = useState(false)
+  const [sending,     setSending]     = useState(false)
+  const [sendStatus,  setSendStatus]  = useState(null)  // 'shared' | 'copied' | 'manual' | 'error'
 
   const liveHandleRef = useRef(null)
   const audioUrlRef   = useRef(null)
@@ -72,7 +73,6 @@ export default function TranscriptReview({
     return isTranscriptionSupported()
   }, [isSupportedInjected])
 
-  // Audio playback URL — only for kind='audio' with a Blob.
   const audioUrl = useMemo(() => {
     if (!isAudio || !entry?.blob) return null
     try {
@@ -103,6 +103,7 @@ export default function TranscriptReview({
       case 'transcribed':     return 'Transcript saved.'
       case 'silent-fallback': return 'Couldn’t transcribe -- type what you said below.'
       case 'failed':          return feedback || 'Voice transcription failed. Type it below.'
+      case 'handed-off':      return 'Sent to Claude. Paste into Claude when you’re ready.'
       default:                return null
     }
   }
@@ -134,9 +135,6 @@ export default function TranscriptReview({
     }
   }
 
-  // Live Web Speech transcription. MUST be invoked synchronously in the click
-  // handler frame -- no awaited boundary before startLiveTranscription -- so
-  // iOS honors the user-activation gesture.
   function handleSpeakItNow() {
     if (state === 'transcribing') return
     setFeedback(null)
@@ -152,14 +150,12 @@ export default function TranscriptReview({
           accumulated = (accumulated + ' ' + transcript).trim()
           setDraft(accumulated)
         } else {
-          // Interim — preview in textarea but don't commit yet.
           const preview = (accumulated + ' ' + transcript).trim()
           setDraft(preview)
         }
       },
       onError: (code) => {
         liveHandleRef.current = null
-        // Count this as an attempt for visibility.
         incrementTranscribeAttempt(entry.id).catch(() => {})
         if (code === 'silent-failure') {
           setState('silent-fallback')
@@ -174,7 +170,6 @@ export default function TranscriptReview({
           setState('failed')
           setFeedback('Voice transcription not available on this device. Type it below.')
         } else if (code === 'aborted') {
-          // User stopped before any error — go back to idle without complaining.
           setState((s) => (s === 'transcribing' ? 'idle' : s))
         } else {
           setState('failed')
@@ -186,7 +181,6 @@ export default function TranscriptReview({
         if (finalTranscript && finalTranscript.length > 0) {
           setDraft((cur) => cur || finalTranscript)
         }
-        // Settle to idle so the user can edit + save.
         setState((s) => (s === 'transcribing' ? 'idle' : s))
       },
     })
@@ -199,10 +193,109 @@ export default function TranscriptReview({
     }
   }
 
+  /**
+   * Bite 6: Send to Claude. Assembles a Helper Prompt from the entry (or the
+   * current draft if the user is composing manually) and runs the share/clipboard
+   * fallback chain from Bite 1. On success, marks the queue entry handed_off so
+   * the field-capture queue depth drops by one.
+   */
+  async function handleSendToClaude() {
+    if (sending) return
+    setSendStatus(null)
+
+    // Always use the textarea draft as source of truth. It's seeded from entry.transcript
+    // (or entry.text) on mount, so the initial state captures whatever was saved. User edits
+    // move the draft, and Send uses what's visible in the textarea -- no silent divergence.
+    const text = (draft ?? '').toString().trim()
+    if (text.length === 0) {
+      setSendStatus('error')
+      setFeedback('Add a transcript first, then send.')
+      return
+    }
+    // Build the prompt from the latest content (use draft if user edited but hasn't saved).
+    const sendEntry = { ...entry, transcript: text }
+    const prompt = assembleFromEntry(sendEntry)
+    if (!prompt) {
+      setSendStatus('error')
+      setFeedback('Nothing to send.')
+      return
+    }
+
+    setSending(true)
+    setFeedback(null)
+
+    let delivered = false
+    let deliveredAs = null  // 'shared' | 'copied' | 'manual'
+
+    // 1. navigator.share — mobile share-sheet → user picks Claude
+    if (!delivered
+        && typeof navigator !== 'undefined'
+        && typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ text: prompt })
+        delivered = true
+        deliveredAs = 'shared'
+      } catch (err) {
+        // AbortError (user dismissed sheet) or share failure → fall through to clipboard.
+      }
+    }
+
+    // 2. navigator.clipboard.writeText fallback — desktop / share-unsupported
+    if (!delivered
+        && typeof navigator !== 'undefined'
+        && navigator.clipboard
+        && typeof navigator.clipboard.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText(prompt)
+        delivered = true
+        deliveredAs = 'copied'
+      } catch {
+        // Continue to manual-copy fallback below.
+      }
+    }
+
+    // 3. Manual-copy fallback — surface the prompt in feedback so user can long-press copy.
+    //    Not "delivered" in the success sense but not "error" either — the user can act.
+    if (!delivered) {
+      setSendStatus('manual')
+      setFeedback('Could not share or copy automatically. Long-press the textarea to copy your transcript and paste it into Claude.')
+      setSending(false)
+      return
+    }
+
+    // 4. Mark handed_off so the queue depth drops + the entry transitions out of unprocessed.
+    try {
+      await markHandedOff(entry.id)
+      setState('handed-off')
+      setSendStatus(deliveredAs)
+      if (typeof onHandedOff === 'function') onHandedOff(entry.id)
+    } catch (e) {
+      // Delivery succeeded but state-update failed. Surface as advisory; don't undo the share.
+      const code = typeof e === 'string' ? e : 'failed'
+      setSendStatus(deliveredAs)
+      setFeedback(`Sent — but couldn’t update the queue (${code}). You may see this entry again until storage recovers.`)
+      if (typeof onError === 'function') onError(code)
+    } finally {
+      setSending(false)
+    }
+  }
+
   const isTranscribing = state === 'transcribing'
-  const saveDisabled = saving || isTranscribing || draft.trim().length === 0
-  const showSpeakNow = isAudio && supported && state !== 'transcribing' && state !== 'transcribed'
+  const isHandedOff = state === 'handed-off'
+  const saveDisabled = saving || isTranscribing || isHandedOff || draft.trim().length === 0
+  const showSpeakNow = isAudio && supported && state !== 'transcribing' && state !== 'transcribed' && !isHandedOff
   const showStopNow  = isTranscribing
+  // Send-to-Claude visible whenever there is any content to send AND not currently handed-off.
+  const hasContent = (draft ?? '').toString().trim().length > 0
+  const showSendToClaude = hasContent && !isTranscribing && !isHandedOff
+  const sendDisabled = sending || !hasContent
+
+  const sendStatusLabel =
+      sendStatus === 'shared' ? 'Shared — pick Claude to continue.'
+    : sendStatus === 'copied' ? 'Copied — paste into Claude.'
+    : sendStatus === 'manual' ? null  // feedback already explains the manual path
+    : sendStatus === 'error'  ? null
+    :                            null
 
   return (
     <div
@@ -256,10 +349,10 @@ export default function TranscriptReview({
         id={`tr-draft-${entry?.id}`}
         data-testid="transcript-draft"
         value={draft}
-        onChange={(e) => { setDraft(e.target.value); if (state === 'transcribed') setState('idle') }}
+        onChange={(e) => { setDraft(e.target.value); if (state === 'transcribed') setState('idle'); setSendStatus(null) }}
         placeholder={isAudio ? 'Type what you said…' : 'Edit your note…'}
         rows={3}
-        disabled={isTranscribing}
+        disabled={isTranscribing || isHandedOff}
         style={{
           width: '100%',
           padding: 8,
@@ -332,18 +425,65 @@ export default function TranscriptReview({
             borderRadius: 6,
             cursor: saveDisabled ? 'not-allowed' : 'pointer',
             minHeight: 44,
-            marginLeft: 'auto',
           }}
         >
           {state === 'transcribed' ? 'Saved' : 'Save transcript'}
         </button>
+
+        {showSendToClaude && (
+          <button
+            type="button"
+            data-testid="transcript-send-to-claude"
+            onClick={handleSendToClaude}
+            disabled={sendDisabled}
+            aria-label="Send to Claude"
+            style={{
+              padding: '8px 14px',
+              fontSize: '0.88rem',
+              fontWeight: 700,
+              color: '#fff',
+              background: sendDisabled ? P.light : '#2d6a4f',
+              border: `1px solid ${sendDisabled ? P.light : '#2d6a4f'}`,
+              borderRadius: 6,
+              cursor: sendDisabled ? 'not-allowed' : 'pointer',
+              minHeight: 44,
+              marginLeft: 'auto',
+            }}
+          >
+            {sending ? 'Sending…' : 'Send to Claude'}
+          </button>
+        )}
       </div>
 
-      {feedback !== null && state !== 'silent-fallback' && state !== 'failed' && (
+      {sendStatusLabel !== null && (
+        <div
+          data-testid="transcript-send-status"
+          role="status"
+          style={{ fontSize: '0.82rem', color: '#2d6a4f', fontWeight: 600 }}
+        >
+          {sendStatusLabel}
+        </div>
+      )}
+
+      {feedback !== null
+        && state !== 'silent-fallback'
+        && state !== 'failed'
+        && sendStatus !== 'manual'
+        && (
         <div
           data-testid="transcript-feedback"
           role="status"
           style={{ fontSize: '0.78rem', color: P.light }}
+        >
+          {feedback}
+        </div>
+      )}
+
+      {sendStatus === 'manual' && feedback !== null && (
+        <div
+          data-testid="transcript-manual-fallback"
+          role="alert"
+          style={{ fontSize: '0.82rem', color: P.terra, fontWeight: 600 }}
         >
           {feedback}
         </div>

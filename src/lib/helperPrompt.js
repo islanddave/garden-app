@@ -1,13 +1,10 @@
 // helperPrompt.js — Rung-1 advisory Garden Helper Prompt template.
 //
 // Bite 1 of Post-V2 UX overhaul Increment 2 (Field quick-capture + Rung-1 helper-prompt).
-// Spec: postv2-ux-overhaul-phase2-build-roadmap-V001 §4 Increment 2 (Rung-1 advisory).
-// Decomposition: postv2-ux-overhaul-inc2-bite-decomposition-V001-20260528.1145.md.
-//
-// Purpose: assemble a Claude-ready prompt string that wraps untrusted user input in a
-// delimited fence (the C4 untrusted-data-fence pattern). Bite 6 reuses this same
-// function for the audio-derived transcript path — transcript-in vs typed-in are
-// byte-identical from the fence inward; no fence redesign in Increment 2.
+// Bite 6 extension: assembleFromEntry() entry point for field-path handoff (audio-derived
+// transcript or text-fallback). Same C4 untrusted-data-fence pattern reused byte-for-byte;
+// no fence redesign in Increment 2. Transcript-in vs typed-in collapse into the same
+// prompt format from the fence inward.
 //
 // NON-RECORDING SCAFFOLD: this module is pure client-side string assembly. No DB
 // writes, no Lambda calls, no network IO. Documented as advisory only per Dave-call
@@ -40,6 +37,27 @@ export function assembleHelperPrompt(userText) {
     '',
     TRAILER,
   ].join('\n')
+}
+
+/**
+ * Bite 6: assemble a Helper Prompt from a captureQueue entry (audio with transcript,
+ * or text). Returns the assembled prompt string ready for navigator.share / clipboard.
+ *
+ * Field-path UX: voice captures arrive with `transcript` set (manual or web-speech);
+ * text captures arrive with `text` set. We pick whichever is present, in that priority:
+ *   1. entry.transcript (canonical Bite 5 field, populated for both audio + text after Save)
+ *   2. entry.text       (Bite 4 fallback for text-kind entries that haven't been "Saved"
+ *                        through TranscriptReview yet, AND the back-compat mirror set by
+ *                        Bite 5 setTranscript() for any saved-transcript record)
+ *   3. ''               (defensive — caller should disable the CTA when no content)
+ *
+ * Returns null if no usable content present (caller should treat as "nothing to send").
+ */
+export function assembleFromEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null
+  const content = (entry.transcript ?? entry.text ?? '').toString().trim()
+  if (content.length === 0) return null
+  return assembleHelperPrompt(content)
 }
 
 export const HELPER_PROMPT_FENCE = { open: FENCE_OPEN, close: FENCE_CLOSE }
