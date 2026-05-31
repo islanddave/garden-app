@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
 import { formatQty } from '../lib/format.js'
-import { hapticShort } from '../lib/haptic.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
@@ -281,7 +280,7 @@ export default function EventNew() {
   const [searchParams] = useSearchParams()
   const preselectedProjectId = searchParams.get('project') || ''
   const preselectedEventType = searchParams.get('event_type') || ''
-  const { fetch: apiFetch } = useApiFetch()
+  const { fetch: apiFetch, getToken } = useApiFetch()
   // M1 telemetry (Inc 0) — log_watering flow. Only counts when the event is a watering.
   // Fire-and-forget; never affects the save flow.
   const ux = useUxFlow(FLOWS.LOG_WATERING)
@@ -511,7 +510,14 @@ export default function EventNew() {
 
     // V1.2a-1 Lambda 2.1.x response shape: event_row fields at top level + updated_streak / xp_gained / newly_earned_achievements / daily_xp_remaining.
     const { id: eventId, updated_streak, xp_gained, newly_earned_achievements } = result
-    hapticShort() // V002 §C-V1.2a-1-D: log save haptic
+    // V-4 removed (reward-ux-conformance-audit V001 §V-4, ratified jolly-fervent-ritchie):
+    // log-save haptic was a banned channel on a reward-signal path. Save still completes.
+
+    // MVP-Critter Stage 1 — server-side hook (Phase B++ refactor 2026-05-30, replaces
+    // client-side awardCritter). The events Lambda awards the critter inline in the same
+    // POST /api/events transaction; critter_state row exists by the time this response
+    // arrives. Dashboard backfill on the next navigate finds it deterministically.
+    // No race, no per-surface wiring.
 
     // 2 — Upload photo via shared hook (non-fatal — errorMode='swallow')
     // The hook runs the same 3-step presign → S3 PUT → POST /api/photos dance.
@@ -538,6 +544,7 @@ export default function EventNew() {
     navigate('/dashboard', {
       replace: true,
       state: {
+        // Stage 1 critter is now rendered via Dashboard backfill, NOT location state.
         logged: {
           id: eventId,
           project_id:                form.project_id,

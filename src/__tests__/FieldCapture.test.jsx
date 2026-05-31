@@ -14,6 +14,7 @@ const mockOldest = vi.fn(async () => null)
 const mockPersist = vi.fn(async () => ({ supported: true, granted: true }))
 const mockSetTranscript = vi.fn(async (args) => ({ id: args.id, transcript: args.transcript, status: 'transcribed' }))
 const mockIncTranscribeAttempt = vi.fn(async () => ({}))
+const mockMarkHandedOff = vi.fn(async (id) => ({ id, status: 'handed_off' }))
 let mockOnReconnectCb = null
 
 vi.mock('../lib/captureQueue.js', () => ({
@@ -24,6 +25,7 @@ vi.mock('../lib/captureQueue.js', () => ({
   getOldestUnprocessedAgeMs:() => mockOldest(),
   setTranscript:            (...args) => mockSetTranscript(...args),
   incrementTranscribeAttempt:(...args) => mockIncTranscribeAttempt(...args),
+  markHandedOff:            (...args) => mockMarkHandedOff(...args),
   STATUS: { QUEUED: 'queued', RECORDED: 'recorded', TRANSCRIBED: 'transcribed', HANDED_OFF: 'handed_off' },
   KIND: { AUDIO: 'audio', TEXT: 'text' },
   TRANSCRIPT_SOURCE: { MANUAL: 'manual', WEB_SPEECH: 'web-speech' },
@@ -222,5 +224,129 @@ describe('FieldCapture (Inc 2 Bite 5 — TranscriptReview wiring)', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('transcript-save')); await Promise.resolve(); await Promise.resolve() })
     expect(mockSetTranscript).toHaveBeenCalledWith({ id: 'a-1', transcript: 'aphids on tomatoes', source: 'manual' })
     expect(mockList).toHaveBeenCalled()
+  })
+})
+
+describe('FieldCapture (Inc 2 Bite 7 — one-pass capture tile UX)', () => {
+  let origShare, origClipboard
+  beforeEach(() => {
+    mockEnqueueRecording.mockClear()
+    mockEnqueueText.mockClear()
+    mockList.mockReset()
+    mockDepth.mockReset().mockImplementation(async () => 0)
+    mockOldest.mockReset().mockImplementation(async () => null)
+    mockPersist.mockClear()
+    mockSetTranscript.mockClear()
+    mockIncTranscribeAttempt.mockClear()
+    mockMarkHandedOff.mockReset().mockImplementation(async (id) => ({ id, status: 'handed_off' }))
+    mockOnReconnectCb = null
+    origShare = navigator.share
+    origClipboard = navigator.clipboard
+    delete navigator.share
+    delete navigator.clipboard
+  })
+
+  it('handleRecorded passes one-pass transcript + source through to enqueueRecording', async () => {
+    // Override the audioCapture stop to return a transcript (mimics Bite 7 MicCaptureButton).
+    renderAt(MODE.FIELD)
+    await act(async () => { await Promise.resolve() })
+    // Simulate the MicCaptureButton emitting an enriched result by driving the
+    // record→stop cycle; the mocked startRecording().stop() returns no transcript,
+    // so we instead assert the wiring by calling through the public surface:
+    // click record, then stop — and assert enqueueRecording received the keys
+    // (transcript will be '' here since transcribe mock isTranscriptionSupported=false).
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(mockEnqueueRecording).toHaveBeenCalledTimes(1)
+    const arg = mockEnqueueRecording.mock.calls[0][0]
+    expect('transcript' in arg).toBe(true)
+    expect('transcriptSource' in arg).toBe(true)
+    expect(arg.mode).toBe('field')
+  })
+
+  it('queue renders newest-first (fresh capture on top, stale empty one sinks)', async () => {
+    const seed = [
+      { id: 'old', kind: 'audio', blob: new Blob(['x']), mime: 'audio/webm', durationMs: 5000,
+        transcript: null, status: 'recorded', capturedAt: '2026-05-31T02:59:00.000Z',
+        transcribeAttempts: 0, transcriptSource: null },
+      { id: 'new', kind: 'audio', blob: new Blob(['y']), mime: 'audio/webm', durationMs: 3000,
+        transcript: 'absolutely love her boots', status: 'transcribed', capturedAt: '2026-05-31T03:51:00.000Z',
+        transcribeAttempts: 1, transcriptSource: 'web-speech' },
+    ]
+    renderAt(MODE.FIELD, { initialList: seed })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const items = screen.getAllByTestId('field-queue-item')
+    // newest (transcribed) first
+    expect(items[0].getAttribute('data-status')).toBe('transcribed')
+    expect(items[1].getAttribute('data-status')).toBe('recorded')
+  })
+
+  it('audio tile with a transcript shows the transcript inline (not "Voice (Xs)")', async () => {
+    const seed = [{
+      id: 'a-1', kind: 'audio', blob: new Blob(['x']), mime: 'audio/webm',
+      durationMs: 3200, transcript: 'beans need staking', status: 'transcribed',
+      capturedAt: '2026-05-31T03:00:00.000Z', transcribeAttempts: 1, transcriptSource: 'web-speech',
+    }]
+    renderAt(MODE.FIELD, { initialList: seed })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByTestId('field-queue-item-label').textContent).toMatch(/beans need staking/)
+    expect(screen.queryByText(/Voice \(/)).toBe(null)
+  })
+
+  it('tile-level Send to Claude shown for transcribed audio + clipboard delivery marks handed_off', async () => {
+    const writeSpy = vi.fn(async () => undefined)
+    navigator.clipboard = { writeText: writeSpy }
+    const seed = [{
+      id: 'a-1', kind: 'audio', blob: new Blob(['x']), mime: 'audio/webm',
+      durationMs: 3200, transcript: 'powdery mildew on squash', status: 'transcribed',
+      capturedAt: '2026-05-31T03:00:00.000Z', transcribeAttempts: 1, transcriptSource: 'web-speech',
+    }]
+    renderAt(MODE.FIELD, { initialList: seed })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const sendBtn = screen.getByTestId('field-queue-item-send')
+    expect(sendBtn).toBeDefined()
+    await act(async () => { fireEvent.click(sendBtn); await Promise.resolve(); await Promise.resolve() })
+    expect(writeSpy).toHaveBeenCalledTimes(1)
+    expect(writeSpy.mock.calls[0][0]).toContain('powdery mildew on squash')
+    expect(mockMarkHandedOff).toHaveBeenCalledWith('a-1')
+    expect(screen.getByTestId('field-queue-item-send-status').textContent).toMatch(/Copied/)
+  })
+
+  it('tile-level Send NOT shown when audio has no transcript', async () => {
+    const seed = [{
+      id: 'a-2', kind: 'audio', blob: new Blob(['x']), mime: 'audio/webm',
+      durationMs: 1000, transcript: null, status: 'recorded',
+      capturedAt: '2026-05-31T03:01:00.000Z', transcribeAttempts: 0, transcriptSource: null,
+    }]
+    renderAt(MODE.FIELD, { initialList: seed })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByTestId('field-queue-item-send')).toBe(null)
+  })
+
+  it('handed_off tile shows "Sent to Claude." and no send button', async () => {
+    const seed = [{
+      id: 'a-3', kind: 'audio', blob: new Blob(['x']), mime: 'audio/webm',
+      durationMs: 1000, transcript: 'done', status: 'handed_off',
+      capturedAt: '2026-05-31T03:02:00.000Z', transcribeAttempts: 1, transcriptSource: 'web-speech',
+    }]
+    renderAt(MODE.FIELD, { initialList: seed })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByTestId('field-queue-item-send')).toBe(null)
+    expect(screen.getByTestId('field-queue-item-handed-off')).toBeDefined()
+  })
+
+  it('tile Send manual fallback when share + clipboard absent', async () => {
+    const seed = [{
+      id: 'a-4', kind: 'audio', blob: new Blob(['x']), mime: 'audio/webm',
+      durationMs: 1000, transcript: 'manual path', status: 'transcribed',
+      capturedAt: '2026-05-31T03:03:00.000Z', transcribeAttempts: 1, transcriptSource: 'web-speech',
+    }]
+    renderAt(MODE.FIELD, { initialList: seed })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    await act(async () => { fireEvent.click(screen.getByTestId('field-queue-item-send')); await Promise.resolve(); await Promise.resolve() })
+    expect(mockMarkHandedOff).not.toHaveBeenCalled()
+    expect(screen.getByTestId('field-queue-item-send-status').textContent).toMatch(/Could not share or copy/)
   })
 })

@@ -25,6 +25,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { validatePostBody, validateBatchBody, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate } from './validators.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope } from './household.js';
+import { awardCritterServer, awardCrittersForBatch, readUserPrefs as readPrefsForCritter, readSpeciesPrefs as readSpeciesPrefsForCritter } from './critterAward.js';
 import { randomUUID } from 'node:crypto';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -161,7 +162,19 @@ export const handler = async (event) => {
         WHERE idempotency_key = ${key} AND created_by = ${userId}
       `;
       if (prior.length) {
-        return resp(200, { batch_id: prior[0].id, count: prior[0].item_count, idempotent: true });
+        // Backfill event_ids from event_log for idempotent re-hits (Phase B+ critter wiring).
+        const priorEvents = await sql`
+          SELECT id FROM event_log
+           WHERE metadata->>'batch_id' = ${prior[0].id}::text
+             AND created_by = ${userId}
+             AND deleted_at IS NULL
+        `;
+        return resp(200, {
+          batch_id: prior[0].id,
+          count: prior[0].item_count,
+          event_ids: priorEvents.map(r => r.id),
+          idempotent: true,
+        });
       }
 
       // (2) Resolve scope server-side → owner-scoped, alive plantings (never trust a client list).
@@ -241,7 +254,36 @@ export const handler = async (event) => {
             updated_at = NOW()
         `,
       ]);
-      return resp(200, { batch_id: batchId, count: plantIds.length });
+      // MVP-Critter server-side hook (Phase B++ refactor 2026-05-30) — fetch inserted events
+      // with plant_id + created_at, then call awardCrittersForBatch which awards critters
+      // INLINE in the events Lambda (one prefs fetch reused across the whole batch).
+      // Replaces the prior client-side fan-out (LogMany iterating event_ids).
+      const insertedEvents = await sql`
+        SELECT id, plant_id, created_at, metadata FROM event_log
+         WHERE metadata->>'batch_id' = ${batchId}::text
+           AND created_by = ${userId}
+           AND deleted_at IS NULL
+      `;
+      try {
+        const tzOffsetHeader = parseInt(event.headers?.['x-client-tz-offset'] ?? event.headers?.['X-Client-Tz-Offset'] ?? '0', 10);
+        await awardCrittersForBatch({
+          sql,
+          userId,
+          events: insertedEvents,
+          householdId: userId,
+          tzOffsetMin: Number.isFinite(tzOffsetHeader) ? tzOffsetHeader : 0,
+        });
+      } catch (critterErr) {
+        console.warn('critter batch hook failed (non-fatal):', critterErr?.message ?? String(critterErr));
+      }
+      return resp(200, {
+        batch_id: batchId,
+        count: plantIds.length,
+        // event_ids kept in response for backward-compat with Phase B+ clients (any deployed
+        // Phase B+ build still iterates and calls /api/critters — UNIQUE INDEX makes those
+        // idempotent re-hits). Will remove once all clients are Phase B++.
+        event_ids: insertedEvents.map(r => r.id),
+      });
     }
 
     // GET /api/events/batches — recent (non-undone) batches for the durable Undo affordance.
@@ -649,6 +691,44 @@ export const handler = async (event) => {
       delete newEvent.harvest_row;
       newEvent.harvest = harvest;
       const eventId = newEvent.id;
+
+      // MVP-Critter server-side hook (Phase B++ refactor 2026-05-30) — fire awardCritterServer
+      // for the inserted event. Inline (same Lambda, same DB connection); critter_state row
+      // exists by the time this POST returns 201 → Dashboard backfill on next navigate finds
+      // it deterministically (no race). Plant-only per MVP §1.1: silent no-op when plant_id null.
+      // NEVER throws — internal try/catch + console.warn telemetry per spec §3.10.
+      try {
+        // Smoke / admin can bypass server-side awarding by setting metadata._skip_critter_award: true.
+        // Production frontend NEVER sets this — it lets the hook do its thing.
+        const skipAward = newEvent.metadata && (newEvent.metadata._skip_critter_award === true);
+        if (!skipAward && newEvent.plant_id) {
+          const tzOffsetHeader = parseInt(event.headers?.['x-client-tz-offset'] ?? event.headers?.['X-Client-Tz-Offset'] ?? '0', 10);
+          // Fetch prefs + species prefs once for this event (cheap; one-row lookups).
+          let critterPrefs = null;
+          let speciesPrefs = {};
+          try {
+            critterPrefs = await readPrefsForCritter(sql, userId);
+            speciesPrefs = await readSpeciesPrefsForCritter(sql, userId);
+          } catch (prefsErr) {
+            console.warn('critter prefs fetch failed (using defaults):', prefsErr?.message ?? String(prefsErr));
+          }
+          await awardCritterServer({
+            sql,
+            userId,
+            eventId,
+            plantId: newEvent.plant_id,
+            eventCreatedAt: newEvent.created_at,
+            householdId: userId,
+            tzOffsetMin: Number.isFinite(tzOffsetHeader) ? tzOffsetHeader : 0,
+            prefs: critterPrefs,
+            speciesPrefs,
+            // speciesMultipliers: future season/milestone config (V4 blocker). Empty = use base_probability.
+            speciesMultipliers: {},
+          });
+        }
+      } catch (critterErr) {
+        console.warn('critter award hook failed (non-fatal):', critterErr?.message ?? String(critterErr));
+      }
 
       // ── Step 3a: user_stats streak — recompute from DISTINCT activity days ──────────────────
       // V1.2-streak-fix (2026-05-25): the streak counts DISTINCT calendar days with activity, keyed

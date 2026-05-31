@@ -14,6 +14,20 @@ vi.mock('../context/AuthContext.jsx', () => ({
   }),
 }))
 
+// Mock useApiFetch — BottomNav passes getToken into <BottomNavDot> (added by
+// Critter S3); test doesn't exercise the dot's fetch path.
+vi.mock('../lib/api.js', () => ({
+  useApiFetch: () => ({
+    fetch: vi.fn(),
+    getToken: vi.fn(async () => 'test-token'),
+  }),
+}))
+
+// Stub BottomNavDot — orthogonal to mode-swap; avoids Clerk/fetch dependencies.
+vi.mock('../components/BottomNavDot.jsx', () => ({
+  default: () => null,
+}))
+
 // Stub CatchUpBadge — orthogonal to mode-swap.
 vi.mock('../components/CatchUpBadge.jsx', () => ({
   default: () => <div data-testid="catch-up-badge-stub" />,

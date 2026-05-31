@@ -34,7 +34,6 @@ vi.mock('react-router-dom', () => ({
 vi.mock('../context/AuthContext.jsx', () => ({ useAuth: () => authMock }))
 vi.mock('../context/ZoneContext.jsx', () => ({ useZone: () => zoneMock }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
-vi.mock('../lib/haptic.js', () => ({ hapticDouble: vi.fn(), hapticTriple: vi.fn() }))
 
 vi.mock('../components/HarvestReadyTile.jsx', () => ({
   default: () => <div data-testid="harvest-ready-tile">HarvestReadyTile</div>,

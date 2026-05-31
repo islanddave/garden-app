@@ -140,6 +140,9 @@ export default function LogMany() {
         exclude_plant_ids: [...excluded],
       }) })
       try { localStorage.setItem(SCOPE_KEY, JSON.stringify(scope)) } catch (e) {}
+      // MVP-Critter — critters are awarded SERVER-SIDE by the events Lambda batch handler
+      // (Phase B++ refactor 2026-05-30). No client-side fan-out needed; Dashboard backfill
+      // surfaces the freshest via fetchActiveCritters.
       setResult(r)
     } catch (err) { setError(err.message) }
     setSaving(false)

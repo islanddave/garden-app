@@ -66,7 +66,7 @@ function generateSlug(name, startDate) {
 export default function ProjectDetail() {
   const { id }   = useParams()
   const navigate = useNavigate()
-  const { fetch } = useApiFetch()
+  const { fetch, getToken } = useApiFetch()
   // M1 telemetry (Inc 0) — reach_planting. Fire-and-forget.
   const ux = useUxFlow(FLOWS.REACH_PLANTING)
   const reachedRef = useRef(false)
@@ -255,6 +255,10 @@ export default function ProjectDetail() {
           is_public: eventForm.is_public,
         })
       }
+
+      // MVP-Critter — critters are awarded SERVER-SIDE by the events Lambda hook
+      // (Phase B++ refactor 2026-05-30). No client call needed; if a plant picker is added
+      // to this form later, the server-side hook auto-handles it.
 
       setEventForm(emptyEventForm())
       clearMiniPhoto()

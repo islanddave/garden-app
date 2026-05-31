@@ -6,7 +6,6 @@ import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 import { severityTier, SEVERITY_STYLES } from '../lib/waterDue.js'
 import { getStatusColors } from '../lib/status.js'
-import { hapticDouble, hapticTriple } from '../lib/haptic.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
 import HeadsUpTile from '../components/HeadsUpTile.jsx'
@@ -58,9 +57,6 @@ function DashboardFallback({ error, retry } = {}) {
 
 const LOGGABLE_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
 
-// V1.2a-1 §C-V1.2a-1-D: streak milestones for next-milestone modal display
-const STREAK_MILESTONES = [3, 7, 14, 30, 100]
-
 // Stale threshold for Tile 1 "Give attention to" — surface only projects engaged within last 30 days.
 // Never-touched and very-stale projects defer to V1.2a-2 "Inactive projects" surface.
 const STALE_MS = 30 * 86400000
@@ -101,7 +97,6 @@ export default function Dashboard() {
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState(null)
   const [streakModalOpen, setStreakModalOpen] = useState(false)
-  const [achievementQueue, setAchievementQueue] = useState([])
   const [undoState, setUndoState] = useState(null) // { eventId, projectName, expiresAt }
 
   // Pulse trigger keyed on streak value — increments cause animation re-fire.
@@ -168,7 +163,6 @@ export default function Dashboard() {
     const cur = userStats.current_streak ?? 0
     if (prevStreakRef.current !== null && cur > prevStreakRef.current) {
       setStreakPulse(p => p + 1)
-      hapticDouble()
     }
     prevStreakRef.current = cur
   }, [userStats.current_streak])
@@ -177,16 +171,16 @@ export default function Dashboard() {
   useEffect(() => {
     const logged = location.state?.logged
     if (!logged) return
+    // MVP-Critter Stage 1 — handled globally by CritterArrivalController mounted at App.jsx.
+    // (Phase B++ reward redesign 2026-05-30: fires on whatever route the user is on at award
+    // time, not gated by Dashboard navigation.)
 
     // Refresh dashboard data (cache invalidation pattern — replace React Query in V1.3+).
     let isMounted = true
     loadDashboard(isMounted)
 
-    // Queue achievement toasts.
-    if (logged.newly_earned_achievements?.length) {
-      setAchievementQueue(q => [...q, ...logged.newly_earned_achievements])
-      hapticTriple()
-    }
+    // Achievements earned this session are visible on the /achievements page —
+    // ambient surfacing per Reward UX V100 (no dashboard overlay/toast/haptic).
 
     // Show undo toast for 5 seconds.
     if (logged.id) {
@@ -212,11 +206,7 @@ export default function Dashboard() {
     let isMounted = true
     loadDashboard(isMounted)
 
-    const earned = location.state?.newly_earned_achievements
-    if (earned?.length) {
-      setAchievementQueue(q => [...q, ...earned])
-      hapticTriple()
-    }
+    // Achievements from issue-resolve are visible on /achievements (ambient per V100).
 
     // Clear navigation state so refresh on tab-revisit doesn't re-fire.
     navigate(location.pathname, { replace: true, state: null })
@@ -233,22 +223,6 @@ export default function Dashboard() {
     const t = setTimeout(() => setUndoState(null), remaining)
     return () => clearTimeout(t)
   }, [undoState])
-
-  // Sequential achievement toasts (2s each). Split into two effects so the auto-dismiss
-  // timer isn't cancelled by the promotion effect's cleanup when currentToast changes.
-  const [currentToast, setCurrentToast] = useState(null)
-  // Promotion: when no toast is showing and queue has items, promote the next one.
-  useEffect(() => {
-    if (currentToast || achievementQueue.length === 0) return
-    setCurrentToast(achievementQueue[0])
-    setAchievementQueue(q => q.slice(1))
-  }, [achievementQueue, currentToast])
-  // Auto-dismiss: when a toast is showing, clear it 2s later.
-  useEffect(() => {
-    if (!currentToast) return
-    const t = setTimeout(() => setCurrentToast(null), 2000)
-    return () => clearTimeout(t)
-  }, [currentToast])
 
   async function handleUndo() {
     if (!undoState) return
@@ -467,8 +441,9 @@ export default function Dashboard() {
         />
       )}
 
-      {/* Achievement toast (top, auto-dismiss 2s, click-to-dismiss) */}
-      {currentToast && <AchievementToast achievement={currentToast} onDismiss={() => setCurrentToast(null)} />}
+      {/* MVP-Critter Stage 1 — moved to App.jsx global mount (CritterArrivalController + CritterArrival).
+          Fires on whatever route the user is on at award time (Dave directive 2026-05-30 evening:
+          "shouldn't require navigating to find"). */}
 
       {/* Undo toast (bottom, 5s) */}
       {undoState && <UndoToast state={undoState} onUndo={handleUndo} onDismiss={() => setUndoState(null)} />}
@@ -529,9 +504,12 @@ function StreakCounter({ streak, pulseKey, onTap }) {
 
 // ─── Streak Modal — current / longest / next milestone ───────────────────────
 function StreakModal({ stats, onClose }) {
+  // V-5 cadence-utility framing per reward-ux-conformance-audit-V001-20260522.2150 §V-5.
+  // Path (b): no milestone-chase, no "X to go" countdown — streak is a record of consecutive
+  // days you logged activity, not a goal you're behind on. Personal longest_streak is the
+  // only historical reference. STREAK_GRACE_DAYS is currently 0 (strict) so no grace UI to
+  // surface; if grace returns server-side, expose it here.
   const current = stats.current_streak ?? 0
-  const nextMilestone = STREAK_MILESTONES.find(m => m > current) ?? null
-  const daysToMilestone = nextMilestone ? nextMilestone - current : null
 
   return (
     <div
@@ -572,19 +550,17 @@ function StreakModal({ stats, onClose }) {
         </div>
 
         <div style={{
-          backgroundColor: P.greenPale,
-          border: `1px solid ${P.greenLight}`,
+          backgroundColor: P.cream,
+          border: `1px solid ${P.border}`,
           borderRadius: 8,
           padding: '12px 16px',
           textAlign: 'center',
-          fontSize: '0.88rem',
-          color: P.green,
-          fontWeight: 600,
+          fontSize: '0.82rem',
+          color: P.mid,
           marginBottom: 16,
+          lineHeight: 1.45,
         }}>
-          {nextMilestone === null
-            ? '🏆 All streak achievements earned'
-            : `Next milestone: ${nextMilestone} days · ${daysToMilestone} to go`}
+          Consecutive days you logged activity. Take a break when you need one.
         </div>
 
         <button onClick={onClose} style={{
@@ -807,44 +783,11 @@ function WaterMeTile({ waterDue, hasProjects }) {
 }
 
 // ─── Toasts ──────────────────────────────────────────────────────────────────
-function AchievementToast({ achievement, onDismiss }) {
-  return (
-    <button
-      type="button"
-      onClick={onDismiss}
-      aria-label={`Dismiss achievement: ${achievement.name}`}
-      role="status"
-      aria-live="polite"
-      style={{
-        position: 'fixed',
-        top: 70,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        backgroundColor: P.gold,
-        color: P.white,
-        border: 'none',
-        borderRadius: 10,
-        padding: '12px 20px',
-        boxShadow: '0 6px 18px rgba(0,0,0,0.22)',
-        fontSize: '0.95rem',
-        fontWeight: 600,
-        zIndex: 1100,
-        display: 'flex', alignItems: 'center', gap: 10,
-        animation: 'streakPulse 400ms ease-out',
-        cursor: 'pointer',
-      }}
-    >
-      <span style={{ fontSize: '1.4rem' }}>{achievement.emoji ?? '🏆'}</span>
-      <div style={{ textAlign: 'left' }}>
-        <div style={{ lineHeight: 1.2 }}>{achievement.name}</div>
-        <div style={{ fontSize: '0.78rem', opacity: 0.92, marginTop: 2 }}>
-          +{achievement.xp_reward ?? 0} XP
-        </div>
-      </div>
-      <span style={{ fontSize: '0.85rem', opacity: 0.7, marginLeft: 4 }}>✕</span>
-    </button>
-  )
-}
+// V-1 removed (reward-ux-conformance-audit V001 §V-1, ratified jolly-fervent-ritchie):
+// AchievementToast was a fixed top-banner overlay (zIndex 1100, dismiss button, +XP count)
+// — out-of-scope channels per Reward UX V100. Achievements are intrinsic-delight rewards
+// and the /achievements page IS the canonical celebration surface. No dashboard toast,
+// no haptic, no replacement signal — silence is more ambient than a banner.
 
 function UndoToast({ state, onUndo, onDismiss }) {
   return (

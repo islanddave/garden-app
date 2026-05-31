@@ -1,9 +1,19 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { getStatusColors } from '../lib/status.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
+import CritterSprite from '../components/CritterSprite.jsx'
+import LoveMehPopover from '../components/LoveMehPopover.jsx'
+import BaselineResidents from '../components/BaselineResidents.jsx'
+import { fetchActiveCritters, markCrittersViewed, patchSpeciesPrefs } from '../lib/critterClient.js'
+import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed } from '../lib/notificationPrefsClient.js'
+import CritterCoachmark from '../components/CritterCoachmark.jsx'
+import CritterOptInPrompt from '../components/CritterOptInPrompt.jsx'
+import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
+import { SYSTEM_NOTIFICATIONS_ENABLED } from '../lib/featureFlags.js'
+import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded } from '../lib/projectTree.js'
 import { formatQty } from '../lib/format.js'
 
@@ -18,12 +28,29 @@ import { formatQty } from '../lib/format.js'
 // Frontend-only: composes /api/projects + /api/plants (no backend/schema change).
 
 export default function Garden() {
-  const { fetch } = useApiFetch()
+  const { fetch, getToken } = useApiFetch()
   const [projects, setProjects] = useState([])
   const [plants,   setPlants]   = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
   const [expanded, setExpanded] = useState(() => loadExpanded())
+  // MVP-Critter Session 3: active critters for this household, grouped by plant_id.
+  const [critters, setCritters] = useState([])
+  // D-INV-1 long-press popover state. anchorEl is the long-pressed sprite DOM node.
+  const [popover, setPopover] = useState({ open: false, critter: null, anchorEl: null })
+
+  // Session 3.5 (§3.26): per-sprite actually-seen accumulator.
+  // CritterSprite fires onIntersect ONCE per id when IO-gate trips (sprite enters viewport).
+  // Drained on Garden unmount (route change) AND on visibilitychange → hidden (tab background).
+  const seenIdsRef = useRef(new Set())
+  const onSpriteIntersect = useCallback((critter) => {
+    if (critter && critter.id) seenIdsRef.current.add(critter.id)
+  }, [])
+
+  // Phase B (§3.7, §3.8, §3.9): coachmark + opt-in prompt state.
+  // prefs.last_garden_view_at READ here is the value BEFORE this visit's Route 6 POST —
+  // it reflects the user's PRIOR garden-view (used to detect "second visit" eligibility).
+  const [prefs, setPrefs] = useState(null)
 
   useEffect(() => {
     let on = true
@@ -38,6 +65,93 @@ export default function Garden() {
     return () => { on = false }
   }, [fetch])
 
+  // MVP-Critter Session 3: fetch active critters on mount + visibilitychange.
+  // critterClient is fire-and-forget — silent no-op when VITE_API_CRITTERS unset.
+  useEffect(() => {
+    let on = true
+    function refresh() {
+      fetchActiveCritters({ getToken }).then(list => { if (on) setCritters(list) })
+    }
+    refresh()
+    function onVis() { if (document.visibilityState === 'visible') refresh() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { on = false; document.removeEventListener('visibilitychange', onVis) }
+  }, [getToken])
+
+  // MVP-Critter Phase B (§3.7): fetch notification prefs + record garden-view-opened.
+  // ORDER MATTERS: fetch prefs FIRST (capturing prior last_garden_view_at — the "before this
+  // visit" signal that gates coachmark eligibility per §3.9 second-visit rule), THEN post
+  // Route 6 (updates server-side last_garden_view_at to now — next visit will see THIS value).
+  // Same fire-and-forget contract as critterClient — silent no-op when VITE_API_CRITTERS unset.
+  useEffect(() => {
+    let on = true
+    async function refreshPrefsAndRecord() {
+      const p = await fetchNotificationPrefs({ getToken })
+      if (on) setPrefs(p)
+      // Fire Route 6 AFTER capturing prev prefs (the post updates last_garden_view_at).
+      recordGardenViewOpened({ getToken })
+    }
+    refreshPrefsAndRecord()
+    function onVis() {
+      if (document.visibilityState === 'visible') refreshPrefsAndRecord()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { on = false; document.removeEventListener('visibilitychange', onVis) }
+  }, [getToken])
+
+  // MVP-Critter Session 3 + 3.5: mark unviewed critters as viewed.
+  // Session 3 path = bulk PATCH /api/critters/viewed (legacy, still supported when no sprites IO'd).
+  // Session 3.5 path = drain seenIdsRef and pass actuallySeenCritterIds → Lambda marks ONLY those.
+  // Race-window header (x-garden-view-opened-at) preserved in both paths.
+  //
+  // Flush boundaries:
+  //   • Garden unmount (route change out)
+  //   • document visibilitychange → hidden (tab background; iOS PWA app switch)
+  // Both flushes drain + clear the ref so re-mount/re-foreground starts fresh.
+  const gardenOpenedAtRef = useRef(new Date().toISOString())
+  const flushSeen = useCallback(() => {
+    const ids = Array.from(seenIdsRef.current)
+    seenIdsRef.current.clear()
+    // Pass null when no sprites IO'd → Lambda falls back to bulk-mark (preserves Stage 3 dot clear).
+    markCrittersViewed({
+      getToken,
+      openedAt: gardenOpenedAtRef.current,
+      actuallySeenCritterIds: ids.length > 0 ? ids : null,
+    })
+  }, [getToken])
+
+  useEffect(() => {
+    function onVis() {
+      if (document.visibilityState === 'hidden') flushSeen()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      // Unmount flush — route change out of Garden.
+      flushSeen()
+    }
+  }, [flushSeen])
+
+  // Long-press handler — opens popover anchored to the long-pressed sprite element.
+  const onSpriteLongPress = useCallback((critter, e) => {
+    const anchorEl = e?.currentTarget ?? null
+    setPopover({ open: true, critter, anchorEl })
+  }, [])
+
+  // Popover pick handler — translate action → weight via D-INV-1 mapping (§3.29).
+  const onPrefsPick = useCallback((action) => {
+    if (!popover.critter) return
+    const weight = action === 'love' ? 2.0 : action === 'meh' ? 0.5 : action === 'reset' ? 1.0 : null
+    if (weight != null) {
+      patchSpeciesPrefs({ getToken, speciesId: popover.critter.species_id, weight })
+      // Fire-and-forget; no toast per §3.29. Pulse confirmation is already inside popover.
+    }
+  }, [getToken, popover.critter])
+
+  const closePopover = useCallback(() => {
+    setPopover({ open: false, critter: null, anchorEl: null })
+  }, [])
+
   const toggle = useCallback((id) => {
     setExpanded(prev => {
       const next = new Set(prev)
@@ -48,6 +162,70 @@ export default function Garden() {
     })
   }, [])
 
+  // Group critters by plant_id (target_id falls back to plant_id) for O(1) lookup in PlantingRow.
+  const crittersByPlantId = useMemo(() => {
+    const m = new Map()
+    for (const c of critters) {
+      const key = c.plant_id ?? c.target_id
+      if (!key) continue
+      if (!m.has(key)) m.set(key, [])
+      m.get(key).push(c)
+    }
+    return m
+  }, [critters])
+
+  // Phase B eligibility (§3.7, §3.9 step 3, §3.14 baseline exclusion).
+  // EXCLUDES baseline residents (species_id 1-2) from "first earned critter" count.
+  const nonBaselineCritters = useMemo(
+    () => critters.filter(c => Number.isInteger(c.species_id) && c.species_id > 2),
+    [critters]
+  )
+
+  const earliestNonBaselineEarnedAt = useMemo(() => {
+    let min = null
+    for (const c of nonBaselineCritters) {
+      const t = c.earned_at ? Date.parse(c.earned_at) : NaN
+      if (Number.isFinite(t) && (min === null || t < min)) min = t
+    }
+    return min
+  }, [nonBaselineCritters])
+
+  // Coachmark renders on SECOND garden-view visit after first non-baseline critter (§3.9 step 3).
+  // "Second visit" detected via: prev last_garden_view_at > earliestNonBaselineEarnedAt
+  //   (i.e., user has already visited Garden at least once SINCE the first non-baseline critter
+  //   was earned — that prior visit was the unmediated Stage 2 delight beat).
+  const coachmarkEligible = useMemo(() => {
+    if (!prefs) return false
+    if (prefs.coachmark_seen_at) return false
+    if (nonBaselineCritters.length === 0) return false
+    if (earliestNonBaselineEarnedAt === null) return false
+    const prev = prefs.last_garden_view_at ? Date.parse(prefs.last_garden_view_at) : NaN
+    if (!Number.isFinite(prev)) return false
+    return prev > earliestNonBaselineEarnedAt
+  }, [prefs, nonBaselineCritters, earliestNonBaselineEarnedAt])
+
+  // Opt-in renders only when SYSTEM_NOTIFICATIONS_ENABLED feature flag is true (currently false in V2.x).
+  // Phase B opt-in code ships dormant per §3.8 suppression-flag fix — when the flag flips post-V2.x,
+  // the prompt activates on first eligible critter event AFTER the flip (no permanent suppression).
+  const optInEligible = useMemo(() => {
+    if (!SYSTEM_NOTIFICATIONS_ENABLED) return false
+    if (!prefs) return false
+    if (!prefs.coachmark_seen_at) return false
+    if (prefs.opt_in_prompt_seen_at) return false
+    return nonBaselineCritters.length >= OPT_IN_CRITTER_THRESHOLD
+  }, [prefs, nonBaselineCritters])
+
+  // Dismiss callbacks — fire-and-forget POSTs (NEVER throw, NEVER block render).
+  // recordCoachmarkDismissed fires ONLY when CritterCoachmark's 1500ms min-visible gate passes.
+  // recordOptInDismissed fires ONLY when CritterOptInPrompt actually rendered (suppression-flag fix §3.8).
+  const onCoachmarkDismiss = useCallback(() => {
+    recordCoachmarkDismissed({ getToken })
+  }, [getToken])
+
+  const onOptInDismiss = useCallback(() => {
+    recordOptInDismissed({ getToken })
+  }, [getToken])
+
   if (loading) return <Shell><Spinner /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
@@ -55,6 +233,15 @@ export default function Garden() {
 
   return (
     <Shell>
+      {/* MVP-Critter Session 3: Day-1 always-present residents (robin + honeybee).
+          Decorative, aria-hidden, never persisted to critter_state. Per revision §3.14. */}
+      <BaselineResidents />
+
+      {/* MVP-Critter Phase B: coachmark (§3.7) + opt-in prompt (§3.8).
+          Both ambient inline strips, NEVER overlays. Render null when not eligible. */}
+      <CritterCoachmark eligible={coachmarkEligible} onDismiss={onCoachmarkDismiss} />
+      <CritterOptInPrompt eligible={optInEligible} onDismiss={onOptInDismiss} />
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Garden</h1>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -69,15 +256,28 @@ export default function Garden() {
       ) : (
         <div role="tree" aria-label="Garden" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {tree.map(node => (
-            <TreeNode key={node.project.id} node={node} expanded={expanded} onToggle={toggle} level={1} />
+            <TreeNode key={node.project.id} node={node} expanded={expanded} onToggle={toggle} level={1}
+              crittersByPlantId={crittersByPlantId}
+              onSpriteLongPress={onSpriteLongPress}
+              onSpriteIntersect={onSpriteIntersect} />
           ))}
         </div>
       )}
+
+      {/* MVP-Critter Session 3 D-INV-1: long-press species-prefs popover.
+          Anchored to long-pressed sprite. Single instance at a time. */}
+      <LoveMehPopover
+        open={popover.open}
+        anchorRef={{ current: popover.anchorEl }}
+        species={popover.critter ? SPECIES_BY_ID[popover.critter.species_id] : null}
+        onPick={onPrefsPick}
+        onClose={closePopover}
+      />
     </Shell>
   )
 }
 
-function TreeNode({ node, expanded, onToggle, level }) {
+function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSpriteLongPress, onSpriteIntersect }) {
   const { project: p, depth, children, plantings } = node
   const hasKids = nodeHasChildren(node)
   const isOpen  = hasKids && expanded.has(p.id)
@@ -146,8 +346,14 @@ function TreeNode({ node, expanded, onToggle, level }) {
 
       {isOpen && (
         <div role="group" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-          {plantings.map(pl => <PlantingRow key={pl.id} planting={pl} depth={depth + 1} level={level + 1} />)}
-          {children.map(c => <TreeNode key={c.project.id} node={c} expanded={expanded} onToggle={onToggle} level={level + 1} />)}
+          {plantings.map(pl => <PlantingRow key={pl.id} planting={pl} depth={depth + 1} level={level + 1}
+            critters={crittersByPlantId?.get(pl.id) ?? []}
+            onSpriteLongPress={onSpriteLongPress}
+            onSpriteIntersect={onSpriteIntersect} />)}
+          {children.map(c => <TreeNode key={c.project.id} node={c} expanded={expanded} onToggle={onToggle} level={level + 1}
+            crittersByPlantId={crittersByPlantId}
+            onSpriteLongPress={onSpriteLongPress}
+            onSpriteIntersect={onSpriteIntersect} />)}
         </div>
       )}
     </div>
@@ -155,11 +361,23 @@ function TreeNode({ node, expanded, onToggle, level }) {
 }
 
 // Planting leaf — whole row OPENS (navigates to its owning project, where plantings live).
-function PlantingRow({ planting: pl, depth, level }) {
+function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPress = null, onSpriteIntersect = null }) {
   const sc = getStatusColors(pl.status)
   const variety = pl.variety_ref?.name
   return (
-    <div role="treeitem" aria-level={level} style={{ paddingLeft: depth * 20 }}>
+    <div role="treeitem" aria-level={level} style={{ paddingLeft: depth * 20, position: 'relative' }}>
+      {/* MVP-Critter sprites (Stage 2 reveal + persistent accumulation).
+          Phase B++ redesign 2026-05-30 (Dave: "should not obscure text, links, etc on the item"):
+          positioned to peek above the row's top edge near the photo, NOT over the body/status/chevron.
+          Size 22px so multiple birds can sit shoulder-to-shoulder without crowding. zIndex 5 so they
+          stay visible above the row but never block tap targets (Link nav still works underneath). */}
+      {critters.length > 0 && (
+        <div style={{ position: 'absolute', top: -10, left: 16, display: 'flex', gap: 2, zIndex: 5, pointerEvents: 'auto' }}>
+          {critters.map(c => (
+            <CritterSprite key={c.id} critter={c} onLongPress={onSpriteLongPress} onIntersect={onSpriteIntersect} spriteSize={22} />
+          ))}
+        </div>
+      )}
       <Link to={`/projects/${pl.project_id}`} aria-label={`Open ${pl.name}`} style={{ textDecoration: 'none', display: 'block' }}>
         <div style={{
           backgroundColor: P.cream, border: `1px solid ${P.border}`, borderLeft: `3px solid ${P.greenLight}`,
@@ -189,8 +407,8 @@ function PlantingRow({ planting: pl, depth, level }) {
 
 function Shell({ children }) {
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px' }}>{children}</div>
+    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream, position: 'relative' }}>
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px', position: 'relative' }}>{children}</div>
     </div>
   )
 }

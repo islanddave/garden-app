@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 // as ./household.js. These copies MUST stay byte-identical to the canonical lambda/household.js.
 // (Caught 2026-05-20: ../household.js import 502'd the deployed handlers — copies are the fix.)
 const here = dirname(fileURLToPath(import.meta.url));
-const DIRS = ['projects', 'plants', 'events', 'inventory-items', 'photos', 'dashboard', 'locations'];
+const DIRS = ['projects', 'plants', 'events', 'inventory-items', 'photos', 'dashboard', 'locations', 'critter'];
 
 describe('household.js per-Lambda copies stay in sync with canonical', () => {
   const canonical = readFileSync(join(here, 'household.js'), 'utf8');

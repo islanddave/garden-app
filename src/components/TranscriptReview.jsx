@@ -13,6 +13,7 @@ import {
   NO_SPEECH_TIMEOUT_MS,
 } from '../lib/transcribe.js'
 import { assembleFromEntry } from '../lib/helperPrompt.js'
+import { deliverPrompt } from '../lib/sendCapture.js'
 
 /**
  * src/components/TranscriptReview.jsx
@@ -224,37 +225,11 @@ export default function TranscriptReview({
     setSending(true)
     setFeedback(null)
 
-    let delivered = false
-    let deliveredAs = null  // 'shared' | 'copied' | 'manual'
+    // Bite 7: the share -> clipboard chain lives in sendCapture.deliverPrompt
+    // (shared with FieldCapture's tile-level Send-to-Claude — one copy, no drift).
+    const { delivered, deliveredAs } = await deliverPrompt(prompt)
 
-    // 1. navigator.share — mobile share-sheet → user picks Claude
-    if (!delivered
-        && typeof navigator !== 'undefined'
-        && typeof navigator.share === 'function') {
-      try {
-        await navigator.share({ text: prompt })
-        delivered = true
-        deliveredAs = 'shared'
-      } catch (err) {
-        // AbortError (user dismissed sheet) or share failure → fall through to clipboard.
-      }
-    }
-
-    // 2. navigator.clipboard.writeText fallback — desktop / share-unsupported
-    if (!delivered
-        && typeof navigator !== 'undefined'
-        && navigator.clipboard
-        && typeof navigator.clipboard.writeText === 'function') {
-      try {
-        await navigator.clipboard.writeText(prompt)
-        delivered = true
-        deliveredAs = 'copied'
-      } catch {
-        // Continue to manual-copy fallback below.
-      }
-    }
-
-    // 3. Manual-copy fallback — surface the prompt in feedback so user can long-press copy.
+    // Manual-copy fallback — surface the prompt in feedback so user can long-press copy.
     //    Not "delivered" in the success sense but not "error" either — the user can act.
     if (!delivered) {
       setSendStatus('manual')
@@ -263,7 +238,7 @@ export default function TranscriptReview({
       return
     }
 
-    // 4. Mark handed_off so the queue depth drops + the entry transitions out of unprocessed.
+    // Mark handed_off so the queue depth drops + the entry transitions out of unprocessed.
     try {
       await markHandedOff(entry.id)
       setState('handed-off')

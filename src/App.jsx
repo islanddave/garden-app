@@ -6,6 +6,7 @@ import { ModeProvider } from './context/ModeContext.jsx'
 import TopBar from './components/TopBar.jsx'
 import BottomNav from './components/BottomNav.jsx'
 import TodayBand from './components/TodayBand.jsx'
+import CritterArrivalController from './components/CritterArrivalController.jsx'
 import Footer from './components/Footer.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import Login from './pages/Login.jsx'
@@ -38,6 +39,8 @@ import ProjectsAdminClassify from './pages/ProjectsAdminClassify.jsx'
 import GardenActivity from './pages/GardenActivity.jsx'
 import GardenHelper from './pages/GardenHelper.jsx'
 import FieldCapture from './pages/FieldCapture.jsx'
+import Settings from './pages/Settings.jsx'
+import SettingsNotifications from './pages/SettingsNotifications.jsx'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -132,6 +135,13 @@ function AppRoutes() {
                   C4 untrusted-data fence and copies/shares to Claude.
                   See postv2-ux-overhaul-inc2-bite-decomposition-V001-20260528.1145.md */}
               <Route path="/helper"        element={<Protected><GardenHelper /></Protected>} />
+              {/* MVP-Critter Session 4 Phase A — Settings → Notifications.
+                  /settings parent permissive redirects to /settings/notifications per
+                  revision §3.23 (forward-compat for future nested settings).
+                  Wrap in ErrorBoundary per §3.23 — mirrors /inactive route-level pattern.
+                  See mvp-critter-pre-build-revision-V001-20260528.md §3.17/§3.23/§3.24. */}
+              <Route path="/settings"      element={<Protected><Settings /></Protected>} />
+              <Route path="/settings/notifications" element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SettingsNotifications /></ErrorBoundary></Protected>} />
               {/* Post-V2 UX overhaul Inc 2 Bite 3: Field capture surface MVP.
                   Glove-and-glare mic UI + tap-to-type fallback + queued-count
                   indicator. Gated on useMode()==='field'; Desk-mode visits
@@ -145,6 +155,7 @@ function AppRoutes() {
         </div>
         {user && <TodayBand />}
         {user && <BottomNav />}
+        {user && <CritterArrivalController />}
       </ErrorBoundary>
     </BrowserRouter>
   )

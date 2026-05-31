@@ -31,6 +31,10 @@ env:
   STAGING_API_APP_EVENTS: https://m3lvka5lzswyqkl6uzpkof24y40hoqki.lambda-url.us-east-1.on.aws/
   # ux-events: placeholder until first staging deploy creates the Function URL (then this is updated to the real URL).
   STAGING_API_UX_EVENTS: https://ggrsrryarrkw2y5eaxm6r26cc40czzje.lambda-url.us-east-1.on.aws/
+  # critter: placeholder until first staging deploy creates the Function URL (then this is updated to the real URL).
+  # Per mvp-critter-pre-build-revision-V001-20260528 §2.6: smoke gracefully skips while placeholder is in place
+  # (first-deploy bootstrap); HARD-FAILs once Lambda is deployed and Dave updates this to the real URL.
+  STAGING_API_CRITTERS: https://nqq6b5kkf76mtvjmtqybk5jene0efzuk.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
@@ -43,7 +47,7 @@ jobs:
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     strategy:
       matrix:
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events, critter]
       max-parallel: 4
       fail-fast: false
 
@@ -239,6 +243,7 @@ jobs:
           VITE_API_VARIETIES:         ${{ env.STAGING_API_VARIETIES }}
           VITE_API_APP_EVENTS:        ${{ env.STAGING_API_APP_EVENTS }}
           VITE_API_UX_EVENTS:         ${{ env.STAGING_API_UX_EVENTS }}
+          VITE_API_CRITTERS:          ${{ env.STAGING_API_CRITTERS }}
 
       - name: Verify build output
         run: |
@@ -395,6 +400,7 @@ jobs:
             -c "DELETE FROM entity_memory  WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM favorites      WHERE entity_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM event_batches  WHERE scope_json->>'project_id' IN (SELECT id::text FROM plant_projects WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM critter_state  WHERE species_id = 255 OR created_by IN (SELECT created_by FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM plants         WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM inventory_items WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM plant_varieties WHERE name ILIKE '%smoke%';" \
