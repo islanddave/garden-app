@@ -19,7 +19,7 @@ import { useApiFetch } from '../lib/api.js'
 import { fetchActiveCritters } from '../lib/critterClient.js'
 import CritterArrival from './CritterArrival.jsx'
 
-const FRESH_WINDOW_MS = 30 * 1000
+const FRESH_WINDOW_MS = 5 * 60 * 1000  // 5 minutes — accommodate nav delay + auth hydration + cold-start (Dave smoke surfaced 30s was too tight)
 const SHOWN_KEY = 'gardenApp.stage1ShownIds'
 const SHOWN_CAP = 50
 
