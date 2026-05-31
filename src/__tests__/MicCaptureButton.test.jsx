@@ -35,7 +35,7 @@ describe('MicCaptureButton (Inc 2 Bite 4 — real recorder)', () => {
   beforeEach(() => {
     mockSupportedImpl = () => true
     mockStartImpl = () => Promise.resolve(makeHandle())
-    mockTranscriptionSupported = () => true
+    mockTranscriptionSupported = () => false   // Bite 4 behavior: no live transcription
     mockStartLive.mockClear()
     liveCb.last = null
   })
@@ -179,7 +179,10 @@ describe('MicCaptureButton (Inc 2 Bite 7 — one-pass capture)', () => {
       liveCb.last.onResult({ transcript: 'flowering', isFinal: true })
     })
     fireEvent.click(screen.getByTestId('mic-capture-button'))
-    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    await act(async () => {
+      liveCb.last.onEnd({ finalTranscript: '' })   // recognizer flushes on stop
+      await Promise.resolve(); await Promise.resolve()
+    })
     expect(onRecorded).toHaveBeenCalledTimes(1)
     const arg = onRecorded.mock.calls[0][0]
     expect(arg.transcript).toBe('tomatoes are flowering')
@@ -197,8 +200,30 @@ describe('MicCaptureButton (Inc 2 Bite 7 — one-pass capture)', () => {
       liveCb.last.onResult({ transcript: 'aphids', isFinal: true })
     })
     fireEvent.click(screen.getByTestId('mic-capture-button'))
-    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    await act(async () => {
+      liveCb.last.onEnd({ finalTranscript: '' })
+      await Promise.resolve(); await Promise.resolve()
+    })
     expect(onRecorded.mock.calls[0][0].transcript).toBe('aphids')
+  })
+
+  it('transcript delivered ONLY via onEnd (post-stop flush) is still captured — race fix', async () => {
+    const onRecorded = vi.fn()
+    render(<MicCaptureButton onRecorded={onRecorded} queuedCount={0} />)
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    await act(async () => { await Promise.resolve() })
+    // No interim/final during recording — recognizer holds everything until stop.
+    fireEvent.click(screen.getByTestId('mic-capture-button'))
+    // Recorder resolves first (blob ready) but emit must WAIT for onEnd.
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(onRecorded).not.toHaveBeenCalled()
+    await act(async () => {
+      liveCb.last.onEnd({ finalTranscript: 'leeks looking leggy' })
+      await Promise.resolve()
+    })
+    expect(onRecorded).toHaveBeenCalledTimes(1)
+    expect(onRecorded.mock.calls[0][0].transcript).toBe('leeks looking leggy')
+    expect(onRecorded.mock.calls[0][0].transcriptSource).toBe('web-speech')
   })
 
   it('Web Speech unsupported: recording still works, transcript empty, source null', async () => {
