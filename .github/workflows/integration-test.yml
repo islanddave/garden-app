@@ -1,0 +1,105 @@
+# .github/workflows/integration-test.yml
+# Phase 2 / RES-001: real-Postgres integration test layer.
+# Creates an ephemeral Neon branch off staging (br-damp-frog-amdfxwrr), runs the real
+# Lambda handlers against it with @neondatabase/serverless (prod driver), deletes the
+# branch in always(). Catches schema/code divergence (green-tests-broken-prod class)
+# BEFORE the dev->main gate. Smoke (run-smoke.sh on staging) stays — complementary.
+#
+# NOT yet a required check — wired as blocking only after the fault-injection proof.
+
+name: Integration Tests — real Postgres (Neon ephemeral branch)
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.19.0'
+
+      - name: Install root deps
+        run: npm ci --legacy-peer-deps
+
+      # The harness directSql + vi.mock factories need these resolvable from repo root
+      # (root has only @clerk/react). Pinned to the versions lambda/events uses for
+      # driver fidelity. --no-save: do not mutate package.json/lock in CI.
+      - name: Install handler deps at root (harness driver + mock targets)
+        run: npm install --no-save --legacy-peer-deps "@neondatabase/serverless@^0.10.0" "@clerk/backend@^1.0.0" "@aws-sdk/client-secrets-manager@^3.0.0"
+
+      # Install in-place lambda deps so the real handler imports resolve.
+      - name: Install lambda deps (handlers under test)
+        run: |
+          for fn in events; do
+            echo "--- npm install lambda/$fn ---"
+            (cd lambda/$fn && npm install --omit=dev)
+          done
+
+      - name: Create ephemeral Neon branch
+        id: neon_create
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          NEON_PARENT_BRANCH: br-damp-frog-amdfxwrr
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          BRANCH_NAME="ci-${RUN_ID}"
+          echo "Creating Neon branch: $BRANCH_NAME"
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer $NEON_API_KEY" \
+            -H "Content-Type: application/json" \
+            "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
+            -d "{\"branch\":{\"parent_id\":\"$NEON_PARENT_BRANCH\",\"name\":\"$BRANCH_NAME\"},\"endpoints\":[{\"type\":\"read_write\"}]}")
+          BRANCH_ID=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['branch']['id'])" 2>/dev/null || echo "")
+          DB_URL=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['connection_uris'][0]['connection_uri'])" 2>/dev/null || echo "")
+          if [[ -z "$BRANCH_ID" || -z "$DB_URL" ]]; then
+            echo "FATAL: Neon branch create failed. Response: $RESPONSE"
+            exit 1
+          fi
+          echo "NEON_BRANCH_ID=$BRANCH_ID" >> "$GITHUB_ENV"
+          echo "INT_DATABASE_URL=$DB_URL" >> "$GITHUB_ENV"
+          echo "::add-mask::$DB_URL"
+          echo "Branch created: $BRANCH_ID"
+
+      - name: Run integration tests
+        env:
+          INT_DATABASE_URL: ${{ env.INT_DATABASE_URL }}
+          SECRET_NAME: stub-not-used-in-integration-tests
+        run: |
+          npx vitest run --config vitest.integration.config.ts tests/integration/
+
+      - name: Delete ephemeral Neon branch
+        if: always()
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          NEON_BRANCH_ID: ${{ env.NEON_BRANCH_ID }}
+        run: |
+          if [[ -z "$NEON_BRANCH_ID" ]]; then
+            echo "No branch ID — nothing to delete"
+            exit 0
+          fi
+          echo "Deleting Neon branch: $NEON_BRANCH_ID"
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            -H "Authorization: Bearer $NEON_API_KEY" \
+            "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$NEON_BRANCH_ID")
+          if [[ "$HTTP" == 2* || "$HTTP" == "404" ]]; then
+            echo "Branch deleted (HTTP $HTTP)"
+          else
+            echo "WARNING: Branch delete returned HTTP $HTTP — may need manual cleanup (idle-suspends automatically)"
+          fi

@@ -2,9 +2,10 @@
 // Canonical spec: mvp-critter-pre-build-revision-V001-20260528.md §2 (Lambda routes + handlers).
 // Binding parent: reward-ux-guideline-V100-20260518.1830.md (CONTENT-LOCKED).
 //
-// Routes (9):
+// Routes (11):
 //   POST   /api/critters                           Award critter for action-completion event (MVP plant-only)
 //   GET    /api/critters/active                    Unviewed + unfaded list for household
+//   GET    /api/critters/collection             Per-user lifetime stickerbook summary (Collection page Phase 2 wiring)
 //   GET    /api/critters/:id                       Single row (smoke verification)
 //   PATCH  /api/critters/viewed                    Mark unviewed → viewed (Stage 3 dot clear, race-window guarded)
 //   PATCH  /api/critters/species-prefs             D-INV-1 Option A: long-press love/meh weight
@@ -246,6 +247,32 @@ export const handler = async (event) => {
       return resp(200, { critters: rows })
     }
 
+    // ── Route 2.5: GET /api/critters/collection (per-user stickerbook) ──
+    // Per-USER lifetime species summary for Collection page Phase 2 wiring.
+    // Scope: created_by = userId (NOT householdIds). Per Dave 2026-05-31
+    //   ("stickerbook is per person, not per household"). species_household_count
+    //   remains plumbed on Route 2 for the household-first celebration badge;
+    //   this route is the per-USER lifetime view (the stickerbook).
+    // Lifetime: includes viewed AND faded rows (excludes only soft-deleted).
+    // Species never earned by the user are absent from the response — the frontend
+    // renders them as silhouettes per spec V001.
+    // IMPORTANT: declared BEFORE Route 3 (GET /api/critters/:id) so the "collection"
+    //   path segment doesn't get UUID-matched as an :id by Route 3's regex.
+    if (rawPath === '/api/critters/collection' && method === 'GET') {
+      const rows = await sql`
+        SELECT species_id,
+               COUNT(*)::int AS count,
+               MIN(earned_at) AS first_seen_at,
+               MAX(earned_at) AS last_seen_at
+          FROM public.critter_state
+         WHERE created_by = ${userId}
+           AND deleted_at IS NULL
+         GROUP BY species_id
+         ORDER BY first_seen_at ASC
+      `
+      return resp(200, { species: rows })
+    }
+
     // ── Route 3: GET /api/critters/:id (smoke verification) ─────────────
     const byId = rawPath.match(/^\/api\/critters\/([^/]+)$/)
     if (byId && method === 'GET') {
@@ -406,6 +433,7 @@ export const handler = async (event) => {
       `
       return resp(200, rows[0])
     }
+
 
     return resp(404, { error: `route not found: ${method} ${rawPath}` })
   } catch (err) {

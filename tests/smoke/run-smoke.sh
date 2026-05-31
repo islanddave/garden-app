@@ -647,6 +647,38 @@ else
                 echo "❌ FAIL [write:critter-idempotency] HTTP $C_IDEM_HTTP idempotent=$IDEM id=$IDEM_ID (expected $CRITTER_ID)"
                 FAIL=$((FAIL+1))
               fi
+
+              # Step 5: collection readback — GET /api/critters/collection.
+              # Stickerbook Phase 2 (laughing-sleepy-gauss 2026-05-31). Per-USER scope
+              # per Dave's directive. Asserts: HTTP 200 + species[] is an array + the
+              # species_id we just wrote appears in the response with count >= 1.
+              # Defensive: every jq is wrapped (route 400/empty body would make .species[]
+              # iterate-null with exit-5 under set -e + pipefail without these guards).
+              C_OUR_SP_BODY=$(mktemp)
+              C_OUR_SP_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+                -X GET -H "Authorization: Bearer $CLERK_JWT" \
+                -o "$C_OUR_SP_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters/${CRITTER_ID}") || C_OUR_SP_HTTP="000"
+              C_OUR_SPECIES=$(jq -r '.critter.species_id // empty' "$C_OUR_SP_BODY" 2>/dev/null || echo "")
+              rm -f "$C_OUR_SP_BODY"
+              C_COL_BODY=$(mktemp)
+              C_COL_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+                -X GET -H "Authorization: Bearer $CLERK_JWT" \
+                -o "$C_COL_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters/collection") || C_COL_HTTP="000"
+              C_COL_SHAPE=$(jq -r '(.species | type) // "missing"' "$C_COL_BODY" 2>/dev/null || echo "missing")
+              C_COL_LEN=$(jq -r '(.species | length) // 0' "$C_COL_BODY" 2>/dev/null || echo "0")
+              C_COL_OUR_COUNT="0"
+              if [[ -n "$C_OUR_SPECIES" && "$C_COL_SHAPE" == "array" ]]; then
+                FOUND=$(jq -r --argjson sid "$C_OUR_SPECIES" '(.species // []) | map(select(.species_id == $sid)) | .[0].count // 0' "$C_COL_BODY" 2>/dev/null || echo "0")
+                C_COL_OUR_COUNT="${FOUND:-0}"
+              fi
+              rm -f "$C_COL_BODY"
+              if [[ "$C_COL_HTTP" == "200" && "$C_COL_SHAPE" == "array" && "${C_COL_OUR_COUNT:-0}" -ge 1 ]]; then
+                echo "✅ PASS [write:critter-collection-readback] HTTP $C_COL_HTTP species[]=array len=$C_COL_LEN our_species=$C_OUR_SPECIES count=$C_COL_OUR_COUNT"
+                PASS=$((PASS+1))
+              else
+                echo "❌ FAIL [write:critter-collection-readback] HTTP $C_COL_HTTP shape=$C_COL_SHAPE len=$C_COL_LEN our_species=$C_OUR_SPECIES count=${C_COL_OUR_COUNT:-0}"
+                FAIL=$((FAIL+1))
+              fi
             else
               echo "❌ FAIL [crud:POST /critters] HTTP $C_HTTP (id=$CRITTER_ID)"
               FAIL=$((FAIL+1))

@@ -4,6 +4,11 @@ on:
   push:
     branches: [staging]
   workflow_dispatch:
+    inputs:
+      dev_sha:
+        description: 'Exact dev commit SHA to build + deploy to staging (no staging-ref force-reset). Defaults to the dispatch ref HEAD if omitted.'
+        required: false
+        type: string
 
 permissions:
   id-token: write
@@ -53,6 +58,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.dev_sha || github.sha }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -205,6 +212,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.dev_sha || github.sha }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -317,6 +326,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.dev_sha || github.sha }}
 
       - name: Install postgresql-client
         run: |
@@ -338,6 +349,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.dev_sha || github.sha }}
 
       - name: Run smoke tests
         run: bash tests/smoke/run-smoke.sh

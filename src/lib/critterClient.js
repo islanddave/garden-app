@@ -120,6 +120,29 @@ export async function fetchActiveCritters({ getToken } = {}) {
   }
 }
 
+// fetchCollection — GETs /api/critters/collection for the Stickerbook (Collection page Phase 2).
+// Per-user lifetime species summary; each row: { species_id, count, first_seen_at, last_seen_at }.
+// Returns the full response object { species: [...] } on success, null on no-op or failure.
+// NEVER throws. Mirrors fetchActiveCritters pattern but returns the wrapper object so the
+// hook can distinguish "fetched-but-empty" (loading→done, []) from "no-op" (env unset or auth fail).
+export async function fetchCollection({ getToken } = {}) {
+  if (!CRITTER_BASE) return null
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return null
+    const res = await fetch(`${CRITTER_BASE}/api/critters/collection`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) return null
+    const json = await res.json().catch(() => null)
+    if (!json || typeof json !== 'object') return null
+    return { species: Array.isArray(json.species) ? json.species : [] }
+  } catch {
+    return null
+  }
+}
+
 // markCrittersViewed — PATCHes /api/critters/viewed with race-window header.
 // Returns array of marked-viewed ids, [] on no-op or failure.
 //
