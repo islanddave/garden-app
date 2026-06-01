@@ -50,6 +50,14 @@ vi.mock('../lib/api.js', () => ({
   }),
 }))
 
+// useMode requires a ModeProvider ancestor; this suite renders <BottomNav /> bare.
+// Desk mode (isField:false) is the default surface these tests exercise (Create
+// sheet + More menu). Field-mode behavior has dedicated coverage in BottomNav.modeSwap.test.jsx.
+vi.mock('../lib/mode.js', () => ({
+  useMode: () => ({ mode: 'desk', isField: false, isDesk: true, setMode: vi.fn(), toggleMode: vi.fn() }),
+  MODE: { FIELD: 'field', DESK: 'desk' },
+}))
+
 import BottomNav from '../components/BottomNav.jsx'
 
 beforeEach(() => {

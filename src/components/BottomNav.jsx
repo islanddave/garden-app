@@ -1,9 +1,12 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { P } from '../lib/constants.js'
 import CatchUpBadge from './CatchUpBadge.jsx'
 import { CATCH_UP_EDITOR_SHIPPED } from '../lib/featureFlags.js'
+import { useApiFetch } from '../lib/api.js'
+import BottomNavDot from './BottomNavDot.jsx'
+import { useMode } from '../lib/mode.js'
 
 // BottomNav — NAV-IA-1 layout (V1.2a-3 Increment C / PR-C1, 2026-05-18)
 // Tabs: Projects · Plants · (centered LOG+) · Inventory · (… More menu)
@@ -23,11 +26,34 @@ const TABS = [
   { to: '/inventory', label: 'Inventory', icon: '📦' },
 ]
 
+// +LOG FAB → create action sheet (Increment 1, post-V2 UX overhaul).
+// Tapping the center +LOG opens a <=4-choice sheet so every create flow is reachable
+// without first navigating to a tab. This is a user-initiated operational/navigation
+// affordance — NOT a reward surface (no celebration / recognition / progress signal),
+// so the action-sheet pattern is appropriate (Reward UX V100 out-of-scope channels bind
+// reward surfaces, not user-triggered create menus).
+// Routes: Log -> /log (EventNew); Plant -> /plants?add=1 (Plants add-form auto-open);
+//         Project -> /projects/new (ProjectNew); Inventory -> /inventory/add (InventoryAdd).
+// Spec: postv2-ux-overhaul-phase2-build-roadmap-V001 §4 Increment 1 + garden-tab-design-V001 §3.4.
+// RESTORED 2026-05-28: clobbered by garden-helper rung1 commit a45fb013 (rode through
+// a917b51b to prod); now re-restored alongside Garden Helper menu entry.
+const CREATE_ACTIONS = [
+  { to: '/log',           icon: '📝', label: 'Log an event',   sub: 'Watering, harvest, a note…' },
+  { to: '/plants?add=1',  icon: '🌱', label: 'Add a planting', sub: 'A plant growing in a project' },
+  { to: '/projects/new',  icon: '🪴', label: 'New project',     sub: 'A bed, crop, or grow' },
+  { to: '/inventory/add', icon: '📦', label: 'Add inventory',   sub: 'Seeds, soil, supplies…' },
+]
+
 export default function BottomNav() {
   const location = useLocation()
   const navigate = useNavigate()
   const { profile, signOut } = useAuth()
+  const { getToken } = useApiFetch()
+  // Post-V2 UX overhaul Inc 2 Bite 3: Field-mode swaps the +LOG center button
+  // for a mic affordance that navigates to /field. Desk-mode unchanged.
+  const { isField } = useMode()
   const [showMore, setShowMore]               = useState(false)
+  const [showCreate, setShowCreate]           = useState(false)
   const [confirmSignOut, setConfirmSignOut]   = useState(false)
 
   function isActive(path) {
@@ -39,6 +65,21 @@ export default function BottomNav() {
     setConfirmSignOut(false)
   }
 
+  function closeCreate() {
+    setShowCreate(false)
+  }
+
+  // Escape closes whichever sheet is open (dialog-dismissal a11y; mirrors the
+  // backdrop tap-to-close already provided by the overlay).
+  useEffect(() => {
+    if (!showMore && !showCreate) return
+    function onKey(e) {
+      if (e.key === 'Escape') { closeMore(); closeCreate() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showMore, showCreate])
+
   async function handleSignOutConfirmed() {
     closeMore()
     await signOut()
@@ -47,6 +88,54 @@ export default function BottomNav() {
 
   return (
     <>
+      {/* +LOG create action sheet — backdrop + slide-up dialog (mirrors More menu) */}
+      {showCreate && (
+        <div onClick={closeCreate}
+          style={{ position: 'fixed', inset: 0, zIndex: 90, backgroundColor: 'rgba(0,0,0,0.3)' }}
+        />
+      )}
+
+      {showCreate && (
+        <div role="dialog" aria-label="Create new" style={{
+          position: 'fixed',
+          bottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom))',
+          left: 0, right: 0,
+          backgroundColor: P.white,
+          borderRadius: '16px 16px 0 0',
+          boxShadow: '0 -4px 20px rgba(0,0,0,0.14)',
+          zIndex: 100,
+          paddingTop: 8, paddingBottom: 12,
+        }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: P.border, margin: '0 auto 8px' }} />
+          <div style={{ padding: '6px 24px 8px', fontSize: '0.8rem', color: P.light }}>
+            Add to your garden
+          </div>
+          {CREATE_ACTIONS.map(action => (
+            <Link
+              key={action.label}
+              to={action.to}
+              onClick={closeCreate}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 16,
+                width: '100%',
+                padding: '12px 24px',
+                borderTop: `1px solid ${P.border}`,
+                background: 'none', textAlign: 'left',
+                cursor: 'pointer', textDecoration: 'none',
+                color: P.dark, fontFamily: 'inherit',
+                minHeight: 48,
+              }}
+            >
+              <span aria-hidden="true" style={{ fontSize: '1.5rem' }}>{action.icon}</span>
+              <span style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '1rem', fontWeight: 600 }}>{action.label}</span>
+                <span style={{ fontSize: '0.78rem', color: P.light }}>{action.sub}</span>
+              </span>
+            </Link>
+          ))}
+        </div>
+      )}
+
       {showMore && (
         <div onClick={closeMore}
           style={{ position: 'fixed', inset: 0, zIndex: 90, backgroundColor: 'rgba(0,0,0,0.3)' }}
@@ -88,11 +177,7 @@ export default function BottomNav() {
             </div>
           )}
 
-          {/* Plants — restored to More menu (NAV-REGRESSION fix / BUG-13, 2026-05-24).
-              /plants route + Plants.jsx remain routable (see TABS comment) but the nav
-              entry was dropped by the NAV-IA-1 rework (PR-C1, 2026-05-18) — same regression
-              class as Photos & Achievements below. Interim list-level restore; per-plant
-              detail (/plants/:id + PlantDetail.jsx) is the full V3-NAV-001 deliverable. */}
+          {/* Plants — restored to More menu (NAV-REGRESSION fix / BUG-13, 2026-05-24). */}
           <Link
             to="/plants"
             onClick={closeMore}
@@ -112,10 +197,7 @@ export default function BottomNav() {
             Plants
           </Link>
 
-          {/* Photos — restored to More menu (NAV-REGRESSION fix, 2026-05-23).
-              /photos route + PhotoLibrary.jsx shipped V2-PHOTO-F1; nav entry was
-              dropped by the NAV-IA-1 rework (PR-C1, 2026-05-18) — same regression
-              class as Achievements. Restores access to the standalone photo library. */}
+          {/* Photos — restored to More menu (NAV-REGRESSION fix, 2026-05-23). */}
           <Link
             to="/photos"
             onClick={closeMore}
@@ -135,11 +217,7 @@ export default function BottomNav() {
             Photos
           </Link>
 
-          {/* Achievements — restored to More menu (NAV-REGRESSION fix, 2026-05-22).
-              Route + page shipped V1.2a-1 S4; nav entry was dropped by the NAV-IA-1
-              rework (PR-C1, 2026-05-18). Restores access per the V1.2 NAV-REGRESSION
-              blocker (sprint-tracker §V1.2 Blockers). Full dedicated-tab placement
-              remains a V2 consideration. */}
+          {/* Achievements — restored to More menu (NAV-REGRESSION fix, 2026-05-22). */}
           <Link
             to="/achievements"
             onClick={closeMore}
@@ -159,8 +237,7 @@ export default function BottomNav() {
             Achievements
           </Link>
 
-          {/* Critter Collection — preview dex (Phase 1). Reward surface; ambient nav entry.
-              /collection route + Collection.jsx. Spec: critter-collection-page-spec-V001. */}
+          {/* Critter Collection — preview dex (Phase 1). Reward surface; ambient nav entry. */}
           <Link
             to="/collection"
             onClick={closeMore}
@@ -201,6 +278,29 @@ export default function BottomNav() {
           >
             <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>💬</span>
             Garden Helper
+          </Link>
+
+          {/* MVP-Critter Session 4 Phase A — Settings entry.
+              /settings parent permissively redirects to /settings/notifications
+              per revision §3.23. Placed between Garden Helper and Sign Out per
+              handoff Pending #1 (mvp-critter-pre-build-revision-V001 §3.23). */}
+          <Link
+            to="/settings"
+            onClick={closeMore}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 16,
+              width: '100%',
+              padding: '14px 24px',
+              borderTop: `1px solid ${P.border}`,
+              background: 'none', textAlign: 'left',
+              cursor: 'pointer', textDecoration: 'none',
+              color: P.dark, fontSize: '1rem', fontWeight: 500,
+              fontFamily: 'inherit',
+              minHeight: 48,
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>⚙</span>
+            Settings
           </Link>
 
           {/* Sign Out — inline confirmation */}
@@ -268,28 +368,48 @@ export default function BottomNav() {
       }}>
         {TABS.map(tab => {
           const active = isActive(tab.to)
-          if (tab.highlight) return (
-            <Link key={tab.to} to={tab.to} aria-label="Log an event"
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, minHeight: 44 }}>
+          if (tab.highlight) {
+            // Field mode (Bite 3): center button becomes a mic affordance that
+            // navigates to /field — no FAB action sheet. Desk mode (default):
+            // unchanged +LOG FAB that opens the create action sheet.
+            if (isField) return (
+              <Link key={tab.to} to="/field"
+                onClick={() => { closeMore(); closeCreate() }}
+                data-testid="bottomnav-field-mic"
+                aria-label="Go to field capture"
+                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', padding: 0, minHeight: 44 }}>
+                <span style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: 44, height: 44, backgroundColor: P.terra, borderRadius: '50%',
+                  color: '#fff', fontSize: '1.3rem', fontWeight: 700,
+                  boxShadow: '0 2px 8px rgba(183,83,42,0.35)',
+                }} aria-hidden="true">🎤</span>
+              </Link>
+            )
+            return (
+            <button key={tab.to} type="button"
+              onClick={() => { closeMore(); setShowCreate(s => !s) }}
+              aria-haspopup="true" aria-expanded={showCreate} aria-label="Create"
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: 0, minHeight: 44 }}>
               <span style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 width: 44, height: 44, backgroundColor: P.green, borderRadius: '50%',
                 color: '#fff', fontSize: '1.5rem', fontWeight: 700,
-                boxShadow: '0 2px 8px rgba(45,106,79,0.35)', marginTop: -10,
+                boxShadow: '0 2px 8px rgba(45,106,79,0.35)',
               }}>+</span>
-              <span style={{ fontSize: '0.62rem', color: active ? P.green : P.light, fontWeight: active ? 700 : 400, marginTop: 1 }}>{tab.label}</span>
-            </Link>
-          )
+            </button>
+          )}
           return (
             <Link key={tab.to} to={tab.to}
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44 }}>
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44, position: 'relative' }}>
               <span style={{ fontSize: '1.25rem', lineHeight: 1 }}>{tab.icon}</span>
               <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400 }}>{tab.label}</span>
+              {tab.to === '/garden' && <BottomNavDot getToken={getToken} />}
             </Link>
           )
         })}
 
-        <button onClick={() => setShowMore(s => !s)}
+        <button onClick={() => { closeCreate(); setShowMore(s => !s) }}
           aria-expanded={showMore} aria-label="More navigation options"
           style={{
             flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',

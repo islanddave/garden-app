@@ -64,6 +64,8 @@ export function validateCreate(body) {
   if (body.condition != null && !VALID_CONDITIONS.includes(body.condition)) return `condition must be one of: ${VALID_CONDITIONS.join(', ')}`;
   if (body.status != null && !VALID_STATUSES.includes(body.status)) return `status must be one of: ${VALID_STATUSES.join(', ')}`;
   if (body.unit != null && !VALID_UNITS.includes(body.unit)) return `unit must be one of: ${VALID_UNITS.join(', ')}`;
+  if (body.variety_id != null && body.category !== 'seeds') return 'variety_id is only allowed when category is seeds';
+  if (body.category === 'seeds' && body.variety_id == null) return 'variety_id is required for seeds';
   return null;
 }
 
@@ -78,6 +80,8 @@ export function validateUpdate(body) {
   if (body.unit != null && !VALID_UNITS.includes(body.unit)) return `unit must be one of: ${VALID_UNITS.join(', ')}`;
   if (body.condition != null && !VALID_CONDITIONS.includes(body.condition)) return `condition must be one of: ${VALID_CONDITIONS.join(', ')}`;
   if (body.status != null && !VALID_STATUSES.includes(body.status)) return `status must be one of: ${VALID_STATUSES.join(', ')}`;
+  if (body.variety_id != null && body.category != null && body.category !== 'seeds') return 'variety_id is only allowed when category is seeds';
+  if (body.category === 'seeds' && body.variety_id == null) return 'variety_id is required for seeds';
   return null;
 }
 
@@ -119,9 +123,10 @@ export const handler = async (event) => {
 
       if (method === 'GET') {
         const rows = await sql`
-          SELECT i.*, fp.storage_path AS featured_photo_storage_path
+          SELECT i.*, fp.storage_path AS featured_photo_storage_path, pv.name AS variety_name
           FROM inventory_items i
           LEFT JOIN photos fp ON fp.id = i.featured_photo_id
+          LEFT JOIN plant_varieties pv ON pv.id = i.variety_id
           WHERE i.id = ${itemId}
             AND i.created_by = ANY(${householdIds})
             AND i.deleted_at IS NULL
@@ -166,6 +171,7 @@ export const handler = async (event) => {
             name              = ${body.name ?? null},
             type              = ${body.type ?? null},
             category          = ${body.category ?? null},
+            variety_id        = ${body.variety_id ?? null},
             location_id       = ${body.location_id ?? null},
             location_text     = ${body.location_text ?? null},
             source            = ${body.source ?? null},
@@ -217,10 +223,12 @@ export const handler = async (event) => {
 
     if (method === 'GET') {
       const rows = await sql`
-        SELECT * FROM inventory_items
-        WHERE created_by = ANY(${householdIds})
-          AND deleted_at IS NULL
-        ORDER BY created_at DESC
+        SELECT i.*, pv.name AS variety_name
+        FROM inventory_items i
+        LEFT JOIN plant_varieties pv ON pv.id = i.variety_id
+        WHERE i.created_by = ANY(${householdIds})
+          AND i.deleted_at IS NULL
+        ORDER BY i.created_at DESC
       `;
       return resp(200, rows);
     }
@@ -245,7 +253,7 @@ export const handler = async (event) => {
           unit_cost, unit, quantity_purchased, notes, tags, status,
           quantity_on_hand, reorder_threshold, reorder_quantity,
           quantity, condition, brand, model,
-          image_url, featured_image_id
+          image_url, featured_image_id, variety_id
         ) VALUES (
           ${userId}, ${userId}, ${body.type}, ${body.name.trim()}, ${body.category},
           ${body.location_id ?? null}, ${body.location_text ?? null}, ${body.source ?? null}, ${body.source_url ?? null}, ${body.purchase_date ?? null},
@@ -258,7 +266,7 @@ export const handler = async (event) => {
           ${isDurable ? body.quantity : null},
           ${isDurable ? (body.condition ?? null) : null},
           ${body.brand ?? null}, ${body.model ?? null},
-          ${body.image_url ?? null}, ${body.featured_image_id ?? null}
+          ${body.image_url ?? null}, ${body.featured_image_id ?? null}, ${body.variety_id ?? null}
         ) RETURNING *
       `;
       return resp(201, rows[0]);
