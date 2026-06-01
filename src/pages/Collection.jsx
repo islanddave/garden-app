@@ -3,68 +3,66 @@ import roster from '../data/critters-roster.json'
 import { P } from '../lib/constants.js'
 import { useCritterCollection } from '../hooks/useCritterCollection.js'
 
-// Critter Collection V005 — Two micro-refinements on V004.
-// Dave on V004 staging smoke (2026-05-31): "sooo close. lighten the lighter
-// green shade in the critter block to about 50% of current darkness. I like
-// the nav at the top and the section labels — great. small tweak to nav for
-// critters: make it clear they are clickable"
+// Critter Collection V007c — per-critter view_scale normalization.
+// V007b → V007c changes:
+//   1. VIEW_SCALE: each critter reads `c.view_scale` (written by tools/compute_view_scale.py,
+//      an automated SVG bounding-box script). Applied as CSS transform:scale() on the img,
+//      clipped by stage overflow:hidden. Small-viewBox birds (hummingbird=1.6x, cardinal=1.33x)
+//      now appear at roughly the same visual weight as large-viewBox mammals (wolverine=1.21x).
+//      Scale range across 168 critters: 1.0–2.5, median ~1.54.
+//   2. STAGE overflow:hidden restored — ensures scale() is clipped at the stage boundary
+//      (preserving the ~7% card-edge padding), not at the card boundary.
 //
-// Two changes vs V004:
-//   1. WILD SAGE CARD LIGHTENED ~50% (50% of current darkness retained):
-//        sage:  #b1c9a9 -> #d8e4d4   (50% closer to white)
-//      Terra (legacy) + gold (cryptid) UNCHANGED — Dave called out the green
-//      specifically. P.dark on #d8e4d4 = ~11:1 contrast (AAA strong).
-//   2. NAV TAP-AFFORDANCE — each section button now carries the EXACT color
-//      of the room it jumps to: wild → lighter-sage, legacy → terra,
-//      cryptid → gold-leaf. The nav reads as three colored chips you can
-//      tap to enter each room. Clear button SHAPE = clear tap affordance,
-//      no need for chevrons or extra ornament.
-//
-// All other V004 craft holds: lighter mats raise P.dark to AAA across all
-// three groups; gold dex# stamps + gold SEEN/NOT YET labels; centered
-// small-caps section titles flanked by gold-fade hairlines.
-//
-// V100 binders unchanged: ambient only, no motion, no streaks/badges-as-
-// score, no tap-to-claim, uniform gold across all tiles.
-//
-// V005 rides V003 Jen-walkthrough PASS (jen-walkthrough-log.md row #6) —
-// iteration on passed design direction (palette + nav affordance only,
-// structure unchanged).
+// V007b mechanics unchanged: fully contained (no overflow past stage), consistent 86% stage
+// padding, TILE_H=212 for 3-line names, 12-tone candy pastel theming.
+// V100 binders: ambient, no animation/motion, no tap-to-claim, no streaks.
 
-const GROUP_ORDER = ['wild', 'legacy', 'cryptid']
-const GROUP_LABEL = { wild: 'Around the garden', legacy: 'Legacy', cryptid: 'Curiosities' }
-const GROUP_PREFIX = { wild: 'W', legacy: 'L', cryptid: 'C' }
-
-// Sage lightened ~50%. Terra + gold unchanged.
-const GROUP_CARD = {
-  wild:    { bg: '#d8e4d4', strip: '#3a5232', well: '#f8f5ec' }, // sage  +50% L vs V004
-  legacy:  { bg: '#d8b8a0', strip: '#5a3a1f', well: '#f8f5ec' }, // terra (unchanged V004)
-  cryptid: { bg: '#d8bc89', strip: '#5a4218', well: '#f8f5ec' }, // gold  (unchanged V004)
+// ─── 12-tone curated candy pastel palette (spec §3.1) ────────────────────────────
+const THEMES = {
+  peach:      { bg: '#fbe6d6', strip: '#b9551f', name: '#5a2a16' },
+  apricot:    { bg: '#fbe0c8', strip: '#b05420', name: '#5a2e15' },
+  honey:      { bg: '#f2e6cd', strip: '#6e4a24', name: '#4a3216' },
+  butter:     { bg: '#fbeec2', strip: '#9a6b1e', name: '#5e4410' },
+  rose:       { bg: '#f7dde2', strip: '#9e3a52', name: '#5e2231' },
+  blush:      { bg: '#fbe1e8', strip: '#b04a6a', name: '#5e2236' },
+  lilac:      { bg: '#e7e1f3', strip: '#5c4a8c', name: '#34295e' },
+  periwinkle: { bg: '#d9def4', strip: '#474c8c', name: '#2e3370' },
+  sky:        { bg: '#dcebf5', strip: '#2f5d86', name: '#1f3f5e' },
+  oat:        { bg: '#efe7d6', strip: '#7a5c34', name: '#4a3a1c' },
+  stone:      { bg: '#e6e6dd', strip: '#5a5a4e', name: '#3c3c30' },
+  teal:       { bg: '#d6e8e6', strip: '#2f6f6b', name: '#1f4f4a' },
+}
+const GROUP_DEFAULT = { wild: 'oat', legacy: 'honey', cryptid: 'lilac' }
+function getTheme(c) {
+  const key = c.theme || GROUP_DEFAULT[c.group || 'wild'] || 'oat'
+  return THEMES[key] || THEMES.oat
 }
 
-const GOLD = '#e9c878'
-const GOLD_FADE = 'rgba(180, 130, 50, 0.40)'
+// ─── Group config ─────────────────────────────────────────────────────────────────
+const GROUP_ORDER  = ['wild', 'legacy', 'cryptid']
+const GROUP_LABEL  = { wild: 'Around the garden', legacy: 'Legacy', cryptid: 'Curiosities' }
+const GROUP_PREFIX = { wild: 'W', legacy: 'L', cryptid: 'C' }
 
-const TILE_H = 178
-const TILE_W_MIN = 108
-const ART_BOX = 64
-const WELL_BOX = 82
-const CAPTION_H = 38
-const NAME_H = 22
+const GOLD_FADE  = 'rgba(180, 130, 50, 0.40)'
+const LABEL_GOLD = '#ffcf7a'
+
+// ─── Card geometry ───────────────────────────────────────────────────────────────
+const TILE_H      = 212   // 212: fits 3-line names ("Ruby Throated Hummingbird") at 108px min
+const TILE_W_MIN  = 108
+const STAGE_PCT   = '86%' // ~7% gap on each side between critter and card edge
+const CAPTION_H   = 42
 const CARD_RADIUS = 14
-const WELL_RADIUS = 9
 
-const CARD_SHADOW = '0 1px 2px rgba(45, 75, 50, 0.08), 0 3px 12px rgba(26, 26, 26, 0.10)'
-const WELL_INSET = 'inset 0 1.5px 3px rgba(0, 0, 0, 0.18), inset 0 -1px 1px rgba(255, 255, 255, 0.6)'
+const CARD_SHADOW = '0 2px 4px rgba(40,30,10,.10), 0 6px 16px rgba(40,30,10,.16)'
 
-function formatShortMonthYear(iso) {
+// ─── Helpers ─────────────────────────────────────────────────────────────────────
+function formatSeenDate(iso) {
   if (!iso) return ''
   try {
     const d = new Date(iso)
-    const now = new Date()
-    const opts = d.getFullYear() === now.getFullYear()
-      ? { month: 'short' }
-      : { month: 'short', year: '2-digit' }
+    const opts = d.getFullYear() === new Date().getFullYear()
+      ? { month: 'short', day: 'numeric' }
+      : { month: 'short', day: 'numeric', year: 'numeric' }
     return d.toLocaleDateString(undefined, opts)
   } catch { return '' }
 }
@@ -75,10 +73,10 @@ function formatLongDate(iso) {
   } catch { return '' }
 }
 function dexCode(group, idx) {
-  const prefix = GROUP_PREFIX[group] || 'W'
-  return `${prefix}${String(idx + 1).padStart(3, '0')}`
+  return `${GROUP_PREFIX[group] || 'W'}${String(idx + 1).padStart(3, '0')}`
 }
 
+// ─── Component ───────────────────────────────────────────────────────────────────
 export default function Collection() {
   const { collected, loading, error } = useCritterCollection()
 
@@ -88,7 +86,7 @@ export default function Collection() {
     if (!byGroup[g]) byGroup[g] = []
     byGroup[g].push(c)
   }
-  const groups = GROUP_ORDER.filter(g => byGroup[g] && byGroup[g].length)
+  const groups = GROUP_ORDER.filter(g => byGroup[g]?.length)
   const discovered = roster.filter(c => collected.has(c.id)).length
 
   const headerLine = loading
@@ -96,11 +94,8 @@ export default function Collection() {
     : `${discovered} spotted so far — the rest are out there waiting to be found.`
 
   const sectionRefs = useRef({})
-  const scrollToGroup = (g) => {
-    const el = sectionRefs.current[g]
-    if (el && typeof el.scrollIntoView === 'function') {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
+  const scrollToGroup = g => {
+    sectionRefs.current[g]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   return (
@@ -118,22 +113,12 @@ export default function Collection() {
 
       <header style={{ marginBottom: 14 }}>
         <h1 style={{
-          fontSize: '1.55rem',
-          lineHeight: 1.15,
-          color: P.dark,
-          margin: '0 0 6px',
-          fontWeight: 600,
-          letterSpacing: '-0.01em',
+          fontSize: '1.55rem', lineHeight: 1.15, color: P.dark,
+          margin: '0 0 6px', fontWeight: 600, letterSpacing: '-0.01em',
         }}>
           Critter collection
         </h1>
-        <p style={{
-          color: P.mid,
-          fontSize: '0.92rem',
-          lineHeight: 1.4,
-          margin: 0,
-          fontWeight: 500,
-        }}>
+        <p style={{ color: P.mid, fontSize: '0.92rem', lineHeight: 1.4, margin: 0, fontWeight: 500 }}>
           {headerLine}
         </p>
         {error && !loading && (
@@ -143,28 +128,20 @@ export default function Collection() {
         )}
       </header>
 
-      {/* Sticky jump-nav — each button is the SAME color as the room it goes to.
-          Tappability cue = button shape via colored fill, not just text. */}
+      {/* Sticky jump-nav */}
       <nav aria-label="Jump to section" style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 2,
-        background: P.cream,
-        padding: '10px 0 12px',
-        marginBottom: 14,
-        borderBottom: `0.5px solid ${P.border}`,
+        position: 'sticky', top: 0, zIndex: 2,
+        background: P.cream, padding: '10px 0 12px',
+        marginBottom: 14, borderBottom: `0.5px solid ${P.border}`,
       }}>
         <div style={{
-          display: 'flex',
-          gap: 8,
-          background: P.white,
-          border: `0.5px solid ${P.border}`,
-          borderRadius: 12,
-          padding: 5,
+          display: 'flex', gap: 8,
+          background: P.white, border: `0.5px solid ${P.border}`,
+          borderRadius: 12, padding: 5,
           boxShadow: '0 1px 2px rgba(26,26,26,0.04)',
         }}>
           {groups.map(g => {
-            const card = GROUP_CARD[g] || GROUP_CARD.wild
+            const navTheme = THEMES[GROUP_DEFAULT[g]] || THEMES.oat
             return (
               <button
                 key={g}
@@ -172,35 +149,23 @@ export default function Collection() {
                 onClick={() => scrollToGroup(g)}
                 aria-label={`Jump to ${GROUP_LABEL[g]}`}
                 style={{
-                  flex: 1,
-                  minHeight: 40,
-                  padding: '8px 10px',
-                  border: 'none',
-                  // Group-tinted background = tap-affordance + room-preview.
-                  background: card.bg,
-                  borderRadius: 9,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
+                  flex: 1, minHeight: 40, padding: '8px 10px',
+                  border: 'none', background: navTheme.bg,
+                  borderRadius: 9, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
                   font: 'inherit',
-                  // Subtle lift to read as a button, not a colored panel.
                   boxShadow: '0 1px 1px rgba(26,26,26,0.06), inset 0 0.5px 0 rgba(255,255,255,0.4)',
                   transition: 'transform 80ms ease, box-shadow 80ms ease',
                 }}
-                onMouseDown={(e) => { e.currentTarget.style.transform = 'translateY(0.5px)' }}
-                onMouseUp={(e) => { e.currentTarget.style.transform = 'translateY(0)' }}
-                onTouchStart={(e) => { e.currentTarget.style.transform = 'translateY(0.5px)' }}
-                onTouchEnd={(e) => { e.currentTarget.style.transform = 'translateY(0)' }}
+                onMouseDown={e => { e.currentTarget.style.transform = 'translateY(0.5px)' }}
+                onMouseUp={e => { e.currentTarget.style.transform = 'translateY(0)' }}
+                onTouchStart={e => { e.currentTarget.style.transform = 'translateY(0.5px)' }}
+                onTouchEnd={e => { e.currentTarget.style.transform = 'translateY(0)' }}
               >
                 <span style={{
-                  fontSize: '0.85rem',
-                  color: P.dark,
-                  fontWeight: 700,
-                  letterSpacing: '-0.005em',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
+                  fontSize: '0.85rem', color: P.dark, fontWeight: 700,
+                  letterSpacing: '-0.005em', whiteSpace: 'nowrap',
+                  overflow: 'hidden', textOverflow: 'ellipsis',
                 }}>
                   {GROUP_LABEL[g]}
                 </span>
@@ -212,41 +177,26 @@ export default function Collection() {
 
       {groups.map(group => {
         const entries = byGroup[group]
-        const card = GROUP_CARD[group] || GROUP_CARD.wild
         return (
           <section
             key={group}
-            ref={(el) => { sectionRefs.current[group] = el }}
+            ref={el => { sectionRefs.current[group] = el }}
             aria-labelledby={`group-${group}`}
             style={{ marginBottom: 28, scrollMarginTop: 90 }}
           >
-            {/* Centered chapter-divider section header (unchanged from V004). */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 14,
-              marginTop: 8,
-              marginBottom: 16,
-            }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 8, marginBottom: 16 }}>
               <span aria-hidden="true" style={{
-                flex: 1,
-                height: 1,
+                flex: 1, height: 1,
                 background: `linear-gradient(to right, transparent 0%, ${GOLD_FADE} 70%, ${GOLD_FADE} 100%)`,
               }} />
               <h2 id={`group-${group}`} style={{
-                fontSize: '0.85rem',
-                fontWeight: 700,
-                color: P.dark,
-                margin: 0,
-                letterSpacing: '0.18em',
-                textTransform: 'uppercase',
-                whiteSpace: 'nowrap',
+                fontSize: '0.85rem', fontWeight: 700, color: P.dark, margin: 0,
+                letterSpacing: '0.18em', textTransform: 'uppercase', whiteSpace: 'nowrap',
               }}>
                 {GROUP_LABEL[group]}
               </h2>
               <span aria-hidden="true" style={{
-                flex: 1,
-                height: 1,
+                flex: 1, height: 1,
                 background: `linear-gradient(to right, ${GOLD_FADE} 0%, ${GOLD_FADE} 30%, transparent 100%)`,
               }} />
             </div>
@@ -256,16 +206,15 @@ export default function Collection() {
               gridTemplateColumns: `repeat(auto-fill, minmax(${TILE_W_MIN}px, 1fr))`,
               gap: 12,
               gridAutoRows: `${TILE_H}px`,
-              padding: 0,
-              margin: 0,
-              listStyle: 'none',
+              padding: 0, margin: 0, listStyle: 'none',
             }}>
               {entries.map((c, idx) => {
+                const theme = getTheme(c)
                 const entry = collected.get(c.id)
                 const got = !!entry
                 const code = dexCode(group, idx)
                 const firstSeenLong = got ? formatLongDate(entry.firstSeenAt) : ''
-                const firstSeenShort = got ? formatShortMonthYear(entry.firstSeenAt) : ''
+                const firstSeenDate = got ? formatSeenDate(entry.firstSeenAt) : ''
                 const ariaState = got
                   ? `${c.name}, visited${firstSeenLong ? `, first seen ${firstSeenLong}` : ''}`
                   : `${code}, not yet visited`
@@ -282,132 +231,101 @@ export default function Collection() {
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
-                      padding: '10px 8px 0',
-                      background: card.bg,
+                      padding: '8px 6px 0',
+                      background: theme.bg,
                       borderRadius: CARD_RADIUS,
                       boxShadow: CARD_SHADOW,
                       boxSizing: 'border-box',
                       overflow: 'hidden',
                     }}
                   >
+                    {/* Dex badge */}
                     <span aria-hidden="true" style={{
-                      position: 'absolute',
-                      top: 6,
-                      left: 6,
-                      minWidth: 36,
-                      height: 18,
-                      padding: '0 6px',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      background: card.strip,
-                      borderRadius: 5,
+                      position: 'absolute', top: 6, left: 6, zIndex: 2,
+                      minWidth: 36, height: 18, padding: '0 6px',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      background: theme.strip, borderRadius: 5,
                       boxShadow: 'inset 0 0.5px 1px rgba(0,0,0,0.25), inset 0 0.5px 0 0.5px rgba(255,255,255,0.18)',
                       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                      fontSize: '0.6rem',
-                      fontWeight: 700,
-                      letterSpacing: '0.04em',
-                      color: GOLD,
-                      fontVariantNumeric: 'tabular-nums',
+                      fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.04em',
+                      color: LABEL_GOLD, fontVariantNumeric: 'tabular-nums',
                     }}>{code}</span>
 
+                    {/* Art stage — 86% of card width, overflow:hidden clips the scaled art.
+                        Stage provides the ~7% consistent edge padding. view_scale zooms in
+                        on critters that have empty viewBox space (scale range 1.0–2.5). */}
                     <div style={{
-                      width: WELL_BOX,
-                      height: WELL_BOX,
-                      marginTop: 2,
+                      width: STAGE_PCT,
+                      aspectRatio: '1 / 1',
+                      marginTop: 8,
+                      flexShrink: 0,
+                      overflow: 'hidden',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      background: card.well,
-                      borderRadius: WELL_RADIUS,
-                      boxShadow: WELL_INSET,
-                      flexShrink: 0,
                     }}>
                       <img
                         src={c.image_url}
                         alt={got ? c.name : ''}
-                        width={ART_BOX}
-                        height={ART_BOX}
                         loading="lazy"
                         draggable={false}
                         style={{
-                          width: ART_BOX,
-                          height: ART_BOX,
+                          width: '100%',
+                          height: '100%',
                           objectFit: 'contain',
                           display: 'block',
+                          transform: `scale(${c.view_scale || 1})`,
+                          transformOrigin: 'center center',
                           filter: got ? 'none' : 'brightness(0)',
                           opacity: got ? 1 : 0.55,
                         }}
                       />
                     </div>
 
+                    {/* Full name — wraps freely, themed color, no truncation */}
                     <div style={{
                       marginTop: 8,
-                      height: NAME_H,
-                      lineHeight: `${NAME_H}px`,
-                      fontSize: '0.9rem',
+                      fontSize: '0.88rem',
                       fontWeight: 700,
+                      lineHeight: 1.2,
                       letterSpacing: '-0.005em',
-                      color: P.dark,
+                      color: theme.name,
                       width: '100%',
                       textAlign: 'center',
-                      overflow: 'hidden',
-                      whiteSpace: 'nowrap',
-                      textOverflow: 'ellipsis',
-                      padding: '0 4px',
+                      padding: '0 6px',
                       boxSizing: 'border-box',
-                      opacity: got ? 1 : 0.5,
+                      wordBreak: 'break-word',
+                      overflowWrap: 'anywhere',
                     }}>
-                      {got ? c.name : (
-                        <span aria-hidden="true" style={{ letterSpacing: '0.18em' }}>
-                          {'···'}
-                        </span>
-                      )}
+                      {got ? c.name : ''}
                     </div>
 
+                    {/* Caption strip */}
                     <div data-testid={`sighting-caption-${c.id}`} style={{
-                      position: 'absolute',
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
+                      position: 'absolute', left: 0, right: 0, bottom: 0,
                       height: CAPTION_H,
-                      background: card.strip,
+                      background: theme.strip,
                       boxShadow: 'inset 0 1.5px 0 rgba(0,0,0,0.20), inset 0 -0.5px 0 rgba(255,255,255,0.06)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: '0 8px',
-                      boxSizing: 'border-box',
+                      display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center',
+                      padding: '0 8px', boxSizing: 'border-box',
                     }}>
                       {got ? (
                         <>
                           <span style={{
-                            fontSize: '0.6rem',
-                            fontWeight: 700,
-                            letterSpacing: '0.14em',
-                            color: GOLD,
-                            textTransform: 'uppercase',
-                            lineHeight: 1.1,
+                            fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.14em',
+                            color: LABEL_GOLD, textTransform: 'uppercase', lineHeight: 1.1,
                           }}>Seen</span>
                           <span style={{
-                            marginTop: 2,
-                            fontSize: '0.8rem',
-                            fontWeight: 600,
-                            color: '#ffffff',
-                            fontVariantNumeric: 'tabular-nums',
-                            lineHeight: 1.1,
-                            letterSpacing: '0.02em',
-                          }}>{firstSeenShort}</span>
+                            marginTop: 2, fontSize: '0.8rem', fontWeight: 600,
+                            color: '#ffffff', fontVariantNumeric: 'tabular-nums',
+                            lineHeight: 1.1, letterSpacing: '0.01em', whiteSpace: 'nowrap',
+                          }}>{firstSeenDate}</span>
                         </>
                       ) : (
                         <span style={{
-                          fontSize: '0.62rem',
-                          fontWeight: 700,
-                          letterSpacing: '0.16em',
-                          color: GOLD,
-                          textTransform: 'uppercase',
-                          opacity: 0.78,
+                          fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.16em',
+                          color: LABEL_GOLD, textTransform: 'uppercase', opacity: 0.78,
                         }}>Not yet</span>
                       )}
                     </div>

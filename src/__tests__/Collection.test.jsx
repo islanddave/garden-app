@@ -14,71 +14,94 @@ function setState({ collected = new Map(), loading = false, error = null } = {})
   useCritterCollection.mockReturnValue({ collected, loading, error, reload: vi.fn() })
 }
 
-describe('Collection — Pokédex preview dex (Phase 2 wiring)', () => {
+// V007 contract: float-free candy-pastel per-critter theming on V006 mechanics.
+// Heading = "Critter collection" (lowercase). Header line = "N spotted so far…".
+// Undiscovered: empty name div (no "???" placeholder), art silhouetted via brightness(0),
+//   aria-label on li encodes state. Collected: name in div + alt, caption shows "Seen" + date.
+// All cards render sighting-caption testid (Not yet vs Seen+date).
+
+describe('Collection — V007 candy-pastel float-free redesign', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('renders the heading + discovered count over the full roster when none collected', () => {
+  it('renders heading + "spotted so far" line when none collected', () => {
     setState({ collected: new Map() })
     render(<Collection />)
-    expect(screen.getByText('Critter Collection')).toBeDefined()
-    expect(screen.getByText(new RegExp(`0 of ${roster.length} discovered`, 'i'))).toBeDefined()
+    expect(screen.getByText('Critter collection')).toBeDefined()
+    expect(screen.getByText(/0 spotted so far/i)).toBeDefined()
   })
 
-  it('renders one undiscovered silhouette per roster entry (??? + generic alt, no name leak)', () => {
+  it('renders one card per roster entry; undiscovered have no name text and "not yet" aria-label', () => {
     setState({ collected: new Map() })
     render(<Collection />)
-    expect(screen.getAllByText('???').length).toBe(roster.length)
-    expect(screen.getAllByAltText(/undiscovered critter/i).length).toBe(roster.length)
+    const items = screen.getAllByRole('listitem')
+    expect(items.length).toBe(roster.length)
+    // All uncollected lis have aria-label ending in "not yet visited"
+    const notYet = items.filter(el => /not yet visited/i.test(el.getAttribute('aria-label') || ''))
+    expect(notYet.length).toBe(roster.length)
+    // No "???" placeholder — undiscovered name slot is empty
+    expect(screen.queryAllByText('???').length).toBe(0)
   })
 
-  it('groups into wild / legacy / cryptid only (Special excluded; no tier jargon)', () => {
+  it('groups into wild / legacy / cryptid sections (Special excluded; no tier jargon)', () => {
     setState({ collected: new Map() })
     render(<Collection />)
-    expect(screen.getByText('Around the garden')).toBeDefined()
-    expect(screen.getByText('Legacy')).toBeDefined()
-    expect(screen.getByText('Curiosities')).toBeDefined()
+    // Check h2 section headings (not nav buttons which also contain same text)
+    const headings = screen.getAllByRole('heading', { level: 2 })
+    const texts = headings.map(h => h.textContent)
+    expect(texts).toContain('Around the garden')
+    expect(texts).toContain('Legacy')
+    expect(texts).toContain('Curiosities')
   })
 
-  it('reveals collected entries by roster id (name visible, alt = name, sighting caption present)', () => {
+  it('reveals collected entry: name in alt + div, caption shows Seen + month/day date', () => {
     const collected = new Map([
       ['C050', { speciesId: 3, count: 4, firstSeenAt: '2026-05-10T00:00:00Z', lastSeenAt: '2026-05-20T00:00:00Z' }],
     ])
     setState({ collected })
     render(<Collection />)
-    expect(screen.getByText(new RegExp(`1 of ${roster.length} discovered`, 'i'))).toBeDefined()
-    // C050 = Blue jay in roster
-    expect(screen.getByAltText(/blue jay/i)).toBeDefined()
-    expect(screen.getByTestId('sighting-caption-C050').textContent).toMatch(/4 sightings/)
-    expect(screen.getByTestId('sighting-caption-C050').textContent).toMatch(/first /)
+    expect(screen.getByText(/1 spotted so far/i)).toBeDefined()
+    // Blue Jay should appear as alt text and visible name
+    expect(screen.getByAltText('Blue Jay')).toBeDefined()
+    expect(screen.getByText('Blue Jay')).toBeDefined()
+    // Caption strip shows "Seen" label + a date
+    const caption = screen.getByTestId('sighting-caption-C050')
+    expect(caption.textContent).toMatch(/Seen/i)
+    expect(caption.textContent).toMatch(/May 10/i)
   })
 
-  it('singular sighting caption when count = 1', () => {
+  it('collected entry without current-year date includes year in caption', () => {
     const collected = new Map([
-      ['C007', { speciesId: 8, count: 1, firstSeenAt: '2026-05-30T00:00:00Z', lastSeenAt: '2026-05-30T00:00:00Z' }],
+      ['C007', { speciesId: 8, count: 1, firstSeenAt: '2025-11-12T00:00:00Z', lastSeenAt: '2025-11-12T00:00:00Z' }],
     ])
     setState({ collected })
     render(<Collection />)
-    expect(screen.getByTestId('sighting-caption-C007').textContent).toMatch(/1 sighting/)
-    expect(screen.getByTestId('sighting-caption-C007').textContent).not.toMatch(/sightings/)
+    const caption = screen.getByTestId('sighting-caption-C007')
+    expect(caption.textContent).toMatch(/Seen/i)
+    expect(caption.textContent).toMatch(/2025/i)
   })
 
-  it('renders "Loading…" header while loading; cards still render as silhouettes', () => {
+  it('renders "Loading…" header while loading', () => {
     setState({ collected: new Map(), loading: true })
     render(<Collection />)
     expect(screen.getByText('Loading…')).toBeDefined()
-    expect(screen.getAllByText('???').length).toBe(roster.length)
   })
 
   it('surfaces error message under header when error is set and not loading', () => {
     setState({ collected: new Map(), loading: false, error: 'Could not load your collection' })
     render(<Collection />)
     expect(screen.getByText('Could not load your collection')).toBeDefined()
-    expect(screen.getByText(new RegExp(`0 of ${roster.length} discovered`, 'i'))).toBeDefined()
+    expect(screen.getByText(/0 spotted so far/i)).toBeDefined()
   })
 
-  it('does not render sighting captions on uncollected entries', () => {
+  it('all cards render sighting-caption testid; uncollected show "Not yet", not "Seen"', () => {
     setState({ collected: new Map() })
     render(<Collection />)
-    expect(screen.queryAllByTestId(/^sighting-caption-/).length).toBe(0)
+    const strips = screen.queryAllByTestId(/^sighting-caption-/)
+    // Every card has the testid (not just collected ones)
+    expect(strips.length).toBe(roster.length)
+    // None show "Seen" when nothing is collected
+    for (const strip of strips) {
+      expect(strip.textContent).not.toMatch(/^Seen/)
+    }
   })
 })
