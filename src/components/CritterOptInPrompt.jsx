@@ -1,7 +1,7 @@
 // Phase B opt-in prompt — MVP-Critter.
 // Canonical spec: revision §3.8 (informational ONLY — NO "Sure" nav button — preserves
 //                 project CLAUDE.md notification-permission discipline rule),
-//                 §3.9 step 4 (renders after 3+ NON-baseline critters AND coachmark dismissed).
+//                 §3.9 step 4 (renders after 3+ earned critters AND coachmark dismissed).
 // V100 binding: §6 system-notification opt-in is user-initiated nav only;
 //               project CLAUDE.md: "Notification permission discipline:
 //               NEVER auto-call Notification.requestPermission() from a reward flow."
@@ -10,7 +10,7 @@
 // Parent computes `eligible` strictly:
 //   eligible = (
 //     SYSTEM_NOTIFICATIONS_ENABLED === true     // §6 feature flag (currently FALSE in V2.x)
-//     AND non_baseline_critter_count >= OPT_IN_CRITTER_THRESHOLD
+//     AND earned_critter_count >= OPT_IN_CRITTER_THRESHOLD  // V101: all species count (no baselines)
 //     AND coachmark_seen_at IS NOT NULL
 //     AND opt_in_prompt_seen_at IS NULL
 //   )

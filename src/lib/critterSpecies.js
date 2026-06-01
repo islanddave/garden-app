@@ -16,17 +16,17 @@
 // ART ASSETS ONLY, not V3 roster content organization (tier/lore/legacy). The mapping
 // table below is the namespace boundary.
 //
-// Baselines vs earned pool:
-//   species_id 1,2 = baseline residents (Day-1 ambient, client-side render only, NEVER
-//     persisted to critter_state — per revision §3.14)
-//   species_id 3-8 = earned pool (drawn by pickSpecies on action-completion)
+// Earned pool (V101 2026-06-01 — baseline residents RETIRED per Dave owner-override, L-102):
+//   species_id 1-8 = earned pool (drawn by pickSpecies on action-completion).
+//   Robin(1) + honeybee(2) were Day-1 baseline residents (always-present, never persisted);
+//   they are now earnable common species like any other critter. There are NO baselines.
 //
-// Distribution (revision §4 — D-INV-1 = A+B+C-as-honest-protocol):
-//   common (3-5)   = 0.07 base_probability each (21% sum)
+// Distribution (V101 — reward-ux-guideline-V101-20260601.1359.md §0.1):
+//   common (1-5)   = 0.07 base_probability each (35% sum)
 //   uncommon (6-7) = 0.05 base_probability each (10% sum)
 //   rare (8)       = 0.025 base_probability
-//   Total ≈ 33.5% baseline chance per plant event → variable-ratio reward.
-//   Relative weights preserve original 60/30/10 tier distribution WHEN a critter fires.
+//   Total ≈ 47.5% chance per plant event → variable-ratio reward (was 33.5% pre-retirement).
+//   Tier base_weights when a critter fires: common 100 / uncommon 30 / rare 10 (sum 140).
 // NO rarity UI — invisible mechanism (V100 §8 anti-pattern on rarity-chase pressure).
 //
 // base_weight kept for back-compat callers; new code reads base_probability.
@@ -35,14 +35,14 @@ export const SPECIES_POOL = Object.freeze([
   Object.freeze({
     species_id: 1, name: 'American robin',
     sprite_filename: 'C013-american-robin.svg', aria_announce_name: 'an American robin',
-    tier: 'baseline', base_weight: 0, base_probability: 0,
-    note: 'Day-1 baseline resident — always present, never enters earned pool. Substituted for V100\'s generic "sparrow" example; year-round W. MA backyard staple, doesn\'t overlap earned pool.',
+    tier: 'common', base_weight: 20, base_probability: 0.07,
+    note: 'Earnable common species (V101 2026-06-01 — baseline residents retired per Dave owner-override L-102; robin earned like any critter). Year-round W. MA backyard staple.',
   }),
   Object.freeze({
     species_id: 2, name: 'Honeybee',
     sprite_filename: 'C001-honeybee.svg', aria_announce_name: 'a honeybee',
-    tier: 'baseline', base_weight: 0, base_probability: 0,
-    note: 'Day-1 baseline resident — always present, never enters earned pool. Per V100 §7 "sparrow, bee" example.',
+    tier: 'common', base_weight: 20, base_probability: 0.07,
+    note: 'Earnable common species (V101 2026-06-01 — baseline residents retired per Dave owner-override L-102; earned like any critter).',
   }),
   Object.freeze({
     species_id: 3, name: 'Blue jay',
@@ -99,7 +99,7 @@ export const TOTAL_BASE_PROBABILITY = EARNED_POOL.reduce((a, s) => a + (s.base_p
 //           multipliers. Each multiplier modulates base_probability (cap effective total
 //           at 1.0). Today: pass {} or omit; V4 blocker will source from DB/config.
 //
-// Output: species_id in [3, 8] (earned pool only), OR null = "no critter awarded this event."
+// Output: species_id in [1, 8] (earned pool only — V101 retired baselines), OR null = "no critter awarded this event."
 //   The null path is intentional (variable-ratio reward — Dave directive 2026-05-30).
 //
 // Algorithm:

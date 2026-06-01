@@ -5,8 +5,10 @@
 //
 // Behavior:
 // - On mount + on every location change, fetch /api/critters/active
-// - Filter for non-baseline (species_id > 2) critters earned within last 30s, not viewed,
-//   not already shown this session (sessionStorage de-dup key gardenApp.stage1ShownIds)
+// - Filter for critters earned within the fresh window, not viewed,
+//   not already shown this session (sessionStorage de-dup key gardenApp.stage1ShownIds).
+//   V101 (2026-06-01): baseline residents RETIRED — robin/honeybee (1,2) now animate like
+//   any earned critter (removed the species_id<=2 exclusion).
 // - Pick the freshest qualifying critter; render <CritterArrival> with it
 // - When the animation finishes (~3s), clear local state; sessionStorage records the id
 //   so it doesn't re-fire on the next location change
@@ -39,7 +41,7 @@ export default function CritterArrivalController() {
         let shown = []
         try { shown = JSON.parse(sessionStorage.getItem(SHOWN_KEY) ?? '[]') } catch { shown = [] }
         const candidates = list.filter(c => {
-          if (!Number.isInteger(c.species_id) || c.species_id <= 2) return false
+          if (!Number.isInteger(c.species_id)) return false
           if (c.viewed_at) return false
           if (shown.includes(c.id)) return false
           const t = c.earned_at ? Date.parse(c.earned_at) : NaN

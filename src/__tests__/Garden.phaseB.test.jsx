@@ -38,10 +38,9 @@ vi.mock('../lib/notificationPrefsClient.js', () => ({
   patchNotificationPrefs: vi.fn(),
 }))
 
-// Mock CritterSprite + LoveMehPopover + BaselineResidents passively.
+// Mock CritterSprite + LoveMehPopover passively. (BaselineResidents retired V101 2026-06-01.)
 vi.mock('../components/CritterSprite.jsx', () => ({ default: () => <span data-testid="critter-sprite" /> }))
 vi.mock('../components/LoveMehPopover.jsx', () => ({ default: () => null }))
-vi.mock('../components/BaselineResidents.jsx', () => ({ default: () => null }))
 
 import Garden from '../pages/Garden.jsx'
 
@@ -94,11 +93,13 @@ describe('Garden Phase B — coachmark + opt-in render gating', () => {
     expect(screen.queryByTestId('critter-coachmark')).toBeNull()
   })
 
-  it('coachmark NOT rendered when only baseline critters (species_id 1-2) are present', async () => {
+  it('coachmark RENDERED when only robin/honeybee (species 1-2) present on second visit (V101: they count like any critter)', async () => {
+    // V101 (2026-06-01): baseline residents retired — robin/honeybee are earnable commons and
+    // COUNT toward the coachmark (coupling=YES). last_garden_view_at AFTER earned_at = second visit.
     fetchPrefsMock.mockResolvedValue({ last_garden_view_at: '2026-05-29T10:00:00Z', coachmark_seen_at: null, opt_in_prompt_seen_at: null })
     fetchActiveCrittersMock.mockResolvedValue([critter({ species_id: 1, id: 'b1' }), critter({ species_id: 2, id: 'b2' })])
     await renderGarden()
-    expect(screen.queryByTestId('critter-coachmark')).toBeNull()
+    expect(screen.getByTestId('critter-coachmark')).toBeDefined()
   })
 
   it('coachmark NOT rendered on FIRST garden-view (last_garden_view_at < earned_at)', async () => {

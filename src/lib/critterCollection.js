@@ -22,9 +22,9 @@ export function rosterIdFromSpriteFilename(filename) {
 
 // Pre-computed: species_id (int) → roster id (string). Frozen at module load.
 // Baseline residents (species_id 1, 2) are present here — their roster entries WILL render
-// as "collected" if the user has rows for them (which they typically don't, since baseline
+// as "collected" if the user has rows for them (V101 2026-06-01: baseline residents retired —
 // residents are client-side ambient + never persisted per revision §3.14). Future-proof:
-// if Stage 5 ever persists baselines, the bridge already handles them.
+// robin/honeybee 1,2 are now earnable and persist like any critter; the bridge handles them).
 export const ROSTER_ID_BY_SPECIES_ID = Object.freeze(
   Object.fromEntries(
     SPECIES_POOL.map(s => [s.species_id, rosterIdFromSpriteFilename(s.sprite_filename)])

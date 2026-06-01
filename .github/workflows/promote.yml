@@ -1,0 +1,125 @@
+name: promote-dev-to-main
+
+# Promotes dev -> main via Scenario A-FF (squash-onto-main fast-forward, per pipeline §Break-Glass / L-101)
+# AND performs the L-074 dev cooldown (force dev -> new main SHA) that, when skipped manually, causes the
+# recurring dev/main phantom-divergence + "git pull to sync" pain. The cooldown is GUARDED: it only runs if
+# dev has not moved since the promoted SHA AND dev tree == squashed tree, else it ABORTS without touching dev.
+#
+# HARD GATE: runs under environment "production" -> GitHub requires Dave's reviewer approval before the job
+# proceeds. workflow_dispatch only (never automatic). Dispatch with the exact dev HEAD to promote:
+#   POST /repos/islanddave/garden-app/actions/workflows/promote.yml/dispatches {"ref":"dev","inputs":{"dev_sha":"<dev HEAD>"}}
+# Requires repo Actions secret GARDEN_ADMIN_PAT (PAT with Administration:write — toggles enforce_admins).
+
+on:
+  workflow_dispatch:
+    inputs:
+      dev_sha:
+        description: 'Exact dev HEAD SHA to promote (must equal current dev HEAD)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      REPO: ${{ github.repository }}
+      PAT: ${{ secrets.GARDEN_ADMIN_PAT }}
+      DEV_SHA: ${{ inputs.dev_sha }}
+    steps:
+      - name: Preflight — verify input SHA == current dev HEAD
+        run: |
+          set -euo pipefail
+          api() { curl -sS -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" "$@"; }
+          DEV_HEAD=$(api "https://api.github.com/repos/$REPO/git/refs/heads/dev" | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])")
+          MAIN_HEAD=$(api "https://api.github.com/repos/$REPO/git/refs/heads/main" | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])")
+          echo "dev HEAD   = $DEV_HEAD"
+          echo "main HEAD  = $MAIN_HEAD"
+          echo "input SHA  = $DEV_SHA"
+          if [ "$DEV_HEAD" != "$DEV_SHA" ]; then
+            echo "::error::input dev_sha ($DEV_SHA) != current dev HEAD ($DEV_HEAD) — dev moved; refusing to promote a stale SHA"; exit 1
+          fi
+          if [ "$DEV_HEAD" = "$MAIN_HEAD" ]; then echo "::notice::dev already == main; nothing to promote"; exit 0; fi
+          DEV_TREE=$(api "https://api.github.com/repos/$REPO/git/commits/$DEV_HEAD" | python3 -c "import sys,json;print(json.load(sys.stdin)['tree']['sha'])")
+          echo "dev tree   = $DEV_TREE"
+          { echo "DEV_HEAD=$DEV_HEAD"; echo "MAIN_HEAD=$MAIN_HEAD"; echo "DEV_TREE=$DEV_TREE"; } >> "$GITHUB_ENV"
+
+      - name: Build squash commit on main (parent=main HEAD, tree=dev tree)
+        run: |
+          set -euo pipefail
+          api() { curl -sS -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" "$@"; }
+          BODY=$(python3 -c "import json,os;print(json.dumps({'message':'promote dev->main (squash) '+os.environ['DEV_SHA'][:8],'tree':os.environ['DEV_TREE'],'parents':[os.environ['MAIN_HEAD']]}))")
+          NEW=$(api -X POST -d "$BODY" "https://api.github.com/repos/$REPO/git/commits" | python3 -c "import sys,json;print(json.load(sys.stdin)['sha'])")
+          echo "new squash commit = $NEW"
+          echo "NEW=$NEW" >> "$GITHUB_ENV"
+
+      - name: Bypass require-PR (disable enforce_admins)
+        run: |
+          set -euo pipefail
+          curl -sS -o /dev/null -w "DELETE enforce_admins -> %{http_code}\n" -X DELETE \
+            -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/branches/main/protection/enforce_admins"
+
+      - name: Fast-forward main to squash commit
+        run: |
+          set -euo pipefail
+          api() { curl -sS -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" "$@"; }
+          CODE=$(curl -sS -o /tmp/ff.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" \
+            -d "{\"sha\":\"$NEW\",\"force\":false}" \
+            "https://api.github.com/repos/$REPO/git/refs/heads/main")
+          echo "PATCH main ref -> $CODE"
+          [ "$CODE" = "200" ] || { echo "::error::main fast-forward failed ($CODE)"; cat /tmp/ff.json; exit 1; }
+
+      - name: Guarded dev cooldown (force dev -> new main SHA, compare-and-swap)
+        run: |
+          set -euo pipefail
+          api() { curl -sS -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" "$@"; }
+          DEV_NOW=$(api "https://api.github.com/repos/$REPO/git/refs/heads/dev" | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])")
+          NEW_TREE=$(api "https://api.github.com/repos/$REPO/git/commits/$NEW" | python3 -c "import sys,json;print(json.load(sys.stdin)['tree']['sha'])")
+          if [ "$DEV_NOW" != "$DEV_SHA" ]; then
+            echo "::warning::dev moved ($DEV_NOW != $DEV_SHA) since promote began — SKIPPING cooldown to avoid orphaning new dev commits. main is promoted; reconcile dev manually."
+            echo "COOLDOWN=skipped-dev-moved" >> "$GITHUB_ENV"; exit 0
+          fi
+          if [ "$NEW_TREE" != "$DEV_TREE" ]; then
+            echo "::warning::squashed tree != dev tree — SKIPPING cooldown (unexpected). main is promoted; investigate."
+            echo "COOLDOWN=skipped-tree-mismatch" >> "$GITHUB_ENV"; exit 0
+          fi
+          CODE=$(curl -sS -o /tmp/cd.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" \
+            -d "{\"sha\":\"$NEW\",\"force\":true}" \
+            "https://api.github.com/repos/$REPO/git/refs/heads/dev")
+          echo "force dev -> $NEW : $CODE"
+          [ "$CODE" = "200" ] && echo "COOLDOWN=done" >> "$GITHUB_ENV" || { echo "::warning::dev cooldown PATCH failed ($CODE)"; cat /tmp/cd.json; echo "COOLDOWN=failed" >> "$GITHUB_ENV"; }
+
+      - name: Restore branch protection (always)
+        if: always()
+        run: |
+          set -euo pipefail
+          curl -sS -o /dev/null -w "POST enforce_admins (restore) -> %{http_code}\n" -X POST \
+            -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/branches/main/protection/enforce_admins"
+          ENF=$(curl -sS -H "Authorization: token $PAT" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/branches/main/protection/enforce_admins" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin).get('enabled'))")
+          echo "enforce_admins now = $ENF"
+          [ "$ENF" = "True" ] || echo "::error::enforce_admins NOT restored — main protection is OPEN; fix immediately"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Promote dev -> main"
+            echo "- promoted dev SHA: \`${DEV_SHA:0:8}\`"
+            echo "- new main SHA: \`${NEW:-(not created)}\`"
+            echo "- dev cooldown: \`${COOLDOWN:-n/a}\`"
+            echo ""
+            echo "Record in the ledger:"
+            echo '```'
+            echo "pstate set <id> deploy=prod prod_sha=${NEW:-SHA}   # via promote (anti-fabrication: real merged SHA)"
+            echo "pstate verify   # confirm against GitHub"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

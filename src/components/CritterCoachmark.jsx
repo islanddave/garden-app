@@ -2,13 +2,13 @@
 // Canonical spec: revision §3.7 (anchor to garden-view-enter, 1500ms min-visible-time),
 //                 §3.9 step 3 (renders on SECOND garden-view visit after first earned critter,
 //                 NOT first — first visit is reserved for unmediated Stage 2 delight),
-//                 §3.14 (EXCLUDE baseline residents species_id 1-2 from "first earned" count).
+//                 V101 2026-06-01: baseline residents RETIRED — all species count toward "first earned".
 // V100 binding: §5 Stage 3 — explains the dot, NEVER a modal, NEVER interrupt.
 //
 // Render gating (parent computes + passes `eligible` prop):
 //   eligible = (
 //     coachmark_seen_at IS NULL         // server-side single source of truth
-//     AND non-baseline critter exists   // earned, not baseline 1-2
+//     AND an earned critter exists   // V101: any species 1-8 (no baselines)
 //     AND prevGardenViewAt > earnedAt   // SECOND visit (user has been here once since earning)
 //   )
 //

@@ -35,9 +35,8 @@ vi.mock('../components/CritterSprite.jsx', () => ({
   },
 }))
 
-// Mock LoveMehPopover / BaselineResidents — passive renderers.
+// Mock LoveMehPopover — passive renderer. (BaselineResidents retired V101 2026-06-01.)
 vi.mock('../components/LoveMehPopover.jsx', () => ({ default: () => null }))
-vi.mock('../components/BaselineResidents.jsx', () => ({ default: () => null }))
 
 import Garden from '../pages/Garden.jsx'
 

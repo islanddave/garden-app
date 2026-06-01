@@ -6,7 +6,6 @@ import { getStatusColors } from '../lib/status.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import CritterSprite from '../components/CritterSprite.jsx'
 import LoveMehPopover from '../components/LoveMehPopover.jsx'
-import BaselineResidents from '../components/BaselineResidents.jsx'
 import { fetchActiveCritters, markCrittersViewed, patchSpeciesPrefs } from '../lib/critterClient.js'
 import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed } from '../lib/notificationPrefsClient.js'
 import CritterCoachmark from '../components/CritterCoachmark.jsx'
@@ -174,35 +173,36 @@ export default function Garden() {
     return m
   }, [critters])
 
-  // Phase B eligibility (§3.7, §3.9 step 3, §3.14 baseline exclusion).
-  // EXCLUDES baseline residents (species_id 1-2) from "first earned critter" count.
-  const nonBaselineCritters = useMemo(
-    () => critters.filter(c => Number.isInteger(c.species_id) && c.species_id > 2),
+  // Phase B eligibility (§3.7, §3.9 step 3). V101 (2026-06-01): baseline residents RETIRED —
+  // robin/honeybee (1,2) are earnable commons and COUNT toward coachmark/opt-in like any critter
+  // (coupling=YES, Dave 2026-06-01). Filter is now all critters with a valid species_id.
+  const earnedCritters = useMemo(
+    () => critters.filter(c => Number.isInteger(c.species_id)),
     [critters]
   )
 
-  const earliestNonBaselineEarnedAt = useMemo(() => {
+  const earliestEarnedAt = useMemo(() => {
     let min = null
-    for (const c of nonBaselineCritters) {
+    for (const c of earnedCritters) {
       const t = c.earned_at ? Date.parse(c.earned_at) : NaN
       if (Number.isFinite(t) && (min === null || t < min)) min = t
     }
     return min
-  }, [nonBaselineCritters])
+  }, [earnedCritters])
 
-  // Coachmark renders on SECOND garden-view visit after first non-baseline critter (§3.9 step 3).
-  // "Second visit" detected via: prev last_garden_view_at > earliestNonBaselineEarnedAt
-  //   (i.e., user has already visited Garden at least once SINCE the first non-baseline critter
+  // Coachmark renders on SECOND garden-view visit after first earned critter (§3.9 step 3).
+  // "Second visit" detected via: prev last_garden_view_at > earliestEarnedAt
+  //   (i.e., user has already visited Garden at least once SINCE the first earned critter
   //   was earned — that prior visit was the unmediated Stage 2 delight beat).
   const coachmarkEligible = useMemo(() => {
     if (!prefs) return false
     if (prefs.coachmark_seen_at) return false
-    if (nonBaselineCritters.length === 0) return false
-    if (earliestNonBaselineEarnedAt === null) return false
+    if (earnedCritters.length === 0) return false
+    if (earliestEarnedAt === null) return false
     const prev = prefs.last_garden_view_at ? Date.parse(prefs.last_garden_view_at) : NaN
     if (!Number.isFinite(prev)) return false
-    return prev > earliestNonBaselineEarnedAt
-  }, [prefs, nonBaselineCritters, earliestNonBaselineEarnedAt])
+    return prev > earliestEarnedAt
+  }, [prefs, earnedCritters, earliestEarnedAt])
 
   // Opt-in renders only when SYSTEM_NOTIFICATIONS_ENABLED feature flag is true (currently false in V2.x).
   // Phase B opt-in code ships dormant per §3.8 suppression-flag fix — when the flag flips post-V2.x,
@@ -212,8 +212,8 @@ export default function Garden() {
     if (!prefs) return false
     if (!prefs.coachmark_seen_at) return false
     if (prefs.opt_in_prompt_seen_at) return false
-    return nonBaselineCritters.length >= OPT_IN_CRITTER_THRESHOLD
-  }, [prefs, nonBaselineCritters])
+    return earnedCritters.length >= OPT_IN_CRITTER_THRESHOLD
+  }, [prefs, earnedCritters])
 
   // Dismiss callbacks — fire-and-forget POSTs (NEVER throw, NEVER block render).
   // recordCoachmarkDismissed fires ONLY when CritterCoachmark's 1500ms min-visible gate passes.
@@ -233,10 +233,6 @@ export default function Garden() {
 
   return (
     <Shell>
-      {/* MVP-Critter Session 3: Day-1 always-present residents (robin + honeybee).
-          Decorative, aria-hidden, never persisted to critter_state. Per revision §3.14. */}
-      <BaselineResidents />
-
       {/* MVP-Critter Phase B: coachmark (§3.7) + opt-in prompt (§3.8).
           Both ambient inline strips, NEVER overlays. Render null when not eligible. */}
       <CritterCoachmark eligible={coachmarkEligible} onDismiss={onCoachmarkDismiss} />

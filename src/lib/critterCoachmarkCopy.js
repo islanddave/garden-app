@@ -27,8 +27,8 @@ export const DEFAULT_COACHMARK_COPY = COACHMARK_COPY_VARIANTS[0]
 // Closes the ADHD accidental-route-change footgun: < 1500ms in garden view = not dismissed.
 export const COACHMARK_MIN_VISIBLE_MS = 1500
 
-// Threshold for opt-in prompt eligibility (§3.9 step 4): 3+ NON-baseline critters earned.
-// Baseline residents (species_id 1-2) are explicitly excluded from the count.
+// Threshold for opt-in prompt eligibility (§3.9 step 4): 3+ critters earned.
+// V101 (2026-06-01): baseline residents retired — ALL species (incl. robin/honeybee 1,2) count.
 export const OPT_IN_CRITTER_THRESHOLD = 3
 
 // Opt-in copy (verbatim from revision §3.8 — purely informational, NO nav button).
