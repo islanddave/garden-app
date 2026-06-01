@@ -67,9 +67,12 @@ describe('awardCritter — endpoint configured', () => {
     const body = JSON.parse(opts.body)
     expect(body.source_event_id).toBe('11111111-1111-1111-1111-111111111111')
     expect(body.plant_id).toBe('22222222-2222-2222-2222-222222222222')
-    expect(Number.isInteger(body.species_id)).toBe(true)
-    expect(body.species_id).toBeGreaterThanOrEqual(3) // earned pool
-    expect(body.species_id).toBeLessThanOrEqual(8)
+    // pickSpecies is variable-ratio (V102): may return null = no critter this event. The client
+    // POSTs species_id either way; assert it's null OR a valid full-pool id (1..168).
+    expect(
+      body.species_id === null ||
+      (Number.isInteger(body.species_id) && body.species_id >= 1 && body.species_id <= 168)
+    ).toBe(true)
     expect(body.meta.deterministic_seed).toContain('11111111')
     expect(Number.isInteger(body.meta.copy_variant_id)).toBe(true)
   })

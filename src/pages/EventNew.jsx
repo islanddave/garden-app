@@ -7,33 +7,47 @@ import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 
-const EVENT_TYPES_UI = [
-  { value: 'watering',    label: 'Watered',                emoji: '💧' },
-  { value: 'transplant',  label: 'Transplanted\n/ Planted', emoji: '🌱' },
-  { value: 'fertilizing', label: 'Fertilized\n/ Fed',       emoji: '🌿' },
-  { value: 'observation', label: 'Observed\n/ Note',        emoji: '👁️' },
-  { value: 'pruning',     label: 'Pruned\n/ Topped',        emoji: '✂️' },
+// Primary quick-picks (Dave 2026-06-01: in/out promoted to primary, hardening_off
+// promoted, observation demoted to the "More" group). 3 render in the top 3-col
+// grid (slice 0..3), the remaining 4 in a 2-col grid (slice 3..) below.
+// hardening_off glyph is ⛅ (not ☀️) so it does not collide with brought_outside ☀️.
+export const EVENT_TYPES_UI = [
+  { value: 'watering',        label: 'Watered',                 emoji: '💧' },
+  { value: 'transplant',      label: 'Transplanted\n/ Planted', emoji: '🌱' },
+  { value: 'fertilizing',     label: 'Fertilized\n/ Fed',       emoji: '🌿' },
+  { value: 'pruning',         label: 'Pruned\n/ Topped',        emoji: '✂️' },
+  { value: 'hardening_off',   label: 'Hardening\nOff',          emoji: '⛅' },
+  { value: 'brought_inside',  label: 'Brought\nInside',         emoji: '🏠' },
+  { value: 'brought_outside', label: 'Brought\nOutside',        emoji: '☀️' },
 ]
 
 const PRIMARY_VALUES = new Set(EVENT_TYPES_UI.map(t => t.value))
 
-const EVENT_TYPE_META = {
-  sowing:         { label: 'Sowed',          emoji: '🌰', category: 'Growth & Training' },
-  seed_soak:      { label: 'Seed soak',       emoji: '💦', category: 'Growth & Training' },
-  germination:    { label: 'Germination',     emoji: '🌿', category: 'Growth & Training' },
-  thinning:       { label: 'Thinned',         emoji: '🪓', category: 'Growth & Training' },
-  potting_up:     { label: 'Potted up',       emoji: '🪴', category: 'Growth & Training' },
-  hardening_off:  { label: 'Hardening off',   emoji: '☀️', category: 'Growth & Training' },
-  pest_treatment: { label: 'Pest treatment',  emoji: '🐛', category: 'Pest & Health' },
-  cover:          { label: 'Covered',         emoji: '🌂', category: 'Environmental' },
-  uncover:        { label: 'Uncovered',       emoji: '🌤️', category: 'Environmental' },
-  first_harvest:  { label: 'First harvest',   emoji: '🌟', category: 'Harvest' },
-  harvest:        { label: 'Harvested',       emoji: '🧺', category: 'Harvest' },
-  photo:          { label: 'Photo only',      emoji: '📷', category: 'Pest & Health' },
-  other:          { label: 'Other',           emoji: '📝', category: 'Environmental' },
+// Per-type display metadata. Source of truth for how any non-primary value renders
+// in the "More" secondary groups (and a label/emoji lookup for any value).
+// observation has an entry so that, now demoted from primary, it still renders with
+// a real label/emoji in "More" (not raw snake_case via the default fallback).
+export const EVENT_TYPE_META = {
+  sowing:          { label: 'Sowed',          emoji: '🌰', category: 'Growth & Training' },
+  seed_soak:       { label: 'Seed soak',       emoji: '💦', category: 'Growth & Training' },
+  germination:     { label: 'Germination',     emoji: '🌿', category: 'Growth & Training' },
+  thinning:        { label: 'Thinned',         emoji: '🪓', category: 'Growth & Training' },
+  potting_up:      { label: 'Potted up',       emoji: '🪴', category: 'Growth & Training' },
+  hardening_off:   { label: 'Hardening off',   emoji: '⛅', category: 'Growth & Training' },
+  observation:     { label: 'Observed / Note', emoji: '👁️', category: 'Pest & Health' },
+  pest_treatment:  { label: 'Pest treatment',  emoji: '🐛', category: 'Pest & Health' },
+  cover:           { label: 'Covered',         emoji: '🌂', category: 'Environmental' },
+  uncover:         { label: 'Uncovered',       emoji: '🌤️', category: 'Environmental' },
+  brought_inside:  { label: 'Brought inside',  emoji: '🏠', category: 'Environmental' },
+  brought_outside: { label: 'Brought outside', emoji: '☀️', category: 'Environmental' },
+  mulched:         { label: 'Mulched',         emoji: '🍂', category: 'Environmental' },
+  first_harvest:   { label: 'First harvest',   emoji: '🌟', category: 'Harvest' },
+  harvest:         { label: 'Harvested',       emoji: '🧺', category: 'Harvest' },
+  photo:           { label: 'Photo only',      emoji: '📷', category: 'Pest & Health' },
+  other:           { label: 'Other',           emoji: '📝', category: 'Environmental' },
 }
 
-const SECONDARY_GROUPS = (() => {
+export const SECONDARY_GROUPS = (() => {
   const cats = {}
   EVENT_TYPES.forEach(v => {
     if (PRIMARY_VALUES.has(v)) return

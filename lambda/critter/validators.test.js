@@ -43,7 +43,7 @@ describe('validateCritterPostBody', () => {
   it('rejects invalid plant_id format', () => {
     expect(validateCritterPostBody({ source_event_id: VALID_UUID, plant_id: 'bad' })?.status).toBe(400)
   })
-  it('species_id MVP range 1-8 accepted', () => {
+  it('species_id full pool range accepted (V102: 1..254)', () => {
     for (let i = MVP_SPECIES_MIN; i <= MVP_SPECIES_MAX; i++) {
       expect(validateCritterPostBody({ source_event_id: VALID_UUID, species_id: i })).toBeNull()
     }
@@ -53,7 +53,7 @@ describe('validateCritterPostBody', () => {
   })
   it('species_id out of range rejected', () => {
     expect(validateCritterPostBody({ source_event_id: VALID_UUID, species_id: 0 })?.status).toBe(400)
-    expect(validateCritterPostBody({ source_event_id: VALID_UUID, species_id: 99 })?.status).toBe(400)
+    expect(validateCritterPostBody({ source_event_id: VALID_UUID, species_id: 300 })?.status).toBe(400)
     expect(validateCritterPostBody({ source_event_id: VALID_UUID, species_id: 1.5 })?.status).toBe(400)
   })
   it('meta allowlist enforced (no behavioral-log creep)', () => {
@@ -98,9 +98,9 @@ describe('validateSpeciesPrefsPatchBody (D-INV-1 Option A)', () => {
     expect(validateSpeciesPrefsPatchBody({ species_id: 5, weight: 0.5 })).toBeNull()
     expect(validateSpeciesPrefsPatchBody({ species_id: 8, weight: 1.0 })).toBeNull()
   })
-  it('rejects species_id outside MVP range', () => {
+  it('rejects species_id outside pool range', () => {
     expect(validateSpeciesPrefsPatchBody({ species_id: 0, weight: 1 })?.status).toBe(400)
-    expect(validateSpeciesPrefsPatchBody({ species_id: 9, weight: 1 })?.status).toBe(400)
+    expect(validateSpeciesPrefsPatchBody({ species_id: 300, weight: 1 })?.status).toBe(400)
     expect(validateSpeciesPrefsPatchBody({ species_id: 255, weight: 1 })?.status).toBe(400)
   })
   it('rejects bad weights', () => {

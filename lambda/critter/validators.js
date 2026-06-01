@@ -4,9 +4,11 @@
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-// MVP species_id pool 1-8; smoke sentinel 255 also accepted (out-of-MVP-range; CHECK is 1-255).
+// V102 un-gate (L-102 owner-override): full earnable critter pool. Live pool is species_id 1-168;
+// the validator bound is 1-254 to leave headroom under the DB CHECK (species_id BETWEEN 1 AND 255)
+// for later roster waves without re-touching this gate. Smoke sentinel 255 still accepted (out-of-pool).
 export const MVP_SPECIES_MIN = 1
-export const MVP_SPECIES_MAX = 8
+export const MVP_SPECIES_MAX = 254
 export const SMOKE_SENTINEL_SPECIES_ID = 255
 
 // POST /api/critters body validator
@@ -26,7 +28,7 @@ export function validateCritterPostBody(body) {
     const inMvp = id >= MVP_SPECIES_MIN && id <= MVP_SPECIES_MAX
     const isSentinel = id === SMOKE_SENTINEL_SPECIES_ID
     if (!inMvp && !isSentinel) {
-      return { status: 400, error: `species_id ${id} out of MVP range (1-8) and not smoke sentinel (255)` }
+      return { status: 400, error: `species_id ${id} out of pool range (1-254) and not smoke sentinel (255)` }
     }
   }
   // meta JSONB allowlist (revision §6 deferred note — prevent behavioral-log creep)

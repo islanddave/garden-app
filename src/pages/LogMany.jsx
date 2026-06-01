@@ -28,15 +28,18 @@ const SECONDARY_GROUPS = [
     { value: 'thinning',       label: 'Thinned',       emoji: '🪓' },
     { value: 'potting_up',     label: 'Potted up',     emoji: '🪴' },
     { value: 'transplant',     label: 'Transplanted',  emoji: '🌱' },
-    { value: 'hardening_off',  label: 'Hardening off', emoji: '☀️' },
+    { value: 'hardening_off',  label: 'Hardening off', emoji: '⛅' },
   ]],
   ['Pest & Health', [
     { value: 'pest_treatment', label: 'Pest treatment', emoji: '🐛' },
   ]],
   ['Environmental', [
-    { value: 'cover',          label: 'Covered',       emoji: '🌂' },
-    { value: 'uncover',        label: 'Uncovered',     emoji: '🌤️' },
-    { value: 'other',          label: 'Other',         emoji: '📝' },
+    { value: 'cover',          label: 'Covered',         emoji: '🌂' },
+    { value: 'uncover',        label: 'Uncovered',       emoji: '🌤️' },
+    { value: 'brought_inside', label: 'Brought inside',  emoji: '🏠' },
+    { value: 'brought_outside',label: 'Brought outside', emoji: '☀️' },
+    { value: 'mulched',        label: 'Mulched',         emoji: '🍂' },
+    { value: 'other',          label: 'Other',           emoji: '📝' },
   ]],
 ]
 

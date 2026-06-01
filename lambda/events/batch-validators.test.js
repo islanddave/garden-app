@@ -1,6 +1,7 @@
 // Unit tests for validateBatchBody (bulk "Quick Log" / Unit A). DB-free, pure.
 import { describe, it, expect } from 'vitest';
 import { validateBatchBody, BATCH_EVENT_TYPES } from './validators.js';
+import { EVENT_TYPES } from '../../src/lib/constants.js';
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 const UUID2 = '22222222-2222-4222-8222-222222222222';
@@ -32,4 +33,19 @@ describe('validateBatchBody', () => {
   it('rejects non-array exclude_plant_ids', () => bad(base({ exclude_plant_ids: 'x' }), /must be an array/));
   it('rejects non-UUID exclude_plant_ids', () => bad(base({ exclude_plant_ids: ['nope'] }), /must all be UUIDs/));
   it('rejects event_date in far future', () => bad(base({ event_date: '2099-01-01' }), /future/));
+
+  // Phase 1 (V3-EVENT-004 + V3-EVENT-002): new environmental types are batch-loggable.
+  it('accepts brought_inside / brought_outside / mulched', () => {
+    ['brought_inside', 'brought_outside', 'mulched'].forEach(t => ok(base({ event_type: t })));
+  });
+});
+
+// Drift guard (data-schema-architect): the batch allowlist must never name a
+// value absent from the EVENT_TYPES master soft-enum, or event_log.event_type
+// would diverge between the single-POST and batch paths.
+describe('BATCH_EVENT_TYPES drift guard', () => {
+  it('is a subset of EVENT_TYPES', () => {
+    const master = new Set(EVENT_TYPES);
+    BATCH_EVENT_TYPES.forEach(t => expect(master.has(t), t).toBe(true));
+  });
 });

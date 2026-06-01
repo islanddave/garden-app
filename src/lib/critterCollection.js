@@ -13,10 +13,12 @@
 import { SPECIES_POOL } from './critterSpecies.js'
 
 // Pure string transform: sprite_filename → roster id.
-// Returns null when input is not a non-empty string or doesn't match 'C{NNN}-...' shape.
+// Returns null when input is not a non-empty string or doesn't match '{C|L|Y}{NNN}-...' shape.
+// V102: roster spans three groups — wild (C), legacy (L), cryptid (Y) — so the prefix is [CLY],
+// not C-only, or the 24 legacy/cryptid critters would never resolve to a roster id (never show collected).
 export function rosterIdFromSpriteFilename(filename) {
   if (typeof filename !== 'string' || filename.length === 0) return null
-  const m = filename.match(/^(C\d+)-/)
+  const m = filename.match(/^([CLY]\d+)-/)
   return m ? m[1] : null
 }
 

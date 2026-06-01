@@ -5,6 +5,23 @@ import {
   indexCollectionRows,
 } from '../lib/critterCollection.js'
 import { SPECIES_POOL } from '../lib/critterSpecies.js'
+import roster from '../data/critters-roster.json'
+
+// V102 drift guard: the earnable pool is GENERATED from critters-roster.json. If a future roster
+// wave adds/removes critters but the pool isn't regenerated, these assertions fail loudly.
+describe('SPECIES_POOL ↔ critters-roster.json parity (V102 drift guard)', () => {
+  const rosterBasenames = new Set(roster.map(c => c.image_url.split('/').pop()))
+  const poolBasenames = new Set(SPECIES_POOL.map(s => s.sprite_filename))
+  it('pool has one entry per roster critter (same count)', () => {
+    expect(SPECIES_POOL.length).toBe(roster.length)
+  })
+  it('every pool sprite matches a roster sprite', () => {
+    for (const b of poolBasenames) expect(rosterBasenames.has(b), b).toBe(true)
+  })
+  it('every roster critter has a pool entry', () => {
+    for (const b of rosterBasenames) expect(poolBasenames.has(b), b).toBe(true)
+  })
+})
 
 describe('critterCollection — rosterIdFromSpriteFilename', () => {
   it('extracts roster id from a well-formed sprite filename', () => {
@@ -29,7 +46,7 @@ describe('critterCollection — ROSTER_ID_BY_SPECIES_ID', () => {
   it('maps every SPECIES_POOL entry to a roster id', () => {
     for (const s of SPECIES_POOL) {
       expect(ROSTER_ID_BY_SPECIES_ID[s.species_id]).toBeTruthy()
-      expect(ROSTER_ID_BY_SPECIES_ID[s.species_id]).toMatch(/^C\d+$/)
+      expect(ROSTER_ID_BY_SPECIES_ID[s.species_id]).toMatch(/^[CLY]\d+$/)
     }
   })
   it('is frozen at module load', () => {
@@ -72,7 +89,7 @@ describe('critterCollection — indexCollectionRows', () => {
   it('drops rows with species_id outside SPECIES_POOL (forward-compat)', () => {
     const rows = [
       { species_id: 3, count: 1, first_seen_at: '2026-05-01T10:00:00Z' },
-      { species_id: 99, count: 1, first_seen_at: '2026-05-01T10:00:00Z' },
+      { species_id: 200, count: 1, first_seen_at: '2026-05-01T10:00:00Z' },
       { species_id: 255, count: 1, first_seen_at: '2026-05-01T10:00:00Z' },
     ]
     const m = indexCollectionRows(rows)

@@ -103,6 +103,9 @@ export const BATCH_EVENT_TYPES = [
   // Secondary — Environmental
   'cover',
   'uncover',
+  'brought_inside',
+  'brought_outside',
+  'mulched',
   'other',
 ];
 
