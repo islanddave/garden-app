@@ -202,7 +202,7 @@ export default function EventDetail() {
               onChange={e => setForm(f => ({ ...f, event_type: e.target.value }))}
               style={inputStyle}
             >
-              {EVENT_TYPES.map(t => (
+              {[...EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
                 <option key={t} value={t}>
                   {(EVENT_ICONS[t] ?? '📝') + ' ' + t.replace(/_/g, ' ')}
                 </option>
@@ -301,7 +301,7 @@ export default function EventDetail() {
             parentId={event.id}
             linkage={{ event_id: event.id, project_id: projectId }}
             errorMode="swallow"
-            buttonLabel="Tap to take or choose a photo"
+            mode="both"
             inputId={`event-photo-${event.id}`}
           />
         </div>

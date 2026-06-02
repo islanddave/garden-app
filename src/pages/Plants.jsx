@@ -305,7 +305,7 @@ export default function Plants() {
               <label htmlFor="plant-status" style={lbl}>Status</label>
               <select id="plant-status" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inp}>
                 <option value="">— none —</option>
-                {PLANT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                {[...PLANT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div>
@@ -397,7 +397,9 @@ export default function Plants() {
                 parentId={plant.id}
                 linkage={{ plant_id: plant.id, project_id: plant.project_id }}
                 errorMode="surface"
-                buttonLabel="📷"
+                mode="both"
+                takeLabel="📷"
+                chooseLabel="🖼️"
                 showPreview={false}
                 inputId={`plant-list-photo-${plant.id}`}
                 onUploadComplete={refetchPlants}
@@ -449,7 +451,7 @@ export default function Plants() {
                   <label htmlFor="plant-edit-status" style={lbl}>Status</label>
                   <select id="plant-edit-status" value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))} style={inp}>
                     <option value="">— none —</option>
-                    {PLANT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                    {[...PLANT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>

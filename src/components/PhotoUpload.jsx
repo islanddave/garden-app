@@ -1,28 +1,35 @@
 // src/components/PhotoUpload.jsx
 // V2-PHOTO-F1 — thin visual layer over useUploadPhoto.
 //
-// Mobile-first. `capture="environment"` invokes the rear camera on iOS Safari
-// and Chrome Android directly; falls back gracefully on desktop (still opens
-// the regular file picker). Primary target: Jen's iPhone in the garden.
+// Mobile-first. The single reusable photo widget for the whole app.
+//
+// mode="both" (RECOMMENDED, 2026-06-02 camera-unification): renders TWO triggers —
+//   "Take photo" (camera, capture="environment") and "Choose photo" (library, no
+//   capture attr). One hidden <input> whose `capture` attribute is toggled imperatively
+//   per choice, then .click()'d inside the user gesture so the camera/library opens on
+//   mobile. This is the consistent take-OR-choose flow that plugs into every surface.
+//
+// mode="single" (default, legacy): one trigger; behavior controlled by the `capture` prop
+//   (default 'environment' = camera on mobile, file-picker on desktop). Unchanged so the
+//   existing call sites + unit tests are untouched.
 //
 // Props:
-//   keyPrefix     : one of 'standalone' | 'events' | 'projects' | 'plants' | 'locations' | 'inventory' (default 'standalone')
+//   keyPrefix     : 'standalone' | 'events' | 'projects' | 'plants' | 'locations' | 'inventory' (default 'standalone')
 //   parentId      : parent entity id (required when keyPrefix !== 'standalone')
-//   linkage       : object forwarded to POST /api/photos as body fields, e.g. { project_id, plant_id, event_id, location_id, inventory_item_id }
+//   linkage       : object forwarded to POST /api/photos as body fields
 //   caption       : optional, forwarded to POST /api/photos
 //   is_public     : default true
 //   accept        : default 'image/*'
-//   capture       : default 'environment' (set to '' or null to disable camera invocation)
+//   capture       : default 'environment' (single mode only; '' or null disables camera invocation)
 //   errorMode     : 'surface' | 'swallow' — passed to useUploadPhoto
-//   buttonLabel   : trigger button text (default 'Add Photo')
+//   mode          : 'single' (default) | 'both'
+//   buttonLabel   : single-mode trigger text (default 'Add Photo')
+//   takeLabel     : both-mode camera trigger text (default '📷 Take photo')
+//   chooseLabel   : both-mode library trigger text (default '🖼️ Choose photo')
 //   showPreview   : default true
-//   onUploadStart : () => void
-//   onUploadComplete : (photo) => void
-//   onUploadError    : (errorMsg) => void
+//   onUploadStart / onUploadComplete / onUploadError
 //   disabled      : boolean
-//
-// Renders the trigger as a styled <label> wrapping a hidden <input type="file">
-// — the same iOS-friendly pattern proven by PhotoLibrary and EventNew.
+//   buttonStyle   : style override applied to the trigger(s); in both mode it overrides each button.
 
 import React, { useCallback, useRef } from 'react';
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js';
@@ -41,6 +48,25 @@ const DEFAULT_BTN_STYLE = {
   userSelect: 'none',
 };
 
+const CHOICE_BTN_STYLE = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '0.4rem',
+  flex: '1 1 0',
+  minWidth: 0,
+  padding: '0.7rem 0.9rem',
+  background: '#7c9885',
+  color: '#fff',
+  borderRadius: '0.5rem',
+  cursor: 'pointer',
+  fontSize: '0.95rem',
+  border: 'none',
+  fontWeight: 600,
+  textAlign: 'center',
+  userSelect: 'none',
+};
+
 export function PhotoUpload({
   keyPrefix     = 'standalone',
   parentId      = null,
@@ -50,7 +76,10 @@ export function PhotoUpload({
   accept        = 'image/*',
   capture       = 'environment',
   errorMode     = 'surface',
+  mode          = 'single',
   buttonLabel   = 'Add Photo',
+  takeLabel     = '📷 Take photo',
+  chooseLabel   = '🖼️ Choose photo',
   showPreview   = true,
   onUploadStart,
   onUploadComplete,
@@ -82,31 +111,79 @@ export function PhotoUpload({
     if (inputRef.current) inputRef.current.value = '';
   }, [upload, keyPrefix, parentId, linkage, caption, is_public, onUploadStart, onUploadComplete, onUploadError]);
 
-  const labelStyle = disabled || isUploading
+  const resolvedId = inputId ?? 'photo-upload-input';
+  const busy = disabled || isUploading;
+
+  // both-mode: toggle the capture attribute imperatively, then open the picker within the
+  // user gesture so iOS/Android open the camera (capture) vs the photo library (no capture).
+  const openPicker = useCallback((useCamera) => {
+    const el = inputRef.current;
+    if (!el || busy) return;
+    if (useCamera) el.setAttribute('capture', 'environment');
+    else el.removeAttribute('capture');
+    el.click();
+  }, [busy]);
+
+  // single-mode: capture is only added when truthy. Passing '' / null disables it (desktop fallback).
+  const captureProps = capture ? { capture } : {};
+
+  const choiceStyle = (buttonStyle ?? CHOICE_BTN_STYLE);
+  const choiceStyleBusy = busy ? { ...choiceStyle, opacity: 0.6, cursor: 'not-allowed' } : choiceStyle;
+  const labelStyle = busy
     ? { ...(buttonStyle ?? DEFAULT_BTN_STYLE), opacity: 0.6, cursor: 'not-allowed' }
     : (buttonStyle ?? DEFAULT_BTN_STYLE);
 
-  // capture is intentionally only added when truthy — passing the empty string
-  // explicitly tells some browsers "I want capture" which is the opposite of
-  // what we want for desktop fallback. Use a conditional spread.
-  const captureProps = capture ? { capture } : {};
-
   return (
     <div className="photo-upload" data-testid="photo-upload">
-      <label htmlFor={inputId ?? 'photo-upload-input'} style={labelStyle}>
-        {isUploading ? 'Uploading…' : buttonLabel}
-        <input
-          ref={inputRef}
-          id={inputId ?? 'photo-upload-input'}
-          type="file"
-          accept={accept}
-          {...captureProps}
-          onChange={handleChange}
-          disabled={disabled || isUploading}
-          style={{ display: 'none' }}
-          data-testid="photo-upload-input"
-        />
-      </label>
+      {mode === 'both' ? (
+        <>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => openPicker(true)}
+              disabled={busy}
+              data-testid="photo-upload-take"
+              style={choiceStyleBusy}
+            >
+              {isUploading ? 'Uploading…' : takeLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => openPicker(false)}
+              disabled={busy}
+              data-testid="photo-upload-choose"
+              style={choiceStyleBusy}
+            >
+              {chooseLabel}
+            </button>
+          </div>
+          <input
+            ref={inputRef}
+            id={resolvedId}
+            type="file"
+            accept={accept}
+            onChange={handleChange}
+            disabled={busy}
+            style={{ display: 'none' }}
+            data-testid="photo-upload-input"
+          />
+        </>
+      ) : (
+        <label htmlFor={resolvedId} style={labelStyle}>
+          {isUploading ? 'Uploading…' : buttonLabel}
+          <input
+            ref={inputRef}
+            id={resolvedId}
+            type="file"
+            accept={accept}
+            {...captureProps}
+            onChange={handleChange}
+            disabled={busy}
+            style={{ display: 'none' }}
+            data-testid="photo-upload-input"
+          />
+        </label>
+      )}
 
       {showPreview && preview && (
         <div style={{ marginTop: '0.75rem' }}>

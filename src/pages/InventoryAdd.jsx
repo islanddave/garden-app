@@ -75,9 +75,10 @@ export default function InventoryAdd() {
   const [successToast,  setSuccessToast]  = useState(false)
   const [typeWarning,   setTypeWarning]   = useState(false) // pending type switch
 
-  const visibleCategories = form.type
+  const visibleCategories = (form.type
     ? CATEGORIES.filter(c => c.types.includes(form.type))
     : CATEGORIES
+  ).slice().sort((a, b) => a.label.localeCompare(b.label))
 
   // Clear type-specific fields when type changes
   function applyTypeSwitch(newType) {
@@ -350,7 +351,7 @@ export default function InventoryAdd() {
                     style={selectStyle(!!errors.unit)}
                   >
                     <option value="">— Unit —</option>
-                    {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                    {[...UNITS].sort((a, b) => a.localeCompare(b)).map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </Field>
               </div>
@@ -429,7 +430,7 @@ export default function InventoryAdd() {
                         style={selectStyle(false)}
                       >
                         <option value="">— Optional —</option>
-                        {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                        {[...CONDITIONS].sort((a, b) => a.localeCompare(b)).map(c => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </Field>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

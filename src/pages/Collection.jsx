@@ -33,9 +33,20 @@ const THEMES = {
   teal:       { bg: '#d6e8e6', strip: '#2f6f6b', name: '#1f4f4a' },
 }
 const GROUP_DEFAULT = { wild: 'oat', legacy: 'honey', cryptid: 'lilac' }
+const THEME_KEYS = Object.keys(THEMES)
+// Stable per-critter theme. Explicit c.theme wins; otherwise hash the slug so every critter
+// gets a distinct, consistent tone from the 12-tone palette. (The roster carries no per-critter
+// theme field yet, so without this every wild critter collapsed to GROUP_DEFAULT.wild = 'oat' —
+// the "all my birds share one theme" bug.) Group still tints the jump-nav via GROUP_DEFAULT.
+function hashKey(s) {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
 function getTheme(c) {
-  const key = c.theme || GROUP_DEFAULT[c.group || 'wild'] || 'oat'
-  return THEMES[key] || THEMES.oat
+  if (c.theme && THEMES[c.theme]) return THEMES[c.theme]
+  const seed = c.slug || c.id || c.name || ''
+  return THEMES[THEME_KEYS[hashKey(seed) % THEME_KEYS.length]] || THEMES.oat
 }
 
 // ─── Group config ─────────────────────────────────────────────────────────────────
@@ -47,8 +58,7 @@ const GOLD_FADE  = 'rgba(180, 130, 50, 0.40)'
 const LABEL_GOLD = '#ffcf7a'
 
 // ─── Card geometry ───────────────────────────────────────────────────────────────
-const TILE_H      = 212   // 212: fits 3-line names ("Ruby Throated Hummingbird") at 108px min
-const TILE_W_MIN  = 108
+const TILE_H      = 212   // 212: fits 3-line names ("Ruby Throated Hummingbird")
 const STAGE_PCT   = '86%' // ~7% gap on each side between critter and card edge
 const CAPTION_H   = 42
 const CARD_RADIUS = 14
@@ -106,6 +116,13 @@ export default function Collection() {
       backgroundColor: P.cream,
       minHeight: '100vh',
     }}>
+      {/* Responsive critter grid: 3-per-row on phones (Jen's required layout), scaling up on
+          wider screens. Explicit column counts (not auto-fill) so phone widths are guaranteed 3. */}
+      <style>{`
+        .cc-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;grid-auto-rows:${TILE_H}px;padding:0;margin:0;list-style:none;}
+        @media(min-width:560px){.cc-grid{grid-template-columns:repeat(4,minmax(0,1fr));}}
+        @media(min-width:760px){.cc-grid{grid-template-columns:repeat(5,minmax(0,1fr));}}
+      `}</style>
       <div aria-live="polite" aria-atomic="true" style={{
         position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
         overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0,
@@ -201,13 +218,7 @@ export default function Collection() {
               }} />
             </div>
 
-            <ul role="list" style={{
-              display: 'grid',
-              gridTemplateColumns: `repeat(auto-fill, minmax(${TILE_W_MIN}px, 1fr))`,
-              gap: 12,
-              gridAutoRows: `${TILE_H}px`,
-              padding: 0, margin: 0, listStyle: 'none',
-            }}>
+            <ul role="list" className="cc-grid">
               {entries.map((c, idx) => {
                 const theme = getTheme(c)
                 const entry = collected.get(c.id)
@@ -232,6 +243,7 @@ export default function Collection() {
                       flexDirection: 'column',
                       alignItems: 'center',
                       padding: '8px 6px 0',
+                      paddingBottom: CAPTION_H,
                       background: theme.bg,
                       borderRadius: CARD_RADIUS,
                       boxShadow: CARD_SHADOW,
@@ -255,7 +267,7 @@ export default function Collection() {
                         Stage provides the ~7% consistent edge padding. view_scale zooms in
                         on critters that have empty viewBox space (scale range 1.0–2.5). */}
                     <div style={{
-                      width: STAGE_PCT,
+                      width: `min(${STAGE_PCT}, 132px)`,
                       aspectRatio: '1 / 1',
                       marginTop: 8,
                       flexShrink: 0,
@@ -282,15 +294,22 @@ export default function Collection() {
                       />
                     </div>
 
-                    {/* Full name — wraps freely, themed color, no truncation */}
+                    {/* Full name — fills the space between art and the pinned caption strip,
+                        vertically centered, clipped (never slides under the caption). */}
                     <div style={{
+                      flex: '1 1 auto',
+                      minHeight: 0,
+                      width: '100%',
                       marginTop: 8,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      overflow: 'hidden',
                       fontSize: '0.88rem',
                       fontWeight: 700,
                       lineHeight: 1.2,
                       letterSpacing: '-0.005em',
                       color: theme.name,
-                      width: '100%',
                       textAlign: 'center',
                       padding: '0 6px',
                       boxSizing: 'border-box',

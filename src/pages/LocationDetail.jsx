@@ -135,7 +135,7 @@ export default function LocationDetail() {
             parentId={location.id}
             linkage={{ location_id: location.id }}
             errorMode="surface"
-            buttonLabel="Add Location Photo"
+            mode="both"
             inputId={`location-photo-${location.id}`}
           />
         </div>

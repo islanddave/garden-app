@@ -49,7 +49,8 @@ export default function ZonePicker() {
       // Locations Lambda returns { locations: [...], locations_with_path: [...] }
       // Filter to level-0 active zones only for the zone picker
       const allLocs = locsResp?.locations ?? []
-      setZones(allLocs.filter(l => l.level === 0 && l.is_active !== false))
+      setZones(allLocs.filter(l => l.level === 0 && l.is_active !== false)
+        .sort((a, b) => (a.name || '').localeCompare(b.name || '')))
       setCounts(countMap)
     } catch (err) {
       setError(err.message)

@@ -190,6 +190,7 @@ export default function InventoryDetail() {
 
   const isConsumable = form.type === 'consumable'
   const visibleCats  = CATEGORIES.filter(c => c.types.includes(form.type))
+    .slice().sort((a, b) => a.label.localeCompare(b.label))
 
   return (
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
@@ -240,7 +241,7 @@ export default function InventoryDetail() {
             parentId={item.id}
             linkage={{ inventory_item_id: item.id }}
             errorMode="surface"
-            buttonLabel="Add Item Photo"
+            mode="both"
             inputId={`inventory-photo-${item.id}`}
           />
         </div>
@@ -288,7 +289,7 @@ export default function InventoryDetail() {
                 onChange={e => set('status', e.target.value)}
                 style={selectStyle(false)}
               >
-                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                {[...STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </Field>
 
@@ -310,7 +311,7 @@ export default function InventoryDetail() {
                     style={selectStyle(false)}
                   >
                     <option value="">— Unit —</option>
-                    {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                    {[...UNITS].sort((a, b) => a.localeCompare(b)).map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </Field>
               </div>
@@ -363,7 +364,7 @@ export default function InventoryDetail() {
                     style={selectStyle(false)}
                   >
                     <option value="">— Optional —</option>
-                    {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                    {[...CONDITIONS].sort((a, b) => a.localeCompare(b)).map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </Field>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

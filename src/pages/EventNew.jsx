@@ -267,7 +267,7 @@ function MetadataSection({ eventType, metadataState, onMetadataChange }) {
                   style={selectStyle}
                 >
                   <option value="">— optional —</option>
-                  {field.options.map(opt => (
+                  {[...field.options].sort((a, b) => String(a).localeCompare(String(b))).map(opt => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
                 </select>
@@ -416,6 +416,17 @@ export default function EventNew() {
     if (!file) return
     setPhotoFile(file)
     setPhotoPreview(URL.createObjectURL(file))
+  }
+
+  // Camera-unification (2026-06-02): one hidden input, capture toggled per choice so the
+  // staged-photo flow offers BOTH take-photo and choose-photo, consistent with <PhotoUpload mode="both">.
+  const photoInputRef = useRef(null)
+  function openPhotoPicker(useCamera) {
+    const el = photoInputRef.current
+    if (!el) return
+    if (useCamera) el.setAttribute('capture', 'environment')
+    else el.removeAttribute('capture')
+    el.click()
   }
 
   function clearPhoto() {
@@ -673,7 +684,7 @@ export default function EventNew() {
               style={selectStyle}
             >
               <option value="">— Select project —</option>
-              {projects.map(p => (
+              {[...projects].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
@@ -694,7 +705,7 @@ export default function EventNew() {
                 style={selectStyle}
               >
                 <option value="">— All plants (project level) —</option>
-                {plantsForProject.map(pl => (
+                {[...plantsForProject].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(pl => (
                   <option key={pl.id} value={pl.id}>
                     {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety_ref?.name ? ` — ${pl.variety_ref.name}` : ''}
                   </option>
@@ -791,7 +802,7 @@ export default function EventNew() {
                     aria-label="Harvest unit"
                     style={{ ...selectStyle, minHeight: 44, minWidth: 44 }}
                   >
-                    {HARVEST_UNITS.map(u => (
+                    {[...HARVEST_UNITS].sort((a, b) => a.localeCompare(b)).map(u => (
                       <option key={u} value={u}>{u}</option>
                     ))}
                   </select>
@@ -873,7 +884,7 @@ export default function EventNew() {
                     }}
                   >
                     <option value="">— Pick a severity —</option>
-                    {SEVERITY_OPTIONS.map(o => (
+                    {[...SEVERITY_OPTIONS].sort((a, b) => a.value - b.value).map(o => (
                       <option key={o.value} value={o.value}>
                         {o.value} · {o.label} — {o.anchor}
                       </option>
@@ -941,22 +952,45 @@ export default function EventNew() {
                 >✕</button>
               </div>
             ) : (
-              <label style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
-                padding: '22px 16px',
-                border: `2px dashed ${P.border}`, borderRadius: 8,
-                cursor: 'pointer', backgroundColor: P.white,
-                color: P.mid, fontSize: '0.88rem',
-              }}>
-                <span style={{ fontSize: '1.5rem' }}>📷</span>
-                <span>Tap to take or choose a photo</span>
+              <div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => openPhotoPicker(true)}
+                    style={{
+                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      padding: '18px 12px',
+                      border: `2px dashed ${P.border}`, borderRadius: 8,
+                      cursor: 'pointer', backgroundColor: P.white,
+                      color: P.mid, fontSize: '0.88rem', fontWeight: 600,
+                    }}
+                  >
+                    <span style={{ fontSize: '1.3rem' }}>📷</span>
+                    <span>Take photo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openPhotoPicker(false)}
+                    style={{
+                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      padding: '18px 12px',
+                      border: `2px dashed ${P.border}`, borderRadius: 8,
+                      cursor: 'pointer', backgroundColor: P.white,
+                      color: P.mid, fontSize: '0.88rem', fontWeight: 600,
+                    }}
+                  >
+                    <span style={{ fontSize: '1.3rem' }}>🖼️</span>
+                    <span>Choose photo</span>
+                  </button>
+                </div>
                 <input
+                  ref={photoInputRef}
                   type="file"
                   accept="image/*"
                   onChange={handlePhotoChange}
                   style={{ display: 'none' }}
                 />
-              </label>
+              </div>
             )}
           </Section>
 

@@ -488,7 +488,7 @@ export default function ProjectDetail() {
             </FormRow>
             <FormRow label="Status">
               <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inputStyle}>
-                {PROJECT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                {[...PROJECT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </FormRow>
           </div>
@@ -722,7 +722,9 @@ export default function ProjectDetail() {
                     parentId={plant.id}
                     linkage={{ plant_id: plant.id, project_id: id }}
                     errorMode="surface"
-                    buttonLabel="📷"
+                    mode="both"
+                    takeLabel="📷"
+                    chooseLabel="🖼️"
                     showPreview={false}
                     inputId={`plant-photo-${plant.id}`}
                     buttonStyle={{
@@ -756,7 +758,7 @@ export default function ProjectDetail() {
             parentId={id}
             linkage={{ project_id: id }}
             errorMode="surface"
-            buttonLabel="Add Project Photo"
+            mode="both"
             inputId={`project-photo-${id}`}
           />
         </div>
@@ -796,7 +798,7 @@ export default function ProjectDetail() {
                   onChange={e => setEventForm(f => ({ ...f, event_type: e.target.value }))}
                   style={inputStyle}
                 >
-                  {EVENT_TYPES.map(t => (
+                  {[...EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
                     <option key={t} value={t}>
                       {(EVENT_ICONS[t] ?? '📝') + ' ' + t.replace(/_/g, ' ')}
                     </option>

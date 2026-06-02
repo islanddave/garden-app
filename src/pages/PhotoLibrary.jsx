@@ -278,7 +278,7 @@ export default function PhotoLibrary() {
                 caption={photoCaption}
                 is_public={uploadForm.is_public}
                 errorMode="surface"
-                buttonLabel="Tap to choose a photo"
+                mode="both"
                 onUploadComplete={handleUploadComplete}
                 onUploadError={handleUploadError}
                 disabled={projectIdMissing}

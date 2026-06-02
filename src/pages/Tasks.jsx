@@ -122,7 +122,7 @@ function CreateFormV2({ form, setForm, locations, projects, saving, formError, o
         </div>
         <div style={{ marginBottom: 14 }}>
           <label htmlFor="task-priority" style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Priority</label>
-          <select id="task-priority" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}>{TASK_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}</select>
+          <select id="task-priority" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}>{[...TASK_PRIORITIES].sort((a, b) => a.localeCompare(b)).map(p => <option key={p} value={p}>{p}</option>)}</select>
         </div>
       </div>
       <div style={{ marginBottom: 14 }}>

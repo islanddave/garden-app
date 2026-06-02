@@ -5,7 +5,8 @@
     "name": "Honeybee",
     "group": "wild",
     "image_url": "/critters/C001-honeybee.svg",
-    "view_scale": 1.6
+    "view_scale": 1.6,
+    "theme": "rose"
   },
   {
     "id": "C002",
@@ -13,7 +14,8 @@
     "name": "Monarch Butterfly",
     "group": "wild",
     "image_url": "/critters/C002-monarch-butterfly.svg",
-    "view_scale": 1.481
+    "view_scale": 1.481,
+    "theme": "sky"
   },
   {
     "id": "C003",
@@ -21,7 +23,8 @@
     "name": "Convergent Ladybug",
     "group": "wild",
     "image_url": "/critters/C003-convergent-ladybug.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "oat"
   },
   {
     "id": "C004",
@@ -29,7 +32,8 @@
     "name": "Big Dipper Firefly",
     "group": "wild",
     "image_url": "/critters/C004-big-dipper-firefly.svg",
-    "view_scale": 1.667
+    "view_scale": 1.667,
+    "theme": "periwinkle"
   },
   {
     "id": "C005",
@@ -37,7 +41,8 @@
     "name": "Green Lacewing",
     "group": "wild",
     "image_url": "/critters/C005-green-lacewing.svg",
-    "view_scale": 1.739
+    "view_scale": 1.739,
+    "theme": "peach"
   },
   {
     "id": "C006",
@@ -45,7 +50,8 @@
     "name": "Common Earthworm",
     "group": "wild",
     "image_url": "/critters/C006-common-earthworm.svg",
-    "view_scale": 2.162
+    "view_scale": 2.162,
+    "theme": "stone"
   },
   {
     "id": "C007",
@@ -53,7 +59,8 @@
     "name": "Ruby Throated Hummingbird",
     "group": "wild",
     "image_url": "/critters/C007-ruby-throated-hummingbird.svg",
-    "view_scale": 1.6
+    "view_scale": 1.6,
+    "theme": "rose"
   },
   {
     "id": "C008",
@@ -61,7 +68,8 @@
     "name": "Common Green Darner",
     "group": "wild",
     "image_url": "/critters/C008-common-green-darner.svg",
-    "view_scale": 1.6
+    "view_scale": 1.6,
+    "theme": "butter"
   },
   {
     "id": "C009",
@@ -69,7 +77,8 @@
     "name": "Eastern Tiger Swallowtail",
     "group": "wild",
     "image_url": "/critters/C009-eastern-tiger-swallowtail.svg",
-    "view_scale": 1.649
+    "view_scale": 1.649,
+    "theme": "periwinkle"
   },
   {
     "id": "C010",
@@ -77,7 +86,8 @@
     "name": "Eastern Cottontail",
     "group": "wild",
     "image_url": "/critters/C010-eastern-cottontail.svg",
-    "view_scale": 1.905
+    "view_scale": 1.905,
+    "theme": "stone"
   },
   {
     "id": "C011",
@@ -85,7 +95,8 @@
     "name": "Northern Cardinal",
     "group": "wild",
     "image_url": "/critters/C011-northern-cardinal.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "sky"
   },
   {
     "id": "C012",
@@ -93,7 +104,8 @@
     "name": "Black Capped Chickadee",
     "group": "wild",
     "image_url": "/critters/C012-black-capped-chickadee.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "periwinkle"
   },
   {
     "id": "C013",
@@ -101,7 +113,8 @@
     "name": "American Robin",
     "group": "wild",
     "image_url": "/critters/C013-american-robin.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "butter"
   },
   {
     "id": "C014",
@@ -109,7 +122,8 @@
     "name": "Eastern Bluebird",
     "group": "wild",
     "image_url": "/critters/C014-eastern-bluebird.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "peach"
   },
   {
     "id": "C015",
@@ -117,7 +131,8 @@
     "name": "Eastern Chipmunk",
     "group": "wild",
     "image_url": "/critters/C015-eastern-chipmunk.svg",
-    "view_scale": 2.254
+    "view_scale": 2.254,
+    "theme": "stone"
   },
   {
     "id": "C016",
@@ -125,7 +140,8 @@
     "name": "Red Squirrel",
     "group": "wild",
     "image_url": "/critters/C016-red-squirrel.svg",
-    "view_scale": 1.702
+    "view_scale": 1.702,
+    "theme": "stone"
   },
   {
     "id": "C017",
@@ -133,7 +149,8 @@
     "name": "Gray Treefrog",
     "group": "wild",
     "image_url": "/critters/C017-gray-treefrog.svg",
-    "view_scale": 1.468
+    "view_scale": 1.468,
+    "theme": "rose"
   },
   {
     "id": "C018",
@@ -141,7 +158,8 @@
     "name": "Eastern Garter Snake",
     "group": "wild",
     "image_url": "/critters/C018-eastern-garter-snake.svg",
-    "view_scale": 1.778
+    "view_scale": 1.778,
+    "theme": "blush"
   },
   {
     "id": "C019",
@@ -149,7 +167,8 @@
     "name": "White Tailed Deer",
     "group": "wild",
     "image_url": "/critters/C019-white-tailed-deer.svg",
-    "view_scale": 2.051
+    "view_scale": 2.051,
+    "theme": "sky"
   },
   {
     "id": "C020",
@@ -157,7 +176,8 @@
     "name": "Red Fox",
     "group": "wild",
     "image_url": "/critters/C020-red-fox.svg",
-    "view_scale": 1.758
+    "view_scale": 1.758,
+    "theme": "sky"
   },
   {
     "id": "C022",
@@ -165,7 +185,8 @@
     "name": "Woodchuck",
     "group": "wild",
     "image_url": "/critters/C022-woodchuck.svg",
-    "view_scale": 1.882
+    "view_scale": 1.882,
+    "theme": "stone"
   },
   {
     "id": "C023",
@@ -173,7 +194,8 @@
     "name": "Northern Raccoon",
     "group": "wild",
     "image_url": "/critters/C023-northern-raccoon.svg",
-    "view_scale": 1.905
+    "view_scale": 1.905,
+    "theme": "sky"
   },
   {
     "id": "C024",
@@ -181,7 +203,8 @@
     "name": "Barred Owl",
     "group": "wild",
     "image_url": "/critters/C024-barred-owl.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "sky"
   },
   {
     "id": "C027",
@@ -189,7 +212,8 @@
     "name": "Black Bear",
     "group": "wild",
     "image_url": "/critters/C027-black-bear.svg",
-    "view_scale": 1.29
+    "view_scale": 1.29,
+    "theme": "oat"
   },
   {
     "id": "C028",
@@ -197,7 +221,8 @@
     "name": "Bobcat",
     "group": "wild",
     "image_url": "/critters/C028-bobcat.svg",
-    "view_scale": 1.619
+    "view_scale": 1.619,
+    "theme": "sky"
   },
   {
     "id": "C029",
@@ -205,7 +230,8 @@
     "name": "American Goldfinch",
     "group": "wild",
     "image_url": "/critters/C029-american-goldfinch.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "periwinkle"
   },
   {
     "id": "C030",
@@ -213,7 +239,8 @@
     "name": "Downy Woodpecker",
     "group": "wild",
     "image_url": "/critters/C030-downy-woodpecker.svg",
-    "view_scale": 1.481
+    "view_scale": 1.481,
+    "theme": "honey"
   },
   {
     "id": "C031",
@@ -221,7 +248,8 @@
     "name": "Mallard",
     "group": "wild",
     "image_url": "/critters/C031-mallard.svg",
-    "view_scale": 1.739
+    "view_scale": 1.739,
+    "theme": "blush"
   },
   {
     "id": "C039",
@@ -229,7 +257,8 @@
     "name": "Polyphemus Moth",
     "group": "wild",
     "image_url": "/critters/C039-polyphemus-moth.svg",
-    "view_scale": 1.818
+    "view_scale": 1.818,
+    "theme": "oat"
   },
   {
     "id": "C040",
@@ -237,7 +266,8 @@
     "name": "Giant Panda",
     "group": "wild",
     "image_url": "/critters/C040-giant-panda.svg",
-    "view_scale": 1.778
+    "view_scale": 1.778,
+    "theme": "lilac"
   },
   {
     "id": "C041",
@@ -245,7 +275,8 @@
     "name": "American Flamingo",
     "group": "wild",
     "image_url": "/critters/C041-american-flamingo.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "sky"
   },
   {
     "id": "C042",
@@ -253,7 +284,8 @@
     "name": "Galapagos Tortoise",
     "group": "wild",
     "image_url": "/critters/C042-galapagos-tortoise.svg",
-    "view_scale": 1.86
+    "view_scale": 1.86,
+    "theme": "peach"
   },
   {
     "id": "C043",
@@ -261,7 +293,8 @@
     "name": "Resplendent Quetzal",
     "group": "wild",
     "image_url": "/critters/C043-resplendent-quetzal.svg",
-    "view_scale": 1.212
+    "view_scale": 1.212,
+    "theme": "rose"
   },
   {
     "id": "C044",
@@ -269,7 +302,8 @@
     "name": "Bengal Tiger",
     "group": "wild",
     "image_url": "/critters/C044-bengal-tiger.svg",
-    "view_scale": 1.818
+    "view_scale": 1.818,
+    "theme": "oat"
   },
   {
     "id": "C045",
@@ -277,7 +311,8 @@
     "name": "Snow Leopard",
     "group": "wild",
     "image_url": "/critters/C045-snow-leopard.svg",
-    "view_scale": 1.778
+    "view_scale": 1.778,
+    "theme": "periwinkle"
   },
   {
     "id": "C046",
@@ -285,7 +320,8 @@
     "name": "Tufted Titmouse",
     "group": "wild",
     "image_url": "/critters/C046-tufted-titmouse.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "periwinkle"
   },
   {
     "id": "C047",
@@ -293,7 +329,8 @@
     "name": "American Crow",
     "group": "wild",
     "image_url": "/critters/C047-american-crow.svg",
-    "view_scale": 1.29
+    "view_scale": 1.29,
+    "theme": "butter"
   },
   {
     "id": "C048",
@@ -301,7 +338,8 @@
     "name": "Red Bellied Woodpecker",
     "group": "wild",
     "image_url": "/critters/C048-red-bellied-woodpecker.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "oat"
   },
   {
     "id": "C049",
@@ -309,7 +347,8 @@
     "name": "Mourning Dove",
     "group": "wild",
     "image_url": "/critters/C049-mourning-dove.svg",
-    "view_scale": 1.481
+    "view_scale": 1.481,
+    "theme": "sky"
   },
   {
     "id": "C050",
@@ -317,7 +356,8 @@
     "name": "Blue Jay",
     "group": "wild",
     "image_url": "/critters/C050-blue-jay.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "butter"
   },
   {
     "id": "C051",
@@ -325,7 +365,8 @@
     "name": "White Breasted Nuthatch",
     "group": "wild",
     "image_url": "/critters/C051-white-breasted-nuthatch.svg",
-    "view_scale": 1.481
+    "view_scale": 1.481,
+    "theme": "peach"
   },
   {
     "id": "C052",
@@ -333,7 +374,8 @@
     "name": "Eastern Gray Squirrel",
     "group": "wild",
     "image_url": "/critters/C052-eastern-gray-squirrel.svg",
-    "view_scale": 1.693
+    "view_scale": 1.693,
+    "theme": "sky"
   },
   {
     "id": "C053",
@@ -341,7 +383,8 @@
     "name": "Striped Skunk",
     "group": "wild",
     "image_url": "/critters/C053-striped-skunk.svg",
-    "view_scale": 1.818
+    "view_scale": 1.818,
+    "theme": "honey"
   },
   {
     "id": "C054",
@@ -349,7 +392,8 @@
     "name": "American Green Frog",
     "group": "wild",
     "image_url": "/critters/C054-american-green-frog.svg",
-    "view_scale": 2.388
+    "view_scale": 2.388,
+    "theme": "rose"
   },
   {
     "id": "C055",
@@ -357,7 +401,8 @@
     "name": "American Toad",
     "group": "wild",
     "image_url": "/critters/C055-american-toad.svg",
-    "view_scale": 2.5
+    "view_scale": 2.5,
+    "theme": "oat"
   },
   {
     "id": "C056",
@@ -365,7 +410,8 @@
     "name": "Redback Salamander",
     "group": "wild",
     "image_url": "/critters/C056-redback-salamander.svg",
-    "view_scale": 1.616
+    "view_scale": 1.616,
+    "theme": "butter"
   },
   {
     "id": "C057",
@@ -373,7 +419,8 @@
     "name": "Wild Turkey",
     "group": "wild",
     "image_url": "/critters/C057-wild-turkey.svg",
-    "view_scale": 2.105
+    "view_scale": 2.105,
+    "theme": "honey"
   },
   {
     "id": "C058",
@@ -381,7 +428,8 @@
     "name": "Common Raven",
     "group": "wild",
     "image_url": "/critters/C058-common-raven.svg",
-    "view_scale": 1.212
+    "view_scale": 1.212,
+    "theme": "oat"
   },
   {
     "id": "C059",
@@ -389,7 +437,8 @@
     "name": "American Woodcock",
     "group": "wild",
     "image_url": "/critters/C059-american-woodcock.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "oat"
   },
   {
     "id": "C060",
@@ -397,7 +446,8 @@
     "name": "Dark Eyed Junco",
     "group": "wild",
     "image_url": "/critters/C060-dark-eyed-junco.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "peach"
   },
   {
     "id": "C061",
@@ -405,7 +455,8 @@
     "name": "Hairy Woodpecker",
     "group": "wild",
     "image_url": "/critters/C061-hairy-woodpecker.svg",
-    "view_scale": 1.481
+    "view_scale": 1.481,
+    "theme": "peach"
   },
   {
     "id": "C062",
@@ -413,7 +464,8 @@
     "name": "Yellow Bellied Sapsucker",
     "group": "wild",
     "image_url": "/critters/C062-yellow-bellied-sapsucker.svg",
-    "view_scale": 1.481
+    "view_scale": 1.481,
+    "theme": "periwinkle"
   },
   {
     "id": "C063",
@@ -421,7 +473,8 @@
     "name": "Pileated Woodpecker",
     "group": "wild",
     "image_url": "/critters/C063-pileated-woodpecker.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "honey"
   },
   {
     "id": "C064",
@@ -429,7 +482,8 @@
     "name": "Virginia Opossum",
     "group": "wild",
     "image_url": "/critters/C064-virginia-opossum.svg",
-    "view_scale": 1.951
+    "view_scale": 1.951,
+    "theme": "butter"
   },
   {
     "id": "C065",
@@ -437,7 +491,8 @@
     "name": "Big Brown Bat",
     "group": "wild",
     "image_url": "/critters/C065-big-brown-bat.svg",
-    "view_scale": 1.6
+    "view_scale": 1.6,
+    "theme": "oat"
   },
   {
     "id": "C066",
@@ -445,7 +500,8 @@
     "name": "Hairy Tailed Mole",
     "group": "wild",
     "image_url": "/critters/C066-hairy-tailed-mole.svg",
-    "view_scale": 2.105
+    "view_scale": 2.105,
+    "theme": "butter"
   },
   {
     "id": "C067",
@@ -453,7 +509,8 @@
     "name": "North American Porcupine",
     "group": "wild",
     "image_url": "/critters/C067-north-american-porcupine.svg",
-    "view_scale": 2.424
+    "view_scale": 2.424,
+    "theme": "sky"
   },
   {
     "id": "C068",
@@ -461,7 +518,8 @@
     "name": "Deer Mouse",
     "group": "wild",
     "image_url": "/critters/C068-deer-mouse.svg",
-    "view_scale": 1.739
+    "view_scale": 1.739,
+    "theme": "sky"
   },
   {
     "id": "C069",
@@ -469,7 +527,8 @@
     "name": "Meadow Vole",
     "group": "wild",
     "image_url": "/critters/C069-meadow-vole.svg",
-    "view_scale": 2.105
+    "view_scale": 2.105,
+    "theme": "oat"
   },
   {
     "id": "C070",
@@ -477,7 +536,8 @@
     "name": "Common Snapping Turtle",
     "group": "wild",
     "image_url": "/critters/C070-common-snapping-turtle.svg",
-    "view_scale": 1.778
+    "view_scale": 1.778,
+    "theme": "peach"
   },
   {
     "id": "C071",
@@ -485,7 +545,8 @@
     "name": "Spring Peeper",
     "group": "wild",
     "image_url": "/critters/C071-spring-peeper.svg",
-    "view_scale": 2.5
+    "view_scale": 2.5,
+    "theme": "stone"
   },
   {
     "id": "C072",
@@ -493,7 +554,8 @@
     "name": "Eastern Milk Snake",
     "group": "wild",
     "image_url": "/critters/C072-eastern-milk-snake.svg",
-    "view_scale": 1.778
+    "view_scale": 1.778,
+    "theme": "oat"
   },
   {
     "id": "C073",
@@ -501,7 +563,8 @@
     "name": "Northern Water Snake",
     "group": "wild",
     "image_url": "/critters/C073-northern-water-snake.svg",
-    "view_scale": 1.778
+    "view_scale": 1.778,
+    "theme": "honey"
   },
   {
     "id": "C074",
@@ -509,7 +572,8 @@
     "name": "Canada Goose",
     "group": "wild",
     "image_url": "/critters/C074-canada-goose.svg",
-    "view_scale": 1.667
+    "view_scale": 1.667,
+    "theme": "lilac"
   },
   {
     "id": "C075",
@@ -517,7 +581,8 @@
     "name": "Great Horned Owl",
     "group": "wild",
     "image_url": "/critters/C075-great-horned-owl.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "stone"
   },
   {
     "id": "C076",
@@ -525,7 +590,8 @@
     "name": "Indigo Bunting",
     "group": "wild",
     "image_url": "/critters/C076-indigo-bunting.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "oat"
   },
   {
     "id": "C077",
@@ -533,7 +599,8 @@
     "name": "Scarlet Tanager",
     "group": "wild",
     "image_url": "/critters/C077-scarlet-tanager.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "oat"
   },
   {
     "id": "C078",
@@ -541,7 +608,8 @@
     "name": "Cedar Waxwing",
     "group": "wild",
     "image_url": "/critters/C078-cedar-waxwing.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "sky"
   },
   {
     "id": "C079",
@@ -549,7 +617,8 @@
     "name": "Baltimore Oriole",
     "group": "wild",
     "image_url": "/critters/C079-baltimore-oriole.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "stone"
   },
   {
     "id": "C080",
@@ -557,7 +626,8 @@
     "name": "American Kestrel",
     "group": "wild",
     "image_url": "/critters/C080-american-kestrel.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "peach"
   },
   {
     "id": "C081",
@@ -565,7 +635,8 @@
     "name": "Peregrine Falcon",
     "group": "wild",
     "image_url": "/critters/C081-peregrine-falcon.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "butter"
   },
   {
     "id": "C082",
@@ -573,7 +644,8 @@
     "name": "Coopers Hawk",
     "group": "wild",
     "image_url": "/critters/C082-coopers-hawk.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "oat"
   },
   {
     "id": "C083",
@@ -581,7 +653,8 @@
     "name": "Ring Necked Duck",
     "group": "wild",
     "image_url": "/critters/C083-ring-necked-duck.svg",
-    "view_scale": 1.739
+    "view_scale": 1.739,
+    "theme": "peach"
   },
   {
     "id": "C084",
@@ -589,7 +662,8 @@
     "name": "Willow Flycatcher",
     "group": "wild",
     "image_url": "/critters/C084-willow-flycatcher.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "periwinkle"
   },
   {
     "id": "C085",
@@ -597,7 +671,8 @@
     "name": "Ruffed Grouse",
     "group": "wild",
     "image_url": "/critters/C085-ruffed-grouse.svg",
-    "view_scale": 1.905
+    "view_scale": 1.905,
+    "theme": "stone"
   },
   {
     "id": "C086",
@@ -605,7 +680,8 @@
     "name": "Yellow Billed Cuckoo",
     "group": "wild",
     "image_url": "/critters/C086-yellow-billed-cuckoo.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "oat"
   },
   {
     "id": "C087",
@@ -613,7 +689,8 @@
     "name": "Ovenbird",
     "group": "wild",
     "image_url": "/critters/C087-ovenbird.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "blush"
   },
   {
     "id": "C088",
@@ -621,7 +698,8 @@
     "name": "Eastern Racer",
     "group": "wild",
     "image_url": "/critters/C088-eastern-racer.svg",
-    "view_scale": 1.778
+    "view_scale": 1.778,
+    "theme": "peach"
   },
   {
     "id": "C089",
@@ -629,7 +707,8 @@
     "name": "Bald Eagle",
     "group": "wild",
     "image_url": "/critters/C089-bald-eagle.svg",
-    "view_scale": 1.212
+    "view_scale": 1.212,
+    "theme": "stone"
   },
   {
     "id": "C090",
@@ -637,7 +716,8 @@
     "name": "Gray Fox",
     "group": "wild",
     "image_url": "/critters/C090-gray-fox.svg",
-    "view_scale": 1.758
+    "view_scale": 1.758,
+    "theme": "honey"
   },
   {
     "id": "C091",
@@ -645,7 +725,8 @@
     "name": "North American Beaver",
     "group": "wild",
     "image_url": "/critters/C091-north-american-beaver.svg",
-    "view_scale": 1.882
+    "view_scale": 1.882,
+    "theme": "sky"
   },
   {
     "id": "C092",
@@ -653,7 +734,8 @@
     "name": "American Mink",
     "group": "wild",
     "image_url": "/critters/C092-american-mink.svg",
-    "view_scale": 1.739
+    "view_scale": 1.739,
+    "theme": "sky"
   },
   {
     "id": "C093",
@@ -661,7 +743,8 @@
     "name": "Long Tailed Weasel",
     "group": "wild",
     "image_url": "/critters/C093-long-tailed-weasel.svg",
-    "view_scale": 1.633
+    "view_scale": 1.633,
+    "theme": "oat"
   },
   {
     "id": "C094",
@@ -669,7 +752,8 @@
     "name": "Little Brown Bat",
     "group": "wild",
     "image_url": "/critters/C094-little-brown-bat.svg",
-    "view_scale": 1.6
+    "view_scale": 1.6,
+    "theme": "oat"
   },
   {
     "id": "C095",
@@ -677,7 +761,8 @@
     "name": "Summer Tanager",
     "group": "wild",
     "image_url": "/critters/C095-summer-tanager.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "stone"
   },
   {
     "id": "C096",
@@ -685,7 +770,8 @@
     "name": "Yellow Bellied Flycatcher",
     "group": "wild",
     "image_url": "/critters/C096-yellow-bellied-flycatcher.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "blush"
   },
   {
     "id": "C097",
@@ -693,7 +779,8 @@
     "name": "Cerulean Warbler",
     "group": "wild",
     "image_url": "/critters/C097-cerulean-warbler.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "butter"
   },
   {
     "id": "C098",
@@ -701,7 +788,8 @@
     "name": "Common Nighthawk",
     "group": "wild",
     "image_url": "/critters/C098-common-nighthawk.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "stone"
   },
   {
     "id": "C099",
@@ -709,7 +797,8 @@
     "name": "Red Headed Woodpecker",
     "group": "wild",
     "image_url": "/critters/C099-red-headed-woodpecker.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "sky"
   },
   {
     "id": "C100",
@@ -717,7 +806,8 @@
     "name": "Grasshopper Sparrow",
     "group": "wild",
     "image_url": "/critters/C100-grasshopper-sparrow.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "stone"
   },
   {
     "id": "C101",
@@ -725,7 +815,8 @@
     "name": "Black Billed Cuckoo",
     "group": "wild",
     "image_url": "/critters/C101-black-billed-cuckoo.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "oat"
   },
   {
     "id": "C102",
@@ -733,7 +824,8 @@
     "name": "Orange Crowned Warbler",
     "group": "wild",
     "image_url": "/critters/C102-orange-crowned-warbler.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "rose"
   },
   {
     "id": "C103",
@@ -741,7 +833,8 @@
     "name": "Merlin",
     "group": "wild",
     "image_url": "/critters/C103-merlin.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "peach"
   },
   {
     "id": "C104",
@@ -749,7 +842,8 @@
     "name": "Purple Martin",
     "group": "wild",
     "image_url": "/critters/C104-purple-martin.svg",
-    "view_scale": 1.25
+    "view_scale": 1.25,
+    "theme": "apricot"
   },
   {
     "id": "C105",
@@ -757,7 +851,8 @@
     "name": "Orchard Oriole",
     "group": "wild",
     "image_url": "/critters/C105-orchard-oriole.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "sky"
   },
   {
     "id": "C106",
@@ -765,7 +860,8 @@
     "name": "Moose",
     "group": "wild",
     "image_url": "/critters/C106-moose.svg",
-    "view_scale": 1.633
+    "view_scale": 1.633,
+    "theme": "oat"
   },
   {
     "id": "C107",
@@ -773,7 +869,8 @@
     "name": "Fisher",
     "group": "wild",
     "image_url": "/critters/C107-fisher.svg",
-    "view_scale": 1.633
+    "view_scale": 1.633,
+    "theme": "sky"
   },
   {
     "id": "C108",
@@ -781,7 +878,8 @@
     "name": "American Ermine",
     "group": "wild",
     "image_url": "/critters/C108-american-ermine.svg",
-    "view_scale": 1.633
+    "view_scale": 1.633,
+    "theme": "rose"
   },
   {
     "id": "C109",
@@ -789,7 +887,8 @@
     "name": "Eastern Red Bat",
     "group": "wild",
     "image_url": "/critters/C109-eastern-red-bat.svg",
-    "view_scale": 1.6
+    "view_scale": 1.6,
+    "theme": "stone"
   },
   {
     "id": "C110",
@@ -797,7 +896,8 @@
     "name": "Snowshoe Hare",
     "group": "wild",
     "image_url": "/critters/C110-snowshoe-hare.svg",
-    "view_scale": 1.633
+    "view_scale": 1.633,
+    "theme": "lilac"
   },
   {
     "id": "C111",
@@ -805,7 +905,8 @@
     "name": "Star Nosed Mole",
     "group": "wild",
     "image_url": "/critters/C111-star-nosed-mole.svg",
-    "view_scale": 2.105
+    "view_scale": 2.105,
+    "theme": "stone"
   },
   {
     "id": "C112",
@@ -813,7 +914,8 @@
     "name": "Eastern Wood Pewee",
     "group": "wild",
     "image_url": "/critters/C112-eastern-wood-pewee.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "rose"
   },
   {
     "id": "C113",
@@ -821,7 +923,8 @@
     "name": "Eastern Phoebe",
     "group": "wild",
     "image_url": "/critters/C113-eastern-phoebe.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "sky"
   },
   {
     "id": "C114",
@@ -829,7 +932,8 @@
     "name": "Veery",
     "group": "wild",
     "image_url": "/critters/C114-veery.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "sky"
   },
   {
     "id": "C115",
@@ -837,7 +941,8 @@
     "name": "Hermit Thrush",
     "group": "wild",
     "image_url": "/critters/C115-hermit-thrush.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "oat"
   },
   {
     "id": "C116",
@@ -845,7 +950,8 @@
     "name": "Northern Parula",
     "group": "wild",
     "image_url": "/critters/C116-northern-parula.svg",
-    "view_scale": 1.667
+    "view_scale": 1.667,
+    "theme": "apricot"
   },
   {
     "id": "C117",
@@ -853,7 +959,8 @@
     "name": "Blue Headed Vireo",
     "group": "wild",
     "image_url": "/critters/C117-blue-headed-vireo.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "rose"
   },
   {
     "id": "C118",
@@ -861,7 +968,8 @@
     "name": "Eastern Screech Owl",
     "group": "wild",
     "image_url": "/critters/C118-eastern-screech-owl.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "stone"
   },
   {
     "id": "C119",
@@ -869,7 +977,8 @@
     "name": "Red Shouldered Hawk",
     "group": "wild",
     "image_url": "/critters/C119-red-shouldered-hawk.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "oat"
   },
   {
     "id": "C120",
@@ -877,7 +986,8 @@
     "name": "Wood Frog",
     "group": "wild",
     "image_url": "/critters/C120-wood-frog.svg",
-    "view_scale": 2.5
+    "view_scale": 2.5,
+    "theme": "oat"
   },
   {
     "id": "C121",
@@ -885,7 +995,8 @@
     "name": "Red Eft",
     "group": "wild",
     "image_url": "/critters/C121-red-eft.svg",
-    "view_scale": 1.584
+    "view_scale": 1.584,
+    "theme": "oat"
   },
   {
     "id": "C122",
@@ -893,7 +1004,8 @@
     "name": "Pickerel Frog",
     "group": "wild",
     "image_url": "/critters/C122-pickerel-frog.svg",
-    "view_scale": 2.5
+    "view_scale": 2.5,
+    "theme": "oat"
   },
   {
     "id": "C123",
@@ -901,7 +1013,8 @@
     "name": "Black Throated Blue Warbler",
     "group": "wild",
     "image_url": "/critters/C123-black-throated-blue-warbler.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "butter"
   },
   {
     "id": "C124",
@@ -909,7 +1022,8 @@
     "name": "Northern Saw Whet Owl",
     "group": "wild",
     "image_url": "/critters/C124-northern-saw-whet-owl.svg",
-    "view_scale": 1.667
+    "view_scale": 1.667,
+    "theme": "stone"
   },
   {
     "id": "C125",
@@ -917,7 +1031,8 @@
     "name": "Whip Poor Will",
     "group": "wild",
     "image_url": "/critters/C125-whip-poor-will.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "oat"
   },
   {
     "id": "C126",
@@ -925,7 +1040,8 @@
     "name": "Wood Turtle",
     "group": "wild",
     "image_url": "/critters/C126-wood-turtle.svg",
-    "view_scale": 1.86
+    "view_scale": 1.86,
+    "theme": "oat"
   },
   {
     "id": "C127",
@@ -933,7 +1049,8 @@
     "name": "Smooth Green Snake",
     "group": "wild",
     "image_url": "/critters/C127-smooth-green-snake.svg",
-    "view_scale": 1.778
+    "view_scale": 1.778,
+    "theme": "rose"
   },
   {
     "id": "C128",
@@ -941,7 +1058,8 @@
     "name": "Spotted Salamander",
     "group": "wild",
     "image_url": "/critters/C128-spotted-salamander.svg",
-    "view_scale": 1.584
+    "view_scale": 1.584,
+    "theme": "butter"
   },
   {
     "id": "C129",
@@ -949,7 +1067,8 @@
     "name": "Southern Flying Squirrel",
     "group": "wild",
     "image_url": "/critters/C129-southern-flying-squirrel.svg",
-    "view_scale": 1.6
+    "view_scale": 1.6,
+    "theme": "lilac"
   },
   {
     "id": "C130",
@@ -957,7 +1076,8 @@
     "name": "Luna Moth",
     "group": "wild",
     "image_url": "/critters/C130-luna-moth.svg",
-    "view_scale": 1.905
+    "view_scale": 1.905,
+    "theme": "rose"
   },
   {
     "id": "C131",
@@ -965,7 +1085,8 @@
     "name": "Cecropia Moth",
     "group": "wild",
     "image_url": "/critters/C131-cecropia-moth.svg",
-    "view_scale": 1.739
+    "view_scale": 1.739,
+    "theme": "stone"
   },
   {
     "id": "C132",
@@ -973,7 +1094,8 @@
     "name": "Wheel Bug",
     "group": "wild",
     "image_url": "/critters/C132-wheel-bug.svg",
-    "view_scale": 1.739
+    "view_scale": 1.739,
+    "theme": "oat"
   },
   {
     "id": "C133",
@@ -981,7 +1103,8 @@
     "name": "Bobolink",
     "group": "wild",
     "image_url": "/critters/C133-bobolink.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "periwinkle"
   },
   {
     "id": "C134",
@@ -989,7 +1112,8 @@
     "name": "Eastern Meadowlark",
     "group": "wild",
     "image_url": "/critters/C134-eastern-meadowlark.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "sky"
   },
   {
     "id": "C135",
@@ -997,7 +1121,8 @@
     "name": "Golden Winged Warbler",
     "group": "wild",
     "image_url": "/critters/C135-golden-winged-warbler.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "lilac"
   },
   {
     "id": "C136",
@@ -1005,7 +1130,8 @@
     "name": "Northern Goshawk",
     "group": "wild",
     "image_url": "/critters/C136-northern-goshawk.svg",
-    "view_scale": 1.333
+    "view_scale": 1.333,
+    "theme": "apricot"
   },
   {
     "id": "C137",
@@ -1013,7 +1139,8 @@
     "name": "Olive Sided Flycatcher",
     "group": "wild",
     "image_url": "/critters/C137-olive-sided-flycatcher.svg",
-    "view_scale": 1.379
+    "view_scale": 1.379,
+    "theme": "lilac"
   },
   {
     "id": "C138",
@@ -1021,7 +1148,8 @@
     "name": "Northern Long Eared Bat",
     "group": "wild",
     "image_url": "/critters/C138-northern-long-eared-bat.svg",
-    "view_scale": 1.6
+    "view_scale": 1.6,
+    "theme": "sky"
   },
   {
     "id": "C139",
@@ -1029,7 +1157,8 @@
     "name": "Tricolored Bat",
     "group": "wild",
     "image_url": "/critters/C139-tricolored-bat.svg",
-    "view_scale": 1.6
+    "view_scale": 1.6,
+    "theme": "oat"
   },
   {
     "id": "C140",
@@ -1037,7 +1166,8 @@
     "name": "New England Cottontail",
     "group": "wild",
     "image_url": "/critters/C140-new-england-cottontail.svg",
-    "view_scale": 1.758
+    "view_scale": 1.758,
+    "theme": "sky"
   },
   {
     "id": "C141",
@@ -1045,7 +1175,8 @@
     "name": "Blandings Turtle",
     "group": "wild",
     "image_url": "/critters/C141-blandings-turtle.svg",
-    "view_scale": 2.105
+    "view_scale": 2.105,
+    "theme": "peach"
   },
   {
     "id": "C142",
@@ -1053,7 +1184,8 @@
     "name": "Marbled Salamander",
     "group": "wild",
     "image_url": "/critters/C142-marbled-salamander.svg",
-    "view_scale": 1.584
+    "view_scale": 1.584,
+    "theme": "honey"
   },
   {
     "id": "C143",
@@ -1061,7 +1193,8 @@
     "name": "Rusty Patched Bumblebee",
     "group": "wild",
     "image_url": "/critters/C143-rusty-patched-bumblebee.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "periwinkle"
   },
   {
     "id": "C144",
@@ -1069,7 +1202,8 @@
     "name": "Puritan Tiger Beetle",
     "group": "wild",
     "image_url": "/critters/C144-puritan-tiger-beetle.svg",
-    "view_scale": 1.951
+    "view_scale": 1.951,
+    "theme": "blush"
   },
   {
     "id": "C145",
@@ -1077,7 +1211,8 @@
     "name": "Frosted Elfin",
     "group": "wild",
     "image_url": "/critters/C145-frosted-elfin.svg",
-    "view_scale": 2.222
+    "view_scale": 2.222,
+    "theme": "butter"
   },
   {
     "id": "C146",
@@ -1085,7 +1220,8 @@
     "name": "Common Eastern Bumblebee",
     "group": "wild",
     "image_url": "/critters/C146-common-eastern-bumblebee.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "periwinkle"
   },
   {
     "id": "C147",
@@ -1093,7 +1229,8 @@
     "name": "Eastern Carpenter Bee",
     "group": "wild",
     "image_url": "/critters/C147-eastern-carpenter-bee.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "honey"
   },
   {
     "id": "C148",
@@ -1101,7 +1238,8 @@
     "name": "Paper Wasp",
     "group": "wild",
     "image_url": "/critters/C148-paper-wasp.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "stone"
   },
   {
     "id": "C149",
@@ -1109,7 +1247,8 @@
     "name": "Hover Fly",
     "group": "wild",
     "image_url": "/critters/C149-hover-fly.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "lilac"
   },
   {
     "id": "C150",
@@ -1117,7 +1256,8 @@
     "name": "Bald Faced Hornet",
     "group": "wild",
     "image_url": "/critters/C150-bald-faced-hornet.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "peach"
   },
   {
     "id": "C151",
@@ -1125,7 +1265,8 @@
     "name": "Mud Dauber Wasp",
     "group": "wild",
     "image_url": "/critters/C151-mud-dauber-wasp.svg",
-    "view_scale": 1.739
+    "view_scale": 1.739,
+    "theme": "honey"
   },
   {
     "id": "C152",
@@ -1133,7 +1274,8 @@
     "name": "Great Golden Digger Wasp",
     "group": "wild",
     "image_url": "/critters/C152-great-golden-digger-wasp.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "oat"
   },
   {
     "id": "C153",
@@ -1141,7 +1283,8 @@
     "name": "Leafcutter Bee",
     "group": "wild",
     "image_url": "/critters/C153-leafcutter-bee.svg",
-    "view_scale": 1.538
+    "view_scale": 1.538,
+    "theme": "peach"
   },
   {
     "id": "C154",
@@ -1149,7 +1292,8 @@
     "name": "Garden Snail",
     "group": "wild",
     "image_url": "/critters/C154-garden-snail.svg",
-    "view_scale": 1.951
+    "view_scale": 1.951,
+    "theme": "oat"
   },
   {
     "id": "L001",
@@ -1157,7 +1301,8 @@
     "name": "American Marten",
     "group": "legacy",
     "image_url": "/critters/L001-american-marten.svg",
-    "view_scale": 1.553
+    "view_scale": 1.553,
+    "theme": "sky"
   },
   {
     "id": "L002",
@@ -1165,7 +1310,8 @@
     "name": "Eastern Wolf",
     "group": "legacy",
     "image_url": "/critters/L002-eastern-wolf.svg",
-    "view_scale": 1.404
+    "view_scale": 1.404,
+    "theme": "stone"
   },
   {
     "id": "L003",
@@ -1173,7 +1319,8 @@
     "name": "Passenger Pigeon",
     "group": "legacy",
     "image_url": "/critters/L003-passenger-pigeon.svg",
-    "view_scale": 1.176
+    "view_scale": 1.176,
+    "theme": "oat"
   },
   {
     "id": "L004",
@@ -1181,7 +1328,8 @@
     "name": "Heath Hen",
     "group": "legacy",
     "image_url": "/critters/L004-heath-hen.svg",
-    "view_scale": 1.25
+    "view_scale": 1.25,
+    "theme": "oat"
   },
   {
     "id": "L005",
@@ -1189,7 +1337,8 @@
     "name": "Eastern Wild Turkey Ghost",
     "group": "legacy",
     "image_url": "/critters/L005-eastern-wild-turkey-ghost.svg",
-    "view_scale": 1.25
+    "view_scale": 1.25,
+    "theme": "stone"
   },
   {
     "id": "L006",
@@ -1197,7 +1346,8 @@
     "name": "Eastern Elk",
     "group": "legacy",
     "image_url": "/critters/L006-eastern-elk.svg",
-    "view_scale": 1.168
+    "view_scale": 1.168,
+    "theme": "sky"
   },
   {
     "id": "L007",
@@ -1205,7 +1355,8 @@
     "name": "Woodland Caribou",
     "group": "legacy",
     "image_url": "/critters/L007-woodland-caribou.svg",
-    "view_scale": 1.127
+    "view_scale": 1.127,
+    "theme": "oat"
   },
   {
     "id": "L008",
@@ -1213,7 +1364,8 @@
     "name": "Wild Atlantic Salmon",
     "group": "legacy",
     "image_url": "/critters/L008-wild-atlantic-salmon.svg",
-    "view_scale": 1.28
+    "view_scale": 1.28,
+    "theme": "oat"
   },
   {
     "id": "L009",
@@ -1221,7 +1373,8 @@
     "name": "Sea Mink",
     "group": "legacy",
     "image_url": "/critters/L009-sea-mink.svg",
-    "view_scale": 1.468
+    "view_scale": 1.468,
+    "theme": "butter"
   },
   {
     "id": "L010",
@@ -1229,7 +1382,8 @@
     "name": "Great Auk",
     "group": "legacy",
     "image_url": "/critters/L010-great-auk.svg",
-    "view_scale": 1.356
+    "view_scale": 1.356,
+    "theme": "stone"
   },
   {
     "id": "L011",
@@ -1237,7 +1391,8 @@
     "name": "Labrador Duck",
     "group": "legacy",
     "image_url": "/critters/L011-labrador-duck.svg",
-    "view_scale": 1.212
+    "view_scale": 1.212,
+    "theme": "butter"
   },
   {
     "id": "L012",
@@ -1245,7 +1400,8 @@
     "name": "Eskimo Curlew",
     "group": "legacy",
     "image_url": "/critters/L012-eskimo-curlew.svg",
-    "view_scale": 1.29
+    "view_scale": 1.29,
+    "theme": "stone"
   },
   {
     "id": "L013",
@@ -1253,7 +1409,8 @@
     "name": "Carolina Parakeet",
     "group": "legacy",
     "image_url": "/critters/L013-carolina-parakeet.svg",
-    "view_scale": 1.25
+    "view_scale": 1.25,
+    "theme": "blush"
   },
   {
     "id": "Y001",
@@ -1261,7 +1418,8 @@
     "name": "Eastern Cougar",
     "group": "cryptid",
     "image_url": "/critters/Y001-eastern-cougar.svg",
-    "view_scale": 1.143
+    "view_scale": 1.143,
+    "theme": "oat"
   },
   {
     "id": "Y002",
@@ -1269,7 +1427,8 @@
     "name": "Melanistic Bobcat",
     "group": "cryptid",
     "image_url": "/critters/Y002-melanistic-bobcat.svg",
-    "view_scale": 1.221
+    "view_scale": 1.221,
+    "theme": "peach"
   },
   {
     "id": "Y003",
@@ -1277,7 +1436,8 @@
     "name": "Wolverine",
     "group": "cryptid",
     "image_url": "/critters/Y003-wolverine.svg",
-    "view_scale": 1.212
+    "view_scale": 1.212,
+    "theme": "oat"
   },
   {
     "id": "Y004",
@@ -1285,7 +1445,8 @@
     "name": "White Squirrel",
     "group": "cryptid",
     "image_url": "/critters/Y004-white-squirrel.svg",
-    "view_scale": 1.143
+    "view_scale": 1.143,
+    "theme": "periwinkle"
   },
   {
     "id": "Y005",
@@ -1293,7 +1454,8 @@
     "name": "Lake Monster Champ",
     "group": "cryptid",
     "image_url": "/critters/Y005-lake-monster-champ.svg",
-    "view_scale": 1.0
+    "view_scale": 1.0,
+    "theme": "blush"
   },
   {
     "id": "Y006",
@@ -1301,7 +1463,8 @@
     "name": "Pukwudgie",
     "group": "cryptid",
     "image_url": "/critters/Y006-pukwudgie.svg",
-    "view_scale": 1.356
+    "view_scale": 1.356,
+    "theme": "oat"
   },
   {
     "id": "Y007",
@@ -1309,7 +1472,8 @@
     "name": "Dover Demon",
     "group": "cryptid",
     "image_url": "/critters/Y007-dover-demon.svg",
-    "view_scale": 1.26
+    "view_scale": 1.26,
+    "theme": "sky"
   },
   {
     "id": "Y008",
@@ -1317,7 +1481,8 @@
     "name": "Glawackus",
     "group": "cryptid",
     "image_url": "/critters/Y008-glawackus.svg",
-    "view_scale": 1.039
+    "view_scale": 1.039,
+    "theme": "oat"
   },
   {
     "id": "Y009",
@@ -1325,7 +1490,8 @@
     "name": "Gloucester Sea Serpent",
     "group": "cryptid",
     "image_url": "/critters/Y009-gloucester-sea-serpent.svg",
-    "view_scale": 1.0
+    "view_scale": 1.0,
+    "theme": "oat"
   },
   {
     "id": "Y010",
@@ -1333,7 +1499,8 @@
     "name": "Pioneer Valley Visitor",
     "group": "cryptid",
     "image_url": "/critters/Y010-pioneer-valley-visitor.svg",
-    "view_scale": 1.127
+    "view_scale": 1.127,
+    "theme": "blush"
   },
   {
     "id": "Y011",
@@ -1341,6 +1508,7 @@
     "name": "Memphre",
     "group": "cryptid",
     "image_url": "/critters/Y011-memphre.svg",
-    "view_scale": 1.0
+    "view_scale": 1.0,
+    "theme": "peach"
   }
 ]

@@ -74,13 +74,14 @@ export default function VarietyPicker({
     const q = query.trim().toLowerCase()
     let list = varieties
     if (speciesFilter) list = list.filter(v => v.species === speciesFilter)
-    if (!q) return list.slice(0, 50)
+    const byName = (a, b) => (a.name || '').localeCompare(b.name || '')
+    if (!q) return [...list].sort(byName).slice(0, 50)
     return list.filter(v => {
       const name = (v.name || '').toLowerCase()
       const sp = (v.species || '').toLowerCase()
       const cn = (v.common_name || '').toLowerCase()
       return name.includes(q) || sp.includes(q) || cn.includes(q)
-    }).slice(0, 50)
+    }).sort(byName).slice(0, 50)
   }, [varieties, query, speciesFilter])
 
   const showCreateFooter = allowCreate && query.trim().length > 0 && !filtered.some(v =>

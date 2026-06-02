@@ -5,7 +5,6 @@ import { useZone } from '../context/ZoneContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
 import { severityTier, SEVERITY_STYLES } from '../lib/waterDue.js'
-import { getStatusColors } from '../lib/status.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
 import HeadsUpTile from '../components/HeadsUpTile.jsx'
@@ -87,7 +86,6 @@ export default function Dashboard() {
 
   const [projects,      setProjects]      = useState([])
   const [nextAttention, setNextAttention] = useState(null)
-  const [entityMap,     setEntityMap]     = useState({})
   const [recentEvents,  setRecentEvents]  = useState([])
   const [userStats,     setUserStats]     = useState({ current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0 })
   const [waterDue,      setWaterDue]      = useState([])
@@ -119,12 +117,12 @@ export default function Dashboard() {
       setHarvestReady(dashData.harvest_ready ?? [])
       setHeadsUp(dashData.heads_up ?? [])
 
+      // memMap drives the "give attention to" stale-project ranking below.
       const memMap = {}
       activeProjects.forEach(p => {
         const activity = getProjectActivity(p)
         if (activity) memMap[p.id] = activity
       })
-      setEntityMap(memMap)
 
       // V002: surface recently-engaged-but-stale first (last_event_at within 30d, oldest ASC).
       // Never-touched and very-stale (>30d) defer to V1.2a-2 "Inactive projects" surface.
@@ -321,61 +319,8 @@ export default function Dashboard() {
           )}
         </ErrorBoundary>
 
-        {/* Active Projects */}
-        <section style={{ marginBottom: '32px' }}>
-          <h2 style={sectionHeadStyle}>Active projects</h2>
-          {projects.length === 0 ? (
-            <div style={{
-              backgroundColor: P.white, border: `1px solid ${P.border}`,
-              borderRadius: 10, padding: '48px 24px', textAlign: 'center',
-            }}>
-              <div style={{ fontSize: '3rem', marginBottom: 12 }}>🌱</div>
-              <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>
-                Nothing planted yet
-              </p>
-              <p style={{ margin: '0 0 24px', color: P.light, fontSize: '0.875rem' }}>
-                Start your first project and the garden tracker comes to life.
-              </p>
-              <Link to="/projects/new" style={{
-                display: 'inline-block',
-                backgroundColor: P.green, color: P.white,
-                textDecoration: 'none', borderRadius: 8,
-                padding: '11px 24px', fontSize: '0.9rem', fontWeight: 700,
-              }}>
-                Create a project
-              </Link>
-            </div>
-          ) : (
-            projects.map(project => {
-              const mem = entityMap[project.id]
-              return (
-                <Link key={project.id} to={`/projects/${project.id}`} style={{ textDecoration: 'none' }}>
-                  <div style={{
-                    backgroundColor: P.white,
-                    border: `1px solid ${P.border}`,
-                    borderRadius: '8px',
-                    padding: '14px 16px',
-                    marginBottom: '8px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    cursor: 'pointer',
-                  }}>
-                    <div>
-                      <div style={{ fontWeight: 600, color: P.green }}>{project.name}</div>
-                      <div style={{ fontSize: '0.72rem', color: P.light, marginTop: 2 }}>
-                        {mem?.last_event_at
-                          ? `${mem.last_event_type?.replace(/_/g, ' ')} · ${daysAgo(mem.last_event_at)}`
-                          : 'never logged'}
-                      </div>
-                    </div>
-                    <StatusBadge status={project.status} />
-                  </div>
-                </Link>
-              )
-            })
-          )}
-        </section>
+        {/* Active Projects section removed (Dave directive 2026-06-02): redundant with the
+            Projects page. Recent Activity stays and grows into the full activity feed (V3-FEED-001). */}
 
         {/* Recent Activity */}
         {recentEvents.length > 0 && (
@@ -884,26 +829,6 @@ function relativeTime(isoStr) {
   if (hours < 24) return `${hours}h ago`
   if (days === 1) return 'yesterday'
   return `${days}d ago`
-}
-
-function StatusBadge({ status }) {
-  // I7 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): use unified status colors from
-  // src/lib/status.js so badge color is consistent across Dashboard / ProjectList / ProjectDetail.
-  const c = getStatusColors(status)
-  return (
-    <span style={{
-      backgroundColor: c.bg,
-      color: c.text,
-      border: `1px solid ${c.border}`,
-      fontSize: '0.75rem',
-      padding: '2px 10px',
-      borderRadius: '12px',
-      fontWeight: 500,
-      flexShrink: 0,
-    }}>
-      {status}
-    </span>
-  )
 }
 
 const sectionHeadStyle = {

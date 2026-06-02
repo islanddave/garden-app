@@ -210,7 +210,7 @@ export default function ProjectNew() {
               style={inputStyle}
             >
               <option value="">None — top-level project</option>
-              {allProjects.map(p => (
+              {[...allProjects].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
@@ -241,7 +241,7 @@ export default function ProjectNew() {
             </FormRow>
             <FormRow label="Status">
               <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inputStyle}>
-                {PROJECT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                {[...PROJECT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </FormRow>
           </div>
