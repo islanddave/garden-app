@@ -19,6 +19,9 @@ export const EVENT_TYPES_UI = [
   { value: 'hardening_off',   label: 'Hardening\nOff',          emoji: '⛅' },
   { value: 'brought_inside',  label: 'Brought\nInside',         emoji: '🏠' },
   { value: 'brought_outside', label: 'Brought\nOutside',        emoji: '☀️' },
+  // V3-EVENT-005: promoted to primary
+  { value: 'photo',           label: 'Photo\nOnly',             emoji: '📷' },
+  { value: 'potting_up',      label: 'Potted Up\n/ Repotted',  emoji: '🪴' },
 ]
 
 const PRIMARY_VALUES = new Set(EVENT_TYPES_UI.map(t => t.value))
@@ -32,7 +35,7 @@ export const EVENT_TYPE_META = {
   seed_soak:       { label: 'Seed soak',       emoji: '💦', category: 'Growth & Training' },
   germination:     { label: 'Germination',     emoji: '🌿', category: 'Growth & Training' },
   thinning:        { label: 'Thinned',         emoji: '🪓', category: 'Growth & Training' },
-  potting_up:      { label: 'Potted up',       emoji: '🪴', category: 'Growth & Training' },
+  potting_up:      { label: 'Potted up / Repotted', emoji: '🪴', category: 'Growth & Training' },
   hardening_off:   { label: 'Hardening off',   emoji: '⛅', category: 'Growth & Training' },
   observation:     { label: 'Observed / Note', emoji: '👁️', category: 'Pest & Health' },
   pest_treatment:  { label: 'Pest treatment',  emoji: '🐛', category: 'Pest & Health' },
@@ -41,6 +44,22 @@ export const EVENT_TYPE_META = {
   brought_inside:  { label: 'Brought inside',  emoji: '🏠', category: 'Environmental' },
   brought_outside: { label: 'Brought outside', emoji: '☀️', category: 'Environmental' },
   mulched:         { label: 'Mulched',         emoji: '🍂', category: 'Environmental' },
+  caged:           { label: 'Caged',           emoji: '🛡️', category: 'Environmental' },
+  staked:          { label: 'Staked',          emoji: '🪵', category: 'Growth & Training' },
+  mesh_netting:    { label: 'Mesh / Netting',  emoji: '🕸️', category: 'Environmental' },
+  trellised:       { label: 'Trellised',        emoji: '🏗️', category: 'Growth & Training' },
+  pinched:         { label: 'Pinched',          emoji: '🤌', category: 'Growth & Training' },
+  deadheaded:      { label: 'Deadheaded',       emoji: '🌸', category: 'Growth & Training' },
+  weeded:          { label: 'Weeded',           emoji: '☘️', category: 'Environmental' },
+  hand_pollinated: { label: 'Hand-pollinated',  emoji: '🐝', category: 'Growth & Training' },
+  divided:         { label: 'Divided',          emoji: '↔️', category: 'Growth & Training' },
+  cutting_taken:   { label: 'Cutting taken',    emoji: '🪚', category: 'Growth & Training' },
+  relocated:       { label: 'Relocated / Moved',emoji: '📦', category: 'Environmental' },
+  fruit_set:       { label: 'Fruit set',        emoji: '🍅', category: 'Growth & Training' },
+  animal_damage:   { label: 'Animal damage',    emoji: '🐾', category: 'Pest & Health' },
+  heat_damage:     { label: 'Heat damage',      emoji: '🌡️', category: 'Environmental' },
+  frost_damage:    { label: 'Frost damage',     emoji: '❄️', category: 'Environmental' },
+  soil_amended:    { label: 'Soil amended',     emoji: '🪨', category: 'Environmental' },
   first_harvest:   { label: 'First harvest',   emoji: '🌟', category: 'Harvest' },
   harvest:         { label: 'Harvested',       emoji: '🧺', category: 'Harvest' },
   photo:           { label: 'Photo only',      emoji: '📷', category: 'Pest & Health' },
@@ -675,6 +694,26 @@ export default function EventNew() {
             )}
           </Section>
 
+          {/* ── Notes ── */}
+          <Section label="Notes">
+            <div style={{ position: 'relative' }}>
+              <textarea
+                value={form.notes}
+                onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                aria-label="Notes"
+                style={{ ...inputStyle, height: 90, resize: 'vertical', paddingRight: 44 }}
+                placeholder="Notes (optional — leave blank to save)"
+              />
+              <MicBtn
+                fieldKey="notes"
+                onResult={text => setForm(f => ({ ...f, notes: f.notes ? f.notes + ' ' + text : text }))}
+                voice={voice}
+                top="14px"
+                transform="none"
+              />
+            </div>
+          </Section>
+
           {/* ── Project ── */}
           <Section label="Project *">
             <select
@@ -695,71 +734,28 @@ export default function EventNew() {
             )}
           </Section>
 
-          {/* ── Plant / Group (optional) ── */}
-          {plantsForProject.length > 0 && (
-            <Section label="Plant / Group (optional)">
-              <select
-                value={form.plant_id}
-                onChange={e => setForm(f => ({ ...f, plant_id: e.target.value }))}
-                aria-label="Plant or group"
-                style={selectStyle}
-              >
-                <option value="">— All plants (project level) —</option>
-                {[...plantsForProject].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(pl => (
-                  <option key={pl.id} value={pl.id}>
-                    {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety_ref?.name ? ` — ${pl.variety_ref.name}` : ''}
-                  </option>
-                ))}
-              </select>
-            </Section>
-          )}
-
-          {/* ── Location (optional — informational) ── */}
-          {locations.length > 0 && (
-            <Section label="Location  ·  optional">
-              <select
-                value={form.location_id}
-                onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))}
-                aria-label="Location"
-                style={selectStyle}
-              >
-                <option value="">— Select location —</option>
-                {locations.map(l => (
-                  <option key={l.id} value={l.id}>{l.full_path}</option>
-                ))}
-              </select>
-            </Section>
-          )}
-
-          {/* ── Date / time ── */}
-          <Section label="When?">
-            <input
-              type="datetime-local"
-              value={form.event_date}
-              onChange={e => setForm(f => ({ ...f, event_date: e.target.value }))}
-              aria-label="Event date and time"
-              style={inputStyle}
-            />
-          </Section>
-
-          {/* ── Notes ── */}
-          <Section label="Notes">
-            <div style={{ position: 'relative' }}>
-              <textarea
-                value={form.notes}
-                onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                aria-label="Notes"
-                style={{ ...inputStyle, height: 90, resize: 'vertical', paddingRight: 44 }}
-                placeholder="Notes (optional — leave blank to save)"
-              />
-              <MicBtn
-                fieldKey="notes"
-                onResult={text => setForm(f => ({ ...f, notes: f.notes ? f.notes + ' ' + text : text }))}
-                voice={voice}
-                top="14px"
-                transform="none"
-              />
-            </div>
+          {/* ── Plant / Group — V3-EVENT-005: ever-present, disabled until project chosen ── */}
+          <Section label="Plant / Group (optional)">
+            <select
+              value={form.plant_id}
+              onChange={e => setForm(f => ({ ...f, plant_id: e.target.value }))}
+              aria-label="Plant or group"
+              disabled={!form.project_id}
+              style={{ ...selectStyle, opacity: form.project_id ? 1 : 0.5 }}
+            >
+              {form.project_id ? (
+                <>
+                  <option value="">— All plants (project level) —</option>
+                  {[...plantsForProject].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(pl => (
+                    <option key={pl.id} value={pl.id}>
+                      {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety_ref?.name ? ` — ${pl.variety_ref.name}` : ''}
+                    </option>
+                  ))}
+                </>
+              ) : (
+                <option value="">— select a project first —</option>
+              )}
+            </select>
           </Section>
 
           {/* ── Tier 2: per-type metadata enrichment (collapsible) ── */}
@@ -1042,19 +1038,35 @@ export default function EventNew() {
             )}
           </div>
 
-          {/* ── Submit ── */}
-          <div style={{
-            paddingTop: 12, marginTop: 4,
-            borderTop: `1px solid ${P.border}`,
-            display: 'flex', gap: 14, alignItems: 'center',
-          }}>
-            <button type="submit" disabled={saving} style={primaryBtn(saving)}>
-              {saving ? 'Saving…' : '+ Log event'}
-            </button>
-            <Link to="/dashboard" style={{ color: P.mid, textDecoration: 'none', fontSize: '0.88rem' }}>
-              Cancel
-            </Link>
-          </div>
+          {/* ── Date / time ── */}
+          <Section label="When?">
+            <input
+              type="datetime-local"
+              value={form.event_date}
+              onChange={e => setForm(f => ({ ...f, event_date: e.target.value }))}
+              aria-label="Event date and time"
+              style={inputStyle}
+            />
+          </Section>
+
+          {/* ── Floating Save — V3-EVENT-005 (Dave to eyeball bottom offset) ── */}
+          {/* Spacer so content isn't hidden behind the fixed button */}
+          <div style={{ height: 72 }} aria-hidden="true" />
+          <button
+            type="submit"
+            disabled={saving}
+            style={{
+              ...primaryBtn(saving),
+              position: 'fixed',
+              bottom: 68,
+              right: 20,
+              zIndex: 200,
+              boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
+              minWidth: 140,
+            }}
+          >
+            {saving ? 'Saving…' : '+ Log event'}
+          </button>
 
         </form>
       </div>

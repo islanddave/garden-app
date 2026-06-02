@@ -38,6 +38,10 @@ describe('validateBatchBody', () => {
   it('accepts brought_inside / brought_outside / mulched', () => {
     ['brought_inside', 'brought_outside', 'mulched'].forEach(t => ok(base({ event_type: t })));
   });
+
+  it('accepts caged / staked / mesh_netting (V3-EVENT-007)', () => {
+    ['caged', 'staked', 'mesh_netting'].forEach(t => ok(base({ event_type: t })));
+  });
 });
 
 // Drift guard (data-schema-architect): the batch allowlist must never name a

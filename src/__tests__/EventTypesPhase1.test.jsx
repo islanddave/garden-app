@@ -31,6 +31,11 @@ describe('Phase 1 — primary quick-pick rebalance', () => {
     expect(primary).toContain('hardening_off')
   })
 
+  it('V3-EVENT-005: promotes photo and potting_up to primary', () => {
+    expect(primary).toContain('photo')
+    expect(primary).toContain('potting_up')
+  })
+
   it('demotes observation out of the primary quick-picks', () => {
     expect(primary).not.toContain('observation')
   })
@@ -66,8 +71,15 @@ describe('Phase 1 — demoted/new types render non-raw in "More"', () => {
     }
   })
 
-  it('EVENT_TYPE_META carries the three new types', () => {
+  it('EVENT_TYPE_META carries the three Phase-1 types', () => {
     for (const v of ['brought_inside', 'brought_outside', 'mulched']) {
+      expect(EVENT_TYPE_META[v], v).toBeTruthy()
+      expect(isRaw(EVENT_TYPE_META[v].label), v).toBe(false)
+    }
+  })
+
+  it('EVENT_TYPE_META carries the three V3-EVENT-007 types', () => {
+    for (const v of ['caged', 'staked', 'mesh_netting']) {
       expect(EVENT_TYPE_META[v], v).toBeTruthy()
       expect(isRaw(EVENT_TYPE_META[v].label), v).toBe(false)
     }
@@ -75,9 +87,15 @@ describe('Phase 1 — demoted/new types render non-raw in "More"', () => {
 })
 
 describe('Phase 1 — EVENT_TYPES master soft-enum', () => {
-  it('includes the three new event types', () => {
+  it('includes the three Phase-1 event types', () => {
     expect(EVENT_TYPES).toContain('brought_inside')
     expect(EVENT_TYPES).toContain('brought_outside')
     expect(EVENT_TYPES).toContain('mulched')
+  })
+
+  it('includes the three V3-EVENT-007 event types', () => {
+    expect(EVENT_TYPES).toContain('caged')
+    expect(EVENT_TYPES).toContain('staked')
+    expect(EVENT_TYPES).toContain('mesh_netting')
   })
 })
