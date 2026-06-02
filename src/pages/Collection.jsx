@@ -1,21 +1,22 @@
-import React, { useRef } from 'react'
+import React, { useRef, useState, useEffect, useCallback } from 'react'
 import roster from '../data/critters-roster.json'
 import { P } from '../lib/constants.js'
 import { useCritterCollection } from '../hooks/useCritterCollection.js'
+import GardenArrival from '../components/GardenArrival.jsx'
 
-// Critter Collection V007c — per-critter view_scale normalization.
-// V007b → V007c changes:
-//   1. VIEW_SCALE: each critter reads `c.view_scale` (written by tools/compute_view_scale.py,
-//      an automated SVG bounding-box script). Applied as CSS transform:scale() on the img,
-//      clipped by stage overflow:hidden. Small-viewBox birds (hummingbird=1.6x, cardinal=1.33x)
-//      now appear at roughly the same visual weight as large-viewBox mammals (wolverine=1.21x).
-//      Scale range across 168 critters: 1.0–2.5, median ~1.54.
-//   2. STAGE overflow:hidden restored — ensures scale() is clipped at the stage boundary
-//      (preserving the ~7% card-edge padding), not at the card boundary.
+// Critter Collection.
+// Resting states (static, no motion):
+//   • unseen (!got)            → SOFT VEIL: desaturated/lightened bg, dim blurred black silhouette,
+//                                muted strip ("Not yet"). Recedes so discovered critters carry the grid.
+//   • seen + bloom witnessed   → FULL presence (vivid themed bg, crisp colour art, name, "Seen" date).
+// One-time bloom (newly-seen critter the user hasn't visually witnessed yet):
+//   first time the card is scrolled FULLY into view (IntersectionObserver ≥0.9) OR tapped, it BLOOMS
+//   from quiet → full with a float-in + wing-flutter settle, then is full-static forever. Witnessed set
+//   persists in localStorage (per-device; server migration tracked as V4-BLOOM-001). prefers-reduced-motion
+//   snaps straight to full (no motion), still marks witnessed. Reward-UX: ambient, in-context, no interrupt.
 //
-// V007b mechanics unchanged: fully contained (no overflow past stage), consistent 86% stage
-// padding, TILE_H=212 for 3-line names, 12-tone candy pastel theming.
-// V100 binders: ambient, no animation/motion, no tap-to-claim, no streaks.
+// view_scale (tools/compute_view_scale.py) normalizes art weight; theme (tools/assign_critter_themes.py)
+// is the frozen per-critter candy-pastel tone read from the roster.
 
 // ─── 12-tone curated candy pastel palette (spec §3.1) ────────────────────────────
 const THEMES = {
@@ -34,20 +35,40 @@ const THEMES = {
 }
 const GROUP_DEFAULT = { wild: 'oat', legacy: 'honey', cryptid: 'lilac' }
 const THEME_KEYS = Object.keys(THEMES)
-// Stable per-critter theme. Explicit c.theme wins; otherwise hash the slug so every critter
-// gets a distinct, consistent tone from the 12-tone palette. (The roster carries no per-critter
-// theme field yet, so without this every wild critter collapsed to GROUP_DEFAULT.wild = 'oat' —
-// the "all my birds share one theme" bug.) Group still tints the jump-nav via GROUP_DEFAULT.
 function hashKey(s) {
   let h = 0
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
   return Math.abs(h)
 }
+// Explicit frozen c.theme wins; hash fallback keeps a never-themeless backstop (group-default-free).
 function getTheme(c) {
   if (c.theme && THEMES[c.theme]) return THEMES[c.theme]
   const seed = c.slug || c.id || c.name || ''
   return THEMES[THEME_KEYS[hashKey(seed) % THEME_KEYS.length]] || THEMES.oat
 }
+
+// ─── Soft-veil colour derivation (mix a tone toward cream to quiet it) ────────────
+const CREAM = '#f4efe4'
+function hx(c) { return [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16)) }
+function mix(a, b, t) {
+  const x = hx(a), y = hx(b)
+  return '#' + x.map((v, i) => Math.round(v * (1 - t) + y[i] * t).toString(16).padStart(2, '0')).join('')
+}
+function veilOf(theme) {
+  return { bg: mix(theme.bg, CREAM, 0.5), strip: mix(theme.strip, CREAM, 0.34) }
+}
+
+// ─── Bloom "witnessed" persistence (localStorage; V4-BLOOM-001 = server migration) ─
+const BLOOM_KEY = 'critter_bloom_seen_v1'
+function loadBloomSeen() {
+  try { return new Set(JSON.parse(window.localStorage.getItem(BLOOM_KEY) || '[]')) }
+  catch { return new Set() }
+}
+function persistBloomSeen(set) {
+  try { window.localStorage.setItem(BLOOM_KEY, JSON.stringify([...set])) } catch { /* private mode */ }
+}
+const REDUCE_MOTION = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
 // ─── Group config ─────────────────────────────────────────────────────────────────
 const GROUP_ORDER  = ['wild', 'legacy', 'cryptid']
@@ -58,12 +79,12 @@ const GOLD_FADE  = 'rgba(180, 130, 50, 0.40)'
 const LABEL_GOLD = '#ffcf7a'
 
 // ─── Card geometry ───────────────────────────────────────────────────────────────
-const TILE_H      = 212   // 212: fits 3-line names ("Ruby Throated Hummingbird")
-const STAGE_PCT   = '86%' // ~7% gap on each side between critter and card edge
+const TILE_H      = 212
+const STAGE_PCT   = '86%'
 const CAPTION_H   = 42
 const CARD_RADIUS = 14
-
 const CARD_SHADOW = '0 2px 4px rgba(40,30,10,.10), 0 6px 16px rgba(40,30,10,.16)'
+const BLOOM_MS    = 6000
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────────
 function formatSeenDate(iso) {
@@ -86,9 +107,168 @@ function dexCode(group, idx) {
   return `${GROUP_PREFIX[group] || 'W'}${String(idx + 1).padStart(3, '0')}`
 }
 
+// ─── Single critter card ───────────────────────────────────────────────────────────
+function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed }) {
+  const theme = getTheme(c)
+  const veil = veilOf(theme)
+  const liRef = useRef(null)
+
+  // phase: 'veil' (unseen, static) | 'pending' (got, awaiting first witness) | 'blooming' | 'full'
+  const [phase, setPhase] = useState(() => (!got ? 'veil' : (initiallyBloomed ? 'full' : 'pending')))
+
+  const trigger = useCallback(() => {
+    setPhase(prev => {
+      if (prev !== 'pending') return prev
+      onBloomed(c.id)
+      return REDUCE_MOTION ? 'full' : 'blooming'
+    })
+  }, [c.id, onBloomed])
+
+  // First-full-view trigger (or immediate reveal where IntersectionObserver is unavailable).
+  useEffect(() => {
+    if (phase !== 'pending') return
+    const el = liRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      onBloomed(c.id); setPhase('full'); return
+    }
+    const io = new IntersectionObserver(ents => {
+      for (const e of ents) {
+        if (e.isIntersecting && e.intersectionRatio >= 0.9) { io.disconnect(); trigger(); break }
+      }
+    }, { threshold: [0, 0.9, 1] })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [phase, c.id, onBloomed, trigger])
+
+  // End the one-time animation → settle to full-static.
+  useEffect(() => {
+    if (phase !== 'blooming') return
+    const t = setTimeout(() => setPhase('full'), BLOOM_MS)
+    return () => clearTimeout(t)
+  }, [phase])
+
+  const quiet = phase === 'veil' || phase === 'pending'   // soft-veil resting look
+  const blooming = phase === 'blooming'
+  const lit = phase === 'full' || blooming                // colour revealed
+
+  const firstSeenLong = got ? formatLongDate(entry.firstSeenAt) : ''
+  const firstSeenDate = got ? formatSeenDate(entry.firstSeenAt) : ''
+  const ariaState = got
+    ? `${c.name}, visited${firstSeenLong ? `, first seen ${firstSeenLong}` : ''}`
+    : `${code}, not yet visited`
+
+  // Art treatment: unseen = black silhouette; got-quiet = dim desaturated colour; lit = full colour.
+  const artStyle = {
+    width: '100%', height: '100%', objectFit: 'contain', display: 'block',
+    transform: `scale(${c.view_scale || 1})`, transformOrigin: 'center center',
+  }
+  if (!got) { artStyle.filter = 'brightness(0) blur(1.3px)'; artStyle.opacity = 0.24 }
+  else if (blooming) { artStyle.filter = 'none'; artStyle.opacity = 0 }  // hidden during arrival; GardenArrival flies the critter in
+  else if (lit) { artStyle.filter = 'none'; artStyle.opacity = 1 }
+  else { artStyle.filter = 'saturate(0.55) brightness(1.04) blur(0.6px)'; artStyle.opacity = 0.82 }
+
+  return (
+    <li
+      ref={liRef}
+      role="listitem"
+      aria-label={ariaState}
+      title={got ? `${c.name}${firstSeenLong ? ` — first seen ${firstSeenLong}` : ''}` : undefined}
+      onClick={phase === 'pending' ? trigger : undefined}
+      className={blooming ? 'cc-card cc-blooming' : 'cc-card'}
+      style={{
+        position: 'relative', height: TILE_H,
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        padding: '8px 6px 0', paddingBottom: CAPTION_H,
+        background: lit ? theme.bg : veil.bg,
+        borderRadius: CARD_RADIUS, boxShadow: CARD_SHADOW, boxSizing: 'border-box',
+        overflow: blooming ? 'visible' : 'hidden',
+        zIndex: blooming ? 3 : 'auto',
+        transition: 'background-color 700ms ease',
+        cursor: phase === 'pending' ? 'pointer' : 'default',
+      }}
+    >
+      {blooming && <GardenArrival imageUrl={c.image_url} viewScale={c.view_scale || 1} />}
+      <span aria-hidden="true" style={{
+        position: 'absolute', top: 6, left: 6, zIndex: 2,
+        minWidth: 36, height: 18, padding: '0 6px',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        background: lit ? theme.strip : veil.strip, borderRadius: 5,
+        boxShadow: 'inset 0 0.5px 1px rgba(0,0,0,0.25), inset 0 0.5px 0 0.5px rgba(255,255,255,0.18)',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.04em',
+        color: LABEL_GOLD, fontVariantNumeric: 'tabular-nums',
+        transition: 'background-color 700ms ease',
+      }}>{code}</span>
+
+      <div className={blooming ? 'cc-stage cc-settle' : 'cc-stage'} style={{
+        width: `min(${STAGE_PCT}, 132px)`, aspectRatio: '1 / 1', marginTop: 8,
+        flexShrink: 0, overflow: 'hidden',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <img
+          src={c.image_url}
+          alt={got ? c.name : ''}
+          loading="lazy"
+          draggable={false}
+          className={blooming ? 'cc-art-bloom' : undefined}
+          style={artStyle}
+        />
+      </div>
+
+      <div style={{
+        flex: '1 1 auto', minHeight: 0, width: '100%', marginTop: 8,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+        fontSize: '0.88rem', fontWeight: 700, lineHeight: 1.2, letterSpacing: '-0.005em',
+        color: theme.name, textAlign: 'center', padding: '0 6px', boxSizing: 'border-box',
+        wordBreak: 'break-word', overflowWrap: 'anywhere',
+        opacity: got ? (lit ? 1 : 0) : 0,
+        transition: 'opacity 600ms ease',
+      }}>
+        {got ? c.name : ''}
+      </div>
+
+      <div data-testid={`sighting-caption-${c.id}`} style={{
+        position: 'absolute', left: 0, right: 0, bottom: 0, height: CAPTION_H,
+        background: lit ? theme.strip : veil.strip,
+        boxShadow: 'inset 0 1.5px 0 rgba(0,0,0,0.20), inset 0 -0.5px 0 rgba(255,255,255,0.06)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        padding: '0 8px', boxSizing: 'border-box',
+        transition: 'background-color 700ms ease',
+      }}>
+        {got ? (
+          <>
+            <span style={{
+              fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.14em',
+              color: LABEL_GOLD, textTransform: 'uppercase', lineHeight: 1.1, opacity: lit ? 1 : 0.6,
+            }}>Seen</span>
+            <span style={{
+              marginTop: 2, fontSize: '0.8rem', fontWeight: 600,
+              color: '#ffffff', fontVariantNumeric: 'tabular-nums',
+              lineHeight: 1.1, letterSpacing: '0.01em', whiteSpace: 'nowrap', opacity: lit ? 1 : 0.6,
+            }}>{firstSeenDate}</span>
+          </>
+        ) : (
+          <span style={{
+            fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.16em',
+            color: LABEL_GOLD, textTransform: 'uppercase', opacity: 0.7,
+          }}>Not yet</span>
+        )}
+      </div>
+    </li>
+  )
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────────
 export default function Collection() {
   const { collected, loading, error } = useCritterCollection()
+
+  const bloomSeenRef = useRef(null)
+  if (bloomSeenRef.current === null) bloomSeenRef.current = loadBloomSeen()
+  const markBloomed = useCallback((id) => {
+    if (bloomSeenRef.current.has(id)) return
+    bloomSeenRef.current.add(id)
+    persistBloomSeen(bloomSeenRef.current)
+  }, [])
 
   const byGroup = {}
   for (const c of roster) {
@@ -110,18 +290,20 @@ export default function Collection() {
 
   return (
     <div style={{
-      padding: '20px 16px 40px',
-      maxWidth: 860,
-      margin: '0 auto',
-      backgroundColor: P.cream,
-      minHeight: '100vh',
+      padding: '20px 16px 40px', maxWidth: 860, margin: '0 auto',
+      backgroundColor: P.cream, minHeight: '100vh',
     }}>
-      {/* Responsive critter grid: 3-per-row on phones (Jen's required layout), scaling up on
-          wider screens. Explicit column counts (not auto-fill) so phone widths are guaranteed 3. */}
+      {/* Grid: explicit columns so phones are guaranteed 3-per-row. Bloom keyframes: a float-in +
+          wing-flutter settle on the art stage + a colour reveal on the art, one-time per critter. */}
       <style>{`
         .cc-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;grid-auto-rows:${TILE_H}px;padding:0;margin:0;list-style:none;}
         @media(min-width:560px){.cc-grid{grid-template-columns:repeat(4,minmax(0,1fr));}}
         @media(min-width:760px){.cc-grid{grid-template-columns:repeat(5,minmax(0,1fr));}}
+        .cc-settle{animation:ccSettle ${BLOOM_MS}ms cubic-bezier(.34,1.32,.5,1) both;}
+        .cc-art-bloom{animation:ccArtBloom 800ms ease both;}
+        @keyframes ccSettle{0%{transform:translateY(16px) scale(.94) rotate(-3deg)}45%{transform:translateY(-6px) scale(1.03) rotate(3deg)}62%{transform:translateY(2px) rotate(-6deg)}74%{transform:rotate(5deg)}86%{transform:rotate(-2deg)}100%{transform:translateY(0) scale(1) rotate(0)}}
+        @keyframes ccArtBloom{0%{opacity:.82;filter:saturate(.55) brightness(1.04) blur(.6px)}100%{opacity:1;filter:none}}
+        @media(prefers-reduced-motion:reduce){.cc-settle,.cc-art-bloom{animation:none!important}}
       `}</style>
       <div aria-live="polite" aria-atomic="true" style={{
         position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
@@ -220,135 +402,19 @@ export default function Collection() {
 
             <ul role="list" className="cc-grid">
               {entries.map((c, idx) => {
-                const theme = getTheme(c)
                 const entry = collected.get(c.id)
                 const got = !!entry
                 const code = dexCode(group, idx)
-                const firstSeenLong = got ? formatLongDate(entry.firstSeenAt) : ''
-                const firstSeenDate = got ? formatSeenDate(entry.firstSeenAt) : ''
-                const ariaState = got
-                  ? `${c.name}, visited${firstSeenLong ? `, first seen ${firstSeenLong}` : ''}`
-                  : `${code}, not yet visited`
-
                 return (
-                  <li
+                  <CritterCard
                     key={c.id}
-                    role="listitem"
-                    aria-label={ariaState}
-                    title={got ? `${c.name}${firstSeenLong ? ` — first seen ${firstSeenLong}` : ''}` : undefined}
-                    style={{
-                      position: 'relative',
-                      height: TILE_H,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      padding: '8px 6px 0',
-                      paddingBottom: CAPTION_H,
-                      background: theme.bg,
-                      borderRadius: CARD_RADIUS,
-                      boxShadow: CARD_SHADOW,
-                      boxSizing: 'border-box',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    {/* Dex badge */}
-                    <span aria-hidden="true" style={{
-                      position: 'absolute', top: 6, left: 6, zIndex: 2,
-                      minWidth: 36, height: 18, padding: '0 6px',
-                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                      background: theme.strip, borderRadius: 5,
-                      boxShadow: 'inset 0 0.5px 1px rgba(0,0,0,0.25), inset 0 0.5px 0 0.5px rgba(255,255,255,0.18)',
-                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                      fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.04em',
-                      color: LABEL_GOLD, fontVariantNumeric: 'tabular-nums',
-                    }}>{code}</span>
-
-                    {/* Art stage — 86% of card width, overflow:hidden clips the scaled art.
-                        Stage provides the ~7% consistent edge padding. view_scale zooms in
-                        on critters that have empty viewBox space (scale range 1.0–2.5). */}
-                    <div style={{
-                      width: `min(${STAGE_PCT}, 132px)`,
-                      aspectRatio: '1 / 1',
-                      marginTop: 8,
-                      flexShrink: 0,
-                      overflow: 'hidden',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}>
-                      <img
-                        src={c.image_url}
-                        alt={got ? c.name : ''}
-                        loading="lazy"
-                        draggable={false}
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          objectFit: 'contain',
-                          display: 'block',
-                          transform: `scale(${c.view_scale || 1})`,
-                          transformOrigin: 'center center',
-                          filter: got ? 'none' : 'brightness(0)',
-                          opacity: got ? 1 : 0.55,
-                        }}
-                      />
-                    </div>
-
-                    {/* Full name — fills the space between art and the pinned caption strip,
-                        vertically centered, clipped (never slides under the caption). */}
-                    <div style={{
-                      flex: '1 1 auto',
-                      minHeight: 0,
-                      width: '100%',
-                      marginTop: 8,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      overflow: 'hidden',
-                      fontSize: '0.88rem',
-                      fontWeight: 700,
-                      lineHeight: 1.2,
-                      letterSpacing: '-0.005em',
-                      color: theme.name,
-                      textAlign: 'center',
-                      padding: '0 6px',
-                      boxSizing: 'border-box',
-                      wordBreak: 'break-word',
-                      overflowWrap: 'anywhere',
-                    }}>
-                      {got ? c.name : ''}
-                    </div>
-
-                    {/* Caption strip */}
-                    <div data-testid={`sighting-caption-${c.id}`} style={{
-                      position: 'absolute', left: 0, right: 0, bottom: 0,
-                      height: CAPTION_H,
-                      background: theme.strip,
-                      boxShadow: 'inset 0 1.5px 0 rgba(0,0,0,0.20), inset 0 -0.5px 0 rgba(255,255,255,0.06)',
-                      display: 'flex', flexDirection: 'column',
-                      alignItems: 'center', justifyContent: 'center',
-                      padding: '0 8px', boxSizing: 'border-box',
-                    }}>
-                      {got ? (
-                        <>
-                          <span style={{
-                            fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.14em',
-                            color: LABEL_GOLD, textTransform: 'uppercase', lineHeight: 1.1,
-                          }}>Seen</span>
-                          <span style={{
-                            marginTop: 2, fontSize: '0.8rem', fontWeight: 600,
-                            color: '#ffffff', fontVariantNumeric: 'tabular-nums',
-                            lineHeight: 1.1, letterSpacing: '0.01em', whiteSpace: 'nowrap',
-                          }}>{firstSeenDate}</span>
-                        </>
-                      ) : (
-                        <span style={{
-                          fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.16em',
-                          color: LABEL_GOLD, textTransform: 'uppercase', opacity: 0.78,
-                        }}>Not yet</span>
-                      )}
-                    </div>
-                  </li>
+                    c={c}
+                    code={code}
+                    got={got}
+                    entry={entry}
+                    initiallyBloomed={bloomSeenRef.current.has(c.id)}
+                    onBloomed={markBloomed}
+                  />
                 )
               })}
             </ul>
