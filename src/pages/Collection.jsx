@@ -124,6 +124,15 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed }) {
     })
   }, [c.id, onBloomed])
 
+  // BUG-A/BUG-B fix: useCritterCollection loads async, so the phase initializer above can
+  // run while `got` is still false (empty Map during load). When the row resolves, a stuck
+  // 'veil' card must leave the silhouette: promote earned critters to their real phase so the
+  // dim/blur resting look clears AND the pending->bloom trigger (gated on phase==='pending')
+  // can attach. No-op when `got` was already correct at mount.
+  useEffect(() => {
+    if (got && phase === 'veil') setPhase(initiallyBloomed ? 'full' : 'pending')
+  }, [got, initiallyBloomed, phase])
+
   // First-full-view trigger (or immediate reveal where IntersectionObserver is unavailable).
   useEffect(() => {
     if (phase !== 'pending') return
