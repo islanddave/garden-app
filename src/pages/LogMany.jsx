@@ -50,6 +50,9 @@ const ALL_TYPES = [
 ]
 
 const SCOPE_KEY = 'quicklog.lastScope'
+// FIX-3: per-DEVICE default selection (true=start all selected [Dave default], false=start none [Jen]).
+// Device-local expedient; server-side per-user migration tracked as V4-LOGMANY-001 (Cross-Device State Principle).
+const DEFAULT_SEL_KEY = 'quicklog.defaultAllSelected'
 
 function genKey() {
   try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID() } catch (e) {}
@@ -76,6 +79,9 @@ export default function LogMany() {
   const [result, setResult] = useState(null)       // { batch_id, count }
   const [error, setError]   = useState(null)
   const [showList, setShowList] = useState(false)
+  const [defaultAllSelected, setDefaultAllSelected] = useState(() => {
+    try { const v = localStorage.getItem(DEFAULT_SEL_KEY); return v === null ? true : v === '1' } catch (e) { return true }
+  })
   const idemRef = useRef(null)
 
   // If the user reopens the page with a previously-selected secondary type
@@ -117,7 +123,10 @@ export default function LogMany() {
     let on = true
     setPreviewing(true); setError(null); setExcluded(new Set())
     fetch('/api/events/batch', { method: 'POST', body: JSON.stringify({ dry_run: true, event_type: eventType, scope }) })
-      .then(r => { if (on) { setPreview(r); setPreviewing(false) } })
+      .then(r => { if (on) {
+        setPreview(r); setPreviewing(false)
+        setExcluded(defaultAllSelected ? new Set() : new Set((r.plantings || []).map(pl => pl.id)))
+      } })
       .catch(err => { if (on) { setError(err.message); setPreview(null); setPreviewing(false) } })
     return () => { on = false }
   }, [ready, scope, eventType, fetch, result])
@@ -125,6 +134,13 @@ export default function LogMany() {
   const toggleExclude = useCallback((id) => {
     setExcluded(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
   }, [])
+
+  // FIX-3: flip the per-device default and re-apply to the current preview immediately.
+  const applyDefaultSel = useCallback((on) => {
+    setDefaultAllSelected(on)
+    try { localStorage.setItem(DEFAULT_SEL_KEY, on ? '1' : '0') } catch (e) {}
+    setExcluded(on ? new Set() : new Set((preview?.plantings || []).map(pl => pl.id)))
+  }, [preview])
 
   const evMeta = ALL_TYPES.find(t => t.value === eventType) || EVENT_TYPES[0]
   const verbLabel = evMeta.label.toLowerCase()
@@ -279,6 +295,12 @@ export default function LogMany() {
               <button type="button" onClick={() => setShowList(v => !v)} style={linkBtn}>
                 {showList ? 'Hide' : 'Review'} {preview.plantings.length} {preview.plantings.length === 1 ? 'planting' : 'plantings'} {excluded.size > 0 ? `(${excluded.size} skipped)` : ''}
               </button>
+            )}
+            {preview.plantings.length > 0 && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 0', fontSize: '0.8rem', color: P.mid, cursor: 'pointer' }}>
+                <input type="checkbox" checked={defaultAllSelected} onChange={e => applyDefaultSel(e.target.checked)} />
+                Start with everything selected
+              </label>
             )}
             {showList && (
               <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>

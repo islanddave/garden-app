@@ -242,8 +242,6 @@ export default function Garden() {
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Garden</h1>
         <div style={{ display: 'flex', gap: 8 }}>
           <Link to="/log/many" style={btnGhost}>⚡ Log many</Link>
-          <Link to="/plants" style={btnGhost}>+ Planting</Link>
-          <Link to="/projects/new" style={btnLink}>+ Project</Link>
         </div>
       </div>
 

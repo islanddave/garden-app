@@ -70,7 +70,6 @@ export default function ProjectList() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Projects</h1>
-        <Link to="/projects/new" style={btnLink}>+ New project</Link>
       </div>
 
       {/* List */}

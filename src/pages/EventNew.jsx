@@ -621,6 +621,12 @@ export default function EventNew() {
           <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
             Log an event
           </h1>
+          <Link
+            to="/log/many"
+            style={{ display: 'inline-block', marginTop: 6, fontSize: '0.85rem', color: P.green, textDecoration: 'none', fontWeight: 600 }}
+          >
+            Logging the same thing across plants? Use Log Many →
+          </Link>
           {voice.supported && (
             <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: P.light }}>
               🎙️ Voice input active — tap the mic button next to any field to speak

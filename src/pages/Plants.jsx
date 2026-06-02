@@ -239,10 +239,11 @@ export default function Plants() {
     <div style={{ maxWidth: 640, margin: '0 auto', padding: '16px 16px 32px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <h1 style={{ margin: 0, fontSize: '1.4rem', color: P.dark }}>🌿 Plantings</h1>
-        <button onClick={() => { setShowAdd(v => !v); setErr(null) }}
-          style={showAdd ? gBtn : { ...pBtn(false), fontSize: '0.85rem', padding: '8px 14px' }}>
-          {showAdd ? 'Cancel' : '+ New Planting'}
-        </button>
+        {showAdd && (
+          <button onClick={() => { setShowAdd(false); setErr(null) }} style={gBtn}>
+            Cancel
+          </button>
+        )}
       </div>
 
       {showRenameNote && (
