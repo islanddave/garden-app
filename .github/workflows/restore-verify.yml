@@ -1,0 +1,59 @@
+name: restore-verify (scheduled)
+
+# B3 (spec §3) — "an untested backup is not a backup." Daily, restores the LATEST
+# durable daily dump (s3://garden-backups-prod/db/garden-*.dump) into a FRESH,
+# root-parented Neon scratch branch, asserts schema (table-set) + core row-count
+# coherence vs live prod, then deletes the scratch branch. A mismatch or restore
+# failure exits non-zero -> this run goes RED -> GitHub notifies Dave (the alert).
+#
+# UNATTENDED by design: the restore-verify role's OIDC trust is scoped to the main
+# ref (NOT environment:production), so the scheduled run does NOT pause for approval.
+# Read-only blast radius: S3 GetObject on the backup bucket + a throwaway Neon branch.
+# Touches NOTHING in prod/dev/main/staging.
+#
+# Scheduled + dispatch both require this file on the DEFAULT branch (main), so it is
+# inert until the OPS-GATE-001 promote. Schedule is 08:00 UTC, ~1h after backup.yml
+# (07:00 UTC), so the freshest daily dump exists when this runs.
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install postgresql-client-17 (pgdg)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_restore --version
+
+      - name: Configure AWS credentials (restore-verify role, OIDC)
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.RESTORE_VERIFY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Install python deps
+        run: pip install boto3 requests --quiet
+
+      - name: Restore-verify latest durable dump
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          NEON_BACKUP_URL: ${{ secrets.NEON_BACKUP_URL }}
+          BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET_NAME }}
+        run: |
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          python3 scripts/restore-verify.py
