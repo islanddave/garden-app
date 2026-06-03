@@ -153,6 +153,17 @@ def s3_object_exists(s3, bucket, key):
         code = e.response.get("Error", {}).get("Code", "")
         if code in ("404", "NoSuchKey", "NotFound"):
             return False
+        if code in ("403", "Forbidden", "AccessDenied"):
+            # S3 returns 403 (not 404) for HeadObject on a MISSING key when the
+            # caller's s3:ListBucket is prefix-conditioned (the condition is not
+            # evaluated for a HEAD). Disambiguate via a prefix-scoped list, which
+            # the conditional ListBucket DOES authorize (key starts with an allowed
+            # snap-* prefix). Present in the listing => exists; absent => not exists.
+            resp = s3.list_objects_v2(Bucket=bucket, Prefix=key, MaxKeys=1)
+            for o in resp.get("Contents", []):
+                if o.get("Key") == key:
+                    return True
+            return False
         raise
 
 
