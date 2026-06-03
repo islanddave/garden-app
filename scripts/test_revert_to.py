@@ -26,10 +26,11 @@ rt = _load()
 # --- fakes -------------------------------------------------------------------
 
 class FakeResp:
-    def __init__(self, status, payload=None, text=""):
+    def __init__(self, status, payload=None, text="", content=b""):
         self.status_code = status
         self._payload = payload if payload is not None else {}
         self.text = text or json.dumps(self._payload)
+        self.content = content
 
     def json(self):
         return self._payload
@@ -292,33 +293,41 @@ def test_ff_main_failure_raises(monkeypatch):
 
 
 class FakeLambda:
-    def __init__(self, missing_alias=False):
+    """U1-resolved mechanism: get_function(Qualifier) -> Code.Location, then
+    update_function_code($LATEST). No aliases (Function URLs hit $LATEST)."""
+    def __init__(self, code_loc="https://s3/pkg.zip"):
         self.calls = []
-        self.missing_alias = missing_alias
+        self.code_loc = code_loc
 
-    def update_alias(self, **k):
-        self.calls.append(("update", k))
-        if self.missing_alias:
-            from botocore.exceptions import ClientError
-            raise ClientError({"Error": {"Code": "ResourceNotFoundException"}}, "UpdateAlias")
+    def get_function(self, FunctionName, Qualifier=None):
+        self.calls.append(("get", FunctionName, Qualifier))
+        return {"Code": {"Location": self.code_loc}}
 
-    def create_alias(self, **k):
-        self.calls.append(("create", k))
+    def update_function_code(self, **k):
+        self.calls.append(("update_code", k))
+        return {"Version": "99"}
 
 
-def test_restore_lambda_updates_alias():
+def test_restore_lambda_pushes_code_to_latest(monkeypatch):
     cfg = rt.Config(env=base_env())
     lc = FakeLambda()
+    fr = FakeRequests()
+    fr.add("GET", "https://s3/pkg.zip", FakeResp(200, content=b"ZIPBYTES"))
+    monkeypatch.setattr(rt, "requests", fr)
     out = rt.restore_lambda_versions(cfg, good_manifest(), lambda_client=lc)
     assert out == {"garden-plants": "7"}
-    assert lc.calls[0][0] == "update"
+    assert any(c[0] == "get" for c in lc.calls)
+    assert any(c[0] == "update_code" for c in lc.calls)
 
 
-def test_restore_lambda_creates_alias_when_missing():
+def test_restore_lambda_download_failure_raises(monkeypatch):
     cfg = rt.Config(env=base_env())
-    lc = FakeLambda(missing_alias=True)
-    rt.restore_lambda_versions(cfg, good_manifest(), lambda_client=lc)
-    assert any(c[0] == "create" for c in lc.calls)
+    lc = FakeLambda()
+    fr = FakeRequests()
+    fr.add("GET", "https://s3/pkg.zip", FakeResp(403, content=b""))
+    monkeypatch.setattr(rt, "requests", fr)
+    with pytest.raises(rt.RevertError):
+        rt.restore_lambda_versions(cfg, good_manifest(), lambda_client=lc)
 
 
 # --- orchestration -----------------------------------------------------------
@@ -351,6 +360,7 @@ def test_run_happy_path_fastpath(monkeypatch):
     fr.add("POST", "/git/commits", FakeResp(201, {"sha": "revcommit"}))
     fr.add("PATCH", "/git/refs/heads/dev", FakeResp(200, {"object": {"sha": "revcommit"}}))
     fr.add("PATCH", "/git/refs/heads/main", FakeResp(200, {"object": {"sha": "revcommit"}}))
+    fr.add("GET", "https://s3/pkg.zip", FakeResp(200, content=b"ZIP"))  # lambda pkg download
     monkeypatch.setattr(rt, "requests", fr)
     monkeypatch.setattr(rt, "compute_rpo", lambda cfg: {"total_live_rows": 5, "latest_event": "t"})
     # pre-revert snap mocked
@@ -421,3 +431,162 @@ def test_run_failure_before_checkpoint_no_rollback(monkeypatch):
 def test_main_exit_code_on_error(monkeypatch):
     monkeypatch.setattr(rt, "Config", lambda: (_ for _ in ()).throw(rt.RevertError("x")))
     assert rt.main() == 1
+
+
+# --- REHEARSAL_MODE: safety guard -------------------------------------------
+
+def reh_env(**over):
+    env = base_env(
+        REHEARSAL_MODE="1",
+        DEV_BRANCH="revert-rehearsal-dev-1",
+        MAIN_BRANCH="revert-rehearsal-main-1",
+        NEON_PROD_BRANCH_ID="br-damp-frog-amdfxwrr",
+    )
+    env.update(over)
+    return env
+
+
+def test_guard_off_ok_defaults():
+    rt.rehearsal_guard(rt.Config(env=base_env()))  # dev/main defaults -> no raise
+
+
+def test_guard_off_rejects_branch_override():
+    cfg = rt.Config(env=base_env(DEV_BRANCH="revert-rehearsal-dev-1"))
+    with pytest.raises(rt.RevertError):
+        rt.rehearsal_guard(cfg)
+
+
+def test_guard_on_ok():
+    rt.rehearsal_guard(rt.Config(env=reh_env()))  # no raise
+
+
+def test_guard_on_rejects_dev_main_refs():
+    with pytest.raises(rt.RevertError):
+        rt.rehearsal_guard(rt.Config(env=reh_env(DEV_BRANCH="dev", MAIN_BRANCH="main")))
+
+
+def test_guard_on_rejects_non_prefix():
+    with pytest.raises(rt.RevertError):
+        rt.rehearsal_guard(rt.Config(env=reh_env(DEV_BRANCH="hotfix-x")))
+
+
+def test_guard_on_rejects_equal_branches():
+    with pytest.raises(rt.RevertError):
+        rt.rehearsal_guard(rt.Config(env=reh_env(MAIN_BRANCH="revert-rehearsal-dev-1")))
+
+
+def test_guard_on_rejects_prod_neon():
+    with pytest.raises(rt.RevertError):
+        rt.rehearsal_guard(rt.Config(env=reh_env(NEON_PROD_BRANCH_ID="br-delicate-sea-amum92c2")))
+
+
+# --- REHEARSAL_MODE: leg redirection ----------------------------------------
+
+def test_create_revert_commit_uses_rehearsal_dev(monkeypatch):
+    cfg = rt.Config(env=reh_env())
+    fr = FakeRequests()
+    fr.add("GET", f"/git/commits/{'a'*40}", FakeResp(200, {"tree": {"sha": "treeX"}}))
+    fr.add("GET", "/git/ref/heads/revert-rehearsal-dev-1", FakeResp(200, {"object": {"sha": "rdev"}}))
+    fr.add("POST", "/git/commits", FakeResp(201, {"sha": "newc"}))
+    fr.add("PATCH", "/git/refs/heads/revert-rehearsal-dev-1", FakeResp(200, {"object": {"sha": "newc"}}))
+    monkeypatch.setattr(rt, "requests", fr)
+    assert rt.create_revert_commit_on_dev(cfg, good_manifest()) == "newc"
+    assert any(m == "PATCH" and "revert-rehearsal-dev-1" in u for m, u in fr.calls)
+    assert not any("heads/dev" in u and "rehearsal" not in u for m, u in fr.calls)
+
+
+def test_ff_main_uses_rehearsal_main(monkeypatch):
+    cfg = rt.Config(env=reh_env())
+    fr = FakeRequests()
+    fr.add("PATCH", "/git/refs/heads/revert-rehearsal-main-1", FakeResp(200, {"object": {"sha": "x"}}))
+    monkeypatch.setattr(rt, "requests", fr)
+    rt.ff_main(cfg, "z" * 40)
+    assert any("revert-rehearsal-main-1" in u for m, u in fr.calls)
+
+
+def test_lambda_skipped_in_rehearsal():
+    cfg = rt.Config(env=reh_env())
+    lc = FakeLambda()
+    assert rt.restore_lambda_versions(cfg, good_manifest(), lambda_client=lc) == {}
+    assert lc.calls == []
+
+
+def test_cf_skipped_in_rehearsal():
+    cfg = rt.Config(env=reh_env())
+    called = {"n": 0}
+    cfc = types.SimpleNamespace(create_invalidation=lambda **k: called.__setitem__("n", called["n"] + 1))
+    rt.cf_invalidate(cfg, cloudfront_client=cfc)
+    assert called["n"] == 0
+
+
+# --- REHEARSAL_MODE: full run paths -----------------------------------------
+
+def test_run_rejects_override_without_rehearsal(monkeypatch):
+    cfg = rt.Config(env=base_env(DEV_BRANCH="revert-rehearsal-dev-1"))
+    s3 = FakeS3({("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
+    with pytest.raises(rt.RevertError) as e:
+        rt.run(cfg, s3=s3)
+    assert "REHEARSAL_MODE" in str(e.value)
+
+
+def test_run_rehearsal_dump_path(monkeypatch):
+    """Rehearsal + FORCE_DUMP_PATH: fresh-branch+restore+validate, DB reset to
+    the STAGING branch, code legs to rehearsal refs, Lambda/CF untouched."""
+    cfg = rt.Config(env=reh_env(FORCE_DUMP_PATH="1"))
+    s3 = FakeS3({
+        ("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode(),
+        ("garden-backups-prod", "db/snap-v2.5.0.dump"): b"DUMP",
+    })
+    fr = FakeRequests()
+    fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
+    fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
+    fr.add("GET", "/branches", FakeResp(200, {"branches": []}))
+    fr.add("POST", "/restore", FakeResp(200, {"ok": True}))
+    fr.add("POST", "/branches", FakeResp(201, {"branch": {"id": "br-stage"},
+           "connection_uris": [{"connection_uri": "postgresql://stage"}]}))
+    fr.add("GET", f"/git/commits/{'a'*40}", FakeResp(200, {"tree": {"sha": "treeX"}}))
+    fr.add("GET", "/git/ref/heads/revert-rehearsal-dev-1", FakeResp(200, {"object": {"sha": "rdev"}}))
+    fr.add("POST", "/git/commits", FakeResp(201, {"sha": "revc"}))
+    fr.add("PATCH", "/git/refs/heads/revert-rehearsal-dev-1", FakeResp(200, {"object": {"sha": "revc"}}))
+    fr.add("PATCH", "/git/refs/heads/revert-rehearsal-main-1", FakeResp(200, {"object": {"sha": "revc"}}))
+    monkeypatch.setattr(rt, "requests", fr)
+    monkeypatch.setattr(rt, "compute_rpo", lambda cfg: {"total_live_rows": 5, "latest_event": "t"})
+    monkeypatch.setattr(rt, "prerevert_snap", lambda cfg: {"manifest": {
+        "neon_branch_id": "br-pre", "neon_lsn": "0/PRE", "main_sha": "m" * 40, "lambda_versions": {}}})
+
+    class P:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: P())
+    monkeypatch.setattr(rt, "_psql_scalar", lambda url, sql: "25" if "information_schema" in sql else "10")
+    lc = FakeLambda()
+    out = rt.run(cfg, s3=s3, lambda_client=lc,
+                 cloudfront_client=types.SimpleNamespace(create_invalidation=lambda **k: None))
+    assert out["reverted_to"] == "v2.5.0"
+    assert lc.calls == []  # Lambda untouched in rehearsal
+    assert any(m == "POST" and u.endswith("/branches") for m, u in fr.calls)  # dump path
+    assert any("br-damp-frog-amdfxwrr/restore" in u for m, u in fr.calls)  # reset STAGING, not prod
+    assert any("revert-rehearsal-main-1" in u for m, u in fr.calls)
+
+
+def test_run_rehearsal_force_abort_rolls_back(monkeypatch):
+    """Rehearsal + FORCE_ABORT: post-checkpoint failure triggers rollback()."""
+    cfg = rt.Config(env=reh_env(FORCE_ABORT="1"))
+    s3 = FakeS3({("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
+    fr = FakeRequests()
+    fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
+    fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
+    fr.add("GET", "/branches", FakeResp(200, {"branches": [
+        {"id": "br-snap", "name": "snap-v2.5.0", "current_state_lsn": "0/ABC"}]}))
+    fr.add("POST", "/restore", FakeResp(200, {"ok": True}))
+    monkeypatch.setattr(rt, "requests", fr)
+    monkeypatch.setattr(rt, "compute_rpo", lambda cfg: {"total_live_rows": 5, "latest_event": "t"})
+    monkeypatch.setattr(rt, "prerevert_snap", lambda cfg: {"manifest": {
+        "neon_branch_id": "br-pre", "neon_lsn": "0/PRE", "main_sha": "m" * 40, "lambda_versions": {}}})
+    rolled = {"n": 0}
+    monkeypatch.setattr(rt, "rollback", lambda *a, **k: rolled.__setitem__("n", rolled["n"] + 1))
+    with pytest.raises(rt.RevertError) as e:
+        rt.run(cfg, s3=s3)
+    assert rolled["n"] == 1
+    assert "rolled back" in str(e.value)
