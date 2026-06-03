@@ -1,15 +1,33 @@
 {
   "_meta": {
-    "purpose": "Coverage threshold schedule for vitest. CI fails if vitest.config.ts thresholds fall below the calendar-due target.",
-    "source": "pipeline-consolidation-plan-20260501.md §B2 (boss VP add)",
+    "purpose": "Milestone-driven coverage floor for vitest. CI fails if vitest.config.ts thresholds fall below active_target. Target advances ONLY when a milestone is marked reached + active_target is bumped \u2014 never by the calendar (No-Date-Based-Gating rule, gardening.md).",
+    "source": "pipeline-consolidation-plan-20260501.md \u00a7B2; de-dated 2026-06-03 (OPS-GATE-001 cleanup) per No-Date-Gating.",
     "created": "2026-05-01",
+    "de_dated": "2026-06-03",
     "applies_to": "vitest.config.ts coverage thresholds (lines/functions/branches/statements minimum)",
-    "tunable": "Dave or session may revise dates/targets here as scope adjusts."
+    "how_to_advance": "When a milestone's completion criteria are met (and Dave agrees), set that milestone status=reached and set active_target to its target. Enforcement = vitest min threshold must be >= active_target."
   },
-  "schedule": [
-    {"date": "2026-05-01", "target": 0,  "milestone": "Path A baseline"},
-    {"date": "2026-06-30", "target": 10, "milestone": "V2 close"},
-    {"date": "2026-09-30", "target": 25, "milestone": "V2.1"},
-    {"date": "2026-12-31", "target": 50, "milestone": "V3"}
+  "active_target": 0,
+  "milestones": [
+    {
+      "name": "Path A baseline",
+      "target": 0,
+      "status": "reached"
+    },
+    {
+      "name": "V2 close",
+      "target": 10,
+      "status": "pending"
+    },
+    {
+      "name": "V2.1",
+      "target": 25,
+      "status": "pending"
+    },
+    {
+      "name": "V3",
+      "target": 50,
+      "status": "pending"
+    }
   ]
 }
