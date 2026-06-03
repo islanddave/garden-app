@@ -1,0 +1,69 @@
+name: Ruleset Drift Watchdog
+
+# Defense-in-depth (repo-version-env-spec V100 §5 ADD): asserts the main capability-gate
+# ruleset is intact and alerts on drift. Runs from the DEFAULT branch (main) on a schedule,
+# so its own definition is capability-gated — an agent writing dev cannot unilaterally alter
+# it (dev->main is a Dave-approved gate). NOT load-bearing (the gate already blocks agent
+# writes to main); this catches accidental or manual ruleset tampering.
+# Requires secret RULESET_READ_PAT = a token with administration:read on the repo.
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  assert-ruleset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert main-capability-gate ruleset intact
+        env:
+          GH_TOKEN: ${{ secrets.RULESET_READ_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::RULESET_READ_PAT not set (needs administration:read). Cannot verify the ruleset."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
+          tok = os.environ["GH_TOKEN"]; repo = os.environ["REPO"]
+          EXPECT_ID = 17227141; EXPECT_BOT = 3951762
+          def api(path):
+              req = urllib.request.Request(
+                  "https://api.github.com/repos/%s%s" % (repo, path),
+                  headers={"Authorization": "token %s" % tok,
+                           "Accept": "application/vnd.github+json"})
+              return json.load(urllib.request.urlopen(req))
+          fail = []
+          ids = [r["id"] for r in api("/rulesets")]
+          if EXPECT_ID not in ids:
+              fail.append("ruleset %d MISSING (present: %s)" % (EXPECT_ID, ids))
+          else:
+              d = api("/rulesets/%d" % EXPECT_ID)
+              if d.get("enforcement") != "active":
+                  fail.append("enforcement=%s != active" % d.get("enforcement"))
+              ba = d.get("bypass_actors", [])
+              ok_bypass = (len(ba) == 1 and ba[0].get("actor_id") == EXPECT_BOT
+                           and ba[0].get("actor_type") == "Integration")
+              if not ok_bypass:
+                  fail.append("bypass_actors drifted: %s" % ba)
+              rules = set(r["type"] for r in d.get("rules", []))
+              for need in ("pull_request", "non_fast_forward", "deletion"):
+                  if need not in rules:
+                      fail.append("missing rule: %s" % need)
+              inc = d.get("conditions", {}).get("ref_name", {}).get("include", [])
+              if inc != ["refs/heads/main"]:
+                  fail.append("ref scope drifted: %s" % inc)
+          if fail:
+              print("::error::main-capability-gate RULESET DRIFT detected:")
+              for f in fail:
+                  print("  - " + f)
+              sys.exit(1)
+          print("OK: main-capability-gate ruleset intact (id %d, bypass=garden-bot %d)"
+                % (EXPECT_ID, EXPECT_BOT))
+          PY
