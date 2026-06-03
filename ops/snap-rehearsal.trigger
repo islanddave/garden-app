@@ -1,1 +1,1 @@
-rehearsal run 1 @ 2026-06-03 (staging-pointed v0.0.0)
+rehearsal run 2 @ 2026-06-03 (s3 403 fix)
