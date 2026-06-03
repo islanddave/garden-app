@@ -1,8 +1,6 @@
 name: Build and Deploy — SPA
 
 on:
-  push:
-    branches: [main]
   workflow_call:
     inputs:
       skip_version_bump:
