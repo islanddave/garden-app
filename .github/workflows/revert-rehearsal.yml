@@ -1,0 +1,164 @@
+name: revert rehearsal (staging)
+
+# One-off REHEARSAL of scripts/revert-to.py against STAGING (spec §3 B2 rehearsal).
+# Unlike snap (which only CREATES and so could be pointed at staging by env alone),
+# revert-to's CODE leg mutates refs -> it CANNOT be pointed at staging by env.
+# REHEARSAL_MODE=1 redirects the code legs to throwaway revert-rehearsal-* branches,
+# resets the STAGING Neon branch (br-damp-frog-amdfxwrr) from the v0.0.0 snapshot,
+# and SKIPS the prod Lambda/CF legs (revert-to.rehearsal_guard fails closed otherwise).
+# It does NOT touch dev, main, prod DB, prod Lambda, or prod CF.
+#
+# Triggered by touching ops/revert-rehearsal.trigger on dev (push), mirroring snap-rehearsal:
+# workflow_dispatch cannot be used because this workflow lives only on dev (dispatch requires
+# the workflow on the default branch). Runs in environment: production ONLY because the snap
+# role's OIDC trust is scoped to environment:production (Dave approves each run there).
+#
+# The trigger file selects the run via shell-style lines (all optional, defaults shown):
+#   MODE=dump_path            # dump_path | fast_path | abort
+#   TARGET_VERSION=v0.0.0     # snapshot to revert TO (must exist in SNAP_BUCKET)
+#   PREREVERT_VERSION=v0.0.1  # fresh version for the pre-revert snap of CURRENT staging
+# Setup creates the two rehearsal refs + recreates tag TARGET_VERSION (snap-rehearsal deleted
+# it); teardown (always) deletes all rehearsal artifacts (refs, tags, pre-revert + stage Neon
+# branches).
+
+on:
+  push:
+    branches: [dev]
+    paths: ['ops/revert-rehearsal.trigger']
+
+permissions:
+  id-token: write
+  contents: write
+
+env:
+  REPO: ${{ github.repository }}
+  # v0.0.0 snapshot's main_sha (pinned in snap-rehearsal.yml); the recreated tag must resolve here.
+  TARGET_MAIN_SHA: "31e8673032bcb142e3accf6ae96fd45bd1830429"
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: dev
+
+      - name: Setup rehearsal refs + tag, parse mode
+        env:
+          GH_TOKEN: ${{ secrets.RULESET_READ_PAT }}
+        run: |
+          set -euo pipefail
+          TRG=ops/revert-rehearsal.trigger
+          get() { grep -E "^$1=" "$TRG" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]'; }
+          MODE=$(get MODE); MODE=${MODE:-dump_path}
+          TV=$(get TARGET_VERSION); TV=${TV:-v0.0.0}
+          PV=$(get PREREVERT_VERSION); PV=${PV:-v0.0.1}
+          echo "mode=$MODE target=$TV prerevert=$PV"
+          RID="${{ github.run_id }}"
+          DEVB="revert-rehearsal-dev-$RID"
+          MAINB="revert-rehearsal-main-$RID"
+          BASE=$(curl -sS -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/git/refs/heads/dev" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])")
+          echo "base dev HEAD = $BASE"
+          for B in "$DEVB" "$MAINB"; do
+            CODE=$(curl -sS -o /tmp/r.json -w "%{http_code}" -X POST \
+              -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              -d "{\"ref\":\"refs/heads/$B\",\"sha\":\"$BASE\"}" \
+              "https://api.github.com/repos/$REPO/git/refs")
+            if [ "$CODE" != "201" ]; then
+              curl -sS -X PATCH -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                -d "{\"sha\":\"$BASE\",\"force\":true}" \
+                "https://api.github.com/repos/$REPO/git/refs/heads/$B" >/dev/null
+            fi
+          done
+          curl -sS -X DELETE -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/git/refs/tags/$TV" >/dev/null || true
+          curl -sS -X POST -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            -d "{\"ref\":\"refs/tags/$TV\",\"sha\":\"$TARGET_MAIN_SHA\"}" \
+            "https://api.github.com/repos/$REPO/git/refs" >/dev/null
+          {
+            echo "DEVB=$DEVB"
+            echo "MAINB=$MAINB"
+            echo "TV=$TV"
+            echo "PV=$PV"
+          } >> "$GITHUB_ENV"
+          case "$MODE" in
+            dump_path) echo "FORCE_DUMP_PATH=1" >> "$GITHUB_ENV" ;;
+            abort) echo "FORCE_ABORT=1" >> "$GITHUB_ENV" ;;
+            fast_path) : ;;
+            *) echo "::error::unknown MODE=$MODE"; exit 1 ;;
+          esac
+
+      - name: Install postgresql-client-17 (pgdg)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      - name: Configure AWS credentials (snap role, OIDC)
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Install python deps
+        run: pip install boto3 requests --quiet
+
+      - name: Run revert-to (REHEARSAL, staging-pointed)
+        env:
+          GH_TOKEN: ${{ secrets.RULESET_READ_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REHEARSAL_MODE: "1"
+          DEV_BRANCH: ${{ env.DEVB }}
+          MAIN_BRANCH: ${{ env.MAINB }}
+          TARGET_VERSION: ${{ env.TV }}
+          PREREVERT_VERSION: ${{ env.PV }}
+          CONFIRM_DATA_LOSS: "yes"
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          NEON_PROD_BRANCH_ID: br-damp-frog-amdfxwrr
+          NEON_BACKUP_URL: ${{ secrets.NEON_STAGING_URL }}
+          SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
+          PHOTOS_BUCKET: ${{ vars.PHOTOS_BUCKET }}
+          SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
+          CF_DIST: E3FAJTXAORQYDT
+        run: |
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          python3 scripts/revert-to.py
+
+      - name: Teardown rehearsal artifacts
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.RULESET_READ_PAT }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+        run: |
+          set +e
+          for B in "$DEVB" "$MAINB"; do
+            [ -n "$B" ] && curl -sS -X DELETE -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/$REPO/git/refs/heads/$B" >/dev/null
+          done
+          for T in "$TV" "$PV"; do
+            [ -n "$T" ] && curl -sS -X DELETE -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/$REPO/git/refs/tags/$T" >/dev/null
+          done
+          python3 - <<'PY'
+          import os, requests
+          key = os.environ["NEON_API_KEY"]; proj = os.environ["NEON_PROJECT_ID"]
+          pre = os.environ.get("PV", "v0.0.1"); tv = os.environ.get("TV", "v0.0.0")
+          H = {"accept": "application/json", "Authorization": f"Bearer {key}"}
+          try:
+              bs = requests.get(f"https://console.neon.tech/api/v2/projects/{proj}/branches", headers=H, timeout=60).json()["branches"]
+          except Exception as e:
+              print("teardown: neon list failed", e); raise SystemExit(0)
+          kill = {f"snap-{pre}", f"revert-stage-{tv}"}
+          for b in bs:
+              if b.get("name") in kill:
+                  requests.delete(f"https://console.neon.tech/api/v2/projects/{proj}/branches/{b['id']}", headers=H, timeout=60)
+                  print("deleted neon branch", b.get("name"))
+          PY
