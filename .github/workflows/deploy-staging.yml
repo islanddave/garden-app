@@ -1,8 +1,6 @@
 name: Build and Deploy — Staging + Regression Suite
 
 on:
-  push:
-    branches: [staging]
   workflow_dispatch:
     inputs:
       dev_sha:
