@@ -1,10 +1,15 @@
 name: promote-gate
 
-# Capability-gate promote (cutover spec V1.0, session ce88c0be). Minimal first cut — no snap yet (snap.py follows).
+# Capability-gate promote (cutover spec V1.0, session ce88c0be; snap + deploy-coupling wired 2026-06-03 sleepy-gifted-maxwell).
 # main is ruleset-protected with garden-bot (App 3951762) as the sole bypass actor; this workflow runs AS garden-bot.
-# environment: production pauses the whole job for Dave's approval BEFORE main is touched (gate bound to the push).
+# environment: production pauses the promote job for Dave's approval BEFORE main is touched (gate bound to the push).
 # Promote = fast-forward main -> the exact dev SHA (no squash). CI is enforced here (required-checks on main only gate PRs).
-# Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY.
+# After the FF, a version-snap (scripts/snap.py) captures a revertible marker (git tag + Neon branch + durable dump +
+# photo/lambda version-ids + manifest) INSIDE the same production-gated job — so a green promote always has a snapshot
+# (a snap failure reds the promote). Then the `deploy` job (workflow_call into deploy.yml) builds + deploys the SPA
+# under a SECOND production approval, making promote->deploy deterministic (no reliance on push:main retriggering).
+# Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY, NEON_API_KEY, NEON_PROJECT_ID, NEON_BACKUP_URL.
+# Vars: SNAP_AWS_ROLE_ARN, SNAP_BUCKET, PHOTOS_BUCKET, SNAP_RETENTION.
 
 on:
   workflow_dispatch:
@@ -13,9 +18,14 @@ on:
         description: 'Exact dev HEAD SHA to promote (must equal current dev HEAD)'
         required: true
         type: string
+      snap_version:
+        description: 'Version tag for the post-promote snapshot (unique; ^v\d+(\.\d+){0,2}$, e.g. v2.5.2)'
+        required: true
+        type: string
 
 permissions:
-  contents: read
+  contents: write
+  id-token: write
 
 jobs:
   promote:
@@ -51,3 +61,50 @@ jobs:
             cat /tmp/ff.json; echo "::error::fast-forward of main failed ($CODE)"; exit 1
           fi
           echo "promoted main -> $DEV_SHA"
+
+      - name: Install postgresql-client-17 (pgdg)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      - name: Configure AWS credentials (snap role, OIDC)
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Checkout dev (scripts/snap.py)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.dev_sha }}
+
+      - name: Install python deps
+        run: pip install boto3 requests --quiet
+
+      - name: Version snap (revertibility marker)
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          MAIN_SHA: ${{ inputs.dev_sha }}
+          SNAP_VERSION: ${{ inputs.snap_version }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          NEON_PROD_BRANCH_ID: br-delicate-sea-amum92c2
+          NEON_BACKUP_URL: ${{ secrets.NEON_BACKUP_URL }}
+          SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
+          PHOTOS_BUCKET: ${{ vars.PHOTOS_BUCKET }}
+          SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
+          CF_DIST: E3FAJTXAORQYDT
+          APP_VERSION: ${{ inputs.snap_version }}
+        run: |
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          python3 scripts/snap.py
+
+  deploy:
+    needs: promote
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
