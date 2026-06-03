@@ -176,8 +176,23 @@ jobs:
               print("teardown: neon list failed", e); raise SystemExit(0)
           def doomed(n):
               return n == f"snap-{pre}" or n == f"revert-stage-{tv}" or n.startswith(f"prerestore-{tv}-")
-          for b in bs:
-              if doomed(b.get("name", "")):
-                  requests.delete(f"https://console.neon.tech/api/v2/projects/{proj}/branches/{b['id']}", headers=H, timeout=60)
-                  print("deleted neon branch", b.get("name"))
+          # Multi-pass, leaf-first: Neon refuses to delete a branch that still has
+          # children (restore-with-preserve RE-PARENTS branches, so a scratch branch
+          # can end up an ANCESTOR of staging and is then un-deletable by design).
+          # Report status honestly instead of assuming success.
+          for _pass in range(4):
+              bs = requests.get(f"https://console.neon.tech/api/v2/projects/{proj}/branches", headers=H, timeout=60).json()["branches"]
+              targets = [b for b in bs if doomed(b.get("name", ""))]
+              if not targets:
+                  break
+              made_progress = False
+              for b in targets:
+                  r = requests.delete(f"https://console.neon.tech/api/v2/projects/{proj}/branches/{b['id']}", headers=H, timeout=60)
+                  if r.status_code in (200, 201, 202):
+                      print("deleted neon branch", b.get("name")); made_progress = True
+                  else:
+                      print(f"kept neon branch {b.get('name')} ({r.status_code}: {r.json().get('message','')[:60]})")
+              if not made_progress:
+                  print("teardown: remaining scratch branches are staging ancestors (expected, benign)")
+                  break
           PY
