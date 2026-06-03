@@ -49,6 +49,21 @@ ENV CONTRACT (read at runtime; no secrets hardcoded):
                       DB reset (defense-in-depth on top of the env approval —
                       reverting prod DB is real data loss for live users).
 
+REHEARSAL CONTRACT (staging dry-run; honored ONLY together):
+  REHEARSAL_MODE      "1" enables the safe dry-run. Code legs are redirected to
+                      throwaway revert-rehearsal-* refs, Lambda/CF legs are
+                      skipped, and rehearsal_guard() fails closed unless the
+                      redirects + a non-prod Neon target are set. With it unset,
+                      DEV_BRANCH/MAIN_BRANCH overrides are REFUSED.
+  DEV_BRANCH          rehearsal code-leg branch (must start 'revert-rehearsal-',
+                      != dev/main). Default 'dev' (prod).
+  MAIN_BRANCH         rehearsal promote-leg branch (same rules; != DEV_BRANCH).
+                      Default 'main' (prod).
+  FORCE_DUMP_PATH     "1" (rehearsal only) forces the dump+fresh-branch+validate
+                      DB path even if a matching snap-vX branch exists (U2/U3).
+  FORCE_ABORT         "1" (rehearsal only) raises after the DB checkpoint to
+                      exercise the abort->rollback path.
+
 Dependencies: boto3 (S3/Lambda/CloudFront), requests (Neon + GitHub REST),
 pg_restore/psql (pg17 client) via subprocess, and snap.py (co-located in
 scripts/) for the pre-revert snap.
@@ -92,6 +107,11 @@ VERSION_RE = re.compile(r"^v\d+(\.\d+){0,2}$")
 NEON_API = "https://console.neon.tech/api/v2"
 GITHUB_API = "https://api.github.com"
 HTTP_TIMEOUT = 60
+
+# Real prod identifiers the rehearsal guard must REFUSE to mutate.
+PROD_NEON_BRANCH = "br-delicate-sea-amum92c2"
+PROD_CF_DIST = "E3FAJTXAORQYDT"
+REHEARSAL_BRANCH_PREFIX = "revert-rehearsal-"
 
 # Key tables for the row-count sanity validate + RPO probe (read-only).
 SANITY_TABLES = [
@@ -144,6 +164,17 @@ class Config:
         self.retention = int(env.get("SNAP_RETENTION", "5"))
         self.cf_dist = env.get("CF_DIST", "E3FAJTXAORQYDT")
         self.confirm_data_loss = env.get("CONFIRM_DATA_LOSS", "")
+        # --- rehearsal redirect (REHEARSAL_MODE=1 only) ---------------------
+        # Outside rehearsal the code legs MUST target the real dev/main refs.
+        # In rehearsal they are redirected to throwaway revert-rehearsal-* refs
+        # and the prod-mutating Lambda/CF legs are skipped, so a rehearsal can
+        # NEVER touch dev, main, the prod Neon branch, or the prod CDN.
+        self.rehearsal = env.get("REHEARSAL_MODE", "") == "1"
+        self.dev_branch = env.get("DEV_BRANCH", "dev")
+        self.main_branch = env.get("MAIN_BRANCH", "main")
+        # rehearsal-only fault injection (honored ONLY when rehearsal is True):
+        self.force_abort = env.get("FORCE_ABORT", "") == "1"
+        self.force_dump_path = env.get("FORCE_DUMP_PATH", "") == "1"
         self._raw_env = env
 
     @staticmethod
@@ -182,6 +213,40 @@ def validate_version(version, label):
             f"invalid {label} {version!r}; must match ^v\\d+(\\.\\d+){{0,2}}$"
         )
     return version
+
+
+def rehearsal_guard(cfg):
+    """Fail-closed safety gate run before ANY mutation.
+
+    The single invariant that makes the rehearsal safe: it is structurally
+    impossible to mutate the real dev/main refs, the prod Neon branch, or the
+    prod CDN when REHEARSAL_MODE=1, AND impossible to redirect the code legs
+    away from dev/main when REHEARSAL_MODE is off.
+
+    OFF: dev_branch/main_branch MUST be exactly 'dev'/'main' (no silent
+         redirect of a real revert).
+    ON:  dev_branch/main_branch MUST be non-empty revert-rehearsal-* refs that
+         are NOT 'dev'/'main'; the Neon target MUST NOT be the prod branch.
+    """
+    if not cfg.rehearsal:
+        if cfg.dev_branch != "dev" or cfg.main_branch != "main":
+            raise RevertError(
+                "DEV_BRANCH/MAIN_BRANCH override requires REHEARSAL_MODE=1 "
+                f"(got dev_branch={cfg.dev_branch!r}, main_branch={cfg.main_branch!r})"
+            )
+        return
+    bad = []
+    for label, ref in (("DEV_BRANCH", cfg.dev_branch), ("MAIN_BRANCH", cfg.main_branch)):
+        if ref in ("", "dev", "main"):
+            bad.append(f"{label}={ref!r} is empty or a protected ref")
+        elif not ref.startswith(REHEARSAL_BRANCH_PREFIX):
+            bad.append(f"{label}={ref!r} must start {REHEARSAL_BRANCH_PREFIX!r}")
+    if cfg.dev_branch == cfg.main_branch and cfg.dev_branch not in ("", "dev", "main"):
+        bad.append("DEV_BRANCH and MAIN_BRANCH must differ")
+    if cfg.neon_prod_branch_id == PROD_NEON_BRANCH:
+        bad.append(f"NEON_PROD_BRANCH_ID is the real prod branch {PROD_NEON_BRANCH}")
+    if bad:
+        raise RevertError("REHEARSAL_MODE safety guard tripped: " + "; ".join(bad))
 
 
 # --- step 1: manifest load + tag cross-check ---------------------------------
@@ -258,7 +323,7 @@ def prerevert_snap(cfg):
     """
     if snap_mod is None:
         raise RevertError("snap module not importable; cannot take the pre-revert snap")
-    current_main = _get_ref_sha(cfg, "heads/main")
+    current_main = _get_ref_sha(cfg, f"heads/{cfg.main_branch}")
     snap_env = dict(cfg._raw_env)
     snap_env["SNAP_VERSION"] = cfg.prerevert_version
     snap_env["MAIN_SHA"] = current_main
@@ -455,7 +520,7 @@ def create_revert_commit_on_dev(cfg, manifest):
     if rc.status_code != 200:
         raise RevertError(f"get target commit failed {rc.status_code}: {rc.text}")
     target_tree = rc.json()["tree"]["sha"]
-    dev_head = _get_ref_sha(cfg, "heads/dev")
+    dev_head = _get_ref_sha(cfg, f"heads/{cfg.dev_branch}")
     rn = requests.post(
         f"{GITHUB_API}/repos/{cfg.repo}/git/commits",
         headers=gh_headers(cfg),
@@ -470,46 +535,58 @@ def create_revert_commit_on_dev(cfg, manifest):
         raise RevertError(f"create revert commit failed {rn.status_code}: {rn.text}")
     new_sha = rn.json()["sha"]
     ru = requests.patch(
-        f"{GITHUB_API}/repos/{cfg.repo}/git/refs/heads/dev",
+        f"{GITHUB_API}/repos/{cfg.repo}/git/refs/heads/{cfg.dev_branch}",
         headers=gh_headers(cfg),
         json={"sha": new_sha, "force": False},
         timeout=HTTP_TIMEOUT,
     )
     if ru.status_code != 200:
-        raise RevertError(f"update dev ref failed {ru.status_code}: {ru.text}")
+        raise RevertError(f"update {cfg.dev_branch} ref failed {ru.status_code}: {ru.text}")
     return new_sha
 
 
 def ff_main(cfg, sha):
-    """Fast-forward main to sha (the revert-commit). garden-bot only. Returns sha."""
+    """Fast-forward the promote ref (main, or the rehearsal main ref) to sha
+    (the revert-commit). garden-bot only in prod. Returns sha."""
     r = requests.patch(
-        f"{GITHUB_API}/repos/{cfg.repo}/git/refs/heads/main",
+        f"{GITHUB_API}/repos/{cfg.repo}/git/refs/heads/{cfg.main_branch}",
         headers=gh_headers(cfg),
         json={"sha": sha, "force": False},
         timeout=HTTP_TIMEOUT,
     )
     if r.status_code != 200:
-        raise RevertError(f"FF main -> {sha[:12]} failed {r.status_code}: {r.text}")
+        raise RevertError(f"FF {cfg.main_branch} -> {sha[:12]} failed {r.status_code}: {r.text}")
     return sha
 
 
 def restore_lambda_versions(cfg, manifest, lambda_client=None):
-    """Re-point each function's 'live' alias to the snapped published version so
-    the URL serves the old code (U1 — confirm URL->version binding in rehearsal).
-    Idempotent: already-correct alias is a no-op update.
+    """Restore each function's $LATEST code to the snapped published version.
+
+    U1 (RESOLVED 2026-06-03): the garden-* Function URLs are UNQUALIFIED — they
+    invoke $LATEST directly; there is NO 'live' alias and no URL qualifier
+    (verified via get_function_url_config: Qualifier=none, $LATEST). So a revert
+    cannot simply re-point an alias. Instead, for each fn it pulls the snapped
+    version's IMMUTABLE deployment package (GetFunction at the version qualifier
+    returns a presigned Code.Location) and pushes that same zip back onto
+    $LATEST via update_function_code(Publish=True). The URL (→ $LATEST) then
+    serves the old code. Re-running re-pushes identical code (harmless).
     """
+    if cfg.rehearsal:
+        # Never mutate prod Lambda code during a rehearsal.
+        return {}
     client = lambda_client or boto3.client("lambda")
     versions = manifest.get("lambda_versions", {})
     restored = {}
     for fn, ver in versions.items():
         try:
-            try:
-                client.update_alias(FunctionName=fn, Name="live", FunctionVersion=str(ver))
-            except ClientError as e:
-                if e.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
-                    client.create_alias(FunctionName=fn, Name="live", FunctionVersion=str(ver))
-                else:
-                    raise
+            meta = client.get_function(FunctionName=fn, Qualifier=str(ver))
+            loc = meta.get("Code", {}).get("Location")
+            if not loc:
+                raise RevertError(f"no Code.Location for {fn}@{ver}")
+            pkg = requests.get(loc, timeout=HTTP_TIMEOUT)
+            if pkg.status_code != 200 or not pkg.content:
+                raise RevertError(f"download {fn}@{ver} package failed {pkg.status_code}")
+            client.update_function_code(FunctionName=fn, ZipFile=pkg.content, Publish=True)
             restored[fn] = ver
         except ClientError as e:
             raise RevertError(f"lambda restore failed for {fn}@{ver}: {e}")
@@ -517,6 +594,9 @@ def restore_lambda_versions(cfg, manifest, lambda_client=None):
 
 
 def cf_invalidate(cfg, cloudfront_client=None):
+    if cfg.rehearsal:
+        # The CF dist is prod; a rehearsal must not invalidate it.
+        return
     client = cloudfront_client or boto3.client("cloudfront")
     client.create_invalidation(
         DistributionId=cfg.cf_dist,
@@ -559,6 +639,17 @@ def run(cfg, s3=None, lambda_client=None, cloudfront_client=None):
     if cfg.prerevert_version == cfg.target_version:
         raise RevertError("PREREVERT_VERSION must differ from TARGET_VERSION")
 
+    # Fail-closed BEFORE any mutation: rehearsal can't touch dev/main/prod-db.
+    rehearsal_guard(cfg)
+    if cfg.rehearsal:
+        sys.stdout.write(
+            f"[revert] REHEARSAL_MODE: code legs -> {cfg.dev_branch}/{cfg.main_branch}, "
+            f"db target -> {cfg.neon_prod_branch_id}, Lambda/CF skipped"
+            + (", FORCE_DUMP_PATH" if cfg.force_dump_path else "")
+            + (", FORCE_ABORT" if cfg.force_abort else "")
+            + "\n"
+        )
+
     # Step 1 — manifest + tag cross-check (fail closed) BEFORE any mutation.
     manifest = load_manifest(s3, cfg)
     verify_tag(cfg, manifest)
@@ -581,7 +672,9 @@ def run(cfg, s3=None, lambda_client=None, cloudfront_client=None):
     checkpointed = False
     try:
         # Step 3 — stage + validate DB target FIRST (no prod mutation yet).
-        fast = fast_path_branch(cfg, manifest)
+        # Rehearsal may force the dump+fresh-branch+validate path to exercise it
+        # (and resolve U2/U3) even when a matching snap-vX branch exists.
+        fast = None if (cfg.rehearsal and cfg.force_dump_path) else fast_path_branch(cfg, manifest)
         if fast is not None:
             source_branch_id = fast["id"]
             source_lsn = manifest.get("neon_lsn")
@@ -595,6 +688,12 @@ def run(cfg, s3=None, lambda_client=None, cloudfront_client=None):
         # Cut over: prod DB reset (first prod mutation) ...
         checkpointed = True
         neon_restore_prod_from(cfg, source_branch_id, source_lsn)
+
+        # Rehearsal-only: inject a post-checkpoint failure to exercise rollback.
+        if cfg.rehearsal and cfg.force_abort:
+            raise RevertError(
+                "FORCE_ABORT (rehearsal): injected post-checkpoint failure to exercise rollback"
+            )
 
         # ... then code + lambda together.
         revert_sha = create_revert_commit_on_dev(cfg, manifest)
