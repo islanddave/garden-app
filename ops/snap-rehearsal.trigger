@@ -1,1 +1,1 @@
-rehearsal run 2 @ 2026-06-03 (s3 403 fix)
+rehearsal run 3 @ 2026-06-03 (403-as-absent)
