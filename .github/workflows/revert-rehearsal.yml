@@ -50,7 +50,8 @@ jobs:
         run: |
           set -euo pipefail
           TRG=ops/revert-rehearsal.trigger
-          get() { grep -E "^$1=" "$TRG" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]'; }
+          # || true: a missing key makes grep exit 1, which under pipefail+set -e would abort setup.
+          get() { grep -E "^$1=" "$TRG" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]' || true; }
           MODE=$(get MODE); MODE=${MODE:-dump_path}
           TV=$(get TARGET_VERSION); TV=${TV:-v0.0.0}
           # run-unique default so re-fires don't collide with a prior (WORM-locked) prerevert manifest
