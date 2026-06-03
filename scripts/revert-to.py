@@ -494,7 +494,19 @@ def neon_restore_prod_from(cfg, source_branch_id, source_lsn=None):
     connection string -> no Lambda env change needed. This is the only
     prod-DB-mutating call.
     """
-    body = {"source_branch_id": source_branch_id}
+    # Neon REQUIRES preserve_under_name when the target branch has CHILDREN, else
+    # 422 "Branch has children, preserve_under_name is required". The prod branch
+    # ALWAYS has children (every snap-vX is a copy-on-write child of it), so this
+    # is set unconditionally with a unique name; the pre-restore state is retained
+    # as a backup branch rather than orphaning child lineage. (U2 RESOLVED in the
+    # 2026-06-03 staging rehearsal — the live API rejected the no-preserve body.)
+    body = {
+        "source_branch_id": source_branch_id,
+        "preserve_under_name": (
+            f"prerestore-{cfg.target_version}-"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{os.urandom(2).hex()}"
+        ),
+    }
     if source_lsn:
         body["source_lsn"] = source_lsn
     r = requests.post(
