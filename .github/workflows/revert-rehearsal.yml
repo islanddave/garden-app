@@ -53,7 +53,8 @@ jobs:
           get() { grep -E "^$1=" "$TRG" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]'; }
           MODE=$(get MODE); MODE=${MODE:-dump_path}
           TV=$(get TARGET_VERSION); TV=${TV:-v0.0.0}
-          PV=$(get PREREVERT_VERSION); PV=${PV:-v0.0.1}
+          # run-unique default so re-fires don't collide with a prior (WORM-locked) prerevert manifest
+          PV=$(get PREREVERT_VERSION); PV=${PV:-v0.0.${{ github.run_number }}}
           echo "mode=$MODE target=$TV prerevert=$PV"
           RID="${{ github.run_id }}"
           DEVB="revert-rehearsal-dev-$RID"
@@ -156,9 +157,10 @@ jobs:
               bs = requests.get(f"https://console.neon.tech/api/v2/projects/{proj}/branches", headers=H, timeout=60).json()["branches"]
           except Exception as e:
               print("teardown: neon list failed", e); raise SystemExit(0)
-          kill = {f"snap-{pre}", f"revert-stage-{tv}"}
+          def doomed(n):
+              return n == f"snap-{pre}" or n == f"revert-stage-{tv}" or n.startswith(f"prerestore-{tv}-")
           for b in bs:
-              if b.get("name") in kill:
+              if doomed(b.get("name", "")):
                   requests.delete(f"https://console.neon.tech/api/v2/projects/{proj}/branches/{b['id']}", headers=H, timeout=60)
                   print("deleted neon branch", b.get("name"))
           PY
