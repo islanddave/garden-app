@@ -1,6 +1,0 @@
-[build]
-  command = "npm ci && npm run build"
-  publish = "dist"
-[build.environment]
-  NODE_VERSION = "20"
-  VITE_APP_VERSION = "1.0.0"
