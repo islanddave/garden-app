@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
@@ -729,9 +730,7 @@ export default function EventNew() {
               style={selectStyle}
             >
               <option value="">— Select project —</option>
-              {[...projects].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
+              <ProjectOptions projects={projects} />
             </select>
             {projects.length === 0 && (
               <small style={{ color: P.terra, fontSize: '0.75rem', display: 'block', marginTop: 6 }}>

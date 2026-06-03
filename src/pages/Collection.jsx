@@ -3,6 +3,8 @@ import roster from '../data/critters-roster.json'
 import { P } from '../lib/constants.js'
 import { useCritterCollection } from '../hooks/useCritterCollection.js'
 import GardenArrival from '../components/GardenArrival.jsx'
+import critterFacts from '../data/critter-facts.json'
+import CritterFactsPopover from '../components/CritterFactsPopover.jsx'
 
 // Critter Collection.
 // Resting states (static, no motion):
@@ -108,7 +110,7 @@ function dexCode(group, idx) {
 }
 
 // ─── Single critter card ───────────────────────────────────────────────────────────
-function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed }) {
+function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenFacts }) {
   const theme = getTheme(c)
   const veil = veilOf(theme)
   const liRef = useRef(null)
@@ -123,6 +125,15 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed }) {
       return REDUCE_MOTION ? 'full' : 'blooming'
     })
   }, [c.id, onBloomed])
+
+  // FIX-5: tap a collected critter -> open its Facts/Alt-Facts popover (ambient, reward-UX OK).
+  // A still-pending card blooms on first tap (existing reveal); once full, tap opens facts.
+  // Unseen (!got) silhouettes stay non-interactive.
+  const handleCardClick = useCallback(() => {
+    if (!got) return
+    if (phase === 'pending') { trigger(); return }
+    if (phase === 'full') onOpenFacts(c)
+  }, [got, phase, trigger, onOpenFacts, c])
 
   // BUG-A/BUG-B fix: useCritterCollection loads async, so the phase initializer above can
   // run while `got` is still false (empty Map during load). When the row resolves, a stuck
@@ -182,7 +193,7 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed }) {
       role="listitem"
       aria-label={ariaState}
       title={got ? `${c.name}${firstSeenLong ? ` — first seen ${firstSeenLong}` : ''}` : undefined}
-      onClick={phase === 'pending' ? trigger : undefined}
+      onClick={got ? handleCardClick : undefined}
       className={blooming ? 'cc-card cc-blooming' : 'cc-card'}
       style={{
         position: 'relative', height: TILE_H,
@@ -193,7 +204,7 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed }) {
         overflow: blooming ? 'visible' : 'hidden',
         zIndex: blooming ? 3 : 'auto',
         transition: 'background-color 700ms ease',
-        cursor: phase === 'pending' ? 'pointer' : 'default',
+        cursor: got ? 'pointer' : 'default',
       }}
     >
       {blooming && <GardenArrival imageUrl={c.image_url} viewScale={c.view_scale || 1} />}
@@ -296,6 +307,9 @@ export default function Collection() {
   const scrollToGroup = g => {
     sectionRefs.current[g]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
+
+  // FIX-5: which critter's Facts popover is open (null = none).
+  const [factsCritter, setFactsCritter] = useState(null)
 
   return (
     <div style={{
@@ -423,6 +437,7 @@ export default function Collection() {
                     entry={entry}
                     initiallyBloomed={bloomSeenRef.current.has(c.id)}
                     onBloomed={markBloomed}
+                    onOpenFacts={setFactsCritter}
                   />
                 )
               })}
@@ -430,6 +445,14 @@ export default function Collection() {
           </section>
         )
       })}
+      {factsCritter && (
+        <CritterFactsPopover
+          critter={factsCritter}
+          theme={getTheme(factsCritter)}
+          content={critterFacts.facts[factsCritter.slug] || null}
+          onClose={() => setFactsCritter(null)}
+        />
+      )}
     </div>
   )
 }

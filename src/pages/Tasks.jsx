@@ -1,5 +1,6 @@
 // TODO DB-MIGRATE-TASKS: migrate to /api/tasks Lambda when deployed
 import { Link } from 'react-router-dom'
+import ProjectOptions from '../components/ProjectOptions.jsx'
 import { P } from '../lib/constants.js'
 
 // ============================================================
@@ -131,7 +132,7 @@ function CreateFormV2({ form, setForm, locations, projects, saving, formError, o
       </div>
       <div style={{ marginBottom: 14 }}>
         <label htmlFor="task-project" style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Project (optional)</label>
-        <select id="task-project" value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}><option value="">— Not linked —</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+        <select id="task-project" value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }}><option value="">— Not linked —</option><ProjectOptions projects={projects} /></select>
       </div>
       <div style={{ marginBottom: 14 }}>
         <label htmlFor="task-notes" style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Notes (optional)</label>

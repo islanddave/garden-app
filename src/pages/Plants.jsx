@@ -12,6 +12,7 @@ import { formatQty } from '../lib/format.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
+import ProjectOptions from '../components/ProjectOptions.jsx'
 
 const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']
 
@@ -313,7 +314,7 @@ export default function Plants() {
               <label htmlFor="plant-project" style={lbl}>Project *</label>
               <select id="plant-project" required value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} style={inp}>
                 {projects.length === 0 && <option value="">No projects yet</option>}
-                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                <ProjectOptions projects={projects} />
               </select>
             </div>
             <div style={{ gridColumn: '1 / -1' }}>

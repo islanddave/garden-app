@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -266,7 +267,7 @@ export default function LogMany() {
         </div>
         {scope.type === 'project' && (
           <select value={scope.project_id ?? ''} onChange={e => setScope({ type: 'project', project_id: e.target.value })} style={selectStyle} aria-label="Project">
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            <ProjectOptions projects={projects} />
           </select>
         )}
         {scope.type === 'space' && (

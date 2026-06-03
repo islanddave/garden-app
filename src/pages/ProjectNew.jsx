@@ -1,4 +1,5 @@
 import React from 'react'
+import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -210,9 +211,7 @@ export default function ProjectNew() {
               style={inputStyle}
             >
               <option value="">None — top-level project</option>
-              {[...allProjects].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
+              <ProjectOptions projects={allProjects} />
             </select>
             <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
               Optional — leave blank for a top-level project.

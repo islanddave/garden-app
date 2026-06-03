@@ -1,0 +1,846 @@
+{
+  "schema": 1,
+  "note": "FIX-5 critter Facts/Alt-Facts content. Keyed by roster slug. has_source=true => Facts tab shows authored text; false => Facts tab shows the pulsing-? placeholder (Alt Facts always authored).",
+  "facts": {
+    "honeybee": {
+      "facts": "A single honeybee colony can hold up to 60,000 bees, nearly all daughters of one queen. Foragers tell the hive where to find flowers by performing a looping 'waggle dance,' and one bee may visit dozens of blossoms per trip — which is what makes honeybees among the garden's most valuable pollinators.",
+      "alt_facts": "The honeybee invented cursive but will only write it as a dance no one can read back. Each hive runs on a strict economy of golden coins it absolutely refuses to spend, overseen by a queen who has never seen the sun and governs entirely by rumor.",
+      "has_source": true
+    },
+    "monarch-butterfly": {
+      "facts": "Monarchs migrate up to 3,000 miles to overwinter in central Mexico — a trip no single butterfly finishes, because it spans several generations. Their caterpillars eat only milkweed, banking its toxins to make themselves poisonous to anything that tries to eat them.",
+      "alt_facts": "The monarch is a small stained-glass window that escaped a cathedral and now refuses to hold still. It navigates by remembering a country it has personally never visited, and tastes danger with its feet, which it finds rude but necessary.",
+      "has_source": true
+    },
+    "convergent-ladybug": {
+      "facts": "The convergent lady beetle is a voracious aphid predator — one adult can eat around 50 aphids a day and its larvae eat even more, which is why gardeners treat them as living pest control. The name comes from two converging white lines just behind the head.",
+      "alt_facts": "The ladybug is a polished checker piece that came to life mid-game and quietly wandered off the board. It eats only the color green and recounts its own spots every morning to be sure none slipped away in the night.",
+      "has_source": true
+    },
+    "big-dipper-firefly": {
+      "facts": "The Big Dipper firefly is the most common firefly in eastern North America, named for the J-shaped swoop the male makes as he flashes. Its glow comes from bioluminescence — a chemical reaction that is nearly 100% efficient, giving off light with almost no heat.",
+      "alt_facts": "The firefly is a single fallen star doing community service, blinking out messages it has long since forgotten the meaning of. It carries its own lantern because it does not trust the moon, and signs each flash with a little hook, like punctuation.",
+      "has_source": true
+    },
+    "green-lacewing": {
+      "facts": "Green lacewings have delicate iridescent wings and golden eyes, but their larvae — nicknamed 'aphid lions' — are fierce hunters of aphids, mites, and insect eggs. The adult lays each egg on top of a thin stalk so the hungry siblings can't eat one another.",
+      "alt_facts": "The lacewing is a pane of frost that learned to fly before spring could melt it. Its children are tiny dragons hatched on stilts, and it views the whole world through two drops of honey it has decided to call eyes.",
+      "has_source": true
+    },
+    "common-earthworm": {
+      "facts": "Earthworms aerate and enrich soil by tunneling through it and digesting organic matter, leaving behind nutrient-rich castings. A worm has no lungs — it breathes through its moist skin — and each one carries both male and female parts.",
+      "alt_facts": "The earthworm is a length of living rope that tied the entire garden together while no one was watching. It breathes through its whole body out of lifelong indecision about where a nose ought to go, and treats every rainfall as a personal invitation.",
+      "has_source": true
+    },
+    "ruby-throated-hummingbird": {
+      "facts": "Ruby-throated hummingbirds beat their wings roughly 50 times a second and can hover, fly backward, and even briefly upside down. To fuel that, they visit hundreds of flowers a day, and some cross the Gulf of Mexico in a single nonstop flight during migration.",
+      "alt_facts": "The hummingbird is a rumor that travels too fast to confirm. It drinks only liquid jewels, files its wings down into one continuous blur to stay un-photographed, and crosses entire seas on a dare it once made to itself.",
+      "has_source": true
+    },
+    "common-green-darner": {
+      "facts": "The common green darner is one of North America's largest and fastest dragonflies — a migratory species that hunts mosquitoes and other insects on the wing. Its huge compound eyes give it nearly 360-degree vision.",
+      "alt_facts": "The green darner is a sewing needle that quit the workbasket to go police the air. It owns far more eyes than it has any use for, and stitches invisible seams back and forth across the pond to keep the two halves of summer together.",
+      "has_source": true
+    },
+    "eastern-tiger-swallowtail": {
+      "facts": "This large yellow butterfly with black 'tiger' stripes is a familiar eastern garden visitor. Its caterpillar mimics a tiny snake with fake eyespots to startle predators, and some females wear a dark form that imitates the toxic pipevine swallowtail.",
+      "alt_facts": "The tiger swallowtail is a banner from a parade no one remembers scheduling. Its children wear painted snake-masks to frighten birds, and it tips its wings to passing strangers out of an old courtesy it can no longer quite explain.",
+      "has_source": true
+    },
+    "eastern-cottontail": {
+      "facts": "The eastern cottontail is the common garden rabbit, named for its white, fluffy tail. It can sprint up to about 18 mph in a zigzag to lose predators, and will otherwise freeze completely still and trust its camouflage.",
+      "alt_facts": "The cottontail is a dropped powderpuff that decided to keep on running. It escapes danger by drawing zigzags faster than the danger can read them, and wears its own alarm signal on its backside out of pure honesty.",
+      "has_source": true
+    },
+    "northern-cardinal": {
+      "facts": "The brilliant red male cardinal is a year-round resident that does not migrate. Both males and females sing — unusual among songbirds — and the bird's red comes from carotenoid pigments in the seeds and berries it eats.",
+      "alt_facts": "The cardinal is a single ember that refused to go out and now commutes between bushes. It wears a permanent crown because it lost an argument about whether it was royalty, and rehearses duets with its own reflection.",
+      "has_source": true
+    },
+    "black-capped-chickadee": {
+      "facts": "The black-capped chickadee is a tiny, bold songbird whose 'chick-a-dee' call adds more 'dee' notes to warn of greater danger. It caches thousands of seeds each fall and grows new brain cells to remember where it hid them.",
+      "alt_facts": "The chickadee is a cotton ball that swallowed a thunderstorm and got very brave about it. It hides seeds in a thousand secret drawers, then grows extra mind every winter for the sole purpose of remembering the drawers.",
+      "has_source": true
+    },
+    "american-robin": {
+      "facts": "The American robin doesn't actually navigate by sight alone when hunting earthworms — it tilts its head to listen for movement underground. Robins are often the first birdsong heard before dawn and among the last heard after dusk, making them the unofficial timekeepers of the eastern garden. Their mud-and-grass cup nests can support two or three broods in a single season.",
+      "alt_facts": "The robin shows up every spring like a landlord doing an inspection, tugging at the lawn with an air of mild disappointment. It is convinced it can hear the earth thinking, which is technically correct, and it does not appreciate you watching while it works.",
+      "has_source": true
+    },
+    "eastern-bluebird": {
+      "facts": "Eastern bluebirds nest in cavities but cannot excavate their own — they rely entirely on abandoned woodpecker holes or nest boxes, which is why bluebird box trails have been central to their recovery after dramatic population declines in the mid-20th century. Males are a startling sky-blue above and russet below; females are softer versions of the same palette. They hunt insects by watching from a low perch and dropping to the ground in a quick, precise strike.",
+      "alt_facts": "The bluebird is a piece of October sky that got confused and arrived in April, wearing a rust-colored vest it borrowed from autumn and never returned. It perches very still and watches the grass with the focused intensity of someone who has misplaced their keys in it.",
+      "has_source": true
+    },
+    "eastern-chipmunk": {
+      "facts": "Eastern chipmunks have cheek pouches that can stretch to roughly three times the width of their head, letting them carry extraordinary loads of seeds and nuts back to underground larders. Unlike true hibernators, they wake periodically through winter to eat from their cache rather than burning stored fat. A single chipmunk may collect and store several pounds of food before autumn ends.",
+      "alt_facts": "The chipmunk is a small striped alarm system that has appointed itself security director of your garden and finds everything alarming. It operates a private bank beneath the roots of the old oak, has never successfully balanced its accounts, and is fine with that.",
+      "has_source": true
+    },
+    "red-squirrel": {
+      "facts": "Red squirrels are famously territorial and will defend their middens — large caches of conifer cones that can contain thousands of seeds — aggressively against any intruder, including squirrels many times their size. They cut green cones before they open and store them damp so they stay sealed and edible through winter. Their scolding chatter is one of the loudest, most persistent sounds in a northeastern forest.",
+      "alt_facts": "The red squirrel has opinions about everything in the forest and will share them at length, at volume, starting immediately. It is the size of a croissant and has the energy of someone who drank the croissant instead.",
+      "has_source": true
+    },
+    "gray-treefrog": {
+      "facts": "Gray treefrogs can survive being partially frozen — they produce glucose as a kind of internal antifreeze, allowing ice to form around their organs while the cells themselves are protected. They are masters of camouflage, their rough gray-green skin matching lichen-covered bark so well they seem to materialize out of the tree itself. Despite their name, they can shift color from gray to green depending on temperature, humidity, and background.",
+      "alt_facts": "The gray treefrog is a small riddle that solved the problem of winter by becoming briefly indistinguishable from ice and simply waiting. It announces its survival each spring with a sound like a toy kazoo played with genuine conviction.",
+      "has_source": true
+    },
+    "eastern-garter-snake": {
+      "facts": "Eastern garter snakes are among the most cold-tolerant snakes in North America and are often the first and last snakes seen each season. They give birth to live young rather than laying eggs — litters can include dozens of fully formed snakelets. When threatened, they release a foul-smelling musk from glands near the base of the tail, a defense that works considerably better than their mild, largely toothless bite.",
+      "alt_facts": "The garter snake moves through the garden like a thought that hasn't quite decided where it's going. It has a formal ribbon pattern it wears every day and considers this perfectly sufficient for any occasion.",
+      "has_source": true
+    },
+    "white-tailed-deer": {
+      "facts": "White-tailed deer raise and flash their namesake tail — a bright white underside — as an alarm signal when startled, warning other deer while they bolt. Fawns are born with white spots that break up their outline in dappled light, and does leave them hidden and motionless for hours at a time while foraging. Bucks regrow their antlers entirely each year, making antler velvet one of the fastest-growing tissues in any mammal.",
+      "alt_facts": "The white-tailed deer considers your garden a very generous and poorly supervised restaurant and is grateful you went to all this trouble. It departs with a flag of white that says, politely but clearly, that it will be back.",
+      "has_source": true
+    },
+    "red-fox": {
+      "facts": "Red foxes use Earth's magnetic field as a targeting aid when pouncing on prey hidden under snow — they preferentially leap toward the northeast and are far more successful from that angle than any other, suggesting the magnetic sense helps them triangulate distance as well as direction. They are solitary and largely nocturnal but adapt remarkably well to suburban and even urban landscapes. Their repertoire of vocalizations includes a sharp, eerie scream that surprises most people the first time they hear it.",
+      "alt_facts": "The red fox navigates by a compass hidden somewhere in its skull that it has never once explained to anyone. It moves through the garden at the exact hour no one is watching, leaving only footprints and the strong impression that something clever just happened.",
+      "has_source": true
+    },
+    "woodchuck": {
+      "facts": "Woodchucks — also called groundhogs — are true hibernators: their heart rate drops from around 80 beats per minute to roughly 5, and their body temperature falls close to the surrounding soil temperature. They are capable excavators; a single burrow system can move 35 pounds of soil and extend more than 25 feet, providing shelter that many other species later use. Despite the famous tongue twister, they are not closely associated with wood — they are grazers, spending most of their above-ground time eating grasses and clover.",
+      "alt_facts": "The woodchuck spends half the year asleep and feels no guilt about this whatsoever. Every February it steps outside, checks on its shadow as a formality, and goes back to bed, which is the most sensible thing anyone does in February.",
+      "has_source": true
+    },
+    "northern-raccoon": {
+      "facts": "Raccoons do not actually wash their food — what looks like rinsing is likely a behavior that enhances the sensitivity of their remarkably dexterous front paws, which have five times more sensory cells when wet. They are opportunistic omnivores with an exceptional ability to solve mechanical puzzles, including latches, lids, and containers specifically designed to exclude them. Raccoons in colder climates put on significant fat reserves and enter a light winter sleep, though they are not true hibernators and will emerge on mild nights.",
+      "alt_facts": "The raccoon wears its mask as a statement of intent and does not explain itself. It approaches every locked container the way a scholar approaches an interesting problem — with patience, curiosity, and the quiet confidence that it has done this before.",
+      "has_source": true
+    },
+    "barred-owl": {
+      "facts": "The barred owl's famous call — 'who cooks for you, who cooks for you-all' — carries over remarkable distances through forest, and pairs often duet in a wild cackling exchange that sounds like chaotic laughter. Unlike most owls, barred owls are somewhat tolerant of humans and may hunt in daylight near dawn and dusk. Their asymmetrically placed ears let them pinpoint prey in total darkness by sound alone.",
+      "alt_facts": "The barred owl asks the same two questions every night, has never received a satisfactory answer, and has made peace with that. It hunts in the dark by listening so carefully it has essentially invented a second kind of seeing.",
+      "has_source": true
+    },
+    "black-bear": {
+      "facts": "Black bears are not true hibernators but enter a state called torpor, during which their metabolism slows significantly but they can wake quickly and, remarkably, do not eat, drink, urinate, or defecate for months. Cubs are born in the den in January or February — tiny, blind, and weighing less than a pound — while the mother continues to sleep. Black bears have an exceptional sense of smell, estimated at seven times stronger than a bloodhound's, which is the main reason bird feeders are irresistible to them from astonishing distances.",
+      "alt_facts": "The black bear spends winter in a kind of philosophical suspension, dreaming of birdseed. It emerges in spring technically having done nothing wrong and would like that acknowledged.",
+      "has_source": true
+    },
+    "bobcat": {
+      "facts": "Bobcats are far more common across North America than most people realize — their secretive, mostly nocturnal habits make them nearly invisible despite sizable populations. They are named for their short, bobbed tail, which is white-tipped with black bars and held upright when they walk, flashing a signal visible to trailing kittens. A bobcat's territory can range from a few square miles in prey-rich habitat to over 100 square miles where prey is scarce.",
+      "alt_facts": "The bobcat has lived in the same woods as you for years and found the arrangement entirely satisfactory precisely because you didn't know. It carries its short tail like a small punctuation mark at the end of a sentence no one finished reading.",
+      "has_source": true
+    },
+    "american-goldfinch": {
+      "facts": "The American goldfinch is one of the latest nesting songbirds in North America, timing its breeding precisely to the peak of thistle and other seed-producing plants so the down can line its nest and the seeds can feed its young. Males molt twice a year — fading from brilliant canary yellow to an olive-streaked winter plumage and back again. Goldfinches are strict vegetarians, even feeding plant matter to their nestlings, which is unusual among songbirds.",
+      "alt_facts": "The goldfinch is a small piece of August that has learned to fly and sees no reason to rush into anything. It arrives at the feeder with the unhurried confidence of someone who knows exactly how good they look.",
+      "has_source": true
+    },
+    "downy-woodpecker": {
+      "facts": "The downy woodpecker is the smallest woodpecker in North America, and its relatively short bill lets it access food from weed stems and small branches that larger woodpeckers cannot work. It is among the most frequently seen woodpeckers at feeders across the continent, drawn readily to suet. Males and females partition their foraging — males tend to work smaller, higher twigs while females prefer larger branches — reducing competition between mates on the same territory.",
+      "alt_facts": "The downy woodpecker types very quickly and never explains what it is writing. It is small enough to fit inside most people's expectations of what a woodpecker is and has used this to its advantage.",
+      "has_source": true
+    },
+    "mallard": {
+      "facts": "The mallard is the ancestor of nearly every domestic duck breed in the world, a domestication that began at least 2,000 years ago. Males sport their iridescent green heads only in breeding plumage — after nesting season they molt into a drab 'eclipse' plumage nearly identical to females before growing the green back. The familiar quack is made only by females; males produce a quieter, raspy call.",
+      "alt_facts": "The mallard perfected its look so thoroughly thousands of years ago that it simply stopped adjusting. The male removes his best hat every summer as a kind of humility exercise and puts it back on when he feels ready.",
+      "has_source": true
+    },
+    "polyphemus-moth": {
+      "facts": "The polyphemus moth is one of the largest moths in North America, with a wingspan that can reach six inches. Its hindwings bear dramatic eyespots — named for the one-eyed Cyclops of Greek myth — which flash when the moth is disturbed, startling predators. Adult polyphemus moths have no functional mouths: they emerge, mate, lay eggs, and die within about a week, living entirely on energy stored as caterpillars.",
+      "alt_facts": "The polyphemus moth arrives in the night already past the point of eating, carrying two enormous eyes on its wings that belong to no one. It has exactly one week to accomplish everything and faces this with the calm of something that planned for it.",
+      "has_source": true
+    },
+    "giant-panda": {
+      "facts": "Giant pandas are biologically carnivores — their digestive system is built like a predator's — yet they eat bamboo almost exclusively, up to 40 pounds of it per day, because they must consume in quantity what their gut cannot efficiently digest. They have a modified wrist bone that functions as a sixth finger, an evolutionary adaptation for gripping bamboo stems. Despite their lumbering appearance, pandas are capable climbers and take to trees readily.",
+      "alt_facts": "The giant panda adopted a vegetarian lifestyle without fully committing to the biology required, and has spent millions of years eating enormous amounts of grass in compensation. It holds its bamboo with a thumb it invented specifically for this purpose and considers that good enough.",
+      "has_source": true
+    },
+    "american-flamingo": {
+      "facts": "American flamingos get their pink color entirely from their diet — carotenoid pigments in the algae and crustaceans they filter-feed accumulate in their feathers, and captive flamingos fed a colorless diet fade toward white. They feed with their heads upside-down, using a specialized bent bill as a pump and filter to separate food from water and mud. Flamingos are surprisingly strong fliers, often traveling hundreds of miles at night between feeding sites.",
+      "alt_facts": "The flamingo is the color of a sunset that decided to become a bird and stand in a marsh on one leg, thinking. It turned pink from eating things that were pink, which is the most committed lifestyle choice in the animal kingdom.",
+      "has_source": true
+    },
+    "galapagos-tortoise": {
+      "facts": "Galápagos tortoises are among the longest-lived vertebrates on Earth — some individuals have lived well past 170 years in captivity. Different island populations evolved distinct shell shapes: domed shells on islands with abundant low vegetation, and saddle-backed shells on drier islands where tortoises must stretch their necks to reach higher plants. They can survive up to a year without food or water, a trait that made them devastatingly easy for sailors to harvest as living provisions.",
+      "alt_facts": "The Galápagos tortoise has been walking toward the same patch of grass since before your great-great-grandparents were born and is not going to hurry on your account. Its shell is shaped like an answer to a question the island asked a very long time ago.",
+      "has_source": true
+    },
+    "resplendent-quetzal": {
+      "facts": "The resplendent quetzal was sacred to the ancient Maya and Aztec, associated with the feathered-serpent deity Quetzalcoatl, and its tail feathers were more valuable than gold. Males grow spectacular tail coverts up to three feet long during breeding season and nest in hollowed-out tree trunks, where the tail feathers trail out of the entrance hole. Despite their legendary status, they are shy cloud-forest birds closely tied to wild avocado trees, whose fruit is a dietary staple.",
+      "alt_facts": "The quetzal grew a tail so long it has to back carefully out of its own nest, which it manages with a dignity that suggests it was always intentional. It is the bird that inspired a god and has been quietly aware of this ever since.",
+      "has_source": true
+    },
+    "bengal-tiger": {
+      "facts": "Bengal tigers are solitary and largely nocturnal hunters, using their striped coats — which are unique to each individual, like fingerprints — to break up their outline in grass and dappled forest light. They are powerful swimmers and, unlike most cats, will readily enter water to cool off or pursue prey. A Bengal tiger's roar can be heard up to two miles away and serves primarily as long-distance communication between solitary individuals across large territories.",
+      "alt_facts": "The Bengal tiger wears a pattern no one else can replicate and hunts in the dark, which it considers private. It is very large and very quiet, two qualities it combines on purpose.",
+      "has_source": true
+    },
+    "snow-leopard": {
+      "facts": "Snow leopards cannot roar — unlike the other great cats, they lack the specialized larynx for it, and instead communicate with a range of sounds including a distinctive 'chuff' or prusten, a soft puffing exhalation used as a friendly greeting. Their enormously long tails — sometimes nearly as long as their body — are thick with fat reserves and double as a scarf in extreme cold. Their wide, fur-covered paws act as natural snowshoes, distributing their weight across deep mountain snow.",
+      "alt_facts": "The snow leopard is a gray ghost that lives above the clouds and has decided the roaring is not for it. It wraps its own tail around itself when it sleeps, because it came prepared, and it always comes prepared.",
+      "has_source": true
+    },
+    "tufted-titmouse": {
+      "facts": "The tufted titmouse is a bold, curious bird that often investigates intruders closely before retreating, and it readily accepts nest boxes and feeders. It is a scatter-hoarder, caching seeds one at a time in bark crevices and other hiding spots for later retrieval — and studies suggest it has a strong memory for the locations. Titmice often pluck hair directly from living mammals — including sleeping dogs, squirrels, and occasionally humans — to line their nests.",
+      "alt_facts": "The tufted titmouse is very interested in what you are doing and would like to collect some of your hair for a project it is working on. It has a small crest it raises when it is thinking, which is always.",
+      "has_source": true
+    },
+    "american-crow": {
+      "facts": "American crows are among the most cognitively sophisticated birds studied — they use tools, recognize individual human faces, hold grudges across years, and pass social information about dangerous people to their offspring. They live in complex family groups where older siblings help raise younger ones, a behavior called cooperative breeding. Crows gather in communal winter roosts that can number in the hundreds of thousands of birds.",
+      "alt_facts": "The American crow has memorized your face, made a note about you, and discussed you with its family. It is not certain what you did but it has not ruled anything out, and it would like you to know that.",
+      "has_source": true
+    },
+    "red-bellied-woodpecker": {
+      "facts": "The red-bellied woodpecker's most prominent field mark is actually its bright red cap — the namesake red belly is a faint blush on the lower abdomen that is easy to miss in the field. It has an extraordinarily long, barbed tongue that can extend nearly two inches past the tip of its bill, letting it extract insects and cached food from deep crevices. Red-bellied woodpeckers store food in bark furrows and crevices and have good enough memory to relocate their caches accurately.",
+      "alt_facts": "The red-bellied woodpecker was named for the part of it that is least obvious, which says something about the people doing the naming. Its tongue is longer than seems strictly necessary and it deploys it with complete confidence.",
+      "has_source": true
+    },
+    "mourning-dove": {
+      "facts": "Mourning doves are among the most abundant birds in North America, recognized instantly by the mournful, cooing call that gives them their name. They feed almost exclusively on seeds, swallowing grit to help grind them down, and can consume up to 20% of their body weight in a single feeding session. Unlike most birds, they drink by submerging their bill and sucking up water continuously, the way a mammal drinks.",
+      "alt_facts": "The mourning dove has perfected the art of sitting on a wire and looking like a small, soft regret. It is technically a pigeon who took a wrong turn into melancholy and never came back, and it sings the same four notes every morning as a reminder that beauty is also a little sad.",
+      "has_source": true
+    },
+    "blue-jay": {
+      "facts": "Blue jays are remarkably intelligent corvids capable of mimicking the calls of hawks — sometimes to warn other birds of danger, sometimes apparently just to clear competitors off a feeder. They are crucial forest architects: each fall a single jay may cache thousands of acorns, and the ones it forgets become oak trees. Their vivid blue plumage is not pigment but structural color, produced entirely by the way feather barbs scatter light.",
+      "alt_facts": "The blue jay is a living argument dressed in lapis lazuli, and it is winning. It can impersonate a hawk with the casual confidence of someone who has absolutely done this before and gotten away with it. Its opinions on the sunflower-to-safflower ratio are firm, loudly held, and not open for discussion.",
+      "has_source": true
+    },
+    "white-breasted-nuthatch": {
+      "facts": "White-breasted nuthatches are the birds you see traveling headfirst down tree trunks — a trick made possible by their unusually large hind toe, which lets them grip bark from any angle. This habit gives them a different view of the bark than woodpeckers, letting them find insects and eggs those birds miss. They cache seeds in bark crevices and sometimes rub the entrance to their nest cavity with a crushed insect, thought to deter predators with its chemical smell.",
+      "alt_facts": "The white-breasted nuthatch has decided that down is simply a direction like any other, and the looks it gets have only reinforced this. It keeps a small pantry inside every tree it has ever met and cannot remember which ones, which it considers irrelevant because the tree knows.",
+      "has_source": true
+    },
+    "eastern-gray-squirrel": {
+      "facts": "Eastern gray squirrels are scatter-hoarders, burying thousands of individual nuts each fall and recovering them months later using spatial memory and smell — even through a foot of snow. The ones they miss are a primary mechanism for forest regeneration, making them inadvertent but highly productive tree planters. They also practice deceptive caching, performing an elaborate burying mime with nothing in their paws when they think they are being watched.",
+      "alt_facts": "The eastern gray squirrel is a small mammal conducting an enormous heist it has completely forgotten the details of. It buries its savings in ten thousand locations and then acts shocked and grateful when it finds them, like a person rediscovering a twenty in a coat pocket but six hundred times and underground. It is also an excellent liar.",
+      "has_source": true
+    },
+    "striped-skunk": {
+      "facts": "The striped skunk's black-and-white pattern is one of nature's clearest warning signals, and most predators learn to respect it after a single encounter. Its defensive spray — a sulfur-containing compound called thiol — can reach up to 10 feet with accuracy and causes temporary blindness if it hits the eyes. Skunks give generous warning before spraying: a raised tail, foot-stamping, and a handstand display all say 'please don't make me do this.'",
+      "alt_facts": "The striped skunk has found the one social contract that is universally honored across species, and it is dressed accordingly. It gives you several very polite warnings — a little foot tap, a dramatic handstand — and it is genuinely relieved when you take the hint. It does not enjoy this any more than you do. Probably.",
+      "has_source": true
+    },
+    "american-green-frog": {
+      "facts": "American green frogs are one of the most common pond frogs in eastern North America, identified by the prominent ridges running down either side of their back — a feature that distinguishes them from bullfrogs. Males defend territories along the water's edge and call with a sound like a loose banjo string being plucked. They are visual predators, lunging at almost any small moving thing that crosses their path.",
+      "alt_facts": "The American green frog sits at the edge of every pond like a small, opinionated senator who has staked out his exact square foot of shoreline and will pluck a single banjo note at you until you acknowledge it. It eats anything that moves, which is a philosophy, and it has lived at this particular lily pad longer than you have been standing here and would like that noted.",
+      "has_source": true
+    },
+    "american-toad": {
+      "facts": "American toads are remarkably tolerant of dry conditions for an amphibian, spending most of their lives on land and returning to water only to breed. Their skin secretes bufadienolide toxins from large parotoid glands behind each eye — enough to make a dog drool and drop the toad immediately. A single female can lay four thousand to eight thousand eggs in long double strings draped across shallow water.",
+      "alt_facts": "The American toad is a small, damp philosopher who has made peace with the dirt and would like you to as well. It produces a mild poison it never had to advertise because the expression on the face of the first animal that tried it did all the marketing. It comes out after rain because some things require the right atmosphere.",
+      "has_source": true
+    },
+    "redback-salamander": {
+      "facts": "Redback salamanders are among the most abundant vertebrates in the forests of eastern North America, so numerous that their total biomass may exceed that of all the region's birds and mammals combined. They are lungless, breathing entirely through their moist skin — which means they must stay damp to survive. They lay eggs under logs and rocks on land, skipping the aquatic tadpole stage entirely, and the mother guards the clutch until the eggs hatch as miniature adults.",
+      "alt_facts": "The redback salamander breathes through its skin, which it considers the most elegant possible arrangement and wonders why everyone else is so committed to lungs. It lives under your favorite log and has been there longer than you have owned the garden. It hatches already knowing everything it needs to know, which is wet and hidden and enough.",
+      "has_source": true
+    },
+    "wild-turkey": {
+      "facts": "Wild turkeys were nearly hunted to extinction in the early twentieth century but have rebounded dramatically, now ranging across most of North America. They can fly strongly for short distances despite their bulk — reaching speeds of 55 mph — and roost in trees each night. Males court females with elaborate fan displays and a resonant gobble audible from over a mile away.",
+      "alt_facts": "The wild turkey is a large, suspicious bird in a feathered suit that it takes extremely seriously. It can fly perfectly well and does so every single evening into a tree, which it finds extremely satisfying. The gobble is meant to be impressive, and the turkey genuinely believes this is working.",
+      "has_source": true
+    },
+    "common-raven": {
+      "facts": "Common ravens are among the most cognitively complex birds on Earth, capable of planning, deception, and tool use, and they can solve multi-step puzzles comparable to those passed by great apes. They form long-term pair bonds and can live over 20 years in the wild. Ravens can mimic an extraordinary range of sounds — including human speech, other animals, and mechanical noises — and use distinct calls to communicate with specific individuals in their social group.",
+      "alt_facts": "The common raven has been watching you from that spruce for several minutes and has already formed an opinion. It can say your name if it wants to, but it prefers to wait. It solves puzzles for fun, holds grudges with precision, and has been a bad omen in roughly fourteen different mythologies, all of which it finds flattering.",
+      "has_source": true
+    },
+    "american-woodcock": {
+      "facts": "The American woodcock is a shorebird that abandoned the shore and moved into the forest, probing soft soil for earthworms with a bill tip that can open independently underground. Its eyes are set so far back on its head that it has nearly 360-degree vision, and its brain is literally upside down compared to other birds — rotated so the visual processing centers sit on top. Males perform a spectacular spring sky dance at dusk, spiraling up hundreds of feet and then tumbling back down while singing.",
+      "alt_facts": "The American woodcock is built by someone who read the brief for 'bird' once, loosely, and then went their own direction. Its eyes are on the back of its head, its brain is installed upside down, and its peak romantic gesture is a dramatic spiral into the sky that ends in a controlled fall. It considers this refined.",
+      "has_source": true
+    },
+    "dark-eyed-junco": {
+      "facts": "Dark-eyed juncos are one of the most numerous birds in North America, sometimes called 'snowbirds' because they appear at feeders across the United States when they descend from northern and mountain forests each winter. They flash white outer tail feathers in flight, a signal used in flock coordination and alarm. Despite enormous variation in coloration across their range, all populations interbreed freely and are considered one species.",
+      "alt_facts": "The dark-eyed junco arrives every winter like a small, well-organized rumor that something cold is coming. It wears a little slate hood pulled down against the weather and flashes white tail feathers when it leaves, which is the junco's way of saying it was here. It knows twelve variations of itself and considers them all correct.",
+      "has_source": true
+    },
+    "hairy-woodpecker": {
+      "facts": "The hairy woodpecker is nearly identical to the smaller downy woodpecker — same bold black-and-white pattern, same red cap on males — but it is stockier, with a bill as long as its head, built for deeper excavation into hardwood. It often follows pileated woodpeckers to glean insects from the large holes they leave behind. Hairy woodpeckers excavate fresh nest cavities each year, which eventually become critical housing for dozens of other cavity-nesting species.",
+      "alt_facts": "The hairy woodpecker is the downy woodpecker's larger, slightly more intense cousin who brings a much bigger drill to what is essentially the same party. It follows pileated woodpeckers around like someone trailing a demolition crew with a sandwich bag. It considers itself an excavator and prefers that framing.",
+      "has_source": true
+    },
+    "yellow-bellied-sapsucker": {
+      "facts": "Yellow-bellied sapsuckers drill neat rows of small wells in tree bark and return repeatedly to lap up the sap that flows in — using a brush-tipped tongue rather than the pointed tongue of other woodpeckers. The wells also attract insects and hummingbirds, making sapsuckers a keystone species whose feeding sites benefit dozens of other animals. Despite the name, most of their underside is pale yellowish white, and the red on their throat and forehead is far more distinctive.",
+      "alt_facts": "The yellow-bellied sapsucker drills a grid of small wells into a tree with the calm dedication of someone who has been running this restaurant for years and knows the regulars. Hummingbirds come when the sap is flowing. The sapsucker has never once sent a bill. It is unclear whether this is generosity or an experiment.",
+      "has_source": true
+    },
+    "pileated-woodpecker": {
+      "facts": "The pileated woodpecker is the largest woodpecker in North America, crow-sized with a flaming red crest, and its rectangular excavations in dead wood are unmistakable — sometimes so deep they split a tree in half. It is the primary predator of carpenter ants deep inside rotting logs, and a single bird's foraging can expose enough wood that five or six other species move in to exploit the site. Its loud, laughing call and dramatic flapping flight make it the likely model for the fictional Woody Woodpecker.",
+      "alt_facts": "The pileated woodpecker arrived at the dead tree three minutes ago and has already committed to what can only be described as a renovation project. It operates at a volume and ambition that feels personal. The red crest says 'I have a plan,' and the pile of wood chips at its feet says the plan is going extremely well.",
+      "has_source": true
+    },
+    "virginia-opossum": {
+      "facts": "The Virginia opossum is the only marsupial native to North America, carrying its young in a pouch and later on its back as they grow. 'Playing possum' — the involuntary catatonic state they enter when severely stressed — can last from minutes to hours and is genuine, not a trick. Opossums are remarkably resistant to snake venom and consume enormous numbers of ticks, making them quiet allies of anyone who spends time outdoors.",
+      "alt_facts": "The Virginia opossum carries its children on its back like a very small, very crowded bus service it did not entirely plan for. When frightened beyond its limits it simply ceases being present for a while, which is a coping strategy several other species have considered. It eats ticks by the thousand and has never once been thanked for it.",
+      "has_source": true
+    },
+    "big-brown-bat": {
+      "facts": "Big brown bats are one of the most common bats in North America and voracious predators of night-flying insects, consuming thousands of beetles, mosquitoes, and moths per night using sophisticated echolocation. They are year-round residents in much of their range, sometimes hibernating in buildings rather than caves. A single colony of 150 big brown bats can consume enough cucumber beetles to protect local crops across thousands of acres.",
+      "alt_facts": "The big brown bat has mapped every inch of your backyard in pure sound, a private atlas it carries entirely in its ears and updates on the fly. It eats mosquitoes with a focus that could generously be called passionate, and it does all of this in the dark, because it prefers not to make a thing of it.",
+      "has_source": true
+    },
+    "hairy-tailed-mole": {
+      "facts": "The hairy-tailed mole is one of several eastern North American moles, distinguished from the star-nosed mole by its plain snout and the distinct tuft of hair at the tip of its short tail. Like other moles, it can consume its own body weight in earthworms and grubs daily, and it constructs both deep permanent tunnels and shallow surface runs that appear as raised ridges in lawns. Its front paws are rotated permanently outward and backward — an adaptation so extreme it makes walking on the surface awkward but makes digging extraordinarily powerful.",
+      "alt_facts": "The hairy-tailed mole has built an entire city under your garden and has opinions about the drainage. It is shaped like a small velvet torpedo and moves through soil with the calm efficiency of something that finds your whole concept of 'surface' a bit much. The little tuft on its tail was not requested but here it is.",
+      "has_source": true
+    },
+    "north-american-porcupine": {
+      "facts": "North American porcupines carry about 30,000 quills, each tipped with microscopic backward-facing barbs that work their way deeper into muscle with every movement, making removal genuinely dangerous. Contrary to legend, they cannot throw their quills — the quills detach on contact and the illusion of throwing comes from how quickly they release. Porcupines are largely solitary herbivores and a significant nuisance to forestry, capable of girdling and killing mature trees by gnawing through their bark for the nutritious layer underneath.",
+      "alt_facts": "The North American porcupine is a slow, spiny archive of bad ideas made by anything that has ever gotten too close. It cannot throw its quills but it has never needed to, because the rumor that it can has been doing excellent work for centuries. It climbs trees at a pace it considers appropriate and eats their outsides thoughtfully, in no particular hurry.",
+      "has_source": true
+    },
+    "deer-mouse": {
+      "facts": "Deer mice are extraordinarily common across North America and are distinguished by their bicolored tails — dark on top, white on bottom — and large dark eyes suited to nocturnal life. They are significant seed dispersers and prey items that anchor many food webs, but they are also the primary reservoir host of hantavirus in North America, which makes their nests and droppings a genuine health concern for people cleaning old outbuildings. They can survive winter through both food caching and periods of torpor, though they do not truly hibernate.",
+      "alt_facts": "The deer mouse has eyes like two small moons installed in something the size of a golf ball, and it uses them to run a very efficient operation at 2 a.m. It caches food, holds territory, and carries a complicated medical history it cannot be blamed for. It is very soft and very busy and would prefer you didn't notice it at all.",
+      "has_source": true
+    },
+    "meadow-vole": {
+      "facts": "Meadow voles are small, compact rodents that create elaborate systems of surface runways — visible as clear paths through matted grass — and are among the most reproductively prolific mammals in North America, with females capable of producing up to 100 offspring per year under ideal conditions. Their population cycles dramatically every three to five years, and when numbers peak, nearly every predator in the landscape — hawks, owls, foxes, weasels — shifts its diet to take advantage. They are foundational prey in almost every eastern grassland and meadow ecosystem.",
+      "alt_facts": "The meadow vole has carved a city into the roots of your lawn that operates entirely out of sight, with commuter routes and everything. It reproduces with an optimism that the rest of the food web finds extremely convenient. Every owl in the county knows when it's a vole year, and they do not hide their enthusiasm.",
+      "has_source": true
+    },
+    "common-snapping-turtle": {
+      "facts": "Common snapping turtles can live more than 40 years in the wild and are virtually unchanged from fossils 40 million years old, making them a genuine living antique. On land they are surprisingly aggressive because their shell is too small to fully retract into — unlike most turtles, they cannot simply withdraw and wait — so a cornered snapper defends itself. In the water they are placid and rarely bite, spending much of their time buried in mud with just their nostrils breaking the surface.",
+      "alt_facts": "The common snapping turtle is a very old idea that the world has not yet improved upon, and it knows this. It sits in the mud with the patience of something that has simply outlasted most of its problems. On land it is all opinion and attitude, but that is because on land it is also vulnerable, which it finds undignified and holds against you.",
+      "has_source": true
+    },
+    "spring-peeper": {
+      "facts": "Spring peepers are tiny tree frogs — barely an inch long — whose shrill, piping calls are one of the first reliable sounds of spring in eastern North America, sometimes beginning while ice is still on the pond edges. A chorus of peepers can reach 90 decibels, extraordinary for an animal that weighs less than a dime. They have adhesive toe pads that let them climb vegetation, but they spend winter on the forest floor, surviving by allowing much of their body water to freeze solid.",
+      "alt_facts": "The spring peeper is approximately the size of a thumbnail and has decided this is no reason to be quiet. It freezes solid in winter, which it does not appear to have strong feelings about, and then thaws in March and immediately begins screaming with joy from the pond's edge. The volume is not proportional. Nothing about the spring peeper is proportional.",
+      "has_source": true
+    },
+    "eastern-milk-snake": {
+      "facts": "Eastern milk snakes are harmless constrictors — beautifully patterned in red or brown blotches on gray — that are frequently mistaken for copperheads or timber rattlesnakes, a case of accidental mimicry that costs them their lives in many encounters with humans. The 'milk snake' name comes from the old folk belief that they entered barns to drink from cows, which is false; they went to barns for the mice. They are beneficial garden and farm residents, consuming rodents, other small snakes, and invertebrates.",
+      "alt_facts": "The eastern milk snake wears a pattern so alarming that it has outsourced most of its threat management entirely — it simply looks like something dangerous and lets the reputation do the work. It has never once touched a cow. The barn was about the mice, and it was very good at the mice, and the milk story is a slander it declines to dignify.",
+      "has_source": true
+    },
+    "northern-water-snake": {
+      "facts": "Northern water snakes are large, heavy-bodied, non-venomous snakes that are the most commonly encountered water snake in the northeastern United States, and among the most frequently misidentified as cottonmouths — which don't live in the region at all. When handled or cornered they flatten their bodies, musk, and bite readily, which reinforces their fearsome reputation despite being completely harmless to humans. They are efficient predators of fish, frogs, and salamanders, and are in turn eaten by herons, large fish, and raptors.",
+      "alt_facts": "The northern water snake has the public image problem of someone who looks exactly like a villain in a region where no actual villain has ever lived. It bites with conviction and smells terrible when it does, and it maintains that this is entirely your fault for reaching. It is innocent of all other charges and would like to return to the rock.",
+      "has_source": true
+    },
+    "canada-goose": {
+      "facts": "Canada geese form long-term pair bonds and are famously devoted parents, with both adults fiercely defending the nest and goslings — which accounts for much of their reputation for aggression toward humans who get too close. They are grazers that thrive in the short grass of suburban lawns, golf courses, and park edges, which is why urban populations have exploded since the mid-twentieth century. Geese flying in V-formation take turns leading, with the bird at the point breaking the wind for those behind.",
+      "alt_facts": "The Canada goose has colonized every flat, grassy surface adjacent to water and considers this a reasonable use of the land. It hisses with the moral authority of someone who was here first and will be here last. The V-formation is genuinely cooperative and altruistic, which the goose would prefer you not mention, as it complicates the narrative.",
+      "has_source": true
+    },
+    "great-horned-owl": {
+      "facts": "The great horned owl is one of North America's most powerful avian predators, capable of taking prey much larger than itself — including skunks, which it apparently tolerates by smell alone. Its 'horns' are simply tufts of feathers called plumicorns, unrelated to ears, which are hidden asymmetrically on the sides of its skull to help triangulate sound with uncanny precision. Great horned owls begin nesting in the dead of winter, often in February, which means owlets hatch while snow is still on the ground.",
+      "alt_facts": "The great horned owl is a pair of yellow lamps wearing a judge's wig, presiding over the night court from a branch no one else dares approach. It files its opinions at two in the morning and the forest always rules in its favor.",
+      "has_source": true
+    },
+    "indigo-bunting": {
+      "facts": "The male indigo bunting carries no blue pigment whatsoever — its brilliant color is entirely structural, produced by microscopic barbs that scatter light the way the sky does. At night during migration, indigo buntings navigate by the stars, specifically by learning the rotation patterns of the night sky around the celestial pole as nestlings. In poor light the male looks nearly black, as if the color were on loan from the afternoon.",
+      "alt_facts": "The indigo bunting is a small piece of June sky that got homesick and decided to perch somewhere obvious about it. It has no blue in it at all, which it finds either deeply philosophical or a clerical error, and it hasn't decided which.",
+      "has_source": true
+    },
+    "scarlet-tanager": {
+      "facts": "The male scarlet tanager is one of eastern North America's most visually striking birds — a burning red body paired with jet-black wings, as though someone designed him by committee and two departments refused to communicate. He spends most of his time foraging high in the forest canopy, which means he is heard far more often than he is seen. After breeding season, males molt into a patchy, olive-yellow plumage that makes them nearly unrecognizable until spring.",
+      "alt_facts": "The scarlet tanager is a small fire that learned to sit still at the tops of trees and wait for someone to look up. In autumn it quietly folds the red away like a flag at the end of a ceremony no one else knew was happening.",
+      "has_source": true
+    },
+    "cedar-waxwing": {
+      "facts": "Cedar waxwings are named for the waxy red droplets on their secondary wing feathers — ornaments whose purpose is still debated, but which may signal age and health to potential mates. They are highly social, rarely seen alone, and are known to pass berries beak-to-beak down a perched row of birds like a polite fruit assembly line. Their diet is so fruit-heavy that waxwings have been documented becoming intoxicated on fermented berries.",
+      "alt_facts": "The cedar waxwing is a bird designed by someone who wanted everything to match — the crest, the mask, the butter-yellow hem — and then dipped the wingtips in red wax as a finishing touch it did not explain. It travels in glamorous, tight-knit groups and passes snacks to its friends, which is possibly the most civilized behavior in the animal kingdom.",
+      "has_source": true
+    },
+    "baltimore-oriole": {
+      "facts": "The baltimore oriole weaves one of the most architecturally impressive nests in North American birding — a pendant pouch of plant fibers, bark strips, and occasionally string or yarn, suspended from the tip of a high branch where predators can't reach it. Females do the majority of the weaving, constructing the nest in as little as a week. Orioles are strongly attracted to the color orange and can be lured reliably to backyard feeders stocked with orange halves or grape jelly.",
+      "alt_facts": "The baltimore oriole is a small contractor who shows up in May, builds something structurally improbable in a week, and then acts like it was nothing. It is personally offended by any orange object that is not food and will investigate it at length regardless.",
+      "has_source": true
+    },
+    "american-kestrel": {
+      "facts": "The american kestrel is North America's smallest falcon and one of its most charismatic — a sparrow-sized raptor with the hunting habits of something much larger. Kestrels can see ultraviolet light, which lets them track the UV-fluorescent urine trails that voles leave along their runways in the grass, essentially following a glowing map to their next meal. They hover in place with remarkable precision, facing into the wind while scanning the ground below.",
+      "alt_facts": "The american kestrel is a tiny falcon with the energy of a much bigger problem. It hovers in midair like it is reconsidering every decision it has ever made, and then drops on a vole it located by reading its secret glowing trail, because kestrels see light the rest of us are not invited to see.",
+      "has_source": true
+    },
+    "peregrine-falcon": {
+      "facts": "The peregrine falcon holds the title of fastest animal on Earth in a controlled dive, reaching speeds exceeding 240 miles per hour in a stoop. It kills prey mid-air with a strike from its notched beak that severs the spinal cord — a precision blow at highway speeds. Peregrines nearly vanished from eastern North America due to DDT thinning their eggshells, but an intensive captive-breeding and hacking program rebuilt the population, and they now nest on bridges and skyscrapers in cities across the continent.",
+      "alt_facts": "The peregrine falcon is a bird that discovered terminal velocity and decided it was a lifestyle. It lives on ledges it has claimed by simply being faster than any argument anyone could make against it, and it is not interested in slowing down to discuss the matter.",
+      "has_source": true
+    },
+    "coopers-hawk": {
+      "facts": "Cooper's hawks are built for pursuit through dense woodland — short, rounded wings and a long rudder tail allow them to thread gaps between branches at speed, chasing songbirds with unsettling agility. They hunt by surprise, often flying low and using hedgerows or buildings to stay hidden until the last moment. Ironically, Cooper's hawks have thrived in suburban environments, where backyard feeders concentrate prey in one predictable location.",
+      "alt_facts": "The Cooper's hawk is a very fast opinion moving through your yard at the height of the bird feeder, and the songbirds have about half a second to form a rebuttal. It finds suburban life efficient and has no complaints about the arrangement, though the sparrows do.",
+      "has_source": true
+    },
+    "ring-necked-duck": {
+      "facts": "Despite being named for the barely visible chestnut ring around its neck — a field mark nearly impossible to see in the field — the ring-necked duck is easily identified by the bold white ring around its bill. They dive to forage for aquatic plants and invertebrates, and prefer smaller, wooded ponds and lakes over open water. The misleading name has frustrated birders for generations, and the bird shows no sign of apologizing.",
+      "alt_facts": "The ring-necked duck is named for a collar no one can see, which it wears anyway with complete indifference to the confusion this causes. It keeps its most legible ring on its bill, where it is clearly visible, and refuses to explain the discrepancy.",
+      "has_source": true
+    },
+    "willow-flycatcher": {
+      "facts": "The willow flycatcher is nearly identical to the alder flycatcher in appearance — so similar that for decades they were considered one species — and can only be reliably distinguished by song. The willow flycatcher sings a raspy fitz-bew; the alder answers with a buzzy fee-bee-o. They nest in shrubby wetland edges and are among the species most frequently parasitized by brown-headed cowbirds, which lay eggs in their nests for others to raise.",
+      "alt_facts": "The willow flycatcher looks exactly like its cousin the alder flycatcher, and both of them know it, and neither of them is doing anything about it. The only way to tell them apart is by asking them to sing, which they will do, and which will immediately resolve the question unless you have also forgotten what you were listening for.",
+      "has_source": true
+    },
+    "ruffed-grouse": {
+      "facts": "The ruffed grouse is famous for the male's drumming display — not a vocalization, but the sound of cupped wings beating the air rapidly while he stands on a log, creating a deep, accelerating thump that carries through the forest. Grouse undergo a remarkable winter adaptation: their toes grow small projections called pectinations that function like snowshoes, increasing surface area for walking on snow. In hard winters they will plunge directly into deep snow to roost, using it as insulation against the cold above.",
+      "alt_facts": "The ruffed grouse is a bird that communicates exclusively through percussion, standing on its favorite log and drumming messages no one has fully decoded. In winter it solves the problem of the cold by simply going underneath it, which is either very clever or a strong statement about dealing with problems.",
+      "has_source": true
+    },
+    "yellow-billed-cuckoo": {
+      "facts": "The yellow-billed cuckoo is sometimes called the rain crow, because it calls most loudly and frequently before thunderstorms — though whether it is predicting rain or simply responding to changing atmospheric conditions is unclear. Unlike their European relatives, North American cuckoos mostly raise their own young, though they will occasionally lay eggs in other birds' nests. They are specialist hunters of caterpillars, including hairy and toxic species that most birds avoid.",
+      "alt_facts": "The yellow-billed cuckoo is a weather prophet with a billing dispute — it is named for the bill, the bill is yellow, fair enough — but its real occupation is telling you when it is going to rain, and it has not been wrong in a way anyone has recorded. It eats the caterpillars the other birds find disagreeable, which it considers a public service.",
+      "has_source": true
+    },
+    "ovenbird": {
+      "facts": "The ovenbird is a warbler that acts like a thrush — it walks on the forest floor with a distinctive bobbing gait, foraging through leaf litter for insects and worms rather than gleaning from branches overhead. Its name comes from the domed, oven-shaped nest it builds directly on the ground, with a side entrance hidden in plain sight beneath the leaves. Its song — a ringing, escalating teacher teacher teacher — is one of the most recognizable sounds of the eastern deciduous forest.",
+      "alt_facts": "The ovenbird is a warbler who decided the trees were for other people and moved to the floor permanently, where it walks with great purpose in a direction it keeps revising. It built its house in the leaves so well-disguised that it occasionally impresses itself by finding it again.",
+      "has_source": true
+    },
+    "eastern-racer": {
+      "facts": "The eastern racer is exactly what its name promises — one of North America's fastest snakes, capable of moving at speeds up to four miles per hour, which is fast enough to feel alarming even if a person could easily outrun it. Unlike many snakes, racers hold their head off the ground while moving, giving them an alert, almost curious posture. They are not constrictors; they simply overpower prey by pinning it against the ground with their body weight and swallowing it alive.",
+      "alt_facts": "The eastern racer is a snake that has decided not to wait around, and its posture makes this very clear — head up, eyes forward, somewhere to be. It has neither patience for constriction nor interest in your opinion of snakes, and it was already gone before you finished forming one.",
+      "has_source": true
+    },
+    "bald-eagle": {
+      "facts": "The bald eagle is not actually bald — the name comes from an older English usage of bald meaning white-marked, referring to its distinctive white head, which doesn't develop until the bird reaches sexual maturity at around five years old. Juveniles are dark brown throughout and are frequently misidentified. Bald eagles were removed from the U.S. endangered species list in 2007 after a dramatic recovery driven by DDT bans and federal protections, one of conservation's most celebrated turnarounds.",
+      "alt_facts": "The bald eagle spent its first five years in an awkward brown phase that no field guide adequately prepares you for, and then one day arrived at the white-headed look the country had been expecting all along. It is the national bird of a country that nearly poisoned it to extinction, which it has taken very quietly and with great dignity.",
+      "has_source": true
+    },
+    "gray-fox": {
+      "facts": "The gray fox is the only member of the dog family in North America that regularly climbs trees — it has semi-retractable claws that allow it to grip bark and ascend to escape predators or reach fruit. Unlike red foxes, gray foxes prefer dense woodland and brushy habitats, and they are far more omnivorous, eating significant amounts of plant material including berries and acorns. They are also one of the oldest members of the dog family by evolutionary lineage, diverging from other canids roughly 10 million years ago.",
+      "alt_facts": "The gray fox is a dog that climbed a tree and has not fully explained itself since. It regards fruit as entirely appropriate for a predator and sees no contradiction in this, and it has been quietly winning evolutionary arguments for ten million years.",
+      "has_source": true
+    },
+    "north-american-beaver": {
+      "facts": "The north american beaver is the continent's largest rodent and one of its most consequential ecosystem engineers — its dams raise water tables, create wetlands, and slow the flow of streams in ways that benefit dozens of other species. Beavers don't eat wood; they eat the inner bark, leaves, and soft tissue of trees, and cache branches underwater near their lodge as a winter food supply. Their continuously growing incisors are orange because they contain iron compounds that harden the enamel.",
+      "alt_facts": "The north american beaver is a very serious civil engineer who works exclusively at night and has opinions about water flow that it will act on without asking anyone's permission. Its teeth are orange, which it did not choose but has fully committed to.",
+      "has_source": true
+    },
+    "american-mink": {
+      "facts": "The american mink is a semi-aquatic mustelid equally at home on land and in water, and an aggressive, highly effective predator for its size — it regularly takes prey larger than itself, including muskrats, rabbits, and waterfowl. Mink have partially webbed feet and a water-resistant coat with a dense underfur that traps air for insulation. They do not hibernate and remain active through winter, hunting along stream edges and under ice.",
+      "alt_facts": "The american mink is a sleek and extremely motivated small animal that has decided every ecosystem it touches is its hunting territory and is working through the list methodically. It is waterproof, does not take winters off, and has no concept of prey that is too large — only prey that requires more commitment.",
+      "has_source": true
+    },
+    "long-tailed-weasel": {
+      "facts": "The long-tailed weasel can turn almost entirely white in winter in northern parts of its range — a molt triggered by shortening day length rather than temperature, which means it occasionally ends up white on a snowless landscape. Like other mustelids, it has an extremely high metabolism and must eat frequently, consuming roughly a third of its body weight daily. Despite its small size, it regularly pursues and kills rabbits many times heavier than itself.",
+      "alt_facts": "The long-tailed weasel turns white based on the length of the day rather than the presence of snow, which occasionally produces a white weasel on brown ground looking conspicuous in a way it was not warned about. It eats constantly and attacks things much larger than itself, and both of these facts are simply who it is.",
+      "has_source": true
+    },
+    "little-brown-bat": {
+      "facts": "The little brown bat can consume up to 1,000 mosquito-sized insects in a single hour, navigating and hunting in total darkness using echolocation — emitting ultrasonic calls and interpreting the returning echoes with remarkable precision. They roost in colonies that can number in the thousands and have lifespans unusually long for small mammals, sometimes exceeding 30 years. White-nose syndrome, a fungal disease that disrupts hibernation, has killed millions of little brown bats across North America since it arrived in 2006.",
+      "alt_facts": "The little brown bat is a small, warm-blooded sonar dish that spends the night making sounds no one can hear and finding things no one can see, and it has been doing this for thirty years because it turns out bats live a very long time. It is personally responsible for the mosquito situation being as manageable as it is, and it would appreciate a thank-you.",
+      "has_source": true
+    },
+    "summer-tanager": {
+      "facts": "The summer tanager is the only entirely red bird in North America — the male lacks the black wings of the scarlet tanager and is a deep, uniform rose-red from bill to tail. It is a specialist predator of bees and wasps, catching them in flight and then rubbing the stinger off against a branch before eating them. Females are a muted olive-yellow that makes them nearly invisible in the forest canopy.",
+      "alt_facts": "The summer tanager is all red, completely red, and it did not leave any red over for wings or compromises. It eats bees by catching them in midair and then removing the inconvenient part against a branch before proceeding, which suggests a level of patience and planning that the bees find very unfair.",
+      "has_source": true
+    },
+    "yellow-bellied-flycatcher": {
+      "facts": "The yellow-bellied flycatcher is the most distinctly colored of the eastern Empidonax flycatchers — a group notorious for being nearly impossible to tell apart — with a warmer yellow wash on the underparts that actually lives up to its name. It breeds in cool, mossy boreal forests and bogs, including at higher elevations in New England, preferring habitats that feel more Canadian than American even when technically south of the border. Its call, a soft, rising per-wee, is the most reliable way to confirm identification.",
+      "alt_facts": "The yellow-bellied flycatcher is the only one in its family whose name is actually visible, which it carries with justified satisfaction among its identical cousins. It nests in bogs that smell like sphagnum and cold water and has decided this is exactly what a forest should be.",
+      "has_source": true
+    },
+    "cerulean-warbler": {
+      "facts": "The cerulean warbler is a sky-blue warbler that spends most of its life in the very tops of mature deciduous trees — making it one of the most sought-after and least-observed wood warblers in eastern North America. It migrates to the Andes of South America for winter, requiring mature forest habitat on both ends of a journey of several thousand miles. Populations have declined significantly as tall-canopy forest is fragmented, making it a species of growing conservation concern.",
+      "alt_facts": "The cerulean warbler is a blue chip in the canopy economy that very few people have actually seen, because it lives at the tops of the tallest trees and does not come down for casual visitors. It spends half the year in the Andes and the other half being briefly glimpsed against a sky the same color as itself, which it considers adequate privacy.",
+      "has_source": true
+    },
+    "common-nighthawk": {
+      "facts": "The common nighthawk is neither a hawk nor strictly nocturnal — it is a member of the nightjar family, most active at dusk and dawn, catching insects in sustained aerial flight with its wide, gaping mouth. Males perform a dramatic dive display in which they pull up sharply at the last moment, causing the primary feathers to produce a deep, booming whomp that can be heard from a distance. Despite the name, nighthawks are associated with open areas, including city rooftops, where flat gravel provides nesting substrate and city lights concentrate insects.",
+      "alt_facts": "The common nighthawk is not a hawk and keeps reasonable hours, which are dusk and dawn, and it would prefer you updated your records accordingly. It catches insects with its face open wide while flying, and in courtship it dives at the ground until its wings make a sound like a small thunderclap, which is the most dramatic anyone in its family has ever been.",
+      "has_source": true
+    },
+    "red-headed-woodpecker": {
+      "facts": "The red-headed woodpecker is one of only four North American woodpeckers that regularly stores food — caching acorns, insects, and even grasshoppers in bark crevices, sometimes covering the cache with a wood chip or piece of bark to conceal it. Its entire head is a vivid, solid crimson that makes it one of the most instantly recognizable birds on the continent. Populations have declined sharply over the past several decades, linked to habitat loss, competition from European starlings for nest cavities, and reductions in the open woodland it prefers.",
+      "alt_facts": "The red-headed woodpecker dipped its entire head in red and left it that way permanently, which is a bold commitment to personal branding in a forest full of subtler birds. It hides its groceries under bark and sometimes puts a little door on them, and it is losing ground to the starling, which it did not invite.",
+      "has_source": true
+    },
+    "grasshopper-sparrow": {
+      "facts": "The grasshopper sparrow is named for its insect-like buzz of a song rather than its diet, though it does eat grasshoppers. It is a grassland specialist that walks and runs along the ground in a hunched posture, staying low in the vegetation and rarely flushing unless nearly stepped on. Unlike most sparrows, it sings from an exposed perch in two distinct song types — a short introductory note followed by a buzzy trill — and populations are closely tied to the health of open grassland habitats, which have declined dramatically in the eastern United States.",
+      "alt_facts": "The grasshopper sparrow makes a sound like an insect and lives on the ground like it is reconsidering the whole bird thing. It runs through the grass instead of flying, flushes only when you are basically standing on it, and sings a song that most people walk past assuming it is a grasshopper, which the sparrow does not seem to mind.",
+      "has_source": true
+    },
+    "black-billed-cuckoo": {
+      "facts": "The black-billed cuckoo is one of the few birds that actively seeks out hairy caterpillars — including tent caterpillars and fall webworms — that most other birds avoid. It occasionally practices brood parasitism, slipping its eggs into other birds' nests, though far less often than its infamous European cousin. Its hollow, knocking call is a reliable sign that caterpillar numbers are climbing in the surrounding woodland.",
+      "alt_facts": "The black-billed cuckoo is a bird that arrived to handle a specific problem and would prefer not to discuss it further. It keeps its own hours, its own counsel, and a list of caterpillars it is working through methodically, in order.",
+      "has_source": true
+    },
+    "orange-crowned-warbler": {
+      "facts": "The orange-crowned warbler is one of the dullest-plumaged warblers in North America — a deliberate olive-green blur with an orange crown patch so rarely raised it might as well be a rumor. It is one of the last warblers to migrate south in autumn and one of the earliest to move north, hugging the edge of winter on both ends. Unlike most warblers, it will happily pierce the bases of flowers to steal nectar without doing any pollinating at all.",
+      "alt_facts": "The orange-crowned warbler keeps a secret on top of its head and has shown it to no one. It dresses for camouflage in a world where it has no particular enemies, which suggests the camouflage is more of a personal philosophy than a survival strategy.",
+      "has_source": true
+    },
+    "merlin": {
+      "facts": "The merlin is a compact, ferocious falcon that hunts other birds in open pursuit, flying them down with sheer speed and relentless aggression disproportionate to its size. It often perches at the very top of a dead tree, scanning with the intensity of something three times its weight. Merlins have adapted surprisingly well to suburban and urban areas, nesting in old crow nests in city trees and hunting sparrows through backyards.",
+      "alt_facts": "The merlin is a bird the size of a robin that has made a series of decisions a robin would never consider. It sits at the top of the tallest dead tree it can find and waits, exuding the patience of something that has already decided how this ends.",
+      "has_source": true
+    },
+    "purple-martin": {
+      "facts": "Purple martins in eastern North America are almost entirely dependent on human-provided housing — multi-roomed martin houses or clusters of gourds — and have been for so long that natural cavity nesting in the East is now extremely rare. A single colony can consume tens of thousands of flying insects daily, though the claim that they eat primarily mosquitoes is overblown; they mostly hunt larger prey like dragonflies and beetles. Males arrive first in spring and compete fiercely for the best compartments before the females appear.",
+      "alt_facts": "The purple martin moved into human housing so long ago it has entirely forgotten there was another arrangement. It lives in a condominium it did not build, in a neighborhood it chooses by committee, and it would like you to know it has very strong opinions about the gourd situation.",
+      "has_source": true
+    },
+    "orchard-oriole": {
+      "facts": "The orchard oriole is the smallest oriole in North America and one of the shortest-staying summer residents — it arrives late in spring and begins heading south again by late July, giving it one of the briefest breeding seasons of any North American songbird. Young males wear a puzzling rusty-and-black plumage for their first breeding season, looking nothing like the deep chestnut-and-black adult males. They weave pendant nests from green grass that tighten as the fibers dry, locking the structure into shape.",
+      "alt_facts": "The orchard oriole shows up, raises a family in what feels like a long weekend, and is already thinking about leaving before summer has properly started. Its nest is a grass basket engineered to shrink itself closed, which is the most sensible architecture anyone in the garden has ever produced.",
+      "has_source": true
+    },
+    "moose": {
+      "facts": "The moose is the largest member of the deer family, and a bull's antlers — shed and regrown every year — can span six feet and weigh forty pounds. Despite their enormous size, moose are capable swimmers and will wade deep into ponds and lakes to feed on aquatic vegetation, sometimes submerging their entire heads to reach plants on the bottom. In parts of New England, moose populations have declined sharply due to winter tick infestations, a problem worsened by shorter, milder winters that allow more ticks to survive.",
+      "alt_facts": "The moose is a creature that appears to have been assembled from leftover parts by someone working from a description rather than a diagram, and it has never once been self-conscious about this. It walks into a pond the way you walk into a room you own, puts its whole head underwater, and comes up chewing.",
+      "has_source": true
+    },
+    "fisher": {
+      "facts": "The fisher is a large, dark mustelid — related to weasels and martens — and one of the few predators capable of successfully hunting porcupines, which it accomplishes by repeatedly biting the porcupine's unquilled face. Despite its name, fishers rarely eat fish; the name is thought to derive from the Dutch word for a European polecat. After being extirpated from much of New England by the early twentieth century, fishers have made a strong comeback and are now regularly seen in suburban woodlands.",
+      "alt_facts": "The fisher does not fish, which it finds neither embarrassing nor worth explaining. It moves through the woods like a rumor with claws, and it has solved the porcupine problem in a way that suggests it thought about it for a very long time and arrived at the most direct possible answer.",
+      "has_source": true
+    },
+    "american-ermine": {
+      "facts": "The American ermine — also called the short-tailed weasel or stoat — turns white in winter across most of its northern range, a camouflage shift triggered by changing day length rather than temperature or snow. The tip of its tail stays black year-round, which is thought to function as a decoy: a hunting raptor may strike at the conspicuous tail tip and miss the body entirely. Ermines are extraordinarily energetic predators, capable of killing prey significantly larger than themselves.",
+      "alt_facts": "The ermine turns white every winter with the kind of punctuality that implies it has somewhere to be and does not intend to be seen getting there. It keeps its black tail tip as a signature — a small, deliberate imperfection in its own disguise, like initialing a painting.",
+      "has_source": true
+    },
+    "eastern-red-bat": {
+      "facts": "The eastern red bat is a strikingly colored, solitary bat that roosts in tree foliage rather than caves, hanging from branches and resembling a dead leaf or cluster of seeds. Males are a vivid brick red; females are a more muted chestnut — one of the few bat species in North America with obvious sexual dichromatism. Unlike many bats, eastern red bats often give birth to three or four pups at once and carry them during flight until the young become too heavy to transport.",
+      "alt_facts": "The eastern red bat sleeps in plain sight by becoming, through force of personality, a dead leaf. It is the most confident bat in the tree and the only one who chose the tree based on aesthetics. The mother carries her pups until they are heavy enough to be embarrassing, and then she carries them a little longer.",
+      "has_source": true
+    },
+    "snowshoe-hare": {
+      "facts": "The snowshoe hare turns white in winter and brown in summer, a molting cycle controlled by day length — which creates an increasingly documented mismatch problem as snowpack arrives later in a warming climate, leaving white hares conspicuous against bare ground. Its oversized hind feet function as natural snowshoes, distributing weight across the snow's surface and enabling fast travel that smaller-footed predators struggle to match. Snowshoe hare populations cycle dramatically over roughly ten-year periods, and the cycles of their primary predator, the Canada lynx, track almost perfectly in lockstep.",
+      "alt_facts": "The snowshoe hare changes its coat twice a year based on a calendar it can no longer entirely trust, and is doing its best with the information available. Its feet are the size of small plates, which it finds neither funny nor remarkable — they are simply feet, and they work.",
+      "has_source": true
+    },
+    "star-nosed-mole": {
+      "facts": "The star-nosed mole has a ring of twenty-two pink, fleshy tentacles surrounding its nostrils — the most sensitive touch organ of any known mammal, packed with more than 25,000 minute sensory receptors called Eimer's organs. It can identify and consume prey in under 120 milliseconds, making it arguably the fastest-eating mammal on Earth. Uniquely among North American moles, it is an accomplished swimmer and hunts aquatic invertebrates underwater, using its star to detect the faint electrical fields prey emit.",
+      "alt_facts": "The star-nosed mole arrived in this world with a face that is asking several questions at once and will not wait for the answers. It has solved the problem of time by simply moving faster than it, and it would like you to know that what it has on its face is not a problem — it is a solution to a problem you did not know existed.",
+      "has_source": true
+    },
+    "eastern-wood-pewee": {
+      "facts": "The eastern wood-pewee is a flycatcher whose drawn-out, whistled pee-a-wee call is one of the characteristic sounds of eastern woodland edges from late spring through summer. It builds a remarkably flat, lichen-covered nest on a horizontal branch, so well camouflaged it looks like a natural knot in the wood. Pewees are late migrants — arriving well after most flycatchers — and they sing persistently at dusk and occasionally through the night during the breeding season.",
+      "alt_facts": "The eastern wood-pewee announces its name slowly, repeatedly, to anyone within earshot, with the tone of something that has been misidentified before and has decided to get ahead of the problem. Its nest looks exactly like the branch it is sitting on, which the pewee accomplished without apparent effort and has never mentioned.",
+      "has_source": true
+    },
+    "eastern-phoebe": {
+      "facts": "The eastern phoebe was the first bird in North America to be banded — John James Audubon tied silver thread to the legs of a brood in 1803 and confirmed the following year that the same birds had returned to the same site. Phoebes are among the earliest flycatchers to arrive in spring, often appearing when there is still snow on the ground, and they habitually pump their tails up and down in a distinctive nervous rhythm. They readily adopt human structures — bridges, barns, porches — as nest sites, returning to the same location year after year.",
+      "alt_facts": "The eastern phoebe bobs its tail constantly, for reasons it has never explained and which do not appear to be optional. It arrives before spring has fully committed, lands on the nearest fence post, and begins saying its own name in the matter-of-fact way of someone who has been away and is letting the place know it is back.",
+      "has_source": true
+    },
+    "veery": {
+      "facts": "The veery's song is one of the most ethereal sounds in the eastern forest — a descending, spiraling series of flute-like tones that seem to fold back on themselves, produced by its two-chambered syrinx singing in a kind of self-harmonizing duet. Studies have suggested that veery migration timing and breeding success correlate with Atlantic hurricane activity later in the season, raising the possibility that the birds respond in some way to seasonal cues we do not yet understand. Veeries nest on or just above the ground in moist, shaded forest and are easily overlooked despite their extraordinary voices.",
+      "alt_facts": "The veery is a small brown bird that opens its mouth and produces a sound that should not come from something this size — a descending spiral, as if the song is made of water and is draining somewhere beautiful. It nests on the ground, completely unbothered, because it knows what it sounds like.",
+      "has_source": true
+    },
+    "hermit-thrush": {
+      "facts": "The hermit thrush has arguably the most celebrated song of any North American bird — a clear, flute-like opening phrase followed by shimmering harmonics at a different pitch, repeated in ever-varying sequences that can continue for minutes. It is the only spotted thrush that winters in the United States, making it the one thrush reliably heard singing on warm winter days in the South and on early spring mornings farther north. The hermit thrush forages by standing still, then suddenly dropping to snatch invertebrates from leaf litter, using a technique that combines stillness with speed.",
+      "alt_facts": "The hermit thrush stays when the other thrushes leave and sings a song made of several songs nested inside each other, each one a slightly different version of longing. It stands very still in the leaf litter and then moves so fast the stillness was the trick, which describes its whole approach to existing.",
+      "has_source": true
+    },
+    "northern-parula": {
+      "facts": "The northern parula is a tiny warbler that nests almost exclusively inside clumps of hanging material — Spanish moss in the South, and old man's beard lichen (Usnea) in the North — weaving a small cup inside the hanging strands and pulling them closed around it like a curtain. Its buzzy, rising trill with an abrupt zip at the end is one of the most characteristic sounds of northeastern forests in May. Despite its small size, it winters in the Caribbean and Central America and returns north reliably each spring.",
+      "alt_facts": "The northern parula finds a curtain of lichen, climbs inside, and closes it behind itself — a bird that has solved the housing problem with a level of elegance the rest of the forest finds slightly show-offy. It has a song that goes up and up and then stops, as if it just thought of something.",
+      "has_source": true
+    },
+    "blue-headed-vireo": {
+      "facts": "The blue-headed vireo is a deliberate, methodical forager that moves slowly through the canopy, pausing to inspect leaves and twigs with a patience most warblers entirely lack. It is one of the earlier vireos to arrive in spring and one of the latest to leave in fall, with a slow, rich, conversational song it continues singing long after most woodland birds have gone quiet. Its nest is a deep, neatly woven cup suspended from a forked branch and decorated on the outside with bits of lichen, spider silk, and plant down.",
+      "alt_facts": "The blue-headed vireo moves through the trees the way someone reads a used bookshop — slowly, with purpose, convinced the right thing is just around the next branch. It has a white eye ring that gives it a permanent expression of polite but firm interest, which is accurate.",
+      "has_source": true
+    },
+    "eastern-screech-owl": {
+      "facts": "The eastern screech-owl comes in two color morphs — gray and rufous — that are not related to age, sex, or season but appear to be genetically fixed, and both morphs occur throughout the species' range. It is a cavity nester that takes readily to nest boxes and is one of the most common owls in suburban and urban areas of the eastern United States, despite being almost never seen. Its call is not a screech but a long, descending whinny or a trembling, mournful trill — the screech of legend belongs to other species.",
+      "alt_facts": "The eastern screech-owl lives inside a tree in your neighborhood and has never once introduced itself. Its name is a lie — it does not screech, it trembles and wails in the dark, which is worse and also better. It exists in two colors for reasons that have been explained to no one's satisfaction.",
+      "has_source": true
+    },
+    "red-shouldered-hawk": {
+      "facts": "The red-shouldered hawk is a forest hawk of wet woodlands and riparian corridors, often found near streams, swamps, and flooded bottomlands where it hunts frogs, snakes, crayfish, and small mammals. It has a loud, insistent kee-yer call that blue jays famously mimic — possibly to harass other birds at feeders or to test the local hawk situation. Pairs often return to the same nest territory year after year, repairing and reusing the same large stick nest over many seasons.",
+      "alt_facts": "The red-shouldered hawk patrols the wet woods with the air of someone conducting an inspection no one requested. Blue jays have learned its voice and use it without permission, which the hawk has noted and chosen not to dignify with a response.",
+      "has_source": true
+    },
+    "wood-frog": {
+      "facts": "The wood frog is famous for surviving winter by freezing solid — up to 65 percent of its body water turns to ice, its heart stops, and it stops breathing for months, then thaws and resumes activity in early spring. It is one of the first amphibians to breed each year, descending on vernal pools in large, noisy choruses that can begin while ice is still present at the pool's edges. Wood frogs spend most of their lives on the forest floor far from water, returning to vernal pools only to breed.",
+      "alt_facts": "The wood frog freezes to death every winter and then reconsiders. It wakes up, walks to the nearest pond, and hollers about it with several hundred friends — which, given what it just went through, seems like a completely proportionate response.",
+      "has_source": true
+    },
+    "red-eft": {
+      "facts": "The red eft is the terrestrial juvenile stage of the eastern newt — a bright orange-red, land-dwelling phase that can last two to seven years before the newt returns to water and transforms into a drab, aquatic adult. Its vivid color is an honest advertisement: red efts carry potent tetrodotoxin in their skin, the same toxin found in puffer fish, making them genuinely dangerous to eat. They wander forest floors, especially after rain, in plain sight — relying entirely on toxicity rather than camouflage.",
+      "alt_facts": "The red eft is a small poisonous creature that dresses in the brightest color available and walks slowly through the open forest, which is either tremendous confidence or an extremely concise argument. It has decided to be orange for several years and then, without explanation, will change its mind entirely.",
+      "has_source": true
+    },
+    "pickerel-frog": {
+      "facts": "The pickerel frog is the only truly poisonous frog native to North America — its skin secretions are toxic enough to kill other frogs kept in the same container and can cause irritation in humans who handle it and then touch their eyes or mouth. It is often confused with the leopard frog, but its spots are more rectangular and arranged in two neat parallel rows down the back. Pickerel frogs favor cool, clear streams and spring-fed wetlands and are sometimes considered an indicator of good water quality.",
+      "alt_facts": "The pickerel frog looks exactly like a leopard frog and has nothing to say about the confusion except that the consequences of the confusion are entirely the other party's problem. It keeps its spots in orderly rows, which is the only tidy thing about an animal that is also a mild hazard.",
+      "has_source": true
+    },
+    "black-throated-blue-warbler": {
+      "facts": "The male black-throated blue warbler is one of the most strikingly plumaged warblers in eastern North America — a deep, navy blue above with a black face and throat and a clean white belly — while the female is so different in appearance, a dull olive-brown, that early ornithologists classified them as separate species. Both sexes carry a small white wing spot, the female's faint but present, which is the reliable field mark linking the pair. Males return to the same breeding territories in Appalachian and northeastern forests year after year with remarkable fidelity.",
+      "alt_facts": "The male black-throated blue warbler is a bird that has made a decision about color and committed to it fully. The female looks so completely different that for a long time scientists thought they had simply found two birds, which is a reasonable mistake and one the warbler has never bothered to correct.",
+      "has_source": true
+    },
+    "northern-saw-whet-owl": {
+      "facts": "The northern saw-whet owl is among the smallest owls on the continent — easily fitting in a cupped hand — yet it is a capable predator of mice, voles, and small birds, often caching prey in cold weather and returning to thaw and eat it later. Its repetitive tooting call, given persistently through winter and early spring nights, is far more often heard than the owl is ever seen. Banding studies have revealed that saw-whets migrate in surprisingly large numbers along ridge systems and coastlines, largely invisibly, at night.",
+      "alt_facts": "The northern saw-whet owl is the size of a large lemon and has the demeanor of something that does not consider this relevant. It calls the same note over and over in the dark for hours, not because it expects an answer, but because it is making a point about the night.",
+      "has_source": true
+    },
+    "whip-poor-will": {
+      "facts": "The whip-poor-will is a nocturnal, ground-nesting bird that lays its eggs directly on leaf litter — no nest — and times its breeding cycle to coincide with the full moon, using the extra light to forage for the large flying insects it catches entirely on the wing with its enormous, bristle-rimmed mouth. Its camouflage is so complete that a sitting whip-poor-will on a forest floor is nearly invisible even when you are looking directly at it. Populations have declined significantly across the Northeast, likely due to declines in large moth populations and habitat loss.",
+      "alt_facts": "The whip-poor-will lays its eggs on the ground in the dark and trusts that no one will notice, which works, because it is itself indistinguishable from the ground in the dark. It says its own name all night, loudly, in a forest where it cannot be seen, which is a form of confidence that deserves more study.",
+      "has_source": true
+    },
+    "wood-turtle": {
+      "facts": "The wood turtle is a semi-terrestrial turtle that spends significant time on land, foraging along stream banks and in adjacent meadows and woodlands for berries, mushrooms, worms, and slugs. It has been documented stomping the ground with its plastron to bring earthworms to the surface — a behavior that mimics the vibrations of rain — and then eating them, a level of tool-adjacent problem-solving unusual for reptiles. Wood turtles are long-lived and slow to mature, making their populations particularly vulnerable to adult mortality from road crossings and collection.",
+      "alt_facts": "The wood turtle has figured out that if you stomp on the ground correctly, it will produce worms — a discovery it made entirely on its own and has never shared with anyone. It lives a very long time and spends much of it walking slowly between the stream and the meadow with the unhurried confidence of something that has already seen how this goes.",
+      "has_source": true
+    },
+    "smooth-green-snake": {
+      "facts": "The smooth green snake is one of North America's most docile serpents — a slender, vivid-green hunter that moves through meadow grasses nearly invisible against the stems. It feeds almost entirely on insects and spiders, making it a quiet but effective garden ally. Unlike many snakes, it rarely bites when handled, preferring to rely on camouflage over confrontation.",
+      "alt_facts": "The smooth green snake is a piece of the lawn that got bored and learned to have opinions. It moves through the grass like a rumor, eating things it finds personally offensive, and is widely regarded among garden snakes as the one most likely to be mistaken for a twig at a dinner party.",
+      "has_source": true
+    },
+    "spotted-salamander": {
+      "facts": "Spotted salamanders spend most of their lives underground in eastern North American forests, emerging on rainy spring nights to breed in vernal pools — sometimes traveling hundreds of meters in a single night. Their eggs are famously green, tinted by symbiotic algae living inside the egg mass, one of the only known examples of a vertebrate hosting a photosynthesizing organism inside its cells. Adults can live 20 years or more, returning to the same pool every spring.",
+      "alt_facts": "The spotted salamander surfaces once a year on a rainy evening, attends a very important meeting it will not explain, and vanishes back underground for another twelve months. It keeps algae as tiny tenants inside its eggs, which it considers a reasonable arrangement and does not discuss further.",
+      "has_source": true
+    },
+    "southern-flying-squirrel": {
+      "facts": "The southern flying squirrel doesn't actually fly — it glides on a membrane of skin called the patagium that stretches between its wrists and ankles, covering distances of up to 80 feet in a single leap. It is the smallest tree squirrel in eastern North America and is strictly nocturnal, with enormous dark eyes adapted for low-light navigation. Despite their delicate appearance, these squirrels are surprisingly carnivorous, supplementing nuts and seeds with insects, eggs, and carrion.",
+      "alt_facts": "The southern flying squirrel is a very small creature that has decided the ground is a matter of opinion. It sails through the dark on a built-in cape it never asked for and eats things no one expected it to eat, regarding the whole situation as perfectly normal.",
+      "has_source": true
+    },
+    "luna-moth": {
+      "facts": "The luna moth is one of North America's largest and most striking moths, with a wingspan reaching up to 4.5 inches and sweeping hindwing tails that researchers believe help deflect bat echolocation away from the body. Adult luna moths have no mouths — they live only about a week, sustained entirely by fat reserves stored during their caterpillar stage, with the sole purpose of finding a mate. Their pale green wings fade in daylight, making them almost ghostly pale by the time they die.",
+      "alt_facts": "The luna moth emerges already retired, having decided during the caterpillar years that it had eaten enough for one lifetime. It spends its remaining days as a flying piece of sea glass, confusing bats with its decorative tails, and dies having never once opened a bill.",
+      "has_source": true
+    },
+    "cecropia-moth": {
+      "facts": "The cecropia moth is North America's largest native moth, with a wingspan that can exceed six inches — wide enough to cover an adult human hand. Like the luna moth, cecropia adults have vestigial mouths and cannot eat, surviving their brief adult lives on energy stored as caterpillars. Males can detect a female's pheromones from more than a mile away, navigating by scent alone through a dark forest.",
+      "alt_facts": "The cecropia moth is a stained-glass window the size of a salad plate that has given up on eating and now focuses entirely on being enormous and beautiful in the dark. It finds mates by following a smell it cannot describe across distances it finds unreasonable, which it regards as a perfectly good use of a week.",
+      "has_source": true
+    },
+    "wheel-bug": {
+      "facts": "The wheel bug is North America's largest assassin bug, named for the dramatic cog-shaped crest on its thorax — a structure whose purpose remains unclear to scientists. It hunts caterpillars, beetles, and other insects by stabbing them with a curved beak and injecting saliva that liquefies their insides, then drinking the result. Despite looking alarming, wheel bugs are shy and slow-moving; a bite to a human, while rare, is reportedly more painful than a wasp sting.",
+      "alt_facts": "The wheel bug arrived wearing a gear on its back from a machine no one has ever located, and has been solving that mystery ever since by eating things with a beak shaped like a question mark. It is deeply reclusive for something so architecturally dramatic, and considers its reputation for pain to be both accurate and nobody's business.",
+      "has_source": true
+    },
+    "bobolink": {
+      "facts": "The bobolink makes one of the longest migrations of any North American songbird, traveling roughly 12,500 miles round-trip between its breeding grounds in northern meadows and its wintering grounds in South America. Males are striking in reverse — dark below, pale on top — and their bubbling, metallic song sounds like a malfunctioning robot tuned to a frequency of pure joy. Bobolinks navigate partly using Earth's magnetic field, with specialized iron-containing cells in their beaks acting as a compass.",
+      "alt_facts": "The bobolink wears its tuxedo upside-down and sings in a language that sounds like a telegraph wire arguing with a music box. It travels 25,000 miles a year simply because it cannot decide which hemisphere it prefers, and navigates with its face, which it finds perfectly efficient.",
+      "has_source": true
+    },
+    "eastern-meadowlark": {
+      "facts": "The eastern meadowlark is a stocky grassland bird whose bright yellow chest and bold black V-shaped bib make it instantly recognizable — though it is technically a blackbird, not a lark. Its flute-like song, often described as clear and whistled, carries across open fields and has been declining along with the grassland habitat the species depends on. Meadowlarks build their nests on the ground, often weaving a woven dome of grass over the cup to conceal it from above.",
+      "alt_facts": "The eastern meadowlark is wearing a formal waistcoat in a field where no one asked it to dress up, and it is singing anyway, loudly, because it has things to say about fields in general. Its nest is a small thatched cottage with a grass roof, which it considers both structurally sound and nobody's business.",
+      "has_source": true
+    },
+    "golden-winged-warbler": {
+      "facts": "The golden-winged warbler is a small, precisely patterned songbird — gray above with a blazing yellow crown and wing patch and a sharp black mask — that nests in shrubby, early-successional habitat that is rapidly disappearing across eastern North America. It hybridizes extensively with the blue-winged warbler where their ranges overlap, producing fertile offspring called Brewster's and Lawrence's warblers, complicating conservation efforts. Populations have declined steeply, making it one of the most at-risk warblers on the continent.",
+      "alt_facts": "The golden-winged warbler is a small bird wearing a painter's cap and a bandit mask, which together send a mixed message it has never bothered to resolve. It occasionally marries into another family and produces children with entirely different names, which it finds administratively confusing but emotionally fine.",
+      "has_source": true
+    },
+    "northern-goshawk": {
+      "facts": "The northern goshawk is the largest and most formidable of North America's accipiters — a forest hawk built for speed and agility among dense trees, capable of twisting through tight woodland at full chase velocity. Its slate-gray plumage, fierce red eye, and bold white eyebrow stripe give it an expression that naturalists have consistently described as furious. Goshawks defend their nests with extraordinary aggression, regularly striking human intruders hard enough to draw blood.",
+      "alt_facts": "The northern goshawk is a bird that flies through forests the way an argument moves through a quiet room — fast, committed, and leaving a strong impression. It has the expression of someone who has heard your excuse already and found it insufficient, and it nests with the conviction of a creature that has never once been wrong.",
+      "has_source": true
+    },
+    "olive-sided-flycatcher": {
+      "facts": "The olive-sided flycatcher is a stocky, large-headed bird of northern coniferous forests, named for the dark olive patches along its sides that frame a white belly like an unbuttoned vest. Its three-note song — commonly transcribed as quick-three-beers — is one of the most recognizable sounds of boreal summer. It is a long-distance migrant, wintering in South America, and has declined significantly due to habitat loss on both ends of its range.",
+      "alt_facts": "The olive-sided flycatcher perches at the very tip of the tallest dead tree available, surveys its entire territory, and announces its opinion in three emphatic syllables it repeats without apology until everyone has heard it. It dresses like it started getting changed and then decided this was enough.",
+      "has_source": true
+    },
+    "northern-long-eared-bat": {
+      "facts": "The northern long-eared bat is a small, forest-dependent bat with distinctly long ears it uses for precise echolocation, allowing it to detect and pluck insects directly from foliage — a technique called gleaning that few bats attempt. It roosts under bark and in tree cavities during summer, often alone or in small maternity colonies. White-nose syndrome, caused by a fungal pathogen introduced from Europe, has decimated its populations, leading to federal listing as an endangered species.",
+      "alt_facts": "The northern long-eared bat has ears it clearly grew into and uses them to hear things in the dark that are technically not making any sound yet. It sleeps in trees one at a time, takes its roosting very seriously, and has been through a great deal, which it handles with the quiet dignity of something that hunts in complete darkness and still doesn't miss.",
+      "has_source": true
+    },
+    "tricolored-bat": {
+      "facts": "The tricolored bat — formerly called the eastern pipistrelle — is one of the smallest bats in eastern North America, weighing only about as much as a penny. Its name comes from the banding of color on its individual fur hairs: dark at the base, pale in the middle, and tipped in brown. It is often the first bat seen flying in the evening, emerging before other species while there is still light in the sky, and it has been severely affected by white-nose syndrome.",
+      "alt_facts": "The tricolored bat weighs less than a coin and has decided this is no obstacle to having a very full evening. Each of its hairs is wearing three colors simultaneously in a gradient arrangement that serves no purpose it has chosen to explain. It shows up to dusk before anyone else, which it considers punctual and others consider excessive.",
+      "has_source": true
+    },
+    "new-england-cottontail": {
+      "facts": "The New England cottontail is the region's only native rabbit species — and it looks nearly identical to the introduced eastern cottontail, which has largely displaced it across southern New England. It can only be reliably told apart by examining its skull or via DNA testing, a situation the two species do not appear to find awkward. The New England cottontail requires dense, shrubby thicket habitat for cover and has declined steeply as that habitat has been lost to development and forest maturation.",
+      "alt_facts": "The New England cottontail has a cousin who moved in from elsewhere and looks exactly like it, and the only way anyone can officially tell them apart is to ask a scientist with a laboratory, which the rabbits consider a disproportionate response. It lives in the thickest, most impenetrable brush it can find, which it regards as a reasonable policy.",
+      "has_source": true
+    },
+    "blandings-turtle": {
+      "facts": "Blanding's turtle is a medium-sized freshwater turtle with a domed, helmet-like shell and a bright yellow chin and throat that make it recognizable at a glance. It is remarkably long-lived — individuals have been documented past 70 years old — and does not reach reproductive maturity until its mid-teens, making population recovery from declines extremely slow. It relies on a mosaic of wetlands and upland habitat, traveling overland between seasonal wetlands, which brings it into frequent conflict with roads.",
+      "alt_facts": "The Blanding's turtle has a yellow chin it wears like a small, permanent smile, and it has been wearing it for possibly seventy years without complaint. It crosses roads with the calm confidence of something that was here long before the road arrived and fully expects to outlast it.",
+      "has_source": true
+    },
+    "marbled-salamander": {
+      "facts": "The marbled salamander is a stocky, boldly patterned mole salamander with crisp white or silver crossbands on a black body — one of the most striking salamanders in eastern North America. Unlike most of its relatives, it breeds in autumn rather than spring, with females laying eggs in dry woodland depressions and guarding them until autumn rains fill the site with water. It spends the vast majority of its life underground or beneath logs, rarely seen despite being locally common.",
+      "alt_facts": "The marbled salamander dresses in formal black-and-white stripes and guards its eggs in what is currently a dry hole, on the understanding that eventually the rain will come and prove it right. It lives almost entirely underground and considers visibility an overrated quality in a salamander.",
+      "has_source": true
+    },
+    "rusty-patched-bumblebee": {
+      "facts": "The rusty-patched bumblebee was once one of the most common bumblebees in eastern North America; it is now federally listed as endangered — the first bee placed on the U.S. endangered species list. The rusty patch that gives the species its name is a small reddish-orange smudge on the abdomen of workers and males, not found on queens. Its decline has been driven by habitat loss, pesticides, and disease, and it has vanished from roughly 90 percent of its former range.",
+      "alt_facts": "The rusty-patched bumblebee carries a small rust-colored mark like a drop of something it ran into once and never quite got out, and it has been through a great deal since then. It used to be everywhere, and its continued presence in the places it still visits is both a fact and a small, ongoing miracle it does not make a fuss about.",
+      "has_source": true
+    },
+    "puritan-tiger-beetle": {
+      "facts": "The Puritan tiger beetle is a federally threatened insect found only on a handful of sandy riverbank and coastal beach sites along the Connecticut River and the Chesapeake Bay. Like other tiger beetles, it is a fast and voracious predator with large eyes and powerful jaws, capable of running so quickly it must temporarily blind itself mid-sprint because its visual system can't keep pace. Its larvae dig vertical burrows in the sand and ambush prey from the entrance.",
+      "alt_facts": "The Puritan tiger beetle runs faster than its own eyes can process and does not let this stop it — it simply closes them mid-chase and recalculates on the other side. It lives on a short list of specific sandy riverbanks it has approved, and it has approved very few.",
+      "has_source": true
+    },
+    "frosted-elfin": {
+      "facts": "The frosted elfin is a small, early-spring butterfly with subtle gray-brown wings and a delicate frosted appearance on the hindwing undersides that gives it its name. It is a specialist, with caterpillars feeding only on wild lupine or wild indigo, and populations are tightly tied to the presence of these host plants in open, sandy habitats. It is one of the first butterflies of spring, flying for only a few weeks in April and May before disappearing for the year.",
+      "alt_facts": "The frosted elfin appears for a few weeks in early spring, accomplishes everything it came to do, and leaves before anyone has entirely registered it was there. It has strong opinions about lupine and will not negotiate on this point.",
+      "has_source": true
+    },
+    "common-eastern-bumblebee": {
+      "facts": "The common eastern bumblebee is one of the most frequently seen bumblebees across eastern North America, with a yellow and black pattern and the characteristic dense fuzz that helps it warm up its flight muscles in cool weather — allowing it to forage on cold days when other pollinators stay home. Colonies are annual: a single mated queen overwinters, founds a new nest in spring, and the colony grows through summer before dying back in autumn. It is a native bee and a generalist pollinator, visiting hundreds of plant species.",
+      "alt_facts": "The common eastern bumblebee is furry for a reason it will explain if you let it get to the point, which is that cold weather is not an excuse. It shows up to flowers when no one else has bothered, does the work, and leaves without ceremony. The queen survives winter alone and considers this a reasonable arrangement.",
+      "has_source": true
+    },
+    "eastern-carpenter-bee": {
+      "facts": "Eastern carpenter bees look strikingly like bumblebees but have a shiny, bare black abdomen rather than a fuzzy one — a useful field mark. Females excavate perfectly round tunnels in unpainted wood, creating galleries where they lay eggs provisioned with pollen; the same tunnels may be reused and extended for years. Despite their intimidating size, males — the ones that hover aggressively in your face — have no stingers at all, while females sting only if physically restrained.",
+      "alt_facts": "The male eastern carpenter bee has made a career of hovering directly in people's faces with tremendous confidence despite being completely unarmed, which is either very brave or a fundamental misunderstanding of the situation. The female, who can actually sting, drills perfect circles in wood and finds the whole performance embarrassing.",
+      "has_source": true
+    },
+    "paper-wasp": {
+      "facts": "Paper wasps build their iconic open-celled, umbrella-shaped nests from wood fibers they chew into a gray papery pulp — each hexagonal cell housing a single larva fed on chewed caterpillars and other insects. Unlike yellowjackets or hornets, paper wasp nests are not enclosed in an outer envelope, and colonies are relatively small, rarely exceeding a few dozen individuals. They are important predators of garden caterpillars and generally non-aggressive unless their nest is directly disturbed.",
+      "alt_facts": "The paper wasp invented the hexagon independently and uses it to raise children in open rooms it has no intention of finishing — no roof, no insulation, full exposure to inspection, no apologies. It hunts caterpillars to feed its family, which is both ecologically useful and something the caterpillars did not vote for.",
+      "has_source": true
+    },
+    "hover-fly": {
+      "facts": "Hover flies are masters of aerial stillness, able to hold a fixed position in midair with wingbeats so fast they become invisible — then vanish and reappear feet away in an instant. Many species are bee or wasp mimics, wearing yellow-and-black stripes despite being completely harmless, a strategy called Batesian mimicry. Adults feed on nectar and pollen and are significant pollinators, while larvae of many species eat aphids, making hover flies doubly useful in the garden.",
+      "alt_facts": "The hover fly dresses as a wasp with the full knowledge that it has no venom and a great deal of confidence. It hangs in the air doing nothing, perfectly, for longer than seems reasonable, and then leaves. Its children eat aphids, which it regards as a sensible division of family labor.",
+      "has_source": true
+    },
+    "bald-faced-hornet": {
+      "facts": "The bald-faced hornet is actually a yellowjacket, not a true hornet — the only North American member of its genus, distinguished by its white-and-black face. Its paper nests, built from chewed wood pulp, can reach the size of a basketball or larger by late summer, housing hundreds of workers. It is an aggressive defender of its nest and can sting repeatedly, but is an effective predator of caterpillars, flies, and other insects when foraging away from home.",
+      "alt_facts": "The bald-faced hornet builds a gray paper globe the size of a sports equipment malfunction and fills it with opinions about proximity. It has a white face it wears like a mask at a party it is also hosting and also catering, exclusively with things it has caught.",
+      "has_source": true
+    },
+    "mud-dauber-wasp": {
+      "facts": "Mud dauber wasps are solitary wasps that construct distinctive tubular nests from wet mud, provisioning each cell with paralyzed spiders before sealing it with an egg inside. Unlike social wasps, mud daubers have no colony to defend and are remarkably docile — stings are extremely rare and occur only under direct handling. Several species specifically target black widow spiders, making them an unlikely but effective ally in the garden.",
+      "alt_facts": "The mud dauber wasp builds an apartment out of wet dirt, stuffs each room with a paralyzed spider it has personally evaluated, lays one egg, seals the door, and considers itself an excellent parent. It does this alone, with no help, and has no interest in stinging anyone about it.",
+      "has_source": true
+    },
+    "great-golden-digger-wasp": {
+      "facts": "The great golden digger wasp is a large, striking solitary wasp with a golden-orange abdomen and black-and-gold markings, often seen nectaring conspicuously on flowers in late summer. Females excavate burrows in sandy soil and stock them with paralyzed katydids and crickets, each one carefully stung into immobility and dragged back to provision an egg. Despite their size, great golden digger wasps are gentle and rarely sting; males cannot sting at all.",
+      "alt_facts": "The great golden digger wasp is enormous, festively colored, and drags crickets three times its own body weight across the yard with the focused energy of someone who has made a list and intends to complete it. It visits flowers with the same intensity it brings to everything, which is considerable, and it cannot be talked out of any of this.",
+      "has_source": true
+    },
+    "leafcutter-bee": {
+      "facts": "Leafcutter bees cut precise semicircular pieces from leaves and petals — not to eat, but to line the cylindrical nest cells where they provision each egg with a ball of pollen and nectar. Unlike honeybees, they are solitary: every female is her own queen, her own worker, and her own architect. They are exceptionally efficient pollinators, often outperforming honeybees on crops like alfalfa and blueberries because they carry dry pollen loosely on their abdomens rather than packed tight in baskets.",
+      "alt_facts": "The leafcutter bee is a small upholsterer who has never once been asked her opinion and has decided to wallpaper every room anyway. She collects fabric samples from the garden's finest roses and carries them home in her arms, which she uses for everything because she has decided pockets are for other bees.",
+      "has_source": true
+    },
+    "garden-snail": {
+      "facts": "The garden snail carries its shell for life — the shell grows with it, added to in rings like a tree, and is made largely of calcium the snail extracts from soil and stone. A snail moves on a single muscular foot, gliding on a self-secreted mucus that reduces friction so effectively the snail can slide across a razor's edge without injury. They are hermaphrodites, each individual carrying both reproductive systems, though they still seek a partner to mate.",
+      "alt_facts": "The garden snail is a philosopher who has committed fully to the idea that speed is a failure of imagination. It carries its house everywhere because it learned long ago that landlords are unreliable, and leaves a silver signature across every stone it passes — a memoir no one asked for and no one can stop.",
+      "has_source": true
+    },
+    "american-marten": {
+      "facts": "The American marten is a small, agile mustelid of northern and montane forests, closely associated with old-growth stands of spruce and fir where fallen logs and dense canopy provide both prey and refuge from predators. It hunts voles, squirrels, and birds with quick, bounding efficiency and caches food in winter. Trapping pressure and habitat loss eliminated martens from most of New England and the mid-Atlantic by the early twentieth century, though reintroduction efforts have returned small populations to some of their former range.",
+      "alt_facts": "The marten is a footnote that grew legs and went back into the woods to see if anyone would notice. It moves through old forest like a rumor — quick, brown, and gone before the sentence is finished — and it has been doing this since before your grandfather's grandfather thought to look.",
+      "has_source": true
+    },
+    "eastern-wolf": {
+      "facts": "The eastern wolf — sometimes called the Algonquin wolf — was a distinct canid of the northeastern forests, likely a close relative of the red wolf rather than a simple variant of the gray wolf. It was smaller than the gray wolf and appears to have specialized in white-tailed deer. Relentless persecution eliminated it from the contiguous United States, and even in Canada its range has collapsed to a few protected pockets around Algonquin Provincial Park, where hybridization with coyotes clouds the edges of what it was.",
+      "alt_facts": "The eastern wolf howled for so long into forests that kept getting smaller that the forests eventually forgot to howl back. It left behind a shape in the dark between the trees — not quite wolf, not quite memory — that the deer still seem to remember on cold nights, even now.",
+      "has_source": true
+    },
+    "passenger-pigeon": {
+      "facts": "The passenger pigeon was once the most numerous bird in North America, with flocks estimated in the billions that darkened the sky for hours and broke tree branches under their collective weight when they roosted. They were hunted commercially with industrial ferocity in the nineteenth century — netted, shot, and shipped to city markets by the barrel — and the last individual, a female named Martha, died at the Cincinnati Zoo on September 1, 1914. A species that had seemed as permanent as the sky itself was gone in a single human lifetime.",
+      "alt_facts": "The passenger pigeon was the sky's way of showing off — a billion birds moving as one dark river overhead, blotting the sun for the pure theater of it. Now there is only the one September afternoon, quiet, in Cincinnati, which the sky has never quite gotten over.",
+      "has_source": true
+    },
+    "heath-hen": {
+      "facts": "The heath hen was a subspecies of the greater prairie-chicken that once ranged across the coastal heathlands and scrub oak barrens of the eastern seaboard from New England to Virginia. Hunting and habitat loss confined the last population to Martha's Vineyard, where a 1916 brush fire and a brutal winter nearly finished them; the last individual was seen on March 11, 1932. Conservation efforts for the heath hen were among the earliest serious attempts at saving a North American bird from extinction — and they failed, by a margin too narrow to forget.",
+      "alt_facts": "The heath hen stayed on its island long after the island stopped being enough, as if stubbornness alone might negotiate with arithmetic. The last one walked the scrub oak barrens for years after it should have been impossible, until one morning it decided that was enough — and it was.",
+      "has_source": true
+    },
+    "eastern-wild-turkey-ghost": {
+      "facts": "",
+      "alt_facts": "The eastern wild turkey ghost is not extinct — it is simply offended and has gone translucent about it. It haunts the edge of the wood line at dusk, dragging its iridescent tail through the goldenrod, leaving three-toed prints in the frost that stop, inexplicably, in the middle of a field. Local tradition holds that if you hear gobbling from a direction where no turkey could possibly be, you owe it an apology.",
+      "has_source": false
+    },
+    "eastern-elk": {
+      "facts": "The eastern elk — also called the wapiti of the eastern forests — was a large subspecies that ranged across the deciduous woodlands of the eastern United States and southern Canada before European settlement. They were hunted to extinction in the eastern states by the mid-1800s, the last confirmed individuals in Pennsylvania gone by around 1867. The elk found in Pennsylvania today are descended from Rocky Mountain elk reintroduced in the early twentieth century — a stand-in for something that can no longer stand for itself.",
+      "alt_facts": "The eastern elk was the forest's largest opinion — a thousand pounds of antler and intention moving through the hardwoods like a sentence that takes all day to finish. The woods remember the weight of it in the way old trails still run deeper than anything alive now has any reason to have made.",
+      "has_source": true
+    },
+    "woodland-caribou": {
+      "facts": "Woodland caribou were the only member of the deer family in which both sexes grow antlers — an adaptation thought to help females compete for feeding craters in snow. They ranged through the boreal forests of New England and the Great Lakes region but were extirpated from the contiguous United States by the early twentieth century through a combination of hunting, habitat loss, and the expansion of white-tailed deer, which carry a brain worm fatal to caribou. A few individuals still occasionally cross the border from Canada into Maine, where they are met with the particular attention reserved for things that have no business still existing.",
+      "alt_facts": "The woodland caribou wore its antlers like an overcommitment — both sexes, all winter, through the snow — and moved through the northern forest as if it had somewhere to be that turned out not to be here anymore. It left behind its trails, which the moose use now without acknowledgment.",
+      "has_source": true
+    },
+    "wild-atlantic-salmon": {
+      "facts": "Wild Atlantic salmon once filled the rivers of New England in such numbers that colonial-era accounts describe servants petitioning to be fed salmon no more than three times a week. They navigate thousands of miles of open ocean and return — using magnetic fields and the scent memory of their birth river — to spawn in the exact tributary where they hatched. Dams, pollution, and overfishing collapsed populations throughout their southern range; the Connecticut River's salmon are functionally extinct as a self-sustaining run, and the few remaining wild fish in US rivers cling on with heavy intervention.",
+      "alt_facts": "The wild Atlantic salmon memorizes the smell of home as a fingerling and carries that memory across the entire ocean and back, which is either the most romantic thing in the natural world or a demonstration of what happens when you refuse to let anything go. It leaps waterfalls on the way home because of course it does.",
+      "has_source": true
+    },
+    "sea-mink": {
+      "facts": "The sea mink was the largest mink ever known, native to the rocky coasts of the Gulf of Maine and Maritime Canada, where it hunted fish and crustaceans among the intertidal ledges. It was larger and reportedly more aggressive than the American mink and had a distinctly reddish, coarser fur that made it a target for the pelt trade. It was hunted to extinction sometime in the late nineteenth century — the exact date is unknown because it was never formally described by science before it disappeared; what we know of it comes almost entirely from bones in Indigenous shell middens and the recollections of trappers.",
+      "alt_facts": "The sea mink was big, red, and entirely unimpressed by the fact that no naturalist ever got around to writing it down before it was gone. It is the only animal in the region that managed to go extinct without ever officially existing, which it would have found irritating if it had been consulted.",
+      "has_source": true
+    },
+    "great-auk": {
+      "facts": "The great auk was a large, flightless seabird of the North Atlantic — the original 'penguin,' a name later applied to the unrelated southern birds by sailors who recognized the silhouette. It was an extraordinary diver, propelling itself underwater with its wings to catch fish at depth, but its inability to fly and its habit of nesting in dense, accessible colonies made it catastrophically vulnerable to human hunters. The last known pair was killed on Eldey Island, Iceland, on June 3, 1844 — their egg crushed in the process — by collectors working on behalf of a museum that wanted a specimen before there were no more specimens to have.",
+      "alt_facts": "The great auk decided that flight was unnecessary and was correct about everything except the part where that mattered. It stood upright on North Atlantic rocks for millennia, diving deeper than seemed reasonable and returning with fish, until the day a museum decided it needed one more than the ocean did.",
+      "has_source": true
+    },
+    "labrador-duck": {
+      "facts": "The Labrador duck holds the distinction of being the first North American bird to go extinct after the United States was founded, vanishing sometime around 1875 — and it did so before anyone fully understood where it bred, what it ate, or why it was disappearing. Its bill was unusual for a duck, soft and expanded at the tip in a way that suggested a specialized diet, possibly shellfish in coastal estuaries, but no one documented its nesting grounds before it was gone. Only fifty-five museum specimens exist, which is nearly everything we know of it.",
+      "alt_facts": "The Labrador duck left before anyone thought to ask it any questions, which is either deeply rude or deeply wise depending on your opinion of questions. Fifty-five museums keep a piece of it under glass, and it tells them nothing, which is exactly as much as it told anyone while it was alive.",
+      "has_source": true
+    },
+    "eskimo-curlew": {
+      "facts": "The Eskimo curlew was a small shorebird that once migrated in enormous flocks from its Arctic breeding grounds down through the Great Plains and on to the pampas of South America — a journey of thousands of miles, made twice a year. Hunters shot them by the wagonload during migration, and the conversion of prairie to agriculture eliminated the berry-rich stopover habitat the birds depended on to refuel. The last widely accepted sighting was in 1963; a handful of subsequent reports remain unconfirmed, and the species is almost certainly gone, though it has never been formally declared extinct.",
+      "alt_facts": "The Eskimo curlew flew from one end of the hemisphere to the other twice a year and did it in flocks so thick they were called a 'dough bird' because you could shape the flock with your hands — which is the kind of thing someone said who had never considered what would happen if the hands kept reaching. It may or may not still be out there. The paperwork hasn't decided.",
+      "has_source": true
+    },
+    "carolina-parakeet": {
+      "facts": "The Carolina parakeet was the only parrot native to the eastern United States, a bright-plumed, noisy, sociable bird that ranged from the Great Lakes to the Gulf Coast before its population collapsed in the nineteenth century. It was shot relentlessly — as an agricultural pest, for its feathers, and simply because flocks of parrots were irresistible targets — and its social nature worked against it: flocks would circle back over fallen companions, making them easy to shoot in waves. The last known individual, a male named Incas, died at the Cincinnati Zoo on February 21, 1918, in the same cage that had held the last passenger pigeon four years earlier.",
+      "alt_facts": "The Carolina parakeet was a primary-color argument that the eastern forest was in fact a jungle, and it made this argument loudly, in flocks, at every possible opportunity. When one fell the rest came back to say something about it, which was loyal and terrible and very, very parakeet.",
+      "has_source": true
+    },
+    "eastern-cougar": {
+      "facts": "The eastern cougar was declared officially extinct by the U.S. Fish and Wildlife Service in 2011, though debate persists about whether it was ever truly a distinct subspecies or simply the westernmost overlap of the mountain lion's range. Cougars were systematically hunted out of the eastern United States by the late 1800s; the last confirmed resident eastern population survived in Florida as the Florida panther. What keeps the eastern cougar alive as a concept is the steady trickle of sightings across New England and the mid-Atlantic — most attributable to dispersing western mountain lions — and the stubborn human sense that something big and quiet is still moving through the old woods.",
+      "alt_facts": "The eastern cougar is officially extinct, which it treats as a bureaucratic technicality. Hunters, hikers, and people driving backroads at dusk keep seeing something large and tawny that shouldn't be there, which the cougar finds gratifying. It has not returned anyone's calls.",
+      "has_source": true
+    },
+    "melanistic-bobcat": {
+      "facts": "The bobcat is the most widespread wild cat in North America and lives across a broad range of habitats, from boreal forests to desert scrub. Melanism — the genetic condition producing an all-black or very dark coat — occurs in several wild cat species but has never been confirmed by specimen or photograph in North American bobcats, despite persistent reports from hunters and trackers in the eastern states. Whether melanistic bobcats exist as rare individuals or whether the sightings reflect misidentification of other dark animals remains genuinely unresolved.",
+      "alt_facts": "The melanistic bobcat is either a rare genetic marvel or the bobcat's greatest act of performance art — it shows up in enough convincing stories to be taken seriously and in enough unverifiable accounts to remain deniable. Black cats have always known how to work a room.",
+      "has_source": true
+    },
+    "wolverine": {
+      "facts": "The wolverine is the largest terrestrial mustelid, built like a small bear and famously capable of driving wolves and mountain lions from their kills despite weighing no more than a large domestic dog. It requires vast, remote territories — a single animal may range over hundreds of square miles — and is highly dependent on persistent spring snowpack for denning. Wolverines were extirpated from the contiguous United States through the twentieth century but have been slowly recolonizing parts of the northern Rockies; occasional confirmed sightings in the Great Lakes region and, rarely, New England suggest that the edge of their range may still brush the Northeast.",
+      "alt_facts": "The wolverine is pound-for-pound the most aggressive argument in the forest, and it knows it. Every few years one turns up somewhere in the Northeast where wolverines have no business being, looks around at whatever is there, decides it's not impressed, and leaves — which is exactly what a wolverine would do.",
+      "has_source": true
+    },
+    "white-squirrel": {
+      "facts": "White squirrels — leucistic or truly albino gray squirrels — occur as rare natural variants throughout the gray squirrel's range, but several towns in the eastern United States have established colonies where the white form has become locally common through a combination of genetic drift and, in some cases, active protection from hunting. Leucistic individuals lack most pigment but retain dark eyes, while true albinos have pink eyes and often suffer from vision and other health problems. In areas without heavy predation pressure, the white coat's conspicuousness becomes less of a liability, and the population can tip toward pale.",
+      "alt_facts": "The white squirrel is a gray squirrel that had a thought and hasn't been the same since. In certain towns it has become so common that it is the normal one, and the gray squirrels are the ones people stop to photograph, which the white squirrel finds entirely appropriate.",
+      "has_source": true
+    },
+    "lake-monster-champ": {
+      "facts": "",
+      "alt_facts": "Champ has lived in Lake Champlain since before Vermont and New York agreed on where the lake's edges were, which it finds irrelevant. It surfaces occasionally — long neck, dark back, the specific shape of something that shouldn't be there — and then it goes back down, because it has made its point. Both states have passed resolutions protecting it, which Champ acknowledges by continuing to exist on its own terms.",
+      "has_source": false
+    },
+    "pukwudgie": {
+      "facts": "",
+      "alt_facts": "The pukwudgie is a small, grey-skinned being of Wampanoag tradition — roughly human-shaped but its own kind entirely — with a deep and well-documented grievance against being bothered. It is said to appear in the Bridgewater Triangle and along the old paths of southeastern Massachusetts, usually to travelers who would have been better served by staying home. It can appear and disappear at will, which it exercises freely, and it has no interest in explaining itself.",
+      "has_source": false
+    },
+    "dover-demon": {
+      "facts": "",
+      "alt_facts": "The Dover Demon appeared on three consecutive nights in April 1977 in Dover, Massachusetts — pale, large-eyed, moving along a stone wall with its long fingers trailing — and then never again, which suggests it had somewhere to be and got there. Four teenagers saw it independently, drew roughly the same thing, and agreed on the detail no one plans for: it looked back.",
+      "has_source": false
+    },
+    "glawackus": {
+      "facts": "",
+      "alt_facts": "The glawackus terrorized Glastonbury, Connecticut in January 1939 — a large, dark, cat-like creature that screamed in the night and left tracks in the snow that the newspaper reported with the seriousness reserved for things that cannot be explained by noon. Hunters went out. They found nothing. The glawackus, for its part, never clarified what it was, where it came from, or where it went, and Connecticut has had to live with that.",
+      "has_source": false
+    },
+    "gloucester-sea-serpent": {
+      "facts": "",
+      "alt_facts": "The Gloucester sea serpent has been reported in Massachusetts Bay since at least 1638, which means it has outlasted most of the institutions that have tried to debunk it. It is described as enormously long, dark, and possessed of a series of humps — like a string of barrels, said the fishermen, who are not given to exaggeration about the sea. The Linnaean Society of New England commissioned a formal investigation in 1817 and concluded something was out there, then said no more about it, which is its own kind of answer.",
+      "has_source": false
+    },
+    "pioneer-valley-visitor": {
+      "facts": "",
+      "alt_facts": "The Pioneer Valley Visitor does not have an agreed-upon shape, which it considers a feature. It has been reported moving through the tobacco fields and river bottomlands of the Connecticut River Valley as a large, dark, shambling thing — sometimes near Northampton, sometimes near Deerfield, always at dusk, always retreating before anyone can be sure. Local naturalists note that the valley's geography funnels wildlife unexpectedly, but local naturalists were also not the ones who saw it.",
+      "has_source": false
+    },
+    "memphre": {
+      "facts": "",
+      "alt_facts": "Memphre lives in Lake Memphremagog, which straddles the Vermont-Quebec border, and has therefore never been required to declare a country of residence. It has been reported since at least the early 1800s — long-necked, dark, surfacing quietly near the middle of the lake where the water goes very deep very fast. In 1996 a local diver registered it with the International Society of Cryptozoology, giving Memphre the distinction of being perhaps the only lake monster with a file.",
+      "has_source": false
+    }
+  }
+}

@@ -5,6 +5,7 @@ import { P } from '../lib/constants.js'
 import { formatQty } from '../lib/format.js'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
+import ProjectOptions from '../components/ProjectOptions.jsx'
 
 // ---- Photo Library ----
 // Browse all photos, upload standalone photos (event_id = null),
@@ -210,7 +211,7 @@ export default function PhotoLibrary() {
                   style={selectStyle}
                 >
                   <option value="">— Select project —</option>
-                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  <ProjectOptions projects={projects} />
                 </select>
               </div>
 
@@ -324,7 +325,7 @@ export default function PhotoLibrary() {
             }}
           >
             <option value="">Filter by project…</option>
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            <ProjectOptions projects={projects} />
           </select>
         </div>
 
@@ -485,7 +486,7 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
                   style={selectStyle}
                 >
                   <option value="">— None —</option>
-                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  <ProjectOptions projects={projects} />
                 </select>
               </div>
 
