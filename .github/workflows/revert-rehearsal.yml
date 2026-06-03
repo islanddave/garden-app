@@ -88,7 +88,9 @@ jobs:
           } >> "$GITHUB_ENV"
           case "$MODE" in
             dump_path) echo "FORCE_DUMP_PATH=1" >> "$GITHUB_ENV" ;;
-            abort) echo "FORCE_ABORT=1" >> "$GITHUB_ENV" ;;
+            # abort also forces the dump path so the post-checkpoint failure is injected
+            # AFTER the already-proven dump+restore checkpoint, isolating rollback as the SUT.
+            abort) { echo "FORCE_ABORT=1"; echo "FORCE_DUMP_PATH=1"; } >> "$GITHUB_ENV" ;;
             fast_path) : ;;
             *) echo "::error::unknown MODE=$MODE"; exit 1 ;;
           esac
@@ -131,7 +133,21 @@ jobs:
           CF_DIST: E3FAJTXAORQYDT
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
-          python3 scripts/revert-to.py
+          if [ "${FORCE_ABORT:-}" = "1" ]; then
+            # Abort rehearsal: the script is EXPECTED to exit 1 after rolling back.
+            # PASS = exit 1 AND the rollback marker present; anything else FAILS.
+            set +e
+            python3 scripts/revert-to.py 2>&1 | tee /tmp/revert-out.txt
+            rc=${PIPESTATUS[0]}
+            set -e
+            if [ "$rc" = "1" ] && grep -q "rolled back to pre-revert snap" /tmp/revert-out.txt; then
+              echo "ABORT REHEARSAL PASS: post-checkpoint failure rolled back as designed (rc=1 + marker)."
+            else
+              echo "::error::abort rehearsal did NOT roll back as expected (rc=$rc)"; exit 1
+            fi
+          else
+            python3 scripts/revert-to.py
+          fi
 
       - name: Teardown rehearsal artifacts
         if: always()
