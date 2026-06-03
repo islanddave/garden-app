@@ -41,6 +41,7 @@ class FakeRequests:
     def __init__(self):
         self.routes = []
         self.calls = []
+        self.last_json = None
 
     def add(self, method, substr, resp):
         self.routes.append((method.upper(), substr, resp))
@@ -57,10 +58,12 @@ class FakeRequests:
 
     def post(self, url, **k):
         self.calls.append(("POST", url))
+        self.last_json = k.get("json")
         return self._match("POST", url)
 
     def patch(self, url, **k):
         self.calls.append(("PATCH", url))
+        self.last_json = k.get("json")
         return self._match("PATCH", url)
 
     def delete(self, url, **k):
@@ -268,6 +271,9 @@ def test_neon_restore_prod_calls_prod_branch(monkeypatch):
     monkeypatch.setattr(rt, "requests", fr)
     rt.neon_restore_prod_from(cfg, "br-source", "0/ABC")
     assert "br-delicate-sea-amum92c2/restore" in seen["url"]
+    # U2: preserve_under_name is mandatory when the target branch has children
+    assert fr.last_json.get("source_branch_id") == "br-source"
+    assert fr.last_json.get("preserve_under_name", "").startswith("prerestore-")
 
 
 # --- step 4: code + lambda ---------------------------------------------------
