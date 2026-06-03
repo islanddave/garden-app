@@ -1,1 +1,1 @@
-rehearsal run 5 @ 2026-06-03 (stable MAIN_SHA; test PutObject)
+rehearsal run 6 @ 2026-06-03 (owner PAT for tag)
