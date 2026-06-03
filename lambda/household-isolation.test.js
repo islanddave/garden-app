@@ -21,6 +21,7 @@ const IN_SCOPE = [
   'photos/index.js',
   'dashboard/handlers.js',
   'locations/index.js',
+  'critter/index.js', // shared critter stickerbook is household-scoped (created_by = ANY(householdIds))
 ];
 
 // Out-of-scope: must NOT import householdScope.

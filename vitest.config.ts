@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, configDefaults } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
@@ -7,6 +7,10 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/__tests__/setup.ts'],
+    // Integration tests (tests/integration/**) run in the integration-tests workflow via
+    // vitest.integration.config.ts (real Neon driver + DB). Exclude them from the unit run
+    // so `npm test` doesn't try to resolve @neondatabase/serverless.
+    exclude: [...configDefaults.exclude, 'tests/integration/**'],
     // Stub VITE_ env vars for tests — real values not needed in unit tests
     env: {
       VITE_CLERK_PUBLISHABLE_KEY: 'pk_test_unit_test_placeholder',

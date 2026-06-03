@@ -20,7 +20,7 @@ describe('ProjectOptions', () => {
     const byId = Object.fromEntries(ProjectOptions({ projects: P }).map(e => [e.props.value, e]))
     expect(txt(byId['c1'])).toBe('Fruiting Plants')
     expect(txt(byId['p1'])).toContain('↳ Peppers')
-    expect(txt(byId['p1']).startsWith(' ')).toBe(true)
+    expect(txt(byId['p1']).startsWith(' ')).toBe(true)  // <option> indent uses non-breaking space (regular spaces collapse in dropdowns)
   })
   it('orders roots alphabetically with children grouped+sorted under their parent', () => {
     expect(ProjectOptions({ projects: P }).map(e => e.props.value)).toEqual(['a1', 'c1', 'p1', 'p2'])

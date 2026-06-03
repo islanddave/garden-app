@@ -1,3 +1,4 @@
+import React from 'react'
 import { buildDisplayList } from '../lib/projectTree.js'
 
 // FIX-4: shared grouped project <option> list. Single source of truth for every project

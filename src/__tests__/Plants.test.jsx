@@ -165,9 +165,9 @@ describe('Plants — initial load', () => {
 describe('Plants — add new plant', () => {
   it('opens add form when "+ New Plant" clicked', async () => {
     primeMountFetches()
+    searchParamsRef.current = new URLSearchParams('add=1')  // add form now opens via FAB deep-link (?add=1), not a removed +New Plant button
     render(<Plants />)
-    await waitFor(() => screen.getByText(/No plantings yet/))
-    fireEvent.click(screen.getByText(/\+ New Plant/))
+    await waitFor(() => screen.getByTestId('variety-picker'))
     // Form header (div) AND submit button (button) both contain "Add plant" — assert both exist.
     expect(screen.getAllByText(/Add plant/i).length).toBeGreaterThan(0)
     expect(screen.getByTestId('variety-picker')).toBeDefined()
@@ -175,10 +175,10 @@ describe('Plants — add new plant', () => {
 
   it('submits with variety_id and dual-write variety text when variety picked', async () => {
     primeMountFetches()
+    searchParamsRef.current = new URLSearchParams('add=1')
     render(<Plants />)
     await waitFor(() => screen.getByText(/No plantings yet/))
 
-    fireEvent.click(screen.getByText(/\+ New Plant/))
     fireEvent.change(screen.getByLabelText(/Name \*/i), { target: { value: 'New Plant' } })
     fireEvent.click(screen.getByTestId('vp-pick-black-krim'))
 
@@ -208,10 +208,10 @@ describe('Plants — add new plant', () => {
 
   it('submits with variety_id=null when no variety picked', async () => {
     primeMountFetches()
+    searchParamsRef.current = new URLSearchParams('add=1')
     render(<Plants />)
     await waitFor(() => screen.getByText(/No plantings yet/))
 
-    fireEvent.click(screen.getByText(/\+ New Plant/))
     fireEvent.change(screen.getByLabelText(/Name \*/i), { target: { value: 'Plain Plant' } })
 
     fetchSpy.mockResolvedValueOnce({ id: 'plant-new', name: 'Plain Plant', project_id: 'proj-1' })

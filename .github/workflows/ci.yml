@@ -6,6 +6,8 @@ name: CI — Build and Unit Tests
 # to avoid double-firing once enhanced branch protection lands on main/staging.
 
 on:
+  push:
+    branches: [dev]
   pull_request:
     branches: [dev, staging, main]
 
@@ -59,3 +61,4 @@ jobs:
         run: npm test
         # vitest exits non-zero if coverage thresholds (in vitest.config.ts) not met.
         # Path A baseline: thresholds at 0%; schedule ratchets up per coverage-ratchet.json.
+

@@ -2,8 +2,12 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, waitFor, act } from '@testing-library/react'
 
+// getToken must be STABLE across renders (real Clerk memoizes it). A fresh vi.fn() per
+// render would make the hook's reload() callback change every render -> useEffect reloads
+// forever -> loading never settles. Hoist a single stable mock.
+const { getTokenMock } = vi.hoisted(() => ({ getTokenMock: vi.fn().mockResolvedValue('test-token') }))
 vi.mock('@clerk/react', () => ({
-  useAuth: () => ({ getToken: vi.fn().mockResolvedValue('test-token') }),
+  useAuth: () => ({ getToken: getTokenMock }),
 }))
 
 vi.mock('../lib/critterClient.js', () => ({

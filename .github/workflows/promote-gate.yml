@@ -1,0 +1,53 @@
+name: promote-gate
+
+# Capability-gate promote (cutover spec V1.0, session ce88c0be). Minimal first cut — no snap yet (snap.py follows).
+# main is ruleset-protected with garden-bot (App 3951762) as the sole bypass actor; this workflow runs AS garden-bot.
+# environment: production pauses the whole job for Dave's approval BEFORE main is touched (gate bound to the push).
+# Promote = fast-forward main -> the exact dev SHA (no squash). CI is enforced here (required-checks on main only gate PRs).
+# Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dev_sha:
+        description: 'Exact dev HEAD SHA to promote (must equal current dev HEAD)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Mint garden-bot installation token
+        id: bot
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547  # v1
+        with:
+          app-id: ${{ secrets.GARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.GARDEN_BOT_PRIVATE_KEY }}
+
+      - name: Preflight and fast-forward main -> dev SHA
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          REPO: ${{ github.repository }}
+          DEV_SHA: ${{ inputs.dev_sha }}
+        run: |
+          set -euo pipefail
+          api() { curl -sS -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
+          DEV_HEAD=$(api "https://api.github.com/repos/$REPO/git/refs/heads/dev" | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])")
+          if [ "$DEV_HEAD" != "$DEV_SHA" ]; then
+            echo "::error::dev moved since dispatch ($DEV_HEAD != $DEV_SHA)"; exit 1
+          fi
+          CONC=$(api "https://api.github.com/repos/$REPO/commits/$DEV_SHA/check-runs" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((c['conclusion'] for c in d['check_runs'] if c['name']=='build-and-test'),'MISSING'))")
+          if [ "$CONC" != "success" ]; then
+            echo "::error::build-and-test on $DEV_SHA = $CONC (need success)"; exit 1
+          fi
+          CODE=$(curl -sS -o /tmp/ff.json -w "%{http_code}" -X PATCH -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" -d "{\"sha\":\"$DEV_SHA\",\"force\":false}" "https://api.github.com/repos/$REPO/git/refs/heads/main")
+          echo "FF main -> $CODE"
+          if [ "$CODE" != "200" ]; then
+            cat /tmp/ff.json; echo "::error::fast-forward of main failed ($CODE)"; exit 1
+          fi
+          echo "promoted main -> $DEV_SHA"
