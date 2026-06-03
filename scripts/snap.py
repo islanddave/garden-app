@@ -155,14 +155,12 @@ def s3_object_exists(s3, bucket, key):
             return False
         if code in ("403", "Forbidden", "AccessDenied"):
             # S3 returns 403 (not 404) for HeadObject on a MISSING key when the
-            # caller's s3:ListBucket is prefix-conditioned (the condition is not
-            # evaluated for a HEAD). Disambiguate via a prefix-scoped list, which
-            # the conditional ListBucket DOES authorize (key starts with an allowed
-            # snap-* prefix). Present in the listing => exists; absent => not exists.
-            resp = s3.list_objects_v2(Bucket=bucket, Prefix=key, MaxKeys=1)
-            for o in resp.get("Contents", []):
-                if o.get("Key") == key:
-                    return True
+            # caller lacks an effective s3:ListBucket. The snap role intentionally
+            # has only object-level Get/Put on snap-* keys (no bucket listing), so
+            # treat 403 here as "object absent". Fail-closed is preserved: writes
+            # (PutObject) raise their own errors, and self_verify re-checks after
+            # writing (an existing object HEADs 200 via GetObject), so a genuine
+            # permission gap still surfaces downstream rather than being masked.
             return False
         raise
 
