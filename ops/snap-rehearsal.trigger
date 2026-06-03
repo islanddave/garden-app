@@ -1,1 +1,1 @@
-rehearsal run 4 @ 2026-06-03 (s3 putobject + PutObjectRetention)
+rehearsal run 5 @ 2026-06-03 (stable MAIN_SHA; test PutObject)
