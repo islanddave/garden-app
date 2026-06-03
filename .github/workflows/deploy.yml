@@ -3,6 +3,12 @@ name: Build and Deploy — SPA
 on:
   push:
     branches: [main]
+  workflow_call:
+    inputs:
+      skip_version_bump:
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       skip_version_bump:
@@ -40,7 +46,7 @@ jobs:
           #   patch  — default; bug fixes, backend changes, CI, schema migrations, small UI tweaks
           #   minor  — include [minor] in PR title or merge commit for new user-facing features/surfaces
           #   major  — Dave sets package.json manually on dev before the PR; use skip_version_bump on dispatch
-          if [[ "${{ github.event.inputs.skip_version_bump }}" == "true" ]]; then
+          if [[ "${{ inputs.skip_version_bump }}" == "true" ]]; then
             echo "Version bump skipped (manual override — preserving package.json version)."
             exit 0
           fi
