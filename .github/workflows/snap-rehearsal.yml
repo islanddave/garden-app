@@ -24,7 +24,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_REPOSITORY: ${{ github.repository }}
-      MAIN_SHA: ${{ github.sha }}
+      MAIN_SHA: "31e8673032bcb142e3accf6ae96fd45bd1830429"
       SNAP_VERSION: v0.0.0
       NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
       NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
