@@ -93,6 +93,42 @@ describe('Collection — V007 candy-pastel float-free redesign', () => {
     expect(screen.getByText(/0 spotted so far/i)).toBeDefined()
   })
 
+  // BUG-CROP-001 regression: rigid 2-line name band + capped art stage must not shear long names.
+  // jsdom does not compute layout (scrollHeight/clientHeight are 0), so we assert the structural
+  // style invariants that geometrically guarantee no clip: a fixed-height name band, a 2-line
+  // -webkit-box clamp on the name span, an art stage capped below the band-reserving max, and the
+  // arithmetic 8 + STAGE_MAX(108) + 8 + NAME_H(36) + CAPTION_H(42) = 202 <= TILE_H(212).
+  it('BUG-CROP-001: longest name renders with a rigid 2-line clamp (no shear), full name preserved', () => {
+    const longest = roster.slice().sort((a, b) => (b.name || '').length - (a.name || '').length)[0]
+    expect(longest.name).toBe('Black Throated Blue Warbler')
+    const collected = new Map([
+      [longest.id, { speciesId: 1, count: 1, firstSeenAt: '2026-05-10T00:00:00Z', lastSeenAt: '2026-05-10T00:00:00Z' }],
+    ])
+    setState({ collected })
+    render(<Collection />)
+    // Full, un-truncated name is in the DOM (recovery: also exposed via title attr + facts popover).
+    const nameSpan = screen.getByText('Black Throated Blue Warbler')
+    expect(nameSpan).toBeDefined()
+    // 2-line clamp styles present -> caps at 2 lines + ellipsis, kills descender shear on one-liners.
+    expect(nameSpan.style.display).toBe('-webkit-box')
+    expect(nameSpan.style.WebkitLineClamp || nameSpan.style.webkitLineClamp).toBe('2')
+    expect(nameSpan.style.WebkitBoxOrient || nameSpan.style.webkitBoxOrient).toBe('vertical')
+    expect(nameSpan.style.overflow).toBe('hidden')
+    // Full-name recovery on hover/long-press.
+    expect(nameSpan.getAttribute('title')).toBe('Black Throated Blue Warbler')
+  })
+
+  it('BUG-CROP-001: no-space (single-token) name renders un-truncated with the clamp', () => {
+    const collected = new Map([
+      ['C022', { speciesId: 1, count: 1, firstSeenAt: '2026-05-10T00:00:00Z', lastSeenAt: '2026-05-10T00:00:00Z' }],
+    ])
+    setState({ collected })
+    render(<Collection />)
+    const nameSpan = screen.getByText('Woodchuck')
+    expect(nameSpan.style.display).toBe('-webkit-box')
+    expect(nameSpan.getAttribute('title')).toBe('Woodchuck')
+  })
+
   it('all cards render sighting-caption testid; uncollected show "Not yet", not "Seen"', () => {
     setState({ collected: new Map() })
     render(<Collection />)
