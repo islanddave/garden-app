@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
+import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { getStatusColors } from '../lib/status.js'
 import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
@@ -14,26 +15,6 @@ import { loadSortOrder, saveSortOrder, applyNameSort } from '../lib/projectTree.
 import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 
-const EVENT_ICONS = {
-  sowing:        '🌱',
-  seed_soak:     '💧',
-  germination:   '🌿',
-  thinning:      '✂️',
-  potting_up:    '🪴',
-  transplant:    '🔄',
-  hardening_off: '☀️',
-  watering:      '💧',
-  fertilizing:   '🧪',
-  pest_treatment:'🐛',
-  pruning:       '✂️',
-  cover:         '🏕️',
-  uncover:       '🌤️',
-  first_harvest: '🎉',
-  harvest:       '🧺',
-  observation:   '👁️',
-  photo:         '📷',
-  other:         '📝',
-}
 
 function todayLocal() {
   const d = new Date()
@@ -436,7 +417,7 @@ export default function ProjectDetail() {
           </div>
           {!eventsLoading && events.length > 0 && (
             <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 6 }}>
-              Last: {EVENT_ICONS[events[0].event_type] ?? '📝'} {events[0].event_type.replace(/_/g, ' ')} · {daysAgo(events[0].event_date)}
+              Last: {EVENT_TYPE_META[events[0].event_type]?.emoji ?? '📝'} {events[0].event_type.replace(/_/g, ' ')} · {daysAgo(events[0].event_date)}
             </div>
           )}
         </div>
@@ -819,7 +800,7 @@ export default function ProjectDetail() {
                 >
                   {[...EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
                     <option key={t} value={t}>
-                      {(EVENT_ICONS[t] ?? '📝') + ' ' + t.replace(/_/g, ' ')}
+                      {(EVENT_TYPE_META[t]?.emoji ?? '📝') + ' ' + t.replace(/_/g, ' ')}
                     </option>
                   ))}
                 </select>
@@ -1055,7 +1036,7 @@ function Fields({ project: p, locPath }) {
 }
 
 function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
-  const icon = EVENT_ICONS[ev.event_type] ?? '📝'
+  const icon = EVENT_TYPE_META[ev.event_type]?.emoji ?? '📝'
   const d = new Date(ev.event_date)
   const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 

@@ -2,18 +2,13 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { apiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 
 function formatDate(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
-const EVENT_ICONS = {
-  sowing:'🌱',seed_soak:'💧',germination:'🌿',thinning:'✂️',potting_up:'🪴',
-  transplant:'🔄',hardening_off:'☀️',watering:'💧',fertilizing:'🧪',pest_treatment:'🐛',
-  pruning:'✂️',cover:'🏕️',uncover:'🌤️',first_harvest:'🎉',harvest:'🧺',
-  observation:'👁️',photo:'📷',other:'📝',
-}
 
 export default function ProjectPublic() {
   const { slug } = useParams()
@@ -86,7 +81,7 @@ export default function ProjectPublic() {
 }
 
 function EventEntry({ event: ev, isLast }) {
-  const icon = EVENT_ICONS[ev.event_type] ?? '📝'
+  const icon = EVENT_TYPE_META[ev.event_type]?.emoji ?? '📝'
   return (
     <div style={{ display: 'flex', gap: 14, paddingBottom: isLast ? 0 : 20 }}>
       <div style={{ width: 36, height: 36, borderRadius: '50%', backgroundColor: P.white, border: `2px solid ${P.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', flexShrink: 0, position: 'relative', zIndex: 1 }}>{icon}</div>

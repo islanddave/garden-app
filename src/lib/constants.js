@@ -77,6 +77,32 @@ export const PROJECT_STATUS_MAP = {
   ended:      { label: 'Ended',      emoji: '◼'  },
 }
 
+// Plant lifecycle statuses — plants.status. Free-text in the DB as of 2026-06-04
+// (no CHECK constraint; a future DB-CHECK is gated on a SELECT DISTINCT audit +
+// backfill — see forms-consolidation-plan-V002 §3.2). Single source of truth for
+// the plant-status vocabulary; do NOT redefine inline (was inline in Plants.jsx).
+export const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']
+
+// Display mapping for plant statuses — { label, emoji }. Mirrors PROJECT_STATUS_MAP.
+// Colors live in status.js STATUS_COLORS (shared with project stages).
+export const PLANT_STATUS_MAP = {
+  seed:       { label: 'Seed',       emoji: '🌰' },
+  seedling:   { label: 'Seedling',   emoji: '🌱' },
+  vegetative: { label: 'Vegetative', emoji: '🌿' },
+  flowering:  { label: 'Flowering',  emoji: '🌸' },
+  fruiting:   { label: 'Fruiting',   emoji: '🍅' },
+  harvested:  { label: 'Harvested',  emoji: '✅' },
+  dormant:    { label: 'Dormant',    emoji: '💤' },
+  ended:      { label: 'Ended',      emoji: '⏹️' },
+  failed:     { label: 'Failed',     emoji: '✕' },
+}
+
+// Humanize any status value for display. Prefers the plant map, then the project
+// map, else returns the raw value (so an unknown status still renders, un-snaked).
+export function statusLabel(status) {
+  return PLANT_STATUS_MAP[status]?.label ?? PROJECT_STATUS_MAP[status]?.label ?? status
+}
+
 // Task priorities
 export const TASK_PRIORITIES = ['low', 'normal', 'high']
 

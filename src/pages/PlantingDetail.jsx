@@ -20,18 +20,12 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 
-const EVENT_ICONS = {
-  sowing: '🌱', seed_soak: '💧', germination: '🌿', thinning: '✂️',
-  potting_up: '🪴', transplant: '🔄', hardening_off: '☀️', watering: '💧',
-  fertilizing: '🧪', pest_treatment: '🐛', pruning: '✂️', cover: '🏕️',
-  uncover: '🌤️', first_harvest: '🎉', harvest: '🧺', observation: '👁️',
-  photo: '📷', other: '📝',
-}
 
 // Source-type → human label (mirror of the ProjectDetail Add-Planting select).
 const SOURCE_LABELS = {
@@ -272,7 +266,7 @@ export default function PlantingDetail() {
                   backgroundColor: P.cream, border: `1px solid ${P.border}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.95rem',
                 }}>
-                  {EVENT_ICONS[ev.event_type] ?? '📝'}
+                  {EVENT_TYPE_META[ev.event_type]?.emoji ?? '📝'}
                 </span>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.875rem' }}>

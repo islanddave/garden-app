@@ -2,17 +2,11 @@ import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES } from '../lib/constants.js'
+import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import SeverityBadge from '../components/SeverityBadge.jsx'
 
-const EVENT_ICONS = {
-  sowing: '🌱', seed_soak: '💧', germination: '🌿', thinning: '✂️',
-  potting_up: '🪴', transplant: '🔄', hardening_off: '☀️', watering: '💧',
-  fertilizing: '🧪', pest_treatment: '🐛', pruning: '✂️', cover: '🏕️',
-  uncover: '🌤️', first_harvest: '🎉', harvest: '🧺', observation: '👁️',
-  photo: '📷', other: '📝',
-}
 
 // Shared metadata field label map — mirrors EVENT_METADATA_FIELDS keys from EventNew
 const METADATA_LABELS = {
@@ -156,7 +150,7 @@ export default function EventDetail() {
   if (error && !event) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{error}</div></Shell>
   if (!event || !project) return null
 
-  const icon = EVENT_ICONS[event.event_type] ?? '📝'
+  const icon = EVENT_TYPE_META[event.event_type]?.emoji ?? '📝'
 
   return (
     <Shell>
@@ -204,7 +198,7 @@ export default function EventDetail() {
             >
               {[...EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
                 <option key={t} value={t}>
-                  {(EVENT_ICONS[t] ?? '📝') + ' ' + t.replace(/_/g, ' ')}
+                  {(EVENT_TYPE_META[t]?.emoji ?? '📝') + ' ' + t.replace(/_/g, ' ')}
                 </option>
               ))}
             </select>

@@ -6,7 +6,7 @@
 // Color comes from the shared getStatusColors() (single source of truth). Unknown statuses
 // fall through to a neutral glyph + the raw label, so a never-before-seen status still renders.
 import React from 'react'
-import { P } from '../lib/constants.js'
+import { P, statusLabel } from '../lib/constants.js'
 import { getStatusColors } from '../lib/status.js'
 
 // Lifecycle-stage glyphs. Covers plant statuses (seed…failed) and project stages that may
@@ -31,7 +31,7 @@ export default function PlantStatusBadge({ status, size = 'sm' }) {
   return (
     <span
       // aria-label folds the glyph out and reads just "Status: <label>" to AT.
-      aria-label={`Status: ${status}`}
+      aria-label={`Status: ${statusLabel(status)}`}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 5,
         fontSize, fontWeight: 600, padding: pad, borderRadius: 12,
@@ -40,7 +40,7 @@ export default function PlantStatusBadge({ status, size = 'sm' }) {
       }}
     >
       <span aria-hidden="true">{icon}</span>
-      <span>{status}</span>
+      <span>{statusLabel(status)}</span>
     </span>
   )
 }

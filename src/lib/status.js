@@ -25,6 +25,12 @@ export const STATUS_COLORS = {
   harvesting:{ bg: P.warn,  text: '#7a5c00', border: P.warnBorder },
   harvested: { bg: '#eee',  text: P.mid,     border: P.border },
   ended:     { bg: '#eee',  text: P.light,   border: P.border },
+  // ── Plant lifecycle statuses (V3-FORMSYS-001 §3.2 — were falling through to planning gold) ──
+  seed:       ACTIVE_STAGE,
+  seedling:   ACTIVE_STAGE,
+  vegetative: ACTIVE_STAGE,
+  dormant:    { bg: '#eee',  text: P.mid,         border: P.border },
+  failed:     { bg: P.alert, text: P.alertBorder, border: P.alertBorder },
 }
 
 export function getStatusColors(status) {

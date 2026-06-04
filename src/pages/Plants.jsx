@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { P } from '../lib/constants.js'
+import { P, PLANT_STATUSES, statusLabel } from '../lib/constants.js'
 import { getStatusColors } from '../lib/status.js'
 import { formatQty } from '../lib/format.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
@@ -14,7 +14,6 @@ import VarietyPicker from '../components/VarietyPicker.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 
-const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']
 
 function ErrBanner({ msg }) {
   return <div role="alert" style={{ padding: '10px 14px', backgroundColor: P.alert, color: P.terra, borderRadius: 8, fontSize: '0.85rem', marginBottom: 12 }}>{msg}</div>
@@ -307,7 +306,7 @@ export default function Plants() {
               <label htmlFor="plant-status" style={lbl}>Status</label>
               <select id="plant-status" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inp}>
                 <option value="">— none —</option>
-                {[...PLANT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{s}</option>)}
+                {[...PLANT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
               </select>
             </div>
             <div>
@@ -370,7 +369,7 @@ export default function Plants() {
                       backgroundColor: sc.bg, color: sc.text,
                       border: `1px solid ${sc.border}`,
                       padding: '2px 8px', borderRadius: 20,
-                    }}>{plant.status}</span>
+                    }}>{statusLabel(plant.status)}</span>
                   )
                 })()}
                 <FavoriteToggle entityType="plant" entityId={plant.id} />
@@ -455,7 +454,7 @@ export default function Plants() {
                   <label htmlFor="plant-edit-status" style={lbl}>Status</label>
                   <select id="plant-edit-status" value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))} style={inp}>
                     <option value="">— none —</option>
-                    {[...PLANT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{s}</option>)}
+                    {[...PLANT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
                   </select>
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
