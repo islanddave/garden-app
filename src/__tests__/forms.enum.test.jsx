@@ -12,7 +12,7 @@ describe('EnumSelect', () => {
   it('normalizes {value,label} | {v,label} | string and alphabetizes by label', () => {
     render(<EnumSelect value="" onChange={() => {}} enumValues={[{ value: 'z', label: 'Zucchini' }, { v: 'a', label: 'Apple' }, 'mango']} />)
     const opts = screen.getAllByRole('option').map(o => o.textContent)
-    expect(opts).toEqual(['Apple', 'Zucchini', 'mango'])  // alpha by label
+    expect(opts).toEqual(['Apple', 'mango', 'Zucchini'])  // locale-aware (case-insensitive) alpha by label
   })
   it('renders a placeholder option when given', () => {
     render(<EnumSelect value="" onChange={() => {}} placeholder="— pick —" enumValues={['x']} />)
