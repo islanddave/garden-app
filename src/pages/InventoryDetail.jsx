@@ -5,24 +5,11 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
+import { INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS, INVENTORY_STATUSES as STATUSES } from '../lib/inventoryEnums.js'
+import { EnumSelect } from '../components/forms'
 
-// ── Shared enums (mirror InventoryAdd) ───────────────────────────────────────
-const CATEGORIES = [
-  { v: 'seeds',                    label: 'Seeds',                 types: ['consumable'] },
-  { v: 'growing_media',            label: 'Growing media',         types: ['consumable'] },
-  { v: 'nutrients_and_amendments', label: 'Nutrients & amendments', types: ['consumable'] },
-  { v: 'pest_control',             label: 'Pest control',          types: ['consumable'] },
-  { v: 'containers',               label: 'Containers',            types: ['consumable', 'durable'] },
-  { v: 'lighting',                 label: 'Lighting',              types: ['durable'] },
-  { v: 'shelving',                 label: 'Shelving',              types: ['durable'] },
-  { v: 'climate_control',          label: 'Climate control',       types: ['durable'] },
-  { v: 'tools',                    label: 'Tools',                 types: ['durable'] },
-  { v: 'other',                    label: 'Other',                 types: ['consumable', 'durable'] },
-]
-
-const UNITS       = ['each', 'packet', 'oz', 'fl oz', 'lb', 'gal', 'qt', 'bag', 'roll', 'sheet', 'other']
-const CONDITIONS  = ['excellent', 'good', 'fair', 'poor']
-const STATUSES    = ['active', 'depleted', 'retired', 'missing']
+// Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
+// the former local duplicates here were removed (Lane D dedup).
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function InventoryDetail() {
@@ -271,26 +258,21 @@ export default function InventoryDetail() {
             </Field>
 
             <Field label="Category" error={errors.category}>
-              <select
+              <EnumSelect
                 value={form.category}
                 onChange={e => set('category', e.target.value)}
-                style={selectStyle(!!errors.category)}
-              >
-                <option value="">— Select —</option>
-                {visibleCats.map(c => (
-                  <option key={c.v} value={c.v}>{c.label}</option>
-                ))}
-              </select>
+                error={errors.category}
+                enumValues={visibleCats}
+                placeholder="— Select —"
+              />
             </Field>
 
             <Field label="Status">
-              <select
+              <EnumSelect
                 value={form.status}
                 onChange={e => set('status', e.target.value)}
-                style={selectStyle(false)}
-              >
-                {[...STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+                enumValues={STATUSES}
+              />
             </Field>
 
             {/* Consumable quantity */}
@@ -305,14 +287,12 @@ export default function InventoryDetail() {
                   />
                 </Field>
                 <Field label="Unit">
-                  <select
+                  <EnumSelect
                     value={form.unit}
                     onChange={e => set('unit', e.target.value)}
-                    style={selectStyle(false)}
-                  >
-                    <option value="">— Unit —</option>
-                    {[...UNITS].sort((a, b) => a.localeCompare(b)).map(u => <option key={u} value={u}>{u}</option>)}
-                  </select>
+                    enumValues={UNITS}
+                    placeholder="— Unit —"
+                  />
                 </Field>
               </div>
             )}
@@ -358,14 +338,12 @@ export default function InventoryDetail() {
             {!isConsumable && (
               <>
                 <Field label="Condition">
-                  <select
+                  <EnumSelect
                     value={form.condition}
                     onChange={e => set('condition', e.target.value)}
-                    style={selectStyle(false)}
-                  >
-                    <option value="">— Optional —</option>
-                    {[...CONDITIONS].sort((a, b) => a.localeCompare(b)).map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                    enumValues={CONDITIONS}
+                    placeholder="— Optional —"
+                  />
                 </Field>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <Field label="Brand">
@@ -616,13 +594,6 @@ const inputStyle = hasErr => ({
   border: `1px solid ${hasErr ? P.terra : P.border}`,
   borderRadius: 7, fontSize: '0.9rem',
   backgroundColor: P.white, boxSizing: 'border-box', fontFamily: 'inherit',
-})
-const selectStyle = hasErr => ({
-  ...inputStyle(hasErr),
-  appearance: 'none',
-  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23777' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
-  backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center',
-  paddingRight: 36, cursor: 'pointer',
 })
 const btn = (bg, disabled) => ({
   backgroundColor: disabled ? P.light : bg,
