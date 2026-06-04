@@ -14,6 +14,7 @@ import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { loadSortOrder, saveSortOrder, applyNameSort } from '../lib/projectTree.js'
 import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
+import { PlantForm } from '../components/forms'
 
 
 function todayLocal() {
@@ -101,7 +102,7 @@ export default function ProjectDetail() {
   // optional lifecycle/source/lineage fields. All NULL-tolerant server-side.
   // sown_at_approx toggles whether sown_at is treated as an exact date.
   const [plantForm,     setPlantForm]     = useState({
-    name: '', variety: null, quantity: '1', notes: '',
+    name: '', variety: null, quantity: '1', notes: '', status: '',
     sown_at: '', sown_at_approx: false,
     qty_initial: '',
     source_type: '', source_ref: '', source_generation: '',
@@ -187,6 +188,7 @@ export default function ProjectDetail() {
           variety_id: plantForm.variety?.id ?? null,
           quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
           notes:      plantForm.notes.trim()   || null,
+          status:     plantForm.status || null, // E1: project-create gains status; '' -> null == prior server default
           // V1.2a-4 S1: lifecycle/source/lineage extension. All optional.
           sown_at:           plantForm.sown_at         || null,
           sown_at_approx:    !!plantForm.sown_at_approx,
@@ -199,7 +201,7 @@ export default function ProjectDetail() {
       })
       setPlants(p => [...p, data])
       setPlantForm({
-        name: '', variety: null, quantity: '1', notes: '',
+        name: '', variety: null, quantity: '1', notes: '', status: '',
         sown_at: '', sown_at_approx: false,
         qty_initial: '',
         source_type: '', source_ref: '', source_generation: '',
@@ -548,114 +550,19 @@ export default function ProjectDetail() {
         </div>
 
         {showAddPlant && (
-          <form onSubmit={handleAddPlant} style={{ ...cardStyle, marginBottom: 16 }}>
-            {plantErr && <ErrBanner msg={plantErr} />}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
-              <FormRow label="Name *">
-                <input required value={plantForm.name}
-                  onChange={e => setPlantForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder='"Megatron Jalapeno" or "Serrano seedlings"'
-                  style={inputStyle} />
-              </FormRow>
-              <FormRow label="Quantity">
-                <input type="number" min="1" value={plantForm.quantity}
-                  onChange={e => setPlantForm(f => ({ ...f, quantity: e.target.value }))}
-                  style={inputStyle} />
-              </FormRow>
-            </div>
-            <FormRow label="Variety (optional)">
-              {/* BUG-02/03 (VARIETY-REF UI): VarietyPicker replaces free-text variety so the
-                  selection persists as variety_id (the plants Lambda read-strips legacy free-text).
-                  Mirrors the shipped Plants.jsx / InventoryAdd integration. */}
-              <VarietyPicker
-                value={plantForm.variety}
-                onChange={(variety) => setPlantForm(f => ({ ...f, variety }))}
-                placeholder="Search or create a variety…"
-              />
-            </FormRow>
-            <FormRow label="Notes (optional)">
-              <input value={plantForm.notes}
-                onChange={e => setPlantForm(f => ({ ...f, notes: e.target.value }))}
-                placeholder="Anything distinctive about this plant or group"
-                style={inputStyle} />
-            </FormRow>
-
-            {/* V1.2a-4 S1 (PROJ-RESCOPE / V102 §5.1 #4): grouped optional lifecycle / source / lineage fields. */}
-            <details data-testid="planting-details" style={{ marginBottom: 14 }}>
-              <summary style={{ cursor: 'pointer', fontSize: '0.85rem', color: P.mid, fontWeight: 600, padding: '6px 0' }}>
-                Planting details — optional
-              </summary>
-              <div style={{ paddingTop: 10 }}>
-                <FormRow label="Sown date (optional)">
-                  <input type="date" value={plantForm.sown_at}
-                    onChange={e => setPlantForm(f => ({ ...f, sown_at: e.target.value }))}
-                    style={inputStyle} />
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 6, fontSize: '0.78rem', color: P.mid, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={!!plantForm.sown_at_approx}
-                      onChange={e => setPlantForm(f => ({ ...f, sown_at_approx: e.target.checked }))}
-                      data-testid="sown-at-approx"
-                      style={{ width: 14, height: 14, cursor: 'pointer' }}
-                    />
-                    Approximate date
-                  </label>
-                </FormRow>
-
-                <FormRow label="Initial quantity">
-                  <input type="number" min="1" value={plantForm.qty_initial}
-                    onChange={e => setPlantForm(f => ({ ...f, qty_initial: e.target.value }))}
-                    placeholder="defaults to quantity above"
-                    style={inputStyle} />
-                </FormRow>
-
-                <FormRow label="Source">
-                  <select value={plantForm.source_type}
-                    onChange={e => setPlantForm(f => ({ ...f, source_type: e.target.value }))}
-                    style={inputStyle}>
-                    <option value="">— Not specified —</option>
-                    <option value="seed_packet">Seed packet</option>
-                    <option value="nursery_transplant">Bought as transplant</option>
-                    <option value="division">Divided from another plant</option>
-                    <option value="volunteer">Volunteer / self-sown</option>
-                    <option value="gift">Gift</option>
-                    <option value="saved_seed">Saved seed</option>
-                    <option value="unknown">Not sure</option>
-                  </select>
-                </FormRow>
-
-                <FormRow label="Source reference (optional)">
-                  <input value={plantForm.source_ref}
-                    onChange={e => setPlantForm(f => ({ ...f, source_ref: e.target.value }))}
-                    placeholder="e.g. Johnny's Lot 4421"
-                    style={inputStyle} />
-                </FormRow>
-
-                <FormRow label="Generation (optional)">
-                  <input value={plantForm.source_generation}
-                    onChange={e => setPlantForm(f => ({ ...f, source_generation: e.target.value }))}
-                    placeholder="e.g. F2, third gen saved"
-                    style={inputStyle} />
-                </FormRow>
-
-                <FormRow label="Lineage note (optional)">
-                  <textarea value={plantForm.lineage_note}
-                    onChange={e => setPlantForm(f => ({ ...f, lineage_note: e.target.value }))}
-                    placeholder="e.g. Dave's Glass Gem F4 selection"
-                    style={{ ...inputStyle, height: 52, resize: 'vertical' }} />
-                </FormRow>
-              </div>
-            </details>
-
-            <div style={{ display: 'flex', gap: 12, paddingTop: 14, borderTop: `1px solid ${P.border}` }}>
-              <button type="submit" disabled={addingPlant} style={primaryBtn(addingPlant)}>
-                {addingPlant ? 'Adding…' : 'Add planting'}
-              </button>
-              <button type="button" onClick={() => { setShowAddPlant(false); setPlantErr(null) }} style={ghostBtn}>
-                Cancel
-              </button>
-            </div>
-          </form>
+          <div style={{ ...cardStyle, marginBottom: 16 }}>
+            <PlantForm
+              value={plantForm}
+              onChange={patch => setPlantForm(f => ({ ...f, ...patch }))}
+              onSubmit={handleAddPlant}
+              submitting={addingPlant}
+              error={plantErr}
+              submitLabel="Add planting"
+              submittingLabel="Adding…"
+              onCancel={() => { setShowAddPlant(false); setPlantErr(null) }}
+              idPrefix="add-plant"
+            />
+          </div>
         )}
 
         {plantsLoading ? (

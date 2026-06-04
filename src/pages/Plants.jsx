@@ -10,10 +10,9 @@ import { P, statusLabel } from '../lib/constants.js'
 import { getStatusColors } from '../lib/status.js'
 import { formatQty } from '../lib/format.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
-import VarietyPicker from '../components/VarietyPicker.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
-import { StatusSelect } from '../components/forms'
+import { PlantForm } from '../components/forms'
 
 
 function ErrBanner({ msg }) {
@@ -32,7 +31,7 @@ export default function Plants() {
   const [showAdd,    setShowAdd]    = useState(false)
   // form.variety holds the full variety object (or null); form.varietyText is the legacy flat string
   // captured at submission time for dual-read compat.
-  const [form,       setForm]       = useState({ name: '', genus: '', species: '', variety: null, quantity: '1', notes: '', status: '', project_id: '' })
+  const [form,       setForm]       = useState({ name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '' })
   const [saving,     setSaving]     = useState(false)
   const [err,        setErr]        = useState(null)
   const [expandedId, setExpandedId] = useState(null)
@@ -141,13 +140,19 @@ export default function Plants() {
     const payload = {
       project_id: form.project_id,
       name:       form.name.trim(),
-      genus:      form.genus.trim()    || form.variety?.genus   || null,
-      species:    form.species.trim()  || form.variety?.species || null,
       variety:    varietyText,
       variety_id: form.variety?.id ?? null,
       quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
       notes:      form.notes.trim()    || null,
       status:     form.status          || null,
+      // E1: Plants-create gains the planting-details union (blank -> server default/null; source '' -> null to pass ALLOWED_SOURCE).
+      sown_at:           form.sown_at || null,
+      sown_at_approx:    !!form.sown_at_approx,
+      qty_initial:       form.qty_initial.trim() ? parseInt(form.qty_initial, 10) : null,
+      source_type:       form.source_type || null,
+      source_ref:        form.source_ref.trim() || null,
+      source_generation: form.source_generation.trim() || null,
+      lineage_note:      form.lineage_note.trim() || null,
     }
     if (sourceInventoryItemId) payload.source_inventory_item_id = sourceInventoryItemId
     try {
@@ -158,7 +163,7 @@ export default function Plants() {
       // POST returns raw row without project_name JOIN — merge client-side
       const proj = projects.find(p => p.id === form.project_id)
       setPlants(p => [{ ...data, project_name: data.project_name ?? proj?.name }, ...p])
-      setForm(f => ({ ...f, name: '', genus: '', species: '', variety: null, quantity: '1', notes: '', status: '' }))
+      setForm(f => ({ ...f, name: '', variety: null, quantity: '1', notes: '', status: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '' }))
       setShowAdd(false)
       clearQueryParams()
     } catch (error) {
@@ -174,13 +179,19 @@ export default function Plants() {
     // (legacy plants will keep their flat variety text in the locked-out path until manual change).
     setEditForm({
       name:     plant.name,
-      genus:    plant.variety_ref?.genus ?? '',
-      species:  plant.variety_ref?.species ?? '',
       variety:  plant.variety_ref ?? null,
       varietyText: plant.variety_ref?.name ?? '',
       quantity: String(plant.quantity ?? 1),
       notes:    plant.notes ?? '',
       status:   plant.status ?? '',
+      // E1: prefill planting-details so the COALESCE-merge PUT round-trips them unchanged.
+      sown_at:           (plant.sown_at ?? '').slice(0, 10),
+      sown_at_approx:    !!plant.sown_at_approx,
+      qty_initial:       plant.qty_initial != null ? String(plant.qty_initial) : '',
+      source_type:       plant.source_type ?? '',
+      source_ref:        plant.source_ref ?? '',
+      source_generation: plant.source_generation ?? '',
+      lineage_note:      plant.lineage_note ?? '',
     })
     setEditErr(null)
   }
@@ -198,13 +209,19 @@ export default function Plants() {
         method: 'PUT',
         body: JSON.stringify({
           name:       editForm.name.trim(),
-          genus:      editForm.genus.trim()    || editForm.variety?.genus   || null,
-          species:    editForm.species.trim()  || editForm.variety?.species || null,
           variety:    varietyText || null,
           variety_id: editForm.variety?.id ?? null,
           quantity:   isNaN(qty) || qty < 1 ? 1 : qty,
           notes:      editForm.notes.trim()    || null,
           status:     editForm.status          || null,
+          // E1: planting-details round-trip (prefilled). Blank -> null = COALESCE no-op (cannot clear via PUT, parity w/ all other fields).
+          sown_at:           editForm.sown_at || null,
+          sown_at_approx:    !!editForm.sown_at_approx,
+          qty_initial:       editForm.qty_initial.trim() ? parseInt(editForm.qty_initial, 10) : null,
+          source_type:       editForm.source_type || null,
+          source_ref:        editForm.source_ref.trim() || null,
+          source_generation: editForm.source_generation.trim() || null,
+          lineage_note:      editForm.lineage_note.trim() || null,
         }),
       })
       // PUT returns raw row without project_name — preserve existing
@@ -255,7 +272,7 @@ export default function Plants() {
       )}
 
       {showAdd && (
-        <form onSubmit={handleAdd} style={{ ...card, marginBottom: 20 }}>
+        <div style={{ ...card, marginBottom: 20 }}>
           <div style={{ fontWeight: 600, marginBottom: 12, color: P.green }}>Add planting</div>
           {sourcePacket && (
             <div style={{
@@ -273,57 +290,20 @@ export default function Plants() {
               </button>
             </div>
           )}
-          {err && <ErrBanner msg={err} />}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label htmlFor="plant-name" style={lbl}>Name *</label>
-              <input id="plant-name" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Tomato" style={inp} />
-            </div>
-            <div>
-              <label htmlFor="plant-genus" style={lbl}>Genus</label>
-              <input id="plant-genus" value={form.genus} onChange={e => setForm(f => ({ ...f, genus: e.target.value }))} placeholder="e.g. Solanum" style={inp} />
-            </div>
-            <div>
-              <label htmlFor="plant-species" style={lbl}>Species</label>
-              <input id="plant-species" value={form.species} onChange={e => setForm(f => ({ ...f, species: e.target.value }))} placeholder="e.g. lycopersicum" style={inp} />
-            </div>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label htmlFor="plant-variety" style={lbl}>Variety</label>
-              <VarietyPicker
-                id="plant-variety"
-                value={form.variety}
-                onChange={(variety) => setForm(f => ({ ...f, variety }))}
-                placeholder="Search or create a variety…"
-              />
-              <div style={{ marginTop: 4, fontSize: '0.72rem', color: P.light }}>
-                Optional — link a variety to enable care/maturity hints.
-              </div>
-            </div>
-            <div>
-              <label htmlFor="plant-quantity" style={lbl}>Quantity</label>
-              <input id="plant-quantity" type="number" min="1" value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))} style={inp} />
-            </div>
-            <div>
-              <label htmlFor="plant-status" style={lbl}>Status</label>
-              <StatusSelect id="plant-status" kind="plant" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} />
-            </div>
-            <div>
-              <label htmlFor="plant-project" style={lbl}>Project *</label>
-              <select id="plant-project" required value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} style={inp}>
-                {projects.length === 0 && <option value="">No projects yet</option>}
-                <ProjectOptions projects={projects} />
-              </select>
-            </div>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label htmlFor="plant-notes" style={lbl}>Notes</label>
-              <input id="plant-notes" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional" style={inp} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button type="submit" disabled={saving} style={pBtn(saving)}>{saving ? 'Adding…' : 'Add planting'}</button>
-            <button type="button" onClick={() => { setShowAdd(false); clearQueryParams() }} style={gBtn}>Cancel</button>
-          </div>
-        </form>
+          <PlantForm
+            value={form}
+            onChange={patch => setForm(f => ({ ...f, ...patch }))}
+            onSubmit={handleAdd}
+            submitting={saving}
+            error={err}
+            submitLabel="Add planting"
+            submittingLabel="Adding…"
+            onCancel={() => { setShowAdd(false); clearQueryParams() }}
+            showProjectSelect
+            projectOptions={<>{projects.length === 0 && <option value="">No projects yet</option>}<ProjectOptions projects={projects} /></>}
+            idPrefix="add-plant"
+          />
+        </div>
       )}
 
       {loading ? (
@@ -420,52 +400,25 @@ export default function Plants() {
           </div>
 
           {expandedId === plant.id && editForm && (
-            <form onSubmit={e => handleEdit(e, plant.id)} style={{ marginTop: 14, paddingTop: 14, borderTop: bdr }}>
-              {editErr && <ErrBanner msg={editErr} />}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label htmlFor="plant-edit-name" style={lbl}>Name *</label>
-                  <input id="plant-edit-name" required value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} style={inp} />
-                </div>
-                <div>
-                  <label htmlFor="plant-edit-genus" style={lbl}>Genus</label>
-                  <input id="plant-edit-genus" value={editForm.genus} onChange={e => setEditForm(f => ({ ...f, genus: e.target.value }))} placeholder="e.g. Solanum" style={inp} />
-                </div>
-                <div>
-                  <label htmlFor="plant-edit-species" style={lbl}>Species</label>
-                  <input id="plant-edit-species" value={editForm.species} onChange={e => setEditForm(f => ({ ...f, species: e.target.value }))} placeholder="e.g. lycopersicum" style={inp} />
-                </div>
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label htmlFor="plant-edit-variety" style={lbl}>Variety</label>
-                  <VarietyPicker
-                    id="plant-edit-variety"
-                    value={editForm.variety}
-                    onChange={(variety) => setEditForm(f => ({ ...f, variety }))}
-                    placeholder="Search or create a variety…"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="plant-edit-qty" style={lbl}>Qty</label>
-                  <input id="plant-edit-qty" type="number" min="1" value={editForm.quantity} onChange={e => setEditForm(f => ({ ...f, quantity: e.target.value }))} style={inp} />
-                </div>
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label htmlFor="plant-edit-status" style={lbl}>Status</label>
-                  <StatusSelect id="plant-edit-status" kind="plant" value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))} />
-                </div>
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label htmlFor="plant-edit-notes" style={lbl}>Notes</label>
-                  <input id="plant-edit-notes" value={editForm.notes} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} style={inp} />
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                <button type="submit" disabled={editSaving} style={pBtn(editSaving)}>{editSaving ? 'Saving…' : 'Save'}</button>
-                <button type="button" onClick={closeEdit} style={gBtn}>Cancel</button>
-                <button type="button" disabled={deleting === plant.id} onClick={() => handleDelete(plant.id)}
-                  style={{ marginLeft: 'auto', background: 'none', border: 'none', color: P.terra, fontSize: '0.82rem', cursor: 'pointer' }}>
-                  {deleting === plant.id ? 'Removing…' : 'Remove'}
-                </button>
-              </div>
-            </form>
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: bdr }}>
+              <PlantForm
+                value={editForm}
+                onChange={patch => setEditForm(f => ({ ...f, ...patch }))}
+                onSubmit={e => handleEdit(e, plant.id)}
+                submitting={editSaving}
+                error={editErr}
+                submitLabel="Save"
+                submittingLabel="Saving…"
+                onCancel={closeEdit}
+                idPrefix={`edit-${plant.id}`}
+                extraActions={
+                  <button type="button" disabled={deleting === plant.id} onClick={() => handleDelete(plant.id)}
+                    style={{ marginLeft: 'auto', background: 'none', border: 'none', color: P.terra, fontSize: '0.82rem', cursor: 'pointer' }}>
+                    {deleting === plant.id ? 'Removing…' : 'Remove'}
+                  </button>
+                }
+              />
+            </div>
           )}
         </div>
       ))}

@@ -179,7 +179,7 @@ describe('Plants — add new plant', () => {
     render(<Plants />)
     await waitFor(() => screen.getByText(/No plantings yet/))
 
-    fireEvent.change(screen.getByLabelText(/Name \*/i), { target: { value: 'New Plant' } })
+    fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'New Plant' } })
     fireEvent.click(screen.getByTestId('vp-pick-black-krim'))
 
     // POST response
@@ -201,9 +201,14 @@ describe('Plants — add new plant', () => {
     expect(body.name).toBe('New Plant')
     expect(body.variety_id).toBe('var-1')
     expect(body.variety).toBe('Black Krim')        // dual-write flat text
-    expect(body.genus).toBe('Solanum')             // pulled from variety object
-    expect(body.species).toBe('Solanum lycopersicum')
     expect(body.project_id).toBe('proj-1')
+    // E1: genus/species are NO LONGER sent — the plants Lambda ignores plants.genus/species;
+    // taxonomy lives on the linked variety (variety_id). Assert they are absent from the wire.
+    expect(body.genus).toBeUndefined()
+    expect(body.species).toBeUndefined()
+    // E1: Plants-create now carries the planting-details union (blank -> null/default).
+    expect(body.sown_at).toBeNull()
+    expect(body.source_type).toBeNull()
   })
 
   it('submits with variety_id=null when no variety picked', async () => {
@@ -212,7 +217,7 @@ describe('Plants — add new plant', () => {
     render(<Plants />)
     await waitFor(() => screen.getByText(/No plantings yet/))
 
-    fireEvent.change(screen.getByLabelText(/Name \*/i), { target: { value: 'Plain Plant' } })
+    fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Plain Plant' } })
 
     fetchSpy.mockResolvedValueOnce({ id: 'plant-new', name: 'Plain Plant', project_id: 'proj-1' })
 
@@ -248,7 +253,7 @@ describe('Plants — Plant-from-packet deep link', () => {
     })
 
     // Name field pre-filled from packet name
-    const nameInput = screen.getByLabelText(/Name \*/i)
+    const nameInput = screen.getByLabelText(/Name/i)
     expect(nameInput.value).toBe('Black Krim seed packet')
 
     // Fetch calls include both deep-link URLs
@@ -339,7 +344,7 @@ describe('Plants — edit flow', () => {
     // Mock PUT response
     fetchSpy.mockResolvedValueOnce({ ...SAMPLE_PLANT_WITH_REF, name: 'Renamed' })
 
-    fireEvent.change(screen.getByLabelText(/Name \*/i), { target: { value: 'Renamed' } })
+    fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Renamed' } })
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /^Save$/i }))
     })

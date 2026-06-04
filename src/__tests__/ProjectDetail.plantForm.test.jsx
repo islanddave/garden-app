@@ -98,13 +98,16 @@ describe('ProjectDetail — V1.2a-4 S1 plantForm extension', () => {
     wireApiFetch()
     await act(async () => { render(<ProjectDetail />) })
     await openAddPlantForm()
-    expect(screen.getByText('Sown date (optional)')).toBeDefined()
-    expect(screen.getByText('Approximate date')).toBeDefined()
-    expect(screen.getByText('Initial quantity')).toBeDefined()
-    expect(screen.getByText('Source')).toBeDefined()
-    expect(screen.getByText('Source reference (optional)')).toBeDefined()
-    expect(screen.getByText('Generation (optional)')).toBeDefined()
-    expect(screen.getByText('Lineage note (optional)')).toBeDefined()
+    // Refactored onto the unified <PlantForm/> (E1) — assert the union fields by their
+    // deterministic ids (idPrefix="add-plant") rather than exact label strings.
+    expect(document.getElementById('add-plant-sown')).toBeTruthy()
+    expect(screen.getByTestId('sown-at-approx')).toBeDefined()
+    expect(document.getElementById('add-plant-qtyinit')).toBeTruthy()
+    expect(document.getElementById('add-plant-source')).toBeTruthy()
+    expect(document.getElementById('add-plant-sref')).toBeTruthy()
+    expect(document.getElementById('add-plant-sgen')).toBeTruthy()
+    expect(document.getElementById('add-plant-lin')).toBeTruthy()
+    expect(document.getElementById('add-plant-status')).toBeTruthy() // E1: project-create gains status
   })
 
   it('Approximate-date checkbox toggles sown_at_approx in POST body', async () => {
