@@ -109,29 +109,10 @@ export const TASK_PRIORITIES = ['low', 'normal', 'high']
 // Task statuses — matches schema check constraint on tasks.status
 export const TASK_STATUSES = ['pending', 'done', 'skipped']
 
-// Inventory item types — matches schema check constraint on inventory.item_type
-export const INVENTORY_ITEM_TYPES = ['consumable', 'equipment']
-
-// Inventory subcategories — matches schema check constraint on inventory.subcategory
-// Used in both Inventory.jsx and the SQL schema CHECK constraint
-// {v: db value, label: display label, types: item_types this applies to}
-export const INVENTORY_SUBCATEGORIES = [
-  { v: 'seeds',        label: 'Seeds',          types: ['consumable'] },
-  { v: 'growing_media',label: 'Growing media',  types: ['consumable'] },
-  { v: 'fertilizer',   label: 'Fertilizer',     types: ['consumable'] },
-  { v: 'pest_control', label: 'Pest control',   types: ['consumable'] },
-  { v: 'containers',   label: 'Containers',     types: ['consumable', 'equipment'] },
-  { v: 'lighting',     label: 'Lighting',       types: ['equipment'] },
-  { v: 'shelving',     label: 'Shelving',       types: ['equipment'] },
-  { v: 'hand_tools',   label: 'Hand tools',     types: ['equipment'] },
-  { v: 'misc',         label: 'Misc',           types: ['consumable', 'equipment'] },
-]
-
-// Legacy — kept for any code that still references INVENTORY_CATEGORIES
-// TODO: remove after confirming no other code uses this
-export const INVENTORY_CATEGORIES = [
-  'seed', 'fertilizer', 'soil_amendment', 'container', 'tool', 'pest_control', 'other',
-]
+// Inventory enums moved to src/lib/inventoryEnums.js (V3-FORMSYS-001 §4). The prior
+// item-types / subcategories / categories exports here were STALE (claimed schema-match
+// but used dead 'equipment'/'fertilizer'/'hand_tools'/'misc' values not in the live
+// inventory_items CHECK) and had zero importers. Use inventoryEnums.js.
 
 // Project categories — used in project_types table and ProjectTypes.jsx
 export const PROJECT_CATEGORIES = [

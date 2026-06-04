@@ -6,13 +6,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { P, PLANT_STATUSES, statusLabel } from '../lib/constants.js'
+import { P, statusLabel } from '../lib/constants.js'
 import { getStatusColors } from '../lib/status.js'
 import { formatQty } from '../lib/format.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
+import { StatusSelect } from '../components/forms'
 
 
 function ErrBanner({ msg }) {
@@ -304,10 +305,7 @@ export default function Plants() {
             </div>
             <div>
               <label htmlFor="plant-status" style={lbl}>Status</label>
-              <select id="plant-status" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inp}>
-                <option value="">— none —</option>
-                {[...PLANT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
-              </select>
+              <StatusSelect id="plant-status" kind="plant" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} />
             </div>
             <div>
               <label htmlFor="plant-project" style={lbl}>Project *</label>
@@ -452,10 +450,7 @@ export default function Plants() {
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <label htmlFor="plant-edit-status" style={lbl}>Status</label>
-                  <select id="plant-edit-status" value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))} style={inp}>
-                    <option value="">— none —</option>
-                    {[...PLANT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
-                  </select>
+                  <StatusSelect id="plant-edit-status" kind="plant" value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))} />
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <label htmlFor="plant-edit-notes" style={lbl}>Notes</label>

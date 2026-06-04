@@ -5,37 +5,7 @@ import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 
-// ── Spec-compliant enums (inventory_items schema) ────────────────────────────
-const TYPES = [
-  {
-    value: 'consumable',
-    label: 'Consumable',
-    example: 'Seeds, fertilizer, spray, grow bags',
-    emoji: '🌱',
-  },
-  {
-    value: 'durable',
-    label: 'Durable',
-    example: 'Tools, lights, trays, shelving',
-    emoji: '🔧',
-  },
-]
-
-const CATEGORIES = [
-  { v: 'seeds',                   label: 'Seeds',                types: ['consumable'] },
-  { v: 'growing_media',           label: 'Growing media',        types: ['consumable'] },
-  { v: 'nutrients_and_amendments',label: 'Nutrients & amendments',types: ['consumable'] },
-  { v: 'pest_control',            label: 'Pest control',         types: ['consumable'] },
-  { v: 'containers',              label: 'Containers',           types: ['consumable', 'durable'] },
-  { v: 'lighting',                label: 'Lighting',             types: ['durable'] },
-  { v: 'shelving',                label: 'Shelving',             types: ['durable'] },
-  { v: 'climate_control',         label: 'Climate control',      types: ['durable'] },
-  { v: 'tools',                   label: 'Tools',                types: ['durable'] },
-  { v: 'other',                   label: 'Other',                types: ['consumable', 'durable'] },
-]
-
-const UNITS = ['each', 'packet', 'oz', 'fl oz', 'lb', 'gal', 'qt', 'bag', 'roll', 'sheet', 'other']
-const CONDITIONS = ['excellent', 'good', 'fair', 'poor']
+import { INVENTORY_TYPES as TYPES, INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS } from '../lib/inventoryEnums.js'
 
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function InventoryAdd() {
