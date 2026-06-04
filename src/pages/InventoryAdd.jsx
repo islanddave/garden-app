@@ -6,6 +6,7 @@ import { P } from '../lib/constants.js'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 
 import { INVENTORY_TYPES as TYPES, INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS } from '../lib/inventoryEnums.js'
+import { EnumSelect } from '../components/forms'
 
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function InventoryAdd() {
@@ -263,7 +264,7 @@ export default function InventoryAdd() {
 
             {/* Category */}
             <Field label="Category" error={errors.category}>
-              <select
+              <EnumSelect
                 value={form.category}
                 onChange={e => {
                   set('category', e.target.value)
@@ -272,14 +273,11 @@ export default function InventoryAdd() {
                     setForm(f => ({ ...f, variety: null }))
                   }
                 }}
-                style={selectStyle(!!errors.category)}
+                error={errors.category}
+                enumValues={visibleCategories}
+                placeholder={form.type ? '— Select category —' : '— Select type first —'}
                 disabled={!form.type}
-              >
-                <option value="">{form.type ? '— Select category —' : '— Select type first —'}</option>
-                {visibleCategories.map(c => (
-                  <option key={c.v} value={c.v}>{c.label}</option>
-                ))}
-              </select>
+              />
             </Field>
 
             {/* Variety picker — required when category is seeds (DB CHECK chk_inventory_seed_requires_variety) */}
@@ -315,14 +313,13 @@ export default function InventoryAdd() {
                   />
                 </Field>
                 <Field label="Unit" error={errors.unit}>
-                  <select
+                  <EnumSelect
                     value={form.unit}
                     onChange={e => set('unit', e.target.value)}
-                    style={selectStyle(!!errors.unit)}
-                  >
-                    <option value="">— Unit —</option>
-                    {[...UNITS].sort((a, b) => a.localeCompare(b)).map(u => <option key={u} value={u}>{u}</option>)}
-                  </select>
+                    error={errors.unit}
+                    enumValues={UNITS}
+                    placeholder="— Unit —"
+                  />
                 </Field>
               </div>
             )}
@@ -394,14 +391,12 @@ export default function InventoryAdd() {
                 {form.type === 'durable' && (
                   <>
                     <Field label="Condition">
-                      <select
+                      <EnumSelect
                         value={form.condition}
                         onChange={e => set('condition', e.target.value)}
-                        style={selectStyle(false)}
-                      >
-                        <option value="">— Optional —</option>
-                        {[...CONDITIONS].sort((a, b) => a.localeCompare(b)).map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
+                        enumValues={CONDITIONS}
+                        placeholder="— Optional —"
+                      />
                     </Field>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       <Field label="Brand">
@@ -604,16 +599,6 @@ const inputStyle = (hasErr) => ({
   backgroundColor: P.white,
   boxSizing: 'border-box',
   fontFamily: 'inherit',
-})
-
-const selectStyle = (hasErr) => ({
-  ...inputStyle(hasErr),
-  appearance: 'none',
-  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23777' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
-  backgroundRepeat: 'no-repeat',
-  backgroundPosition: 'right 12px center',
-  paddingRight: 36,
-  cursor: 'pointer',
 })
 
 const btn = (bg, disabled) => ({
