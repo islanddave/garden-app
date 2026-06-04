@@ -83,6 +83,8 @@ const LABEL_GOLD = '#ffcf7a'
 // ─── Card geometry ───────────────────────────────────────────────────────────────
 const TILE_H      = 212
 const STAGE_PCT   = '86%'
+const STAGE_MAX   = 108   // BUG-CROP-001: cap art so 8+STAGE_MAX+8+NAME_H+CAPTION_H ≤ TILE_H reserves the 2-line name band at every column width
+const NAME_H      = 36    // rigid 2-line name band (0.88rem × 1.2 line-height × 2)
 const CAPTION_H   = 42
 const CARD_RADIUS = 14
 const CARD_SHADOW = '0 2px 4px rgba(40,30,10,.10), 0 6px 16px rgba(40,30,10,.16)'
@@ -221,7 +223,7 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
       }}>{code}</span>
 
       <div className={blooming ? 'cc-stage cc-settle' : 'cc-stage'} style={{
-        width: `min(${STAGE_PCT}, 132px)`, aspectRatio: '1 / 1', marginTop: 8,
+        width: `min(${STAGE_PCT}, 132px)`, maxHeight: STAGE_MAX, aspectRatio: '1 / 1', marginTop: 8,
         flexShrink: 0, overflow: 'hidden',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
@@ -236,15 +238,21 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
       </div>
 
       <div style={{
-        flex: '1 1 auto', minHeight: 0, width: '100%', marginTop: 8,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-        fontSize: '0.88rem', fontWeight: 700, lineHeight: 1.2, letterSpacing: '-0.005em',
-        color: theme.name, textAlign: 'center', padding: '0 6px', boxSizing: 'border-box',
-        wordBreak: 'break-word', overflowWrap: 'anywhere',
+        flexShrink: 0, height: NAME_H, width: '100%', marginTop: 8,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '0 6px', boxSizing: 'border-box',
         opacity: got ? (lit ? 1 : 0) : 0,
         transition: 'opacity 600ms ease',
       }}>
-        {got ? c.name : ''}
+        <span title={got ? c.name : undefined} style={{
+          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+          overflow: 'hidden', textOverflow: 'ellipsis',
+          fontSize: '0.88rem', fontWeight: 700, lineHeight: 1.2, letterSpacing: '-0.005em',
+          color: theme.name, textAlign: 'center',
+          wordBreak: 'break-word', overflowWrap: 'anywhere',
+        }}>
+          {got ? c.name : ''}
+        </span>
       </div>
 
       <div data-testid={`sighting-caption-${c.id}`} style={{
