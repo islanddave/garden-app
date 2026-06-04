@@ -73,8 +73,8 @@ describe('PlantingDetail — four states', () => {
     // Name appears in both the H1 and the breadcrumb — assert the heading specifically.
     await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
     // Status: multi-channel — the label text is present AND aria-labelled (not color alone).
-    const badge = screen.getByLabelText('Status: fruiting')
-    expect(badge.textContent).toContain('fruiting')
+    const badge = screen.getByLabelText('Status: Fruiting')  // humanized via statusLabel (V3-FORMSYS-001 §3.2)
+    expect(badge.textContent).toContain('Fruiting')
     // Grower fields.
     expect(screen.getByText('Greenhouse / Bed 2', { exact: false })).toBeTruthy()
     expect(screen.getByText('Transplanted')).toBeTruthy()

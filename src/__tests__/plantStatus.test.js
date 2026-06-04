@@ -1,9 +1,8 @@
 // Lane D / Phase B+C slice 1 (§3.1 EVENT_ICONS fold + §3.2 PLANT_STATUS_MAP).
 // Guards: plant-status registry completeness + humanizer + the gold-fallthrough
-// fix, and a re-scatter guard that no page re-defines EVENT_ICONS (folded into
-// eventTypes.EVENT_TYPE_META.emoji).
+// fix; plus EVENT_TYPE_META emoji-completeness (the canonical icon source the
+// 4 page EVENT_ICONS copies were folded into).
 import { describe, it, expect } from 'vitest'
-import fs from 'fs'
 import { PLANT_STATUSES, PLANT_STATUS_MAP, statusLabel, PROJECT_STATUS_MAP } from '../lib/constants.js'
 import { getStatusColors, STATUS_COLORS } from '../lib/status.js'
 import { EVENT_TYPE_META, EVENT_TYPES } from '../lib/eventTypes.js'
@@ -35,12 +34,6 @@ describe('§3.1 EVENT_ICONS fold', () => {
     for (const t of EVENT_TYPES) {
       expect(EVENT_TYPE_META[t]).toBeDefined()
       expect(EVENT_TYPE_META[t].emoji).toBeTruthy()
-    }
-  })
-  it('no page re-defines a local EVENT_ICONS map (re-scatter guard)', () => {
-    for (const f of ['EventDetail', 'PlantingDetail', 'ProjectPublic', 'ProjectDetail']) {
-      const src = fs.readFileSync(new URL(`../pages/${f}.jsx`, import.meta.url), 'utf8')
-      expect(src.includes('const EVENT_ICONS')).toBe(false)
     }
   })
 })
