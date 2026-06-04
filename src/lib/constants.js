@@ -103,6 +103,24 @@ export function statusLabel(status) {
   return PLANT_STATUS_MAP[status]?.label ?? PROJECT_STATUS_MAP[status]?.label ?? status
 }
 
+// Project kinds — plant_projects.kind. Canonical values match the live DB CHECK
+// (kind IN ('campaign','category','cultivar') OR NULL) + the projects Lambda
+// ALLOWED_KINDS. Single source for ProjectNew (user) AND ProjectsAdminClassify
+// (admin). `cultivar` is flag-gated in the USER UI until VARIETY_REF_UI_SHIPPED;
+// the admin tool always includes it. Both derive options from projectKindOptions()
+// so the gating logic lives in ONE place (was duplicated/divergent).
+export const PROJECT_KINDS = ['campaign', 'category', 'cultivar']
+export const PROJECT_KIND_MAP = {
+  campaign: { label: 'Growing this season' },
+  category: { label: 'Folder for organizing' },
+  cultivar: { label: 'Cultivar reference' },
+}
+export function projectKindOptions(includeCultivar = false) {
+  return PROJECT_KINDS
+    .filter(k => k !== 'cultivar' || includeCultivar)
+    .map(k => ({ value: k, label: PROJECT_KIND_MAP[k].label }))
+}
+
 // Task priorities
 export const TASK_PRIORITIES = ['low', 'normal', 'high']
 

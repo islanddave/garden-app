@@ -3,7 +3,7 @@ import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { P, PROJECT_STATUSES } from '../lib/constants.js'
+import { P, PROJECT_STATUSES, projectKindOptions } from '../lib/constants.js'
 import { VARIETY_REF_UI_SHIPPED } from '../lib/featureFlags.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 
@@ -180,11 +180,9 @@ export default function ProjectNew() {
               style={inputStyle}
             >
               <option value="">— Not sure yet —</option>
-              <option value="campaign">Growing this season</option>
-              <option value="category">Folder for organizing</option>
-              {VARIETY_REF_UI_SHIPPED && (
-                <option value="cultivar">Cultivar reference</option>
-              )}
+              {projectKindOptions(VARIETY_REF_UI_SHIPPED).map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
             </select>
             {!VARIETY_REF_UI_SHIPPED && (
               <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>

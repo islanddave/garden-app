@@ -5,7 +5,7 @@
 // Surfaces:
 //   - Desktop-only viewport guard (≥1024px). Placard otherwise.
 //   - GET /api/projects?admin=1 — all alive rows regardless of ownership.
-//   - Per-row kind dropdown (campaign | category | cultivar | defer).
+//   - Per-row kind dropdown (campaign | category | cultivar).
 //   - Cultivar row reveals inline variety-name input.
 //   - Save-per-row: POST /api/varieties (cultivar only, idempotent on
 //     source_proj_rescope_project_id) → PATCH /api/projects/:id with kind.
@@ -15,13 +15,11 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
+import { projectKindOptions } from '../lib/constants.js'
 
-const KIND_OPTIONS = [
-  { value: '', label: '— pick —' },
-  { value: 'campaign', label: 'Campaign (growing this season)' },
-  { value: 'category', label: 'Category (folder for organizing)' },
-  { value: 'cultivar', label: 'Cultivar (variety reference)' },
-]
+// Admin always includes cultivar (it creates varieties). Values + labels come from
+// the centralized projectKindOptions() (constants.js) — same source as ProjectNew.
+const KIND_OPTIONS = [{ value: '', label: '— pick —' }, ...projectKindOptions(true)]
 
 const MIGRATE_CMD = 'python3 claude-ops/scripts/apply-prod-migrations.py --target prod --mig-dir claude-ops/scripts/proj-rescope/s6-0a'
 
