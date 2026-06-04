@@ -1,0 +1,232 @@
+name: Deploy Lambda Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lambda/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: lambda-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production  # claim env:production OIDC subject for garden-app-github-deploy trust (scoped 2026-05-05)
+    strategy:
+      matrix:
+        # One job per Lambda function directory under lambda/
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, ux-events, xp-reconcile, critter]
+      # No max-parallel cap: all 12 functions dispatch in one wave so the
+      # environment:production approval gate prompts ONCE (not 3 batches of 4).
+      # Re-add `max-parallel: N` here only if Lambda control-plane rate limits appear.
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.19.0'
+          # no root-level lockfile — caching disabled for lambda subdirs
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # V3-EVENT-008: regenerate the events Lambda's event-type vocabulary from the
+      # canonical src/lib/eventTypes.js BEFORE zipping, so a stale committed copy can
+      # never ship. events function only; fails the build if it would drift.
+      - name: Regenerate event-types (events only)
+        if: matrix.function == 'events'
+        run: |
+          npm run gen:event-types
+          npm run check:event-types
+
+      - name: Build and zip ${{ matrix.function }}
+        run: |
+          cd lambda/${{ matrix.function }}
+          npm install --omit=dev
+          zip -r ../${{ matrix.function }}.zip .
+
+      - name: Deploy or create ${{ matrix.function }}
+        run: |
+          FUNCTION_NAME="garden-${{ matrix.function }}"
+          ZIP_FILE="fileb://lambda/${{ matrix.function }}.zip"
+
+          # Check if function exists; create on first deploy, update thereafter
+          if aws lambda get-function --function-name "$FUNCTION_NAME" 2>/dev/null; then
+            echo "Updating existing function: $FUNCTION_NAME"
+            aws lambda update-function-code \
+              --function-name "$FUNCTION_NAME" \
+              --zip-file "$ZIP_FILE"
+          else
+            echo "Creating new function: $FUNCTION_NAME"
+            aws lambda create-function \
+              --function-name "$FUNCTION_NAME" \
+              --runtime nodejs20.x \
+              --handler index.handler \
+              --role ${{ vars.LAMBDA_EXECUTION_ROLE_ARN }} \
+              --zip-file "$ZIP_FILE" \
+              --timeout 30 \
+              --memory-size 256
+          fi
+
+      - name: Wait for ${{ matrix.function }} update to complete
+        run: |
+          aws lambda wait function-updated \
+            --function-name "garden-${{ matrix.function }}"
+          echo "garden-${{ matrix.function }} is active"
+
+      - name: Ensure S3_PHOTOS_BUCKET env for ${{ matrix.function }}
+        # Idempotent: only updates if value differs. Required for photo-enriching
+        # Lambdas that sign S3 GET URLs for featured_photo_view_url. Historical gap:
+        # create-function below sets ZERO env vars, so a net-new photo-aware Lambda
+        # would silently return view_url=null for every featured photo. Bug landed
+        # in V2-PHOTO F1 S2 (2026-05-13, PR #36) and was patched manually 2026-05-15;
+        # this step makes it self-healing for future deploys.
+        if: contains(fromJSON('["plants","projects","locations","inventory-items","photos"]'), matrix.function)
+        run: |
+          FN="garden-${{ matrix.function }}"
+          EXPECTED="garden-photos-prod"
+          CURRENT=$(aws lambda get-function-configuration \
+            --function-name "$FN" \
+            --query 'Environment.Variables.S3_PHOTOS_BUCKET' --output text 2>/dev/null || echo "None")
+          if [[ "$CURRENT" == "$EXPECTED" ]]; then
+            echo "S3_PHOTOS_BUCKET already correct on $FN"
+          else
+            echo "Setting S3_PHOTOS_BUCKET=$EXPECTED on $FN (was: $CURRENT)"
+            EXISTING=$(aws lambda get-function-configuration \
+              --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+            UPDATED=$(echo "$EXISTING" | jq --arg b "$EXPECTED" '. + {S3_PHOTOS_BUCKET: $b}')
+            echo "{\"Variables\": $UPDATED}" > /tmp/env-photos-bucket.json
+            aws lambda update-function-configuration \
+              --function-name "$FN" \
+              --environment file:///tmp/env-photos-bucket.json >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "S3_PHOTOS_BUCKET=$EXPECTED on $FN"
+          fi
+
+      - name: Ensure ADMIN_CLERK_SUBS env for ux-events
+        if: matrix.function == 'ux-events'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
+        run: |
+          FN="garden-ux-events"
+          EXPECTED="user_3D2gM0hIl03gjW3JM2DjtPzm0jI"
+          CURRENT=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables.ADMIN_CLERK_SUBS' --output text 2>/dev/null || echo "None")
+          if [[ "$CURRENT" == "$EXPECTED" ]]; then
+            echo "ADMIN_CLERK_SUBS already correct on $FN"
+          else
+            EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+            UPDATED=$(echo "$EXISTING" | jq --arg v "$EXPECTED" '. + {ADMIN_CLERK_SUBS: $v}')
+            echo "{\"Variables\": $UPDATED}" > /tmp/env-ux-admin.json
+            aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-ux-admin.json >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "ADMIN_CLERK_SUBS set on $FN"
+          fi
+
+      - name: Ensure Function URL exists for ${{ matrix.function }}
+        if: matrix.function != 'xp-reconcile'  # xp-reconcile is EventBridge-invoked, no Function URL
+        continue-on-error: true  # requires lambda:CreateFunctionUrlConfig + lambda:GetFunctionUrlConfig + lambda:AddPermission on deploy role
+        run: |
+          FUNCTION_NAME="garden-${{ matrix.function }}"
+          # Check if Function URL exists; create on first deploy.
+          if aws lambda get-function-url-config --function-name "$FUNCTION_NAME" 2>/dev/null; then
+            echo "Function URL already exists for $FUNCTION_NAME"
+          else
+            echo "Creating Function URL for $FUNCTION_NAME"
+            aws lambda create-function-url-config \
+              --function-name "$FUNCTION_NAME" \
+              --auth-type NONE \
+              --cors '{"AllowOrigins":["*"],"AllowMethods":["*"],"AllowHeaders":["*"]}'
+            # Add resource-based policy for public invoke (required when AuthType=NONE)
+            # Function URL invocations require BOTH InvokeFunctionUrl (URL-config layer)
+            # AND InvokeFunction (handler-dispatch layer) — missing either returns 403
+            # at the URL layer before the request reaches the handler.
+            # Ref: error-log.md E-magical-nifty-franklin-pickup-002 (2026-05-08)
+            aws lambda add-permission \
+              --function-name "$FUNCTION_NAME" \
+              --statement-id FunctionURLAllowPublicAccess \
+              --action lambda:InvokeFunctionUrl \
+              --principal "*" \
+              --function-url-auth-type NONE 2>/dev/null || true
+            aws lambda add-permission \
+              --function-name "$FUNCTION_NAME" \
+              --statement-id AllowPublicInvoke \
+              --action lambda:InvokeFunction \
+              --principal "*" 2>/dev/null || true
+            echo "Function URL created for $FUNCTION_NAME"
+          fi
+
+      - name: Restore Lambda Function URL CORS (prod garden.futureishere.net)
+        if: matrix.function != 'xp-reconcile'  # xp-reconcile has no Function URL
+        continue-on-error: true  # requires lambda:UpdateFunctionUrlConfig on deploy role
+        run: |
+          # Set CORS to allow garden.futureishere.net (the prod SPA origin).
+          # IMPORTANT: handler code uses CORS={} (empty) — the Lambda URL config IS the source of truth
+          # for prod CORS. The previous "Clear" step (vestigial "handler owns CORS" assumption) was
+          # racing with deploy.yml's restore step and clobbering CORS on prod — fixed 2026-05-12 by
+          # 3f27c817 prod deploy incident (V1.2a-1 Session 2 staging-then-prod ship).
+          aws lambda update-function-url-config \
+            --function-name "garden-${{ matrix.function }}" \
+            --region us-east-1 \
+            --cors '{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE","PATCH"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}' \
+            --query 'Cors.AllowOrigins[0]' --output text
+          echo "CORS restored for garden-${{ matrix.function }}"
+
+      - name: Set xp-reconcile DRY_RUN env on first deploy
+        if: matrix.function == 'xp-reconcile'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration; idempotent (only sets if unset)
+        run: |
+          # On first deploy, set DRY_RUN=true. Subsequent deploys preserve whatever value is currently set.
+          CURRENT=$(aws lambda get-function-configuration \
+            --function-name garden-xp-reconcile \
+            --query 'Environment.Variables.DRY_RUN' --output text 2>/dev/null || echo "None")
+          if [[ "$CURRENT" == "None" || -z "$CURRENT" ]]; then
+            echo "DRY_RUN not set; defaulting to true on first deploy."
+            aws lambda update-function-configuration \
+              --function-name garden-xp-reconcile \
+              --environment 'Variables={DRY_RUN=true}'
+            aws lambda wait function-updated --function-name garden-xp-reconcile
+          else
+            echo "DRY_RUN already set to: $CURRENT (preserving)"
+          fi
+
+      - name: Ensure EventBridge cron rule for xp-reconcile
+        if: matrix.function == 'xp-reconcile'
+        continue-on-error: true  # requires events:PutRule + events:PutTargets + lambda:AddPermission on deploy role
+        run: |
+          RULE_NAME=garden-xp-reconcile-daily
+          # cron(min hr day-of-month month day-of-week year) — 04:00 UTC daily = midnight ET (standard) / 11pm ET (DST)
+          aws events put-rule \
+            --name "$RULE_NAME" \
+            --schedule-expression 'cron(0 4 * * ? *)' \
+            --state ENABLED \
+            --description 'Daily XP reconciliation: heal user_stats.xp drift vs SUM(xp_events.amount)'
+          # Lambda ARN for target
+          LAMBDA_ARN=$(aws lambda get-function --function-name garden-xp-reconcile --query 'Configuration.FunctionArn' --output text)
+          aws events put-targets \
+            --rule "$RULE_NAME" \
+            --targets "Id=1,Arn=$LAMBDA_ARN"
+          # Permit EventBridge to invoke. AddPermission is idempotent-by-statement-id — duplicate calls return ResourceConflictException (squelched).
+          RULE_ARN=$(aws events describe-rule --name "$RULE_NAME" --query 'Arn' --output text)
+          aws lambda add-permission \
+            --function-name garden-xp-reconcile \
+            --statement-id EventBridgeInvokeDaily \
+            --action lambda:InvokeFunction \
+            --principal events.amazonaws.com \
+            --source-arn "$RULE_ARN" 2>/dev/null || echo "AddPermission already exists (expected on re-deploy)."
+          echo "EventBridge rule $RULE_NAME wired to garden-xp-reconcile (cron 0 4 * * ? *)"
+
+# Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
+# at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).
+# These are NOT injected as GitHub Actions env vars — no DB credentials touch GitHub.
+# Lambda execution role requires secretsmanager:GetSecretValue on arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:garden-app/*
