@@ -1,9 +1,10 @@
 // V3-ORDER-001 (Lane C / PR1): shared sort-order toggle used identically on every planting/
 // project list surface (Garden, ProjectDetail plantings, legacy /plants) so ordering parity is
-// guaranteed by one component, not three copies. Two states: Recency (DEFAULT) and A–Z (alpha).
+// guaranteed by one component, not three copies. Two states: A–Z (alpha, DEFAULT) and Recent.
 //
-// Recency is the default everywhere — it preserves the ADHD recency / interrupt re-entry anchor
-// (Jen). Alphanumeric is OPT-IN. Persistence is handled by the caller via loadSortOrder/
+// A–Z (alphabetical) is the default everywhere per the owner override (Dave, 2026-06-04),
+// overriding the Crucible's recency-default. Recency remains one tap away and persists.
+// Persistence is handled by the caller via loadSortOrder/
 // saveSortOrder (localStorage, tracked V4 follow-up for cross-device); this component is a
 // controlled segmented control: it renders `order` and calls onChange(next).
 //
@@ -18,7 +19,7 @@ const OPTIONS = [
   { value: SORT_ALPHA, label: 'A–Z', aria: 'Sort alphabetically' },
 ]
 
-export default function SortToggle({ order = SORT_RECENCY, onChange, label = 'Sort plantings' }) {
+export default function SortToggle({ order = SORT_ALPHA, onChange, label = 'Sort plantings' }) {
   return (
     <div
       role="group"

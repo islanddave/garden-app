@@ -74,15 +74,22 @@ describe('Garden — unified accordion tree', () => {
   })
 })
 
-describe('Garden — sort toggle (V3-ORDER-001)', () => {
-  it('defaults to recency (server order) and persists alpha when toggled', async () => {
+describe('Garden — sort toggle (V3-ORDER-001, alpha default per owner override 2026-06-04)', () => {
+  it('defaults to alpha (A–Z) and persists recency when toggled', async () => {
     await renderGarden()
-    // Toggle exists with both options; A–Z is opt-in.
+    // Default is now alphabetical (owner override); recency is one tap away.
     const az = screen.getByLabelText('Sort alphabetically')
-    expect(az.getAttribute('aria-checked')).toBe('false')
+    expect(az.getAttribute('aria-checked')).toBe('true')   // alpha is the default
     const recent = screen.getByLabelText('Sort by most recent')
-    expect(recent.getAttribute('aria-checked')).toBe('true')  // recency is the default
-    fireEvent.click(az)
-    expect(localStorage.getItem('garden.sortOrder.v1')).toBe('alpha')
+    expect(recent.getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(recent)
+    expect(localStorage.getItem('garden.sortOrder.v1')).toBe('recency')
+  })
+
+  it('restores the stored choice (recency) on reload', async () => {
+    localStorage.setItem('garden.sortOrder.v1', 'recency')
+    await renderGarden()
+    expect(screen.getByLabelText('Sort by most recent').getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByLabelText('Sort alphabetically').getAttribute('aria-checked')).toBe('false')
   })
 })

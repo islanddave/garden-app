@@ -16,9 +16,12 @@ export function byName(a, b) {
   return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' })
 }
 
-// Sort orders. 'recency' = server order (created_at DESC for plantings; API order for projects) —
-// the DEFAULT, preserving the ADHD recency / interrupt re-entry anchor (Jen). 'alpha' = byName.
-// V002 §5 AUTHORITATIVE: alphanumeric is OPT-IN via a persisted toggle, never the default.
+// Sort orders. 'alpha' = byName (case-insensitive, numeric-aware) — the DEFAULT.
+// 'recency' = server order (created_at DESC for plantings; API order for projects).
+// OWNER OVERRIDE (Dave, 2026-06-04): alphabetical is the default per Dave's explicit decision,
+// overriding the Crucible's recency-default (V002 §5 / V3-ORDER-001). This restores Dave's
+// original ss1-screenshot intent. Recency remains available and persists one tap away via the
+// SortToggle. Do NOT revert to a recency default without a fresh owner decision.
 export const SORT_RECENCY = 'recency'
 export const SORT_ALPHA = 'alpha'
 
@@ -33,8 +36,8 @@ export function applyNameSort(arr, order) {
 // Depth-ordered flat list: root projects first, each followed immediately by its descendants.
 // Orphaned children (parent missing/deleted) render as roots. (Verbatim from ProjectList.jsx.)
 // V3-ORDER-001: `order` ('recency'|'alpha') sorts roots + each childrenOf[] level when 'alpha';
-// default 'recency' = original behavior (server order) — bytewise-identical traversal.
-export function buildDisplayList(projects, order = SORT_RECENCY) {
+// default is now 'alpha' (owner override 2026-06-04). 'recency' preserves server order.
+export function buildDisplayList(projects, order = SORT_ALPHA) {
   const list = projects || []
   const byId = {}
   list.forEach(p => { byId[p.id] = p })
@@ -77,7 +80,7 @@ export function groupPlantingsByProjectId(plants) {
 // Nested tree: each node = { project, depth, children: [node...], plantings: [planting...] }.
 // children are sub-projects; plantings are this project's leaf rows. Used by the accordion,
 // which renders children + plantings only when the node is expanded.
-export function buildGardenTree(projects, plants, order = SORT_RECENCY) {
+export function buildGardenTree(projects, plants, order = SORT_ALPHA) {
   const list = projects || []
   const byId = {}
   list.forEach(p => { byId[p.id] = p })
@@ -139,15 +142,17 @@ export function saveExpanded(set) {
 // so the chosen sort order is per-device, NOT cross-device. The cross-device-preferred home is a
 // per-user server preference; deferring that here keeps Lane C frontend-only. FOLLOW-UP (V4):
 // migrate this toggle to a server/per-user pref so a sort choice on phone carries to desktop.
-// Mirrors loadExpanded/saveExpanded: best-effort, never throws, recency-default on any failure.
+// Mirrors loadExpanded/saveExpanded: best-effort, never throws. Default (nothing stored) = ALPHA
+// per the owner override (Dave, 2026-06-04); returns RECENCY only when localStorage explicitly
+// holds the recency value. Any other/missing/corrupt value falls back to the alpha default.
 const SORT_LS_KEY = 'garden.sortOrder.v1'
 
 export function loadSortOrder() {
   try {
     const raw = (typeof localStorage !== 'undefined') ? localStorage.getItem(SORT_LS_KEY) : null
-    return raw === SORT_ALPHA ? SORT_ALPHA : SORT_RECENCY
+    return raw === SORT_RECENCY ? SORT_RECENCY : SORT_ALPHA
   } catch (_e) {
-    return SORT_RECENCY
+    return SORT_ALPHA
   }
 }
 

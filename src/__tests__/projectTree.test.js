@@ -18,11 +18,17 @@ const PLANTS = [
 ]
 
 describe('buildDisplayList', () => {
-  it('orders roots first then descendants, with depth', () => {
+  it('orders roots first then descendants, with depth (default = alpha)', () => {
+    // Default is now alphabetical (owner override 2026-06-04). Roots: Beds(c), Tomatoes(a);
+    // under a: Cherry(b). Orphan(Lost) is a root, sorts among roots: Beds, Lost, Tomatoes.
     const out = buildDisplayList(PROJECTS)
-    expect(out.map(x => x.project.id)).toEqual(['a', 'b', 'c', 'orphan'])
+    expect(out.map(x => x.project.id)).toEqual(['c', 'orphan', 'a', 'b'])
     expect(out.find(x => x.project.id === 'b').depth).toBe(1)
     expect(out.find(x => x.project.id === 'a').depth).toBe(0)
+  })
+  it('preserves server order when recency is passed explicitly', () => {
+    const out = buildDisplayList(PROJECTS, SORT_RECENCY)
+    expect(out.map(x => x.project.id)).toEqual(['a', 'b', 'c', 'orphan'])
   })
   it('treats orphaned children as roots', () => {
     expect(buildDisplayList(PROJECTS).find(x => x.project.id === 'orphan').depth).toBe(0)
@@ -45,15 +51,20 @@ describe('groupPlantingsByProjectId', () => {
 })
 
 describe('buildGardenTree', () => {
-  it('nests sub-projects and plantings under their project', () => {
+  it('nests sub-projects and plantings under their project (default = alpha)', () => {
+    // Default alphabetical: roots Beds(c), Lost(orphan), Tomatoes(a).
     const tree = buildGardenTree(PROJECTS, PLANTS)
-    expect(tree.map(n => n.project.id)).toEqual(['a', 'c', 'orphan'])
+    expect(tree.map(n => n.project.id)).toEqual(['c', 'orphan', 'a'])
     const a = tree.find(n => n.project.id === 'a')
     expect(a.children.map(c => c.project.id)).toEqual(['b'])
     expect(a.plantings.map(p => p.id)).toEqual(['p2'])
     expect(a.children[0].plantings.map(p => p.id)).toEqual(['p1'])
     expect(a.depth).toBe(0)
     expect(a.children[0].depth).toBe(1)
+  })
+  it('preserves server order for roots when recency is passed explicitly', () => {
+    const tree = buildGardenTree(PROJECTS, PLANTS, SORT_RECENCY)
+    expect(tree.map(n => n.project.id)).toEqual(['a', 'c', 'orphan'])
   })
 })
 
@@ -94,7 +105,7 @@ describe('applyNameSort', () => {
   it('is null-safe', () => { expect(applyNameSort(null, SORT_ALPHA)).toEqual([]) })
 })
 
-describe('ordering default = recency (server order), alpha is opt-in', () => {
+describe('ordering default = alpha (owner override), recency is opt-in', () => {
   const PROJS = [
     { id: 'b', name: 'Zebra',  parent_project_id: null },
     { id: 'a', name: 'Apple',  parent_project_id: null },
@@ -106,51 +117,51 @@ describe('ordering default = recency (server order), alpha is opt-in', () => {
     { id: 'x', name: 'Beet', project_id: 'a' },
   ]
 
-  it('buildDisplayList default keeps server order (recency anchor)', () => {
-    expect(buildDisplayList(PROJS).map(x => x.project.id)).toEqual(['b', 'a', 'd', 'c'])
+  it('buildDisplayList default sorts roots AND every child level (alpha)', () => {
+    // default alpha: roots Apple(a), Zebra(b); under a: Banana(d), Cherry(c)
+    expect(buildDisplayList(PROJS).map(x => x.project.id)).toEqual(['a', 'd', 'c', 'b'])
   })
-  it('buildDisplayList alpha sorts roots AND every child level', () => {
-    // roots: Apple(a), Zebra(b); under a: Banana(d), Cherry(c)
-    expect(buildDisplayList(PROJS, SORT_ALPHA).map(x => x.project.id)).toEqual(['a', 'd', 'c', 'b'])
+  it('buildDisplayList recency (opt-in) keeps server order', () => {
+    expect(buildDisplayList(PROJS, SORT_RECENCY).map(x => x.project.id)).toEqual(['b', 'a', 'd', 'c'])
   })
-  it('buildGardenTree default keeps server order for roots, children, AND plantings', () => {
+  it('buildGardenTree default sorts roots, children, AND plantings (alpha)', () => {
     const tree = buildGardenTree(PROJS, PL)
-    expect(tree.map(n => n.project.id)).toEqual(['b', 'a'])
-    const a = tree.find(n => n.project.id === 'a')
-    expect(a.children.map(c => c.project.id)).toEqual(['d', 'c'])
-    expect(a.plantings.map(p => p.id)).toEqual(['y', 'x'])
-  })
-  it('buildGardenTree alpha sorts roots, children, AND plantings at every level', () => {
-    const tree = buildGardenTree(PROJS, PL, SORT_ALPHA)
     expect(tree.map(n => n.project.name)).toEqual(['Apple', 'Zebra'])
     const a = tree.find(n => n.project.id === 'a')
     expect(a.children.map(c => c.project.name)).toEqual(['Banana', 'Cherry'])
     expect(a.plantings.map(p => p.name)).toEqual(['Beet', 'Yam'])
   })
+  it('buildGardenTree recency (opt-in) keeps server order for roots, children, AND plantings', () => {
+    const tree = buildGardenTree(PROJS, PL, SORT_RECENCY)
+    expect(tree.map(n => n.project.id)).toEqual(['b', 'a'])
+    const a = tree.find(n => n.project.id === 'a')
+    expect(a.children.map(c => c.project.id)).toEqual(['d', 'c'])
+    expect(a.plantings.map(p => p.id)).toEqual(['y', 'x'])
+  })
   it('identical ordering across surfaces (displayList roots == tree roots) under both orders', () => {
-    const rootsRecency = buildDisplayList(PROJS).filter(x => x.depth === 0).map(x => x.project.id)
-    expect(buildGardenTree(PROJS, PL).map(n => n.project.id)).toEqual(rootsRecency)
-    const rootsAlpha = buildDisplayList(PROJS, SORT_ALPHA).filter(x => x.depth === 0).map(x => x.project.id)
-    expect(buildGardenTree(PROJS, PL, SORT_ALPHA).map(n => n.project.id)).toEqual(rootsAlpha)
+    const rootsAlpha = buildDisplayList(PROJS).filter(x => x.depth === 0).map(x => x.project.id)
+    expect(buildGardenTree(PROJS, PL).map(n => n.project.id)).toEqual(rootsAlpha)
+    const rootsRecency = buildDisplayList(PROJS, SORT_RECENCY).filter(x => x.depth === 0).map(x => x.project.id)
+    expect(buildGardenTree(PROJS, PL, SORT_RECENCY).map(n => n.project.id)).toEqual(rootsRecency)
   })
 })
 
-describe('loadSortOrder / saveSortOrder (persisted toggle, recency default)', () => {
+describe('loadSortOrder / saveSortOrder (persisted toggle, alpha default — owner override)', () => {
   beforeEach(() => { localStorage.clear() })
-  it('defaults to recency when nothing persisted', () => {
+  it('defaults to alpha when nothing persisted', () => {
+    expect(loadSortOrder()).toBe(SORT_ALPHA)
+  })
+  it('round-trips recency (toggling persists the recency choice)', () => {
+    saveSortOrder(SORT_RECENCY)
     expect(loadSortOrder()).toBe(SORT_RECENCY)
   })
   it('round-trips alpha', () => {
-    saveSortOrder(SORT_ALPHA)
+    saveSortOrder(SORT_RECENCY); saveSortOrder(SORT_ALPHA)
     expect(loadSortOrder()).toBe(SORT_ALPHA)
   })
-  it('round-trips recency', () => {
-    saveSortOrder(SORT_ALPHA); saveSortOrder(SORT_RECENCY)
-    expect(loadSortOrder()).toBe(SORT_RECENCY)
-  })
-  it('coerces an unknown persisted value to recency (safe default)', () => {
+  it('coerces an unknown persisted value to alpha (safe default)', () => {
     localStorage.setItem('garden.sortOrder.v1', 'garbage')
-    expect(loadSortOrder()).toBe(SORT_RECENCY)
+    expect(loadSortOrder()).toBe(SORT_ALPHA)
   })
 })
 
