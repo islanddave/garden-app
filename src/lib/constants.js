@@ -82,35 +82,60 @@ export const PROJECT_STATUS_MAP = {
   ended:      { label: 'Ended',      emoji: '◼'  },
 }
 
+// Plant lifecycle statuses — plants.status. Free-text in the DB as of 2026-06-04
+// (no CHECK constraint; a future DB-CHECK is gated on a SELECT DISTINCT audit +
+// backfill — see forms-consolidation-plan-V002 §3.2). Single source of truth for
+// the plant-status vocabulary; do NOT redefine inline (was inline in Plants.jsx).
+export const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']
+
+// Display mapping for plant statuses — { label, emoji }. Mirrors PROJECT_STATUS_MAP.
+// Colors live in status.js STATUS_COLORS (shared with project stages).
+export const PLANT_STATUS_MAP = {
+  seed:       { label: 'Seed',       emoji: '🌰' },
+  seedling:   { label: 'Seedling',   emoji: '🌱' },
+  vegetative: { label: 'Vegetative', emoji: '🌿' },
+  flowering:  { label: 'Flowering',  emoji: '🌸' },
+  fruiting:   { label: 'Fruiting',   emoji: '🍅' },
+  harvested:  { label: 'Harvested',  emoji: '✅' },
+  dormant:    { label: 'Dormant',    emoji: '💤' },
+  ended:      { label: 'Ended',      emoji: '⏹️' },
+  failed:     { label: 'Failed',     emoji: '✕' },
+}
+
+// Humanize any status value for display. Prefers the plant map, then the project
+// map, else returns the raw value (so an unknown status still renders, un-snaked).
+export function statusLabel(status) {
+  return PLANT_STATUS_MAP[status]?.label ?? PROJECT_STATUS_MAP[status]?.label ?? status
+}
+
+// Project kinds — plant_projects.kind. Canonical values match the live DB CHECK
+// (kind IN ('campaign','category','cultivar') OR NULL) + the projects Lambda
+// ALLOWED_KINDS. Single source for ProjectNew (user) AND ProjectsAdminClassify
+// (admin). `cultivar` is flag-gated in the USER UI until VARIETY_REF_UI_SHIPPED;
+// the admin tool always includes it. Both derive options from projectKindOptions()
+// so the gating logic lives in ONE place (was duplicated/divergent).
+export const PROJECT_KINDS = ['campaign', 'category', 'cultivar']
+export const PROJECT_KIND_MAP = {
+  campaign: { label: 'Growing this season' },
+  category: { label: 'Folder for organizing' },
+  cultivar: { label: 'Cultivar reference' },
+}
+export function projectKindOptions(includeCultivar = false) {
+  return PROJECT_KINDS
+    .filter(k => k !== 'cultivar' || includeCultivar)
+    .map(k => ({ value: k, label: PROJECT_KIND_MAP[k].label }))
+}
+
 // Task priorities
 export const TASK_PRIORITIES = ['low', 'normal', 'high']
 
 // Task statuses — matches schema check constraint on tasks.status
 export const TASK_STATUSES = ['pending', 'done', 'skipped']
 
-// Inventory item types — matches schema check constraint on inventory.item_type
-export const INVENTORY_ITEM_TYPES = ['consumable', 'equipment']
-
-// Inventory subcategories — matches schema check constraint on inventory.subcategory
-// Used in both Inventory.jsx and the SQL schema CHECK constraint
-// {v: db value, label: display label, types: item_types this applies to}
-export const INVENTORY_SUBCATEGORIES = [
-  { v: 'seeds',        label: 'Seeds',          types: ['consumable'] },
-  { v: 'growing_media',label: 'Growing media',  types: ['consumable'] },
-  { v: 'fertilizer',   label: 'Fertilizer',     types: ['consumable'] },
-  { v: 'pest_control', label: 'Pest control',   types: ['consumable'] },
-  { v: 'containers',   label: 'Containers',     types: ['consumable', 'equipment'] },
-  { v: 'lighting',     label: 'Lighting',       types: ['equipment'] },
-  { v: 'shelving',     label: 'Shelving',       types: ['equipment'] },
-  { v: 'hand_tools',   label: 'Hand tools',     types: ['equipment'] },
-  { v: 'misc',         label: 'Misc',           types: ['consumable', 'equipment'] },
-]
-
-// Legacy — kept for any code that still references INVENTORY_CATEGORIES
-// TODO: remove after confirming no other code uses this
-export const INVENTORY_CATEGORIES = [
-  'seed', 'fertilizer', 'soil_amendment', 'container', 'tool', 'pest_control', 'other',
-]
+// Inventory enums moved to src/lib/inventoryEnums.js (V3-FORMSYS-001 §4). The prior
+// item-types / subcategories / categories exports here were STALE (claimed schema-match
+// but used dead 'equipment'/'fertilizer'/'hand_tools'/'misc' values not in the live
+// inventory_items CHECK) and had zero importers. Use inventoryEnums.js.
 
 // Project categories — used in project_types table and ProjectTypes.jsx
 export const PROJECT_CATEGORIES = [

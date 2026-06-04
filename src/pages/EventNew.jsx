@@ -3,7 +3,8 @@ import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES } from '../lib/constants.js'
-import { EVENT_TYPE_META, buildSecondaryGroups } from '../lib/eventTypes.js'
+import { EVENT_TYPE_META } from '../lib/eventTypes.js'
+import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 import { formatQty } from '../lib/format.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
@@ -15,30 +16,7 @@ import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 // EventNew.jsx (EventTypesPhase1.test.jsx) keep working unchanged.
 export { EVENT_TYPE_META }
 
-// Primary quick-picks (Dave 2026-06-01: in/out promoted to primary, hardening_off
-// promoted, observation demoted to the "More" group). 3 render in the top 3-col
-// grid (slice 0..3), the remaining 4 in a 2-col grid (slice 3..) below.
-// hardening_off glyph is ⛅ (not ☀️) so it does not collide with brought_outside ☀️.
-export const EVENT_TYPES_UI = [
-  { value: 'watering',        label: 'Watered',                 emoji: '💧' },
-  { value: 'transplant',      label: 'Transplanted\n/ Planted', emoji: '🌱' },
-  { value: 'fertilizing',     label: 'Fertilized\n/ Fed',       emoji: '🌿' },
-  { value: 'pruning',         label: 'Pruned\n/ Topped',        emoji: '✂️' },
-  { value: 'hardening_off',   label: 'Hardening\nOff',          emoji: '⛅' },
-  { value: 'brought_inside',  label: 'Brought\nInside',         emoji: '🏠' },
-  { value: 'brought_outside', label: 'Brought\nOutside',        emoji: '☀️' },
-  // V3-EVENT-005: promoted to primary
-  { value: 'photo',           label: 'Photo\nOnly',             emoji: '📷' },
-  { value: 'potting_up',      label: 'Potted Up\n/ Repotted',  emoji: '🪴' },
-]
-
-const PRIMARY_VALUES = new Set(EVENT_TYPES_UI.map(t => t.value))
-
-// V3-EVENT-008: SECONDARY_GROUPS is now derived from the canonical
-// EVENT_TYPE_META via buildSecondaryGroups(). Re-exported so
-// EventTypesPhase1.test.jsx (which imports it from EventNew.jsx) keeps working.
-// NOTE: EVENT_TYPE_META is imported + re-exported at the top of this file.
-export const SECONDARY_GROUPS = buildSecondaryGroups(PRIMARY_VALUES)
+export { EVENT_TYPES_UI, SECONDARY_GROUPS }
 
 // Per-type metadata field definitions for Tier 2 enrichment
 const EVENT_METADATA_FIELDS = {
@@ -78,6 +56,7 @@ const EVENT_METADATA_FIELDS = {
     { key: 'treatment', label: 'Treatment used', type: 'text' },
   ],
 }
+
 
 // V1.2a-2 Wave 3: harvest panel — anchored quality scale (NOT a star widget).
 const HARVEST_QUALITY_LABELS = {
@@ -327,7 +306,6 @@ export default function EventNew() {
   const [saving,       setSaving]       = useState(false)
   const [error,        setError]        = useState(null)
   const [showPrivate,  setShowPrivate]  = useState(false)
-  const [showMoreTypes, setShowMoreTypes] = useState(false)
   // V3-EVENT-008 §8: "Add details" collapsible (Quantity / Visibility / Private notes).
   // Default collapsed unless the feature flag flips it open. Fields stay reachable.
   const [showAddDetails, setShowAddDetails] = useState(EVENTNEW_ADD_DETAILS_EXPANDED)
@@ -605,64 +583,10 @@ export default function EventNew() {
 
           {/* ── Event type ── */}
           <Section label="What happened? *">
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-              {EVENT_TYPES_UI.slice(0, 3).map(t => (
-                <TypeBtn key={t.value} type={t} selected={form.event_type} onSelect={v => setForm(f => ({ ...f, event_type: v }))} />
-              ))}
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginTop: 10 }}>
-              {EVENT_TYPES_UI.slice(3).map(t => (
-                <TypeBtn key={t.value} type={t} selected={form.event_type} onSelect={v => setForm(f => ({ ...f, event_type: v }))} />
-              ))}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowMoreTypes(s => !s)}
-              style={{
-                marginTop: 12, background: 'none', border: 'none',
-                cursor: 'pointer', color: P.green, fontSize: '0.82rem',
-                fontWeight: 600, padding: '4px 0',
-                display: 'flex', alignItems: 'center', gap: 5,
-              }}
-            >
-              <span>{showMoreTypes ? '▾' : '▸'}</span>
-              <span>More event types</span>
-            </button>
-
-            {showMoreTypes && (
-              <div style={{ marginTop: 8 }}>
-                {SECONDARY_GROUPS.map(([category, types]) => (
-                  <div key={category} style={{ marginBottom: 14 }}>
-                    <div style={{
-                      fontSize: '0.7rem', fontWeight: 700, color: P.light,
-                      letterSpacing: '0.4px', textTransform: 'uppercase',
-                      marginBottom: 8,
-                    }}>
-                      {category}
-                    </div>
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: `repeat(${Math.min(types.length, 3)}, 1fr)`,
-                      gap: 8,
-                    }}>
-                      {types.map(t => (
-                        <TypeBtn
-                          key={t.value}
-                          type={t}
-                          selected={form.event_type}
-                          onSelect={v => {
-                            setForm(f => ({ ...f, event_type: v }))
-                            setShowMoreTypes(false)
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Section>
+            <EventTypePicker
+              value={form.event_type}
+              onChange={v => setForm(f => ({ ...f, event_type: v }))}
+            />          </Section>
 
           {/* ── Notes ── */}
           <Section label="Notes">
@@ -1061,40 +985,6 @@ export default function EventNew() {
   )
 }
 
-function TypeBtn({ type, selected, onSelect }) {
-  const isSelected = selected === type.value
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(type.value)}
-      style={{
-        padding: '14px 6px 12px',
-        border: `2px solid ${isSelected ? P.green : P.border}`,
-        borderRadius: 10,
-        backgroundColor: isSelected ? P.greenPale : P.white,
-        cursor: 'pointer',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 7,
-        transition: 'all 0.12s',
-        minHeight: 80,
-      }}
-    >
-      <span style={{ fontSize: '1.7rem', lineHeight: 1 }}>{type.emoji}</span>
-      <span style={{
-        fontSize: '0.73rem',
-        fontWeight: 600,
-        color: isSelected ? P.green : P.mid,
-        textAlign: 'center',
-        lineHeight: 1.25,
-        whiteSpace: 'pre-line',
-      }}>
-        {type.label}
-      </span>
-    </button>
-  )
-}
 
 function Section({ label, children }) {
   return (
