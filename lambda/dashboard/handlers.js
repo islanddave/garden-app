@@ -273,6 +273,12 @@ export function queryHeadsUp(sql, userId) {
 }
 
 // §C inactive_projects_count — harvested/ended status, NOT dismissed by this user.
+// NOTE (E3, 2026-06-04): 'harvested' is now a LOGGABLE project status — harvesting is
+// repeatable (see LOGGABLE_PROJECT_STATUSES in src/lib/constants.js). This count still
+// groups 'harvested' WITH 'ended' as "inactive", which is semantically loose now.
+// DEPRIORITIZED per Dave: the dashboard projects-list UI is currently hidden, so this
+// count is not user-visible. Revisit (split 'harvested' out of "inactive") only if that
+// list is re-surfaced.
 export function queryInactiveCount(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
