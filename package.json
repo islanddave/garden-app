@@ -1,7 +1,7 @@
 {
   "name": "garden-app",
   "private": true,
-  "version": "2.5.1",
+  "version": "2.5.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,9 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
-    "test:ui": "vitest --ui",
-    "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
-    "check:event-types": "node scripts/gen-lambda-event-types.mjs --check"
+    "test:ui": "vitest --ui"
   },
   "dependencies": {
     "@clerk/react": "^6.0.0",
