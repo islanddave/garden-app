@@ -59,9 +59,11 @@ export const PROJECT_STATUSES = [
 ]
 
 // Statuses for which a project appears in the event-logging picker (EventNew).
-// All current lifecycle stages are loggable; legacy terminal values (active/harvested/ended)
-// are excluded automatically by not being members of PROJECT_STATUSES.
-export const LOGGABLE_PROJECT_STATUSES = PROJECT_STATUSES
+// Harvest is REPEATABLE (Dave directive 2026-06-04, E3): a 'harvested' project MUST stay
+// loggable — you can harvest many times; harvesting is not the end of the process. So
+// 'harvested' is loggable IN ADDITION to the active lifecycle stages. Only 'ended'
+// (deliberately, truly done) and the legacy pre-lifecycle 'active' value stay excluded.
+export const LOGGABLE_PROJECT_STATUSES = [...PROJECT_STATUSES, 'harvested']
 
 // Display mapping — covers both new values and legacy DB values.
 // Structure: { label, emoji } — add color here if needed later.
