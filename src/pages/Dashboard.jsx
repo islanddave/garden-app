@@ -54,7 +54,9 @@ function DashboardFallback({ error, retry } = {}) {
   )
 }
 
-const LOGGABLE_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
+// Projects shown in the generic "give attention to" list. Harvesting-stage projects are
+// intentionally excluded here — they surface in the dedicated Harvest Ready tile instead.
+const ATTENTION_LIST_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
 
 // Stale threshold for Tile 1 "Give attention to" — surface only projects engaged within last 30 days.
 // Never-touched and very-stale projects defer to V1.2a-2 "Inactive projects" surface.
@@ -107,7 +109,7 @@ export default function Dashboard() {
       if (!isMounted) return
 
       const activeProjects = (dashData.active_projects ?? []).filter(p =>
-        LOGGABLE_STATUSES.includes(p.status)
+        ATTENTION_LIST_STATUSES.includes(p.status)
       )
       setProjects(activeProjects)
       setRecentEvents(dashData.recent_events ?? [])
