@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
-    "test:ui": "vitest --ui"
+    "test:ui": "vitest --ui",
+    "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
+    "check:event-types": "node scripts/gen-lambda-event-types.mjs --check"
   },
   "dependencies": {
     "@clerk/react": "^6.0.0",
