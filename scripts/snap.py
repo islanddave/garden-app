@@ -512,18 +512,34 @@ def prune_old_branches(cfg):
         return []
     to_delete = snaps[: len(snaps) - k]
     deleted = []
+    skipped = []
     for b in to_delete:
         bid = b["id"]
-        r = requests.delete(
-            f"{NEON_API}/projects/{cfg.neon_project_id}/branches/{bid}",
-            headers=neon_headers(cfg),
-            timeout=HTTP_TIMEOUT,
-        )
-        if r.status_code not in (200, 201, 202):
-            raise SnapError(
-                f"prune: delete branch {bid} failed {r.status_code}: {r.text}"
+        # Best-effort retention: pruning OLD snapshots is hygiene and must NEVER
+        # fail an already-complete, self-verified snapshot. A delete can legitimately
+        # fail with 422 "cannot delete branch that has children" when something (e.g.
+        # a lingering staging branch) was forked off an old snap-* branch. Warn and
+        # move on rather than red-failing the whole promote. (Fix: snap-prune incident
+        # 2026-06-04 — orphan Neon staging branch blocked retention.)
+        try:
+            r = requests.delete(
+                f"{NEON_API}/projects/{cfg.neon_project_id}/branches/{bid}",
+                headers=neon_headers(cfg),
+                timeout=HTTP_TIMEOUT,
             )
-        deleted.append(bid)
+        except requests.RequestException as e:  # noqa: BLE001 — never fatal
+            sys.stderr.write(f"[snap] WARN prune: delete branch {bid} errored ({e}); skipping\n")
+            skipped.append(bid)
+            continue
+        if r.status_code in (200, 201, 202):
+            deleted.append(bid)
+        else:
+            sys.stderr.write(
+                f"[snap] WARN prune: delete branch {bid} failed {r.status_code}: {r.text}; skipping\n"
+            )
+            skipped.append(bid)
+    if skipped:
+        sys.stderr.write(f"[snap] prune kept-on-error {len(skipped)} branch(es): {skipped}\n")
     return deleted
 
 
