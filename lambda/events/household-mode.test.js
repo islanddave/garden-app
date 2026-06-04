@@ -16,13 +16,13 @@ describe('events Lambda — Household Mode surgical widening', () => {
     expect(SRC).toMatch(/const householdIds = householdScope\(userId\)/);
   });
 
-  it('exactly 5 event-entity sites widened to pp.created_by = ANY(${householdIds})', () => {
+  it('exactly 6 event-entity sites widened to pp.created_by = ANY(${householdIds})', () => {
     // UPDATE event_log guard + 3 event LIST/GET reads + Unit A bulk Quick Log batch
-    // plant-resolution (2026-05-24). The batch path is an event-write entity op, so
-    // household-widening is correct per the surgical-widening invariant. Count was 4
-    // pre-Unit-A; this assertion drifted red on dev when Unit A landed (L-099 class).
+    // plant-resolution (2026-05-24) + HS-2 planting-scoped LIST read (2026-06-04, V3-NAV-001).
+    // Each is an event-entity op, so household-widening is correct per the surgical-widening
+    // invariant. Count was 4 pre-Unit-A, 5 post-Unit-A, 6 post-HS-2 (L-099 drift class).
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(5);
+    expect(matches.length).toBe(6);
   });
 
   it('achievement resolved-set query NOT widened (per-user isolation invariant)', () => {

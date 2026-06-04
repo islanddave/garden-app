@@ -14,8 +14,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { FLOWS, getSessionId, sendUxEvent } from '../lib/uxEvents.js'
 
 describe('uxEvents FLOWS + session', () => {
-  it('declares exactly the three M1 flows', () => {
-    expect(Object.values(FLOWS).sort()).toEqual(['create_project', 'log_watering', 'reach_planting'])
+  it('declares the M1 flows + the V3-NAV-001 open_planting step', () => {
+    // open_planting (Lane C / PR2) is a NEW step fired on PlantingDetail mount; it does NOT
+    // replace reach_planting (still fired on project load for one release — documented
+    // temporary double-signal). Update this allowlist whenever a flow is added/removed.
+    expect(Object.values(FLOWS).sort()).toEqual(['create_project', 'log_watering', 'open_planting', 'reach_planting'])
   })
 
   it('getSessionId is stable across calls', () => {
