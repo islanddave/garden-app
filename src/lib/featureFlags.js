@@ -17,3 +17,12 @@ export const CATCH_UP_EDITOR_SHIPPED = false
 // SYSTEM-option render-time MUST gate on PWA-installed state (matchMedia standalone OR
 // navigator.standalone) — installation is a separate prereq from the bi-state flag.
 export const SYSTEM_NOTIFICATIONS_ENABLED = false
+
+// V3-EVENT-008 §8 (Dave 2026-06-03): EventNew's three low-frequency fields —
+// Quantity·optional, Visibility card, Private-notes card — moved into a collapsible
+// "Add details" section to declutter the common logging path (ADHD focus). They are
+// NOT removed: the section stays reachable, all state/payload wiring is intact, and
+// the horticulture data (season-narrative notes + propagation/germination counts) is
+// preserved. When this flag is FALSE the section starts COLLAPSED (the common path);
+// flip TRUE to have it render EXPANDED by default. Either way the fields are reachable.
+export const EVENTNEW_ADD_DETAILS_EXPANDED = false

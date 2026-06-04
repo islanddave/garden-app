@@ -1,7 +1,7 @@
 // Unit tests for validateBatchBody (bulk "Quick Log" / Unit A). DB-free, pure.
 import { describe, it, expect } from 'vitest';
 import { validateBatchBody, BATCH_EVENT_TYPES } from './validators.js';
-import { EVENT_TYPES } from '../../src/lib/constants.js';
+import { EVENT_TYPES, BATCH_EXCLUDED_TYPES } from '../../src/lib/eventTypes.js';
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 const UUID2 = '22222222-2222-4222-8222-222222222222';
@@ -42,14 +42,52 @@ describe('validateBatchBody', () => {
   it('accepts caged / staked / mesh_netting (V3-EVENT-007)', () => {
     ['caged', 'staked', 'mesh_netting'].forEach(t => ok(base({ event_type: t })));
   });
+
+  // V3-EVENT-008: the 12 genuinely-bulk types the LogMany fix newly surfaces.
+  it('accepts the newly-surfaced bulk types', () => {
+    ['caged', 'staked', 'mesh_netting', 'trellised', 'pinched', 'deadheaded',
+     'weeded', 'relocated', 'animal_damage', 'heat_damage', 'frost_damage', 'soil_amended']
+      .forEach(t => ok(base({ event_type: t })));
+  });
+
+  // HS-1 (V002 §4): propagation / single-plant events must NOT be batch-loggable.
+  // divided & cutting_taken spawn child plantings; hand_pollinated & fruit_set are
+  // per-plant. The server must reject them in a batch POST (data-integrity hard-stop).
+  it('rejects HS-1 propagation/single-plant types in a batch POST', () => {
+    ['divided', 'cutting_taken', 'hand_pollinated', 'fruit_set'].forEach(t =>
+      bad(base({ event_type: t }), /must be one of/));
+  });
 });
 
-// Drift guard (data-schema-architect): the batch allowlist must never name a
-// value absent from the EVENT_TYPES master soft-enum, or event_log.event_type
-// would diverge between the single-POST and batch paths.
-describe('BATCH_EVENT_TYPES drift guard', () => {
-  it('is a subset of EVENT_TYPES', () => {
+// Drift guard (V3-EVENT-008, upgraded from subset → EXACT equality):
+// the batch allowlist must EXACTLY equal EVENT_TYPES − BATCH_EXCLUDED_TYPES.
+// Fails on a MISSING type (a valid batch type dropped) AND on an EXTRA type
+// (something present that should be excluded), so event_log.event_type can never
+// diverge between the single-POST and batch paths, and HS-1 exclusions can't regress.
+describe('BATCH_EVENT_TYPES drift guard (exact equality)', () => {
+  const expected = EVENT_TYPES.filter(t => !BATCH_EXCLUDED_TYPES.includes(t));
+
+  it('exactly equals EVENT_TYPES minus BATCH_EXCLUDED_TYPES (order-independent)', () => {
+    expect([...BATCH_EVENT_TYPES].sort()).toEqual([...expected].sort());
+  });
+
+  it('preserves master order (no reorder drift)', () => {
+    expect(BATCH_EVENT_TYPES).toEqual(expected);
+  });
+
+  it('contains NONE of the excluded types', () => {
+    BATCH_EXCLUDED_TYPES.forEach(t =>
+      expect(BATCH_EVENT_TYPES.includes(t), `excluded type leaked: ${t}`).toBe(false));
+  });
+
+  it('every batch type is a member of the EVENT_TYPES master', () => {
     const master = new Set(EVENT_TYPES);
     BATCH_EVENT_TYPES.forEach(t => expect(master.has(t), t).toBe(true));
+  });
+
+  it('excludes exactly the 7 expected types (3 needs-input + 4 HS-1)', () => {
+    expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
+      ['cutting_taken', 'divided', 'first_harvest', 'fruit_set', 'hand_pollinated', 'harvest', 'photo'],
+    );
   });
 });

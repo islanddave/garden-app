@@ -119,9 +119,17 @@ describe('EventNew — harvest panel rendering', () => {
     expect(screen.queryByLabelText('Quantity')).toBeNull()
   })
 
-  it('shows the generic Quantity section for non-harvest events', async () => {
+  it('shows the generic Quantity section for non-harvest events (under "Add details")', async () => {
+    // V3-EVENT-008 §8: Quantity moved into the collapsed "Add details" section to
+    // declutter the common logging path. It is NOT removed — expanding the section
+    // reveals it. Assert it is reachable (the field + its state/payload wiring intact).
     renderEventNew('event_type=watering')
     await flushLoad()
+    // Collapsed by default (EVENTNEW_ADD_DETAILS_EXPANDED=false): not yet in the DOM.
+    expect(screen.queryByLabelText('Quantity')).toBeNull()
+    // The expander label lives in its own <span> ("Add details  ·  optional"); match on
+    // a stable substring so the leading toggle-arrow span doesn't break the matcher.
+    fireEvent.click(screen.getByText(/Add details/i))
     expect(screen.getByLabelText('Quantity')).toBeTruthy()
   })
 

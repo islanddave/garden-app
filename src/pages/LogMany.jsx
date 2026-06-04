@@ -3,52 +3,60 @@ import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { BATCH_EVENT_TYPES, EVENT_TYPE_META, buildSecondaryGroups } from '../lib/eventTypes.js'
 
 // Bulk "Quick Log" (Unit A). Apply ONE event type to MANY plantings at once —
 // one event per planting — without per-item tapping. Scope: All active / By Project /
 // By Space. Server resolves the set (POST /api/events/batch); dry_run powers the
 // server-accurate preview. Durable undo via /api/events/batches. V100: ambient, no interrupt.
 
-// Primary event types — the 4 most common bulk operations stay above the fold.
-const EVENT_TYPES = [
-  { value: 'watering',    label: 'Watered',    emoji: '💧' },
-  { value: 'fertilizing', label: 'Fertilized', emoji: '🌿' },
-  { value: 'observation', label: 'Observed',   emoji: '👁️' },
-  { value: 'pruning',     label: 'Pruned',     emoji: '✂️' },
-]
+// V3-EVENT-008: vocabulary now derives from the canonical src/lib/eventTypes.js
+// (single source of truth). The local hand-maintained copy (which surfaced only 18 of
+// the 30 batch-valid types) is gone — ALL BATCH_EVENT_TYPES are now reachable here, and
+// the labels/emojis come from the shared EVENT_TYPE_META. The 4 primary quick-picks stay
+// as a page-level UX choice (most common bulk ops above the fold); everything else batch-
+// eligible is grouped under "More event types" via buildSecondaryGroups().
 
-// Secondary event types — revealed via "More event types" expand. Curated for batch:
-// side-effect-free types only (harvest/first_harvest excluded — they require quantity;
-// photo excluded — it requires a file). Order + grouping mirrors EventNew (Log one).
-// Vocabulary MUST match the Lambda BATCH_EVENT_TYPES allowlist in lambda/events/validators.js.
-const SECONDARY_GROUPS = [
-  ['Growth & Training', [
-    { value: 'sowing',         label: 'Sowed',         emoji: '🌰' },
-    { value: 'seed_soak',      label: 'Seed soak',     emoji: '💦' },
-    { value: 'germination',    label: 'Germination',   emoji: '🌿' },
-    { value: 'thinning',       label: 'Thinned',       emoji: '🪓' },
-    { value: 'potting_up',     label: 'Potted up',     emoji: '🪴' },
-    { value: 'transplant',     label: 'Transplanted',  emoji: '🌱' },
-    { value: 'hardening_off',  label: 'Hardening off', emoji: '⛅' },
-  ]],
-  ['Pest & Health', [
-    { value: 'pest_treatment', label: 'Pest treatment', emoji: '🐛' },
-  ]],
-  ['Environmental', [
-    { value: 'cover',          label: 'Covered',         emoji: '🌂' },
-    { value: 'uncover',        label: 'Uncovered',       emoji: '🌤️' },
-    { value: 'brought_inside', label: 'Brought inside',  emoji: '🏠' },
-    { value: 'brought_outside',label: 'Brought outside', emoji: '☀️' },
-    { value: 'mulched',        label: 'Mulched',         emoji: '🍂' },
-    { value: 'other',          label: 'Other',           emoji: '📝' },
-  ]],
-]
+// Primary quick-picks — the 4 most common bulk operations stay above the fold.
+// V3-EVENT-008 (V002 §5): SEASON-AWARE / frequency-weighted. In cold-protection
+// season (Conway MA growing-zone reality: frost risk runs ~Oct–Apr) the single most
+// frequent bulk action this garden performs is moving plantings in/out, so
+// brought_inside + brought_outside replace the two lowest-frequency warm-season picks
+// (observation, pruning). Year-round staples watering + fertilizing always stay.
+// All primaries are asserted batch-eligible by the LogMany render test. This is UX
+// weighting only — NOT a work gate (no date gates garden work; see CLAUDE.md).
+const WARM_SEASON_PRIMARIES = ['watering', 'fertilizing', 'observation', 'pruning']
+const COLD_SEASON_PRIMARIES = ['watering', 'fertilizing', 'brought_inside', 'brought_outside']
 
-// Flat lookup so the meta-by-value resolver covers both primary + secondary.
-const ALL_TYPES = [
-  ...EVENT_TYPES,
-  ...SECONDARY_GROUPS.flatMap(([, types]) => types),
-]
+// Cold-protection months (0-indexed): Jan,Feb,Mar,Apr (0-3) + Oct,Nov,Dec (9-11).
+// Injectable `month` keeps this pure + testable.
+export function coldProtectionSeason(month = new Date().getMonth()) {
+  return month <= 3 || month >= 9
+}
+export function primaryValuesForSeason(cold = coldProtectionSeason()) {
+  return cold ? COLD_SEASON_PRIMARIES : WARM_SEASON_PRIMARIES
+}
+function toChips(values) {
+  return values.map(v => ({
+    value: v,
+    label: EVENT_TYPE_META[v]?.label ?? v,
+    emoji: EVENT_TYPE_META[v]?.emoji ?? '📌',
+  }))
+}
+
+// Secondary event types — revealed via "More event types" expand. Every batch-eligible
+// type NOT in the ACTIVE primary quick-picks, grouped by EVENT_TYPE_META category. We
+// exclude only the currently-rendered primaries (NOT the union of both seasons) so that
+// every batch type appears exactly once per render: a value that is a primary THIS season
+// is a chip above; a value that is a primary in the OTHER season (e.g. observation/pruning
+// in cold season) drops back into "More" rather than vanishing. Excluded from batch
+// entirely (never surfaced here): harvest/first_harvest (need quantity), photo (needs a
+// file), and the four propagation/single-plant HS-1 types divided/cutting_taken/
+// hand_pollinated/fruit_set. Source of truth: BATCH_EVENT_TYPES + BATCH_EXCLUDED_TYPES
+// in src/lib/eventTypes.js.
+export function secondaryGroupsExcluding(primaryValues) {
+  return buildSecondaryGroups(new Set(primaryValues), BATCH_EVENT_TYPES)
+}
 
 const SCOPE_KEY = 'quicklog.lastScope'
 // FIX-3: per-DEVICE default selection (true=start all selected [Dave default], false=start none [Jen]).
@@ -58,6 +66,14 @@ const DEFAULT_SEL_KEY = 'quicklog.defaultAllSelected'
 function genKey() {
   try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID() } catch (e) {}
   return 'k-' + Date.now() + '-' + Math.random().toString(16).slice(2)
+}
+
+// Local-time YYYY-MM-DD for the back-date input's `max` (no future dates) and the
+// "reset to today" comparison. toISOString() would shift behind-UTC offsets a day.
+function todayYMD() {
+  const d = new Date()
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
 export default function LogMany() {
@@ -72,6 +88,10 @@ export default function LogMany() {
 
   const [eventType, setEventType] = useState('watering')
   const [showMoreTypes, setShowMoreTypes] = useState(false)
+  // V3-EVENT-008 (V002 §5): bulk back-dating. Frost / bring-in events are often logged
+  // the morning after they happened, so the batch must accept a back-dated event_date.
+  // Empty string = "now" (server defaults to today, noon-anchored). YYYY-MM-DD only.
+  const [eventDate, setEventDate] = useState('')
   const [scope, setScope]   = useState({ type: 'all' })
   const [preview, setPreview]   = useState(null)   // { count, capped, plantings:[{id,name}] }
   const [excluded, setExcluded] = useState(() => new Set())
@@ -85,11 +105,20 @@ export default function LogMany() {
   })
   const idemRef = useRef(null)
 
+  // V3-EVENT-008: season-aware primaries + derived secondary groups (per-render —
+  // cheap, and keeps the seasonal selection live without remount). primaries are the
+  // quick-pick chips; secondaryGroups holds everything else batch-eligible.
+  const primaries = toChips(primaryValuesForSeason())
+  const primaryValueSet = new Set(primaries.map(t => t.value))
+  const secondaryGroups = secondaryGroupsExcluding(primaries.map(t => t.value))
+  const allTypes = [...primaries, ...secondaryGroups.flatMap(([, types]) => types)]
+
   // If the user reopens the page with a previously-selected secondary type
   // saved in eventType (e.g. via "Log more"), keep the More panel open so
   // their selection stays visible.
   useEffect(() => {
-    if (!EVENT_TYPES.some(t => t.value === eventType)) setShowMoreTypes(true)
+    if (!primaryValueSet.has(eventType)) setShowMoreTypes(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventType])
 
   // Load projects + locations; restore last scope (validated against live data); seed from ?project_id / ?location_id.
@@ -123,14 +152,14 @@ export default function LogMany() {
     if (!ready || result) return
     let on = true
     setPreviewing(true); setError(null); setExcluded(new Set())
-    fetch('/api/events/batch', { method: 'POST', body: JSON.stringify({ dry_run: true, event_type: eventType, scope }) })
+    fetch('/api/events/batch', { method: 'POST', body: JSON.stringify({ dry_run: true, event_type: eventType, scope, ...(eventDate ? { event_date: eventDate } : {}) }) })
       .then(r => { if (on) {
         setPreview(r); setPreviewing(false)
         setExcluded(defaultAllSelected ? new Set() : new Set((r.plantings || []).map(pl => pl.id)))
       } })
       .catch(err => { if (on) { setError(err.message); setPreview(null); setPreviewing(false) } })
     return () => { on = false }
-  }, [ready, scope, eventType, fetch, result])
+  }, [ready, scope, eventType, eventDate, fetch, result])
 
   const toggleExclude = useCallback((id) => {
     setExcluded(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -143,7 +172,7 @@ export default function LogMany() {
     setExcluded(on ? new Set() : new Set((preview?.plantings || []).map(pl => pl.id)))
   }, [preview])
 
-  const evMeta = ALL_TYPES.find(t => t.value === eventType) || EVENT_TYPES[0]
+  const evMeta = allTypes.find(t => t.value === eventType) || primaries[0]
   const verbLabel = evMeta.label.toLowerCase()
   const committed = preview ? preview.plantings.filter(p => !excluded.has(p.id)) : []
   const scopeLabel = scope.type === 'all' ? 'all active plantings'
@@ -158,6 +187,7 @@ export default function LogMany() {
       const r = await fetch('/api/events/batch', { method: 'POST', body: JSON.stringify({
         idempotency_key: idemRef.current, event_type: eventType, scope,
         exclude_plant_ids: [...excluded],
+        ...(eventDate ? { event_date: eventDate } : {}),
       }) })
       try { localStorage.setItem(SCOPE_KEY, JSON.stringify(scope)) } catch (e) {}
       // MVP-Critter — critters are awarded SERVER-SIDE by the events Lambda batch handler
@@ -213,7 +243,7 @@ export default function LogMany() {
 
       <Section label="What did you do?">
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {EVENT_TYPES.map(t => (
+          {primaries.map(t => (
             <Chip key={t.value} active={eventType === t.value} onClick={() => setEventType(t.value)}>
               <span aria-hidden="true">{t.emoji}</span> {t.label}
             </Chip>
@@ -237,7 +267,7 @@ export default function LogMany() {
 
         {showMoreTypes && (
           <div style={{ marginTop: 8 }}>
-            {SECONDARY_GROUPS.map(([category, types]) => (
+            {secondaryGroups.map(([category, types]) => (
               <div key={category} style={{ marginBottom: 14 }}>
                 <div style={{
                   fontSize: '0.7rem', fontWeight: 700, color: P.light,
@@ -256,6 +286,24 @@ export default function LogMany() {
               </div>
             ))}
           </div>
+        )}
+      </Section>
+
+      <Section label="When?">
+        {/* V3-EVENT-008 (V002 §5): back-dating for bulk frost / bring-in events logged the
+            morning after. Defaults to today (empty = server "now"); future dates blocked. */}
+        <input
+          type="date"
+          value={eventDate}
+          max={todayYMD()}
+          onChange={e => setEventDate(e.target.value)}
+          aria-label="Event date (leave as today, or back-date)"
+          style={selectStyle}
+        />
+        {eventDate && eventDate !== todayYMD() && (
+          <button type="button" onClick={() => setEventDate('')} style={{ ...linkBtn, marginTop: 8 }}>
+            Reset to today
+          </button>
         )}
       </Section>
 
@@ -287,7 +335,7 @@ export default function LogMany() {
             <p style={{ margin: '0 0 4px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>
               Log <span style={{ color: P.green }}>{verbLabel}</span> on <span style={{ color: P.green }}>{committed.length}</span> {committed.length === 1 ? 'planting' : 'plantings'}
             </p>
-            <p style={{ margin: '0 0 8px', color: P.mid, fontSize: '0.85rem' }}>in {scopeLabel} · one event each, dated now</p>
+            <p style={{ margin: '0 0 8px', color: P.mid, fontSize: '0.85rem' }}>in {scopeLabel} · one event each, dated {eventDate ? eventDate : 'now'}</p>
             {preview.capped && <p style={{ margin: '0 0 8px', color: P.terra, fontSize: '0.8rem' }}>Showing first 500 — narrow the scope to log more.</p>}
             {scope.type === 'space' && (
               <p style={{ margin: '0 0 8px', color: P.light, fontSize: '0.78rem' }}>Plantings with no space aren't included — use “All active” to cover everything.</p>

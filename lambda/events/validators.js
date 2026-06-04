@@ -79,51 +79,18 @@ export function validatePostBody(body) {
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ── Bulk "Quick Log" / Unit A (2026-05-24, expanded 2026-05-28) ───────────
-// Side-effect-free types only. Vocabulary mirrors EventNew EVENT_TYPES_UI + the
-// SECONDARY_GROUPS in src/pages/LogMany.jsx (so event_log.event_type matches the
-// single-event path). Excluded by design:
+// V3-EVENT-008: the batch allowlist is now DERIVED, not hand-listed. It is generated
+// from the canonical src/lib/eventTypes.js (EVENT_TYPES − BATCH_EXCLUDED_TYPES) into the
+// committed sibling eventTypes.generated.js by scripts/gen-lambda-event-types.mjs, and
+// CI (`npm run check:event-types`) fails on any drift. The deployed Lambda is a standalone
+// zip with no bundler, so it imports the generated SIBLING (not src/lib/) at runtime.
+// Excluded by design (see BATCH_EXCLUDED_TYPES in eventTypes.js):
 //   - harvest / first_harvest — require quantity+unit (dual-write to harvest_log)
-//   - photo                    — requires a file upload (no bulk semantics)
-export const BATCH_EVENT_TYPES = [
-  // Primary (always visible in Log Many)
-  'watering',
-  'fertilizing',
-  'observation',
-  'pruning',
-  // Secondary — Growth & Training
-  'sowing',
-  'seed_soak',
-  'germination',
-  'thinning',
-  'potting_up',
-  'transplant',
-  'hardening_off',
-  // Secondary — Pest & Health
-  'pest_treatment',
-  // Secondary — Environmental
-  'cover',
-  'uncover',
-  'brought_inside',
-  'brought_outside',
-  'mulched',
-  'caged',
-  'staked',
-  'mesh_netting',
-  'trellised',
-  'pinched',
-  'deadheaded',
-  'weeded',
-  'hand_pollinated',
-  'divided',
-  'cutting_taken',
-  'relocated',
-  'fruit_set',
-  'animal_damage',
-  'heat_damage',
-  'frost_damage',
-  'soil_amended',
-  'other',
-];
+//   - photo                   — requires a file upload (no bulk semantics)
+//   - divided / cutting_taken — HS-1: spawn child plantings (lineage/transaction risk)
+//   - hand_pollinated / fruit_set — HS-1: single-plant events, no bulk semantics
+import { BATCH_EVENT_TYPES } from './eventTypes.generated.js';
+export { BATCH_EVENT_TYPES };
 
 // Returns null on success, or { status, error } on validation failure.
 export function validateBatchBody(body) {

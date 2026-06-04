@@ -25,46 +25,11 @@ export const P = {
 }
 
 // Soft enum — suggested event types shown in dropdown, free text always accepted.
-// Add new values here as you discover them — no schema change needed.
-export const EVENT_TYPES = [
-  'sowing',
-  'seed_soak',
-  'germination',
-  'thinning',
-  'potting_up',
-  'transplant',
-  'hardening_off',
-  'watering',
-  'fertilizing',
-  'pest_treatment',
-  'pruning',
-  'cover',
-  'uncover',
-  'brought_inside',
-  'brought_outside',
-  'mulched',
-  'caged',
-  'staked',
-  'mesh_netting',
-  'trellised',
-  'pinched',
-  'deadheaded',
-  'weeded',
-  'hand_pollinated',
-  'divided',
-  'cutting_taken',
-  'relocated',
-  'fruit_set',
-  'animal_damage',
-  'heat_damage',
-  'frost_damage',
-  'soil_amended',
-  'first_harvest',
-  'harvest',
-  'observation',
-  'photo',
-  'other',
-]
+// V3-EVENT-008: the master list moved to the canonical src/lib/eventTypes.js
+// (single source of truth). Re-exported here so the 5 existing importers of
+// EVENT_TYPES from constants.js keep working unchanged. Add new values in
+// eventTypes.js, NOT here.
+export { EVENT_TYPES } from './eventTypes.js'
 
 // Location type_label values for UI icons/display
 export const LOCATION_TYPE_LABELS = [

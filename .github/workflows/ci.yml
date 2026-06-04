@@ -9,7 +9,7 @@ on:
   push:
     branches: [dev]
   pull_request:
-    branches: [dev, main]
+    branches: [dev, staging, main]
 
 permissions:
   contents: read
@@ -50,6 +50,13 @@ jobs:
       - name: Verify build output
         run: |
           test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+
+      - name: Event-types drift guard
+        # V3-EVENT-008: fails the build if lambda/events/eventTypes.generated.js is
+        # stale vs the canonical src/lib/eventTypes.js (regenerate to temp + byte-diff).
+        # Required (not advisory): the deployed Lambda cannot import src/lib/ at runtime,
+        # so a stale generated copy would silently diverge the batch allowlist from the UI.
+        run: npm run check:event-types
 
       - name: Coverage ratchet enforcement
         # Fails the build if vitest.config.ts thresholds fall below the

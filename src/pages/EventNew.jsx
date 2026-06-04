@@ -3,10 +3,17 @@ import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, PROJECT_STATUSES } from '../lib/constants.js'
+import { EVENT_TYPE_META, buildSecondaryGroups } from '../lib/eventTypes.js'
 import { formatQty } from '../lib/format.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
+import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
+
+// V3-EVENT-008: EVENT_TYPE_META lives in the canonical src/lib/eventTypes.js
+// (single source of truth). Re-exported here so existing importers from
+// EventNew.jsx (EventTypesPhase1.test.jsx) keep working unchanged.
+export { EVENT_TYPE_META }
 
 // Primary quick-picks (Dave 2026-06-01: in/out promoted to primary, hardening_off
 // promoted, observation demoted to the "More" group). 3 render in the top 3-col
@@ -27,56 +34,11 @@ export const EVENT_TYPES_UI = [
 
 const PRIMARY_VALUES = new Set(EVENT_TYPES_UI.map(t => t.value))
 
-// Per-type display metadata. Source of truth for how any non-primary value renders
-// in the "More" secondary groups (and a label/emoji lookup for any value).
-// observation has an entry so that, now demoted from primary, it still renders with
-// a real label/emoji in "More" (not raw snake_case via the default fallback).
-export const EVENT_TYPE_META = {
-  sowing:          { label: 'Sowed',          emoji: '🌰', category: 'Growth & Training' },
-  seed_soak:       { label: 'Seed soak',       emoji: '💦', category: 'Growth & Training' },
-  germination:     { label: 'Germination',     emoji: '🌿', category: 'Growth & Training' },
-  thinning:        { label: 'Thinned',         emoji: '🪓', category: 'Growth & Training' },
-  potting_up:      { label: 'Potted up / Repotted', emoji: '🪴', category: 'Growth & Training' },
-  hardening_off:   { label: 'Hardening off',   emoji: '⛅', category: 'Growth & Training' },
-  observation:     { label: 'Observed / Note', emoji: '👁️', category: 'Pest & Health' },
-  pest_treatment:  { label: 'Pest treatment',  emoji: '🐛', category: 'Pest & Health' },
-  cover:           { label: 'Covered',         emoji: '🌂', category: 'Environmental' },
-  uncover:         { label: 'Uncovered',       emoji: '🌤️', category: 'Environmental' },
-  brought_inside:  { label: 'Brought inside',  emoji: '🏠', category: 'Environmental' },
-  brought_outside: { label: 'Brought outside', emoji: '☀️', category: 'Environmental' },
-  mulched:         { label: 'Mulched',         emoji: '🍂', category: 'Environmental' },
-  caged:           { label: 'Caged',           emoji: '🛡️', category: 'Environmental' },
-  staked:          { label: 'Staked',          emoji: '🪵', category: 'Growth & Training' },
-  mesh_netting:    { label: 'Mesh / Netting',  emoji: '🕸️', category: 'Environmental' },
-  trellised:       { label: 'Trellised',        emoji: '🏗️', category: 'Growth & Training' },
-  pinched:         { label: 'Pinched',          emoji: '🤌', category: 'Growth & Training' },
-  deadheaded:      { label: 'Deadheaded',       emoji: '🌸', category: 'Growth & Training' },
-  weeded:          { label: 'Weeded',           emoji: '☘️', category: 'Environmental' },
-  hand_pollinated: { label: 'Hand-pollinated',  emoji: '🐝', category: 'Growth & Training' },
-  divided:         { label: 'Divided',          emoji: '↔️', category: 'Growth & Training' },
-  cutting_taken:   { label: 'Cutting taken',    emoji: '🪚', category: 'Growth & Training' },
-  relocated:       { label: 'Relocated / Moved',emoji: '📦', category: 'Environmental' },
-  fruit_set:       { label: 'Fruit set',        emoji: '🍅', category: 'Growth & Training' },
-  animal_damage:   { label: 'Animal damage',    emoji: '🐾', category: 'Pest & Health' },
-  heat_damage:     { label: 'Heat damage',      emoji: '🌡️', category: 'Environmental' },
-  frost_damage:    { label: 'Frost damage',     emoji: '❄️', category: 'Environmental' },
-  soil_amended:    { label: 'Soil amended',     emoji: '🪨', category: 'Environmental' },
-  first_harvest:   { label: 'First harvest',   emoji: '🌟', category: 'Harvest' },
-  harvest:         { label: 'Harvested',       emoji: '🧺', category: 'Harvest' },
-  photo:           { label: 'Photo only',      emoji: '📷', category: 'Pest & Health' },
-  other:           { label: 'Other',           emoji: '📝', category: 'Environmental' },
-}
-
-export const SECONDARY_GROUPS = (() => {
-  const cats = {}
-  EVENT_TYPES.forEach(v => {
-    if (PRIMARY_VALUES.has(v)) return
-    const meta = EVENT_TYPE_META[v] ?? { label: v, emoji: '📌', category: 'Other' }
-    if (!cats[meta.category]) cats[meta.category] = []
-    cats[meta.category].push({ value: v, label: meta.label, emoji: meta.emoji })
-  })
-  return Object.entries(cats)
-})()
+// V3-EVENT-008: SECONDARY_GROUPS is now derived from the canonical
+// EVENT_TYPE_META via buildSecondaryGroups(). Re-exported so
+// EventTypesPhase1.test.jsx (which imports it from EventNew.jsx) keeps working.
+// NOTE: EVENT_TYPE_META is imported + re-exported at the top of this file.
+export const SECONDARY_GROUPS = buildSecondaryGroups(PRIMARY_VALUES)
 
 // Per-type metadata field definitions for Tier 2 enrichment
 const EVENT_METADATA_FIELDS = {
@@ -368,6 +330,9 @@ export default function EventNew() {
   const [error,        setError]        = useState(null)
   const [showPrivate,  setShowPrivate]  = useState(false)
   const [showMoreTypes, setShowMoreTypes] = useState(false)
+  // V3-EVENT-008 §8: "Add details" collapsible (Quantity / Visibility / Private notes).
+  // Default collapsed unless the feature flag flips it open. Fields stay reachable.
+  const [showAddDetails, setShowAddDetails] = useState(EVENTNEW_ADD_DETAILS_EXPANDED)
   const [plantsForProject, setPlantsForProject] = useState([])
 
   // Reset metadata when event type changes
@@ -906,25 +871,90 @@ export default function EventNew() {
             </Section>
           )}
 
-          {/* ── Quantity (hidden for harvest — superseded by the harvest panel) ── */}
-          {form.event_type !== 'harvest' && (
-            <Section label="Quantity  ·  optional">
-              <div style={{ position: 'relative' }}>
-                <input
-                  value={form.quantity}
-                  onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
-                  aria-label="Quantity"
-                  style={{ ...inputStyle, paddingRight: 44 }}
-                  placeholder="e.g. 3 plants, 500ml, 1 tray"
-                />
-                <MicBtn
-                  fieldKey="quantity"
-                  onResult={text => setForm(f => ({ ...f, quantity: text }))}
-                  voice={voice}
-                />
+          {/* ── V3-EVENT-008 §8: "Add details" — collapsible home for the three
+               low-frequency fields (Quantity / Visibility / Private notes). Default
+               collapsed (feature-flagged) to declutter the common path; fully reachable.
+               Harvest quantity is a SEPARATE field in the Harvest panel and stays visible. ── */}
+          <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 18px' }}>
+            <button
+              type="button"
+              onClick={() => setShowAddDetails(s => !s)}
+              aria-expanded={showAddDetails}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <span aria-hidden="true">{showAddDetails ? '▾' : '▸'}</span>
+              <span>Add details  ·  optional</span>
+            </button>
+
+            {showAddDetails && (
+              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {/* Quantity (hidden for harvest — superseded by the harvest panel) */}
+                {form.event_type !== 'harvest' && (
+                  <div>
+                    <label style={fieldLabelStyle}>Quantity  ·  optional</label>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        value={form.quantity}
+                        onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
+                        aria-label="Quantity"
+                        style={{ ...inputStyle, paddingRight: 44 }}
+                        placeholder="e.g. 3 plants, 500ml, 1 tray"
+                      />
+                      <MicBtn
+                        fieldKey="quantity"
+                        onResult={text => setForm(f => ({ ...f, quantity: text }))}
+                        voice={voice}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Visibility */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <input
+                    id="is_public"
+                    type="checkbox"
+                    checked={form.is_public}
+                    onChange={e => setForm(f => ({ ...f, is_public: e.target.checked }))}
+                    style={{ width: 18, height: 18, cursor: 'pointer' }}
+                  />
+                  <label htmlFor="is_public" style={{ fontSize: '0.88rem', color: P.mid, cursor: 'pointer' }}>
+                    Visible on public project page
+                  </label>
+                </div>
+
+                {/* Private notes (collapsible) */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPrivate(s => !s)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.light, fontSize: '0.82rem', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <span>{showPrivate ? '▾' : '▸'}</span>
+                    <span>Private notes  ·  never shown publicly</span>
+                  </button>
+                  {showPrivate && (
+                    <div style={{ position: 'relative', marginTop: 10 }}>
+                      <textarea
+                        value={form.private_notes}
+                        onChange={e => setForm(f => ({ ...f, private_notes: e.target.value }))}
+                        aria-label="Private notes"
+                        style={{ ...inputStyle, height: 72, resize: 'vertical', paddingRight: 44 }}
+                        placeholder="Dosage, concerns, anomalies — internal only"
+                      />
+                      <MicBtn
+                        fieldKey="private_notes"
+                        onResult={text => setForm(f => ({ ...f, private_notes: f.private_notes ? f.private_notes + ' ' + text : text }))}
+                        voice={voice}
+                        top="12px"
+                        transform="none"
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
-            </Section>
-          )}
+            )}
+          </div>
 
           {/* ── Photo ── */}
           <Section label="Photo  ·  optional">
@@ -995,53 +1025,7 @@ export default function EventNew() {
             )}
           </Section>
 
-          {/* ── Visibility ── */}
-          <div style={{
-            backgroundColor: P.white, border: `1px solid ${P.border}`,
-            borderRadius: 10, padding: '14px 18px',
-            display: 'flex', alignItems: 'center', gap: 10,
-          }}>
-            <input
-              id="is_public"
-              type="checkbox"
-              checked={form.is_public}
-              onChange={e => setForm(f => ({ ...f, is_public: e.target.checked }))}
-              style={{ width: 18, height: 18, cursor: 'pointer' }}
-            />
-            <label htmlFor="is_public" style={{ fontSize: '0.88rem', color: P.mid, cursor: 'pointer' }}>
-              Visible on public project page
-            </label>
-          </div>
-
-          {/* ── Private notes (collapsible) ── */}
-          <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 18px' }}>
-            <button
-              type="button"
-              onClick={() => setShowPrivate(s => !s)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.light, fontSize: '0.82rem', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              <span>{showPrivate ? '▾' : '▸'}</span>
-              <span>Private notes  ·  never shown publicly</span>
-            </button>
-            {showPrivate && (
-              <div style={{ position: 'relative', marginTop: 10 }}>
-                <textarea
-                  value={form.private_notes}
-                  onChange={e => setForm(f => ({ ...f, private_notes: e.target.value }))}
-                  aria-label="Private notes"
-                  style={{ ...inputStyle, height: 72, resize: 'vertical', paddingRight: 44 }}
-                  placeholder="Dosage, concerns, anomalies — internal only"
-                />
-                <MicBtn
-                  fieldKey="private_notes"
-                  onResult={text => setForm(f => ({ ...f, private_notes: f.private_notes ? f.private_notes + ' ' + text : text }))}
-                  voice={voice}
-                  top="12px"
-                  transform="none"
-                />
-              </div>
-            )}
-          </div>
+          {/* ── Visibility + Private notes moved into "Add details" above (V3-EVENT-008 §8) ── */}
 
           {/* ── Date / time ── */}
           <Section label="When?">

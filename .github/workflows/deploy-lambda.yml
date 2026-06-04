@@ -42,6 +42,15 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
 
+      # V3-EVENT-008: regenerate the events Lambda's event-type vocabulary from the
+      # canonical src/lib/eventTypes.js BEFORE zipping, so a stale committed copy can
+      # never ship. events function only; fails the build if it would drift.
+      - name: Regenerate event-types (events only)
+        if: matrix.function == 'events'
+        run: |
+          npm run gen:event-types
+          npm run check:event-types
+
       - name: Build and zip ${{ matrix.function }}
         run: |
           cd lambda/${{ matrix.function }}
