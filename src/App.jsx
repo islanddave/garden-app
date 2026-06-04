@@ -32,6 +32,7 @@ import LogMany from './pages/LogMany.jsx'
 import PlantsCatchUp from './pages/PlantsCatchUp.jsx'
 import LocationDetail from './pages/LocationDetail.jsx'
 import EventDetail from './pages/EventDetail.jsx'
+import PlantingDetail from './pages/PlantingDetail.jsx'
 import Achievements from './pages/Achievements.jsx'
 import Collection from './pages/Collection.jsx'
 import InactiveProjects from './pages/InactiveProjects.jsx'
@@ -119,6 +120,9 @@ function AppRoutes() {
               <Route path="/plants"        element={<Protected><Plants /></Protected>} />
               <Route path="/plants/catch-up" element={<Protected><PlantsCatchUp /></Protected>} />
               <Route path="/projects/:id/events/:eventId" element={<Protected><EventDetail /></Protected>} />
+              {/* V3-NAV-001 (Lane C / PR2): dedicated planting detail. Route-level ErrorBoundary
+                  (fresh fetch surface) mirrors /inactive, /log, /settings/notifications. */}
+              <Route path="/projects/:id/plantings/:plantingId" element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected>} />
               <Route path="/achievements" element={<Protected><Achievements /></Protected>} />
               <Route path="/collection" element={<Protected><Collection /></Protected>} />
               {/* V1.2a-4 S6 admin classify route. Jen-invisible (no nav link).

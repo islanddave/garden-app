@@ -1,48 +1,31 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { getStatusColors } from '../lib/status.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
+import { buildDisplayList, loadSortOrder, saveSortOrder } from '../lib/projectTree.js'
+import SortToggle from '../components/SortToggle.jsx'
 
 // I7 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): STATUS_COLORS now sourced from
 // src/lib/status.js. The inline map here only covered {planning,active,harvested,ended},
 // so growing/sprouting/flowering/fruiting fell through to `planning` (gold) — while
 // Dashboard rendered them green. Symptom: same project's badge color flipped between surfaces.
 
-// Build a display-ordered list: root projects first, then their children immediately after,
-// with depth tracked for indentation. Orphaned children (parent deleted/missing) render as root.
-function buildDisplayList(projects) {
-  const byId = {}
-  projects.forEach(p => { byId[p.id] = p })
-
-  const roots = []
-  const childrenOf = {}
-  projects.forEach(p => {
-    const pid = p.parent_project_id
-    if (!pid || !byId[pid]) {
-      roots.push(p)
-    } else {
-      if (!childrenOf[pid]) childrenOf[pid] = []
-      childrenOf[pid].push(p)
-    }
-  })
-
-  const result = []
-  function walk(project, depth) {
-    result.push({ project, depth })
-    const kids = childrenOf[project.id] ?? []
-    kids.forEach(child => walk(child, depth + 1))
-  }
-  roots.forEach(r => walk(r, 0))
-  return result
-}
+// V3-ORDER-001 (Lane C / PR1): the local buildDisplayList copy was deleted and this surface now
+// imports the shared util from projectTree.js. Previously ProjectList carried its OWN verbatim
+// copy (the source comment in projectTree.js says it was "lifted from ProjectList.jsx") — two
+// independent copies meant the alpha-sort would only land on whichever one was edited, breaking
+// cross-surface ordering parity. Consolidated to the single shared implementation.
 
 export default function ProjectList() {
   const { fetch } = useApiFetch()
   const [projects, setProjects] = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
+  // V3-ORDER-001: persisted sort order. DEFAULT = recency; 'alpha' is opt-in.
+  const [sortOrder, setSortOrder] = useState(() => loadSortOrder())
+  const onSortChange = useCallback((order) => { setSortOrder(order); saveSortOrder(order) }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -63,13 +46,14 @@ export default function ProjectList() {
   if (loading) return <Shell><Spinner /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
-  const displayList = buildDisplayList(projects)
+  const displayList = buildDisplayList(projects, sortOrder)
 
   return (
     <Shell>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Projects</h1>
+        <SortToggle order={sortOrder} onChange={onSortChange} label="Sort projects" />
       </div>
 
       {/* List */}

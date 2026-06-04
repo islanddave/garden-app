@@ -518,9 +518,32 @@ export const handler = async (event) => {
     // ── Route 4: /api/events (collection) ──────────────────────────────────────────────────────
     if (method === 'GET') {
       const projectId = event.queryStringParameters?.project_id ?? null;
+      // HS-2 (V002 §4 / Lane C): planting-scoped server-side filter. PlantingDetail passes
+      // &plant_id= so the LIMIT applies to THIS planting's events, not the whole project.
+      // Without it, on a busy project older planting events fall off the 200 cap and the
+      // planting falsely shows "no events" (a silent lie). plant_id already exists per row.
+      const plantId = event.queryStringParameters?.plant_id ?? null;
       const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '50', 10), 200);
 
-      const rows = projectId
+      // project_id + plant_id: planting-scoped (HS-2). Filter by plant_id BEFORE the LIMIT.
+      const rows = (projectId && plantId)
+        ? await sql`
+            SELECT
+              e.id, e.project_id, e.location_id, e.plant_id,
+              e.event_type, e.event_date, e.notes,
+              e.quantity, e.is_public, e.logged_by, e.created_at,
+              e.metadata,
+              pp.name AS project_name
+            FROM event_log e
+            JOIN plant_projects pp ON pp.id = e.project_id
+            WHERE pp.created_by = ANY(${householdIds})
+              AND e.project_id = ${projectId}
+              AND e.plant_id = ${plantId}
+              AND e.deleted_at IS NULL
+            ORDER BY e.event_date DESC, e.created_at DESC
+            LIMIT ${limit}
+          `
+        : projectId
         ? await sql`
             SELECT
               e.id, e.project_id, e.location_id, e.plant_id,

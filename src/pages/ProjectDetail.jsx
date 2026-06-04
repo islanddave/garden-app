@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
@@ -10,6 +10,9 @@ import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
+import { loadSortOrder, saveSortOrder, applyNameSort } from '../lib/projectTree.js'
+import SortToggle from '../components/SortToggle.jsx'
+import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 
 const EVENT_ICONS = {
   sowing:        '🌱',
@@ -109,6 +112,9 @@ export default function ProjectDetail() {
 
   const [plants,        setPlants]        = useState([])
   const [plantsLoading, setPlantsLoading] = useState(true)
+  // V3-ORDER-001: persisted sort order for this project's plantings. DEFAULT = recency.
+  const [sortOrder,     setSortOrder]     = useState(() => loadSortOrder())
+  const onSortChange = useCallback((order) => { setSortOrder(order); saveSortOrder(order) }, [])
   const [showAddPlant,  setShowAddPlant]  = useState(false)
   // V1.2a-4 S1 (PROJ-RESCOPE / V102 §5.1 #4): plantForm shape extended with
   // optional lifecycle/source/lineage fields. All NULL-tolerant server-side.
@@ -551,10 +557,13 @@ export default function ProjectDetail() {
               <span style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.82rem', color: P.light }}>({plants.length})</span>
             )}
           </h2>
-          <button onClick={() => { setShowAddPlant(v => !v); setPlantErr(null) }}
-            style={showAddPlant ? ghostBtn : outlineBtn}>
-            {showAddPlant ? 'Cancel' : '+ Add planting'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {plants.length > 1 && <SortToggle order={sortOrder} onChange={onSortChange} label="Sort plantings" />}
+            <button onClick={() => { setShowAddPlant(v => !v); setPlantErr(null) }}
+              style={showAddPlant ? ghostBtn : outlineBtn}>
+              {showAddPlant ? 'Cancel' : '+ Add planting'}
+            </button>
+          </div>
         </div>
 
         {showAddPlant && (
@@ -676,46 +685,56 @@ export default function ProjectDetail() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {plants.map(plant => (
+            {/* V3-ORDER-001: same shared comparator/order as Garden + /plants so a planting
+                sits in the identical position across every surface. Default recency. */}
+            {applyNameSort(plants, sortOrder).map(plant => (
+              /* V3-NAV-001 (PR2): the name/photo region is a dedicated nav target to the
+                 PlantingDetail page; the photo-upload control is a SIBLING (never nested in
+                 the link) to avoid invalid <button>-inside-<a> and the ADHD two-target mis-tap. */
               <div key={plant.id} style={{
                 backgroundColor: P.white, border: `1px solid ${P.border}`,
-                borderRadius: 8, padding: '12px 16px',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                borderRadius: 8, padding: '8px 12px', minHeight: 44,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {/* Dedicated name/photo nav region → PlantingDetail. Whole region is one tap
+                    target (≥44px via card minHeight + padding); controls below are siblings. */}
+                <Link
+                  to={`/projects/${id}/plantings/${plant.id}`}
+                  aria-label={`Open ${plant.name}`}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0,
+                           textDecoration: 'none', color: 'inherit', minHeight: 44 }}
+                >
                   {/* V1.2a-3 Increment A (I2a-display): the plant's featured photo.
                       Read-back surface for the photo→plant linkage that already worked. */}
-                  {plant.featured_photo_view_url && (
-                    <img
-                      src={plant.featured_photo_view_url}
-                      alt={`${plant.name} photo`}
-                      loading="lazy"
-                      style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover',
-                               flexShrink: 0, border: `1px solid ${P.border}` }}
-                    />
-                  )}
-                  <div>
-                  <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
-                    🌿 {plant.name}
-                    {plant.quantity > 1 && (
-                      <span style={{ marginLeft: 8, fontSize: '0.78rem', color: P.mid,
-                        backgroundColor: P.greenPale, borderRadius: 10, padding: '1px 7px' }}>
-                        ×{formatQty(plant.quantity)}
-                      </span>
+                  {plant.featured_photo_view_url
+                    ? <img
+                        src={plant.featured_photo_view_url}
+                        alt=""
+                        loading="lazy"
+                        style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover',
+                                 flexShrink: 0, border: `1px solid ${P.border}` }}
+                      />
+                    : <span aria-hidden="true" style={{ width: 40, height: 40, flexShrink: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '1.1rem', backgroundColor: P.greenPale, borderRadius: 8 }}>🌱</span>}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
+                      {plant.name}
+                      {plant.quantity > 1 && (
+                        <span style={{ marginLeft: 8, fontSize: '0.78rem', color: P.mid,
+                          backgroundColor: P.greenPale, borderRadius: 10, padding: '1px 7px' }}>
+                          ×{formatQty(plant.quantity)}
+                        </span>
+                      )}
+                    </div>
+                    {plant.variety_ref?.name && (
+                      <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>{plant.variety_ref.name}</div>
                     )}
                   </div>
-                  {plant.variety_ref?.name && (
-                    <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>{plant.variety_ref.name}</div>
-                  )}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {plant.status && (
-                    <span style={{ fontSize: '0.73rem', color: P.mid, backgroundColor: P.greenPale,
-                      borderRadius: 10, padding: '2px 8px' }}>
-                      {plant.status}
-                    </span>
-                  )}
+                </Link>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  {/* Multi-channel status (WCAG 1.4.1): icon + label, never color alone. */}
+                  {plant.status && <PlantStatusBadge status={plant.status} />}
                   {/* V2-PHOTO-F1 S2: per-plant upload trigger on each card. */}
                   <PhotoUpload
                     keyPrefix="plants"
@@ -729,7 +748,7 @@ export default function ProjectDetail() {
                     inputId={`plant-photo-${plant.id}`}
                     buttonStyle={{
                       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                      width: 36, height: 36, padding: 0,
+                      width: 44, height: 44, padding: 0,
                       background: 'transparent', color: P.mid,
                       border: `1px solid ${P.border}`, borderRadius: '50%',
                       cursor: 'pointer', fontSize: '0.95rem', userSelect: 'none',

@@ -13,7 +13,9 @@ import CritterOptInPrompt from '../components/CritterOptInPrompt.jsx'
 import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
 import { SYSTEM_NOTIFICATIONS_ENABLED } from '../lib/featureFlags.js'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
-import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded } from '../lib/projectTree.js'
+import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, loadSortOrder, saveSortOrder } from '../lib/projectTree.js'
+import SortToggle from '../components/SortToggle.jsx'
+import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import { formatQty } from '../lib/format.js'
 
 // Garden — Increment 1 of the post-V2 UX overhaul. Unifies the old Projects + Plants
@@ -33,6 +35,9 @@ export default function Garden() {
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
   const [expanded, setExpanded] = useState(() => loadExpanded())
+  // V3-ORDER-001: persisted sort order. DEFAULT = recency (server order); 'alpha' is opt-in.
+  const [sortOrder, setSortOrder] = useState(() => loadSortOrder())
+  const onSortChange = useCallback((order) => { setSortOrder(order); saveSortOrder(order) }, [])
   // MVP-Critter Session 3: active critters for this household, grouped by plant_id.
   const [critters, setCritters] = useState([])
   // D-INV-1 long-press popover state. anchorEl is the long-pressed sprite DOM node.
@@ -229,7 +234,7 @@ export default function Garden() {
   if (loading) return <Shell><Spinner /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
-  const tree = buildGardenTree(projects, plants)
+  const tree = buildGardenTree(projects, plants, sortOrder)
 
   return (
     <Shell>
@@ -240,7 +245,8 @@ export default function Garden() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Garden</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <SortToggle order={sortOrder} onChange={onSortChange} label="Sort garden" />
           <Link to="/log/many" style={btnGhost}>⚡ Log many</Link>
         </div>
       </div>
@@ -354,9 +360,9 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
   )
 }
 
-// Planting leaf — whole row OPENS (navigates to its owning project, where plantings live).
+// Planting leaf — whole row OPENS the planting's own detail page (V3-NAV-001 / PR2).
+// Previously navigated to the owning project; now deep-links to /projects/:id/plantings/:plantingId.
 function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPress = null, onSpriteIntersect = null }) {
-  const sc = getStatusColors(pl.status)
   const variety = pl.variety_ref?.name
   return (
     <div role="treeitem" aria-level={level} style={{ paddingLeft: depth * 20, position: 'relative' }}>
@@ -372,7 +378,7 @@ function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPr
           ))}
         </div>
       )}
-      <Link to={`/projects/${pl.project_id}`} aria-label={`Open ${pl.name}`} style={{ textDecoration: 'none', display: 'block' }}>
+      <Link to={`/projects/${pl.project_id}/plantings/${pl.id}`} aria-label={`Open ${pl.name}`} style={{ textDecoration: 'none', display: 'block' }}>
         <div style={{
           backgroundColor: P.cream, border: `1px solid ${P.border}`, borderLeft: `3px solid ${P.greenLight}`,
           borderRadius: 8, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10, minHeight: 44,
@@ -387,12 +393,8 @@ function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPr
               {variety && <span style={{ fontSize: '0.76rem', color: P.mid }}>{variety}</span>}
             </div>
           </div>
-          {pl.status && (
-            <span style={{ backgroundColor: sc.bg, color: sc.text, border: `1px solid ${sc.border}`,
-              fontSize: '0.7rem', padding: '2px 8px', borderRadius: 12, fontWeight: 600, flexShrink: 0 }}>
-              {pl.status}
-            </span>
-          )}
+          {/* Multi-channel status (WCAG 1.4.1): icon + label, never color alone. */}
+          {pl.status && <PlantStatusBadge status={pl.status} />}
         </div>
       </Link>
     </div>

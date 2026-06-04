@@ -9,10 +9,18 @@
 import { useCallback, useRef } from 'react'
 import { useApiFetch } from './api.js'
 
-// The three M1 flows (must match the Lambda's server-side ALLOWED_FLOWS allowlist).
+// The M1 flows (must match the Lambda's server-side ALLOWED_FLOWS allowlist).
+// V3-NAV-001 (Lane C / PR2): OPEN_PLANTING is a NEW step fired when the dedicated
+// PlantingDetail page mounts ("opened a planting detail"). It does NOT replace
+// REACH_PLANTING, which still fires on project load ("viewed a project containing
+// plantings") for one release so the funnel keeps a continuous signal during cutover.
+// Temporary double-signal is intentional — reconcile after both are visible in the funnel.
+// If the Lambda allowlist hasn't added 'open_planting' yet, sendUxEvent is a silent no-op
+// (server drops unknown flows), so this is safe to ship ahead of the server allowlist.
 export const FLOWS = {
   LOG_WATERING: 'log_watering',
   REACH_PLANTING: 'reach_planting',
+  OPEN_PLANTING: 'open_planting',
   CREATE_PROJECT: 'create_project',
 }
 

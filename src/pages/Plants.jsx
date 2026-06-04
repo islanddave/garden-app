@@ -385,9 +385,11 @@ export default function Plants() {
                   {plant.variety_ref.name}
                 </div>
               )}
+              {/* V3-NAV-001 (PR2): repoint the planting link to its own PlantingDetail page.
+                  The project name is the visible label but the tap target is now the planting. */}
               <div style={{ fontSize: '0.75rem', marginTop: 4 }}>
-                <Link to={`/projects/${plant.project_id}`} style={{ color: P.green, textDecoration: 'none' }}>
-                  {plant.project_name ?? 'Project'}
+                <Link to={`/projects/${plant.project_id}/plantings/${plant.id}`} style={{ color: P.green, textDecoration: 'none' }}>
+                  {plant.project_name ?? 'Project'} ›
                 </Link>
               </div>
             </div>

@@ -354,6 +354,16 @@ describe('Plants — edit flow', () => {
 
 })
 
+describe('Plants — V3-NAV-001 planting link', () => {
+  it('repoints the planting row link to its own PlantingDetail page', async () => {
+    primeMountFetches({ plants: [SAMPLE_PLANT] })
+    render(<Plants />)
+    // Link text is "{project_name} ›"; the mocked Link renders an <a href>.
+    const link = await screen.findByText(/Spring 2026/)
+    expect(link.closest('a').getAttribute('href')).toBe('/projects/proj-1/plantings/plant-1')
+  })
+})
+
 describe('Plants — V2-PHOTO-F1 S2 per-plant upload trigger', () => {
   it('renders PhotoUpload on each plant card with plants keyPrefix + plant_id linkage', async () => {
     primeMountFetches({ plants: [SAMPLE_PLANT] })

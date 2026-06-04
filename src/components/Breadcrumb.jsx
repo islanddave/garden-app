@@ -8,10 +8,13 @@
 // V2 will extend to full Space → Zone → Area → ... hierarchy without changes
 // to this component — just pass a longer path array.
 //
+// Plant/planting detail breadcrumbs now ship (V3-NAV-001 / Lane C, PR2): PlantingDetail passes
+// a 3-item Home › {Project} › {Planting} path — no component change needed (arbitrary depth).
+//
 // DEFERRED:
-//   - Plant detail breadcrumbs → V2
 //   - Full location hierarchy (Space → Zone → Area → ...) → V2
 //     (component already supports arbitrary depth via the path array)
+import React from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 

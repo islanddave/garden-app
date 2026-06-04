@@ -65,4 +65,24 @@ describe('Garden — unified accordion tree', () => {
     fireEvent.click(screen.getByLabelText(/Expand Tomatoes/))
     expect(localStorage.getItem('garden.expanded.v1')).toContain('a')
   })
+
+  it('a planting row opens its own PlantingDetail page (V3-NAV-001)', async () => {
+    await renderGarden()
+    fireEvent.click(screen.getByLabelText(/Expand Tomatoes/))
+    // Sungold (p1) under project a → /projects/a/plantings/p1, not /projects/a.
+    expect(screen.getByLabelText('Open Sungold').getAttribute('href')).toBe('/projects/a/plantings/p1')
+  })
+})
+
+describe('Garden — sort toggle (V3-ORDER-001)', () => {
+  it('defaults to recency (server order) and persists alpha when toggled', async () => {
+    await renderGarden()
+    // Toggle exists with both options; A–Z is opt-in.
+    const az = screen.getByLabelText('Sort alphabetically')
+    expect(az.getAttribute('aria-checked')).toBe('false')
+    const recent = screen.getByLabelText('Sort by most recent')
+    expect(recent.getAttribute('aria-checked')).toBe('true')  // recency is the default
+    fireEvent.click(az)
+    expect(localStorage.getItem('garden.sortOrder.v1')).toBe('alpha')
+  })
 })
