@@ -1,0 +1,113 @@
+name: revert-gate
+
+# B2 production revert (spec repo-version-env-spec-V100 §3 B2). Reverts prod to a previously-snapped
+# version vX as a SINGLE Dave-approved, environment:production-gated transaction, restoring code + DB +
+# Lambda versions as a coherent pair via scripts/revert-to.py. Runs AS garden-bot (App 3951762) — the sole
+# actor permitted to advance main (the code leg FF-promotes a forward revert-commit). The revert is itself
+# revertible: revert-to.py takes a PRE-REVERT snap of CURRENT prod first, so a bad revert can be rolled back.
+#
+# Relationship to revert-rehearsal.yml: that workflow exercises the SAME script against STAGING with
+# REHEARSAL_MODE=1 (throwaway refs, prod Lambda/CF legs skipped). THIS workflow is the real thing —
+# REHEARSAL_MODE is OFF, the code legs target real dev/main, and CONFIRM_DATA_LOSS must be "yes".
+#
+# Dispatchability: workflow_dispatch requires the workflow on the default branch (main). This file lands on
+# dev now and becomes dispatchable from the Actions UI once it reaches main via the normal promote-gate ship.
+#
+# Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY, NEON_API_KEY, NEON_PROJECT_ID, NEON_BACKUP_URL.
+# Vars: SNAP_AWS_ROLE_ARN, SNAP_BUCKET, PHOTOS_BUCKET, SNAP_RETENTION.
+# NOTE (pre-first-use): confirm the snap OIDC role (SNAP_AWS_ROLE_ARN) carries the Lambda version-restore +
+# CloudFront invalidation + S3 dump-read permissions revert-to.py's code/asset legs need — the rehearsal
+# SKIPS those prod legs, so they are unproven by the rehearsal alone.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Snapped version to revert prod TO (must exist in SNAP_BUCKET; ^v\d+(\.\d+){0,2}$, e.g. v2.5.6)'
+        required: true
+        type: string
+      prerevert_version:
+        description: 'Fresh, unused version to snapshot CURRENT prod as before the revert (so the revert is itself revertible)'
+        required: true
+        type: string
+      confirm_data_loss:
+        description: 'Reverting prod DB to the target discards ALL prod writes since then. Select "yes" to proceed.'
+        required: true
+        type: choice
+        default: 'no'
+        options:
+          - 'no'
+          - 'yes'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  revert:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - name: Validate inputs (injection-safe — read from env, never interpolated into run)
+        env:
+          TARGET_VERSION: ${{ inputs.target_version }}
+          PREREVERT_VERSION: ${{ inputs.prerevert_version }}
+          CONFIRM: ${{ inputs.confirm_data_loss }}
+        run: |
+          set -euo pipefail
+          re='^v[0-9]+(\.[0-9]+){0,2}$'
+          [[ "$TARGET_VERSION" =~ $re ]] || { echo "::error::target_version '$TARGET_VERSION' invalid (need ^v\d+(\.\d+){0,2}$)"; exit 1; }
+          [[ "$PREREVERT_VERSION" =~ $re ]] || { echo "::error::prerevert_version '$PREREVERT_VERSION' invalid (need ^v\d+(\.\d+){0,2}$)"; exit 1; }
+          [ "$TARGET_VERSION" != "$PREREVERT_VERSION" ] || { echo "::error::prerevert_version must differ from target_version"; exit 1; }
+          [ "$CONFIRM" = "yes" ] || { echo "::error::confirm_data_loss must be 'yes' to proceed (prod DB revert is data loss)"; exit 1; }
+          echo "inputs valid: revert prod -> $TARGET_VERSION (pre-revert snap $PREREVERT_VERSION)"
+
+      - name: Mint garden-bot installation token
+        id: bot
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547  # v1
+        with:
+          app-id: ${{ secrets.GARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.GARDEN_BOT_PRIVATE_KEY }}
+
+      - name: Checkout dev (scripts/revert-to.py)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: dev
+
+      - name: Install postgresql-client-17 (pgdg)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      - name: Configure AWS credentials (snap role, OIDC)
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Install python deps
+        run: pip install boto3 requests --quiet
+
+      - name: Run revert-to (PROD — real code + DB + Lambda cutover)
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TARGET_VERSION: ${{ inputs.target_version }}
+          PREREVERT_VERSION: ${{ inputs.prerevert_version }}
+          CONFIRM_DATA_LOSS: ${{ inputs.confirm_data_loss }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          NEON_PROD_BRANCH_ID: br-delicate-sea-amum92c2
+          NEON_BACKUP_URL: ${{ secrets.NEON_BACKUP_URL }}
+          SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
+          PHOTOS_BUCKET: ${{ vars.PHOTOS_BUCKET }}
+          SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
+          CF_DIST: E3FAJTXAORQYDT
+        run: |
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          python3 scripts/revert-to.py
