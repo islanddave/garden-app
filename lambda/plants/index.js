@@ -81,8 +81,40 @@ export const handler = async (event) => {
   const rawPath = event.rawPath ?? '/api/plants';
 
   const idMatch = rawPath.match(/^\/api\/plants\/([^/]+)$/);
+  // V3-SEEN-001 (Lane A Foundation): seen-contract write path. New-endpoint-only,
+  // additive — does NOT touch any existing GET/PUT/POST/DELETE handler. idMatch's
+  // /^\/api\/plants\/([^/]+)$/ does NOT match the /seen suffix, so no route collision.
+  // seen_event + plants.last_seen_at + the AFTER-INSERT trigger exist on staging Neon
+  // only (NOT prod) — this branch never runs on prod, where last_seen_at/seen_event
+  // are absent, so existing routes stay byte-identical there.
+  const seenMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/seen$/);
 
   try {
+    if (seenMatch) {
+      const plantId = seenMatch[1];
+      if (method !== 'POST') return resp(405, { error: 'Method not allowed' });
+      const body = JSON.parse(event.body ?? '{}');
+      const seenAt = body.seen_at ?? null;
+      const source = body.source ?? 'app';
+      // Household-scoped, ownership-checked INSERT…SELECT. The plants table is aliased
+      // `ln` (NOT `p`) so this adds NO 4th `FROM plants p` match → select-columns.test.js
+      // (exactly-3-blocks) stays green. Explicit ::timestamptz cast resolves the
+      // 42P18 "could not determine data type" parse failure (L-086). workspace_id is
+      // left to the column DEFAULT sentinel (do NOT set it here).
+      const ins = await sql`
+        INSERT INTO seen_event (leaf_id, seen_at, source)
+        SELECT ln.id, COALESCE(${seenAt}::timestamptz, now()), ${source}
+        FROM plants ln
+        JOIN plant_projects pp ON pp.id = ln.project_id
+        WHERE ln.id = ${plantId} AND ln.deleted_at IS NULL AND pp.created_by = ANY(${householdIds})
+        RETURNING leaf_id
+      `;
+      if (!ins.length) return resp(404, { error: 'Not found' });
+      // Read back the trigger-maintained last_seen_at (no `p` alias → regex-safe).
+      const back = await sql`SELECT last_seen_at FROM plants WHERE id = ${plantId}`;
+      return resp(201, { leaf_id: ins[0].leaf_id, last_seen_at: back[0]?.last_seen_at ?? null });
+    }
+
     if (idMatch) {
       const plantId = idMatch[1];
 
