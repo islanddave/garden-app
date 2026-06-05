@@ -125,9 +125,9 @@ export const handler = async (event) => {
         // write→read symmetry the original S1 ship missed (Anomaly #A,
         // v12a4-s1-chrome-smoke-verdict-20260518.md).
         const rows = await sql`
-          SELECT p.id, p.name, p.quantity,
-                 p.status, p.notes, p.project_id,
-                 p.variety_id, p.source_inventory_item_id, p.metadata,
+          SELECT p.id, p.display_name AS name, p.quantity,
+                 p.status, p.notes, p.container_id AS project_id,
+                 p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata,
                  p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
                  p.created_at, p.updated_at,
                  p.sown_at, p.sown_at_approx,
@@ -138,10 +138,10 @@ export const handler = async (event) => {
                  p.source_type, p.source_ref, p.source_generation,
                  p.parent_plant_id, p.divergence_type, p.lineage_note,
                  p.succession_group_id, p.succession_order,
-                 pp.name AS project_name,
+                 pp.display_name AS project_name,
                  CASE WHEN pv.id IS NOT NULL THEN
                    jsonb_build_object(
-                     'id', pv.id, 'name', pv.name, 'species', pv.species, 'genus', pv.genus,
+                     'id', pv.id, 'name', pv.display_name, 'species', pv.species, 'genus', pv.genus,
                      'days_to_maturity_min', pv.days_to_maturity_min,
                      'days_to_maturity_max', pv.days_to_maturity_max,
                      'care_notes', pv.care_notes, 'soil_notes', pv.soil_notes,
@@ -151,9 +151,9 @@ export const handler = async (event) => {
                      'photo_id', pv.photo_id, 'source_url', pv.source_url
                    )
                  ELSE NULL END AS variety_ref
-          FROM plants p
-          JOIN plant_projects pp ON pp.id = p.project_id
-          LEFT JOIN plant_varieties pv ON pv.id = p.variety_id AND pv.deleted_at IS NULL
+          FROM public.garden_node p
+          JOIN public.container pp ON pp.id = p.container_id
+          LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
           LEFT JOIN photos fp ON fp.id = p.featured_photo_id
           WHERE p.id = ${plantId}
             AND p.deleted_at IS NULL
@@ -284,9 +284,9 @@ export const handler = async (event) => {
       // by-id GET above. Pairs with POST/PATCH write paths shipped in S1.
       const rows = projectId
         ? await sql`
-            SELECT p.id, p.name, p.quantity,
-                   p.status, p.notes, p.project_id,
-                   p.variety_id, p.source_inventory_item_id, p.metadata,
+            SELECT p.id, p.display_name AS name, p.quantity,
+                   p.status, p.notes, p.container_id AS project_id,
+                   p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata,
                    p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
                    p.created_at,
                    p.sown_at, p.sown_at_approx,
@@ -297,10 +297,10 @@ export const handler = async (event) => {
                    p.source_type, p.source_ref, p.source_generation,
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
                    p.succession_group_id, p.succession_order,
-                   pp.name AS project_name,
+                   pp.display_name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(
-                       'id', pv.id, 'name', pv.name, 'species', pv.species, 'genus', pv.genus,
+                       'id', pv.id, 'name', pv.display_name, 'species', pv.species, 'genus', pv.genus,
                        'days_to_maturity_min', pv.days_to_maturity_min,
                        'days_to_maturity_max', pv.days_to_maturity_max,
                        'care_notes', pv.care_notes, 'soil_notes', pv.soil_notes,
@@ -310,19 +310,19 @@ export const handler = async (event) => {
                        'photo_id', pv.photo_id, 'source_url', pv.source_url
                      )
                    ELSE NULL END AS variety_ref
-            FROM plants p
-            JOIN plant_projects pp ON pp.id = p.project_id
-            LEFT JOIN plant_varieties pv ON pv.id = p.variety_id AND pv.deleted_at IS NULL
+            FROM public.garden_node p
+            JOIN public.container pp ON pp.id = p.container_id
+            LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
             LEFT JOIN photos fp ON fp.id = p.featured_photo_id
             WHERE pp.created_by = ANY(${householdIds})
-              AND p.project_id = ${projectId}
+              AND p.container_id = ${projectId}
               AND p.deleted_at IS NULL
             ORDER BY p.created_at DESC
           `
         : await sql`
-            SELECT p.id, p.name, p.quantity,
-                   p.status, p.notes, p.project_id,
-                   p.variety_id, p.source_inventory_item_id, p.metadata,
+            SELECT p.id, p.display_name AS name, p.quantity,
+                   p.status, p.notes, p.container_id AS project_id,
+                   p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata,
                    p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
                    p.created_at,
                    p.sown_at, p.sown_at_approx,
@@ -333,10 +333,10 @@ export const handler = async (event) => {
                    p.source_type, p.source_ref, p.source_generation,
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
                    p.succession_group_id, p.succession_order,
-                   pp.name AS project_name,
+                   pp.display_name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(
-                       'id', pv.id, 'name', pv.name, 'species', pv.species, 'genus', pv.genus,
+                       'id', pv.id, 'name', pv.display_name, 'species', pv.species, 'genus', pv.genus,
                        'days_to_maturity_min', pv.days_to_maturity_min,
                        'days_to_maturity_max', pv.days_to_maturity_max,
                        'care_notes', pv.care_notes, 'soil_notes', pv.soil_notes,
@@ -346,9 +346,9 @@ export const handler = async (event) => {
                        'photo_id', pv.photo_id, 'source_url', pv.source_url
                      )
                    ELSE NULL END AS variety_ref
-            FROM plants p
-            JOIN plant_projects pp ON pp.id = p.project_id
-            LEFT JOIN plant_varieties pv ON pv.id = p.variety_id AND pv.deleted_at IS NULL
+            FROM public.garden_node p
+            JOIN public.container pp ON pp.id = p.container_id
+            LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
             LEFT JOIN photos fp ON fp.id = p.featured_photo_id
             WHERE pp.created_by = ANY(${householdIds})
               AND p.deleted_at IS NULL

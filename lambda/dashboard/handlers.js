@@ -85,10 +85,10 @@ export function queryRecentEvents(sql, userId) {
   return sql`
       SELECT
         e.id, e.event_type, e.event_date, e.created_at,
-        pp.name AS project_name,
+        pp.display_name AS project_name,
         pr.display_name
       FROM event_log e
-      JOIN plant_projects pp ON pp.id = e.project_id
+      JOIN public.container pp ON pp.id = e.project_id
       LEFT JOIN profiles pr ON pr.id = e.logged_by
       WHERE pp.created_by = ANY(${householdIds})
         AND e.deleted_at IS NULL
@@ -104,13 +104,13 @@ export function queryCounts(sql, userId) {
       SELECT
         (
           SELECT COUNT(*)::int
-          FROM plant_projects
+          FROM public.container
           WHERE created_by = ANY(${householdIds}) AND deleted_at IS NULL
         ) AS project_count,
         (
           SELECT COUNT(*)::int
-          FROM plants p
-          JOIN plant_projects pp ON pp.id = p.project_id
+          FROM public.garden_node p
+          JOIN public.container pp ON pp.id = p.container_id
           WHERE pp.created_by = ANY(${householdIds}) AND p.deleted_at IS NULL
         ) AS plant_count,
         (
@@ -134,11 +134,11 @@ export function queryActiveProjects(sql, userId) {
   const householdIds = householdScope(userId);
   return sql`
       SELECT
-        pp.id, pp.name, pp.status, pp.variety, pp.start_date,
+        pp.id, pp.display_name AS name, pp.status, pp.variety, pp.start_date,
         em.last_watered_at, em.last_observed_at, em.last_fertilized_at,
         em.last_pruned_at, em.last_harvested_at, em.last_event_at,
         em.next_water_at, em.location_type, em.watering_interval_days
-      FROM plant_projects pp
+      FROM public.container pp
       LEFT JOIN entity_memory em ON em.project_id = pp.id
       WHERE pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
@@ -182,11 +182,11 @@ export function queryWaterDue(sql, userId) {
   const householdIds = householdScope(userId);
   return sql`
       SELECT
-        em.project_id, pp.name AS project_name,
+        em.project_id, pp.display_name AS project_name,
         em.last_watered_at, em.next_water_at,
         em.location_type, em.watering_interval_days
       FROM entity_memory em
-      JOIN plant_projects pp ON pp.id = em.project_id
+      JOIN public.container pp ON pp.id = em.project_id
       WHERE pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
         AND em.next_water_at IS NOT NULL
@@ -201,10 +201,10 @@ export function queryHarvestReady(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
   return sql`
-      SELECT pp.id AS project_id, pp.name, pp.status,
+      SELECT pp.id AS project_id, pp.display_name AS name, pp.status,
              em.last_observed_at,
              (NOW()::date - em.last_observed_at::date)::int AS days_since_obs
-      FROM plant_projects pp
+      FROM public.container pp
       LEFT JOIN entity_memory em ON em.project_id = pp.id
       WHERE pp.status = 'harvesting'
         AND pp.created_by = ANY(${householdIds})
@@ -226,13 +226,13 @@ export function queryHeadsUp(sql, userId) {
       WITH flagged AS (
         SELECT DISTINCT ON (el.project_id)
           el.project_id,
-          pp.name,
+          pp.display_name AS name,
           'flagged'::text AS reason,
           el.severity,
           el.created_at AS event_at,
           (NOW()::date - el.created_at::date)::int AS days_stale
         FROM event_log el
-        JOIN plant_projects pp ON pp.id = el.project_id
+        JOIN public.container pp ON pp.id = el.project_id
           AND pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL
         WHERE el.flagged_as_issue = true
           AND el.resolved_at IS NULL
@@ -241,12 +241,12 @@ export function queryHeadsUp(sql, userId) {
       ),
       stale AS (
         SELECT pp.id AS project_id,
-               pp.name,
+               pp.display_name AS name,
                'stale'::text AS reason,
                NULL::smallint AS severity,
                em.last_observed_at AS event_at,
                (NOW()::date - em.last_observed_at::date)::int AS days_stale
-        FROM plant_projects pp
+        FROM public.container pp
         LEFT JOIN entity_memory em ON em.project_id = pp.id
         WHERE pp.status IN ('sprouting','growing','flowering','fruiting')
           AND pp.created_by = ANY(${householdIds})
@@ -284,7 +284,7 @@ export function queryInactiveCount(sql, userId) {
   const householdIds = householdScope(userId);
   return sql`
       SELECT COUNT(*)::int AS count
-      FROM plant_projects pp
+      FROM public.container pp
       WHERE pp.status IN ('harvested','ended')
         AND pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
@@ -303,13 +303,13 @@ export function queryInactiveList(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
   return sql`
-    SELECT pp.id, pp.name, pp.variety, pp.status,
+    SELECT pp.id, pp.display_name AS name, pp.variety, pp.status,
            pp.start_date,
            em.last_event_at,
            em.last_harvested_at,
            CASE WHEN d.dismissed_at IS NULL THEN false ELSE true END AS dismissed,
            d.dismissed_at
-    FROM plant_projects pp
+    FROM public.container pp
     LEFT JOIN entity_memory em ON em.project_id = pp.id
     LEFT JOIN inactive_project_dismissals d
       ON d.project_id = pp.id AND d.user_id = ${userId}

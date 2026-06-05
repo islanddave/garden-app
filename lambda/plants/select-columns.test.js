@@ -45,7 +45,7 @@ const PROJ_RESCOPE_PLANT_COLUMNS = [
 // The UPDATE statement also contains column names but is between SET and
 // FROM/WHERE, not SELECT...FROM, so the regex below correctly excludes it.
 function extractSelectBlocks(src) {
-  const re = /SELECT\s+([\s\S]*?)\s+FROM\s+plants\s+p/g;
+  const re = /SELECT\s+([\s\S]*?)\s+FROM\s+(?:plants|public\.garden_node)\s+p/g;
   const blocks = [];
   let m;
   while ((m = re.exec(src)) !== null) {
@@ -83,6 +83,22 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
         const present = new RegExp(`\\bp\\.${col}\\b`).test(block);
         expect(present, `SELECT block #${idx} still references p.${col}`).toBe(false);
       }
+    });
+  }
+
+  // Foundation V101 repoint guard (L-152): the 3 reads now bind to the widened
+  // canonical view public.garden_node, which RENAMES name->display_name,
+  // project_id->container_id, variety_id->cultivar_id. Each read MUST alias the
+  // renamed column back to its API key or the JSON contract silently breaks
+  // (mock-SQL/static tests are blind to the value; only the data-layer golden-diff
+  // catches the value-level break, this catches the source-level regression).
+  for (const [needle, label] of [
+    [/p\.display_name AS name\b/g, 'p.display_name AS name'],
+    [/p\.container_id AS project_id\b/g, 'p.container_id AS project_id'],
+    [/p\.cultivar_id AS variety_id\b/g, 'p.cultivar_id AS variety_id'],
+  ]) {
+    it(`aliases back ${label} in all 3 reads`, () => {
+      expect((SRC.match(needle) || []).length, `expected 3 of ${label}`).toBe(3);
     });
   }
 });
