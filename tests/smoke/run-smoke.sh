@@ -424,6 +424,48 @@ else
         echo "     (legit skip only if the varieties endpoint is unconfigured; the staging workflow DOES set it)"
       fi
 
+      # ── D2) Seen-contract write→read-back (V3-SEEN-001; L-108 write-path coverage) ─────────
+      # POST /api/plants/:id/seen with {} must persist a seen_event row and the AFTER-INSERT
+      # trigger must stamp plants.last_seen_at (= GREATEST(prev, NEW.seen_at)). Assert HTTP 2xx
+      # AND .last_seen_at is a non-empty ISO timestamp; capture it; POST again and assert the
+      # second last_seen_at >= the first (monotone GREATEST). Gated on the test plant from block D.
+      # NOTE: seen_event.leaf_id is FK ON DELETE CASCADE on plants, so the workflow's existing
+      # L-058 plant sweep already removes any seen_event rows — no new cleanup line is needed here.
+      if [[ -n "$CREATED_PLANT_ID" ]]; then
+        CLERK_JWT=$(mint_session_token)
+        SEEN1_BODY=$(mktemp)
+        SEEN1_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+          -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$SEEN1_BODY" -w "%{http_code}" \
+          "${STAGING_API_PLANTS%/}/api/plants/${CREATED_PLANT_ID}/seen" -d '{}') || SEEN1_HTTP="000"
+        SEEN1_TS=$(jq -r '.last_seen_at // empty' "$SEEN1_BODY" 2>/dev/null || echo "")
+        rm -f "$SEEN1_BODY"
+        if [[ "${SEEN1_HTTP:0:1}" == "2" && -n "$SEEN1_TS" ]]; then
+          echo "✅ PASS [write:seen-first] HTTP $SEEN1_HTTP last_seen_at='$SEEN1_TS'"
+          PASS=$((PASS+1))
+          SEEN2_BODY=$(mktemp)
+          SEEN2_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+            -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$SEEN2_BODY" -w "%{http_code}" \
+            "${STAGING_API_PLANTS%/}/api/plants/${CREATED_PLANT_ID}/seen" -d '{}') || SEEN2_HTTP="000"
+          SEEN2_TS=$(jq -r '.last_seen_at // empty' "$SEEN2_BODY" 2>/dev/null || echo "")
+          rm -f "$SEEN2_BODY"
+          # String compare is valid for ISO-8601 timestamptz (lexicographic == chronological).
+          if [[ "${SEEN2_HTTP:0:1}" == "2" && -n "$SEEN2_TS" && ! "$SEEN2_TS" < "$SEEN1_TS" ]]; then
+            echo "✅ PASS [write:seen-monotone] HTTP $SEEN2_HTTP second last_seen_at='$SEEN2_TS' >= first='$SEEN1_TS'"
+            PASS=$((PASS+1))
+          else
+            echo "❌ FAIL [write:seen-monotone] HTTP $SEEN2_HTTP second='$SEEN2_TS' first='$SEEN1_TS' (expected second >= first)"
+            FAIL=$((FAIL+1))
+          fi
+        else
+          echo "❌ FAIL [write:seen-first] HTTP $SEEN1_HTTP last_seen_at='$SEEN1_TS' (expected 2xx + non-empty ISO timestamp)"
+          FAIL=$((FAIL+1))
+        fi
+      else
+        echo "⚠️  WARN [write:seen] no test planting (block D skipped) — seen-contract assert NOT run"
+      fi
+
       # Refresh the token for the back half of the write path (E/F/G add more round trips).
       CLERK_JWT=$(mint_session_token)
 
