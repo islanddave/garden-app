@@ -38,7 +38,7 @@ describe('varieties Lambda POST source_proj_rescope_project_id path (S6)', () =>
 
   it('INSERT includes source_proj_rescope_project_id in column list', () => {
     const postStart = SRC.indexOf("if (method === 'POST')");
-    const insertIdx = SRC.indexOf('INSERT INTO public.plant_varieties', postStart);
+    const insertIdx = SRC.indexOf('INSERT INTO public.cultivar', postStart);
     const valuesIdx = SRC.indexOf('VALUES', insertIdx);
     const colBlock = SRC.slice(insertIdx, valuesIdx);
     expect(colBlock).toMatch(/source_proj_rescope_project_id/);

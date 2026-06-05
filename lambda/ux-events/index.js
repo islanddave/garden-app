@@ -134,8 +134,8 @@ export const handler = async (event) => {
                COUNT(*)::int AS captures
         FROM (
           SELECT created_at FROM event_log
-          UNION ALL SELECT created_at FROM plants
-          UNION ALL SELECT created_at FROM plant_projects
+          UNION ALL SELECT created_at FROM public.garden_node
+          UNION ALL SELECT created_at FROM public.container
         ) c
         WHERE created_at >= now() - interval '8 weeks'
         GROUP BY 1

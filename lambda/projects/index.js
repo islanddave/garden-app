@@ -219,9 +219,9 @@ export const handler = async (event) => {
         // orphan audit. WHERE has no `created_by = userId` — admin overrides ownership.
         const rows = await sql`
           WITH pre AS (
-            SELECT id, kind, parent_project_id, name,
+            SELECT id, classification AS kind, parent_id AS parent_project_id, display_name AS name,
                    target_end_date, kind_set_at
-            FROM plant_projects
+            FROM public.container
             WHERE id = ${projectId} AND deleted_at IS NULL
           ),
           audit AS (
@@ -237,20 +237,20 @@ export const handler = async (event) => {
             FROM pre
             RETURNING project_id
           )
-          UPDATE plant_projects
+          UPDATE public.container
           SET
-            kind = CASE WHEN ${hasKind} THEN ${body.kind ?? null} ELSE kind END,
+            classification = CASE WHEN ${hasKind} THEN ${body.kind ?? null} ELSE classification END,
             kind_set_at = CASE
-              WHEN ${hasKind && body.kind != null} AND kind IS NULL THEN NOW()
+              WHEN ${hasKind && body.kind != null} AND classification IS NULL THEN NOW()
               ELSE kind_set_at
             END,
-            parent_project_id = CASE
+            parent_id = CASE
               WHEN ${hasParent} THEN ${body.parent_project_id ?? null}
-              ELSE parent_project_id
+              ELSE parent_id
             END
           WHERE id = ${projectId} AND deleted_at IS NULL
             AND id IN (SELECT id FROM pre)
-          RETURNING id, name, slug, kind, kind_set_at, parent_project_id
+          RETURNING id, display_name AS name, slug, classification AS kind, kind_set_at, parent_id AS parent_project_id
         `;
         if (!rows.length) return resp(404, { error: 'Not found or soft-deleted' });
         return resp(200, rows[0]);
@@ -291,40 +291,40 @@ export const handler = async (event) => {
         // V1.2a-4 S1: when kind transitions NULL -> non-NULL, stamp kind_set_at = NOW().
         // Otherwise leave kind_set_at alone. Handled inline in the UPDATE using CASE.
         const rows = await sql`
-          UPDATE plant_projects
+          UPDATE public.container
           SET
-            name             = COALESCE(${body.name ?? null}, name),
+            display_name     = COALESCE(${body.name ?? null}, display_name),
             description      = COALESCE(${body.description ?? null}, description),
             status           = COALESCE(${body.status ?? null}, status),
             variety          = COALESCE(${body.variety ?? null}, variety),
             start_date       = COALESCE(${body.start_date ?? null}, start_date),
             is_public        = COALESCE(${body.is_public ?? null}, is_public),
             location_id      = COALESCE(${body.location_id ?? null}, location_id),
-            parent_project_id = CASE
+            parent_id = CASE
               WHEN ${Object.prototype.hasOwnProperty.call(body, 'parent_project_id')} THEN ${body.parent_project_id ?? null}
-              ELSE parent_project_id
+              ELSE parent_id
             END,
             featured_photo_id = CASE
               WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
               ELSE featured_photo_id
             END,
-            kind = CASE
+            classification = CASE
               WHEN ${hasKind} THEN ${body.kind ?? null}
-              ELSE kind
+              ELSE classification
             END,
             kind_set_at = CASE
-              WHEN ${hasKind && body.kind != null} AND kind IS NULL THEN NOW()
+              WHEN ${hasKind && body.kind != null} AND classification IS NULL THEN NOW()
               ELSE kind_set_at
             END,
             target_end_date = COALESCE(${body.target_end_date ?? null}, target_end_date)
           WHERE id = ${projectId}
             AND created_by = ANY(${householdIds})
             AND deleted_at IS NULL
-          RETURNING id, name, slug, status, variety, description,
+          RETURNING id, display_name AS name, slug, status, variety, description,
                     to_char(start_date, 'YYYY-MM-DD') AS start_date,
                     is_public, location_id, created_at, updated_at, created_by,
-                    parent_project_id, featured_photo_id,
-                    kind,
+                    parent_id AS parent_project_id, featured_photo_id,
+                    classification AS kind,
                     to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                     kind_set_at
         `;
@@ -334,7 +334,7 @@ export const handler = async (event) => {
 
       if (method === 'DELETE') {
         await sql`
-          UPDATE plant_projects
+          UPDATE public.container
           SET deleted_at = NOW()
           WHERE id = ${projectId}
             AND created_by = ANY(${householdIds})
@@ -442,9 +442,9 @@ export const handler = async (event) => {
       const effectiveKind = body.kind ?? 'campaign';
       // Validate parent_project_id is not self-referential (can't know id yet, but guard against explicit self-reference attempts via name matching — full guard at PUT)
       const rows = await sql`
-        INSERT INTO plant_projects
-          (name, slug, status, variety, description, start_date, is_public, location_id, created_by, parent_project_id,
-           kind, target_end_date, kind_set_at)
+        INSERT INTO public.container
+          (display_name, slug, status, variety, description, start_date, is_public, location_id, created_by, parent_id,
+           classification, target_end_date, kind_set_at)
         VALUES (
           ${body.name},
           ${body.slug ?? body.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-')},
@@ -460,11 +460,11 @@ export const handler = async (event) => {
           ${body.target_end_date ?? null},
           ${new Date().toISOString()}
         )
-        RETURNING id, name, slug, status, variety, description,
+        RETURNING id, display_name AS name, slug, status, variety, description,
                   to_char(start_date, 'YYYY-MM-DD') AS start_date,
                   is_public, location_id, created_at, updated_at, created_by,
-                  parent_project_id,
-                  kind,
+                  parent_id AS parent_project_id,
+                  classification AS kind,
                   to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                   kind_set_at
       `;

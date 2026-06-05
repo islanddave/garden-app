@@ -37,7 +37,7 @@ describe('projects Lambda — Household Mode scope widening', () => {
   });
 
   it('INSERT still binds created_by = ${userId} (real author, not widened)', () => {
-    const insIdx = SRC.indexOf('INSERT INTO plant_projects');
+    const insIdx = SRC.indexOf('INSERT INTO public.container');
     expect(insIdx).toBeGreaterThan(-1);
     const valuesIdx = SRC.indexOf('VALUES', insIdx);
     const block = SRC.slice(insIdx, valuesIdx + 600);
@@ -54,7 +54,7 @@ describe('projects Lambda — Household Mode scope widening', () => {
     const patchStart = SRC.indexOf("if (method === 'PATCH')");
     const patchEnd = SRC.indexOf("if (method === 'PUT')", patchStart);
     const patchBlock = SRC.slice(patchStart, patchEnd);
-    const updIdx = patchBlock.indexOf('UPDATE plant_projects');
+    const updIdx = patchBlock.indexOf('UPDATE public.container');
     const retIdx = patchBlock.indexOf('RETURNING', updIdx);
     const upd = patchBlock.slice(updIdx, retIdx);
     expect(upd).not.toMatch(/created_by\s*=\s*\$\{userId\}/);

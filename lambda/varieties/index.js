@@ -145,8 +145,8 @@ export const handler = async (event) => {
         const [, updateRows] = await sql.transaction([
           sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
           sql`
-            UPDATE public.plant_varieties SET
-              name                 = COALESCE(${body.name ?? null}, name),
+            UPDATE public.cultivar SET
+              display_name         = COALESCE(${body.name ?? null}, display_name),
               species              = COALESCE(${body.species ?? null}, species),
               genus                = COALESCE(${body.genus ?? null}, genus),
               days_to_maturity_min = COALESCE(${body.days_to_maturity_min ?? null}, days_to_maturity_min),
@@ -161,7 +161,7 @@ export const handler = async (event) => {
             WHERE id = ${varietyId}
               AND created_by = ${userId}
               AND deleted_at IS NULL
-            RETURNING *
+            RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version
           `,
         ]);
         if (!updateRows.length) return resp(404, { error: 'Not found or not owner' });
@@ -172,7 +172,7 @@ export const handler = async (event) => {
         const [, deleteRows] = await sql.transaction([
           sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
           sql`
-            UPDATE public.plant_varieties
+            UPDATE public.cultivar
             SET deleted_at = NOW()
             WHERE id = ${varietyId}
               AND created_by = ${userId}
@@ -231,13 +231,13 @@ export const handler = async (event) => {
       const sourceProjId = body.source_proj_rescope_project_id ?? null;
       if (sourceProjId) {
         const existing = await sql`
-          SELECT id, name, species, genus,
+          SELECT id, display_name AS name, species, genus,
                  days_to_maturity_min, days_to_maturity_max,
                  care_notes, soil_notes, sun_requirements,
                  common_diseases, expected_yield_notes,
                  photo_id, source_url, created_by, created_at, updated_at,
                  source_proj_rescope_project_id
-          FROM public.plant_varieties
+          FROM public.cultivar
           WHERE source_proj_rescope_project_id = ${sourceProjId}
             AND deleted_at IS NULL
           LIMIT 1
@@ -253,9 +253,9 @@ export const handler = async (event) => {
       // Skipped when sourceProjId is present — admin idempotent-by-source-id is authoritative.
       if (!body.allow_duplicate && !sourceProjId) {
         const similar = await sql`
-          SELECT id, name, species, genus FROM public.plant_varieties
+          SELECT id, display_name AS name, species, genus FROM public.cultivar
           WHERE deleted_at IS NULL
-            AND LOWER(name) = LOWER(${body.name})
+            AND LOWER(display_name) = LOWER(${body.name})
             AND COALESCE(species, '') = COALESCE(${body.species ?? null}, '')
           LIMIT 1
         `;
@@ -271,8 +271,8 @@ export const handler = async (event) => {
       const [, insertRows] = await sql.transaction([
         sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
         sql`
-          INSERT INTO public.plant_varieties (
-            name, species, genus,
+          INSERT INTO public.cultivar (
+            display_name, species, genus,
             days_to_maturity_min, days_to_maturity_max,
             care_notes, soil_notes, sun_requirements,
             common_diseases, expected_yield_notes,
@@ -293,7 +293,7 @@ export const handler = async (event) => {
             ${body.source_url ?? null},
             ${userId},
             ${sourceProjId}
-          ) RETURNING *
+          ) RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version
         `,
       ]);
       return resp(201, insertRows[0]);

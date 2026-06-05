@@ -55,7 +55,7 @@ describe('plants Lambda — seen-contract write path (V3-SEEN-001)', () => {
     // Strip // line comments first — they intentionally mention `FROM plants p` to
     // document WHY the alias is `ln`; the assertion targets executable SQL, not prose.
     const branch = seenBranch(SRC).replace(/\/\/[^\n]*/g, '');
-    expect(branch.includes('FROM plants ln'), 'seen insert must alias plants as ln').toBe(true);
+    expect(branch.includes('FROM public.garden_node ln') || branch.includes('FROM plants ln'), 'seen insert must alias plants/garden_node as ln').toBe(true);
     // No new `FROM plants p` introduced on the seen path (would break select-columns.test.js).
     expect(/FROM\s+plants\s+p\b/.test(branch), 'seen branch must NOT add a FROM plants p block').toBe(false);
   });

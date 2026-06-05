@@ -45,7 +45,7 @@ const PROJ_RESCOPE_PLANT_COLUMNS = [
 // The UPDATE statement also contains column names but is between SET and
 // FROM/WHERE, not SELECT...FROM, so the regex below correctly excludes it.
 function extractSelectBlocks(src) {
-  const re = /SELECT\s+([\s\S]*?)\s+FROM\s+(?:plants|public\.garden_node)\s+p/g;
+  const re = /SELECT\s+((?:(?!\bFROM\b)[\s\S])*?)\s+FROM\s+(?:plants|public\.garden_node)\s+p/g;
   const blocks = [];
   let m;
   while ((m = re.exec(src)) !== null) {
@@ -92,13 +92,33 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
   // renamed column back to its API key or the JSON contract silently breaks
   // (mock-SQL/static tests are blind to the value; only the data-layer golden-diff
   // catches the value-level break, this catches the source-level regression).
+  // Read-path guard: scoped to the 3 SELECT blocks (robust to write-path RETURNING alias-backs added in Foundation V101 writes).
+  const readSrc = selectBlocks.join('\n');
   for (const [needle, label] of [
     [/p\.display_name AS name\b/g, 'p.display_name AS name'],
     [/p\.container_id AS project_id\b/g, 'p.container_id AS project_id'],
     [/p\.cultivar_id AS variety_id\b/g, 'p.cultivar_id AS variety_id'],
   ]) {
     it(`aliases back ${label} in all 3 reads`, () => {
-      expect((SRC.match(needle) || []).length, `expected 3 of ${label}`).toBe(3);
+      expect((readSrc.match(needle) || []).length, `expected 3 of ${label} across the read SELECT blocks`).toBe(3);
     });
   }
+
+  // Foundation V101 WRITE-path repoint guard (L-152): PUT/INSERT/succession also
+  // bind public.garden_node and MUST alias renamed columns back in RETURNING, or the
+  // create/update JSON response silently changes keys (name->display_name etc.).
+  it('PUT RETURNING aliases back all 3 renamed columns (p.-prefixed)', () => {
+    for (const needle of [/p\.display_name AS name\b/, /p\.container_id AS project_id\b/, /p\.cultivar_id AS variety_id\b/]) {
+      expect(needle.test(SRC), `PUT RETURNING missing ${needle}`).toBe(true);
+    }
+  });
+  it('INSERT + succession RETURNING alias back all 3 renamed columns (unprefixed, 2 each)', () => {
+    for (const [needle, label] of [
+      [/(?<!\.)\bdisplay_name AS name\b/g, 'display_name AS name'],
+      [/(?<!\.)\bcontainer_id AS project_id\b/g, 'container_id AS project_id'],
+      [/(?<!\.)\bcultivar_id AS variety_id\b/g, 'cultivar_id AS variety_id'],
+    ]) {
+      expect((SRC.match(needle) || []).length, `expected 2 unprefixed ${label}`).toBe(2);
+    }
+  });
 });

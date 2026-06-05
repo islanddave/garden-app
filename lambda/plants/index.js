@@ -97,21 +97,21 @@ export const handler = async (event) => {
       const seenAt = body.seen_at ?? null;
       const source = body.source ?? 'app';
       // Household-scoped, ownership-checked INSERT…SELECT. The plants table is aliased
-      // `ln` (NOT `p`) so this adds NO 4th `FROM plants p` match → select-columns.test.js
+      // `ln` (NOT `p`) so this adds NO 4th `FROM ... p` read block → select-columns.test.js
       // (exactly-3-blocks) stays green. Explicit ::timestamptz cast resolves the
       // 42P18 "could not determine data type" parse failure (L-086). workspace_id is
       // left to the column DEFAULT sentinel (do NOT set it here).
       const ins = await sql`
         INSERT INTO seen_event (leaf_id, seen_at, source)
         SELECT ln.id, COALESCE(${seenAt}::timestamptz, now()), ${source}
-        FROM plants ln
-        JOIN plant_projects pp ON pp.id = ln.project_id
+        FROM public.garden_node ln
+        JOIN public.container pp ON pp.id = ln.container_id
         WHERE ln.id = ${plantId} AND ln.deleted_at IS NULL AND pp.created_by = ANY(${householdIds})
         RETURNING leaf_id
       `;
       if (!ins.length) return resp(404, { error: 'Not found' });
       // Read back the trigger-maintained last_seen_at (no `p` alias → regex-safe).
-      const back = await sql`SELECT last_seen_at FROM plants WHERE id = ${plantId}`;
+      const back = await sql`SELECT last_seen_at FROM public.garden_node WHERE id = ${plantId}`;
       return resp(201, { leaf_id: ins[0].leaf_id, last_seen_at: back[0]?.last_seen_at ?? null });
     }
 
@@ -203,15 +203,15 @@ export const handler = async (event) => {
         }
 
         const rows = await sql`
-          UPDATE plants p
+          UPDATE public.garden_node p
           SET
-            name                     = COALESCE(${body.name ?? null}, p.name),
+            display_name             = COALESCE(${body.name ?? null}, p.display_name),
             quantity                 = COALESCE(${body.quantity ?? null}, p.quantity),
             status                   = COALESCE(${body.status ?? null}, p.status),
             notes                    = COALESCE(${body.notes ?? null}, p.notes),
-            variety_id               = CASE
+            cultivar_id              = CASE
               WHEN ${hasVariety} THEN ${body.variety_id ?? null}
-              ELSE p.variety_id
+              ELSE p.cultivar_id
             END,
             source_inventory_item_id = COALESCE(${body.source_inventory_item_id ?? null}, p.source_inventory_item_id),
             metadata                 = COALESCE(${body.metadata ?? null}, p.metadata),
@@ -241,12 +241,12 @@ export const handler = async (event) => {
             lineage_note             = COALESCE(${body.lineage_note ?? null}, p.lineage_note),
             succession_group_id      = COALESCE(${body.succession_group_id ?? null}, p.succession_group_id),
             succession_order         = COALESCE(${body.succession_order ?? null}, p.succession_order)
-          FROM plant_projects pp
+          FROM public.container pp
           WHERE p.id = ${plantId}
-            AND p.project_id = pp.id
+            AND p.container_id = pp.id
             AND pp.created_by = ANY(${householdIds})
             AND p.deleted_at IS NULL
-          RETURNING p.*
+          RETURNING p.id, p.container_id AS project_id, p.display_name AS name, p.quantity, p.notes, p.status, p.planted_at, p.created_by, p.created_at, p.updated_at, p.deleted_at, p.location_id, p.featured_image_id, p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata, p.featured_photo_id, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at, p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx, p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause, p.source_type, p.source_ref, p.source_generation, p.parent_plant_id, p.divergence_type, p.lineage_note, p.succession_group_id, p.succession_order, p.container_type, p.container_size, p.kind, p.workspace_id, p.last_seen_at, p.attr_override, p.version
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
@@ -254,11 +254,11 @@ export const handler = async (event) => {
 
       if (method === 'DELETE') {
         await sql`
-          UPDATE plants p
+          UPDATE public.garden_node p
           SET deleted_at = NOW()
-          FROM plant_projects pp
+          FROM public.container pp
           WHERE p.id = ${plantId}
-            AND p.project_id = pp.id
+            AND p.container_id = pp.id
             AND pp.created_by = ANY(${householdIds})
             AND p.deleted_at IS NULL
         `;
@@ -389,9 +389,9 @@ export const handler = async (event) => {
       const qtyInitial = isNaN(qtyInitialRaw) || qtyInitialRaw < 1 ? qtyVal : qtyInitialRaw;
 
       const inserted = await sql`
-        INSERT INTO plants
-          (project_id, name, quantity, status, notes, created_by,
-           variety_id, source_inventory_item_id, metadata,
+        INSERT INTO public.garden_node
+          (container_id, display_name, quantity, status, notes, created_by,
+           cultivar_id, source_inventory_item_id, metadata,
            sown_at, sown_at_approx, germinated_at, germinated_at_approx,
            transplanted_at, transplanted_at_approx, planted_out_at, planted_out_at_approx,
            qty_initial, qty_current, qty_harvested, qty_lost, loss_cause,
@@ -430,7 +430,7 @@ export const handler = async (event) => {
           ${body.succession_group_id ?? null},
           ${body.succession_order ?? null}
         )
-        RETURNING *
+        RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, kind, workspace_id, last_seen_at, attr_override, version
       `;
       const newPlant = inserted[0];
 
@@ -441,11 +441,11 @@ export const handler = async (event) => {
       // UPDATE WHERE succession_group_id IS NULL.
       if (body.succession_group_id == null && body.parent_plant_id == null) {
         const updated = await sql`
-          UPDATE plants
+          UPDATE public.garden_node
           SET succession_group_id = id
           WHERE id = ${newPlant.id}
             AND succession_group_id IS NULL
-          RETURNING *
+          RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, kind, workspace_id, last_seen_at, attr_override, version
         `;
         if (updated.length) return resp(201, updated[0]);
       }

@@ -179,8 +179,8 @@ export const handler = async (event) => {
 
       // (2) Resolve scope server-side → owner-scoped, alive plantings (never trust a client list).
       const resolved = await sql`
-        SELECT p.id AS plant_id, p.name AS plant_name
-        FROM plants p JOIN plant_projects pp ON pp.id = p.project_id
+        SELECT p.id AS plant_id, p.display_name AS plant_name
+        FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id
         WHERE p.deleted_at IS NULL AND pp.deleted_at IS NULL
           AND pp.created_by = ANY(${householdIds})
           AND CASE ${scopeType}
@@ -212,17 +212,17 @@ export const handler = async (event) => {
         sql`INSERT INTO event_log
               (project_id, location_id, plant_id, event_type, event_date, is_public,
                logged_by, created_by, metadata)
-            SELECT p.project_id, pp.location_id, p.id, ${eventType}, ${eventDate}::timestamptz, true,
+            SELECT p.container_id, pp.location_id, p.id, ${eventType}, ${eventDate}::timestamptz, true,
                    ${userId}, ${userId},
                    jsonb_build_object('batch_id', ${batchId}::text, 'batch_v', 1)
-            FROM plants p JOIN plant_projects pp ON pp.id = p.project_id
+            FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id
             WHERE p.id = ANY(${plantIds})`,
         sql`
           INSERT INTO entity_memory
             (project_id, last_event_at,
              last_watered_at, last_fertilized_at, last_pruned_at, last_observed_at, last_harvested_at,
              next_water_at, last_issue_at)
-          SELECT DISTINCT p.project_id,
+          SELECT DISTINCT p.container_id,
             ${eventDate}::timestamptz,
             CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'fertilizing' THEN ${eventDate}::timestamptz ELSE NULL END,
@@ -231,7 +231,7 @@ export const handler = async (event) => {
             NULL::timestamptz,
             CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
             NULL::timestamptz
-          FROM plants p WHERE p.id = ANY(${plantIds})
+          FROM public.garden_node p WHERE p.id = ANY(${plantIds})
           ON CONFLICT (project_id) DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
             last_watered_at    = CASE WHEN ${eventType} = 'watering'      THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
@@ -362,7 +362,7 @@ export const handler = async (event) => {
           SET resolved_at = COALESCE(el.resolved_at, NOW()),
               resolved_by = COALESCE(el.resolved_by, ${userId}),
               updated_at  = NOW()
-          FROM plant_projects pp
+          FROM public.container pp
           WHERE el.id = ${eventId}
             AND el.flagged_as_issue = true
             AND el.deleted_at IS NULL
@@ -400,7 +400,7 @@ export const handler = async (event) => {
                   el.resolved_at,
                   DATE(el.resolved_at AT TIME ZONE ${userTz}) AS resolve_day
                 FROM event_log el
-                JOIN plant_projects pp ON pp.id = el.project_id
+                JOIN public.container pp ON pp.id = el.project_id
                 WHERE pp.created_by = ${userId}
                   AND pp.deleted_at IS NULL
                   AND el.deleted_at IS NULL

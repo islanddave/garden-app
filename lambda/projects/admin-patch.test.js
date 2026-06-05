@@ -64,7 +64,7 @@ describe('projects Lambda admin PATCH route (S6 static-source guard)', () => {
     expect(patchBlock).toMatch(/'admin_classify'/);
     // UPDATE comes after audit in the CTE
     const auditIdx = patchBlock.indexOf('audit AS (');
-    const updateIdx = patchBlock.indexOf('UPDATE plant_projects', auditIdx);
+    const updateIdx = patchBlock.indexOf('UPDATE public.container', auditIdx);
     expect(updateIdx).toBeGreaterThan(auditIdx);
   });
 
@@ -72,7 +72,7 @@ describe('projects Lambda admin PATCH route (S6 static-source guard)', () => {
     const patchStart = SRC.indexOf("if (method === 'PATCH')");
     const patchEnd = SRC.indexOf("if (method === 'PUT')", patchStart);
     const patchBlock = SRC.slice(patchStart, patchEnd);
-    const updateIdx = patchBlock.indexOf('UPDATE plant_projects');
+    const updateIdx = patchBlock.indexOf('UPDATE public.container');
     const returningIdx = patchBlock.indexOf('RETURNING', updateIdx);
     const updateSlice = patchBlock.slice(updateIdx, returningIdx);
     // No `created_by = ${userId}` clause inside the UPDATE WHERE
@@ -88,7 +88,7 @@ describe('projects Lambda admin PATCH route (S6 static-source guard)', () => {
     expect(patchBlock).toMatch(/kind_set_at = CASE/);
     // L-086: WHEN operand must be a JS-computed boolean, NOT a bare `${param} IS NOT NULL`
     // (type-indeterminate at parse -> 42P18). Equivalent guard: hasKind && body.kind != null.
-    expect(patchBlock).toMatch(/WHEN \$\{hasKind && body\.kind != null\} AND kind IS NULL THEN NOW\(\)/);
+    expect(patchBlock).toMatch(/WHEN \$\{hasKind && body\.kind != null\} AND classification IS NULL THEN NOW\(\)/);
   });
 });
 

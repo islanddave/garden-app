@@ -33,7 +33,7 @@ describe('plants Lambda — Household Mode scope widening', () => {
   });
 
   it('INSERT still binds created_by = ${userId}', () => {
-    const insIdx = SRC.indexOf('INSERT INTO plants');
+    const insIdx = SRC.indexOf('INSERT INTO public.garden_node');
     const block = SRC.slice(insIdx, insIdx + 800);
     expect(block).toMatch(/\$\{userId\}/);
     expect(block).not.toMatch(/householdIds/);

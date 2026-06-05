@@ -30,7 +30,7 @@ describe('projects Lambda POST kind-coalesce (S6 / PN1 guard)', () => {
   });
 
   it('the INSERT INTO plant_projects binds effectiveKind for the kind column', () => {
-    const i = SRC.indexOf('INSERT INTO plant_projects');
+    const i = SRC.indexOf('INSERT INTO public.container');
     expect(i).toBeGreaterThan(-1);
     expect(SRC.slice(i, i + 900)).toMatch(/\$\{effectiveKind\},/);
   });

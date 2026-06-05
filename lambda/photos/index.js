@@ -203,7 +203,7 @@ export const handler = async (event) => {
       try {
         if (inserted.project_id) {
           await sql`
-            UPDATE plant_projects
+            UPDATE public.container
                SET featured_photo_id = ${inserted.id}
              WHERE id = ${inserted.project_id}
                AND created_by = ANY(${householdIds})
@@ -213,11 +213,11 @@ export const handler = async (event) => {
         }
         if (inserted.plant_id) {
           await sql`
-            UPDATE plants p
+            UPDATE public.garden_node p
                SET featured_photo_id = ${inserted.id}
-              FROM plant_projects pp
+              FROM public.container pp
              WHERE p.id = ${inserted.plant_id}
-               AND p.project_id = pp.id
+               AND p.container_id = pp.id
                AND pp.created_by = ANY(${householdIds})
                AND p.featured_photo_id IS NULL
                AND p.deleted_at IS NULL

@@ -165,7 +165,7 @@ export const handler = async (event) => {
       }
       // Step 3: verify plant ownership in scope.
       const plantRows = await sql`
-        SELECT 1 FROM public.plants
+        SELECT 1 FROM public.garden_node
          WHERE id = ${plantId}
            AND created_by = ANY(${householdIds})
            AND deleted_at IS NULL

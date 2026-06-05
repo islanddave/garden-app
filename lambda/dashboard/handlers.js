@@ -330,7 +330,7 @@ export function queryDismissInactive(sql, userId, projectId) {
   const householdIds = householdScope(userId);
   return sql`
     WITH owned AS (
-      SELECT id FROM plant_projects
+      SELECT id FROM public.container
       WHERE id = ${projectId}::uuid
         AND created_by = ANY(${householdIds})
         AND status IN ('harvested','ended')
