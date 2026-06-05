@@ -116,13 +116,13 @@ export const handler = async (event) => {
 
       if (method === 'GET') {
         const rows = await sql`
-          SELECT id, name, species, genus,
+          SELECT id, display_name AS name, species, genus,
                  days_to_maturity_min, days_to_maturity_max,
                  care_notes, soil_notes, sun_requirements,
                  common_diseases, expected_yield_notes,
                  photo_id, source_url,
                  created_by, created_at, updated_at
-          FROM public.plant_varieties
+          FROM public.cultivar
           WHERE id = ${varietyId}
             AND deleted_at IS NULL
         `;
@@ -193,26 +193,26 @@ export const handler = async (event) => {
       const q = event.queryStringParameters?.q ?? null;
       const rows = q
         ? await sql`
-            SELECT id, name, species, genus,
+            SELECT id, display_name AS name, species, genus,
                    days_to_maturity_min, days_to_maturity_max,
                    care_notes, soil_notes, sun_requirements,
                    common_diseases, expected_yield_notes,
                    photo_id, source_url, created_by, created_at, updated_at
-            FROM public.plant_varieties
+            FROM public.cultivar
             WHERE deleted_at IS NULL
-              AND LOWER(name) LIKE ${'%' + q.toLowerCase() + '%'}
-            ORDER BY name ASC
+              AND LOWER(display_name) LIKE ${'%' + q.toLowerCase() + '%'}
+            ORDER BY display_name ASC
             LIMIT 50
           `
         : await sql`
-            SELECT id, name, species, genus,
+            SELECT id, display_name AS name, species, genus,
                    days_to_maturity_min, days_to_maturity_max,
                    care_notes, soil_notes, sun_requirements,
                    common_diseases, expected_yield_notes,
                    photo_id, source_url, created_by, created_at, updated_at
-            FROM public.plant_varieties
+            FROM public.cultivar
             WHERE deleted_at IS NULL
-            ORDER BY name ASC
+            ORDER BY display_name ASC
             LIMIT 50
           `;
       return resp(200, rows);

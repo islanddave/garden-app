@@ -123,10 +123,10 @@ export const handler = async (event) => {
 
       if (method === 'GET') {
         const rows = await sql`
-          SELECT i.*, fp.storage_path AS featured_photo_storage_path, pv.name AS variety_name
+          SELECT i.*, fp.storage_path AS featured_photo_storage_path, pv.display_name AS variety_name
           FROM inventory_items i
           LEFT JOIN photos fp ON fp.id = i.featured_photo_id
-          LEFT JOIN plant_varieties pv ON pv.id = i.variety_id
+          LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
           WHERE i.id = ${itemId}
             AND i.created_by = ANY(${householdIds})
             AND i.deleted_at IS NULL
@@ -223,9 +223,9 @@ export const handler = async (event) => {
 
     if (method === 'GET') {
       const rows = await sql`
-        SELECT i.*, pv.name AS variety_name
+        SELECT i.*, pv.display_name AS variety_name
         FROM inventory_items i
-        LEFT JOIN plant_varieties pv ON pv.id = i.variety_id
+        LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
         WHERE i.created_by = ANY(${householdIds})
           AND i.deleted_at IS NULL
         ORDER BY i.created_at DESC

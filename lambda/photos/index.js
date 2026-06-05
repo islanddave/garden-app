@@ -121,9 +121,9 @@ export const handler = async (event) => {
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
               p.storage_path, p.caption, p.is_public, p.created_at,
-              pp.name AS project_name
+              pp.display_name AS project_name
             FROM photos p
-            LEFT JOIN plant_projects pp ON pp.id = p.project_id
+            LEFT JOIN public.container pp ON pp.id = p.project_id
             WHERE p.created_by = ANY(${householdIds})
               AND p.project_id = ${projectId}
             ORDER BY p.created_at DESC
@@ -133,9 +133,9 @@ export const handler = async (event) => {
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
               p.storage_path, p.caption, p.is_public, p.created_at,
-              pp.name AS project_name
+              pp.display_name AS project_name
             FROM photos p
-            LEFT JOIN plant_projects pp ON pp.id = p.project_id
+            LEFT JOIN public.container pp ON pp.id = p.project_id
             WHERE p.created_by = ANY(${householdIds})
             ORDER BY p.created_at DESC
             LIMIT ${limit}
