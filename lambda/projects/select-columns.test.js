@@ -22,12 +22,15 @@ const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
 const PROJ_RESCOPE_PROJECT_COLUMNS = ['kind', 'target_end_date', 'kind_set_at'];
 
-// Extract each SELECT...FROM plant_projects block (no alias).
-// Match BOTH list shape ("FROM plant_projects\n") and by-id shape
-// ("FROM plant_projects pp"). Both groups must include the 3 columns to be
-// fully symmetric.
+// Extract each SELECT...FROM {plant_projects | public.container} block.
+// RENAME-TOLERANT (Foundation path-to-V3): the GET reads were repointed off the
+// base table plant_projects onto the widened canonical view public.container
+// (foundation-migration-V101). Through the view, kind is exposed as
+// "classification AS kind" and the 3-column coverage must follow the reads onto
+// the view -- so match BOTH the base table (still used by write-path selects) and
+// the view. Matches list shape ("FROM <rel>") and by-id shape ("FROM <rel> pp").
 function extractSelectBlocks(src) {
-  const re = /SELECT\s+([\s\S]*?)\s+FROM\s+plant_projects(?:\s+pp)?/g;
+  const re = /SELECT\s+([\s\S]*?)\s+FROM\s+(?:plant_projects|public\.container)(?:\s+pp)?/g;
   const blocks = [];
   let m;
   while ((m = re.exec(src)) !== null) {

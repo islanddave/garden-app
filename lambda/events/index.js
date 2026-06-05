@@ -501,9 +501,9 @@ export const handler = async (event) => {
             e.quantity, e.is_public, e.logged_by, e.created_at,
             e.metadata,
             e.flagged_as_issue, e.severity, e.resolved_at,
-            pp.name AS project_name
+            pp.display_name AS project_name
           FROM event_log e
-          JOIN plant_projects pp ON pp.id = e.project_id
+          JOIN public.container pp ON pp.id = e.project_id
           WHERE e.id = ${eventId}
             AND e.deleted_at IS NULL
             AND pp.created_by = ANY(${householdIds})
@@ -533,9 +533,9 @@ export const handler = async (event) => {
               e.event_type, e.event_date, e.notes,
               e.quantity, e.is_public, e.logged_by, e.created_at,
               e.metadata,
-              pp.name AS project_name
+              pp.display_name AS project_name
             FROM event_log e
-            JOIN plant_projects pp ON pp.id = e.project_id
+            JOIN public.container pp ON pp.id = e.project_id
             WHERE pp.created_by = ANY(${householdIds})
               AND e.project_id = ${projectId}
               AND e.plant_id = ${plantId}
@@ -550,9 +550,9 @@ export const handler = async (event) => {
               e.event_type, e.event_date, e.notes,
               e.quantity, e.is_public, e.logged_by, e.created_at,
               e.metadata,
-              pp.name AS project_name
+              pp.display_name AS project_name
             FROM event_log e
-            JOIN plant_projects pp ON pp.id = e.project_id
+            JOIN public.container pp ON pp.id = e.project_id
             WHERE pp.created_by = ANY(${householdIds})
               AND e.project_id = ${projectId}
               AND e.deleted_at IS NULL
@@ -565,9 +565,9 @@ export const handler = async (event) => {
               e.event_type, e.event_date, e.notes,
               e.quantity, e.is_public, e.logged_by, e.created_at,
               e.metadata,
-              pp.name AS project_name
+              pp.display_name AS project_name
             FROM event_log e
-            JOIN plant_projects pp ON pp.id = e.project_id
+            JOIN public.container pp ON pp.id = e.project_id
             WHERE pp.created_by = ANY(${householdIds})
               AND e.deleted_at IS NULL
             ORDER BY e.event_date DESC, e.created_at DESC

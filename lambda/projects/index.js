@@ -144,17 +144,17 @@ export const handler = async (event) => {
       if (method === 'GET') {
         const [projectRows, plantCountRows, eventCountRows] = await Promise.all([
           sql`
-            SELECT pp.id, pp.name, pp.slug, pp.status, pp.variety, pp.description,
+            SELECT pp.id, pp.display_name AS name, pp.slug, pp.status, pp.variety, pp.description,
                    to_char(pp.start_date, 'YYYY-MM-DD') AS start_date,
                    pp.is_public, pp.location_id, pp.created_at, pp.updated_at, pp.created_by,
-                   pp.parent_project_id, pp.featured_photo_id,
-                   pp.kind,
+                   pp.parent_id AS parent_project_id, pp.featured_photo_id,
+                   pp.classification AS kind,
                    to_char(pp.target_end_date, 'YYYY-MM-DD') AS target_end_date,
                    pp.kind_set_at,
-                   p.name AS parent_project_name,
+                   p.display_name AS parent_project_name,
                    fp.storage_path AS featured_photo_storage_path
-            FROM plant_projects pp
-            LEFT JOIN plant_projects p ON p.id = pp.parent_project_id AND p.deleted_at IS NULL
+            FROM public.container pp
+            LEFT JOIN public.container p ON p.id = pp.parent_id AND p.deleted_at IS NULL
             LEFT JOIN photos fp ON fp.id = pp.featured_photo_id
             WHERE pp.id = ${projectId}
               AND pp.created_by = ANY(${householdIds})
@@ -162,8 +162,8 @@ export const handler = async (event) => {
           `,
           sql`
             SELECT COUNT(*)::int AS count
-            FROM plants
-            WHERE project_id = ${projectId}
+            FROM garden_node
+            WHERE container_id = ${projectId}
               AND deleted_at IS NULL
           `,
           sql`
@@ -362,15 +362,15 @@ export const handler = async (event) => {
           return resp(403, { error: 'Not authorized' });
         }
         const rows = await sql`
-          SELECT id, name, slug, status, variety,
+          SELECT id, display_name AS name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
                  is_public, location_id, created_at, updated_at, created_by,
-                 parent_project_id,
-                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
+                 parent_id AS parent_project_id,
+                 classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at
-          FROM plant_projects
+          FROM public.container
           WHERE deleted_at IS NULL
-          ORDER BY parent_project_id NULLS FIRST, name ASC
+          ORDER BY parent_id NULLS FIRST, display_name ASC
         `;
         return resp(200, rows);
       }
@@ -385,38 +385,38 @@ export const handler = async (event) => {
       let rows;
       if (parentIdFilter === 'null' || parentIdFilter === '') {
         rows = await sql`
-          SELECT id, name, slug, status, variety,
+          SELECT id, display_name AS name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
-                 is_public, location_id, created_at, updated_at, parent_project_id,
-                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
+                 is_public, location_id, created_at, updated_at, parent_id AS parent_project_id,
+                 classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at
-          FROM plant_projects
+          FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
-            AND parent_project_id IS NULL
+            AND parent_id IS NULL
           ORDER BY start_date DESC NULLS LAST, created_at DESC
         `;
       } else if (parentIdFilter) {
         rows = await sql`
-          SELECT id, name, slug, status, variety,
+          SELECT id, display_name AS name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
-                 is_public, location_id, created_at, updated_at, parent_project_id,
-                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
+                 is_public, location_id, created_at, updated_at, parent_id AS parent_project_id,
+                 classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at
-          FROM plant_projects
+          FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
-            AND parent_project_id = ${parentIdFilter}
+            AND parent_id = ${parentIdFilter}
           ORDER BY start_date DESC NULLS LAST, created_at DESC
         `;
       } else {
         rows = await sql`
-          SELECT id, name, slug, status, variety,
+          SELECT id, display_name AS name, slug, status, variety,
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
-                 is_public, location_id, created_at, updated_at, parent_project_id,
-                 kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
+                 is_public, location_id, created_at, updated_at, parent_id AS parent_project_id,
+                 classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at
-          FROM plant_projects
+          FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
           ORDER BY start_date DESC NULLS LAST, created_at DESC

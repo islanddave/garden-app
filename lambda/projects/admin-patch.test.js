@@ -109,8 +109,10 @@ describe('projects Lambda admin GET extension (S6 ?admin=1 guard)', () => {
     expect(adminStart).toBeGreaterThan(-1);
     expect(adminEnd).toBeGreaterThan(adminStart);
     const adminBlock = SRC.slice(adminStart, adminEnd);
-    // SELECT FROM plant_projects WHERE deleted_at IS NULL — no created_by filter
-    expect(adminBlock).toMatch(/FROM plant_projects\s+WHERE deleted_at IS NULL/);
+    // SELECT FROM <plant_projects|public.container> WHERE deleted_at IS NULL — no created_by
+    // filter. Rename-tolerant: admin list read repointed onto the widened canonical view
+    // public.container (foundation-migration-V101); the no-owner-filter invariant is unchanged.
+    expect(adminBlock).toMatch(/FROM (?:plant_projects|public\.container)\s+WHERE deleted_at IS NULL/);
     expect(adminBlock).not.toMatch(/created_by\s*=\s*\$\{userId\}/);
   });
 
