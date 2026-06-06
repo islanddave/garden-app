@@ -7,6 +7,10 @@ vi.mock('../hooks/useCritterCollection.js', () => ({
   useCritterCollection: vi.fn(),
 }))
 
+// V3-DELIGHT D1: the header now renders <CritterOfDay/> which calls useAuth — stub it here
+// so Collection's unit test stays provider-free and its grid assertions are unaffected.
+vi.mock('../components/CritterOfDay.jsx', () => ({ default: () => null }))
+
 import { useCritterCollection } from '../hooks/useCritterCollection.js'
 import Collection from '../pages/Collection.jsx'
 
