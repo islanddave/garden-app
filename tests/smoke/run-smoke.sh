@@ -745,6 +745,45 @@ else
   fi
 fi
 
+
+# ── Shared-state tally write->read-back (V3-REWARDSTATE-001; L-108 write-path coverage) ──
+# Independent of the test project. Hits the deployed garden-shared-state Lambda via its real
+# Function URL: proves deploy + Function URL + CORS + Clerk auth + the atomic-increment SQL
+# end-to-end. natural_key carries 'smoke' so the workflow L-058 DB sweep hard-deletes it.
+# Graceful skip (L-109) when the URL is unset/placeholder or Phase 2 minted no JWT.
+if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_SHARED_STATE:-}" && "$STAGING_API_SHARED_STATE" != *placeholder* ]]; then
+  CLERK_JWT=$(mint_session_token)
+  SS_KEY="smoke-tally-$TEST_RUN_ID"
+  SS_INC=$(mktemp)
+  SS_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -X POST \
+    -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+    -o "$SS_INC" -w "%{http_code}" \
+    "${STAGING_API_SHARED_STATE%/}/api/shared-state/tally/${SS_KEY}/increment" -d '{"by":3}') || SS_HTTP="000"
+  SS_CTR=$(jq -r '.counter // empty' "$SS_INC" 2>/dev/null || echo ""); rm -f "$SS_INC"
+  if [[ "${SS_HTTP:0:1}" == "2" && "$SS_CTR" == "3" ]]; then
+    echo "✅ PASS [crud:POST /shared-state tally increment] HTTP $SS_HTTP counter=$SS_CTR"
+    PASS=$((PASS+1))
+    SS_GET=$(mktemp)
+    SS_GHTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+      -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+      -o "$SS_GET" -w "%{http_code}" \
+      "${STAGING_API_SHARED_STATE%/}/api/shared-state/tally/${SS_KEY}") || SS_GHTTP="000"
+    SS_GCTR=$(jq -r '.counter // empty' "$SS_GET" 2>/dev/null || echo ""); rm -f "$SS_GET"
+    if [[ "${SS_GHTTP:0:1}" == "2" && "$SS_GCTR" == "3" ]]; then
+      echo "✅ PASS [write:shared-state-tally-readback] read-back counter == 3"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:shared-state-tally-readback] HTTP $SS_GHTTP counter='$SS_GCTR' (expected 3)"
+      FAIL=$((FAIL+1))
+    fi
+  else
+    echo "❌ FAIL [crud:POST /shared-state tally increment] HTTP $SS_HTTP counter='$SS_CTR' (expected 2xx + 3)"
+    FAIL=$((FAIL+1))
+  fi
+else
+  echo "⚠️  WARN [write:shared-state] STAGING_API_SHARED_STATE unset/placeholder or no JWT — shared-state assert NOT run"
+fi
+
 echo ""
 echo "=== Smoke tests: $PASS passed, $FAIL failed ==="
 if [[ "$FAIL" -gt 0 ]]; then
