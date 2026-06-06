@@ -69,7 +69,7 @@ describe('ux-events GET admin aggregates (static-source guards)', () => {
   });
 
   it('M2 derives capture-events/week from EXISTING tables (no new write path)', () => {
-    for (const tbl of ['event_log', 'plants', 'plant_projects']) {
+    for (const tbl of ['event_log', 'public.garden_node', 'public.container']) {
       expect(SRC).toMatch(new RegExp(`SELECT created_at FROM ${tbl}`));
     }
     expect(SRC).toMatch(/date_trunc\('week', created_at\)/);

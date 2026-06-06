@@ -42,7 +42,7 @@ describe('projects Lambda parameter typing (L-086 / 42P18 guard)', () => {
   });
 
   it('both kind_set_at CASE branches use the JS-computed boolean operand', () => {
-    const matches = SRC.match(/WHEN \$\{hasKind && body\.kind != null\} AND kind IS NULL THEN NOW\(\)/g);
+    const matches = SRC.match(/WHEN \$\{hasKind && body\.kind != null\} AND classification IS NULL THEN NOW\(\)/g);
     // One in the PUT branch, one in the S6 admin PATCH branch.
     expect(matches?.length ?? 0).toBe(2);
   });
