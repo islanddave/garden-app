@@ -19,6 +19,7 @@
 //   /api/varieties          → VITE_API_VARIETIES     variety reference data
 //   /api/achievements       → VITE_API_ACHIEVEMENTS  achievements list
 //   /api/ux-events          → VITE_API_UX_EVENTS     UX success-metric sink (Inc 0; admin-read + telemetry write)
+//   /api/shared-state       → VITE_API_SHARED_STATE  shared-garden reward substrate (V3-REWARDSTATE-001)
 
 import { useAuth } from '@clerk/react'
 import { useCallback } from 'react'
@@ -37,6 +38,7 @@ const FUNCTION_URLS = {
   '/api/varieties':         import.meta.env.VITE_API_VARIETIES     ?? '',
   '/api/achievements':      import.meta.env.VITE_API_ACHIEVEMENTS  ?? '',
   '/api/ux-events':         import.meta.env.VITE_API_UX_EVENTS     ?? '',
+  '/api/shared-state':      import.meta.env.VITE_API_SHARED_STATE  ?? '',
 }
 
 export function resolveUrl(path, urls = FUNCTION_URLS) {

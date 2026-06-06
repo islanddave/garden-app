@@ -38,6 +38,9 @@ env:
   # Per mvp-critter-pre-build-revision-V001-20260528 §2.6: smoke gracefully skips while placeholder is in place
   # (first-deploy bootstrap); HARD-FAILs once Lambda is deployed and Dave updates this to the real URL.
   STAGING_API_CRITTERS: https://nqq6b5kkf76mtvjmtqybk5jene0efzuk.lambda-url.us-east-1.on.aws/
+  # shared-state: placeholder until the first staging deploy creates the Function URL; Dave updates this to the real URL.
+  # V3-REWARDSTATE-001 substrate (featured-of-day + sighting-tally). No smoke assert added until the URL is real.
+  STAGING_API_SHARED_STATE: https://placeholder-shared-state.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
@@ -50,7 +53,7 @@ jobs:
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     strategy:
       matrix:
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events, critter]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events, critter, shared-state]
       max-parallel: 4
       fail-fast: false
 
@@ -251,6 +254,7 @@ jobs:
           VITE_API_APP_EVENTS:        ${{ env.STAGING_API_APP_EVENTS }}
           VITE_API_UX_EVENTS:         ${{ env.STAGING_API_UX_EVENTS }}
           VITE_API_CRITTERS:          ${{ env.STAGING_API_CRITTERS }}
+          VITE_API_SHARED_STATE:      ${{ env.STAGING_API_SHARED_STATE }}
 
       - name: Verify build output
         run: |

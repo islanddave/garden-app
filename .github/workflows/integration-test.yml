@@ -45,7 +45,7 @@ jobs:
       # Install in-place lambda deps so the real handler imports resolve.
       - name: Install lambda deps (handlers under test)
         run: |
-          for fn in events plants locations inventory-items; do
+          for fn in events plants locations inventory-items shared-state; do
             echo "--- npm install lambda/$fn ---"
             (cd lambda/$fn && npm install --omit=dev)
           done
