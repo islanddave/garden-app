@@ -63,7 +63,7 @@ jobs:
           if [ "$DEV_HEAD" != "$DEV_SHA" ]; then
             echo "::error::dev moved since dispatch ($DEV_HEAD != $DEV_SHA)"; exit 1
           fi
-          CONC=$(api "https://api.github.com/repos/$REPO/commits/$DEV_SHA/check-runs" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((c['conclusion'] for c in d['check_runs'] if c['name']=='build-and-test'),'MISSING'))")
+          CONC=$(api "https://api.github.com/repos/$REPO/commits/$DEV_SHA/check-runs?filter=latest&per_page=100" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((c['conclusion'] for c in d['check_runs'] if c['name']=='build-and-test'),'MISSING'))")
           if [ "$CONC" != "success" ]; then
             echo "::error::build-and-test on $DEV_SHA = $CONC (need success)"; exit 1
           fi
