@@ -15,6 +15,31 @@
 
 import { pickSpecies, pickCopyVariant } from './critterSpecies.js'
 
+// V3-DELIGHT-001 D2 — shared household "sighting tally".
+// CONTRACT: TALLY_SIGHTINGS mirrors src/lib/sharedStateClient.js (frontend read) and the
+// garden_shared_state incentive_counter rows; SENTINEL_WORKSPACE mirrors
+// lambda/shared-state/index.js (denormalized pre-V4-Workspaces value). Keep all in sync.
+const TALLY_SIGHTINGS = 'tally:sightings'
+const SENTINEL_WORKSPACE = '00000000-0000-0000-0000-000000000001'
+
+// Increment the garden-wide sighting tally by 1. NON-FATAL: a failure here must NEVER affect
+// event logging or critter awarding (cosmetic counter). Atomic single-statement upsert mirrors
+// the shared-state Lambda's increment path (row-level lock on ON CONFLICT serializes concurrent
+// +1 writes). Called EXACTLY ONCE per genuine new award — the caller gates on an actually-
+// inserted critter row, so idempotent ON-CONFLICT-DO-NOTHING re-hits never reach here.
+async function incrementSightingTally(sql) {
+  try {
+    await sql`
+      INSERT INTO garden_shared_state (workspace_id, kind, natural_key, counter)
+      VALUES (${SENTINEL_WORKSPACE}::uuid, 'incentive_counter', ${TALLY_SIGHTINGS}, 1)
+      ON CONFLICT (workspace_id, kind, natural_key) WHERE deleted_at IS NULL
+      DO UPDATE SET counter = garden_shared_state.counter + 1
+    `
+  } catch (err) {
+    console.warn('sighting tally increment failed (non-fatal):', err?.message ?? String(err))
+  }
+}
+
 // Build deterministic seed (mirrors src/lib/critterClient.js buildSeed).
 function buildSeed(sourceEventId, eventCreatedAt, householdId) {
   return [
@@ -145,7 +170,10 @@ export async function awardCritterServer({
       ON CONFLICT (source_event_id) WHERE deleted_at IS NULL DO NOTHING
       RETURNING id, species_id, target_id, plant_id, earned_at, dot_visible_after
     `
-    return rows[0] ?? null
+    const awarded = rows[0] ?? null
+    // Genuine new award only (idempotent re-hit -> rows empty -> awarded null -> no double-count).
+    if (awarded) await incrementSightingTally(sql)
+    return awarded
   } catch (err) {
     // Per spec §3.10: log telemetry, defer to server-driven backfill on next garden-view open.
     console.warn('awardCritterServer failed:', err?.code ?? '', err?.message ?? String(err))

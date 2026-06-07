@@ -6,6 +6,7 @@ import GardenArrival from '../components/GardenArrival.jsx'
 import critterFacts from '../data/critter-facts.json'
 import CritterFactsPopover from '../components/CritterFactsPopover.jsx'
 import CritterOfDay from '../components/CritterOfDay.jsx'
+import TallyDisplay from '../components/TallyDisplay.jsx'
 
 // Critter Collection.
 // Resting states (static, no motion):
@@ -360,6 +361,7 @@ export default function Collection() {
       </header>
 
       {!loading && <CritterOfDay collected={collected} />}
+      {!loading && <TallyDisplay />}
 
       {/* Sticky jump-nav */}
       <nav aria-label="Jump to section" style={{

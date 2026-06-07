@@ -447,3 +447,21 @@ describe('Plants — +LOG FAB ?add=1 entry', () => {
     expect(screen.queryByTestId('variety-picker')).toBeNull()
   })
 })
+
+describe('Plants — alphabetical ordering (wizardly-modest-edison)', () => {
+  it('renders plantings alphabetically by name, case-insensitively', async () => {
+    const mk = (id, name) => ({ ...SAMPLE_PLANT, id, name, variety: null, variety_ref: null, variety_id: null })
+    // Primed deliberately out of order: Zinnia, apple Mint, Mango.
+    primeMountFetches({ plants: [mk('p-z', 'Zinnia'), mk('p-a', 'apple Mint'), mk('p-m', 'Mango')] })
+    render(<Plants />)
+    const nameNode = (re) => screen.getByText((_c, el) => el?.tagName === 'SPAN' && re.test(el?.textContent || ''))
+    let zin, app, man
+    await waitFor(() => {
+      zin = nameNode(/Zinnia/); app = nameNode(/apple Mint/); man = nameNode(/Mango/)
+      expect(zin && app && man).toBeTruthy()
+    })
+    // Expected DOM order: apple Mint < Mango < Zinnia (case-insensitive).
+    expect(app.compareDocumentPosition(man) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(man.compareDocumentPosition(zin) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})

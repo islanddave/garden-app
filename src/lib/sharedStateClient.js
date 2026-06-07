@@ -37,6 +37,12 @@ export function putFeaturedOfDay({ getToken, payload, date = null } = {}) {
   return authedFetch('/api/shared-state/featured-of-day', { getToken, method: 'PUT', body })
 }
 
+// V3-DELIGHT-001 D2 — shared household "sighting tally" natural_key. CONTRACT: this exact
+// string is shared across THREE bundles — keep them in sync: this file (TallyDisplay read),
+// lambda/events/critterAward.js (server-side increment on a genuine award), and the
+// garden_shared_state incentive_counter rows. Changing it orphans the live counter.
+export const TALLY_SIGHTINGS = 'tally:sightings'
+
 // GET tally/{key} -> { natural_key, counter } | null   (D2-ready; unused by D1)
 export function getTally({ getToken, key } = {}) {
   if (!key) return Promise.resolve(null)

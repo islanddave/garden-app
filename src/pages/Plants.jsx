@@ -3,7 +3,7 @@
 // - Reads ?source_inventory_item_id and ?variety_id query params (deep-link from InventoryDetail).
 // - Submits variety_id (canonical) AND legacy flat variety text (Lambda dual-read compat per S2).
 // - Schema columns confirmed present in prod 2026-05-13 (variety_id, source_inventory_item_id, metadata).
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, statusLabel } from '../lib/constants.js'
@@ -246,6 +246,14 @@ export default function Plants() {
     }
   }
 
+  // Dave request (wizardly-modest-edison): the Plantings list renders alphabetically by name
+  // (case-insensitive, natural-numeric). Derived view only — state stays in server/insert order
+  // so create/edit/delete updates are unaffected.
+  const sortedPlants = useMemo(
+    () => [...plants].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true })),
+    [plants],
+  )
+
   const bdr  = `1px solid ${P.border}`
   const card = { backgroundColor: P.white, border: bdr, borderRadius: 12, padding: '14px 16px', marginBottom: 10 }
   const inp  = { width: '100%', padding: '9px 12px', border: bdr, borderRadius: 8, fontSize: '0.92rem', backgroundColor: P.white, boxSizing: 'border-box', color: P.dark }
@@ -310,7 +318,7 @@ export default function Plants() {
         <p style={{ color: P.light, textAlign: 'center', marginTop: 40 }}>Loading…</p>
       ) : plants.length === 0 ? (
         <p style={{ color: P.light, textAlign: 'center', marginTop: 40 }}>No plantings yet — add one above.</p>
-      ) : plants.map(plant => (
+      ) : sortedPlants.map(plant => (
         <div key={plant.id} style={card}>
           {/* I9 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): alignItems 'flex-start' → 'center'
               so the camera + Edit buttons stay vertically centered against the content block,

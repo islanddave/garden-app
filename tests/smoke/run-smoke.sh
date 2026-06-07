@@ -784,6 +784,41 @@ else
   echo "⚠️  WARN [write:shared-state] STAGING_API_SHARED_STATE unset/placeholder or no JWT — shared-state assert NOT run"
 fi
 
+# == D2 contract: the EXACT prod sighting-tally key end-to-end (V3-DELIGHT-001 D2) ==
+# Locks the precise natural_key the prod events-Lambda hook + frontend TallyDisplay depend on
+# ('tally:sightings'): baseline GET -> POST increment by 1 -> GET-via-increment-return -> assert
+# exactly +1. Proves deploy + Function URL + CORS + auth + atomic-increment SQL for the REAL key.
+# The events-hook -> increment COUPLING is covered deterministically by
+# lambda/events/critterAward.test.js (it can't be HTTP-smoked: the award is probabilistic AND the
+# increment is non-fatal/swallowed). Increments staging's real counter +1/run -- harmless
+# (staging Neon isolated from prod). Graceful skip (L-109) when URL unset/placeholder or no JWT.
+if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_SHARED_STATE:-}" && "$STAGING_API_SHARED_STATE" != *placeholder* ]]; then
+  CLERK_JWT=$(mint_session_token)
+  D2_KEY="tally:sightings"
+  D2_B=$(mktemp)
+  curl -s --max-time 30 --connect-timeout 10 \
+    -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+    -o "$D2_B" "${STAGING_API_SHARED_STATE%/}/api/shared-state/tally/${D2_KEY}" >/dev/null 2>&1 || true
+  D2_BASE=$(jq -r '.counter // 0' "$D2_B" 2>/dev/null || echo "0"); rm -f "$D2_B"
+  [[ "$D2_BASE" =~ ^[0-9]+$ ]] || D2_BASE=0
+  D2_I=$(mktemp)
+  D2_IHTTP=$(curl -s --max-time 30 --connect-timeout 10 -X POST \
+    -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+    -o "$D2_I" -w "%{http_code}" \
+    "${STAGING_API_SHARED_STATE%/}/api/shared-state/tally/${D2_KEY}/increment" -d '{"by":1}') || D2_IHTTP="000"
+  D2_AFTER=$(jq -r '.counter // empty' "$D2_I" 2>/dev/null || echo ""); rm -f "$D2_I"
+  if [[ "${D2_IHTTP:0:1}" == "2" && "$D2_AFTER" =~ ^[0-9]+$ && "$D2_AFTER" -eq $((D2_BASE + 1)) ]]; then
+    echo "PASS [write:d2-sighting-tally-key] 'tally:sightings' +1 ($D2_BASE -> $D2_AFTER)"
+    PASS=$((PASS+1))
+  else
+    echo "FAIL [write:d2-sighting-tally-key] HTTP $D2_IHTTP base=$D2_BASE after='$D2_AFTER' (expected $((D2_BASE+1)))"
+    FAIL=$((FAIL+1))
+  fi
+else
+  echo "WARN [write:d2-sighting-tally] STAGING_API_SHARED_STATE unset/placeholder or no JWT -- D2 key assert NOT run"
+fi
+
+
 echo ""
 echo "=== Smoke tests: $PASS passed, $FAIL failed ==="
 if [[ "$FAIL" -gt 0 ]]; then

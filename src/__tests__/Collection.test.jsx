@@ -10,6 +10,9 @@ vi.mock('../hooks/useCritterCollection.js', () => ({
 // V3-DELIGHT D1: the header now renders <CritterOfDay/> which calls useAuth — stub it here
 // so Collection's unit test stays provider-free and its grid assertions are unaffected.
 vi.mock('../components/CritterOfDay.jsx', () => ({ default: () => null }))
+// V3-DELIGHT D2: the header also renders <TallyDisplay/> which calls useAuth — stub it too
+// (L-160: a provider-dependent child added to an existing tree breaks its provider-free unit test).
+vi.mock('../components/TallyDisplay.jsx', () => ({ default: () => null }))
 
 import { useCritterCollection } from '../hooks/useCritterCollection.js'
 import Collection from '../pages/Collection.jsx'
