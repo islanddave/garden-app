@@ -1,0 +1,31 @@
+name: verify-deploy
+
+# OPS-VERIFY-001 — on-demand, read-only confirmation that a prod SHA actually
+# deployed (SPA deploy job success per L-161 + lambda not stranded/stale per L-141).
+# workflow_dispatch ONLY — never triggers on push/PR, so it cannot interfere with
+# the promote/deploy pipeline. Uses the default GITHUB_TOKEN (read-only).
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Prod SHA to verify (blank = live main HEAD)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Verify deploy success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.sha }}" ]; then ARGS="--sha ${{ inputs.sha }}"; fi
+          python3 scripts/verify-deploy.py $ARGS
