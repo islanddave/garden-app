@@ -97,7 +97,10 @@ def _deploy_job_ok(jobs):
 
 
 def check_spa(repo, token, sha):
-    for r in sorted(_runs(repo, token, "promote-gate.yml"), key=lambda r: r["created_at"], reverse=True):
+    pg_runs = sorted(_runs(repo, token, "promote-gate.yml"), key=lambda r: r["created_at"], reverse=True)
+    # 1) exact head_sha match — a promote-gate run whose head IS sha (rare; covers a
+    #    promote-gate run dispatched on a ref that already equals sha).
+    for r in pg_runs:
         if r.get("head_sha") == sha:
             res = _deploy_job_ok(_jobs(repo, token, r["id"]))
             if res is True:
@@ -105,6 +108,25 @@ def check_spa(repo, token, sha):
             if res is False:
                 return False, f"promote-gate run {r['id']}: SPA deploy job FAILED (L-161 — check CloudFront invalidation step)"
             break
+    # 2) promote path (OPS-VERIFY-002): a promote-gate run's head_sha is the PRE-FF main,
+    #    NOT the promoted dev_sha, so step 1 cannot match it on a normal promote. main
+    #    advances ONLY via promote-gate fast-forward, so when sha == current main HEAD the
+    #    newest deploy-bearing promote-gate run is the one that promoted it. Read that run's
+    #    deploy job. Skip runs that never reached deploy (e.g. preflight-failed promotes that
+    #    left main unchanged) so they don't mask the real deploy.
+    try:
+        main_head = resolve_main(repo, token)
+    except Exception:
+        main_head = None
+    if main_head == sha:
+        for r in pg_runs:
+            res = _deploy_job_ok(_jobs(repo, token, r["id"]))
+            if res is None:
+                continue
+            if res is True:
+                return True, f"promote-gate run {r['id']} (promoted current main {sha[:10]}): SPA deploy job success"
+            return False, f"promote-gate run {r['id']} (promoted current main {sha[:10]}): SPA deploy job FAILED (L-161 — check CloudFront invalidation step)"
+    # 3) deploy.yml fallback (push / workflow_dispatch deploy path).
     for r in sorted(_runs(repo, token, "deploy.yml"), key=lambda r: r["created_at"], reverse=True):
         if r.get("head_sha") == sha:
             res = _deploy_job_ok(_jobs(repo, token, r["id"]))
@@ -113,7 +135,7 @@ def check_spa(repo, token, sha):
             if res is False:
                 return False, f"deploy.yml run {r['id']}: SPA deploy job FAILED"
             return None, f"deploy.yml run {r['id']}: deploy job indeterminate"
-    return None, f"no promote-gate/deploy run found with head_sha={sha[:10]} (SPA deploy unverified)"
+    return None, f"no promote-gate/deploy run found for {sha[:10]} (SPA deploy unverified)"
 
 
 def _compare(repo, token, base, head):
@@ -129,7 +151,10 @@ def check_lambda_fresh(repo, token, sha):
     last_sha = last["head_sha"]
     if last_sha == sha:
         return True, f"lambda deploy run {last['id']} ran on {sha[:10]} (current)"
-    cmp = _compare(repo, token, last_sha, sha)
+    try:
+        cmp = _compare(repo, token, last_sha, sha)
+    except urllib.error.HTTPError as e:
+        return None, f"could not compare {last_sha[:10]}...{sha[:10]} (HTTP {e.code} — sha not found?); lambda freshness unverifiable"
     status = cmp.get("status")
     if status in ("identical", "behind"):
         return True, f"last lambda deploy {last_sha[:10]} is at/ahead of main (status={status})"
