@@ -84,9 +84,9 @@ export const handler = async (event) => {
   // V3-SEEN-001 (Lane A Foundation): seen-contract write path. New-endpoint-only,
   // additive — does NOT touch any existing GET/PUT/POST/DELETE handler. idMatch's
   // /^\/api\/plants\/([^/]+)$/ does NOT match the /seen suffix, so no route collision.
-  // seen_event + plants.last_seen_at + the AFTER-INSERT trigger exist on staging Neon
-  // only (NOT prod) — this branch never runs on prod, where last_seen_at/seen_event
-  // are absent, so existing routes stay byte-identical there.
+  // seen_event + plants.last_seen_at + the AFTER-INSERT trigger are LIVE on prod
+  // (shipped via Foundation V100, promote f5130254; ground-truthed on prod Neon
+  // 2026-06-07). New-endpoint-only, so existing routes stay byte-identical.
   const seenMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/seen$/);
 
   try {
