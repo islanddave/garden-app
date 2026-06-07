@@ -282,14 +282,30 @@ jobs:
 
       - name: Invalidate staging CloudFront and wait for completion
         run: |
-          INVAL_ID=$(aws cloudfront create-invalidation \
-            --distribution-id ${{ env.STAGING_CF_DIST_ID }} \
-            --paths "/index.html" \
-            --query 'Invalidation.Id' --output text)
+          set -uo pipefail
+          # Bounded retry: a transient "Connect timeout on cloudfront.amazonaws.com" on the
+          # create or the wait used to false-fail the run (promote #20). The wait is idempotent
+          # — it re-polls the same invalidation to Completed, so retrying is safe. (OPS, L-166 family)
+          INVAL_ID=""
+          for attempt in 1 2 3 4 5; do
+            INVAL_ID=$(aws cloudfront create-invalidation \
+              --distribution-id ${{ env.STAGING_CF_DIST_ID }} \
+              --paths "/index.html" \
+              --query 'Invalidation.Id' --output text) && [ -n "$INVAL_ID" ] && break
+            echo "  create-invalidation attempt $attempt failed (transient) — retry in $((attempt*10))s"
+            sleep $((attempt*10))
+          done
+          [ -n "$INVAL_ID" ] || { echo "::error::could not create CF invalidation after retries"; exit 1; }
           echo "Waiting for invalidation $INVAL_ID to complete (edge flush, not just accepted)..."
-          aws cloudfront wait invalidation-completed \
-            --distribution-id ${{ env.STAGING_CF_DIST_ID }} \
-            --id "$INVAL_ID"
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            if aws cloudfront wait invalidation-completed \
+                 --distribution-id ${{ env.STAGING_CF_DIST_ID }} \
+                 --id "$INVAL_ID"; then ok=1; break; fi
+            echo "  wait attempt $attempt failed (transient CF/connect error) — retry in $((attempt*10))s"
+            sleep $((attempt*10))
+          done
+          [ "$ok" = "1" ] || { echo "::error::CF invalidation $INVAL_ID did not complete after retries"; exit 1; }
           echo "✅ CF invalidation $INVAL_ID complete"
 
       - name: Verify CF edge serving new build [Boss condition 1]
@@ -447,3 +463,4 @@ jobs:
           echo "Smoke tests green for commit: ${{ needs.deploy-frontend.outputs.commit-sha || github.sha }}"
           echo "Staging regression suite: PASSED ✅"
           echo "To add Playwright: create tests/e2e/ and invoke from this job with continue-on-error: true"
+

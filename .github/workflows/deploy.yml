@@ -180,9 +180,17 @@ jobs:
 
       - name: Invalidate CloudFront — index.html only
         run: |
-          aws cloudfront create-invalidation \
-            --distribution-id ${{ vars.CLOUDFRONT_DIST_ID }} \
-            --paths "/index.html"
+          set -uo pipefail
+          # Bounded retry against transient CF connect-timeouts (D1-ship false-fail class, L-166 family).
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            aws cloudfront create-invalidation \
+              --distribution-id ${{ vars.CLOUDFRONT_DIST_ID }} \
+              --paths "/index.html" && { ok=1; break; }
+            echo "  create-invalidation attempt $attempt failed (transient) — retry in $((attempt*10))s"
+            sleep $((attempt*10))
+          done
+          [ "$ok" = "1" ] || { echo "::error::CloudFront invalidation failed after retries"; exit 1; }
 
       - name: Restore Lambda Function URL CORS
         # OPTIONS excluded from AllowMethods (>6 chars fails validation); AWS handles preflight automatically.
@@ -324,3 +332,4 @@ jobs:
             -d "{\"message\":\"chore: bump version to ${{ env.NEW_VERSION }} [deploy auto]\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\",\"branch\":\"dev\"}" \
             | python3 -c "import json,sys; r=json.load(sys.stdin); print('✅ v${{ env.NEW_VERSION }} committed to dev:', r['commit']['sha'][:12])" \
             || echo "⚠️ Version commit to dev failed — bump package.json manually on dev"
+
