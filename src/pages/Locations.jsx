@@ -101,7 +101,7 @@ export default function Locations() {
           type_label:  editForm.type_label || null,
           is_active:   loc.is_active,
           sort_order:  parseInt(editForm.sort_order) || 0,
-          notes:       editForm.description.trim() || null,
+          description: editForm.description.trim() || null,
         }),
       })
       setEditingId(null); load()
