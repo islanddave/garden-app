@@ -81,13 +81,13 @@ export default function LocationDetail() {
         </button>
       </div>
 
-      {location.notes && (
+      {location.description && (
         <div style={{
           background: '#fff', border: `1px solid ${P.sage}`,
           borderRadius: 10, padding: '14px 18px', marginBottom: 20,
           fontSize: '0.9rem', color: P.dark, lineHeight: 1.6,
         }}>
-          {location.notes}
+          {location.description}
         </div>
       )}
 
