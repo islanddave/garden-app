@@ -185,6 +185,9 @@ export default function PlantingDetail() {
     ['Source', SOURCE_LABELS[pl.source_type] ?? (pl.source_type || null)],
     ['Source ref', pl.source_ref],
     ['Generation', pl.source_generation],
+    ['Source planting', pl.parent_plant_id && pl.parent_plant_name
+      ? <Link to={`/projects/${pl.parent_project_id}/plantings/${pl.parent_plant_id}`} style={{ color: P.green, textDecoration: 'none' }}>{pl.parent_plant_name} ›</Link>
+      : null],
     ['Lineage', pl.lineage_note],
     ['Notes', pl.notes],
   ].filter(([, v]) => v)

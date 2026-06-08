@@ -59,6 +59,7 @@ export default function PlantForm({
   onCancel,
   showProjectSelect = false,
   projects = [],
+  plantingOptions = [],    // V3-LINEAGE-001: [{id,name}] candidate source plantings; picker hidden when empty
   projectOptions = null,   // optional <option> children (e.g. hierarchical <ProjectOptions/>); overrides flat `projects`
   extraActions = null,     // optional node appended to the button row (e.g. a Remove button on edit)
   idPrefix = 'plant',
@@ -169,6 +170,17 @@ export default function PlantForm({
               onChange={e => set({ lineage_note: e.target.value })}
               placeholder="e.g. Dave's Glass Gem F4 selection" />
           </Field>
+
+          {/* V3-LINEAGE-001: link this planting to the source planting it was cloned/cut from.
+              Optional; rendered only when candidate plantings are supplied. The parent_plant_id
+              write path already exists in lambda/plants (POST+PUT). */}
+          {plantingOptions.length > 0 && (
+            <Field label="Source planting" htmlFor={`${pid}-parent`} optional>
+              <Select id={`${pid}-parent`} value={v.parent_plant_id ?? ''}
+                onChange={e => set({ parent_plant_id: e.target.value || null })}
+                options={[{ value: '', label: '— None —' }, ...plantingOptions.map(p => ({ value: p.id, label: p.name }))]} />
+            </Field>
+          )}
         </div>
       </details>
 

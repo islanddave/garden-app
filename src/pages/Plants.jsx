@@ -32,7 +32,7 @@ export default function Plants() {
   const [showAdd,    setShowAdd]    = useState(false)
   // form.variety holds the full variety object (or null); form.varietyText is the legacy flat string
   // captured at submission time for dual-read compat.
-  const [form,       setForm]       = useState({ name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '' })
+  const [form,       setForm]       = useState({ name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '', parent_plant_id: '' })
   const [saving,     setSaving]     = useState(false)
   const [err,        setErr]        = useState(null)
   const [expandedId, setExpandedId] = useState(null)
@@ -172,6 +172,7 @@ export default function Plants() {
       source_ref:        form.source_ref.trim() || null,
       source_generation: form.source_generation.trim() || null,
       lineage_note:      form.lineage_note.trim() || null,
+      parent_plant_id:   form.parent_plant_id || null,
     }
     if (sourceInventoryItemId) payload.source_inventory_item_id = sourceInventoryItemId
     try {
@@ -211,6 +212,7 @@ export default function Plants() {
       source_ref:        plant.source_ref ?? '',
       source_generation: plant.source_generation ?? '',
       lineage_note:      plant.lineage_note ?? '',
+      parent_plant_id:   plant.parent_plant_id ?? '',
     })
     setEditErr(null)
   }
@@ -241,6 +243,7 @@ export default function Plants() {
           source_ref:        editForm.source_ref.trim() || null,
           source_generation: editForm.source_generation.trim() || null,
           lineage_note:      editForm.lineage_note.trim() || null,
+          parent_plant_id:   editForm.parent_plant_id || null,
         }),
       })
       // PUT returns raw row without project_name — preserve existing
@@ -328,6 +331,7 @@ export default function Plants() {
             onCancel={() => { setShowAdd(false); clearQueryParams() }}
             showProjectSelect
             projectOptions={<>{projects.length === 0 && <option value="">No projects yet</option>}<ProjectOptions projects={projects} /></>}
+            plantingOptions={plants.map(p => ({ id: p.id, name: p.name }))}
             idPrefix="add-plant"
           />
         </div>
@@ -437,6 +441,7 @@ export default function Plants() {
                 submitLabel="Save"
                 submittingLabel="Saving…"
                 onCancel={closeEdit}
+                plantingOptions={plants.filter(p => p.id !== plant.id).map(p => ({ id: p.id, name: p.name }))}
                 idPrefix={`edit-${plant.id}`}
                 extraActions={
                   <button type="button" disabled={deleting === plant.id} onClick={() => handleDelete(plant.id)}
