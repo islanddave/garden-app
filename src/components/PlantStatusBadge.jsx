@@ -12,7 +12,7 @@ import { getStatusColors } from '../lib/status.js'
 // Lifecycle-stage glyphs. Covers plant statuses (seed…failed) and project stages that may
 // appear on a planting. Anything unmapped uses the neutral dot.
 const STATUS_ICONS = {
-  seed: '🌰', seedling: '🌱', sprouting: '🌱', seeding: '🌱',
+  seed: '🌰', rooting: '🫚', seedling: '🌱', sprouting: '🌱', seeding: '🌱',
   vegetative: '🌿', growing: '🌿', active: '🌿',
   flowering: '🌸', fruiting: '🍅', harvesting: '🧺', harvested: '✅',
   dormant: '💤', planning: '📋', ended: '⏹️', failed: '✕', dead: '✕',

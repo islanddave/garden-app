@@ -172,7 +172,7 @@ export const handler = async (event) => {
         // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation for the new
         // lifecycle/source/lineage fields. Mirrors DB CHECK constraints; NULL allowed.
         const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
-        const ALLOWED_SOURCE = ['seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'unknown'];
+        const ALLOWED_SOURCE = ['seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'unknown', 'cutting_taken', 'rescued'];
         const ALLOWED_DIVERGENCE = ['mutation', 'cross', 'selection', 'unknown'];
         if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
           return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });

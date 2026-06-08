@@ -32,7 +32,8 @@ import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 const SOURCE_LABELS = {
   seed_packet: 'Seed packet', nursery_transplant: 'Bought as transplant',
   division: 'Divided from another plant', volunteer: 'Volunteer / self-sown',
-  gift: 'Gift', saved_seed: 'Saved seed', unknown: 'Not sure',
+  gift: 'Gift', saved_seed: 'Saved seed',
+  cutting_taken: 'Cutting taken', rescued: 'Rescued', unknown: 'Not sure',
 }
 
 function fmtDate(value) {

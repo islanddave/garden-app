@@ -88,6 +88,6 @@ describe('PlantForm (E1 unified)', () => {
     setup()
     const sel = document.getElementById('t-source')
     const values = Array.from(sel.querySelectorAll('option')).map(o => o.value)
-    expect(values).toEqual(['', 'seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'unknown'])
+    expect(values).toEqual(['', 'seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'cutting_taken', 'rescued', 'unknown'])
   })
 })

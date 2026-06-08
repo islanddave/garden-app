@@ -84,16 +84,19 @@ export const PROJECT_STATUS_MAP = {
   ended:      { label: 'Ended',      emoji: '◼'  },
 }
 
-// Plant lifecycle statuses — plants.status. Free-text in the DB as of 2026-06-04
-// (no CHECK constraint; a future DB-CHECK is gated on a SELECT DISTINCT audit +
-// backfill — see forms-consolidation-plan-V002 §3.2). Single source of truth for
+// Plant lifecycle statuses — plants.status. The DB DOES enforce a CHECK constraint
+// `chk_plants_status` (verified live on prod Neon 2026-06-08; the earlier "free-text,
+// no CHECK" note was stale folklore). This list MUST stay a subset of that constraint —
+// adding a value here requires widening chk_plants_status first (see
+// v3-status-source-check-widen-migration-V100, V3-STATUS-002). Single source of truth for
 // the plant-status vocabulary; do NOT redefine inline (was inline in Plants.jsx).
-export const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']
+export const PLANT_STATUSES = ['seed', 'rooting', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']
 
 // Display mapping for plant statuses — { label, emoji }. Mirrors PROJECT_STATUS_MAP.
 // Colors live in status.js STATUS_COLORS (shared with project stages).
 export const PLANT_STATUS_MAP = {
   seed:       { label: 'Seed',       emoji: '🌰' },
+  rooting:    { label: 'Rooting',    emoji: '🫚' },  // V3-STATUS-002: cuttings/propagation
   seedling:   { label: 'Seedling',   emoji: '🌱' },
   vegetative: { label: 'Vegetative', emoji: '🌿' },
   flowering:  { label: 'Flowering',  emoji: '🌸' },

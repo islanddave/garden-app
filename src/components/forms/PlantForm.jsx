@@ -43,6 +43,8 @@ export const PLANT_SOURCE_OPTIONS = [
   { value: 'volunteer', label: 'Volunteer / self-sown' },
   { value: 'gift', label: 'Gift' },
   { value: 'saved_seed', label: 'Saved seed' },
+  { value: 'cutting_taken', label: 'Cutting taken' },
+  { value: 'rescued', label: 'Rescued' },
   { value: 'unknown', label: 'Not sure' },
 ]
 
