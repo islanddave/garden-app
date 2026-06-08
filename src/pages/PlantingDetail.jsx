@@ -24,6 +24,7 @@ import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
+import ZoomableImage from '../components/ZoomableImage.jsx'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 
 
@@ -200,7 +201,7 @@ export default function PlantingDetail() {
       {/* Header — status reachable without scrolling, multi-channel. */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 22 }}>
         {pl.featured_photo_view_url
-          ? <img src={pl.featured_photo_view_url} alt="" loading="lazy"
+          ? <ZoomableImage src={pl.featured_photo_view_url} alt={`${pl.name || 'Planting'} photo`} loading="lazy"
               style={{ width: 64, height: 64, borderRadius: 10, objectFit: 'cover', flexShrink: 0, border: `1px solid ${P.border}` }} />
           : <span aria-hidden="true" style={{ width: 64, height: 64, flexShrink: 0, display: 'flex',
               alignItems: 'center', justifyContent: 'center', fontSize: '1.8rem', backgroundColor: P.greenPale, borderRadius: 10 }}>🌱</span>}
@@ -216,6 +217,21 @@ export default function PlantingDetail() {
             {variety && <span style={{ fontSize: '0.85rem', color: P.mid }}>{variety}</span>}
           </div>
         </div>
+        {/* V3-EDIT-001: edit affordance — deep-links to the Plants inline edit form for this planting. */}
+        <Link
+          to={`/plants?edit=${plantingId}`}
+          aria-label="Edit this planting"
+          style={{
+            flexShrink: 0, alignSelf: 'flex-start',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            backgroundColor: P.white, color: P.green,
+            border: `1px solid ${P.greenLight}`, borderRadius: 8,
+            padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
+            textDecoration: 'none', whiteSpace: 'nowrap',
+          }}
+        >
+          ✏️ Edit
+        </Link>
       </div>
 
       {/* ── Details ───────────────────────────────────────────────────────────────────────── */}

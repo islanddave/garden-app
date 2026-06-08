@@ -563,12 +563,22 @@ export default function EventNew() {
           <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
             Log an event
           </h1>
-          <Link
-            to="/log/many"
-            style={{ display: 'inline-block', marginTop: 6, fontSize: '0.85rem', color: P.green, textDecoration: 'none', fontWeight: 600 }}
-          >
-            Logging the same thing across plants? Use Log Many →
-          </Link>
+          {/* V3-LOGBTN-001: themed ghost button (cream/sage/terra), not a raw text link. */}
+          <div style={{ marginTop: 8, fontSize: '0.82rem', color: P.light }}>
+            Logging the same thing across plants?{' '}
+            <Link
+              to="/log/many"
+              style={{
+                display: 'inline-block', marginTop: 4,
+                backgroundColor: P.white, color: P.green,
+                border: `1px solid ${P.greenLight}`, borderRadius: 8,
+                padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
+                textDecoration: 'none',
+              }}
+            >
+              ⚡ Log Many →
+            </Link>
+          </div>
           {voice.supported && (
             <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: P.light }}>
               🎙️ Voice input active — tap the mic button next to any field to speak

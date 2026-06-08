@@ -13,6 +13,7 @@ import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import { PlantForm } from '../components/forms'
+import ZoomableImage from '../components/ZoomableImage.jsx'
 
 
 function ErrBanner({ msg }) {
@@ -118,6 +119,24 @@ export default function Plants() {
       setSearchParams(next, { replace: true })
     }
   }, [searchParams, setSearchParams])
+
+  // V3-EDIT-001: /plants?edit=<plantingId> deep-link (from PlantingDetail's Edit button) opens
+  // that planting's inline edit form + scrolls it into view, then strips the param (replace, no
+  // history entry) so a repeat deep-link re-triggers. Mirrors the ?add=1 pattern above.
+  useEffect(() => {
+    const editId = searchParams.get('edit')
+    if (!editId || loading) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('edit')
+    setSearchParams(next, { replace: true })
+    const target = plants.find(p => String(p.id) === String(editId))
+    if (target) {
+      startEdit(target)
+      setTimeout(() => {
+        document.getElementById(`planting-card-${target.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 60)
+    }
+  }, [searchParams, loading, plants, setSearchParams])
 
   function clearQueryParams() {
     if (sourceInventoryItemId || queryVarietyId) {
@@ -319,7 +338,7 @@ export default function Plants() {
       ) : plants.length === 0 ? (
         <p style={{ color: P.light, textAlign: 'center', marginTop: 40 }}>No plantings yet — add one above.</p>
       ) : sortedPlants.map(plant => (
-        <div key={plant.id} style={card}>
+        <div key={plant.id} id={`planting-card-${plant.id}`} style={card}>
           {/* I9 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): alignItems 'flex-start' → 'center'
               so the camera + Edit buttons stay vertically centered against the content block,
               not pinned to the top. This stops the layout from "shifting" when a plant name
@@ -331,7 +350,7 @@ export default function Plants() {
                 now actually shows on the plant. Conditional render = no layout
                 shift when a plant has no photo yet. */}
             {plant.featured_photo_view_url && (
-              <img
+              <ZoomableImage
                 src={plant.featured_photo_view_url}
                 alt={`${plant.name} photo`}
                 loading="lazy"

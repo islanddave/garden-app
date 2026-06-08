@@ -302,7 +302,8 @@ function Header() {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
       <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Log many</h1>
-      <Link to="/log" style={{ color: P.green, fontSize: '0.85rem', fontWeight: 600 }}>Log one →</Link>
+      {/* V3-LOGBTN-001: themed ghost button, not a raw text link. */}
+      <Link to="/log" style={{ ...btnGhost, textDecoration: 'none', display: 'inline-block' }}>Log one →</Link>
     </div>
   )
 }
