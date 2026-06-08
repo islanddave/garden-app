@@ -44,17 +44,23 @@ describe('TodayBand (global, above-nav)', () => {
     expect(navigateMock).toHaveBeenCalledWith('/log?project=a&event_type=watering')
   })
 
-  it('tapping the count expands to the full ranked list', async () => {
+  it('tapping the count expands to the full ranked list (harvest excluded per V3-HARVEST-001)', async () => {
     mockDash({
       water_due: [{ project_id: 'a', project_name: 'Chilis', next_water_at: overdue3, location_type: 'outdoor' }],
+      // harvest_ready is supplied but must NOT surface in the band (V3-HARVEST-001).
       harvest_ready: [{ project_id: 'h', name: 'Beans', days_since_obs: 2 }],
-      heads_up: [{ project_id: 'f', name: 'Basil', reason: 'flagged', severity: 3 }],
+      heads_up: [
+        { project_id: 'f', name: 'Basil', reason: 'flagged', severity: 3 },
+        { project_id: 's', name: 'Thyme', reason: 'stale', days_stale: 9 },
+      ],
     })
     render(<TodayBand />)
-    // collapsed chip must count items hidden behind the top row (total-1), not cap-overflow
+    // 3 band items: water + flag + stale. Harvest is intentionally NOT one of them.
     expect(await screen.findByText(/\+2 more/)).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: /Show all 3 items/ }))
-    expect(await screen.findByText('Beans')).toBeDefined()
-    expect(screen.getByText('Basil')).toBeDefined()
+    expect(await screen.findByText('Basil')).toBeDefined()
+    expect(screen.getByText('Thyme')).toBeDefined()
+    // Harvest-ready 'Beans' must NOT appear in the above-nav band (V3-HARVEST-001).
+    expect(screen.queryByText('Beans')).toBeNull()
   })
 })

@@ -3,7 +3,8 @@
  *
  * Bite 2 of Post-V2 UX overhaul Increment 2: Field/Desk mode toggle scaffold.
  * (Dave-call #3 from roadmap §4: manual session-persistent mode toggle with
- * visible status; default Field on touch/mobile, Desk on desktop.)
+ * visible status.) V3-DESK-001 (2026-06-08): default is Desk for ALL devices;
+ * Field is the opt-in alternate (was: Field on touch/mobile, Desk on desktop).
  *
  * This module exports the MODE constants and the `useMode()` hook. The
  * provider implementation lives in src/context/ModeContext.jsx — separating

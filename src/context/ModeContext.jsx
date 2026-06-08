@@ -12,12 +12,12 @@ import { MODE, MODE_VALUES, MODE_STORAGE_KEY } from '../lib/mode.js'
  * gate the FieldCapture page on `useMode() === MODE.FIELD` and swap the
  * BottomNav +LOG affordance for the mic button in Field mode.
  *
- * Defaults:
- *   - Field if the device looks touch-first (matchMedia '(pointer: coarse)')
- *   - Desk otherwise
- * Detected once on first render; persisted to sessionStorage so the user's
- * explicit toggle survives navigation but resets at tab close (per spec:
- * "manual session-persistent").
+ * Defaults (V3-DESK-001, Dave+Jen 2026-06-08):
+ *   - Desk ALWAYS, regardless of device/pointer. The desk/home view is used
+ *     far more than field even on mobile, so Field is the alternate the user
+ *     opts into via the toggle (no longer auto-selected on touch devices).
+ * Persisted to sessionStorage so the user's explicit toggle survives
+ * navigation but resets at tab close (per spec: "manual session-persistent").
  *
  * Defensive against environments where matchMedia / sessionStorage are
  * unavailable (server-side render, locked-down browsers, jsdom variants).
@@ -27,13 +27,8 @@ import { MODE, MODE_VALUES, MODE_STORAGE_KEY } from '../lib/mode.js'
 const ModeContext = createContext(null)
 
 function detectDefaultMode() {
-  try {
-    if (typeof window !== 'undefined'
-        && typeof window.matchMedia === 'function'
-        && window.matchMedia('(pointer: coarse)').matches) {
-      return MODE.FIELD
-    }
-  } catch {}
+  // V3-DESK-001: default is Desk for every device. Field is opt-in via the
+  // toggle, no longer auto-selected on coarse-pointer (touch) devices.
   return MODE.DESK
 }
 

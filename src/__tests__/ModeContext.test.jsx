@@ -3,7 +3,7 @@
  * Bite 2 of Post-V2 UX overhaul Increment 2: Field/Desk mode toggle scaffold.
  *
  * Covers:
- *  - default = Field on touch (coarse pointer) / Desk otherwise
+ *  - default = Desk always (V3-DESK-001; Field is opt-in, not auto on touch)
  *  - sessionStorage persistence across re-renders + tab reloads
  *  - explicit initialMode prop takes precedence over default detection
  *  - setMode rejects invalid values
@@ -62,12 +62,12 @@ describe('ModeContext — default detection', () => {
     expect(screen.getByTestId('isField').textContent).toBe('false')
   })
 
-  it('defaults to Field when pointer is coarse (touch device)', () => {
+  it('defaults to Desk even when pointer is coarse (V3-DESK-001: Desk is always the default)', () => {
     setMatchMediaCoarse(true)
     render(<ModeProvider><Probe /></ModeProvider>)
-    expect(screen.getByTestId('mode').textContent).toBe(MODE.FIELD)
-    expect(screen.getByTestId('isField').textContent).toBe('true')
-    expect(screen.getByTestId('isDesk').textContent).toBe('false')
+    expect(screen.getByTestId('mode').textContent).toBe(MODE.DESK)
+    expect(screen.getByTestId('isDesk').textContent).toBe('true')
+    expect(screen.getByTestId('isField').textContent).toBe('false')
   })
 
   it('survives missing matchMedia by falling back to Desk', () => {
@@ -85,10 +85,10 @@ describe('ModeContext — default detection', () => {
 })
 
 describe('ModeContext — persistence', () => {
-  it('persists the initial detected mode to sessionStorage on mount', () => {
+  it('persists the initial detected mode (Desk) to sessionStorage on mount', () => {
     setMatchMediaCoarse(true)
     render(<ModeProvider><Probe /></ModeProvider>)
-    expect(window.sessionStorage.getItem(MODE_STORAGE_KEY)).toBe(MODE.FIELD)
+    expect(window.sessionStorage.getItem(MODE_STORAGE_KEY)).toBe(MODE.DESK)
   })
 
   it('reads a previously stored value over the UA default', () => {

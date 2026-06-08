@@ -15,7 +15,6 @@ describe('buildTodayItems', () => {
   it('maps each source to its reason-label + correct /log route', () => {
     const items = buildTodayItems({
       water_due: [{ project_id: 'w', project_name: 'Tomatoes', next_water_at: daysAgo(2), location_type: 'bed' }],
-      harvest_ready: [{ project_id: 'h', name: 'Beans', days_since_obs: 5 }],
       heads_up: [
         { project_id: 'f', name: 'Squash', reason: 'flagged', severity: 3 },
         { project_id: 's', name: 'Kale', reason: 'stale', days_stale: 30 },
@@ -24,15 +23,22 @@ describe('buildTodayItems', () => {
     const byKind = Object.fromEntries(items.map(i => [i.kind, i]))
     expect(byKind.water.label).toBe('Needs water')
     expect(byKind.water.to).toBe('/log?project=w&event_type=watering')
-    expect(byKind.harvest.label).toBe('Ready to harvest')
-    expect(byKind.harvest.to).toBe('/log?project=h&event_type=harvest')
     expect(byKind.flag.label).toBe('Needs a look')
     expect(byKind.flag.to).toBe('/log?project=f&event_type=observation')
     expect(byKind.stale.label).toBe('Not seen lately')
     expect(byKind.stale.to).toBe('/log?project=s&event_type=observation')
   })
 
-  it('ranks watering > flagged > harvest > stale', () => {
+  // V3-HARVEST-001: harvest-ready is no longer merged into the above-nav band.
+  it('does NOT surface a harvest item even when harvest_ready is present (V3-HARVEST-001)', () => {
+    const items = buildTodayItems({
+      harvest_ready: [{ project_id: 'h', name: 'Beans', days_since_obs: 5 }],
+    })
+    expect(items).toEqual([])
+    expect(items.some(i => i.kind === 'harvest')).toBe(false)
+  })
+
+  it('ranks watering > flagged > stale (harvest excluded per V3-HARVEST-001)', () => {
     const items = buildTodayItems({
       water_due: [{ project_id: 'w', project_name: 'W', next_water_at: daysAgo(1), location_type: 'bed' }],
       harvest_ready: [{ project_id: 'h', name: 'H', days_since_obs: 2 }],
@@ -41,13 +47,13 @@ describe('buildTodayItems', () => {
         { project_id: 's', name: 'S', reason: 'stale', days_stale: 40 },
       ],
     })
-    expect(items.map(i => i.kind)).toEqual(['water', 'flag', 'harvest', 'stale'])
+    expect(items.map(i => i.kind)).toEqual(['water', 'flag', 'stale'])
   })
 
   it('de-dups a project to its single most-urgent reason', () => {
     const items = buildTodayItems({
       water_due: [{ project_id: 'x', project_name: 'X', next_water_at: daysAgo(1), location_type: 'bed' }],
-      harvest_ready: [{ project_id: 'x', name: 'X', days_since_obs: 3 }],
+      heads_up: [{ project_id: 'x', name: 'X', reason: 'stale', days_stale: 5 }],
     })
     expect(items).toHaveLength(1)
     expect(items[0].kind).toBe('water')
@@ -69,23 +75,23 @@ describe('buildTodayItems', () => {
   })
 
   it('falls back to row.name when project_name is absent', () => {
-    const items = buildTodayItems({ harvest_ready: [{ project_id: 'h', name: 'Carrots', days_since_obs: 0 }] })
+    const items = buildTodayItems({ heads_up: [{ project_id: 'h', name: 'Carrots', reason: 'stale', days_stale: 4 }] })
     expect(items[0].projectName).toBe('Carrots')
-    expect(items[0].detail).toBe('ready now')
+    expect(items[0].detail).toBe('4 days unseen')
   })
 })
 
 describe('todayBand cap', () => {
   it('renders at most TODAY_RENDER_CAP and reports the remainder', () => {
-    const harvest_ready = Array.from({ length: 8 }, (_, i) => ({ project_id: 'p' + i, name: 'P' + i, days_since_obs: i }))
-    const band = todayBand({ harvest_ready })
+    const heads_up = Array.from({ length: 8 }, (_, i) => ({ project_id: 'p' + i, name: 'P' + i, reason: 'stale', days_stale: i + 1 }))
+    const band = todayBand({ heads_up })
     expect(band.total).toBe(8)
     expect(band.visible).toHaveLength(TODAY_RENDER_CAP)
     expect(band.more).toBe(8 - TODAY_RENDER_CAP)
   })
 
   it('no overflow when at or under cap', () => {
-    const band = todayBand({ harvest_ready: [{ project_id: 'a', name: 'A', days_since_obs: 1 }] })
+    const band = todayBand({ heads_up: [{ project_id: 'a', name: 'A', reason: 'stale', days_stale: 1 }] })
     expect(band.visible).toHaveLength(1)
     expect(band.more).toBe(0)
   })

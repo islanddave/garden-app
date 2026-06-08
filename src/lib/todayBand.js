@@ -2,8 +2,12 @@ import { P } from './constants.js'
 import { severityTier, SEVERITY_STYLES, overdueLabel } from './waterDue.js'
 
 // "Today" band item model (Inc 1 — full band). Merges the actionable "what needs me now?"
-// signals ALREADY returned by /api/dashboard — watering overdue, flagged issues, harvest-ready,
-// and long-unseen (stale) projects — into ONE ranked, de-duplicated, capped list, each row
+// signals ALREADY returned by /api/dashboard — watering overdue, flagged issues, and long-unseen
+// (stale) projects — into ONE ranked, de-duplicated, capped list, each row.
+// V3-HARVEST-001 (2026-06-08): harvest-ready is INTENTIONALLY EXCLUDED from this above-nav band —
+// a harvesting project stays harvest-ready for weeks, so surfacing it here was a constant nag.
+// Harvest-ready still lives on the Dashboard HarvestReadyTile; harvest alerting may be rethought later.
+// Each row
 // carrying a reason-label + a tap-to-log route. This is an OPERATIONAL surface (harm-prevention
 // + time-sensitive opportunity), NOT a reward surface: no streaks/badges/celebration, and
 // recent-activity (a non-actionable recognition feed) is deliberately EXCLUDED — it stays on the
@@ -15,10 +19,9 @@ import { severityTier, SEVERITY_STYLES, overdueLabel } from './waterDue.js'
 export const TODAY_RENDER_CAP = 5
 
 // Priority — lower sorts first. Watering overdue = harm imminent (plants drying); flagged issue =
-// active problem; harvest-ready = time-sensitive opportunity; stale = gentle "haven't looked" nudge.
-const KIND_PRIORITY = { water: 0, flag: 1, harvest: 2, stale: 3 }
+// active problem; stale = gentle "haven't looked" nudge. (harvest removed per V3-HARVEST-001.)
+const KIND_PRIORITY = { water: 0, flag: 1, stale: 2 }
 
-const HARVEST_STYLE = { bg: P.greenPale, border: P.greenLight, text: P.green }
 const STALE_STYLE   = SEVERITY_STYLES.gold
 const FLAG_STYLE    = { bg: P.alert, border: P.alertBorder, text: P.terra }
 
@@ -51,19 +54,6 @@ function flagItem(row) {
   }
 }
 
-function harvestItem(row) {
-  const d = num(row.days_since_obs)
-  return {
-    key: `harvest:${row.project_id}`, kind: 'harvest', priority: KIND_PRIORITY.harvest,
-    sort: -(d ?? 0), // longest-waiting harvest first
-    emoji: '\u{1F9FA}', label: 'Ready to harvest',
-    projectId: row.project_id, projectName: projName(row),
-    detail: d != null && d > 0 ? `${d}d since last check` : 'ready now',
-    to: `/log?project=${row.project_id}&event_type=harvest`,
-    style: HARVEST_STYLE,
-  }
-}
-
 function staleItem(row) {
   const d = num(row.days_stale)
   return {
@@ -85,7 +75,7 @@ export function buildTodayItems(dashboard) {
   const items = []
   for (const r of (d.water_due || []))     if (r && r.project_id) items.push(waterItem(r))
   for (const r of (d.heads_up || []))      if (r && r.project_id && r.reason === 'flagged') items.push(flagItem(r))
-  for (const r of (d.harvest_ready || [])) if (r && r.project_id) items.push(harvestItem(r))
+  // V3-HARVEST-001: harvest_ready is deliberately NOT merged into the band (see header note).
   for (const r of (d.heads_up || []))      if (r && r.project_id && r.reason === 'stale') items.push(staleItem(r))
 
   const byProject = new Map()
