@@ -5,7 +5,6 @@ import { P, EVENT_TYPES } from '../lib/constants.js'
 import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
-import SeverityBadge from '../components/SeverityBadge.jsx'
 
 
 // Shared metadata field label map — mirrors EVENT_METADATA_FIELDS keys from EventNew
@@ -46,7 +45,6 @@ export default function EventDetail() {
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState(null)
   const [deleting, setDeleting] = useState(false)
-  const [resolving, setResolving] = useState(false)
 
   useEffect(() => {
     let isMounted = true
@@ -118,35 +116,9 @@ export default function EventDetail() {
     }
   }
 
-  async function handleResolve() {
-    if (!window.confirm('Resolve this issue? Marks it as handled.')) return
-    const priorResolvedAt = event.resolved_at ?? null
-    // Optimistic — hide the Resolve button immediately.
-    setEvent(ev => ({ ...ev, resolved_at: new Date().toISOString() }))
-    setResolving(true)
-    setError(null)
-    try {
-      const updated = await fetch('/api/events/' + eventId, {
-        method: 'PATCH',
-        body: JSON.stringify({ resolved: true }),
-      })
-      navigate('/dashboard', {
-        state: {
-          refreshDashboard: true,
-          newly_earned_achievements: updated?.newly_earned_achievements ?? [],
-        },
-      })
-    } catch (e) {
-      // Revert the optimistic resolve and surface a friendly error.
-      setEvent(ev => ({ ...ev, resolved_at: priorResolvedAt }))
-      setResolving(false)
-      setError("Couldn't resolve this issue — try again.")
-    }
-  }
-
   if (loading) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div></Shell>
   // Full-page error only when the page never loaded. Post-load errors (e.g. a failed
-  // Resolve) surface inline via ErrBanner so the event content stays visible.
+  // Delete) surface inline via ErrBanner so the event content stays visible.
   if (error && !event) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{error}</div></Shell>
   if (!event || !project) return null
 
@@ -164,17 +136,9 @@ export default function EventDetail() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span>{icon} {event.title || event.event_type.replace(/_/g, ' ')}</span>
-          {event.flagged_as_issue === true && (
-            <SeverityBadge severity={event.severity} reason="flagged" />
-          )}
         </h1>
         {!editing && (
           <div style={{ display: 'flex', gap: 8 }}>
-            {event.flagged_as_issue === true && event.resolved_at == null && (
-              <button onClick={handleResolve} disabled={resolving} style={outlineBtn}>
-                {resolving ? '…' : 'Resolve'}
-              </button>
-            )}
             <button onClick={startEdit} style={outlineBtn}>Edit</button>
             <button onClick={handleDelete} disabled={deleting} style={{ ...outlineBtn, color: P.terra, borderColor: P.terra }}>
               {deleting ? '…' : 'Delete'}

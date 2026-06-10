@@ -79,22 +79,56 @@ export function optionsResp() {
 // and returns the awaitable result. The SQL string + bind params are visible
 // to the test mock via the tagged-template signature.
 
+// V3-FEED-001: collapsed feed cap — recent_events returns at most FEED_CAP entries AFTER
+// collapseBatches() folds each Log Many batch into one entry.
+export const FEED_CAP = 20;
+
 export function queryRecentEvents(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
+  // V3-FEED-001: raw window (LIMIT 200, pre-collapse) + batch linkage. batch_id comes from
+  // event_log.metadata->>'batch_id' (written by POST /api/events/batch); event_batches.item_count
+  // gives the exact batch size even when the 200-row window truncates a batch. 200 must
+  // comfortably exceed FEED_CAP + the largest realistic batch (~113 plantings today; hard cap 500).
   const householdIds = householdScope(userId);
   return sql`
       SELECT
         e.id, e.event_type, e.event_date, e.created_at,
+        e.metadata->>'batch_id' AS batch_id,
+        eb.item_count,
         pp.display_name AS project_name,
         pr.display_name
       FROM event_log e
       JOIN public.container pp ON pp.id = e.project_id
       LEFT JOIN profiles pr ON pr.id = e.logged_by
+      LEFT JOIN event_batches eb ON eb.id::text = e.metadata->>'batch_id'
       WHERE pp.created_by = ANY(${householdIds})
         AND e.deleted_at IS NULL
       ORDER BY e.created_at DESC
-      LIMIT 5
+      LIMIT 200
     `;
+}
+
+// V3-FEED-001 pure collapse: one Log Many batch -> ONE feed entry. Rows arrive created_at DESC;
+// a batch anchors at its newest row (order otherwise preserved). batch_count prefers
+// event_batches.item_count (exact, window-truncation-proof); falls back to occurrences seen in
+// the raw window. Undone batches never appear (their events are soft-deleted upstream).
+// Cap applies AFTER collapsing.
+export function collapseBatches(rows, cap = FEED_CAP) {
+  const out = [];
+  const byBatch = new Map();
+  for (const r of rows ?? []) {
+    if (!r) continue;
+    const bid = r.batch_id ?? null;
+    if (!bid) { out.push({ ...r, batch_count: 1 }); continue; }
+    const prev = byBatch.get(bid);
+    if (prev) { if (!prev.exact) prev.entry.batch_count += 1; continue; }
+    const n = Number(r.item_count);
+    const exact = Number.isFinite(n) && n > 0;
+    const entry = { ...r, batch_count: exact ? n : 1 };
+    byBatch.set(bid, { entry, exact });
+    out.push(entry);
+  }
+  return out.slice(0, cap);
 }
 
 export function queryCounts(sql, userId) {
@@ -406,7 +440,7 @@ export async function handleDashboard(sql, userId) {
   };
 
   return resp(200, {
-    recent_events: recentEvents,
+    recent_events: collapseBatches(recentEvents),
     active_projects: activeProjects,
     counts: {
       projects:  counts[0].project_count,

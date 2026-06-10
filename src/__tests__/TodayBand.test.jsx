@@ -44,7 +44,7 @@ describe('TodayBand (global, above-nav)', () => {
     expect(navigateMock).toHaveBeenCalledWith('/log?project=a&event_type=watering')
   })
 
-  it('tapping the count expands to the full ranked list (harvest excluded per V3-HARVEST-001)', async () => {
+  it('tapping the count expands to the full ranked list (harvest + flagged excluded)', async () => {
     mockDash({
       water_due: [{ project_id: 'a', project_name: 'Chilis', next_water_at: overdue3, location_type: 'outdoor' }],
       // harvest_ready is supplied but must NOT surface in the band (V3-HARVEST-001).
@@ -55,11 +55,13 @@ describe('TodayBand (global, above-nav)', () => {
       ],
     })
     render(<TodayBand />)
-    // 3 band items: water + flag + stale. Harvest is intentionally NOT one of them.
-    expect(await screen.findByText(/\+2 more/)).toBeDefined()
-    fireEvent.click(screen.getByRole('button', { name: /Show all 3 items/ }))
-    expect(await screen.findByText('Basil')).toBeDefined()
-    expect(screen.getByText('Thyme')).toBeDefined()
+    // 2 band items: water + stale. Harvest (V3-HARVEST-001) and flagged (FLAG-REMOVAL
+    // 2026-06-10) are intentionally NOT band items.
+    expect(await screen.findByText(/\+1 more/)).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: /Show all 2 items/ }))
+    expect(await screen.findByText('Thyme')).toBeDefined()
+    // Flagged 'Basil' must NOT appear (flagging UI retired).
+    expect(screen.queryByText('Basil')).toBeNull()
     // Harvest-ready 'Beans' must NOT appear in the above-nav band (V3-HARVEST-001).
     expect(screen.queryByText('Beans')).toBeNull()
   })

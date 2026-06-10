@@ -2,8 +2,10 @@ import { P } from './constants.js'
 import { severityTier, SEVERITY_STYLES, overdueLabel } from './waterDue.js'
 
 // "Today" band item model (Inc 1 — full band). Merges the actionable "what needs me now?"
-// signals ALREADY returned by /api/dashboard — watering overdue, flagged issues, and long-unseen
+// signals ALREADY returned by /api/dashboard — watering overdue and long-unseen
 // (stale) projects — into ONE ranked, de-duplicated, capped list, each row.
+// FLAG-REMOVAL (2026-06-10): flagged-issue rows are no longer surfaced; the planting-flagging
+// UI was retired (server still emits reason='flagged' heads_up rows — ignored here).
 // V3-HARVEST-001 (2026-06-08): harvest-ready is INTENTIONALLY EXCLUDED from this above-nav band —
 // a harvesting project stays harvest-ready for weeks, so surfacing it here was a constant nag.
 // Harvest-ready still lives on the Dashboard HarvestReadyTile; harvest alerting may be rethought later.
@@ -18,12 +20,11 @@ import { severityTier, SEVERITY_STYLES, overdueLabel } from './waterDue.js'
 
 export const TODAY_RENDER_CAP = 5
 
-// Priority — lower sorts first. Watering overdue = harm imminent (plants drying); flagged issue =
-// active problem; stale = gentle "haven't looked" nudge. (harvest removed per V3-HARVEST-001.)
-const KIND_PRIORITY = { water: 0, flag: 1, stale: 2 }
+// Priority — lower sorts first. Watering overdue = harm imminent (plants drying); stale =
+// gentle "haven't looked" nudge. (harvest removed per V3-HARVEST-001; flag removed 2026-06-10.)
+const KIND_PRIORITY = { water: 0, stale: 1 }
 
 const STALE_STYLE   = SEVERITY_STYLES.gold
-const FLAG_STYLE    = { bg: P.alert, border: P.alertBorder, text: P.terra }
 
 function num(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null }
 function projName(row) { return row.project_name ?? row.name ?? 'Untitled' }
@@ -38,19 +39,6 @@ function waterItem(row) {
     detail: overdueLabel(row.next_water_at),
     to: `/log?project=${row.project_id}&event_type=watering`,
     style: SEVERITY_STYLES[tier] || SEVERITY_STYLES.gold,
-  }
-}
-
-function flagItem(row) {
-  const sev = num(row.severity)
-  return {
-    key: `flag:${row.project_id}`, kind: 'flag', priority: KIND_PRIORITY.flag,
-    sort: -(sev ?? 0), // higher severity first
-    emoji: '⚠️', label: 'Needs a look',
-    projectId: row.project_id, projectName: projName(row),
-    detail: sev ? `flagged · severity ${sev}` : 'flagged issue',
-    to: `/log?project=${row.project_id}&event_type=observation`,
-    style: FLAG_STYLE,
   }
 }
 
@@ -74,8 +62,8 @@ export function buildTodayItems(dashboard) {
   const d = (dashboard && !Array.isArray(dashboard)) ? dashboard : {}
   const items = []
   for (const r of (d.water_due || []))     if (r && r.project_id) items.push(waterItem(r))
-  for (const r of (d.heads_up || []))      if (r && r.project_id && r.reason === 'flagged') items.push(flagItem(r))
   // V3-HARVEST-001: harvest_ready is deliberately NOT merged into the band (see header note).
+  // FLAG-REMOVAL (2026-06-10): reason='flagged' heads_up rows are deliberately ignored.
   for (const r of (d.heads_up || []))      if (r && r.project_id && r.reason === 'stale') items.push(staleItem(r))
 
   const byProject = new Map()

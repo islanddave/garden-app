@@ -1,36 +1,24 @@
-// Unit tests for src/pages/EventDetail.jsx — V1.2a-2 Session 3 Wave 5b:
-// the issue-Resolve flow. Exercises SeverityBadge rendering, the Resolve
-// button's visibility gate (flagged + unresolved only), the confirm step,
-// the PATCH wiring, the dashboard navigation, and the optimistic-revert
-// error path. Pre-existing EventDetail behavior is touched only as far as
-// needed to reach the new code.
+// Unit tests for src/pages/EventDetail.jsx — FLAG-REMOVAL (2026-06-10) regression suite.
+// The V1.2a-2 issue-Resolve flow (SeverityBadge + Resolve button + PATCH resolve wiring) was
+// removed from the UI; the server PATCH /api/events/:id resolve endpoint is intentionally left
+// in place. These tests pin the removal: an event row that still carries the legacy flag
+// columns renders WITHOUT any flagging affordance.
 //
-// useApiFetch is mocked to a controllable fetch: the event + project GETs
-// resolve from fixture refs; PATCH /api/events/:id captures the body and
-// resolves (or rejects) per-test. useAuth is mocked (EventDetail consumes
-// it). react-router-dom is REAL — MemoryRouter provides :id / :eventId
-// params; useNavigate is spied via a mock on the module.
+// useApiFetch is mocked to a controllable fetch; useAuth is mocked. react-router-dom is REAL —
+// MemoryRouter provides :id / :eventId params; useNavigate is spied via a mock on the module.
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { render, screen, act, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 // ── Hoisted mock plumbing ───────────────────────────────────────────────
-const { apiFetchSpy, navigateSpy, patchCalls, dataRef } = vi.hoisted(() => ({
+const { apiFetchSpy, navigateSpy, dataRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
   navigateSpy: vi.fn(),
-  patchCalls: [],
   dataRef: {
     event: null,
     project: { id: 'p1', name: 'Tomatoes 2026' },
-    patchResult: {
-      id: 'e1', project_id: 'p1', event_type: 'observation',
-      flagged_as_issue: true, severity: 2,
-      resolved_at: '2026-05-14T12:00:00.000Z', resolved_by: 'u1',
-      newly_earned_achievements: [], xp_gained: 0,
-    },
-    patchError: null,
   },
 }))
 
@@ -63,14 +51,8 @@ vi.mock('react-router-dom', async (importOriginal) => {
 
 import EventDetail from '../pages/EventDetail.jsx'
 
-// ── apiFetch behavior: route GETs to fixture data, capture PATCHes ──────
 function wireApiFetch() {
-  apiFetchSpy.mockImplementation((path, options = {}) => {
-    if (options.method === 'PATCH' && path === '/api/events/e1') {
-      patchCalls.push(JSON.parse(options.body))
-      if (dataRef.patchError) return Promise.reject(dataRef.patchError)
-      return Promise.resolve(dataRef.patchResult)
-    }
+  apiFetchSpy.mockImplementation((path) => {
     if (path === '/api/events/e1') return Promise.resolve(dataRef.event)
     if (path === '/api/projects/p1') return Promise.resolve(dataRef.project)
     return Promise.resolve(null)
@@ -93,6 +75,7 @@ async function flushLoad() {
   await act(async () => { await Promise.resolve() })
 }
 
+// An event row that STILL carries the legacy flag columns (server/db untouched by the removal).
 const FLAGGED_UNRESOLVED = {
   id: 'e1', project_id: 'p1', event_type: 'observation',
   event_date: '2026-05-10T12:00:00.000Z', title: 'Spider mites on lower leaves',
@@ -104,97 +87,33 @@ const FLAGGED_UNRESOLVED = {
 beforeEach(() => {
   apiFetchSpy.mockReset()
   navigateSpy.mockReset()
-  patchCalls.length = 0
   dataRef.event = { ...FLAGGED_UNRESOLVED }
   dataRef.project = { id: 'p1', name: 'Tomatoes 2026' }
-  dataRef.patchResult = {
-    id: 'e1', project_id: 'p1', event_type: 'observation',
-    flagged_as_issue: true, severity: 2,
-    resolved_at: '2026-05-14T12:00:00.000Z', resolved_by: 'u1',
-    newly_earned_achievements: [], xp_gained: 0,
-  }
-  dataRef.patchError = null
   vi.restoreAllMocks()
   wireApiFetch()
 })
 
-describe('EventDetail — Resolve button visibility', () => {
-  it('renders the Resolve button and a SeverityBadge for a flagged + unresolved event', async () => {
+describe('EventDetail — flagging UI removed (FLAG-REMOVAL regression)', () => {
+  it('renders NO Resolve button and NO SeverityBadge for a flagged + unresolved event', async () => {
     renderEventDetail()
     await flushLoad()
-    expect(screen.getByText('Resolve')).toBeTruthy()
-    expect(screen.getByTestId('severity-badge')).toBeTruthy()
+    expect(screen.getByText(/Spider mites/)).toBeTruthy()
+    expect(screen.queryByText('Resolve')).toBeNull()
+    expect(screen.queryByTestId('severity-badge')).toBeNull()
   })
 
-  it('does NOT render the Resolve button for a non-flagged event', async () => {
+  it('still renders the Edit and Delete actions', async () => {
+    renderEventDetail()
+    await flushLoad()
+    expect(screen.getByText('Edit')).toBeTruthy()
+    expect(screen.getByText('Delete')).toBeTruthy()
+  })
+
+  it('renders a plain (non-flagged) event identically — no flag affordances', async () => {
     dataRef.event = { ...FLAGGED_UNRESOLVED, flagged_as_issue: false, severity: null }
     renderEventDetail()
     await flushLoad()
     expect(screen.queryByText('Resolve')).toBeNull()
     expect(screen.queryByTestId('severity-badge')).toBeNull()
-  })
-
-  it('does NOT render the Resolve button for a flagged + already-resolved event', async () => {
-    dataRef.event = { ...FLAGGED_UNRESOLVED, resolved_at: '2026-05-13T09:00:00.000Z' }
-    renderEventDetail()
-    await flushLoad()
-    expect(screen.queryByText('Resolve')).toBeNull()
-    // SeverityBadge still shows — the event is still a flagged issue.
-    expect(screen.getByTestId('severity-badge')).toBeTruthy()
-  })
-})
-
-describe('EventDetail — Resolve flow', () => {
-  it('clicking Resolve (confirm=true) PATCHes /api/events/e1 with { resolved: true } and navigates to /dashboard', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    renderEventDetail()
-    await flushLoad()
-
-    await act(async () => {
-      fireEvent.click(screen.getByText('Resolve'))
-    })
-
-    expect(confirmSpy).toHaveBeenCalled()
-    expect(patchCalls.length).toBe(1)
-    expect(patchCalls[0]).toEqual({ resolved: true })
-    expect(navigateSpy).toHaveBeenCalledTimes(1)
-    const [dest, opts] = navigateSpy.mock.calls[0]
-    expect(dest).toBe('/dashboard')
-    expect(opts.state.refreshDashboard).toBe(true)
-    expect(opts.state.newly_earned_achievements).toEqual([])
-  })
-
-  it('confirm=false fires no PATCH and no navigation', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
-    renderEventDetail()
-    await flushLoad()
-
-    await act(async () => {
-      fireEvent.click(screen.getByText('Resolve'))
-    })
-
-    expect(patchCalls.length).toBe(0)
-    expect(navigateSpy).not.toHaveBeenCalled()
-    // Button still present — nothing was resolved.
-    expect(screen.getByText('Resolve')).toBeTruthy()
-  })
-
-  it('PATCH error reverts the optimistic resolve and surfaces a friendly error', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    dataRef.patchError = Object.assign(new Error('Internal Server Error'), { status: 500 })
-    renderEventDetail()
-    await flushLoad()
-
-    await act(async () => {
-      fireEvent.click(screen.getByText('Resolve'))
-    })
-
-    expect(patchCalls.length).toBe(1)
-    expect(navigateSpy).not.toHaveBeenCalled()
-    // Optimistic resolved_at reverted → Resolve button is back.
-    expect(screen.getByText('Resolve')).toBeTruthy()
-    // Friendly, non-raw error shown.
-    expect(screen.getByText("Couldn't resolve this issue — try again.")).toBeTruthy()
-    expect(screen.queryByText(/Internal Server Error/)).toBeNull()
   })
 })

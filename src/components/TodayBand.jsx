@@ -7,8 +7,8 @@ import { todayBand } from '../lib/todayBand.js'
 // Today band — the persistent global "what needs me now?" module docked directly ABOVE the bottom
 // nav, present on every authenticated screen (canonical E-3 / design §4: the push>pull front door
 // that replaced the dropped-from-nav Dashboard). Merges the actionable signals /api/dashboard
-// returns (watering overdue + flagged issues + harvest-ready + long-unseen) via the shared
-// todayBand() helper. OPERATIONAL ALERT, not a reward surface: ambient, in-context, no
+// returns (watering overdue + long-unseen; harvest-ready excluded per V3-HARVEST-001, flagged
+// excluded per FLAG-REMOVAL 2026-06-10) via the shared todayBand() helper. OPERATIONAL ALERT, not a reward surface: ambient, in-context, no
 // push/modal/sound/haptic; recent-activity excluded. Collapsed by default = one compact row (the
 // single most-urgent item, 1-tap to log) + a count chip; tap the chip to reveal the full <=5 list
 // (C5 cap). Renders NOTHING when nothing needs attention (ADHD: no empty clutter). Refreshes on

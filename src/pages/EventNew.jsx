@@ -67,14 +67,6 @@ const HARVEST_QUALITY_LABELS = {
   5: 'excellent',
 }
 
-// V1.2a-2 Wave 3: observation flag — severity options. "Stale" is system-assigned
-// only and is intentionally excluded from this list (see SeverityBadge.jsx).
-const SEVERITY_OPTIONS = [
-  { value: 1, label: 'Watch',  anchor: 'monitor only, no action today' },
-  { value: 2, label: 'Issue',  anchor: 'action within 48h' },
-  { value: 3, label: 'Urgent', anchor: 'action today or plant may be lost' },
-]
-
 const DEFAULT_HARVEST_UNIT = 'count'
 
 // Read the user's last-used harvest unit from localStorage. Guarded for
@@ -97,9 +89,6 @@ function friendlyError(err) {
   }
   if (/quantity must be a positive/i.test(raw)) {
     return 'Quantity doesn’t look right — check the form and try again.'
-  }
-  if (/severity/i.test(raw)) {
-    return 'Something didn’t look right with the issue flag — check and try again.'
   }
   if (typeof status === 'number') {
     if (status >= 400 && status < 500) {
@@ -289,13 +278,6 @@ export default function EventNew() {
   }))
   const [harvestError, setHarvestError] = useState(null)
 
-  // V1.2a-2 Wave 3: observation flag state — only submitted for event_type=observation.
-  const [flaggedAsIssue, setFlaggedAsIssue] = useState(false)
-  const [severity,       setSeverity]       = useState(null)
-  const [severityError,  setSeverityError]  = useState(null)
-  const [severityShake,  setSeverityShake]  = useState(false)
-  const severitySelectRef = useRef(null)
-
   // V1.2a-2 Wave 3: non-fatal notice (e.g. deep-link project not found).
   const [notice, setNotice] = useState(null)
 
@@ -318,10 +300,6 @@ export default function EventNew() {
     // re-seeded from localStorage so the user's last choice persists across types.
     setHarvest({ quantity: '', unit: readLastHarvestUnit(), quality_rating: null })
     setHarvestError(null)
-    setFlaggedAsIssue(false)
-    setSeverity(null)
-    setSeverityError(null)
-    setSeverityShake(false)
   }, [form.event_type])
 
   // M1 telemetry: reset the flow on mount; mark start-capture the first time the
@@ -422,18 +400,6 @@ export default function EventNew() {
       setHarvestError(null)
     }
 
-    // V1.2a-2 Wave 3: observation flag gate — action-then-correct pattern.
-    // Button stays enabled; on submit with the flag on but no severity, we show
-    // an inline error, focus the select, and shake — but do NOT fire the POST.
-    if (form.event_type === 'observation' && flaggedAsIssue && severity == null) {
-      setSeverityError('Pick a severity to flag.')
-      setSeverityShake(true)
-      setTimeout(() => setSeverityShake(false), 100)
-      severitySelectRef.current?.focus()
-      return
-    }
-    setSeverityError(null)
-
     if (form.event_type === 'watering') ux.tap()  // submit tap (watering flow only)
     setSaving(true)
     setError(null)
@@ -455,12 +421,6 @@ export default function EventNew() {
           },
         }
       : {}
-    // Flag fields only when the event is an observation AND the flag is on —
-    // never send severity without flagged_as_issue (server rejects that).
-    const flagPayload = (form.event_type === 'observation' && flaggedAsIssue)
-      ? { flagged_as_issue: true, severity }
-      : {}
-
     // 1 — POST event, get back { eventId, stats }
     let result
     try {
@@ -480,7 +440,6 @@ export default function EventNew() {
           has_photo:     !!photoFile,
           metadata,
           ...harvestPayload,
-          ...flagPayload,
         }),
       })
     } catch (err) {
@@ -546,13 +505,6 @@ export default function EventNew() {
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
-      {/* V1.2a-2 Wave 3: shake animation for the severity-required nudge. */}
-      <style>{`@keyframes evnew-shake {
-        0% { transform: translateX(0); }
-        25% { transform: translateX(-4px); }
-        75% { transform: translateX(4px); }
-        100% { transform: translateX(0); }
-      }`}</style>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 60px' }}>
 
         <div style={{ marginBottom: 24 }}>
@@ -736,69 +688,6 @@ export default function EventNew() {
                   </button>
                 )}
               </div>
-            </Section>
-          )}
-
-          {/* ── V1.2a-2 Wave 3: Observation flag form (observation events only) ── */}
-          {form.event_type === 'observation' && (
-            <Section label="Flag this observation">
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={flaggedAsIssue}
-                  onChange={e => {
-                    const on = e.target.checked
-                    setFlaggedAsIssue(on)
-                    // Toggling OFF clears severity so a stale value never reaches the POST.
-                    if (!on) { setSeverity(null); setSeverityError(null) }
-                  }}
-                  aria-label="Flag as an issue"
-                  style={{ width: 18, height: 18, cursor: 'pointer' }}
-                />
-                <span style={{ fontSize: '0.88rem', color: P.mid }}>Flag as an issue</span>
-              </label>
-
-              {flaggedAsIssue && (
-                <div style={{ marginTop: 14 }}>
-                  <label htmlFor="severity-select" style={fieldLabelStyle}>
-                    Severity *
-                  </label>
-                  <select
-                    id="severity-select"
-                    ref={severitySelectRef}
-                    value={severity ?? ''}
-                    onChange={e => {
-                      const v = e.target.value === '' ? null : Number(e.target.value)
-                      setSeverity(v)
-                      if (v != null && severityError) setSeverityError(null)
-                    }}
-                    aria-label="Severity"
-                    style={{
-                      ...selectStyle,
-                      minHeight: 44,
-                      borderColor: severityError ? P.alertBorder : P.border,
-                      animation: severityShake ? 'evnew-shake 0.1s linear' : undefined,
-                    }}
-                  >
-                    <option value="">— Pick a severity —</option>
-                    {[...SEVERITY_OPTIONS].sort((a, b) => a.value - b.value).map(o => (
-                      <option key={o.value} value={o.value}>
-                        {o.value} · {o.label} — {o.anchor}
-                      </option>
-                    ))}
-                  </select>
-                  {severityError && (
-                    <div role="alert" style={inlineErrorStyle}>{severityError}</div>
-                  )}
-                  <div style={{ marginTop: 8, fontSize: '0.75rem', color: P.light, lineHeight: 1.5 }}>
-                    {SEVERITY_OPTIONS.map(o => (
-                      <div key={o.value}>
-                        <strong>{o.label}</strong> — {o.anchor}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </Section>
           )}
 

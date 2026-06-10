@@ -112,12 +112,14 @@ export default function Dashboard() {
         ATTENTION_LIST_STATUSES.includes(p.status)
       )
       setProjects(activeProjects)
-      setRecentEvents(dashData.recent_events ?? [])
+      setRecentEvents(dashData.recent_events ?? [])  // V3-FEED-001: arrives batch-collapsed + capped at 20
       setUserStats(dashData.user_stats ?? { current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0 })
       setWaterDue(dashData.water_due ?? [])
       setInactiveCount(dashData.inactive_projects_count ?? 0)
       setHarvestReady(dashData.harvest_ready ?? [])
-      setHeadsUp(dashData.heads_up ?? [])
+      // FLAG-REMOVAL (2026-06-10): planting-flagging UI retired. The dashboard Lambda still
+      // emits reason='flagged' heads_up rows (server intentionally untouched); drop them here.
+      setHeadsUp((dashData.heads_up ?? []).filter(r => r?.reason !== 'flagged'))
 
       // memMap drives the "give attention to" stale-project ranking below.
       const memMap = {}
@@ -190,23 +192,6 @@ export default function Dashboard() {
         expiresAt: Date.now() + 5000,
       })
     }
-
-    // Clear navigation state so refresh on tab-revisit doesn't re-fire.
-    navigate(location.pathname, { replace: true, state: null })
-
-    return () => { isMounted = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.state, loadDashboard, navigate])
-
-  // Handle issue-resolve return from EventDetail: refresh data, queue achievement
-  // toasts. No undo toast — that's only for the logged-event flow.
-  useEffect(() => {
-    if (!location.state?.refreshDashboard) return
-
-    let isMounted = true
-    loadDashboard(isMounted)
-
-    // Achievements from issue-resolve are visible on /achievements (ambient per V100).
 
     // Clear navigation state so refresh on tab-revisit doesn't re-fire.
     navigate(location.pathname, { replace: true, state: null })
@@ -297,7 +282,7 @@ export default function Dashboard() {
             <HarvestReadyTile harvestReady={harvestReady} onDataRefresh={() => loadDashboard(true)} />
           )}
 
-          {/* Tile 4: Heads up — flagged + stale projects (V1.2a-2 S3 W2) */}
+          {/* Tile 4: Heads up — stale projects (V1.2a-2 S3 W2; flagging UI retired 2026-06-10) */}
           <HeadsUpTile headsUp={headsUp} onDataRefresh={() => loadDashboard(true)} />
 
           {/* NotifyButton — push-consent tile, behind NOTIFY_ENABLED flag (default OFF → renders null) */}
@@ -324,7 +309,7 @@ export default function Dashboard() {
         {/* Active Projects section removed (Dave directive 2026-06-02): redundant with the
             Projects page. Recent Activity stays and grows into the full activity feed (V3-FEED-001). */}
 
-        {/* Recent Activity */}
+        {/* Recent Activity — V3-FEED-001: 20 collapsed entries; a Log Many batch renders ONCE as "type × N" */}
         {recentEvents.length > 0 && (
           <section>
             <h2 style={sectionHeadStyle}>Recent activity</h2>
@@ -355,7 +340,7 @@ export default function Dashboard() {
                       flexShrink: 0,
                       whiteSpace: 'nowrap',
                     }}>
-                      {ev.event_type?.replace(/_/g, ' ')}
+                      {(ev.batch_count ?? 1) > 1 ? `${ev.event_type?.replace(/_/g, ' ')} × ${ev.batch_count}` : ev.event_type?.replace(/_/g, ' ')}
                     </span>
                     <div style={{ minWidth: 0 }}>
                       <div style={{
@@ -366,7 +351,7 @@ export default function Dashboard() {
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                       }}>
-                        {ev.project_name ?? '—'}
+                        {(ev.batch_count ?? 1) > 1 ? `${ev.batch_count} plantings` : (ev.project_name ?? '—')}
                       </div>
                     </div>
                   </div>

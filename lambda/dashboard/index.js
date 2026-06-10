@@ -5,7 +5,7 @@
 //   - POST /api/projects/inactive/:projectId/dismiss      → dismiss inactive project (§8)
 //
 // GET /api/dashboard returns aggregated dashboard state in a single round trip:
-//   - recent_events: last 5 logged events
+//   - recent_events: last 20 collapsed feed entries (V3-FEED-001: Log Many batches fold to one)
 //   - active_projects: all non-deleted projects + entity_memory state
 //   - counts: projects, plants, locations, favorites
 //   - user_stats: current_streak, longest_streak, last_active_date, total_events, xp

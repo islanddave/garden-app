@@ -4,13 +4,15 @@ import { P } from '../lib/constants.js'
 import SeverityBadge from '../components/SeverityBadge.jsx'
 
 // ─── Dashboard Tile: Heads Up ────────────────────────────────────────────────
-// Surfaces flagged + stale projects from the dashboard Lambda's `heads_up` payload.
+// Surfaces stale projects from the dashboard Lambda's `heads_up` payload.
+// FLAG-REMOVAL (2026-06-10): the planting-flagging UI was retired; reason='flagged' rows are
+// filtered out upstream in Dashboard.jsx (server payload intentionally unchanged).
 //
 // Prop contract:
 //   headsUp: Array<{
 //     project_id: string,
 //     name: string,
-//     reason: 'flagged' | 'stale',
+//     reason: 'stale',
 //     severity: 1 | 2 | 3 | null,
 //     event_at: string | null,
 //     days_stale: number | null,
@@ -36,10 +38,6 @@ function daysAgoPhrase(days) {
 
 // Secondary line under the project name, by reason.
 function secondaryLine(row) {
-  if (row.reason === 'flagged') {
-    const phrase = daysAgoPhrase(row.days_stale)
-    return phrase ? `Flagged ${phrase}` : 'Flagged'
-  }
   // reason === 'stale'
   if (row.event_at == null) return 'No recent observations'
   const phrase = daysAgoPhrase(row.days_stale)
@@ -61,7 +59,7 @@ export default function HeadsUpTile({ headsUp, onDataRefresh }) {
     )
   }
 
-  // ── Empty state — no flags or stale projects ──────────────────────────────
+  // ── Empty state — no stale projects ───────────────────────────────────────
   if (headsUp.length === 0) {
     return (
       <div style={{
@@ -80,7 +78,7 @@ export default function HeadsUpTile({ headsUp, onDataRefresh }) {
             HEADS UP
           </div>
           <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
-            All clear — no flags or stale projects
+            All clear — no stale projects
           </div>
         </div>
       </div>
@@ -89,14 +87,10 @@ export default function HeadsUpTile({ headsUp, onDataRefresh }) {
 
   // ── Populated — list each row in server-returned order ────────────────────
   function goToRow(row) {
-    if (row.reason === 'flagged') {
-      navigate(`/projects/${row.project_id}?focus=flagged`)
-    } else {
-      // reason === 'stale' — navigate to the project page, no query param.
-      // NOTE: the heads_up payload has no event_id, so we cannot deeplink to a
-      // specific event — project page only.
-      navigate(`/projects/${row.project_id}`)
-    }
+    // reason === 'stale' — navigate to the project page, no query param.
+    // NOTE: the heads_up payload has no event_id, so we cannot deeplink to a
+    // specific event — project page only.
+    navigate(`/projects/${row.project_id}`)
   }
 
   return (
@@ -136,7 +130,6 @@ export default function HeadsUpTile({ headsUp, onDataRefresh }) {
             }}
           >
             <SeverityBadge
-              severity={row.severity}
               reason={row.reason}
               daysStale={row.days_stale}
             />

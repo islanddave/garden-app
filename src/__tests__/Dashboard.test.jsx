@@ -157,3 +157,36 @@ describe('Dashboard — DASH-ORDER-HARVEST-GATE', () => {
     expect(harvest.compareDocumentPosition(headsUp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })
+
+describe('Dashboard — V3-FEED-001 recent-activity batch entries', () => {
+  it('renders a collapsed batch as "type × N" + "N plantings"; singleton keeps its project name', async () => {
+    const now = new Date().toISOString()
+    primeDash({
+      recent_events: [
+        { id: 'b1', event_type: 'watering', created_at: now, batch_id: 'B', batch_count: 12, project_name: 'Pepper 3' },
+        { id: 's1', event_type: 'observation', created_at: now, batch_count: 1, project_name: 'Basil' },
+      ],
+    })
+    render(<Dashboard />)
+    await waitFor(() => expect(screen.getByText('Recent activity')).toBeDefined())
+    expect(screen.getByText('watering × 12')).toBeDefined()
+    expect(screen.getByText('12 plantings')).toBeDefined()
+    // The batch entry shows the count, not one arbitrary planting's project name.
+    expect(screen.queryByText('Pepper 3')).toBeNull()
+    expect(screen.getByText('observation')).toBeDefined()
+    expect(screen.getByText('Basil')).toBeDefined()
+  })
+
+  it('tolerates recent_events rows without batch_count (legacy shape) as singletons', async () => {
+    const now = new Date().toISOString()
+    primeDash({
+      recent_events: [
+        { id: 'l1', event_type: 'watering', created_at: now, project_name: 'Fig' },
+      ],
+    })
+    render(<Dashboard />)
+    await waitFor(() => expect(screen.getByText('Recent activity')).toBeDefined())
+    expect(screen.getByText('watering')).toBeDefined()
+    expect(screen.getByText('Fig')).toBeDefined()
+  })
+})

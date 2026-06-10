@@ -36,6 +36,8 @@ import {
   resp,
   optionsResp,
   queryRecentEvents,
+  collapseBatches,
+  FEED_CAP,
   queryCounts,
   queryFavoriteCount,
   queryActiveProjects,
@@ -436,11 +438,13 @@ describe('handleDismissInactive — POST /api/projects/inactive/:projectId/dismi
 // ---- Per-query builder shape tests (additional coverage) -----------------
 
 describe('per-query builders bind userId correctly', () => {
-  it('queryRecentEvents binds userId', async () => {
+  it('queryRecentEvents binds userId + V3-FEED-001 raw window with batch linkage', async () => {
     await queryRecentEvents(makeSql(), 'user_alpha');
     // HOUSEHOLD-MODE: pp.created_by widened to ANY(['user_alpha']).
     expect(bindsUserAnyForm(sqlCalls[0].values, 'user_alpha')).toBe(true);
-    expect(sqlCalls[0].resolved).toMatch(/LIMIT 5/);
+    expect(sqlCalls[0].resolved).toMatch(/LIMIT 200/);
+    expect(sqlCalls[0].resolved).toMatch(/metadata->>'batch_id'/);
+    expect(sqlCalls[0].resolved).toMatch(/LEFT JOIN event_batches/);
   });
   it('queryCounts binds householdScope twice (projects + plants sub-counts)', async () => {
     await queryCounts(makeSql(), 'user_alpha');
@@ -495,5 +499,75 @@ describe('per-query builders bind userId correctly', () => {
     // INSERT + COALESCE subquery still bind user_id = ${userId} (>=2 bare-string binds).
     expect(sqlCalls[0].values.filter(v => v === 'user_alpha').length).toBeGreaterThanOrEqual(2);
     expect(bindsUserArray(sqlCalls[0].values, 'user_alpha')).toBe(true);
+  });
+});
+
+
+// ---- V3-FEED-001 — collapseBatches (Log Many feed collapse) ----------------
+
+describe('collapseBatches — V3-FEED-001 log-many feed collapse', () => {
+  const ev = (id, over = {}) => ({
+    id, event_type: 'watering', event_date: '2026-06-10',
+    created_at: '2026-06-10T12:00:00Z', batch_id: null, item_count: null,
+    project_name: 'P-' + id, ...over,
+  });
+
+  it('passes singletons through with batch_count 1, order preserved', () => {
+    const out = collapseBatches([ev('a'), ev('b')]);
+    expect(out.map(r => r.id)).toEqual(['a', 'b']);
+    expect(out.every(r => r.batch_count === 1)).toBe(true);
+  });
+
+  it('folds a batch into ONE entry anchored at its newest row', () => {
+    const rows = [ev('n1'), ev('b1', { batch_id: 'B' }), ev('n2'), ev('b2', { batch_id: 'B' }), ev('b3', { batch_id: 'B' })];
+    const out = collapseBatches(rows);
+    expect(out.map(r => r.id)).toEqual(['n1', 'b1', 'n2']);
+    expect(out[1].batch_count).toBe(3);
+  });
+
+  it('prefers event_batches.item_count (exact) over occurrences when the window truncates a batch', () => {
+    const rows = [ev('b1', { batch_id: 'B', item_count: 12 }), ev('b2', { batch_id: 'B', item_count: 12 })];
+    const out = collapseBatches(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].batch_count).toBe(12);
+  });
+
+  it('separate batches stay separate entries', () => {
+    const out = collapseBatches([ev('x1', { batch_id: 'X' }), ev('y1', { batch_id: 'Y' })]);
+    expect(out).toHaveLength(2);
+    expect(out.map(r => r.batch_count)).toEqual([1, 1]);
+  });
+
+  it('caps at FEED_CAP=20 AFTER collapsing (batch counts as one entry)', () => {
+    const batch = Array.from({ length: 10 }, (_, i) => ev('b' + i, { batch_id: 'B' }));
+    const singles = Array.from({ length: 30 }, (_, i) => ev('s' + i));
+    const out = collapseBatches([...batch, ...singles]);
+    expect(FEED_CAP).toBe(20);
+    expect(out).toHaveLength(20);
+    expect(out[0].batch_count).toBe(10);   // collapsed batch = entry 1
+    expect(out[1].id).toBe('s0');          // then 19 singles
+    expect(out[19].id).toBe('s18');
+  });
+
+  it('null / empty input is safe', () => {
+    expect(collapseBatches(null)).toEqual([]);
+    expect(collapseBatches([])).toEqual([]);
+  });
+
+  it('handleDashboard returns recent_events already collapsed', async () => {
+    sqlResults.push(
+      [
+        { id: 'e1', event_type: 'watering', created_at: 'c3', batch_id: 'B', item_count: 2, project_name: 'A' },
+        { id: 'e2', event_type: 'watering', created_at: 'c2', batch_id: 'B', item_count: 2, project_name: 'B' },
+        { id: 'e3', event_type: 'observation', created_at: 'c1', batch_id: null, item_count: null, project_name: 'C' },
+      ],
+      [{ project_count: 0, plant_count: 0, location_count: 0 }],
+      [{ count: 0 }], [], [], [], [], [], [{ count: 0 }],
+    );
+    const res = await handleDashboard(makeSql(), 'user_alpha');
+    const re = parseBody(res).recent_events;
+    expect(re).toHaveLength(2);
+    expect(re[0]).toMatchObject({ id: 'e1', batch_count: 2 });
+    expect(re[1]).toMatchObject({ id: 'e3', batch_count: 1 });
   });
 });

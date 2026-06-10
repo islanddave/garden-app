@@ -1,5 +1,6 @@
 // Unit tests for src/components/HeadsUpTile.jsx — Wave 2 dashboard tile.
-// Component uses useNavigate, so renders are wrapped in MemoryRouter.
+// FLAG-REMOVAL (2026-06-10): flagged rows are filtered upstream (Dashboard.jsx); the tile is
+// stale-only now. Component uses useNavigate, so renders are wrapped in MemoryRouter.
 
 import React from 'react'
 import { describe, it, expect } from 'vitest'
@@ -14,8 +15,6 @@ function LocationProbe() {
   return <div data-testid="location-probe">{loc.pathname + loc.search}</div>
 }
 
-// Render HeadsUpTile inside a router with a catch-all route mounting LocationProbe,
-// so any navigate() the component performs is observable.
 function renderWithRouter(ui) {
   return render(
     <MemoryRouter initialEntries={['/']}>
@@ -25,15 +24,6 @@ function renderWithRouter(ui) {
       </Routes>
     </MemoryRouter>
   )
-}
-
-const flaggedRow = {
-  project_id: 'p-flag-1',
-  name: 'Tomatoes',
-  reason: 'flagged',
-  severity: 3,
-  event_at: '2026-05-10T12:00:00.000Z',
-  days_stale: 4,
 }
 
 const staleRow = {
@@ -57,15 +47,6 @@ describe('HeadsUpTile — render branches', () => {
     expect(screen.getByText(/All clear/i)).toBeTruthy()
   })
 
-  it('renders flagged rows with a SeverityBadge', () => {
-    renderWithRouter(<HeadsUpTile headsUp={[flaggedRow]} />)
-    expect(screen.getByText('Tomatoes')).toBeTruthy()
-    expect(screen.getByText('Flagged 4 days ago')).toBeTruthy()
-    // SeverityBadge present and showing the flagged variant.
-    const badge = screen.getByTestId('severity-badge')
-    expect(badge.getAttribute('data-variant')).toBe('flagged3')
-  })
-
   it('renders stale rows with a SeverityBadge', () => {
     renderWithRouter(<HeadsUpTile headsUp={[staleRow]} />)
     expect(screen.getByText('Basil')).toBeTruthy()
@@ -82,23 +63,16 @@ describe('HeadsUpTile — render branches', () => {
 
   it('uses today/yesterday phrasing for days_stale 0 and 1', () => {
     const rows = [
-      { ...flaggedRow, project_id: 'a', name: 'Today Proj', days_stale: 0 },
-      { ...flaggedRow, project_id: 'b', name: 'Yesterday Proj', days_stale: 1 },
+      { ...staleRow, project_id: 'a', name: 'Today Proj', days_stale: 0 },
+      { ...staleRow, project_id: 'b', name: 'Yesterday Proj', days_stale: 1 },
     ]
     renderWithRouter(<HeadsUpTile headsUp={rows} />)
-    expect(screen.getByText('Flagged today')).toBeTruthy()
-    expect(screen.getByText('Flagged yesterday')).toBeTruthy()
+    expect(screen.getByText('Last observed today')).toBeTruthy()
+    expect(screen.getByText('Last observed yesterday')).toBeTruthy()
   })
 })
 
 describe('HeadsUpTile — navigation targets', () => {
-  it('navigates flagged row to /projects/:id?focus=flagged', () => {
-    renderWithRouter(<HeadsUpTile headsUp={[flaggedRow]} />)
-    fireEvent.click(screen.getByText('Tomatoes'))
-    expect(screen.getByTestId('location-probe').textContent)
-      .toBe('/projects/p-flag-1?focus=flagged')
-  })
-
   it('navigates stale row to /projects/:id with no query param', () => {
     renderWithRouter(<HeadsUpTile headsUp={[staleRow]} />)
     fireEvent.click(screen.getByText('Basil'))
@@ -109,12 +83,11 @@ describe('HeadsUpTile — navigation targets', () => {
 
 describe('HeadsUpTile — server order preserved', () => {
   it('renders rows in the exact server-returned order (no client sort/dedup)', () => {
-    // Deliberate order that is NOT severity-sorted client-side: a low-severity
-    // flagged row first, then a stale row, then a high-severity flagged row.
+    // Deliberate order that is NOT days_stale-sorted client-side.
     const rows = [
-      { ...flaggedRow, project_id: 'first',  name: 'Alpha', severity: 1, days_stale: 2 },
-      { ...staleRow,   project_id: 'second', name: 'Bravo' },
-      { ...flaggedRow, project_id: 'third',  name: 'Charlie', severity: 3, days_stale: 9 },
+      { ...staleRow, project_id: 'first',  name: 'Alpha', days_stale: 2 },
+      { ...staleRow, project_id: 'second', name: 'Bravo', days_stale: 43 },
+      { ...staleRow, project_id: 'third',  name: 'Charlie', days_stale: 9 },
     ]
     renderWithRouter(<HeadsUpTile headsUp={rows} />)
     const names = screen.getAllByRole('button').map(btn => {
@@ -126,8 +99,8 @@ describe('HeadsUpTile — server order preserved', () => {
 
   it('does not dedup repeated project_ids', () => {
     const rows = [
-      { ...flaggedRow, project_id: 'dup', name: 'Dup A' },
-      { ...staleRow,   project_id: 'dup', name: 'Dup B' },
+      { ...staleRow, project_id: 'dup', name: 'Dup A' },
+      { ...staleRow, project_id: 'dup', name: 'Dup B' },
     ]
     renderWithRouter(<HeadsUpTile headsUp={rows} />)
     expect(screen.getAllByRole('button')).toHaveLength(2)

@@ -12,7 +12,7 @@ describe('buildTodayItems', () => {
     expect(buildTodayItems({ water_due: [], harvest_ready: [], heads_up: [] })).toEqual([])
   })
 
-  it('maps each source to its reason-label + correct /log route', () => {
+  it('maps each source to its reason-label + correct /log route (flagged rows ignored per FLAG-REMOVAL)', () => {
     const items = buildTodayItems({
       water_due: [{ project_id: 'w', project_name: 'Tomatoes', next_water_at: daysAgo(2), location_type: 'bed' }],
       heads_up: [
@@ -23,10 +23,11 @@ describe('buildTodayItems', () => {
     const byKind = Object.fromEntries(items.map(i => [i.kind, i]))
     expect(byKind.water.label).toBe('Needs water')
     expect(byKind.water.to).toBe('/log?project=w&event_type=watering')
-    expect(byKind.flag.label).toBe('Needs a look')
-    expect(byKind.flag.to).toBe('/log?project=f&event_type=observation')
     expect(byKind.stale.label).toBe('Not seen lately')
     expect(byKind.stale.to).toBe('/log?project=s&event_type=observation')
+    // FLAG-REMOVAL (2026-06-10): reason='flagged' rows produce NO band item.
+    expect(byKind.flag).toBeUndefined()
+    expect(items).toHaveLength(2)
   })
 
   // V3-HARVEST-001: harvest-ready is no longer merged into the above-nav band.
@@ -38,7 +39,7 @@ describe('buildTodayItems', () => {
     expect(items.some(i => i.kind === 'harvest')).toBe(false)
   })
 
-  it('ranks watering > flagged > stale (harvest excluded per V3-HARVEST-001)', () => {
+  it('ranks watering > stale (harvest excluded per V3-HARVEST-001; flag removed 2026-06-10)', () => {
     const items = buildTodayItems({
       water_due: [{ project_id: 'w', project_name: 'W', next_water_at: daysAgo(1), location_type: 'bed' }],
       harvest_ready: [{ project_id: 'h', name: 'H', days_since_obs: 2 }],
@@ -47,7 +48,7 @@ describe('buildTodayItems', () => {
         { project_id: 's', name: 'S', reason: 'stale', days_stale: 40 },
       ],
     })
-    expect(items.map(i => i.kind)).toEqual(['water', 'flag', 'stale'])
+    expect(items.map(i => i.kind)).toEqual(['water', 'stale'])
   })
 
   it('de-dups a project to its single most-urgent reason', () => {
