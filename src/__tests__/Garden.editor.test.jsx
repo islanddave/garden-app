@@ -25,6 +25,7 @@ vi.mock('react-router-dom', () => ({
 
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchSpy, getToken: getTokenSpy }),
+  apiFetch: (...a) => fetchSpy(...a),
 }))
 vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => <span data-testid="fav" /> }))
 vi.mock('../components/VarietyPicker.jsx', () => ({

@@ -18,6 +18,7 @@ import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import { formatQty } from '../lib/format.js'
 import PlantingEditor from '../components/PlantingEditor.jsx'
+import PhotoUpload from '../components/PhotoUpload.jsx'
 
 // Garden — Increment 1 of the post-V2 UX overhaul. Unifies the old Projects + Plants
 // tabs into ONE nested accordion: projects form a parent/child tree; each project's
@@ -208,6 +209,17 @@ export default function Garden() {
   const onPlantCreated = useCallback((pl) => setPlants(prev => [pl, ...prev]), [])
   const onPlantUpdated = useCallback((pl) => setPlants(prev => prev.map(x => x.id === pl.id ? pl : x)), [])
   const onPlantDeleted = useCallback((id) => setPlants(prev => prev.filter(x => x.id !== id)), [])
+  // V3-IA photo restore: after a per-planting upload, refetch /api/plants so the server-side
+  // featured-photo auto-promote (plants.featured_photo_id -> featured_photo_view_url) flows
+  // into the tree thumbnails without a reload. Same contract as the retired Plants.jsx.
+  const refetchPlants = useCallback(async () => {
+    try {
+      const fresh = await fetch('/api/plants')
+      setPlants(fresh ?? [])
+    } catch {
+      /* non-fatal — stale thumbnail heals on next mount */
+    }
+  }, [fetch])
 
   const toggle = useCallback((id) => {
     setExpanded(prev => {
@@ -326,7 +338,8 @@ export default function Garden() {
             <TreeNode key={node.project.id} node={node} expanded={expanded} onToggle={toggle} level={1}
               crittersByPlantId={crittersByPlantId}
               onSpriteLongPress={onSpriteLongPress}
-              onSpriteIntersect={onSpriteIntersect} />
+              onSpriteIntersect={onSpriteIntersect}
+              onPhotoUploaded={refetchPlants} />
           ))}
         </div>
       )}
@@ -344,7 +357,7 @@ export default function Garden() {
   )
 }
 
-function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSpriteLongPress, onSpriteIntersect }) {
+function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded }) {
   const { project: p, depth, children, plantings } = node
   const hasKids = nodeHasChildren(node)
   const isOpen  = hasKids && expanded.has(p.id)
@@ -416,11 +429,13 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
           {plantings.map(pl => <PlantingRow key={pl.id} planting={pl} depth={depth + 1} level={level + 1}
             critters={crittersByPlantId?.get(pl.id) ?? []}
             onSpriteLongPress={onSpriteLongPress}
-            onSpriteIntersect={onSpriteIntersect} />)}
+            onSpriteIntersect={onSpriteIntersect}
+            onPhotoUploaded={onPhotoUploaded} />)}
           {children.map(c => <TreeNode key={c.project.id} node={c} expanded={expanded} onToggle={onToggle} level={level + 1}
             crittersByPlantId={crittersByPlantId}
             onSpriteLongPress={onSpriteLongPress}
-            onSpriteIntersect={onSpriteIntersect} />)}
+            onSpriteIntersect={onSpriteIntersect}
+            onPhotoUploaded={onPhotoUploaded} />)}
         </div>
       )}
     </div>
@@ -429,7 +444,7 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
 
 // Planting leaf — whole row OPENS the planting's own detail page (V3-NAV-001 / PR2).
 // Previously navigated to the owning project; now deep-links to /projects/:id/plantings/:plantingId.
-function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPress = null, onSpriteIntersect = null }) {
+function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPress = null, onSpriteIntersect = null, onPhotoUploaded = null }) {
   const variety = pl.variety_ref?.name
   return (
     <div role="treeitem" aria-level={level} style={{ paddingLeft: depth * 20, position: 'relative' }}>
@@ -445,11 +460,19 @@ function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPr
           ))}
         </div>
       )}
-      <Link to={`/projects/${pl.project_id}/plantings/${pl.id}`} aria-label={`Open ${pl.name}`} style={{ textDecoration: 'none', display: 'block' }}>
-        <div style={{
-          backgroundColor: P.cream, border: `1px solid ${P.border}`, borderLeft: `3px solid ${P.greenLight}`,
-          borderRadius: 8, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10, minHeight: 44,
-        }}>
+      {/* V3-IA photo restore: the card div is the flex row; the Link covers thumb+body
+          (nav target) while the status badge + per-planting PhotoUpload sit OUTSIDE the
+          anchor so the camera/library buttons never trigger navigation. Wire contract is
+          identical to the retired Plants.jsx row uploader (V2-PHOTO-F1 S2): keyPrefix
+          'plants' + {plant_id, project_id} linkage -> 3-step useUploadPhoto engine ->
+          POST /api/photos; server auto-promotes first photo to featured. Hidden input id
+          `plant-list-photo-<plantId>` preserved for automated bulk-attach sessions. */}
+      <div style={{
+        backgroundColor: P.cream, border: `1px solid ${P.border}`, borderLeft: `3px solid ${P.greenLight}`,
+        borderRadius: 8, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10, minHeight: 44,
+      }}>
+        <Link to={`/projects/${pl.project_id}/plantings/${pl.id}`} aria-label={`Open ${pl.name}`}
+          style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
           {pl.featured_photo_view_url
             ? <img src={pl.featured_photo_view_url} alt="" style={{ ...thumbImg, width: 32, height: 32 }} />
             : <span aria-hidden="true" style={{ fontSize: '1rem', width: 32, textAlign: 'center' }}>🌱</span>}
@@ -460,10 +483,29 @@ function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPr
               {variety && <span style={{ fontSize: '0.76rem', color: P.mid }}>{variety}</span>}
             </div>
           </div>
-          {/* Multi-channel status (WCAG 1.4.1): icon + label, never color alone. */}
-          {pl.status && <PlantStatusBadge status={pl.status} />}
-        </div>
-      </Link>
+        </Link>
+        {/* Multi-channel status (WCAG 1.4.1): icon + label, never color alone. */}
+        {pl.status && <PlantStatusBadge status={pl.status} />}
+        <PhotoUpload
+          keyPrefix="plants"
+          parentId={pl.id}
+          linkage={{ plant_id: pl.id, project_id: pl.project_id }}
+          errorMode="surface"
+          mode="both"
+          takeLabel="📷"
+          chooseLabel="🖼️"
+          showPreview={false}
+          inputId={`plant-list-photo-${pl.id}`}
+          onUploadComplete={onPhotoUploaded}
+          buttonStyle={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            width: 34, height: 34, padding: 0,
+            background: 'transparent', color: P.mid,
+            border: `1px solid ${P.border}`, borderRadius: '50%',
+            cursor: 'pointer', fontSize: '0.9rem', userSelect: 'none',
+          }}
+        />
+      </div>
     </div>
   )
 }

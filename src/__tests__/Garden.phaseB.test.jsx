@@ -15,7 +15,7 @@ vi.mock('react-router-dom', () => {
 // Mock useApiFetch.
 const fetchMock = vi.fn()
 const getTokenMock = vi.fn().mockResolvedValue('test-token')
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: getTokenMock }) }))
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: getTokenMock }), apiFetch: (...a) => fetchMock(...a) }))
 vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => <span /> }))
 
 // Mock critterClient (Phase B doesn't exercise these directly; just keep them inert).

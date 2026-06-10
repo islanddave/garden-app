@@ -15,7 +15,7 @@ vi.mock('react-router-dom', () => {
 // Mock useApiFetch to return both fetch + getToken (production shape).
 const fetchMock = vi.fn()
 const getTokenMock = vi.fn().mockResolvedValue('test-token')
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: getTokenMock }) }))
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: getTokenMock }), apiFetch: (...a) => fetchMock(...a) }))
 vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => <span data-testid="fav" /> }))
 
 // Mock critterClient — capture markCrittersViewed calls.

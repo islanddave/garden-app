@@ -11,7 +11,7 @@ vi.mock('react-router-dom', () => {
   }
 })
 const fetchMock = vi.fn()
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }), apiFetch: (...a) => fetchMock(...a) }))
 vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => <span data-testid="fav" /> }))
 
 import Garden from '../pages/Garden.jsx'
