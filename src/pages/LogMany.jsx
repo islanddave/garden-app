@@ -161,8 +161,12 @@ export default function LogMany() {
       }) })
       try { localStorage.setItem(SCOPE_KEY, JSON.stringify(scope)) } catch (e) {}
       // MVP-Critter — critters are awarded SERVER-SIDE by the events Lambda batch handler
-      // (Phase B++ refactor 2026-05-30). No client-side fan-out needed.
+      // (Phase B++ refactor 2026-05-30). V3-CRITTER-002: wake CritterArrivalController so the
+      // Stage-1 flash fires on this page without a route change. The controller's effect dep
+      // includes location.state — pushing a new state object (same pathname, replace:true)
+      // triggers a re-poll. Critter is in DB before this resolves (Lambda awards inline).
       setResult(r)
+      navigate('.', { state: { critterCheck: Date.now() }, replace: true })
     } catch (err) { setError(err.message) }
     setSaving(false)
   }
