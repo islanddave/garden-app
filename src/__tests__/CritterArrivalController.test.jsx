@@ -113,4 +113,28 @@ describe('CritterArrivalController — global Stage 1 flash (relocated from Dash
     await renderController()
     expect(screen.queryByTestId('critter-arrival')).toBeNull()
   })
+
+  it('V3-CRITTER-002: re-polls when location.state changes (LogMany batch trigger)', async () => {
+    // Simulates: LogMany.confirm() calls navigate('.', { state: { critterCheck: Date.now() }, replace: true })
+    // after a successful batch POST. The controller fires on location.state dep change, polling
+    // for the newly-awarded critter without a pathname change.
+    fetchActiveCrittersMock.mockResolvedValue([])
+    let rerender
+    await act(async () => {
+      const r = render(<CritterArrivalController />)
+      rerender = r.rerender
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(fetchActiveCrittersMock).toHaveBeenCalledTimes(1)
+
+    // Simulate the navigate state push from LogMany (same pathname, new state object).
+    mockLocation.state = { critterCheck: 999 }
+    await act(async () => {
+      rerender(<CritterArrivalController />)
+      await Promise.resolve(); await Promise.resolve()
+    })
+    expect(fetchActiveCrittersMock).toHaveBeenCalledTimes(2)
+
+    mockLocation.state = null  // reset for subsequent tests
+  })
 })
