@@ -172,3 +172,18 @@ describe('PlantingDetail — null tolerance', () => {
     expect(screen.getByText('No additional details recorded yet.')).toBeTruthy()
   })
 })
+
+// V3-IA: Plantings page retired — the Edit affordance must deep-link into the Garden editor.
+describe('PlantingDetail — V3-EDIT-001 edit affordance', () => {
+  it('Edit links to /garden?edit=<plantingId>', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING)
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    const link = screen.getByLabelText('Edit this planting')
+    expect(link.getAttribute('href')).toBe('/garden?edit=pl1')
+  })
+})

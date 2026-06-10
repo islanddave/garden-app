@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { getStatusColors } from '../lib/status.js'
@@ -17,6 +17,7 @@ import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, loadSortO
 import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import { formatQty } from '../lib/format.js'
+import PlantingEditor from '../components/PlantingEditor.jsx'
 
 // Garden — Increment 1 of the post-V2 UX overhaul. Unifies the old Projects + Plants
 // tabs into ONE nested accordion: projects form a parent/child tree; each project's
@@ -42,6 +43,13 @@ export default function Garden() {
   const [critters, setCritters] = useState([])
   // D-INV-1 long-press popover state. anchorEl is the long-pressed sprite DOM node.
   const [popover, setPopover] = useState({ open: false, critter: null, anchorEl: null })
+  // V3-IA: Plantings page retired — its add/edit machinery lives here now.
+  // editor: null | { mode:'add' } | { mode:'edit', plant }. Opened by query params
+  // (?add=1 / ?edit=<id> / packet deep-link params), mirroring the old Plants.jsx contract.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const sourceInventoryItemId = searchParams.get('source_inventory_item_id') || null
+  const queryVarietyId        = searchParams.get('variety_id') || null
+  const [editor, setEditor] = useState(null)
 
   // Session 3.5 (§3.26): per-sprite actually-seen accumulator.
   // CritterSprite fires onIntersect ONCE per id when IO-gate trips (sprite enters viewport).
@@ -156,6 +164,51 @@ export default function Garden() {
     setPopover({ open: false, critter: null, anchorEl: null })
   }, [])
 
+  // ?add=1 (FAB create sheet) or packet/variety deep-link params open the Add form.
+  // ?add strips immediately (replace) so a repeat deep-link re-triggers; the packet
+  // params persist until close so the editor can fetch/prefill (old Plants.jsx contract).
+  useEffect(() => {
+    if (searchParams.get('add') === '1' || sourceInventoryItemId || queryVarietyId) {
+      setEditor(e => (e && e.mode === 'add') ? e : { mode: 'add' })
+      if (searchParams.get('add') === '1') {
+        const next = new URLSearchParams(searchParams)
+        next.delete('add')
+        setSearchParams(next, { replace: true })
+      }
+    }
+  }, [searchParams, sourceInventoryItemId, queryVarietyId, setSearchParams])
+
+  // V3-EDIT-001: ?edit=<plantingId> (PlantingDetail Edit button) opens that planting's
+  // edit form, then strips the param (replace) so a repeat deep-link re-triggers.
+  useEffect(() => {
+    const editId = searchParams.get('edit')
+    if (!editId || loading) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('edit')
+    setSearchParams(next, { replace: true })
+    const target = plants.find(p => String(p.id) === String(editId))
+    if (target) {
+      setEditor({ mode: 'edit', plant: target })
+      setTimeout(() => {
+        document.getElementById('planting-editor')?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+      }, 60)
+    }
+  }, [searchParams, loading, plants, setSearchParams])
+
+  const closeEditor = useCallback(() => {
+    setEditor(null)
+    if (sourceInventoryItemId || queryVarietyId) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('source_inventory_item_id')
+      next.delete('variety_id')
+      setSearchParams(next, { replace: true })
+    }
+  }, [searchParams, setSearchParams, sourceInventoryItemId, queryVarietyId])
+
+  const onPlantCreated = useCallback((pl) => setPlants(prev => [pl, ...prev]), [])
+  const onPlantUpdated = useCallback((pl) => setPlants(prev => prev.map(x => x.id === pl.id ? pl : x)), [])
+  const onPlantDeleted = useCallback((id) => setPlants(prev => prev.filter(x => x.id !== id)), [])
+
   const toggle = useCallback((id) => {
     setExpanded(prev => {
       const next = new Set(prev)
@@ -243,13 +296,27 @@ export default function Garden() {
       <CritterCoachmark eligible={coachmarkEligible} onDismiss={onCoachmarkDismiss} />
       <CritterOptInPrompt eligible={optInEligible} onDismiss={onOptInDismiss} />
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Garden</h1>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <SortToggle order={sortOrder} onChange={onSortChange} label="Sort garden" />
-          <Link to="/log/many" style={btnGhost}>⚡ Log many</Link>
-        </div>
+      {/* V3-IA: no page title — the Garden tab is self-evident. Controls keep the row. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginBottom: 24 }}>
+        <SortToggle order={sortOrder} onChange={onSortChange} label="Sort garden" />
+        <Link to="/log/many" style={btnGhost}>⚡ Log many</Link>
       </div>
+
+      {editor && (
+        <PlantingEditor
+          mode={editor.mode}
+          plant={editor.plant ?? null}
+          plants={plants}
+          projects={projects}
+          fetch={fetch}
+          sourceInventoryItemId={editor.mode === 'add' ? sourceInventoryItemId : null}
+          varietyId={editor.mode === 'add' ? queryVarietyId : null}
+          onCreated={onPlantCreated}
+          onUpdated={onPlantUpdated}
+          onDeleted={onPlantDeleted}
+          onClose={closeEditor}
+        />
+      )}
 
       {tree.length === 0 ? (
         <EmptyState />

@@ -3,10 +3,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, cleanup } from '@testing-library/react'
 
 // Mock react-router-dom to avoid Router context.
-vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-  useNavigate: () => () => {},
-}))
+vi.mock('react-router-dom', () => {
+  const sp = new URLSearchParams()
+  return {
+    Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+    useNavigate: () => () => {},
+    useSearchParams: () => [sp, () => {}],
+  }
+})
 
 // Mock useApiFetch to return both fetch + getToken (production shape).
 const fetchMock = vi.fn()
@@ -70,7 +74,7 @@ afterEach(() => { cleanup() })
 
 async function renderGarden() {
   await act(async () => { render(<Garden />) })
-  await screen.findByText('Garden')
+  await screen.findByText(/Log many/)
   // Expand Tomatoes so plantings (and critter sprites) render.
   await act(async () => {
     screen.getByLabelText(/Expand Tomatoes/).click()
@@ -80,7 +84,7 @@ async function renderGarden() {
 describe('Garden Session 3.5 — per-sprite actually_seen accumulator (§3.26)', () => {
   it('on unmount, flushes with actuallySeenCritterIds = ids of all sprites that intersected', async () => {
     const { unmount } = await act(async () => render(<Garden />))
-    await screen.findByText('Garden')
+    await screen.findByText(/Log many/)
     await act(async () => { screen.getByLabelText(/Expand Tomatoes/).click() })
     // Wait a microtask for the mocked CritterSprite's onIntersect useEffect.
     await act(async () => { await Promise.resolve() })
@@ -145,7 +149,7 @@ describe('Garden Session 3.5 — per-sprite actually_seen accumulator (§3.26)',
     // Override critters fetch to return [] for this test.
     fetchActiveCrittersMock.mockResolvedValue([])
     const { unmount } = await act(async () => render(<Garden />))
-    await screen.findByText('Garden')
+    await screen.findByText(/Log many/)
     await act(async () => { await Promise.resolve() })
     markCrittersViewedMock.mockClear()
     await act(async () => { unmount() })

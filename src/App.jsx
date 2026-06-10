@@ -5,6 +5,7 @@ import { ZoneProvider } from './context/ZoneContext.jsx'
 import { ModeProvider } from './context/ModeContext.jsx'
 import TopBar from './components/TopBar.jsx'
 import BottomNav from './components/BottomNav.jsx'
+import PlantsRedirect from './components/PlantsRedirect.jsx'
 import TodayBand from './components/TodayBand.jsx'
 import CritterArrivalController from './components/CritterArrivalController.jsx'
 import Footer from './components/Footer.jsx'
@@ -26,7 +27,6 @@ import EventNew from './pages/EventNew.jsx'
 import PhotoLibrary from './pages/PhotoLibrary.jsx'
 import Favorites from './pages/Favorites.jsx'
 import ProjectTypes from './pages/ProjectTypes.jsx'
-import Plants from './pages/Plants.jsx'
 import Garden from './pages/Garden.jsx'
 import LogMany from './pages/LogMany.jsx'
 import PlantsCatchUp from './pages/PlantsCatchUp.jsx'
@@ -117,7 +117,8 @@ function AppRoutes() {
               <Route path="/photos"        element={<Protected><PhotoLibrary /></Protected>} />
               <Route path="/favorites"     element={<Protected><Favorites /></Protected>} />
               <Route path="/project-types" element={<Protected><ProjectTypes /></Protected>} />
-              <Route path="/plants"        element={<Protected><Plants /></Protected>} />
+              {/* V3-IA: Plants page retired; legacy links redirect into Garden (query preserved). */}
+              <Route path="/plants"        element={<PlantsRedirect />} />
               <Route path="/plants/catch-up" element={<Protected><PlantsCatchUp /></Protected>} />
               <Route path="/projects/:id/events/:eventId" element={<Protected><EventDetail /></Protected>} />
               {/* V3-NAV-001 (Lane C / PR2): dedicated planting detail. Route-level ErrorBoundary

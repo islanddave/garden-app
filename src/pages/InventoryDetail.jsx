@@ -198,8 +198,8 @@ export default function InventoryDetail() {
 
         {/* Plant-from-packet CTA — VARIETY-REF S4b.
             Visible only for seed packets with stock on hand. Tap-target ≥44px (Jen iPhone-primary).
-            Carries source_inventory_item_id + variety_id as query params; Plants.jsx reads them and
-            opens the Add Plant form pre-filled. */}
+            Carries source_inventory_item_id + variety_id as query params; Garden reads them and
+            opens the PlantingEditor add form pre-filled. */}
         {item.category === 'seeds' && Number(item.quantity_on_hand ?? 0) > 0 && (
           <PlantFromPacketCTA
             item={item}
@@ -207,7 +207,7 @@ export default function InventoryDetail() {
               const params = new URLSearchParams()
               params.set('source_inventory_item_id', item.id)
               if (item.variety_id) params.set('variety_id', item.variety_id)
-              navigate(`/plants?${params.toString()}`)
+              navigate(`/garden?${params.toString()}`)
             }}
           />
         )}

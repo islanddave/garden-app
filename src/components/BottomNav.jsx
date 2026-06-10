@@ -17,13 +17,15 @@ import { useMode } from '../lib/mode.js'
 //     action must not be an impulsive-mistap target.
 // Overflow is a V3 IA-revision concern, explicitly out of NAV-IA-1 scope.
 
-// Increment 1 (post-V2 UX overhaul): Projects + Plants unified into one "Garden" tab
-// (nested accordion tree). Nav = Garden · +LOG · Inventory · More; the freed 5th slot
-// is reserved for Tasks/Care (Increment 3+). /projects + /plants stay routable.
+// V3-IA nav restructure (2026-06-10): Critters + Photos promoted to first-class tabs;
+// Inventory demoted to the More menu. FAB keeps its center slot (3 of 5):
+// Garden · Critters · +LOG · Photos · More. The standalone Plants page is retired —
+// /plants redirects to /garden (PlantsRedirect).
 const TABS = [
-  { to: '/garden',    label: 'Garden',    icon: '🪴' },
-  { to: '/log',       label: '+Log',      icon: '+',  highlight: true },
-  { to: '/inventory', label: 'Inventory', icon: '📦' },
+  { to: '/garden',     label: 'Garden',   icon: '🪴' },
+  { to: '/collection', label: 'Critters', icon: '🦋' },
+  { to: '/log',        label: '+Log',     icon: '+',  highlight: true },
+  { to: '/photos',     label: 'Photos',   icon: '📷' },
 ]
 
 // +LOG FAB → create action sheet (Increment 1, post-V2 UX overhaul).
@@ -32,14 +34,14 @@ const TABS = [
 // affordance — NOT a reward surface (no celebration / recognition / progress signal),
 // so the action-sheet pattern is appropriate (Reward UX V100 out-of-scope channels bind
 // reward surfaces, not user-triggered create menus).
-// Routes: Log -> /log (EventNew); Plant -> /plants?add=1 (Plants add-form auto-open);
+// Routes: Log -> /log (EventNew); Plant -> /garden?add=1 (Garden PlantingEditor auto-open);
 //         Project -> /projects/new (ProjectNew); Inventory -> /inventory/add (InventoryAdd).
 // Spec: postv2-ux-overhaul-phase2-build-roadmap-V001 §4 Increment 1 + garden-tab-design-V001 §3.4.
 // RESTORED 2026-05-28: clobbered by garden-helper rung1 commit a45fb013 (rode through
 // a917b51b to prod); now re-restored alongside Garden Helper menu entry.
 const CREATE_ACTIONS = [
   { to: '/log',           icon: '📝', label: 'Log an event',   sub: 'Watering, harvest, a note…' },
-  { to: '/plants?add=1',  icon: '🌱', label: 'Add a planting', sub: 'A plant growing in a project' },
+  { to: '/garden?add=1',  icon: '🌱', label: 'Add a planting', sub: 'A plant growing in a project' },
   { to: '/projects/new',  icon: '🪴', label: 'New project',     sub: 'A bed, crop, or grow' },
   { to: '/inventory/add', icon: '📦', label: 'Add inventory',   sub: 'Seeds, soil, supplies…' },
 ]
@@ -177,9 +179,10 @@ export default function BottomNav() {
             </div>
           )}
 
-          {/* Plants — restored to More menu (NAV-REGRESSION fix / BUG-13, 2026-05-24). */}
+          {/* Inventory — moved off the first-class tab row (V3-IA, 2026-06-10);
+              its old slot went to Critters/Photos promotion. */}
           <Link
-            to="/plants"
+            to="/inventory"
             onClick={closeMore}
             style={{
               display: 'flex', alignItems: 'center', gap: 16,
@@ -193,28 +196,8 @@ export default function BottomNav() {
               minHeight: 48,
             }}
           >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🌱</span>
-            Plants
-          </Link>
-
-          {/* Photos — restored to More menu (NAV-REGRESSION fix, 2026-05-23). */}
-          <Link
-            to="/photos"
-            onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📷</span>
-            Photos
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📦</span>
+            Inventory
           </Link>
 
           {/* Achievements — restored to More menu (NAV-REGRESSION fix, 2026-05-22). */}
@@ -235,26 +218,6 @@ export default function BottomNav() {
           >
             <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏆</span>
             Achievements
-          </Link>
-
-          {/* Critter Collection — preview dex (Phase 1). Reward surface; ambient nav entry. */}
-          <Link
-            to="/collection"
-            onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🦋</span>
-            Critters
           </Link>
 
           {/* Garden Helper — Post-V2 UX overhaul Inc 2 Bite 1 (Rung-1 advisory).

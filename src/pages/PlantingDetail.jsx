@@ -221,9 +221,9 @@ export default function PlantingDetail() {
             {variety && <span style={{ fontSize: '0.85rem', color: P.mid }}>{variety}</span>}
           </div>
         </div>
-        {/* V3-EDIT-001: edit affordance — deep-links to the Plants inline edit form for this planting. */}
+        {/* V3-EDIT-001: edit affordance — deep-links to the Garden PlantingEditor for this planting. */}
         <Link
-          to={`/plants?edit=${plantingId}`}
+          to={`/garden?edit=${plantingId}`}
           aria-label="Edit this planting"
           style={{
             flexShrink: 0, alignSelf: 'flex-start',

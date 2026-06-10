@@ -7,7 +7,7 @@ const TYPE_META = {
   project:        { label: 'Projects',  icon: '🌱', link: i => `/projects/${i.id}` },
   location:       { label: 'Locations', icon: '📍', link: () => `/locations` },
   inventory_item: { label: 'Inventory', icon: '📦', link: i => `/inventory/${i.id}` },
-  plant:          { label: 'Plants',    icon: '🌿', link: () => `/plants` },
+  plant:          { label: 'Plants',    icon: '🌿', link: () => `/garden` },
 }
 
 export default function Favorites() {

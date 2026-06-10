@@ -2,8 +2,8 @@
  * src/__tests__/BottomNav.test.jsx
  * NAV-IA-1 (V1.2a-3 Increment C / PR-C1, 2026-05-18) tests.
  *
- * Verifies the new 5-slot bottom-nav layout (Projects · Plants · LOG+ · Inventory · More)
- * plus the Sign Out confirmation flow that moved from TopBar into BottomNav's More menu.
+ * Verifies the V3-IA 5-slot bottom-nav layout (Garden · Critters · +LOG · Photos · More;
+ * Inventory demoted to the More menu) plus the Sign Out confirmation flow.
  */
 
 import React from 'react'
@@ -66,15 +66,28 @@ beforeEach(() => {
   locationRef.pathname = '/dashboard'
 })
 
-describe('BottomNav — NAV-IA-1 layout', () => {
-  it('renders Garden + LOG+ + Inventory + More (Projects+Plants unified into Garden)', () => {
+describe('BottomNav — V3-IA layout', () => {
+  it('renders Garden + Critters + +LOG + Photos + More (Inventory demoted to More menu)', () => {
     render(<BottomNav />)
     expect(screen.getByText('Garden')).toBeDefined()
+    expect(screen.getByText('Critters')).toBeDefined()
     expect(screen.getByLabelText('Create')).toBeDefined()
-    expect(screen.getByText('Inventory')).toBeDefined()
+    expect(screen.getByText('Photos')).toBeDefined()
     expect(screen.getByText('More')).toBeDefined()
     expect(screen.queryByText('Projects')).toBeNull()
     expect(screen.queryByText('Plants')).toBeNull()
+    expect(screen.queryByText('Inventory')).toBeNull()
+  })
+
+  it('FAB keeps the center slot: tab order is Garden · Critters · +LOG · Photos · More', () => {
+    render(<BottomNav />)
+    const nav = screen.getByLabelText('Main navigation')
+    expect(nav.children.length).toBe(5)
+    expect(nav.children[0].textContent).toContain('Garden')
+    expect(nav.children[1].textContent).toContain('Critters')
+    expect(nav.children[2].getAttribute('aria-label')).toBe('Create')
+    expect(nav.children[3].textContent).toContain('Photos')
+    expect(nav.children[4].textContent).toContain('More')
   })
 
   it('does NOT render Dashboard in the bottom nav (dropped per 2026-05-15 adjustment)', () => {
@@ -90,7 +103,8 @@ describe('BottomNav — NAV-IA-1 layout', () => {
   it('tab links point to correct routes', () => {
     render(<BottomNav />)
     expect(screen.getByText('Garden').closest('a').getAttribute('href')).toBe('/garden')
-    expect(screen.getByText('Inventory').closest('a').getAttribute('href')).toBe('/inventory')
+    expect(screen.getByText('Critters').closest('a').getAttribute('href')).toBe('/collection')
+    expect(screen.getByText('Photos').closest('a').getAttribute('href')).toBe('/photos')
     // +LOG is no longer a direct link — it's a button that opens the create action sheet.
     const logBtn = screen.getByLabelText('Create')
     expect(logBtn.tagName).toBe('BUTTON')
@@ -129,20 +143,20 @@ describe('BottomNav — More menu', () => {
     expect(link.getAttribute('href')).toBe('/achievements')
   })
 
-  it('More menu shows the Photos link pointing to /photos (NAV-REGRESSION restore, 2026-05-23)', () => {
+  it('More menu shows the Inventory link pointing to /inventory (V3-IA demotion)', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('More navigation options'))
-    const link = screen.getByText('Photos').closest('a')
+    const link = screen.getByText('Inventory').closest('a')
     expect(link).not.toBeNull()
-    expect(link.getAttribute('href')).toBe('/photos')
+    expect(link.getAttribute('href')).toBe('/inventory')
   })
 
-  it('More menu shows the Plants link pointing to /plants (NAV-REGRESSION restore / BUG-13, 2026-05-24)', () => {
+  it('More menu has NO Plants entry (Plantings page retired) and no duplicate Photos/Critters entries', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('More navigation options'))
-    const link = screen.getByText('Plants').closest('a')
-    expect(link).not.toBeNull()
-    expect(link.getAttribute('href')).toBe('/plants')
+    expect(screen.queryByText('Plants')).toBeNull()
+    expect(screen.getAllByText('Photos').length).toBe(1)
+    expect(screen.getAllByText('Critters').length).toBe(1)
   })
 
 
@@ -216,7 +230,7 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
     expect(screen.getByText('Log an event').closest('a').getAttribute('href')).toBe('/log')
-    expect(screen.getByText('Add a planting').closest('a').getAttribute('href')).toBe('/plants?add=1')
+    expect(screen.getByText('Add a planting').closest('a').getAttribute('href')).toBe('/garden?add=1')
     expect(screen.getByText('New project').closest('a').getAttribute('href')).toBe('/projects/new')
     expect(screen.getByText('Add inventory').closest('a').getAttribute('href')).toBe('/inventory/add')
   })

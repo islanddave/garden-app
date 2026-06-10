@@ -13,7 +13,7 @@ export default function PlantsCatchUp() {
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '32px 20px' }}>
         <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 20 }}>
-          <Link to="/plants" style={{ color: P.green, textDecoration: 'none' }}>Plants</Link>
+          <Link to="/garden" style={{ color: P.green, textDecoration: 'none' }}>Garden</Link>
           {' › Catch up'}
         </div>
         <h1 style={{ margin: '0 0 12px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>

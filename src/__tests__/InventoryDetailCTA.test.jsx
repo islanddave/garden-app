@@ -4,7 +4,7 @@
  *
  * Focused scope: CTA visibility rules + navigation contract.
  * - Visible only when category === 'seeds' AND quantity_on_hand > 0
- * - On click, calls navigate(/plants?source_inventory_item_id=<id>[&variety_id=<vid>])
+ * - On click, calls navigate(/garden?source_inventory_item_id=<id>[&variety_id=<vid>]) — V3-IA: Garden hosts the editor now
  *
  * Mocks: useApiFetch, useParams/useNavigate, FavoriteToggle.
  * Strategy mirrors Plants.test.jsx structure.
@@ -127,7 +127,7 @@ describe('InventoryDetail — Plant-from-packet CTA navigation', () => {
 
     expect(navigateSpy).toHaveBeenCalledTimes(1)
     const dest = navigateSpy.mock.calls[0][0]
-    expect(dest).toMatch(/^\/plants\?/)
+    expect(dest).toMatch(/^\/garden\?/)
     const params = new URLSearchParams(dest.split('?')[1])
     expect(params.get('source_inventory_item_id')).toBe('item-seed-1')
     expect(params.get('variety_id')).toBe('var-1')

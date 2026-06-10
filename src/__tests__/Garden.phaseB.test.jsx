@@ -3,10 +3,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, cleanup } from '@testing-library/react'
 
 // Mock react-router-dom.
-vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-  useNavigate: () => () => {},
-}))
+vi.mock('react-router-dom', () => {
+  const sp = new URLSearchParams()
+  return {
+    Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+    useNavigate: () => () => {},
+    useSearchParams: () => [sp, () => {}],
+  }
+})
 
 // Mock useApiFetch.
 const fetchMock = vi.fn()
@@ -69,7 +73,7 @@ afterEach(() => { cleanup() })
 
 async function renderGarden() {
   await act(async () => { render(<Garden />) })
-  await screen.findByText('Garden')
+  await screen.findByText(/Log many/)
   // Let mocked async useEffects resolve.
   await act(async () => { await Promise.resolve(); await Promise.resolve() })
 }
@@ -155,7 +159,7 @@ describe('Garden Phase B — coachmark + opt-in render gating', () => {
     fetchPrefsMock.mockResolvedValue({ last_garden_view_at: null, coachmark_seen_at: null, opt_in_prompt_seen_at: null })
     fetchActiveCrittersMock.mockResolvedValue([])
     const { unmount } = await act(async () => render(<Garden />))
-    await screen.findByText('Garden')
+    await screen.findByText(/Log many/)
     await act(async () => { await Promise.resolve() })
     await act(async () => { unmount() })
     // markCrittersViewed should still fire on unmount (S3.5 contract); the new Phase B effect

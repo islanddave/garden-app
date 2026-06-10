@@ -2,10 +2,14 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 
-vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-  useNavigate: () => () => {},
-}))
+vi.mock('react-router-dom', () => {
+  const sp = new URLSearchParams()
+  return {
+    Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+    useNavigate: () => () => {},
+    useSearchParams: () => [sp, () => {}],
+  }
+})
 const fetchMock = vi.fn()
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
 vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => <span data-testid="fav" /> }))
@@ -30,10 +34,16 @@ beforeEach(() => {
 
 async function renderGarden() {
   await act(async () => { render(<Garden />) })
-  await screen.findByText('Garden')
+  await screen.findByText(/Log many/)
 }
 
 describe('Garden — unified accordion tree', () => {
+  it('renders no page-title heading (V3-IA: tab is self-evident)', async () => {
+    await renderGarden()
+    expect(screen.queryByText('Garden')).toBeNull()
+    expect(document.querySelector('h1')).toBeNull()
+  })
+
   it('renders a tree of top-level projects, collapsed-first (descendants hidden)', async () => {
     await renderGarden()
     expect(screen.getByRole('tree')).toBeDefined()
