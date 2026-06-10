@@ -564,8 +564,7 @@ export default function EventNew() {
             Log an event
           </h1>
           {/* V3-LOGBTN-001: themed ghost button (cream/sage/terra), not a raw text link. */}
-          <div style={{ marginTop: 8, fontSize: '0.82rem', color: P.light }}>
-            Logging the same thing across plants?{' '}
+          <div style={{ marginTop: 8 }}>
             <Link
               to="/log/many"
               style={{

@@ -213,7 +213,7 @@ export default function LogMany() {
     <Shell>
       <Header />
 
-      <Section label="What did you do?">
+      <Section>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {primaries.map(t => (
             <SelectChip key={t.value} active={eventType === t.value} onClick={() => setEventType(t.value)}>
@@ -261,7 +261,7 @@ export default function LogMany() {
         )}
       </Section>
 
-      <Section label="When?">
+      <Section>
         {/* V3-EVENT-008 (V002 §5): back-dating for bulk frost / bring-in events logged the
             morning after. Defaults to today (empty = server "now"); future dates blocked. */}
         <input
@@ -312,9 +312,10 @@ function Header() {
   )
 }
 function Section({ label, children }) {
+  // V3-LOGMANY copy strip: label optional — page is buttons-only, no helper prompts.
   return (
     <div style={{ marginBottom: 16 }}>
-      <p style={{ margin: '0 0 8px', fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{label}</p>
+      {label && <p style={{ margin: '0 0 8px', fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{label}</p>}
       {children}
     </div>
   )

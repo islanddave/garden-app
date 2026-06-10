@@ -6,7 +6,7 @@
 //
 // Contract:
 //   - scope / onScopeChange     controlled scope ({type:'all'|'project'|'space', ...})
-//   - projects / locations      for the scope chips + project <select> + scope label
+//   - projects / locations      for the scope chips + project <select>
 //   - eventType / eventDate      drive the dry-run body + retrigger the preview
 //   - verbLabel                  humanized event verb for the headline copy
 //   - runDryRun({scope,eventType,eventDate,signal}) -> Promise<{count,capped,plantings:[{id,name}]}>
@@ -87,10 +87,6 @@ export default function ScopeChecklist({
   const committedCount = committed.length
   const excludedCount = total - committedCount
 
-  const scopeLabel = scope.type === 'all' ? 'all active plantings'
-    : scope.type === 'project' ? (projects.find(p => p.id === scope.project_id)?.name ?? 'project')
-    : (locations.find(l => l.id === scope.location_id)?.name ?? 'space')
-
   // Lift the committed selection up so the parent can build the confirm body + button.
   useEffect(() => {
     onSelectionChange?.({ committedCount, excludedIds: [...excluded] })
@@ -100,7 +96,6 @@ export default function ScopeChecklist({
   return (
     <>
       <div style={{ marginBottom: 16 }}>
-        <p style={sectionLabel}>To which plantings?</p>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
           <SelectChip active={scope.type === 'all'} onClick={() => onScopeChange({ type: 'all' })}>All active</SelectChip>
           <SelectChip active={scope.type === 'project'} onClick={() => onScopeChange(scope.type === 'project' ? scope : { type: 'project', project_id: projects[0]?.id })}>By project</SelectChip>
@@ -130,7 +125,6 @@ export default function ScopeChecklist({
             <p style={{ margin: '0 0 4px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>
               Log <span style={{ color: P.green }}>{verbLabel}</span> on <span style={{ color: P.green }}>{committedCount}</span> {committedCount === 1 ? 'planting' : 'plantings'}
             </p>
-            <p style={{ margin: '0 0 8px', color: P.mid, fontSize: '0.85rem' }}>in {scopeLabel} · one event each, dated {eventDate ? eventDate : 'now'}</p>
             {excludedCount > 0 && (
               <p data-testid="net-count" aria-live="polite" style={{ margin: '0 0 8px', color: P.dark, fontSize: '0.83rem', fontWeight: 600 }}>
                 {total} matched − {excludedCount} skipped → {committedCount} will be logged
@@ -178,6 +172,5 @@ export default function ScopeChecklist({
   )
 }
 
-const sectionLabel = { margin: '0 0 8px', fontWeight: 600, color: P.dark, fontSize: '0.9rem' }
 const linkBtn = { background: 'none', border: 'none', color: P.green, fontSize: '0.83rem', fontWeight: 600, cursor: 'pointer', padding: 0, fontFamily: 'inherit', textDecoration: 'underline' }
 const selectStyle = { width: '100%', minHeight: 44, padding: '8px 12px', borderRadius: 8, border: `1px solid ${P.border}`, fontSize: '0.9rem', fontFamily: 'inherit', backgroundColor: P.white, color: P.dark }

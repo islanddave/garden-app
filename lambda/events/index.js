@@ -11,6 +11,8 @@
 //   GET    /api/events/:id                   (unchanged from 2.1.x; UUID pre-validated per F9)
 //   POST   /api/events                       (extended: flagged_as_issue, severity, harvest{})
 //   PATCH  /api/events/:id                   (NEW: issue resolve; UUID pre-validated per F9)
+//   DELETE /api/events/:id                   (ADDED 2026-06-10: single-event undo, soft-delete only —
+//                                             never existed server-side; clients always got 405)
 //   POST   /api/notifications/subscribe      (NEW)
 //
 // Routing precedence (F10):
@@ -510,6 +512,57 @@ export const handler = async (event) => {
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
+      }
+
+      // DELETE /api/events/:id — single-event undo. SOFT-DELETE ONLY (deleted_at; never
+      // hard-delete) + watering entity_memory recompute, mirroring the batch-undo path above.
+      // Callers: Dashboard 5s undo toast, EventDetail delete, ProjectDetail delete.
+      // XP/streak/achievements are NOT reversed here (same as batch undo — reconciliation
+      // cron concern, V1.2a-2).
+      if (method === 'DELETE') {
+        const owned = await sql`
+          SELECT el.id, el.project_id, el.event_type
+          FROM event_log el
+          JOIN public.container pp ON pp.id = el.project_id
+          WHERE el.id = ${eventId}
+            AND el.deleted_at IS NULL
+            AND pp.created_by = ANY(${householdIds})
+            AND pp.deleted_at IS NULL
+        `;
+        if (!owned.length) return resp(404, { error: 'Not found' });
+        const projectId = owned[0].project_id;
+        const stmts = [
+          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+          sql`UPDATE event_log SET deleted_at = NOW(), updated_at = NOW()
+              WHERE id = ${eventId} AND deleted_at IS NULL`,
+        ];
+        if (owned[0].event_type === 'watering') {
+          // Recompute watering memory from SURVIVING events (runs after the soft-delete in
+          // the same transaction, so MAX() excludes the undone event) — batch-undo parity.
+          stmts.push(sql`
+            WITH surv AS (
+              SELECT (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.project_id = ${projectId} AND e.event_type = 'watering' AND e.deleted_at IS NULL) AS mw
+            )
+            UPDATE entity_memory em SET
+              last_watered_at = surv.mw,
+              next_water_at = CASE WHEN surv.mw IS NULL THEN NULL ELSE
+                surv.mw + (COALESCE(em.watering_interval_days,
+                  CASE em.location_type
+                    WHEN 'indoor_seedling'   THEN 1
+                    WHEN 'outdoor_container' THEN 2
+                    WHEN 'outdoor_bed'       THEN 4
+                    WHEN 'outdoor_inground'  THEN 5
+                    WHEN 'indoor_mature'     THEN 5
+                    ELSE 4
+                  END)::int * INTERVAL '1 day')
+              END,
+              updated_at = NOW()
+            FROM surv WHERE em.project_id = ${projectId}
+          `);
+        }
+        await sql.transaction(stmts);
+        return resp(200, { undone: true, id: eventId });
       }
 
       return resp(405, { error: 'Method not allowed' });
