@@ -41,18 +41,18 @@ function friendlyError(err) {
     return 'Quantity is unusually high — double-check?'
   }
   if (/quantity must be a positive/i.test(raw)) {
-    return "Quantity doesn't look right — check the form and try again."
+    return "Quantity doesn’t look right — check the form and try again."
   }
   if (typeof status === 'number') {
     if (status >= 400 && status < 500) {
-      return "Something didn't look right — check the form and try again."
+      return "Something didn’t look right — check the form and try again."
     }
     if (status >= 500) {
-      return "Couldn't save — try again."
+      return "Couldn’t save — try again."
     }
   }
   // Network errors (no status) and anything unmapped.
-  return "Couldn't save — try again."
+  return "Couldn’t save — try again."
 }
 
 function toDatetimeLocal(date) {

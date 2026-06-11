@@ -184,24 +184,21 @@ export default function ProjectNew() {
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </Select>
-            {!VARIETY_REF_UI_SHIPPED && (
-              <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
-                Just a planting for now — cultivars get a better home soon.
-              </small>
-            )}
           </Field>
+          {!VARIETY_REF_UI_SHIPPED && (
+            <small style={{ fontSize: '0.75rem', color: P.light, marginTop: -10, marginBottom: 16, display: 'block' }}>
+              Just a planting for now — cultivars get a better home soon.
+            </small>
+          )}
 
           {/* V1.2a-4 S1: target_end_date is optional and only meaningful for campaigns. */}
-          <Field label="Target end date (optional)" style={{ marginBottom: 16 }}>
+          <Field label="Target end date (optional)" style={{ marginBottom: 16 }} help="When do you expect this to wrap? Leave blank if open-ended.">
             <Input type="date" value={form.target_end_date}
               onChange={e => setForm(f => ({ ...f, target_end_date: e.target.value }))} />
-            <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
-              When do you expect this to wrap? Leave blank if open-ended.
-            </small>
           </Field>
 
           {/* ── Parent project picker ── */}
-          <Field label="Nest under another project?" style={{ marginBottom: 16 }}>
+          <Field label="Nest under another project?" style={{ marginBottom: 16 }} help="Optional — leave blank for a top-level project.">
             <Select
               value={form.parent_project_id}
               onChange={e => setForm(f => ({ ...f, parent_project_id: e.target.value }))}
@@ -209,17 +206,14 @@ export default function ProjectNew() {
               <option value="">None — top-level project</option>
               <ProjectOptions projects={allProjects} />
             </Select>
-            <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
-              Optional — leave blank for a top-level project.
-            </small>
           </Field>
 
           <Field label="Slug  ·  used in public URL: /garden/{slug}" style={{ marginBottom: 16 }}>
             <Input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value }))} placeholder="auto-generated" />
-            <small style={{ fontSize: '0.75rem', color: P.light }}>
-              URL: garden.futureishere.net/garden/{form.slug || '…'}
-            </small>
           </Field>
+          <small style={{ fontSize: '0.75rem', color: P.light, marginTop: -10, marginBottom: 16, display: 'block' }}>
+            URL: garden.futureishere.net/garden/{form.slug || '…'}
+          </small>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <Field label="Variety" style={{ marginBottom: 16 }}>
@@ -246,12 +240,12 @@ export default function ProjectNew() {
               <option value="">— None —</option>
               {locations.map(l => <option key={l.id} value={l.id}>{l.full_path}</option>)}
             </Select>
-            {locations.length === 0 && (
-              <small style={{ fontSize: '0.75rem', color: P.terra }}>
-                No locations yet — <Link to="/locations" style={{ color: P.terra }}>create zones first</Link>.
-              </small>
-            )}
           </Field>
+          {locations.length === 0 && (
+            <small style={{ fontSize: '0.75rem', color: P.terra, marginTop: -10, marginBottom: 16, display: 'block' }}>
+              No locations yet — <Link to="/locations" style={{ color: P.terra }}>create zones first</Link>.
+            </small>
+          )}
 
           <Field label="Description  ·  shown on public page" style={{ marginBottom: 16 }}>
             <Textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
