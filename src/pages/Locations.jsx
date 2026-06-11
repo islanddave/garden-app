@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, LOCATION_TYPE_LABELS } from '../lib/constants.js'
+import { Field, Input, Select, Button, ErrorBanner } from '../components/forms'
 
 const LEVEL_LABELS = ['Zone', 'Area', 'Section', 'Sub-Section']
 const LEVEL_ACCENTS = [P.green, P.greenLight, P.gold, P.terra]
@@ -184,7 +185,10 @@ export default function Locations() {
         </div>
         <button
           onClick={() => { setShowAddForm(s => !s); setFormError(null); setForm(emptyCreateForm()) }}
-          style={btnStyle(P.green)}
+          style={{
+            background: P.green, color: P.white, border: 'none', borderRadius: 6,
+            padding: '9px 18px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer',
+          }}
         >
           {showAddForm ? 'Cancel' : '+ Add'}
         </button>
@@ -203,9 +207,7 @@ export default function Locations() {
 
       {/* Global op error */}
       {opError && (
-        <div style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 14, fontSize: '0.84rem', color: '#7a2a10' }}>
-          {opError}
-        </div>
+        <ErrorBanner style={{ marginBottom: 14 }}>{opError}</ErrorBanner>
       )}
 
       {/* Tree */}
@@ -400,36 +402,57 @@ function InlineEditForm({ form, setForm, onSave, onCancel }) {
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${P.border}` }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, marginBottom: 9 }}>
-        <Field label="Name *">
-          <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            style={inputSt} placeholder="Location name" autoFocus />
+        <Field label="Name" htmlFor="inline-edit-name" required>
+          <Input
+            id="inline-edit-name"
+            required
+            value={form.name}
+            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+            placeholder="Location name"
+            autoFocus
+          />
         </Field>
-        <Field label="Type">
-          <select value={form.type_label} onChange={e => setForm(f => ({ ...f, type_label: e.target.value }))} style={inputSt}>
-            <option value="">— optional —</option>
-            {LOCATION_TYPE_LABELS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
+        <Field label="Type" htmlFor="inline-edit-type">
+          <Select
+            id="inline-edit-type"
+            value={form.type_label}
+            onChange={e => setForm(f => ({ ...f, type_label: e.target.value }))}
+            placeholder="— optional —"
+            options={LOCATION_TYPE_LABELS}
+          />
         </Field>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', gap: 9, marginBottom: 12 }}>
-        <Field label="Sort order">
-          <input type="number" min="0" value={form.sort_order}
-            onChange={e => setForm(f => ({ ...f, sort_order: e.target.value }))} style={inputSt} />
+        <Field label="Sort order" htmlFor="inline-edit-sort">
+          <Input
+            id="inline-edit-sort"
+            type="number"
+            min="0"
+            value={form.sort_order}
+            onChange={e => setForm(f => ({ ...f, sort_order: e.target.value }))}
+          />
         </Field>
-        <Field label="Description">
-          <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-            style={inputSt} placeholder="Optional" />
+        <Field label="Description" htmlFor="inline-edit-desc">
+          <Input
+            id="inline-edit-desc"
+            value={form.description}
+            onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+            placeholder="Optional"
+          />
         </Field>
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
-        <button
-          onClick={async () => { if (!form.name.trim()) return; setSaving(true); await onSave(); setSaving(false) }}
+        <Button
+          type="button"
+          variant="primary"
           disabled={!form.name.trim() || saving}
-          style={btnStyle(saving || !form.name.trim() ? P.light : P.green, '0.82rem')}
+          loading={saving}
+          loadingLabel="Saving…"
+          onClick={async () => { if (!form.name.trim()) return; setSaving(true); await onSave(); setSaving(false) }}
         >
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-        <button onClick={onCancel} style={btnStyle('#888', '0.82rem')}>Cancel</button>
+          Save
+        </Button>
+        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
       </div>
     </div>
   )
@@ -446,18 +469,24 @@ function AddChildForm({ parentLoc, form, setForm, onSave, onCancel }) {
         New {childLabel} under <em style={{ color: P.dark }}>{parentLoc.name}</em>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, marginBottom: 9 }}>
-        <Field label="Name *">
-          <input
+        <Field label="Name" htmlFor="add-child-name" required>
+          <Input
+            id="add-child-name"
+            required
             value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value, slug: slugify(e.target.value) }))}
-            style={inputSt} placeholder={`${childLabel} name`} autoFocus
+            placeholder={`${childLabel} name`}
+            autoFocus
           />
         </Field>
-        <Field label="Type">
-          <select value={form.type_label} onChange={e => setForm(f => ({ ...f, type_label: e.target.value }))} style={inputSt}>
-            <option value="">— optional —</option>
-            {LOCATION_TYPE_LABELS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
+        <Field label="Type" htmlFor="add-child-type">
+          <Select
+            id="add-child-type"
+            value={form.type_label}
+            onChange={e => setForm(f => ({ ...f, type_label: e.target.value }))}
+            placeholder="— optional —"
+            options={LOCATION_TYPE_LABELS}
+          />
         </Field>
       </div>
       {form.slug && (
@@ -466,14 +495,17 @@ function AddChildForm({ parentLoc, form, setForm, onSave, onCancel }) {
         </div>
       )}
       <div style={{ display: 'flex', gap: 8 }}>
-        <button
-          onClick={async () => { if (!form.name.trim()) return; setSaving(true); await onSave(); setSaving(false) }}
+        <Button
+          type="button"
+          variant="primary"
           disabled={!form.name.trim() || saving}
-          style={btnStyle(saving || !form.name.trim() ? P.light : P.green, '0.82rem')}
+          loading={saving}
+          loadingLabel="Saving…"
+          onClick={async () => { if (!form.name.trim()) return; setSaving(true); await onSave(); setSaving(false) }}
         >
-          {saving ? 'Saving…' : `Add ${childLabel}`}
-        </button>
-        <button onClick={onCancel} style={btnStyle('#888', '0.82rem')}>Cancel</button>
+          Add {childLabel}
+        </Button>
+        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
       </div>
     </div>
   )
@@ -486,38 +518,50 @@ function AddLocationForm({ form, setForm, withPaths, levelLabel, saving, formErr
       <h2 style={{ margin: '0 0 14px', fontSize: '0.92rem', fontWeight: 700, color: P.dark }}>
         Add location — will be: <span style={{ color: P.green }}>{levelLabel}</span>
       </h2>
-      {formError && <ErrBanner msg={formError} />}
+      <ErrorBanner style={{ marginBottom: 14 }}>{formError}</ErrorBanner>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-        <Field label="Name *">
-          <input
-            required value={form.name}
+        <Field label="Name" htmlFor="add-loc-name" required>
+          <Input
+            id="add-loc-name"
+            required
+            value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value, slug: slugify(e.target.value) }))}
-            style={inputSt} placeholder="e.g. Indoor Rack"
+            placeholder="e.g. Indoor Rack"
           />
         </Field>
-        <Field label="Type">
-          <select value={form.type_label} onChange={e => setForm(f => ({ ...f, type_label: e.target.value }))} style={inputSt}>
-            <option value="">— optional —</option>
-            {LOCATION_TYPE_LABELS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
+        <Field label="Type" htmlFor="add-loc-type">
+          <Select
+            id="add-loc-type"
+            value={form.type_label}
+            onChange={e => setForm(f => ({ ...f, type_label: e.target.value }))}
+            placeholder="— optional —"
+            options={LOCATION_TYPE_LABELS}
+          />
         </Field>
       </div>
-      <Field label="Parent">
-        <select value={form.parent_id} onChange={e => setForm(f => ({ ...f, parent_id: e.target.value }))} style={inputSt}>
-          <option value="">— None (creates a Zone) —</option>
-          {withPaths.filter(l => l.level < 3 && l.is_active).map(l => (
-            <option key={l.id} value={l.id}>{l.full_path}</option>
-          ))}
-        </select>
+      <Field label="Parent" htmlFor="add-loc-parent" style={{ marginBottom: form.slug ? 0 : 12 }}>
+        <Select
+          id="add-loc-parent"
+          value={form.parent_id}
+          onChange={e => setForm(f => ({ ...f, parent_id: e.target.value }))}
+          placeholder="— None (creates a Zone) —"
+          options={withPaths.filter(l => l.level < 3 && l.is_active).map(l => ({ value: l.id, label: l.full_path }))}
+        />
       </Field>
       {form.slug && (
         <div style={{ fontSize: '0.71rem', color: P.light, fontFamily: 'monospace', margin: '8px 0 12px' }}>
           Slug: /{form.slug}
         </div>
       )}
-      <button type="submit" disabled={!form.name.trim() || saving} style={btnStyle(saving || !form.name.trim() ? P.light : P.green)}>
-        {saving ? 'Creating…' : 'Create location'}
-      </button>
+      <Button
+        type="submit"
+        variant="primary"
+        disabled={!form.name.trim() || saving}
+        loading={saving}
+        loadingLabel="Creating…"
+      >
+        Create location
+      </Button>
     </form>
   )
 }
@@ -533,25 +577,6 @@ function Shell({ children }) {
   )
 }
 
-function Field({ label, children }) {
-  return (
-    <div>
-      <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: P.mid, marginBottom: 4 }}>
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
-
-function ErrBanner({ msg }) {
-  return (
-    <div style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 14, fontSize: '0.84rem', color: '#7a2a10' }}>
-      {msg}
-    </div>
-  )
-}
-
 function EmptyState() {
   return (
     <div style={{ textAlign: 'center', color: P.light, padding: '40px 16px', fontSize: '0.875rem', background: P.white, border: `1px solid ${P.border}`, borderRadius: 8 }}>
@@ -559,15 +584,3 @@ function EmptyState() {
     </div>
   )
 }
-
-const inputSt = {
-  width: '100%', padding: '8px 10px', border: `1px solid ${P.border}`,
-  borderRadius: 6, fontSize: '0.875rem', background: P.white,
-  boxSizing: 'border-box', fontFamily: 'inherit',
-}
-
-const btnStyle = (bg, size = '0.875rem') => ({
-  background: bg, color: P.white, border: 'none', borderRadius: 6,
-  padding: '9px 18px', fontSize: size, fontWeight: 600,
-  cursor: (bg === P.light || bg === '#888') ? 'not-allowed' : 'pointer',
-})

@@ -6,6 +6,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES, projectKindOptions } from '../lib/constants.js'
 import { VARIETY_REF_UI_SHIPPED } from '../lib/featureFlags.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
+import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
 
 function slugify(str) {
   return str.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -121,7 +122,7 @@ export default function ProjectNew() {
         </div>
         <h1 style={{ margin: '0 0 24px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>New project</h1>
 
-        {error && <ErrBanner msg={error} />}
+        <ErrorBanner>{error}</ErrorBanner>
 
         {/* ── Type picker ── */}
         {projectTypes.length > 0 && (
@@ -155,7 +156,7 @@ export default function ProjectNew() {
         )}
 
         {/* ── Main form ── */}
-        <form onSubmit={handleSubmit} style={cardStyle}>
+        <form onSubmit={handleSubmit} style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 28 }}>
 
           {selectedType && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, padding: '8px 12px', backgroundColor: P.greenPale, borderRadius: 8, border: `1px solid ${P.greenLight}` }}>
@@ -165,101 +166,98 @@ export default function ProjectNew() {
             </div>
           )}
 
-          <FormRow label="Project name *">
-            <input required value={form.name} onChange={e => handleNameChange(e.target.value)} style={inputStyle}
+          <Field label="Project name *" style={{ marginBottom: 16 }}>
+            <Input required value={form.name} onChange={e => handleNameChange(e.target.value)}
               placeholder={selectedType ? `e.g. ${selectedType.name} 2026` : 'e.g. Peppers 2026'} />
-          </FormRow>
+          </Field>
 
           {/* V1.2a-4 S1 (PROJ-RESCOPE / V102 §5.1 #2): project kind classifier.
               cultivar option is gated behind VARIETY_REF_UI_SHIPPED — flips true when
               VARIETY-REF S4 lands the Cultivar-as-first-class flow. */}
-          <FormRow label="What kind of project is this?">
-            <select
+          <Field label="What kind of project is this?" style={{ marginBottom: 16 }}>
+            <Select
               value={form.kind}
               onChange={e => setForm(f => ({ ...f, kind: e.target.value }))}
-              style={inputStyle}
             >
               <option value="">— Not sure yet —</option>
               {projectKindOptions(VARIETY_REF_UI_SHIPPED).map(o => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
-            </select>
+            </Select>
             {!VARIETY_REF_UI_SHIPPED && (
               <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
                 Just a planting for now — cultivars get a better home soon.
               </small>
             )}
-          </FormRow>
+          </Field>
 
           {/* V1.2a-4 S1: target_end_date is optional and only meaningful for campaigns. */}
-          <FormRow label="Target end date (optional)">
-            <input type="date" value={form.target_end_date}
-              onChange={e => setForm(f => ({ ...f, target_end_date: e.target.value }))}
-              style={inputStyle} />
+          <Field label="Target end date (optional)" style={{ marginBottom: 16 }}>
+            <Input type="date" value={form.target_end_date}
+              onChange={e => setForm(f => ({ ...f, target_end_date: e.target.value }))} />
             <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
               When do you expect this to wrap? Leave blank if open-ended.
             </small>
-          </FormRow>
+          </Field>
 
           {/* ── Parent project picker ── */}
-          <FormRow label="Nest under another project?">
-            <select
+          <Field label="Nest under another project?" style={{ marginBottom: 16 }}>
+            <Select
               value={form.parent_project_id}
               onChange={e => setForm(f => ({ ...f, parent_project_id: e.target.value }))}
-              style={inputStyle}
             >
               <option value="">None — top-level project</option>
               <ProjectOptions projects={allProjects} />
-            </select>
+            </Select>
             <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
               Optional — leave blank for a top-level project.
             </small>
-          </FormRow>
+          </Field>
 
-          <FormRow label="Slug  ·  used in public URL: /garden/{slug}">
-            <input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value }))} style={inputStyle} placeholder="auto-generated" />
+          <Field label="Slug  ·  used in public URL: /garden/{slug}" style={{ marginBottom: 16 }}>
+            <Input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value }))} placeholder="auto-generated" />
             <small style={{ fontSize: '0.75rem', color: P.light }}>
               URL: garden.futureishere.net/garden/{form.slug || '…'}
             </small>
-          </FormRow>
+          </Field>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <FormRow label="Variety">
-              <input value={form.variety} onChange={e => setForm(f => ({ ...f, variety: e.target.value }))} style={inputStyle} placeholder="e.g. Shishito" />
-            </FormRow>
-            <FormRow label="Species">
-              <input value={form.species} onChange={e => setForm(f => ({ ...f, species: e.target.value }))} style={inputStyle} placeholder="e.g. Capsicum annuum" />
-            </FormRow>
+            <Field label="Variety" style={{ marginBottom: 16 }}>
+              <Input value={form.variety} onChange={e => setForm(f => ({ ...f, variety: e.target.value }))} placeholder="e.g. Shishito" />
+            </Field>
+            <Field label="Species" style={{ marginBottom: 16 }}>
+              <Input value={form.species} onChange={e => setForm(f => ({ ...f, species: e.target.value }))} placeholder="e.g. Capsicum annuum" />
+            </Field>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <FormRow label="Start date">
-              <input type="date" value={form.start_date} onChange={e => handleDateChange(e.target.value)} style={inputStyle} />
-            </FormRow>
-            <FormRow label="Status">
-              <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inputStyle}>
+            <Field label="Start date" style={{ marginBottom: 16 }}>
+              <Input type="date" value={form.start_date} onChange={e => handleDateChange(e.target.value)} />
+            </Field>
+            <Field label="Status" style={{ marginBottom: 16 }}>
+              <Select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
                 {[...PROJECT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </FormRow>
+              </Select>
+            </Field>
           </div>
 
-          <FormRow label="Location">
-            <select value={form.location_id} onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))} style={inputStyle}>
+          <Field label="Location" style={{ marginBottom: 16 }}>
+            <Select value={form.location_id} onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))}>
               <option value="">— None —</option>
               {locations.map(l => <option key={l.id} value={l.id}>{l.full_path}</option>)}
-            </select>
+            </Select>
             {locations.length === 0 && (
               <small style={{ fontSize: '0.75rem', color: P.terra }}>
                 No locations yet — <Link to="/locations" style={{ color: P.terra }}>create zones first</Link>.
               </small>
             )}
-          </FormRow>
+          </Field>
 
-          <FormRow label="Description  ·  shown on public page">
-            <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              style={{ ...inputStyle, height: 80, resize: 'vertical' }}
+          <Field label="Description  ·  shown on public page" style={{ marginBottom: 16 }}>
+            <Textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              rows={3}
               placeholder="Optional — shown publicly if project is public" />
-          </FormRow>
+          </Field>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
             <input id="is_public" type="checkbox" checked={form.is_public}
@@ -271,10 +269,10 @@ export default function ProjectNew() {
           </div>
 
           <div style={{ display: 'flex', gap: 12, marginTop: 8, paddingTop: 20, borderTop: `1px solid ${P.border}` }}>
-            <button type="submit" disabled={saving} style={primaryBtn(saving)}>
-              {saving ? 'Creating…' : 'Create project'}
-            </button>
-            <Link to="/projects" style={cancelLink}>Cancel</Link>
+            <Button type="submit" variant="primary" loading={saving} loadingLabel="Creating…">
+              Create project
+            </Button>
+            <Link to="/projects" style={{ display: 'inline-flex', alignItems: 'center', color: P.mid, textDecoration: 'none', fontSize: '0.9rem' }}>Cancel</Link>
           </div>
         </form>
       </div>
@@ -296,31 +294,3 @@ function TypeChip({ type: t, selected, onSelect }) {
     </button>
   )
 }
-
-function ErrBanner({ msg }) {
-  return (
-    <div role="alert" style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: '0.875rem', color: '#7a2a10' }}>
-      {msg}
-    </div>
-  )
-}
-function FormRow({ label, children }) {
-  const fid = React.useId()
-  const kids = React.Children.toArray(children)
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <label htmlFor={fid} style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>{label}</label>
-      {React.isValidElement(kids[0]) ? React.cloneElement(kids[0], { id: fid }) : kids[0]}
-      {kids.slice(1)}
-    </div>
-  )
-}
-const primaryBtn = (disabled) => ({
-  backgroundColor: disabled ? P.light : P.green,
-  color: P.white, border: 'none', borderRadius: 6,
-  padding: '10px 22px', fontSize: '0.9rem', fontWeight: 600,
-  cursor: disabled ? 'not-allowed' : 'pointer',
-})
-const cancelLink = { display: 'inline-flex', alignItems: 'center', color: P.mid, textDecoration: 'none', fontSize: '0.9rem' }
-const inputStyle = { width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }
-const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 28 }

@@ -10,6 +10,8 @@ import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
+import { Field, Input, Select, Textarea, Button } from '../components/forms/index.js'
+import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS } from '../lib/dropdownRegistry.js'
 
 // V3-EVENT-008: EVENT_TYPE_META lives in the canonical src/lib/eventTypes.js
 // (single source of truth). Re-exported here so existing importers from
@@ -17,55 +19,6 @@ import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 export { EVENT_TYPE_META }
 
 export { EVENT_TYPES_UI, SECONDARY_GROUPS }
-
-// Per-type metadata field definitions for Tier 2 enrichment
-const EVENT_METADATA_FIELDS = {
-  sowing:        [
-    { key: 'depth_cm',                  label: 'Sowing depth (cm)',        type: 'number' },
-    { key: 'spacing_cm',                label: 'Spacing (cm)',              type: 'number' },
-    { key: 'germination_expected_days', label: 'Expected germination (days)', type: 'number' },
-  ],
-  germination:   [
-    { key: 'days_to_germinate',      label: 'Days to germinate',    type: 'number' },
-    { key: 'germination_rate_pct',   label: 'Germination rate (%)', type: 'number' },
-  ],
-  observation:   [
-    { key: 'height_cm',   label: 'Height (cm)',  type: 'number' },
-    { key: 'leaf_count',  label: 'Leaf count',   type: 'number' },
-    { key: 'health',      label: 'Health',        type: 'select', options: ['excellent', 'good', 'fair', 'poor', 'critical'] },
-  ],
-  watering:      [
-    { key: 'amount_ml', label: 'Amount (ml)', type: 'number' },
-  ],
-  fertilizing:   [
-    { key: 'product',   label: 'Product / mix',   type: 'text' },
-    { key: 'dilution',  label: 'Dilution ratio',  type: 'text' },
-    { key: 'amount_ml', label: 'Amount (ml)',      type: 'number' },
-  ],
-  harvest:       [
-    { key: 'weight_g', label: 'Weight (g)', type: 'number' },
-    { key: 'count',    label: 'Count',      type: 'number' },
-    { key: 'quality',  label: 'Quality',    type: 'select', options: ['excellent', 'good', 'fair', 'poor'] },
-  ],
-  first_harvest: [
-    { key: 'weight_g', label: 'Weight (g)', type: 'number' },
-    { key: 'count',    label: 'Count',      type: 'number' },
-  ],
-  pest_treatment: [
-    { key: 'pest',      label: 'Pest / disease', type: 'text' },
-    { key: 'treatment', label: 'Treatment used', type: 'text' },
-  ],
-}
-
-
-// V1.2a-2 Wave 3: harvest panel — anchored quality scale (NOT a star widget).
-const HARVEST_QUALITY_LABELS = {
-  1: 'inedible',
-  2: 'poor',
-  3: 'acceptable',
-  4: 'good',
-  5: 'excellent',
-}
 
 const DEFAULT_HARVEST_UNIT = 'count'
 
@@ -88,18 +41,18 @@ function friendlyError(err) {
     return 'Quantity is unusually high — double-check?'
   }
   if (/quantity must be a positive/i.test(raw)) {
-    return 'Quantity doesn’t look right — check the form and try again.'
+    return "Quantity doesn't look right — check the form and try again."
   }
   if (typeof status === 'number') {
     if (status >= 400 && status < 500) {
-      return 'Something didn’t look right — check the form and try again.'
+      return "Something didn't look right — check the form and try again."
     }
     if (status >= 500) {
-      return 'Couldn’t save — try again.'
+      return "Couldn't save — try again."
     }
   }
   // Network errors (no status) and anything unmapped.
-  return 'Couldn’t save — try again.'
+  return "Couldn't save — try again."
 }
 
 function toDatetimeLocal(date) {
@@ -209,22 +162,20 @@ function MetadataSection({ eventType, metadataState, onMetadataChange }) {
                 {field.label}
               </label>
               {field.type === 'select' ? (
-                <select
+                <Select
                   value={metadataState[field.key] ?? ''}
                   onChange={e => onMetadataChange(field.key, e.target.value || undefined)}
-                  style={selectStyle}
                 >
                   <option value="">— optional —</option>
                   {[...field.options].sort((a, b) => String(a).localeCompare(String(b))).map(opt => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
-                </select>
+                </Select>
               ) : (
-                <input
+                <Input
                   type={field.type}
                   value={metadataState[field.key] ?? ''}
                   onChange={e => onMetadataChange(field.key, e.target.value === '' ? undefined : e.target.value)}
-                  style={inputStyle}
                   placeholder="optional"
                   min={field.type === 'number' ? 0 : undefined}
                 />
@@ -552,11 +503,11 @@ export default function EventNew() {
           {/* ── Notes ── */}
           <Section label="Notes">
             <div style={{ position: 'relative' }}>
-              <textarea
+              <Textarea
                 value={form.notes}
                 onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                 aria-label="Notes"
-                style={{ ...inputStyle, height: 90, resize: 'vertical', paddingRight: 44 }}
+                style={{ height: 90, resize: 'vertical', paddingRight: 44 }}
                 placeholder="Notes (optional — leave blank to save)"
               />
               <MicBtn
@@ -571,15 +522,14 @@ export default function EventNew() {
 
           {/* ── Project ── */}
           <Section label="Project *">
-            <select
+            <Select
               value={form.project_id}
               onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))}
               aria-label="Project"
-              style={selectStyle}
             >
               <option value="">— Select project —</option>
               <ProjectOptions projects={projects} />
-            </select>
+            </Select>
             {projects.length === 0 && (
               <small style={{ color: P.terra, fontSize: '0.75rem', display: 'block', marginTop: 6 }}>
                 No active projects — <Link to="/projects/new" style={{ color: P.terra }}>create one first</Link>.
@@ -589,12 +539,12 @@ export default function EventNew() {
 
           {/* ── Plant / Group — V3-EVENT-005: ever-present, disabled until project chosen ── */}
           <Section label="Plant / Group (optional)">
-            <select
+            <Select
               value={form.plant_id}
               onChange={e => setForm(f => ({ ...f, plant_id: e.target.value }))}
               aria-label="Plant or group"
               disabled={!form.project_id}
-              style={{ ...selectStyle, opacity: form.project_id ? 1 : 0.5 }}
+              style={{ opacity: form.project_id ? 1 : 0.5 }}
             >
               {form.project_id ? (
                 <>
@@ -608,7 +558,7 @@ export default function EventNew() {
               ) : (
                 <option value="">— select a project first —</option>
               )}
-            </select>
+            </Select>
           </Section>
 
           {/* ── Tier 2: per-type metadata enrichment (collapsible) ── */}
@@ -623,46 +573,46 @@ export default function EventNew() {
             <Section label="Harvest *">
               <div style={{ display: 'flex', gap: 10 }}>
                 <div style={{ flex: 2 }}>
-                  <label htmlFor="harvest-quantity" style={fieldLabelStyle}>
-                    Quantity *
-                  </label>
-                  <input
-                    id="harvest-quantity"
-                    type="text"
-                    inputMode="decimal"
-                    value={harvest.quantity}
-                    onChange={e => {
-                      setHarvest(h => ({ ...h, quantity: e.target.value }))
-                      if (harvestError) setHarvestError(null)
-                    }}
-                    aria-label="Harvest quantity"
-                    style={inputStyle}
-                    placeholder="e.g. 2.5"
-                  />
+                  <Field label="Quantity *" htmlFor="harvest-quantity">
+                    <Input
+                      id="harvest-quantity"
+                      type="text"
+                      inputMode="decimal"
+                      value={harvest.quantity}
+                      onChange={e => {
+                        setHarvest(h => ({ ...h, quantity: e.target.value }))
+                        if (harvestError) setHarvestError(null)
+                      }}
+                      aria-label="Harvest quantity"
+                      error={!!harvestError}
+                      placeholder="e.g. 2.5"
+                    />
+                  </Field>
                 </div>
                 <div style={{ flex: 1 }}>
-                  <label htmlFor="harvest-unit" style={fieldLabelStyle}>
-                    Unit
-                  </label>
-                  <select
-                    id="harvest-unit"
-                    value={harvest.unit}
-                    onChange={e => setHarvest(h => ({ ...h, unit: e.target.value }))}
-                    aria-label="Harvest unit"
-                    style={{ ...selectStyle, minHeight: 44, minWidth: 44 }}
-                  >
-                    {[...HARVEST_UNITS].sort((a, b) => a.localeCompare(b)).map(u => (
-                      <option key={u} value={u}>{u}</option>
-                    ))}
-                  </select>
+                  <Field label="Unit" htmlFor="harvest-unit">
+                    <Select
+                      id="harvest-unit"
+                      value={harvest.unit}
+                      onChange={e => setHarvest(h => ({ ...h, unit: e.target.value }))}
+                      aria-label="Harvest unit"
+                      style={{ minHeight: 44, minWidth: 44 }}
+                    >
+                      {[...HARVEST_UNITS].sort((a, b) => a.localeCompare(b)).map(u => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </Select>
+                  </Field>
                 </div>
               </div>
               {harvestError && (
-                <div role="alert" style={inlineErrorStyle}>{harvestError}</div>
+                <div role="alert" style={{ marginTop: 6, fontSize: '0.78rem', color: P.terra, fontWeight: 600 }}>{harvestError}</div>
               )}
 
               <div style={{ marginTop: 16 }}>
-                <label style={fieldLabelStyle}>Quality  ·  optional</label>
+                <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: P.light, marginBottom: 6, letterSpacing: '0.3px', textTransform: 'uppercase' }}>
+                  Quality  ·  optional
+                </label>
                 <div role="radiogroup" aria-label="Harvest quality" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {[1, 2, 3, 4, 5].map(n => (
                     <label key={n} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem', color: P.mid }}>
@@ -711,13 +661,15 @@ export default function EventNew() {
                 {/* Quantity (hidden for harvest — superseded by the harvest panel) */}
                 {form.event_type !== 'harvest' && (
                   <div>
-                    <label style={fieldLabelStyle}>Quantity  ·  optional</label>
+                    <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: P.light, marginBottom: 6, letterSpacing: '0.3px', textTransform: 'uppercase' }}>
+                      Quantity  ·  optional
+                    </label>
                     <div style={{ position: 'relative' }}>
-                      <input
+                      <Input
                         value={form.quantity}
                         onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
                         aria-label="Quantity"
-                        style={{ ...inputStyle, paddingRight: 44 }}
+                        style={{ paddingRight: 44 }}
                         placeholder="e.g. 3 plants, 500ml, 1 tray"
                       />
                       <MicBtn
@@ -755,11 +707,11 @@ export default function EventNew() {
                   </button>
                   {showPrivate && (
                     <div style={{ position: 'relative', marginTop: 10 }}>
-                      <textarea
+                      <Textarea
                         value={form.private_notes}
                         onChange={e => setForm(f => ({ ...f, private_notes: e.target.value }))}
                         aria-label="Private notes"
-                        style={{ ...inputStyle, height: 72, resize: 'vertical', paddingRight: 44 }}
+                        style={{ height: 72, resize: 'vertical', paddingRight: 44 }}
                         placeholder="Dosage, concerns, anomalies — internal only"
                       />
                       <MicBtn
@@ -849,23 +801,23 @@ export default function EventNew() {
 
           {/* ── Date / time ── */}
           <Section label="When?">
-            <input
+            <Input
               type="datetime-local"
               value={form.event_date}
               onChange={e => setForm(f => ({ ...f, event_date: e.target.value }))}
               aria-label="Event date and time"
-              style={inputStyle}
             />
           </Section>
 
           {/* ── Floating Save — V3-EVENT-005 (Dave to eyeball bottom offset) ── */}
           {/* Spacer so content isn't hidden behind the fixed button */}
           <div style={{ height: 72 }} aria-hidden="true" />
-          <button
+          <Button
             type="submit"
-            disabled={saving}
+            variant="primary"
+            loading={saving}
+            loadingLabel="Saving…"
             style={{
-              ...primaryBtn(saving),
               position: 'fixed',
               bottom: 68,
               right: 20,
@@ -874,8 +826,8 @@ export default function EventNew() {
               minWidth: 140,
             }}
           >
-            {saving ? 'Saving…' : '+ Log event'}
-          </button>
+            + Log event
+          </Button>
 
         </form>
       </div>
@@ -994,42 +946,3 @@ function SuccessScreen({ success, onDashboard }) {
     </div>
   )
 }
-
-const inputStyle = {
-  width: '100%', padding: '10px 12px',
-  border: `1px solid ${P.border}`,
-  borderRadius: 7, fontSize: '0.9rem',
-  backgroundColor: P.white,
-  boxSizing: 'border-box',
-  fontFamily: 'inherit',
-}
-
-// V1.2a-2 Wave 3: inline sub-field label (lighter than the Section <label>).
-const fieldLabelStyle = {
-  display: 'block', fontSize: '0.74rem', fontWeight: 700,
-  color: P.light, marginBottom: 6,
-  letterSpacing: '0.3px', textTransform: 'uppercase',
-}
-
-// V1.2a-2 Wave 3: inline validation error anchored beneath a field.
-const inlineErrorStyle = {
-  marginTop: 6, fontSize: '0.78rem', color: P.terra, fontWeight: 600,
-}
-
-const selectStyle = {
-  ...inputStyle,
-  appearance: 'none',
-  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23777' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
-  backgroundRepeat: 'no-repeat',
-  backgroundPosition: 'right 12px center',
-  paddingRight: 36,
-  cursor: 'pointer',
-}
-
-const primaryBtn = (disabled) => ({
-  backgroundColor: disabled ? P.light : P.green,
-  color: P.white, border: 'none', borderRadius: 8,
-  padding: '13px 30px', fontSize: '0.95rem', fontWeight: 700,
-  cursor: disabled ? 'not-allowed' : 'pointer',
-  minWidth: 130,
-})

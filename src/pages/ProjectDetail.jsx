@@ -14,7 +14,7 @@ import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { loadSortOrder, saveSortOrder, applyNameSort } from '../lib/projectTree.js'
 import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
-import { PlantForm } from '../components/forms'
+import { PlantForm, Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
 
 
 function todayLocal() {
@@ -450,13 +450,12 @@ export default function ProjectDetail() {
       {editing ? (
         <form onSubmit={handleSave} style={cardStyle}>
           <h2 style={{ margin: '0 0 18px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>Edit project</h2>
-          {saveErr && <ErrBanner msg={saveErr} />}
+          <ErrorBanner>{saveErr}</ErrorBanner>
 
-          <FormRow label="Name *">
-            <input required value={form.name}
-              onChange={e => setForm(f => ({ ...f, name: e.target.value, slug: generateSlug(e.target.value, f.start_date) }))}
-              style={inputStyle} />
-          </FormRow>
+          <Field label="Name *" style={{ marginBottom: 14 }}>
+            <Input required value={form.name}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value, slug: generateSlug(e.target.value, f.start_date) }))} />
+          </Field>
 
           {/* BUG-08 (2.1.1): Slug input hidden from the edit form — humans don't need it now.
               Slug is still auto-generated from name/start_date (generateSlug calls below) and
@@ -470,46 +469,44 @@ export default function ProjectDetail() {
               longer sends it, so COALESCE keeps it) but is no longer user-editable here. */}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <FormRow label="Start date">
-              <input type="date" value={form.start_date}
-                onChange={e => setForm(f => ({ ...f, start_date: e.target.value, slug: generateSlug(f.name, e.target.value) }))}
-                style={inputStyle} />
-            </FormRow>
-            <FormRow label="Status">
-              <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={inputStyle}>
+            <Field label="Start date" style={{ marginBottom: 14 }}>
+              <Input type="date" value={form.start_date}
+                onChange={e => setForm(f => ({ ...f, start_date: e.target.value, slug: generateSlug(f.name, e.target.value) }))} />
+            </Field>
+            <Field label="Status" style={{ marginBottom: 14 }}>
+              <Select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
                 {[...PROJECT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </FormRow>
+              </Select>
+            </Field>
           </div>
 
-          <FormRow label="Location">
-            <select value={form.location_id} onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))} style={inputStyle}>
+          <Field label="Location" style={{ marginBottom: 14 }}>
+            <Select value={form.location_id} onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))}>
               <option value="">— None —</option>
               {locations.map(l => <option key={l.id} value={l.id}>{l.full_path}</option>)}
-            </select>
-          </FormRow>
+            </Select>
+          </Field>
 
           {/* ── Re-parent picker ── */}
-          <FormRow label="Nest under another project?">
-            <select
+          <Field label="Nest under another project?" style={{ marginBottom: 14 }}>
+            <Select
               value={form.parent_project_id}
               onChange={e => setForm(f => ({ ...f, parent_project_id: e.target.value }))}
-              style={inputStyle}
             >
               <option value="">None — top-level project</option>
               {allProjects.map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
-            </select>
+            </Select>
             <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
               Optional — leave blank for a top-level project.
             </small>
-          </FormRow>
+          </Field>
 
-          <FormRow label="Description">
-            <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              style={{ ...inputStyle, height: 80, resize: 'vertical' }} />
-          </FormRow>
+          <Field label="Description" style={{ marginBottom: 14 }}>
+            <Textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              rows={3} />
+          </Field>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
             <input id="edit_public" type="checkbox" checked={form.is_public}
@@ -519,10 +516,10 @@ export default function ProjectDetail() {
           </div>
 
           <div style={{ display: 'flex', gap: 12, paddingTop: 16, borderTop: `1px solid ${P.border}` }}>
-            <button type="submit" disabled={saving} style={primaryBtn(saving)}>
-              {saving ? 'Saving…' : 'Save changes'}
-            </button>
-            <button type="button" onClick={() => setEditing(false)} style={ghostBtn}>Cancel</button>
+            <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
+              Save changes
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => setEditing(false)}>Cancel</Button>
           </div>
         </form>
       ) : (

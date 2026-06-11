@@ -5,6 +5,7 @@ import { P, EVENT_TYPES } from '../lib/constants.js'
 import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
+import { Field, Input, Select, Textarea, Button } from '../components/forms/index.js'
 
 
 // Shared metadata field label map — mirrors EVENT_METADATA_FIELDS keys from EventNew
@@ -154,65 +155,67 @@ export default function EventDetail() {
           <h2 style={{ margin: '0 0 18px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>Edit event</h2>
           {saveErr && <ErrBanner msg={saveErr} />}
 
-          <FormRow label="Event type *">
-            <select
+          <Field label="Event type *" htmlFor="ev-event-type" style={{ marginBottom: 14 }}>
+            <Select
+              id="ev-event-type"
               value={form.event_type}
               onChange={e => setForm(f => ({ ...f, event_type: e.target.value }))}
-              style={inputStyle}
             >
               {[...EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
                 <option key={t} value={t}>
                   {(EVENT_TYPE_META[t]?.emoji ?? '📝') + ' ' + t.replace(/_/g, ' ')}
                 </option>
               ))}
-            </select>
-          </FormRow>
+            </Select>
+          </Field>
 
-          <FormRow label="Date *">
-            <input
+          <Field label="Date *" htmlFor="ev-event-date" style={{ marginBottom: 14 }}>
+            <Input
+              id="ev-event-date"
               type="date"
               required
               value={form.event_date}
               onChange={e => setForm(f => ({ ...f, event_date: e.target.value }))}
-              style={inputStyle}
             />
-          </FormRow>
+          </Field>
 
-          <FormRow label="Title (optional)">
-            <input
+          <Field label="Title (optional)" htmlFor="ev-title" style={{ marginBottom: 14 }}>
+            <Input
+              id="ev-title"
               value={form.title}
               onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
               placeholder="e.g. First true leaves visible"
-              style={inputStyle}
             />
-          </FormRow>
+          </Field>
 
-          <FormRow label="Quantity (optional)">
-            <input
+          <Field label="Quantity (optional)" htmlFor="ev-quantity" style={{ marginBottom: 14 }}>
+            <Input
+              id="ev-quantity"
               value={form.quantity}
               onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
               placeholder="e.g. 6 plants"
-              style={inputStyle}
             />
-          </FormRow>
+          </Field>
 
-          <FormRow label="Notes (public)">
-            <textarea
+          <Field label="Notes (public)" htmlFor="ev-notes" style={{ marginBottom: 14 }}>
+            <Textarea
+              id="ev-notes"
               value={form.notes}
               onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
               placeholder="Visible on public page…"
-              style={{ ...inputStyle, height: 80, resize: 'vertical' }}
+              style={{ height: 80, resize: 'vertical' }}
             />
-          </FormRow>
+          </Field>
 
-          <FormRow label="Private notes (never public)">
-            <textarea
+          <Field label="Private notes (never public)" htmlFor="ev-private-notes" style={{ marginBottom: 14 }}>
+            <Textarea
+              id="ev-private-notes"
               value={form.private_notes}
               onChange={e => setForm(f => ({ ...f, private_notes: e.target.value }))}
               placeholder="Dosage, stress signs, anything you don't want to share…"
-              style={{ ...inputStyle, height: 72, resize: 'vertical', borderColor: P.warnBorder, backgroundColor: P.warn }}
+              style={{ height: 72, resize: 'vertical', borderColor: P.warnBorder, backgroundColor: P.warn }}
             />
-          </FormRow>
+          </Field>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
             <input
@@ -228,16 +231,16 @@ export default function EventDetail() {
           </div>
 
           <div style={{ display: 'flex', gap: 12, paddingTop: 16, borderTop: `1px solid ${P.border}` }}>
-            <button type="submit" disabled={saving} style={primaryBtn(saving)}>
-              {saving ? 'Saving…' : 'Save changes'}
-            </button>
-            <button
+            <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
+              Save changes
+            </Button>
+            <Button
               type="button"
+              variant="secondary"
               onClick={() => setEditing(false)}
-              style={{ ...primaryBtn(false), backgroundColor: 'transparent', color: P.mid, border: `1px solid ${P.border}` }}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </form>
       ) : (
@@ -353,18 +356,5 @@ function ErrBanner({ msg }) {
   )
 }
 
-function FormRow({ label, children }) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
-
-const inputStyle = { width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }
 const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 24 }
-const primaryBtn = (disabled) => ({ backgroundColor: disabled ? P.light : P.green, color: P.white, border: 'none', borderRadius: 6, padding: '9px 20px', fontSize: '0.88rem', fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer' })
 const outlineBtn = { backgroundColor: 'transparent', color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 6, padding: '7px 18px', fontSize: '0.85rem', cursor: 'pointer' }
