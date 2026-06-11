@@ -6,7 +6,7 @@ import { P } from '../lib/constants.js'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS, INVENTORY_STATUSES as STATUSES } from '../lib/inventoryEnums.js'
-import { EnumSelect } from '../components/forms'
+import { EnumSelect, Field, Input, Textarea, Button } from '../components/forms'
 
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
 // the former local duplicates here were removed (Lane D dedup).
@@ -250,10 +250,10 @@ export default function InventoryDetail() {
             <div style={groupLabel}>Item details</div>
 
             <Field label="Name" error={errors.name}>
-              <input
+              <Input
                 value={form.name}
                 onChange={e => set('name', e.target.value)}
-                style={inputStyle(!!errors.name)}
+                error={!!errors.name}
               />
             </Field>
 
@@ -279,11 +279,11 @@ export default function InventoryDetail() {
             {isConsumable && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <Field label="Qty on hand" error={errors.quantity_on_hand}>
-                  <input
+                  <Input
                     type="number" min="0" step="any"
                     value={form.quantity_on_hand}
                     onChange={e => set('quantity_on_hand', e.target.value)}
-                    style={inputStyle(!!errors.quantity_on_hand)}
+                    error={!!errors.quantity_on_hand}
                   />
                 </Field>
                 <Field label="Unit">
@@ -300,11 +300,11 @@ export default function InventoryDetail() {
             {/* Durable quantity */}
             {!isConsumable && (
               <Field label="Quantity" error={errors.quantity}>
-                <input
+                <Input
                   type="number" min="1" step="1"
                   value={form.quantity}
                   onChange={e => set('quantity', e.target.value)}
-                  style={inputStyle(!!errors.quantity)}
+                  error={!!errors.quantity}
                 />
               </Field>
             )}
@@ -317,19 +317,17 @@ export default function InventoryDetail() {
             {isConsumable && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <Field label="Reorder when below">
-                  <input
+                  <Input
                     type="number" min="0" step="any"
                     value={form.reorder_threshold}
                     onChange={e => set('reorder_threshold', e.target.value)}
-                    style={inputStyle(false)}
                   />
                 </Field>
                 <Field label="Reorder quantity">
-                  <input
+                  <Input
                     type="number" min="0" step="any"
                     value={form.reorder_quantity}
                     onChange={e => set('reorder_quantity', e.target.value)}
-                    style={inputStyle(false)}
                   />
                 </Field>
               </div>
@@ -347,17 +345,15 @@ export default function InventoryDetail() {
                 </Field>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <Field label="Brand">
-                    <input
+                    <Input
                       value={form.brand}
                       onChange={e => set('brand', e.target.value)}
-                      style={inputStyle(false)}
                     />
                   </Field>
                   <Field label="Model">
-                    <input
+                    <Input
                       value={form.model}
                       onChange={e => set('model', e.target.value)}
-                      style={inputStyle(false)}
                     />
                   </Field>
                 </div>
@@ -365,67 +361,60 @@ export default function InventoryDetail() {
             )}
 
             <Field label="Location">
-              <input
+              <Input
                 value={form.location_text}
                 onChange={e => set('location_text', e.target.value)}
-                style={inputStyle(false)}
                 placeholder="e.g. Stable rack, shelf 2"
               />
             </Field>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Field label="Unit cost ($)">
-                <input
+                <Input
                   type="number" min="0" step="0.01"
                   value={form.unit_cost}
                   onChange={e => set('unit_cost', e.target.value)}
-                  style={inputStyle(false)}
                   placeholder="0.00"
                 />
               </Field>
               <Field label="Qty purchased">
-                <input
+                <Input
                   type="number" min="0" step="any"
                   value={form.quantity_purchased}
                   onChange={e => set('quantity_purchased', e.target.value)}
-                  style={inputStyle(false)}
                 />
               </Field>
             </div>
 
             <Field label="Source">
-              <input
+              <Input
                 value={form.source}
                 onChange={e => set('source', e.target.value)}
-                style={inputStyle(false)}
                 placeholder="Store or vendor name"
               />
             </Field>
 
             <Field label="Source URL">
-              <input
+              <Input
                 type="url"
                 value={form.source_url}
                 onChange={e => set('source_url', e.target.value)}
-                style={inputStyle(false)}
                 placeholder="https://…"
               />
             </Field>
 
             <Field label="Purchase date">
-              <input
+              <Input
                 type="date"
                 value={form.purchase_date}
                 onChange={e => set('purchase_date', e.target.value)}
-                style={inputStyle(false)}
               />
             </Field>
 
             <Field label="Notes">
-              <textarea
+              <Textarea
                 value={form.notes}
                 onChange={e => set('notes', e.target.value)}
-                style={{ ...inputStyle(false), height: 80, resize: 'vertical' }}
               />
             </Field>
           </div>
@@ -433,9 +422,9 @@ export default function InventoryDetail() {
           {/* ── Actions ── */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 4 }}>
             <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
-              <button type="submit" disabled={saving} style={btn(P.green, saving)}>
-                {saving ? 'Saving…' : 'Save changes'}
-              </button>
+              <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
+                Save changes
+              </Button>
               <Link to="/inventory" style={{ color: P.mid, textDecoration: 'none', fontSize: '0.88rem' }}>
                 Cancel
               </Link>
@@ -470,23 +459,20 @@ export default function InventoryDetail() {
                 "{item.name}" will be hidden from your inventory. This can't be undone from the app.
               </p>
               <div style={{ display: 'flex', gap: 12 }}>
-                <button
+                <Button
+                  variant="danger"
+                  loading={deleting}
+                  loadingLabel="Removing…"
                   onClick={handleDelete}
-                  disabled={deleting}
-                  style={btn(P.terra, deleting)}
                 >
-                  {deleting ? 'Removing…' : 'Remove'}
-                </button>
-                <button
+                  Remove
+                </Button>
+                <Button
+                  variant="secondary"
                   onClick={() => setConfirmDelete(false)}
-                  style={{
-                    ...btn(P.mid, false),
-                    backgroundColor: 'transparent', color: P.mid,
-                    border: `1px solid ${P.border}`,
-                  }}
                 >
                   Keep it
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -547,25 +533,6 @@ function PlantFromPacketCTA({ item, onClick }) {
   )
 }
 
-function Field({ label, children, error }) {
-  return (
-    <div>
-      <label style={{
-        display: 'block', fontSize: '0.78rem', fontWeight: 700, color: P.mid,
-        marginBottom: 6, letterSpacing: '0.3px', textTransform: 'uppercase',
-      }}>
-        {label}
-      </label>
-      {children}
-      {error && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 5, fontSize: '0.78rem', color: P.terra }}>
-          <span>⚠</span> {error}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function Shell({ children }) {
   return (
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
@@ -589,15 +556,3 @@ const groupLabel = {
   fontSize: '0.7rem', fontWeight: 700, color: P.greenLight,
   letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 4,
 }
-const inputStyle = hasErr => ({
-  width: '100%', padding: '10px 12px',
-  border: `1px solid ${hasErr ? P.terra : P.border}`,
-  borderRadius: 7, fontSize: '0.9rem',
-  backgroundColor: P.white, boxSizing: 'border-box', fontFamily: 'inherit',
-})
-const btn = (bg, disabled) => ({
-  backgroundColor: disabled ? P.light : bg,
-  color: P.white, border: 'none', borderRadius: 8,
-  padding: '13px 30px', fontSize: '0.95rem', fontWeight: 700,
-  cursor: disabled ? 'not-allowed' : 'pointer', minHeight: 48,
-})

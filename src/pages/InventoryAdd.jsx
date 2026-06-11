@@ -6,7 +6,7 @@ import { P } from '../lib/constants.js'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 
 import { INVENTORY_TYPES as TYPES, INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS } from '../lib/inventoryEnums.js'
-import { EnumSelect } from '../components/forms'
+import { EnumSelect, Field, Input, Textarea, Button } from '../components/forms'
 
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function InventoryAdd() {
@@ -205,18 +205,18 @@ export default function InventoryAdd() {
               Switching type will clear the quantity and condition fields. Name, category, and notes stay.
             </p>
             <div style={{ display: 'flex', gap: 10 }}>
-              <button
+              <Button
+                variant="danger"
                 onClick={() => applyTypeSwitch(typeWarning)}
-                style={btn(P.terra, false)}
               >
                 Switch to {typeWarning === 'consumable' ? 'Consumable' : 'Durable'}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={() => setTypeWarning(false)}
-                style={{ ...btn(P.mid, false), backgroundColor: 'transparent', color: P.mid, border: `1px solid ${P.border}` }}
               >
                 Keep current type
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -239,10 +239,10 @@ export default function InventoryAdd() {
 
             {/* Name */}
             <Field label="What's the item?" error={errors.name}>
-              <input
+              <Input
                 value={form.name}
                 onChange={e => set('name', e.target.value)}
-                style={inputStyle(!!errors.name)}
+                error={!!errors.name}
                 placeholder="e.g. Black Krim tomato seeds"
               />
             </Field>
@@ -302,13 +302,13 @@ export default function InventoryAdd() {
             {form.type === 'consumable' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <Field label="Qty on hand" error={errors.quantity_on_hand}>
-                  <input
+                  <Input
                     type="number"
                     min="0"
                     step="any"
                     value={form.quantity_on_hand}
                     onChange={e => set('quantity_on_hand', e.target.value)}
-                    style={inputStyle(!!errors.quantity_on_hand)}
+                    error={!!errors.quantity_on_hand}
                     placeholder="0"
                   />
                 </Field>
@@ -326,13 +326,13 @@ export default function InventoryAdd() {
 
             {form.type === 'durable' && (
               <Field label="Quantity (how many?)" error={errors.quantity}>
-                <input
+                <Input
                   type="number"
                   min="1"
                   step="1"
                   value={form.quantity}
                   onChange={e => set('quantity', e.target.value)}
-                  style={inputStyle(!!errors.quantity)}
+                  error={!!errors.quantity}
                   placeholder="1"
                 />
               </Field>
@@ -366,20 +366,18 @@ export default function InventoryAdd() {
                   <>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       <Field label="Reorder when below">
-                        <input
+                        <Input
                           type="number" min="0" step="any"
                           value={form.reorder_threshold}
                           onChange={e => set('reorder_threshold', e.target.value)}
-                          style={inputStyle(false)}
                           placeholder="e.g. 1"
                         />
                       </Field>
                       <Field label="Reorder quantity">
-                        <input
+                        <Input
                           type="number" min="0" step="any"
                           value={form.reorder_quantity}
                           onChange={e => set('reorder_quantity', e.target.value)}
-                          style={inputStyle(false)}
                           placeholder="e.g. 3"
                         />
                       </Field>
@@ -400,18 +398,16 @@ export default function InventoryAdd() {
                     </Field>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       <Field label="Brand">
-                        <input
+                        <Input
                           value={form.brand}
                           onChange={e => set('brand', e.target.value)}
-                          style={inputStyle(false)}
                           placeholder="e.g. Burpee"
                         />
                       </Field>
                       <Field label="Model">
-                        <input
+                        <Input
                           value={form.model}
                           onChange={e => set('model', e.target.value)}
-                          style={inputStyle(false)}
                           placeholder="Optional"
                         />
                       </Field>
@@ -421,63 +417,56 @@ export default function InventoryAdd() {
 
                 {/* Shared optional fields */}
                 <Field label="Location (free text)">
-                  <input
+                  <Input
                     value={form.location_text}
                     onChange={e => set('location_text', e.target.value)}
-                    style={inputStyle(false)}
                     placeholder="e.g. Stable rack, shelf 2"
                   />
                 </Field>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <Field label="Unit cost ($)">
-                    <input
+                    <Input
                       type="number" min="0" step="0.01"
                       value={form.unit_cost}
                       onChange={e => set('unit_cost', e.target.value)}
-                      style={inputStyle(false)}
                       placeholder="0.00"
                     />
                   </Field>
                   <Field label="Total qty purchased">
-                    <input
+                    <Input
                       type="number" min="0" step="any"
                       value={form.quantity_purchased}
                       onChange={e => set('quantity_purchased', e.target.value)}
-                      style={inputStyle(false)}
                       placeholder="All time"
                     />
                   </Field>
                 </div>
                 <Field label="Source (store / vendor)">
-                  <input
+                  <Input
                     value={form.source}
                     onChange={e => set('source', e.target.value)}
-                    style={inputStyle(false)}
                     placeholder="e.g. True Leaf Market"
                   />
                 </Field>
                 <Field label="Source URL">
-                  <input
+                  <Input
                     type="url"
                     value={form.source_url}
                     onChange={e => set('source_url', e.target.value)}
-                    style={inputStyle(false)}
                     placeholder="https://…"
                   />
                 </Field>
                 <Field label="Purchase date">
-                  <input
+                  <Input
                     type="date"
                     value={form.purchase_date}
                     onChange={e => set('purchase_date', e.target.value)}
-                    style={inputStyle(false)}
                   />
                 </Field>
                 <Field label="Notes">
-                  <textarea
+                  <Textarea
                     value={form.notes}
                     onChange={e => set('notes', e.target.value)}
-                    style={{ ...inputStyle(false), height: 80, resize: 'vertical' }}
                     placeholder="Variety, expiry, source quality…"
                   />
                 </Field>
@@ -487,9 +476,9 @@ export default function InventoryAdd() {
 
           {/* ── Actions ── */}
           <div style={{ display: 'flex', gap: 14, alignItems: 'center', paddingTop: 4 }}>
-            <button type="submit" disabled={saving} style={btn(P.green, saving)}>
-              {saving ? 'Saving…' : 'Add item'}
-            </button>
+            <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
+              Add item
+            </Button>
             <Link to="/inventory" style={{ color: P.mid, textDecoration: 'none', fontSize: '0.88rem' }}>
               Cancel
             </Link>
@@ -547,32 +536,6 @@ function TypeCard({ type, selected, onSelect, hasError }) {
   )
 }
 
-function Field({ label, children, error }) {
-  const fid = React.useId()
-  const kids = React.Children.toArray(children)
-  return (
-    <div style={{ marginBottom: 0 }}>
-      <label htmlFor={fid} style={{
-        display: 'block',
-        fontSize: '0.78rem', fontWeight: 700, color: P.mid,
-        marginBottom: 6, letterSpacing: '0.3px', textTransform: 'uppercase',
-      }}>
-        {label}
-      </label>
-      {React.isValidElement(kids[0]) ? React.cloneElement(kids[0], { id: fid }) : kids[0]}
-      {kids.slice(1)}
-      {error && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 5,
-          marginTop: 5, fontSize: '0.78rem', color: P.terra,
-        }}>
-          <span>⚠</span> {error}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Styles ────────────────────────────────────────────────────────────────────
 const card = {
   backgroundColor: P.white,
@@ -589,27 +552,3 @@ const groupLabel = {
   letterSpacing: '0.8px', textTransform: 'uppercase',
   marginBottom: 4,
 }
-
-const inputStyle = (hasErr) => ({
-  width: '100%',
-  padding: '10px 12px',
-  border: `1px solid ${hasErr ? P.terra : P.border}`,
-  borderRadius: 7,
-  fontSize: '0.9rem',
-  backgroundColor: P.white,
-  boxSizing: 'border-box',
-  fontFamily: 'inherit',
-})
-
-const btn = (bg, disabled) => ({
-  backgroundColor: disabled ? P.light : bg,
-  color: P.white,
-  border: 'none',
-  borderRadius: 8,
-  padding: '13px 30px',
-  fontSize: '0.95rem',
-  fontWeight: 700,
-  cursor: disabled ? 'not-allowed' : 'pointer',
-  minHeight: 48,
-})
-
