@@ -26,15 +26,9 @@ import Breadcrumb from '../components/Breadcrumb.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import ZoomableImage from '../components/ZoomableImage.jsx'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
+import { PLANT_SOURCE_LABELS } from '../lib/dropdownRegistry.js'
 
 
-// Source-type → human label (mirror of the ProjectDetail Add-Planting select).
-const SOURCE_LABELS = {
-  seed_packet: 'Seed packet', nursery_transplant: 'Bought as transplant',
-  division: 'Divided from another plant', volunteer: 'Volunteer / self-sown',
-  gift: 'Gift', saved_seed: 'Saved seed',
-  cutting_taken: 'Cutting taken', rescued: 'Rescued', unknown: 'Not sure',
-}
 
 function fmtDate(value) {
   if (!value) return null
@@ -182,7 +176,7 @@ export default function PlantingDetail() {
     ['Sown', fmtDate(pl.sown_at) ? `${fmtDate(pl.sown_at)}${pl.sown_at_approx ? ' (approx.)' : ''}` : null],
     ['Transplanted', fmtDate(pl.transplanted_at) ? `${fmtDate(pl.transplanted_at)}${pl.transplanted_at_approx ? ' (approx.)' : ''}` : null],
     ['First harvest', fmtDate(firstHarvest)],
-    ['Source', SOURCE_LABELS[pl.source_type] ?? (pl.source_type || null)],
+    ['Source', PLANT_SOURCE_LABELS[pl.source_type] ?? (pl.source_type || null)],
     ['Source ref', pl.source_ref],
     ['Generation', pl.source_generation],
     ['Source planting', pl.parent_plant_id && pl.parent_plant_name

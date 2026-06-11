@@ -10,7 +10,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { P } from '../lib/constants.js'
 import {
-  Field, Input, Select, Textarea, Button, Card, Section, PageShell,
+  Field, Input, Select, Textarea, Button, Badge, Card, Section, PageShell,
   Spinner, ErrorBanner, Toast, formStyles,
 } from '../components/forms'
 
@@ -205,5 +205,33 @@ describe('formStyles — every value composes from the palette P', () => {
     const dis = formStyles.buttonChrome('primary', true)
     expect(dis.backgroundColor).toBe(P.light)
     expect(dis.cursor).toBe('not-allowed')
+  })
+})
+
+describe('Badge — tone, children, escape hatches, no-tone-attr-leak', () => {
+  it('renders children inside the badge span', () => {
+    render(<Badge>Seedling</Badge>)
+    expect(screen.getByText('Seedling')).toBeDefined()
+  })
+  it('applies tone styling: active tone uses greenPale background', () => {
+    render(<Badge tone="active" data-testid="b">Active</Badge>)
+    const el = screen.getByTestId('b')
+    expect(el.style.backgroundColor).toBeTruthy()
+    expect(el.style.border).toContain('1px solid')
+  })
+  it('neutral tone (default) renders with a background', () => {
+    render(<Badge data-testid="n">Label</Badge>)
+    expect(screen.getByTestId('n').style.backgroundColor).toBeTruthy()
+  })
+  it('passes through className, style (merged), and title to the DOM', () => {
+    render(<Badge tone="warn" className="my-badge" style={{ marginLeft: 8 }} title="Status note" data-testid="esc">Warn</Badge>)
+    const el = screen.getByTestId('esc')
+    expect(el.className).toBe('my-badge')
+    expect(el.style.marginLeft).toBe('8px')
+    expect(el.getAttribute('title')).toBe('Status note')
+  })
+  it('does not leak the tone prop as a DOM attribute', () => {
+    render(<Badge tone="danger" data-testid="leak">Danger</Badge>)
+    expect(screen.getByTestId('leak').getAttribute('tone')).toBeNull()
   })
 })

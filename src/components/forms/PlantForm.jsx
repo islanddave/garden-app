@@ -32,21 +32,8 @@
 import React from 'react'
 import { Field, Input, Select, Textarea, Button, StatusSelect, ErrorBanner } from './index.js'
 import VarietyPicker from '../VarietyPicker.jsx'
+import { PLANT_SOURCE_OPTIONS } from '../../lib/dropdownRegistry.js'
 
-// Mirrors the plants Lambda ALLOWED_SOURCE enum verbatim (empty -> "not specified";
-// host coerces '' -> null before sending so the != null validation passes).
-export const PLANT_SOURCE_OPTIONS = [
-  { value: '', label: '— Not specified —' },
-  { value: 'seed_packet', label: 'Seed packet' },
-  { value: 'nursery_transplant', label: 'Bought as transplant' },
-  { value: 'division', label: 'Divided from another plant' },
-  { value: 'volunteer', label: 'Volunteer / self-sown' },
-  { value: 'gift', label: 'Gift' },
-  { value: 'saved_seed', label: 'Saved seed' },
-  { value: 'cutting_taken', label: 'Cutting taken' },
-  { value: 'rescued', label: 'Rescued' },
-  { value: 'unknown', label: 'Not sure' },
-]
 
 export default function PlantForm({
   value,
