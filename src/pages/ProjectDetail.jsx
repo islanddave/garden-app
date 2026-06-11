@@ -488,7 +488,7 @@ export default function ProjectDetail() {
           </Field>
 
           {/* ── Re-parent picker ── */}
-          <Field label="Nest under another project?" style={{ marginBottom: 14 }}>
+          <Field label="Nest under another project?" style={{ marginBottom: 14 }} help="Optional — leave blank for a top-level project.">
             <Select
               value={form.parent_project_id}
               onChange={e => setForm(f => ({ ...f, parent_project_id: e.target.value }))}
@@ -498,10 +498,7 @@ export default function ProjectDetail() {
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </Select>
-            </Field>
-            <small style={{ fontSize: '0.75rem', color: P.light, marginTop: 3, display: 'block' }}>
-              Optional — leave blank for a top-level project.
-            </small>
+          </Field>
 
           <Field label="Description" style={{ marginBottom: 14 }}>
             <Textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
