@@ -113,6 +113,26 @@ describe('Garden — ?add=1 opens the Add Planting editor (FAB entry)', () => {
     expect(body.source_type).toBeNull()
     expect(screen.queryAllByText('Add planting').length).toBe(0)
   })
+
+  it('create success refetches /api/plants (V3-GARDEN-001)', async () => {
+    // The POST /api/plants response lacks the nested variety_ref join, so the optimistic
+    // prepend alone leaves the row variety-less until a tab refresh. onPlantCreated must
+    // refetch the full hydrated list. Assert a SECOND bare GET /api/plants fires after Add
+    // (mirrors Garden.photoUpload.test.jsx onUploadComplete refetch assertion). The extra
+    // GET is satisfied by primeFetch's bare-GET branch returning the plants list.
+    searchParamsRef.current = new URLSearchParams('add=1')
+    primeFetch()
+    await renderGarden()
+    fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'New Plant' } })
+    fireEvent.click(screen.getByTestId('vp-pick-black-krim'))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Add planting$/i }))
+    })
+    await waitFor(() => {
+      const plantGets = fetchSpy.mock.calls.filter(([u, o = {}]) => u === '/api/plants' && !o.method)
+      expect(plantGets.length).toBeGreaterThanOrEqual(2)
+    })
+  })
 })
 
 describe('Garden — plant-from-packet deep link (InventoryDetail entry)', () => {

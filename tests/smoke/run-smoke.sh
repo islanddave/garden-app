@@ -735,6 +735,73 @@ else
       else
         echo "⚠️  WARN [write:critter] STAGING_API_CRITTERS unset/placeholder — critter assert NOT run (first-deploy graceful skip)"
       fi
+      # ── K) DELETE soft-delete read-back (Soft-Delete-Only rule; Bundle 2 logging-loop reliability) ──
+      # Proves the planting + event DELETE routes SOFT-delete (deleted_at, never hard-delete):
+      # after DELETE the by-id GET must 404 (handler filters deleted_at IS NULL) — the row is
+      # tombstoned, not gone. Uses OWN throwaway fixtures so it never tombstones the shared
+      # $CREATED_PLANT_ID that blocks H/J depend on. Both rows are '%smoke%' → swept by the
+      # workflow L-058 hard-delete hygiene step (no new cleanup line needed).
+      assert_status() {                   # assert a bare-GET returns an exact HTTP status
+        local label="$1" url="$2" expected="$3" TMP CODE
+        TMP=$(mktemp)
+        CODE=$(curl -s --max-time 30 --connect-timeout 10 \
+          -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$TMP" -w "%{http_code}" "$url") || CODE="000"
+        rm -f "$TMP"
+        if [[ "$CODE" == "$expected" ]]; then
+          echo "✅ PASS [$label] HTTP $CODE == $expected"; PASS=$((PASS+1))
+        else
+          echo "❌ FAIL [$label] HTTP $CODE (expected $expected)"; FAIL=$((FAIL+1))
+        fi
+      }
+      CLERK_JWT=$(mint_session_token)
+      # K1) planting soft-delete: create throwaway plant → DELETE → GET must 404
+      DEL_PLANT_BODY=$(mktemp)
+      DEL_PLANT_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+        -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        -o "$DEL_PLANT_BODY" -w "%{http_code}" "$STAGING_API_PLANTS" \
+        -d "{\"project_id\": \"$CREATED_PROJECT_ID\", \"name\": \"smoke-test-delplant-$TEST_RUN_ID\"}") || DEL_PLANT_HTTP="000"
+      DEL_PLANT_ID=$(jq -r '.id // empty' "$DEL_PLANT_BODY" 2>/dev/null || echo ""); rm -f "$DEL_PLANT_BODY"
+      if [[ "${DEL_PLANT_HTTP:0:1}" == "2" && -n "$DEL_PLANT_ID" ]]; then
+        echo "✅ PASS [crud:POST /plants (del fixture)] HTTP $DEL_PLANT_HTTP (id: $DEL_PLANT_ID)"; PASS=$((PASS+1))
+        DEL_PLANT_DEL_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -X DELETE \
+          -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o /dev/null -w "%{http_code}" "${STAGING_API_PLANTS%/}/api/plants/${DEL_PLANT_ID}") || DEL_PLANT_DEL_HTTP="000"
+        if [[ "${DEL_PLANT_DEL_HTTP:0:1}" == "2" ]]; then
+          echo "✅ PASS [delete:DELETE /plants/$DEL_PLANT_ID] HTTP $DEL_PLANT_DEL_HTTP"; PASS=$((PASS+1))
+          assert_status "delete:plant-soft-delete-404" \
+            "${STAGING_API_PLANTS%/}/api/plants/${DEL_PLANT_ID}" "404"
+        else
+          echo "❌ FAIL [delete:DELETE /plants] HTTP $DEL_PLANT_DEL_HTTP"; FAIL=$((FAIL+1))
+        fi
+      else
+        echo "❌ FAIL [crud:POST /plants (del fixture)] HTTP $DEL_PLANT_HTTP"; FAIL=$((FAIL+1))
+      fi
+      # K2) event soft-delete: create throwaway event → DELETE → GET must 404
+      CLERK_JWT=$(mint_session_token)
+      DEL_EV_BODY=$(mktemp)
+      DEL_EV_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+        -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        -o "$DEL_EV_BODY" -w "%{http_code}" "$STAGING_API_EVENTS" \
+        -d "{\"project_id\": \"$CREATED_PROJECT_ID\", \"event_type\": \"observation\", \"event_date\": \"$(date -u +%Y-%m-%d)\", \"notes\": \"smoke delete-soft-delete — safe to delete\"}") || DEL_EV_HTTP="000"
+      DEL_EV_ID=$(jq -r '.id // empty' "$DEL_EV_BODY" 2>/dev/null || echo ""); rm -f "$DEL_EV_BODY"
+      if [[ "${DEL_EV_HTTP:0:1}" == "2" && -n "$DEL_EV_ID" ]]; then
+        echo "✅ PASS [crud:POST /events (del fixture)] HTTP $DEL_EV_HTTP (id: $DEL_EV_ID)"; PASS=$((PASS+1))
+        DEL_EV_DEL_BODY=$(mktemp)
+        DEL_EV_DEL_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -X DELETE \
+          -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$DEL_EV_DEL_BODY" -w "%{http_code}" "${STAGING_API_EVENTS%/}/api/events/${DEL_EV_ID}") || DEL_EV_DEL_HTTP="000"
+        DEL_EV_UNDONE=$(jq -r '.undone // false' "$DEL_EV_DEL_BODY" 2>/dev/null || echo "false"); rm -f "$DEL_EV_DEL_BODY"
+        if [[ "${DEL_EV_DEL_HTTP:0:1}" == "2" && "$DEL_EV_UNDONE" == "true" ]]; then
+          echo "✅ PASS [delete:DELETE /events/$DEL_EV_ID] HTTP $DEL_EV_DEL_HTTP undone=true"; PASS=$((PASS+1))
+          assert_status "delete:event-soft-delete-404" \
+            "${STAGING_API_EVENTS%/}/api/events/${DEL_EV_ID}" "404"
+        else
+          echo "❌ FAIL [delete:DELETE /events] HTTP $DEL_EV_DEL_HTTP undone=$DEL_EV_UNDONE"; FAIL=$((FAIL+1))
+        fi
+      else
+        echo "❌ FAIL [crud:POST /events (del fixture)] HTTP $DEL_EV_HTTP"; FAIL=$((FAIL+1))
+      fi
     else
       echo "   WARNING: POST succeeded but no id in response — skipping fetch (response: ${CREATE_RESPONSE:0:200})"
     fi
