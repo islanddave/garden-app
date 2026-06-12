@@ -38,7 +38,9 @@ export function applyNameSort(arr, order) {
 // V3-ORDER-001: `order` ('recency'|'alpha') sorts roots + each childrenOf[] level when 'alpha';
 // default is now 'alpha' (owner override 2026-06-04). 'recency' preserves server order.
 export function buildDisplayList(projects, order = SORT_ALPHA) {
-  const list = projects || []
+  // V3-ARCHIVE-001: archived projects never render in active surfaces (defence-in-depth;
+  // the /api/projects list already excludes them, this also covers optimistic local state).
+  const list = (projects || []).filter(p => p && !p.archived_at)
   const byId = {}
   list.forEach(p => { byId[p.id] = p })
 
@@ -81,7 +83,8 @@ export function groupPlantingsByProjectId(plants) {
 // children are sub-projects; plantings are this project's leaf rows. Used by the accordion,
 // which renders children + plantings only when the node is expanded.
 export function buildGardenTree(projects, plants, order = SORT_ALPHA) {
-  const list = projects || []
+  // V3-ARCHIVE-001: drop archived projects AND archived plantings from the active tree.
+  const list = (projects || []).filter(p => p && !p.archived_at)
   const byId = {}
   list.forEach(p => { byId[p.id] = p })
 
@@ -97,7 +100,7 @@ export function buildGardenTree(projects, plants, order = SORT_ALPHA) {
     }
   })
 
-  const plantingsBy = groupPlantingsByProjectId(plants)
+  const plantingsBy = groupPlantingsByProjectId((plants || []).filter(pl => pl && !pl.archived_at))
   // V3-ORDER-001: when order==='alpha', sort sub-projects (every depth) AND each project's
   // plantings; default 'recency' leaves both in server order (no copy, original behavior).
   function build(p, depth) {

@@ -103,6 +103,7 @@ export function queryRecentEvents(sql, userId) {
       LEFT JOIN event_batches eb ON eb.id::text = e.metadata->>'batch_id'
       WHERE pp.created_by = ANY(${householdIds})
         AND e.deleted_at IS NULL
+        AND pp.archived_at IS NULL
       ORDER BY e.created_at DESC
       LIMIT 200
     `;
@@ -139,13 +140,13 @@ export function queryCounts(sql, userId) {
         (
           SELECT COUNT(*)::int
           FROM public.container
-          WHERE created_by = ANY(${householdIds}) AND deleted_at IS NULL
+          WHERE created_by = ANY(${householdIds}) AND deleted_at IS NULL AND archived_at IS NULL
         ) AS project_count,
         (
           SELECT COUNT(*)::int
           FROM public.garden_node p
           JOIN public.container pp ON pp.id = p.container_id
-          WHERE pp.created_by = ANY(${householdIds}) AND p.deleted_at IS NULL
+          WHERE pp.created_by = ANY(${householdIds}) AND p.deleted_at IS NULL AND p.archived_at IS NULL AND pp.archived_at IS NULL
         ) AS plant_count,
         (
           SELECT COUNT(*)::int
@@ -176,6 +177,7 @@ export function queryActiveProjects(sql, userId) {
       LEFT JOIN entity_memory em ON em.project_id = pp.id
       WHERE pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
+        AND pp.archived_at IS NULL
       ORDER BY pp.created_at DESC
     `;
 }
@@ -223,6 +225,7 @@ export function queryWaterDue(sql, userId) {
       JOIN public.container pp ON pp.id = em.project_id
       WHERE pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
+        AND pp.archived_at IS NULL
         AND em.next_water_at IS NOT NULL
         AND em.next_water_at < NOW()
       ORDER BY em.next_water_at ASC
@@ -243,6 +246,7 @@ export function queryHarvestReady(sql, userId) {
       WHERE pp.status = 'harvesting'
         AND pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
+        AND pp.archived_at IS NULL
       ORDER BY em.last_observed_at ASC NULLS LAST
       LIMIT 5
     `;
@@ -267,7 +271,7 @@ export function queryHeadsUp(sql, userId) {
           (NOW()::date - el.created_at::date)::int AS days_stale
         FROM event_log el
         JOIN public.container pp ON pp.id = el.project_id
-          AND pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL
+          AND pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
         WHERE el.flagged_as_issue = true
           AND el.resolved_at IS NULL
           AND el.deleted_at IS NULL
@@ -285,6 +289,7 @@ export function queryHeadsUp(sql, userId) {
         WHERE pp.status IN ('sprouting','growing','flowering','fruiting')
           AND pp.created_by = ANY(${householdIds})
           AND pp.deleted_at IS NULL
+          AND pp.archived_at IS NULL
           AND (
             (em.last_observed_at IS NULL
               AND COALESCE(em.last_event_at, pp.created_at) < NOW() - INTERVAL '21 days')
@@ -322,6 +327,7 @@ export function queryInactiveCount(sql, userId) {
       WHERE pp.status IN ('harvested','ended')
         AND pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
+        AND pp.archived_at IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM inactive_project_dismissals d
           WHERE d.user_id = ${userId} AND d.project_id = pp.id
@@ -350,6 +356,7 @@ export function queryInactiveList(sql, userId) {
     WHERE pp.status IN ('harvested','ended')
       AND pp.created_by = ANY(${householdIds})
       AND pp.deleted_at IS NULL
+      AND pp.archived_at IS NULL
     ORDER BY d.dismissed_at IS NULL DESC, em.last_event_at DESC NULLS LAST
   `;
 }
@@ -369,6 +376,7 @@ export function queryDismissInactive(sql, userId, projectId) {
         AND created_by = ANY(${householdIds})
         AND status IN ('harvested','ended')
         AND deleted_at IS NULL
+        AND archived_at IS NULL
       LIMIT 1
     ),
     upsert AS (

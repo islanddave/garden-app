@@ -182,3 +182,42 @@ describe('loadExpanded / saveExpanded', () => {
     expect(loadExpanded().size).toBe(0)
   })
 })
+
+// ── V3-ARCHIVE-001: archived exclusion (defence-in-depth; API also filters) ──────────────
+describe('V3-ARCHIVE-001 archived exclusion', () => {
+  it('buildDisplayList drops archived projects', () => {
+    const projects = [
+      { id: 'a', name: 'Active', parent_project_id: null },
+      { id: 'z', name: 'Zarchived', parent_project_id: null, archived_at: '2026-06-12T00:00:00Z' },
+    ]
+    const ids = buildDisplayList(projects).map(({ project }) => project.id)
+    expect(ids).toContain('a')
+    expect(ids).not.toContain('z')
+  })
+
+  it('buildGardenTree drops archived projects and archived plantings', () => {
+    const projects = [
+      { id: 'a', name: 'Active', parent_project_id: null },
+      { id: 'z', name: 'Zarchived', parent_project_id: null, archived_at: '2026-06-12T00:00:00Z' },
+    ]
+    const plants = [
+      { id: 'p1', name: 'Live plant', project_id: 'a' },
+      { id: 'p2', name: 'Put-away plant', project_id: 'a', archived_at: '2026-06-12T00:00:00Z' },
+    ]
+    const tree = buildGardenTree(projects, plants)
+    const projIds = tree.map(n => n.project.id)
+    expect(projIds).toEqual(['a'])
+    const plantingIds = tree[0].plantings.map(pl => pl.id)
+    expect(plantingIds).toEqual(['p1'])
+  })
+
+  it('an archived child project does not render under its active parent', () => {
+    const projects = [
+      { id: 'root', name: 'Root', parent_project_id: null },
+      { id: 'kid', name: 'Kid', parent_project_id: 'root', archived_at: '2026-06-12T00:00:00Z' },
+    ]
+    const tree = buildGardenTree(projects, [])
+    expect(tree.map(n => n.project.id)).toEqual(['root'])
+    expect(tree[0].children).toEqual([])
+  })
+})

@@ -55,6 +55,9 @@ export default function Garden() {
   // highlight/fade so the new row is acknowledged WITHOUT a toast/modal/banner (reward-UX
   // ambient rule). Cleared ~1200ms after create (matches the @keyframes duration below).
   const [flashId, setFlashId] = useState(null)
+  // V3-ARCHIVE-001: ambient archive confirmation + Undo (operational confirmation of a
+  // user-initiated action — Toast carve-out; non-modal, auto-dismiss, never a reward surface).
+  const [archiveUndo, setArchiveUndo] = useState(null) // { id, name, expiresAt }
 
   // Session 3.5 (§3.26): per-sprite actually-seen accumulator.
   // CritterSprite fires onIntersect ONCE per id when IO-gate trips (sprite enters viewport).
@@ -253,6 +256,31 @@ export default function Garden() {
     refetchPlants()
   }, [refetchPlants])
 
+  const onPlantArchived = useCallback((plant) => {
+    // Remove from the active list immediately (it's now hidden), refetch for truth, offer Undo.
+    setPlants(prev => prev.filter(x => x.id !== plant.id))
+    refetchPlants()
+    setArchiveUndo({ id: plant.id, name: plant.name ?? 'Planting', expiresAt: Date.now() + 6000 })
+  }, [refetchPlants])
+
+  const undoArchive = useCallback(async () => {
+    if (!archiveUndo) return
+    const id = archiveUndo.id
+    setArchiveUndo(null)
+    try {
+      await fetch('/api/plants/' + id + '/archive', { method: 'PATCH', body: JSON.stringify({ archived: false }) })
+    } catch { /* non-fatal */ }
+    refetchPlants()
+  }, [archiveUndo, fetch, refetchPlants])
+
+  useEffect(() => {
+    if (!archiveUndo) return
+    const remaining = archiveUndo.expiresAt - Date.now()
+    if (remaining <= 0) { setArchiveUndo(null); return }
+    const t = setTimeout(() => setArchiveUndo(null), remaining)
+    return () => clearTimeout(t)
+  }, [archiveUndo])
+
   const toggle = useCallback((id) => {
     setExpanded(prev => {
       const next = new Set(prev)
@@ -369,6 +397,7 @@ export default function Garden() {
           onCreated={onPlantCreated}
           onUpdated={onPlantUpdated}
           onDeleted={onPlantDeleted}
+          onArchived={onPlantArchived}
           onClose={closeEditor}
         />
       )}
@@ -397,6 +426,23 @@ export default function Garden() {
         onPick={onPrefsPick}
         onClose={closePopover}
       />
+
+      {archiveUndo && (
+        <div role="status" aria-live="polite" style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          backgroundColor: P.dark, color: P.white, padding: '10px 14px 10px 18px', borderRadius: 8,
+          fontSize: '0.9rem', boxShadow: '0 4px 16px rgba(0,0,0,0.18)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', gap: 14, maxWidth: '92%',
+        }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Archived <strong>{archiveUndo.name}</strong>
+          </span>
+          <button type="button" onClick={undoArchive} style={{
+            background: 'none', border: 'none', color: P.greenLight, fontWeight: 700,
+            fontSize: '0.9rem', cursor: 'pointer', flexShrink: 0,
+          }}>Undo</button>
+        </div>
+      )}
     </Shell>
   )
 }

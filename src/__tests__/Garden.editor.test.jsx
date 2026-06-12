@@ -61,6 +61,7 @@ function primeFetch({ plants = [PLANT] } = {}) {
     if (url === '/api/plants' && opts.method === 'POST') return Promise.resolve({ id: 'plant-new', name: 'X', project_id: 'proj-1' })
     if (url.startsWith('/api/plants/') && opts.method === 'PUT') return Promise.resolve({ ...PLANT, name: 'Renamed' })
     if (url.startsWith('/api/plants/') && opts.method === 'DELETE') return Promise.resolve({})
+    if (url.includes('/archive') && opts.method === 'PATCH') return Promise.resolve({ id: 'plant-2', archived_at: '2026-06-12T00:00:00Z' })
     return Promise.resolve([])
   })
 }
@@ -210,5 +211,37 @@ describe('Garden — ?edit=<id> opens the edit editor (V3-EDIT-001 target)', () 
     await renderGarden()
     expect(screen.queryByText(/^Edit /)).toBeNull()
     expect(searchParamsRef.current.get('edit')).toBeNull()
+  })
+})
+
+describe('Garden — V3-ARCHIVE-001 archive a planting (edit editor)', () => {
+  it('Archive PATCHes archived:true, closes editor, shows ambient Undo', async () => {
+    searchParamsRef.current = new URLSearchParams('edit=plant-2')
+    primeFetch()
+    await renderGarden()
+    await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Archive$/i }))
+    })
+    const arc = fetchSpy.mock.calls.find(c => c[0] === '/api/plants/plant-2/archive' && c[1]?.method === 'PATCH')
+    expect(arc).toBeDefined()
+    expect(JSON.parse(arc[1].body).archived).toBe(true)
+    expect(screen.queryByText(/Edit Krim Plant/)).toBeNull()
+    // Ambient confirmation + Undo affordance (operational confirmation, non-modal).
+    await waitFor(() => expect(screen.getByText(/Archived/)).toBeDefined())
+    expect(screen.getByRole('button', { name: /^Undo$/i })).toBeDefined()
+  })
+
+  it('Undo PATCHes archived:false', async () => {
+    searchParamsRef.current = new URLSearchParams('edit=plant-2')
+    primeFetch()
+    await renderGarden()
+    await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Archive$/i })) })
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Undo$/i })).toBeDefined())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Undo$/i })) })
+    const calls = fetchSpy.mock.calls.filter(c => c[0] === '/api/plants/plant-2/archive' && c[1]?.method === 'PATCH')
+    expect(calls.length).toBe(2)
+    expect(JSON.parse(calls[1][1].body).archived).toBe(false)
   })
 })

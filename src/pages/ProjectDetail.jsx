@@ -351,11 +351,14 @@ export default function ProjectDetail() {
     setDeleteDialogOpen(false)
     try {
       if (archive) {
-        await fetch('/api/projects/' + id, {
-          method: 'PUT',
-          body: JSON.stringify({ status: 'ended' }),
+        // V3-ARCHIVE-001 (Decision 2): real archive — sets archived_at (hides from active lists).
+        // status is an orthogonal lifecycle label, left untouched. by-id detail still opens, so
+        // we stay on the page and surface an Archived badge + Unarchive affordance below.
+        const res = await fetch('/api/projects/' + id + '/archive', {
+          method: 'PATCH',
+          body: JSON.stringify({ archived: true }),
         })
-        setProject(p => ({ ...p, status: 'ended' }))
+        setProject(p => ({ ...p, archived_at: res?.archived_at ?? new Date().toISOString() }))
         setDeleting(false)
       } else {
         await fetch('/api/projects/' + id, { method: 'DELETE' })
@@ -363,6 +366,21 @@ export default function ProjectDetail() {
       }
     } catch (err) {
       console.error('delete/archive failed', err)
+      setDeleting(false)
+    }
+  }
+
+  async function handleUnarchive() {
+    setDeleting(true)
+    try {
+      const res = await fetch('/api/projects/' + id + '/archive', {
+        method: 'PATCH',
+        body: JSON.stringify({ archived: false }),
+      })
+      setProject(p => ({ ...p, archived_at: res?.archived_at ?? null }))
+    } catch (err) {
+      console.error('unarchive failed', err)
+    } finally {
       setDeleting(false)
     }
   }
@@ -405,6 +423,14 @@ export default function ProjectDetail() {
             }}>
               {project.status}
             </span>
+            {project.archived_at && (
+              <span style={{
+                backgroundColor: P.greenPale, color: P.green, border: `1px solid ${P.greenLight}`,
+                fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600,
+              }}>
+                Archived
+              </span>
+            )}
             {!project.is_public && (
               <span style={{ fontSize: '0.75rem', color: P.light, backgroundColor: '#eee', borderRadius: 12, padding: '3px 10px' }}>
                 private
@@ -425,6 +451,11 @@ export default function ProjectDetail() {
         </div>
         {!editing && (
           <div style={{ display: 'flex', gap: 8 }}>
+            {project.archived_at && (
+              <button onClick={handleUnarchive} disabled={deleting} style={outlineBtn}>
+                {deleting ? 'Working…' : 'Unarchive'}
+              </button>
+            )}
             <button onClick={startEdit} style={outlineBtn}>Edit</button>
             <button
               onClick={handleDeleteClick}

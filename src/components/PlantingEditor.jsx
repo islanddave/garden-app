@@ -42,6 +42,7 @@ export default function PlantingEditor({
   onCreated,
   onUpdated,
   onDeleted,
+  onArchived,
   onClose,
 }) {
   const isEdit = mode === 'edit'
@@ -51,6 +52,7 @@ export default function PlantingEditor({
   const [saving,   setSaving]   = useState(false)
   const [err,      setErr]      = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [archiving, setArchiving] = useState(false)
   const [sourcePacket, setSourcePacket] = useState(null)
 
   useEffect(() => {
@@ -160,6 +162,24 @@ export default function PlantingEditor({
     }
   }
 
+  // V3-ARCHIVE-001: archive = hidden-but-alive (distinct from Remove/delete). Passes the
+  // planting up so Garden can offer an ambient Undo. Un-archive uses {archived:false}.
+  async function handleArchive() {
+    setArchiving(true)
+    try {
+      await fetch('/api/plants/' + plant.id + '/archive', {
+        method: 'PATCH',
+        body: JSON.stringify({ archived: true }),
+      })
+      onArchived?.(plant)
+    } catch {
+      // non-fatal
+    } finally {
+      setArchiving(false)
+      onClose?.()
+    }
+  }
+
   return (
     <div id="planting-editor" style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 12, padding: '14px 16px', marginBottom: 20 }}>
       <div style={{ fontWeight: 600, marginBottom: 12, color: P.green }}>
@@ -191,10 +211,16 @@ export default function PlantingEditor({
         plantingOptions={(isEdit ? plants.filter(p => p.id !== plant?.id) : plants).map(p => ({ id: p.id, name: p.name }))}
         idPrefix={isEdit ? `edit-${plant?.id}` : 'add-plant'}
         extraActions={isEdit ? (
-          <button type="button" disabled={deleting} onClick={handleDelete}
-            style={{ marginLeft: 'auto', background: 'none', border: 'none', color: P.terra, fontSize: '0.82rem', cursor: 'pointer' }}>
-            {deleting ? 'Removing…' : 'Remove'}
-          </button>
+          <>
+            <button type="button" disabled={archiving} onClick={handleArchive}
+              style={{ marginLeft: 'auto', background: 'none', border: 'none', color: P.green, fontSize: '0.82rem', cursor: 'pointer' }}>
+              {archiving ? 'Archiving…' : 'Archive'}
+            </button>
+            <button type="button" disabled={deleting} onClick={handleDelete}
+              style={{ background: 'none', border: 'none', color: P.terra, fontSize: '0.82rem', cursor: 'pointer' }}>
+              {deleting ? 'Removing…' : 'Remove'}
+            </button>
+          </>
         ) : null}
       />
     </div>

@@ -88,6 +88,9 @@ export const handler = async (event) => {
   // (shipped via Foundation V100, promote f5130254; ground-truthed on prod Neon
   // 2026-06-07). New-endpoint-only, so existing routes stay byte-identical.
   const seenMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/seen$/);
+  // V3-ARCHIVE-001: soft-archive toggle (distinct from deleted_at). Checked before idMatch
+  // (idMatch's /([^/]+)$/ won't match the /archive suffix). PATCH-only, symmetric set/unset.
+  const archiveMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/archive$/);
 
   try {
     if (seenMatch) {
@@ -106,13 +109,36 @@ export const handler = async (event) => {
         SELECT ln.id, COALESCE(${seenAt}::timestamptz, now()), ${source}
         FROM public.garden_node ln
         JOIN public.container pp ON pp.id = ln.container_id
-        WHERE ln.id = ${plantId} AND ln.deleted_at IS NULL AND pp.created_by = ANY(${householdIds})
+        WHERE ln.id = ${plantId} AND ln.deleted_at IS NULL AND ln.archived_at IS NULL AND pp.created_by = ANY(${householdIds})
         RETURNING leaf_id
       `;
       if (!ins.length) return resp(404, { error: 'Not found' });
       // Read back the trigger-maintained last_seen_at (no `p` alias → regex-safe).
       const back = await sql`SELECT last_seen_at FROM public.garden_node WHERE id = ${plantId}`;
       return resp(201, { leaf_id: ins[0].leaf_id, last_seen_at: back[0]?.last_seen_at ?? null });
+    }
+
+    if (archiveMatch) {
+      const plantId = archiveMatch[1];
+      if (method !== 'PATCH') return resp(405, { error: 'Method not allowed' });
+      const body = JSON.parse(event.body ?? '{}');
+      const archived = body.archived !== false; // default true; {archived:false} un-archives
+      // Mirrors the DELETE handler shape (UPDATE ... FROM public.container pp). archived_at lives
+      // on base plants, exposed through the updatable garden_node view (V3-ARCHIVE-001 0b-views).
+      // deleted_at filter retained: a deleted planting can't be (un)archived. NOT a SELECT...FROM
+      // garden_node p block, so select-columns.test.js exactly-3 invariant holds.
+      const rows = await sql`
+        UPDATE public.garden_node p
+        SET archived_at = CASE WHEN ${archived} THEN NOW() ELSE NULL END
+        FROM public.container pp
+        WHERE p.id = ${plantId}
+          AND p.container_id = pp.id
+          AND pp.created_by = ANY(${householdIds})
+          AND p.deleted_at IS NULL
+        RETURNING p.id, p.archived_at
+      `;
+      if (!rows.length) return resp(404, { error: 'Not found' });
+      return resp(200, rows[0]);
     }
 
     if (idMatch) {
@@ -319,6 +345,7 @@ export const handler = async (event) => {
             WHERE pp.created_by = ANY(${householdIds})
               AND p.container_id = ${projectId}
               AND p.deleted_at IS NULL
+              AND p.archived_at IS NULL
             ORDER BY p.created_at DESC
           `
         : await sql`
@@ -354,6 +381,7 @@ export const handler = async (event) => {
             LEFT JOIN photos fp ON fp.id = p.featured_photo_id
             WHERE pp.created_by = ANY(${householdIds})
               AND p.deleted_at IS NULL
+              AND p.archived_at IS NULL
             ORDER BY p.created_at DESC
           `;
       // Sign each featured photo's S3 URL (900s), strip the raw storage_path.

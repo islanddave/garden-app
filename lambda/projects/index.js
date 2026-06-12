@@ -89,6 +89,9 @@ export const handler = async (event) => {
 
   const idMatch = rawPath.match(/^\/api\/projects\/([^/]+)$/);
 
+  // V3-ARCHIVE-001: soft-archive toggle. Extra path segment, so idMatch above won't catch it.
+  const archiveMatch = rawPath.match(/^\/api\/projects\/([^/]+)\/archive$/);
+
   try {
     const sql = neon(secrets.NEON_DATABASE_URL);
     // HOUSEHOLD-MODE: widened at V3-ROLES teardown
@@ -137,6 +140,26 @@ export const handler = async (event) => {
       return resp(405, { error: 'Method not allowed' });
     }
 
+    // --- /api/projects/:id/archive (V3-ARCHIVE-001) ---
+    if (archiveMatch) {
+      const projectId = archiveMatch[1];
+      if (method !== 'PATCH') return resp(405, { error: 'Method not allowed' });
+      const body = JSON.parse(event.body ?? '{}');
+      const archived = body.archived !== false; // default true; {archived:false} un-archives
+      // Decision 2: this is the REAL "Archive instead" target (sets archived_at = hides);
+      // status='ended' stays an orthogonal lifecycle label, untouched here.
+      const rows = await sql`
+        UPDATE public.container
+        SET archived_at = CASE WHEN ${archived} THEN NOW() ELSE NULL END
+        WHERE id = ${projectId}
+          AND created_by = ANY(${householdIds})
+          AND deleted_at IS NULL
+        RETURNING id, archived_at
+      `;
+      if (!rows.length) return resp(404, { error: 'Not found' });
+      return resp(200, rows[0]);
+    }
+
     // --- /api/projects/:id ---
     if (idMatch) {
       const projectId = idMatch[1];
@@ -150,7 +173,7 @@ export const handler = async (event) => {
                    pp.parent_id AS parent_project_id, pp.featured_photo_id,
                    pp.classification AS kind,
                    to_char(pp.target_end_date, 'YYYY-MM-DD') AS target_end_date,
-                   pp.kind_set_at,
+                   pp.kind_set_at, pp.archived_at,
                    p.display_name AS parent_project_name,
                    fp.storage_path AS featured_photo_storage_path
             FROM public.container pp
@@ -165,6 +188,7 @@ export const handler = async (event) => {
             FROM garden_node
             WHERE container_id = ${projectId}
               AND deleted_at IS NULL
+              AND archived_at IS NULL
           `,
           sql`
             SELECT COUNT(*)::int AS count
@@ -393,6 +417,7 @@ export const handler = async (event) => {
           FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
+            AND archived_at IS NULL
             AND parent_id IS NULL
           ORDER BY start_date DESC NULLS LAST, created_at DESC
         `;
@@ -406,6 +431,7 @@ export const handler = async (event) => {
           FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
+            AND archived_at IS NULL
             AND parent_id = ${parentIdFilter}
           ORDER BY start_date DESC NULLS LAST, created_at DESC
         `;
@@ -419,6 +445,7 @@ export const handler = async (event) => {
           FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
+            AND archived_at IS NULL
           ORDER BY start_date DESC NULLS LAST, created_at DESC
         `;
       }

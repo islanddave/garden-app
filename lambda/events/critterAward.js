@@ -141,6 +141,16 @@ export async function awardCritterServer({
   if (skipAward) return null  // explicit caller bypass (smoke / admin)
   if (!plantId) return null  // MVP plant-only scope (§1.1)
   if (!userId || !eventId) return null
+  // V3-ARCHIVE-001 (Decision 6): logging on an archived planting is allowed, but the REWARD is
+  // suppressed (a critter popping on a put-away plant is incongruous). Single chokepoint covers
+  // both the batch (one-shot) and single-POST award paths. Non-fatal: a lookup failure fails OPEN
+  // (awards) rather than dropping a legit reward. In unit tests the mock sql returns [] -> not archived.
+  try {
+    const arch = await sql`SELECT archived_at FROM public.garden_node WHERE id = ${plantId}`
+    if (arch[0]?.archived_at) return null
+  } catch (archErr) {
+    console.warn('archived-state check failed (non-fatal, awarding):', archErr?.message ?? String(archErr))
+  }
   const seed = buildSeed(eventId, eventCreatedAt, householdId ?? userId)
   // Probabilistic gate (Dave directive 2026-05-30): pickSpecies may return null = "no critter
   // this event." Variable-ratio reward schedule — ~33% baseline chance, per-species variability

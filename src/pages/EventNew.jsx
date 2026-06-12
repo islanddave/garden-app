@@ -264,7 +264,7 @@ export default function EventNew() {
   useEffect(() => {
     if (!form.project_id) { setPlantsForProject([]); return }
     apiFetch('/api/plants?project_id=' + form.project_id)
-      .then(data => setPlantsForProject(data ?? []))
+      .then(data => setPlantsForProject((data ?? []).filter(p => !p.archived_at)))
       .catch(() => setPlantsForProject([]))
   }, [apiFetch, form.project_id])
 
@@ -274,7 +274,7 @@ export default function EventNew() {
       apiFetch('/api/projects'),
       apiFetch('/api/locations/with-path'),
     ]).then(([proj, locs]) => {
-      const loggable = (proj ?? []).filter(p => LOGGABLE_PROJECT_STATUSES.includes(p.status))
+      const loggable = (proj ?? []).filter(p => LOGGABLE_PROJECT_STATUSES.includes(p.status) && !p.archived_at)
       setProjects(loggable)
       setLocations((locs ?? []).filter(l => l.is_active))
       // V1.2a-2 Wave 3: deep-link safety — if a ?project= param was supplied but

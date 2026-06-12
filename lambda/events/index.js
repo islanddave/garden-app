@@ -183,7 +183,7 @@ export const handler = async (event) => {
       const resolved = await sql`
         SELECT p.id AS plant_id, p.display_name AS plant_name
         FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id
-        WHERE p.deleted_at IS NULL AND pp.deleted_at IS NULL
+        WHERE p.deleted_at IS NULL AND pp.deleted_at IS NULL AND p.archived_at IS NULL
           AND pp.created_by = ANY(${householdIds})
           AND CASE ${scopeType}
                 WHEN 'all'     THEN true
