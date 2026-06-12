@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ClerkProvider } from '@clerk/react'
 import App from './App.jsx'
+import { registerServiceWorker } from './lib/registerSW.js'
 
 const globalStyle = document.createElement('style')
 globalStyle.textContent = `
@@ -13,11 +14,7 @@ globalStyle.textContent = `
 `
 document.head.appendChild(globalStyle)
 
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {})
-  })
-}
+registerServiceWorker()
 
 let deferredPrompt = null
 window.addEventListener('beforeinstallprompt', (e) => {

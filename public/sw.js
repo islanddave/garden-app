@@ -5,6 +5,11 @@
 const CACHE_VERSION = 'v16-20260524' // base default — deploy workflows rewrite this to v{version}-{sha} per deploy for cache-busting (deploy.yml / deploy-staging.yml). Frozen value caused stale-footer bug (2.1.1 fix).
 const STATIC_CACHE  = `static-${CACHE_VERSION}`
 const API_CACHE     = `api-${CACHE_VERSION}`
+// Image cache is intentionally UNVERSIONED — app images are stable across deploys, so we
+// persist them and bound growth by count (oldest-inserted evicted) rather than discarding
+// the whole set every deploy. Excluded from the version purge below. (V3-CACHE-001)
+const IMAGE_CACHE   = 'garden-images'
+const MAX_IMAGE_ENTRIES = 150
 
 const LAMBDA_ORIGIN = 'lambda-url.us-east-1.on.aws'
 
@@ -29,7 +34,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys
-          .filter(k => k !== STATIC_CACHE && k !== API_CACHE)
+          .filter(k => k !== STATIC_CACHE && k !== API_CACHE && k !== IMAGE_CACHE)
           .map(k => caches.delete(k))
       )
     }).then(() => self.clients.claim())
@@ -53,7 +58,13 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Cache-first for static assets (JS, CSS, images, fonts)
+  // Cache-first for images — separate bounded cache (persists across deploys, count-capped)
+  if (isImage(url)) {
+    event.respondWith(cacheFirst(request, IMAGE_CACHE, MAX_IMAGE_ENTRIES))
+    return
+  }
+
+  // Cache-first for other static assets (JS, CSS, fonts) — versioned, purged on deploy
   if (isStaticAsset(url)) {
     event.respondWith(cacheFirst(request, STATIC_CACHE))
     return
@@ -68,18 +79,30 @@ self.addEventListener('fetch', (event) => {
 
 // ---- Strategies ----
 
-async function cacheFirst(request, cacheName) {
+async function cacheFirst(request, cacheName, maxEntries) {
   const cached = await caches.match(request)
   if (cached) return cached
   try {
     const response = await fetch(request)
     if (response.ok) {
       const cache = await caches.open(cacheName)
-      cache.put(request, response.clone())
+      await cache.put(request, response.clone())
+      if (maxEntries) trimCache(cacheName, maxEntries).catch(() => {})
     }
     return response
   } catch {
     return new Response('Offline', { status: 503 })
+  }
+}
+
+// Bound a cache by entry count, evicting oldest-inserted first. Cache.keys() preserves
+// insertion order, so this is a FIFO approximation of LRU — sufficient to cap growth.
+async function trimCache(cacheName, maxEntries) {
+  const cache = await caches.open(cacheName)
+  const keys = await cache.keys()
+  if (keys.length <= maxEntries) return
+  for (let i = 0; i < keys.length - maxEntries; i++) {
+    await cache.delete(keys[i])
   }
 }
 
@@ -102,6 +125,10 @@ async function networkFirst(request, cacheName) {
 
 // ---- Helpers ----
 
+function isImage(url) {
+  return /\.(png|jpg|jpeg|gif|svg|ico|webp|avif)(\?.*)?$/.test(url.pathname)
+}
+
 function isStaticAsset(url) {
-  return /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|webp|avif)(\?.*)?$/.test(url.pathname)
+  return /\.(js|css|woff2?|ttf|eot)(\?.*)?$/.test(url.pathname)
 }
