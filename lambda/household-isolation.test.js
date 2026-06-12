@@ -22,6 +22,7 @@ const IN_SCOPE = [
   'dashboard/handlers.js',
   'locations/index.js',
   'critter/index.js', // shared critter stickerbook is household-scoped (created_by = ANY(householdIds))
+  'findings/index.js', // DRG findings read model — household-scoped reads (created_by = ANY(householdIds))
 ];
 
 // Out-of-scope: must NOT import householdScope.
