@@ -100,3 +100,15 @@ describe('TopBar — mode chip toggle', () => {
     expect(chipAfter.textContent).toContain('Desk')
   })
 })
+
+// V3-UI-001 (APPSHELL-SAFEAREA): the header must grow by the safe-area inset, not absorb
+// it into a fixed height (which clipped the bar content under the notch on standalone iOS).
+describe('TopBar — safe-area header height (V3-UI-001 clip fix)', () => {
+  it('height grows by env(safe-area-inset-top) instead of a fixed 52px', () => {
+    mockUser = { id: 'u1' }
+    const { container } = renderWithProviders()
+    const header = container.querySelector('header')
+    expect(header).toBeTruthy()
+    expect(header.style.height).toBe('calc(52px + env(safe-area-inset-top))')
+  })
+})

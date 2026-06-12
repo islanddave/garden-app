@@ -605,7 +605,7 @@ function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPr
 
 function Shell({ children }) {
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream, position: 'relative' }}>
+    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream, position: 'relative' }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px', position: 'relative' }}>{children}</div>
     </div>
   )

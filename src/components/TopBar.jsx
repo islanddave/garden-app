@@ -35,7 +35,10 @@ export default function TopBar() {
       paddingLeft: 16,
       paddingRight: 16,
       paddingTop: 'env(safe-area-inset-top)',
-      height: '52px',
+      // V3-ARCHIVE? no — V3-UI-001 (APPSHELL-SAFEAREA): height must GROW by the inset, not
+      // absorb it. With a fixed 52px the inset padding ate into the bar and clipped its
+      // content under the notch on standalone iOS. calc keeps a full 52px below the inset.
+      height: 'calc(52px + env(safe-area-inset-top))',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',

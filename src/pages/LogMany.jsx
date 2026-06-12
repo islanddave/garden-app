@@ -322,7 +322,7 @@ function Section({ label, children }) {
 }
 function Shell({ children }) {
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream }}>
+    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 560, margin: '0 auto', padding: '28px 20px 80px' }}>{children}</div>
     </div>
   )
