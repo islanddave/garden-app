@@ -79,6 +79,8 @@ export const FINDING_TYPE_TEMPLATES = {
                    assert: '{subject} is likely due for feeding.' },
   repot_due:     { ask: '{subject}: outgrowing its container? Nothing logged recently.',
                    assert: '{subject} is likely due to be potted up.' },
+  open_issue:    { ask: '{subject}: is the flagged issue still going on? Nothing logged since.',
+                   assert: '{subject} has an open issue you logged.' },
   GENERIC:       { ask: '{subject}: worth a look? No recent log to confirm.',
                    assert: '{subject} may need attention.' },
 };
