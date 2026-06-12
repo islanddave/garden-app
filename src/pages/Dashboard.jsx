@@ -312,7 +312,10 @@ export default function Dashboard() {
         {/* Recent Activity — V3-FEED-001: 20 collapsed entries; a Log Many batch renders ONCE as "type × N" */}
         {recentEvents.length > 0 && (
           <section>
-            <h2 style={sectionHeadStyle}>Recent activity</h2>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+              <h2 style={sectionHeadStyle}>Recent activity</h2>
+              <Link to="/feed" style={{ fontSize: '0.8rem', color: P.green, textDecoration: 'none', fontWeight: 600 }}>See all →</Link>
+            </div>
             <div style={{
               backgroundColor: P.white,
               border: `1px solid ${P.border}`,

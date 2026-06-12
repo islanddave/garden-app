@@ -28,6 +28,7 @@ import PhotoLibrary from './pages/PhotoLibrary.jsx'
 import Favorites from './pages/Favorites.jsx'
 import ProjectTypes from './pages/ProjectTypes.jsx'
 import Garden from './pages/Garden.jsx'
+import FeedPage from './pages/FeedPage.jsx'
 import LogMany from './pages/LogMany.jsx'
 import PlantsCatchUp from './pages/PlantsCatchUp.jsx'
 import LocationDetail from './pages/LocationDetail.jsx'
@@ -98,6 +99,7 @@ function AppRoutes() {
               <Route path="/"              element={<Navigate to="/dashboard" replace />} />
               <Route path="/garden/:slug"  element={<ProjectPublic />} />
               <Route path="/garden"        element={<Protected><Garden /></Protected>} />
+              <Route path="/feed"          element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><FeedPage /></ErrorBoundary></Protected>} />
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/login"         element={user ? <Navigate to="/dashboard" replace /> : <Login />} />
               <Route path="/dashboard"     element={<Protected><Dashboard /></Protected>} />

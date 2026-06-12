@@ -299,6 +299,47 @@ export const handler = async (event) => {
       return resp(200, { batches: rows });
     }
 
+    // V3-FEED-001: paginated, filterable activity feed for the /feed page. Returns RAW events
+    // (batch member rows included) created_at DESC; the client collapses batches over the
+    // accumulated set and paginates via offset (so a batch split across a page boundary still
+    // merges client-side). Filters are null-guarded with explicit casts (L-086 42P18-safe).
+    // Forward-looking critter join (cs.*) lets the feed surface a critter earned at logging time
+    // (V4 social-feed vision). Event-entity read -> household-scoped (counts toward the surgical
+    // widening invariant in household-mode.test.js).
+    if (rawPath === '/api/events/feed' && method === 'GET') {
+      const qp = event.queryStringParameters ?? {};
+      const limit = Math.min(parseInt(qp.limit ?? '30', 10) || 30, 100);
+      const offset = Math.max(parseInt(qp.offset ?? '0', 10) || 0, 0);
+      const fProject = qp.project_id || null;
+      const fType = qp.event_type || null;
+      const fFrom = qp.from || null;
+      const fTo = qp.to || null;
+      const rows = await sql`
+        SELECT
+          e.id, e.project_id, e.plant_id, e.event_type, e.event_date, e.created_at, e.notes,
+          e.metadata->>'batch_id' AS batch_id,
+          eb.item_count,
+          pp.display_name AS project_name,
+          pr.display_name AS logged_by_name,
+          cs.id AS critter_id, cs.species_id AS critter_species_id
+        FROM event_log e
+        JOIN public.container pp ON pp.id = e.project_id
+        LEFT JOIN profiles pr ON pr.id = e.logged_by
+        LEFT JOIN event_batches eb ON eb.id::text = e.metadata->>'batch_id'
+        LEFT JOIN public.critter_state cs ON cs.source_event_id = e.id AND cs.deleted_at IS NULL
+        WHERE pp.created_by = ANY(${householdIds})
+          AND e.deleted_at IS NULL
+          AND pp.archived_at IS NULL
+          AND (${fProject}::uuid IS NULL OR e.project_id = ${fProject}::uuid)
+          AND (${fType}::text IS NULL OR e.event_type = ${fType}::text)
+          AND (${fFrom}::timestamptz IS NULL OR e.event_date >= ${fFrom}::timestamptz)
+          AND (${fTo}::timestamptz IS NULL OR e.event_date <= ${fTo}::timestamptz)
+        ORDER BY e.created_at DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `;
+      return resp(200, { events: rows, limit, offset, has_more: rows.length === limit });
+    }
+
     // DELETE /api/events/batch/:id — undo a batch (soft-delete its events + recompute watering memory).
     const batchUndo = rawPath.match(/^\/api\/events\/batch\/([^/]+)$/);
     if (batchUndo && method === 'DELETE') {
