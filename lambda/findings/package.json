@@ -1,0 +1,7 @@
+{
+  "name": "garden-lambda-findings",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "DRG Care Knowledge Engine V1 — findings read model. Slices 2-5 (pure engine) landed; slice 6 (handler + Neon/Clerk read path) adds @neondatabase/serverless + @clerk/backend + @aws-sdk/client-secrets-manager deps.",
+  "dependencies": {}
+}
