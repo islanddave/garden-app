@@ -1,0 +1,60 @@
+# gates.yml
+# V3-ARCHIVE-001 — additive archived_at + view widening.
+#
+# L-058 SWEEP: empty by design — nullable column, no CHECK / NOT VALID / VALIDATE step.
+# Pre confirms the base tables exist. Post confirms the columns landed (timestamptz), the
+# views expose archived_at (widening succeeded), the active partial indexes exist, and the
+# schema_version row is recorded.
+
+pre:
+  - name: plants_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+  - name: plant_projects_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plant_projects'
+    expect: rowcount_eq
+    value: 1
+
+sweep: []
+
+post:
+  - name: plants_archived_at_column
+    sql: |
+      SELECT data_type FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants' AND column_name='archived_at'
+    expect: scalar_eq
+    value: timestamp with time zone
+  - name: plant_projects_archived_at_column
+    sql: |
+      SELECT data_type FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_projects' AND column_name='archived_at'
+    expect: scalar_eq
+    value: timestamp with time zone
+  - name: garden_node_view_exposes_archived_at
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='garden_node' AND column_name='archived_at'
+    expect: rowcount_eq
+    value: 1
+  - name: container_view_exposes_archived_at
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='container' AND column_name='archived_at'
+    expect: rowcount_eq
+    value: 1
+  - name: plants_active_index_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND indexname='idx_plants_active'
+    expect: rowcount_eq
+    value: 1
+  - name: schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='3.0.0-archive-001'
+    expect: rowcount_eq
+    value: 1
