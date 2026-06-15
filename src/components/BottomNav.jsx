@@ -41,6 +41,7 @@ const TABS = [
 // a917b51b to prod); now re-restored alongside Garden Helper menu entry.
 const CREATE_ACTIONS = [
   { to: '/log',           icon: '📝', label: 'Log an event',   sub: 'Watering, harvest, a note…' },
+  { to: '/log/many',      icon: '⚡', label: 'Log many',        sub: 'One event across many plants' },
   { to: '/garden?add=1',  icon: '🌱', label: 'Add a planting', sub: 'A plant growing in a project' },
   { to: '/projects/new',  icon: '🪴', label: 'New project',     sub: 'A bed, crop, or grow' },
   { to: '/inventory/add', icon: '📦', label: 'Add inventory',   sub: 'Seeds, soil, supplies…' },
