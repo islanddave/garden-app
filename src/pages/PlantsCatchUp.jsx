@@ -22,7 +22,7 @@ export default function PlantsCatchUp() {
         <p style={{ fontSize: '0.9rem', color: P.mid, lineHeight: 1.5 }}>
           The catch-up editor lets you backfill missing sown / germinated / transplanted dates
           for plants you added in a hurry. Inline approximate-date editor, skip-per-row, and
-          bulk skip ship in V1.2a-4 S1.1.
+          bulk skip ship in a future update.
         </p>
         <p style={{ marginTop: 16, fontSize: '0.85rem', color: P.light }}>
           For now, edit individual plants from their project page.
