@@ -86,7 +86,7 @@ export default function ZonePicker() {
           Where are you? 🌱
         </h1>
         <p style={{ color: P.mid, fontSize: '0.875rem', margin: '0 0 28px', lineHeight: 1.5 }}>
-          Tap a zone to focus your tasks and suggestions there.
+          Zone focus is coming soon — picking one won't filter your views yet.
         </p>
 
         <ZoneCard
