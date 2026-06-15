@@ -481,11 +481,6 @@ export default function EventNew() {
               ⚡ Log Many →
             </Link>
           </div>
-          {voice.supported && (
-            <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: P.light }}>
-              🎙️ Voice input active — tap the mic button next to any field to speak
-            </p>
-          )}
         </div>
 
         {error && <ErrBanner msg={error} />}
