@@ -58,7 +58,7 @@ describe('Favorites — section resolution', () => {
     render(<Favorites />)
     // The plant name rendering proves the `plant` branch ran and pushed a section.
     await waitFor(() => expect(screen.getByText('Broccoli')).toBeDefined())
-    expect(screen.getByText(/Plants/)).toBeDefined()  // section header "🌿 Plants"
+    expect(screen.getByText(/Plantings/)).toBeDefined()  // section header "🌿 Plantings" (V3-FAV-001 rename)
     // /api/plants must have been one of the parallel mount fetches.
     expect(fetchSpy.mock.calls.some(c => c[0] === '/api/plants')).toBe(true)
   })

@@ -4,10 +4,14 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 
 const TYPE_META = {
+  // V3-FAV-001: plantings lead (plantings-first as projects deprecate to buckets). The plant list
+  // (/api/plants) carries project_id, so the row deep-links to the planting's own detail page
+  // (/projects/:id/plantings/:plantingId) instead of the generic /garden. Falls back to /garden
+  // if a record somehow lacks project_id.
+  plant:          { label: 'Plantings', icon: '🌿', link: i => i.project_id ? `/projects/${i.project_id}/plantings/${i.id}` : `/garden` },
   project:        { label: 'Projects',  icon: '🌱', link: i => `/projects/${i.id}` },
   location:       { label: 'Locations', icon: '📍', link: () => `/locations` },
   inventory_item: { label: 'Inventory', icon: '📦', link: i => `/inventory/${i.id}` },
-  plant:          { label: 'Plants',    icon: '🌿', link: () => `/garden` },
 }
 
 export default function Favorites() {
@@ -41,6 +45,14 @@ export default function Favorites() {
 
       const resolvedSections = []
 
+      // Plantings — V3-FAV-001: surfaced FIRST (plantings-first as projects deprecate to buckets).
+      // Cross-reference favorited plant ids with the /api/plants list (carries project_id for the
+      // deep-link). The branch itself is the I3-persistence fix; it now leads the page.
+      if (byType.plant) {
+        const items = (allPlants ?? []).filter(pl => byType.plant.includes(pl.id))
+        if (items.length) resolvedSections.push({ type: 'plant', items })
+      }
+
       // Projects — cross-reference with Lambda result
       if (byType.project) {
         const items = (allProjects ?? []).filter(p => byType.project.includes(p.id))
@@ -64,14 +76,6 @@ export default function Favorites() {
       if (byType.inventory_item) {
         const items = (allInventory ?? []).filter(it => byType.inventory_item.includes(it.id))
         if (items.length) resolvedSections.push({ type: 'inventory_item', items })
-      }
-
-      // Plants — cross-reference with Lambda result (I3-persistence fix, V1.2a-3
-      // Increment A: starred plants previously persisted to the favorites table but
-      // were silently dropped here because this branch did not exist).
-      if (byType.plant) {
-        const items = (allPlants ?? []).filter(pl => byType.plant.includes(pl.id))
-        if (items.length) resolvedSections.push({ type: 'plant', items })
       }
 
       setSections(resolvedSections)
@@ -99,7 +103,7 @@ export default function Favorites() {
             borderRadius: '10px', padding: '40px 20px',
             textAlign: 'center', color: P.light, fontSize: '0.95rem',
           }}>
-            No favorites yet. Tap ☆ on any project, location, plant, or inventory item to save it here.
+            No favorites yet. Tap ☆ on any planting, project, location, or inventory item to save it here.
           </div>
         ) : sections.map(({ type, items }) => {
           const meta = TYPE_META[type]
