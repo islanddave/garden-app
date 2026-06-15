@@ -187,7 +187,7 @@ export default function ProjectNew() {
           </Field>
           {!VARIETY_REF_UI_SHIPPED && (
             <small style={{ fontSize: '0.75rem', color: P.light, marginTop: -10, marginBottom: 16, display: 'block' }}>
-              Just a planting for now — cultivars get a better home soon.
+              Just a planting for now.
             </small>
           )}
 
