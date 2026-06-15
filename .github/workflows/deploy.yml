@@ -40,17 +40,12 @@ jobs:
 
       - name: Bump version
         run: |
-          # Release-tag-driven versioning (2026-06-15, L-171 align): package.json is the SINGLE version
-          # source and is set to the v2.5.x release/snap tag at promote time. The old per-deploy
-          # npm-version auto-increment was removed — it drifted the footer counter away from the
-          # release tag. Cache-busting is preserved by the short-SHA in the next step, so every deploy
-          # still changes CACHE_VERSION. NEW_VERSION is left UNSET so the later "Commit version bump
-          # to dev" step no-ops (no more [deploy auto] drift commits).
-          if [[ "${{ inputs.skip_version_bump }}" == "true" ]]; then
-            echo "skip_version_bump set — preserving package.json version."
-          fi
-          CUR=$(node -p "require('./package.json').version")
-          echo "Version preserved at package.json = $CUR (release-tag-driven; no auto-bump).
+          # Release-tag-driven versioning (L-171 align, 2026-06-15): the per-deploy npm-version
+          # auto-increment was removed. package.json is the single version source, set to the
+          # release/snap tag at promote time. NEW_VERSION stays unset so the later "Commit version
+          # bump to dev" step no-ops; the Cache-bust step below still uses the short SHA, so every
+          # deploy changes CACHE_VERSION and busts the PWA.
+          echo "Auto-bump disabled; preserving package.json version (release-tag-driven)."
 
       - name: Cache-bust service worker
         # SW staleness fix (2.1.1): public/sw.js CACHE_VERSION must change every deploy, or the
