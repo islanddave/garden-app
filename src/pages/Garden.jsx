@@ -51,6 +51,13 @@ export default function Garden() {
   const sourceInventoryItemId = searchParams.get('source_inventory_item_id') || null
   const queryVarietyId        = searchParams.get('variety_id') || null
   const [editor, setEditor] = useState(null)
+  // V3-GARDEN-001: transient id of the just-created planting. Drives an ambient in-row
+  // highlight/fade so the new row is acknowledged WITHOUT a toast/modal/banner (reward-UX
+  // ambient rule). Cleared ~1200ms after create (matches the @keyframes duration below).
+  const [flashId, setFlashId] = useState(null)
+  // V3-ARCHIVE-001: ambient archive confirmation + Undo (operational confirmation of a
+  // user-initiated action — Toast carve-out; non-modal, auto-dismiss, never a reward surface).
+  const [archiveUndo, setArchiveUndo] = useState(null) // { id, name, expiresAt }
 
   // Session 3.5 (§3.26): per-sprite actually-seen accumulator.
   // CritterSprite fires onIntersect ONCE per id when IO-gate trips (sprite enters viewport).
@@ -206,20 +213,73 @@ export default function Garden() {
     }
   }, [searchParams, setSearchParams, sourceInventoryItemId, queryVarietyId])
 
-  const onPlantCreated = useCallback((pl) => setPlants(prev => [pl, ...prev]), [])
-  const onPlantUpdated = useCallback((pl) => setPlants(prev => prev.map(x => x.id === pl.id ? pl : x)), [])
-  const onPlantDeleted = useCallback((id) => setPlants(prev => prev.filter(x => x.id !== id)), [])
-  // V3-IA photo restore: after a per-planting upload, refetch /api/plants so the server-side
-  // featured-photo auto-promote (plants.featured_photo_id -> featured_photo_view_url) flows
-  // into the tree thumbnails without a reload. Same contract as the retired Plants.jsx.
+  // V3-IA photo restore + V3-GARDEN-001 logging-loop fix: refetch the full /api/plants list.
+  // Declared ABOVE the create/update/delete handlers so they can call it to re-hydrate rows.
+  // WHY (V3-GARDEN-001): the POST /api/plants response lacks the nested variety_ref join, so an
+  // optimistic prepend shows a variety-less row until a reload. Refetching pulls the hydrated row
+  // (variety_ref + server-side featured_photo_view_url auto-promote) without a tab refresh.
+  // Same contract as the retired Plants.jsx.
   const refetchPlants = useCallback(async () => {
     try {
       const fresh = await fetch('/api/plants')
       setPlants(fresh ?? [])
     } catch {
-      /* non-fatal — stale thumbnail heals on next mount */
+      /* non-fatal — stale row heals on next mount */
     }
   }, [fetch])
+
+  const onPlantCreated = useCallback((pl) => {
+    // Optimistic prepend (instant feedback) — the row is variety-less until refetch hydrates it.
+    setPlants(prev => [pl, ...prev])
+    // Auto-expand the new planting's project so the row is actually visible (it hangs under it).
+    if (pl?.project_id != null) {
+      setExpanded(prev => {
+        const next = new Set(prev).add(pl.project_id)
+        saveExpanded(next)
+        return next
+      })
+    }
+    // Ambient new-row acknowledgment: flash the row, then clear (no toast/banner — §reward-UX).
+    setFlashId(pl?.id ?? null)
+    setTimeout(() => setFlashId(null), 1200)
+    // Re-hydrate from the server so variety_ref (and featured photo) populate the row.
+    refetchPlants()
+  }, [refetchPlants, setFlashId])
+
+  const onPlantUpdated = useCallback((pl) => {
+    setPlants(prev => prev.map(x => x.id === pl.id ? pl : x))
+    refetchPlants()
+  }, [refetchPlants])
+
+  const onPlantDeleted = useCallback((id) => {
+    setPlants(prev => prev.filter(x => x.id !== id))
+    refetchPlants()
+  }, [refetchPlants])
+
+  const onPlantArchived = useCallback((plant) => {
+    // Remove from the active list immediately (it's now hidden), refetch for truth, offer Undo.
+    setPlants(prev => prev.filter(x => x.id !== plant.id))
+    refetchPlants()
+    setArchiveUndo({ id: plant.id, name: plant.name ?? 'Planting', expiresAt: Date.now() + 6000 })
+  }, [refetchPlants])
+
+  const undoArchive = useCallback(async () => {
+    if (!archiveUndo) return
+    const id = archiveUndo.id
+    setArchiveUndo(null)
+    try {
+      await fetch('/api/plants/' + id + '/archive', { method: 'PATCH', body: JSON.stringify({ archived: false }) })
+    } catch { /* non-fatal */ }
+    refetchPlants()
+  }, [archiveUndo, fetch, refetchPlants])
+
+  useEffect(() => {
+    if (!archiveUndo) return
+    const remaining = archiveUndo.expiresAt - Date.now()
+    if (remaining <= 0) { setArchiveUndo(null); return }
+    const t = setTimeout(() => setArchiveUndo(null), remaining)
+    return () => clearTimeout(t)
+  }, [archiveUndo])
 
   const toggle = useCallback((id) => {
     setExpanded(prev => {
@@ -303,6 +363,17 @@ export default function Garden() {
 
   return (
     <Shell>
+      {/* V3-GARDEN-001 ambient new-row ack: one-time @keyframes injection (mirrors the
+          CritterArrival injected-<style> precedent — there is NO global CSS file). A new
+          planting row gets a brief background highlight that fades out. Pure visual flourish:
+          no toast/modal/banner/snackbar/sound/haptic/badge, no text copy (reward-UX ambient rule). */}
+      <style>{`
+        @keyframes garden-newrow-highlight {
+          0%   { background-color: rgba(123,168,90,0.35); }
+          60%  { background-color: rgba(123,168,90,0.18); }
+          100% { background-color: transparent; }
+        }
+      `}</style>
       {/* MVP-Critter Phase B: coachmark (§3.7) + opt-in prompt (§3.8).
           Both ambient inline strips, NEVER overlays. Render null when not eligible. */}
       <CritterCoachmark eligible={coachmarkEligible} onDismiss={onCoachmarkDismiss} />
@@ -326,6 +397,7 @@ export default function Garden() {
           onCreated={onPlantCreated}
           onUpdated={onPlantUpdated}
           onDeleted={onPlantDeleted}
+          onArchived={onPlantArchived}
           onClose={closeEditor}
         />
       )}
@@ -339,7 +411,8 @@ export default function Garden() {
               crittersByPlantId={crittersByPlantId}
               onSpriteLongPress={onSpriteLongPress}
               onSpriteIntersect={onSpriteIntersect}
-              onPhotoUploaded={refetchPlants} />
+              onPhotoUploaded={refetchPlants}
+              flashId={flashId} />
           ))}
         </div>
       )}
@@ -353,11 +426,28 @@ export default function Garden() {
         onPick={onPrefsPick}
         onClose={closePopover}
       />
+
+      {archiveUndo && (
+        <div role="status" aria-live="polite" style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          backgroundColor: P.dark, color: P.white, padding: '10px 14px 10px 18px', borderRadius: 8,
+          fontSize: '0.9rem', boxShadow: '0 4px 16px rgba(0,0,0,0.18)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', gap: 14, maxWidth: '92%',
+        }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Archived <strong>{archiveUndo.name}</strong>
+          </span>
+          <button type="button" onClick={undoArchive} style={{
+            background: 'none', border: 'none', color: P.greenLight, fontWeight: 700,
+            fontSize: '0.9rem', cursor: 'pointer', flexShrink: 0,
+          }}>Undo</button>
+        </div>
+      )}
     </Shell>
   )
 }
 
-function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded }) {
+function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId }) {
   const { project: p, depth, children, plantings } = node
   const hasKids = nodeHasChildren(node)
   const isOpen  = hasKids && expanded.has(p.id)
@@ -430,12 +520,14 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
             critters={crittersByPlantId?.get(pl.id) ?? []}
             onSpriteLongPress={onSpriteLongPress}
             onSpriteIntersect={onSpriteIntersect}
-            onPhotoUploaded={onPhotoUploaded} />)}
+            onPhotoUploaded={onPhotoUploaded}
+            flashId={flashId} />)}
           {children.map(c => <TreeNode key={c.project.id} node={c} expanded={expanded} onToggle={onToggle} level={level + 1}
             crittersByPlantId={crittersByPlantId}
             onSpriteLongPress={onSpriteLongPress}
             onSpriteIntersect={onSpriteIntersect}
-            onPhotoUploaded={onPhotoUploaded} />)}
+            onPhotoUploaded={onPhotoUploaded}
+            flashId={flashId} />)}
         </div>
       )}
     </div>
@@ -444,7 +536,7 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
 
 // Planting leaf — whole row OPENS the planting's own detail page (V3-NAV-001 / PR2).
 // Previously navigated to the owning project; now deep-links to /projects/:id/plantings/:plantingId.
-function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPress = null, onSpriteIntersect = null, onPhotoUploaded = null }) {
+function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPress = null, onSpriteIntersect = null, onPhotoUploaded = null, flashId = null }) {
   const variety = pl.variety_ref?.name
   return (
     <div role="treeitem" aria-level={level} style={{ paddingLeft: depth * 20, position: 'relative' }}>
@@ -470,6 +562,7 @@ function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPr
       <div style={{
         backgroundColor: P.cream, border: `1px solid ${P.border}`, borderLeft: `3px solid ${P.greenLight}`,
         borderRadius: 8, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10, minHeight: 44,
+        animation: pl.id === flashId ? 'garden-newrow-highlight 1200ms ease' : undefined,
       }}>
         <Link to={`/projects/${pl.project_id}/plantings/${pl.id}`} aria-label={`Open ${pl.name}`}
           style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
@@ -515,7 +608,7 @@ function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPr
 
 function Shell({ children }) {
   return (
-    <div style={{ minHeight: 'calc(100vh - 52px)', backgroundColor: P.cream, position: 'relative' }}>
+    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream, position: 'relative' }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px', position: 'relative' }}>{children}</div>
     </div>
   )

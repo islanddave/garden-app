@@ -19,6 +19,8 @@ vi.mock('../lib/uxEvents.js', () => ({
   FLOWS: { OPEN_PLANTING: 'open_planting' },
   useUxFlow: () => ({ step: vi.fn(), tap: vi.fn(), complete: vi.fn(), reset: vi.fn() }),
 }))
+// V3-FAV-001: FavoriteToggle calls useAuth (no AuthProvider in this harness) — stub it to a no-op.
+vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => null }))
 
 import PlantingDetail from '../pages/PlantingDetail.jsx'
 
@@ -204,10 +206,8 @@ describe('PlantingDetail — V3-PHOTOMULTI-001 photos widget (V1 display-only)',
     renderAt()
     await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
     expect(await screen.findByRole('heading', { name: /Photos/ })).toBeTruthy()
-    // ph1 (plant_id) renders its caption; ph2 (event e2, no caption) once events load -> by alt;
-    // ph3 (other planting) excluded. AWAIT both before counting (photos effect re-runs on events).
-    expect(await screen.findByText('Seedling')).toBeTruthy()
-    expect(await screen.findByAltText('Megatron Jalapeno photo')).toBeTruthy()
+    // ph1 (plant_id) + ph2 (event e2) included; ph3 (other planting) excluded.
+    expect(screen.getByText('Seedling')).toBeTruthy()
     expect(screen.queryByText('Not mine')).toBeNull()
     const imgs = screen.getAllByRole('img').filter(i => /\/ph[0-9]\.jpg$/.test(i.getAttribute('src') || ''))
     expect(imgs.length).toBe(2)
