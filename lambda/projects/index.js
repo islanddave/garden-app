@@ -391,7 +391,8 @@ export const handler = async (event) => {
                  is_public, location_id, created_at, updated_at, created_by,
                  parent_id AS parent_project_id,
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
-                 kind_set_at
+                 kind_set_at,
+                 COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
           FROM public.container
           WHERE deleted_at IS NULL
           ORDER BY parent_id NULLS FIRST, display_name ASC
@@ -413,7 +414,8 @@ export const handler = async (event) => {
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
                  is_public, location_id, created_at, updated_at, parent_id AS parent_project_id,
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
-                 kind_set_at
+                 kind_set_at,
+                 COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
           FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
@@ -427,7 +429,8 @@ export const handler = async (event) => {
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
                  is_public, location_id, created_at, updated_at, parent_id AS parent_project_id,
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
-                 kind_set_at
+                 kind_set_at,
+                 COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
           FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
@@ -441,7 +444,8 @@ export const handler = async (event) => {
                  to_char(start_date, 'YYYY-MM-DD') AS start_date,
                  is_public, location_id, created_at, updated_at, parent_id AS parent_project_id,
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
-                 kind_set_at
+                 kind_set_at,
+                 COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
           FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
