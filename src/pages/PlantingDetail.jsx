@@ -53,6 +53,12 @@ export default function PlantingDetail() {
   const [eventsLoading, setEventsLoading] = useState(true)
   const [eventsError, setEventsError] = useState(null)
 
+  // V3-PHOTOMULTI-001 (V1, display-only): every photo linked to THIS planting — uploaded directly
+  // (plant_id) or attached to one of its events (event_id). No backend/migration: read the
+  // project's photos (same source as the Photo Library) and filter client-side.
+  const [photos, setPhotos] = useState([])
+  const [photosLoading, setPhotosLoading] = useState(true)
+
   // Scroll-to-top on mount — BrowserRouter doesn't reset scroll on push, so without this the
   // page opens mid-scroll when tapped from far down a list.
   useEffect(() => { window.scrollTo(0, 0) }, [])
@@ -117,6 +123,28 @@ export default function PlantingDetail() {
       })
     return () => { cancelled = true }
   }, [planting, fetch])
+
+  // Planting photos (V1 display-only). Once the planting is owned, read the project's photos and
+  // keep those linked to THIS planting (directly via plant_id, or through one of its events).
+  useEffect(() => {
+    if (!planting) return
+    let cancelled = false
+    setPhotosLoading(true)
+    Promise.resolve(fetch(`/api/photos?project_id=${planting.project_id}`))
+      .then(data => {
+        if (cancelled) return
+        const evIds = new Set((events || []).map(e => e.id))
+        const seen = new Set()
+        const mine = (data ?? [])
+          .filter(p => p.plant_id === planting.id || (p.event_id && evIds.has(p.event_id)))
+          .filter(p => (seen.has(p.id) ? false : seen.add(p.id)))
+        mine.sort((a, b) => String(b.created_at || b.taken_at || '').localeCompare(String(a.created_at || a.taken_at || '')))
+        setPhotos(mine)
+        setPhotosLoading(false)
+      })
+      .catch(() => { if (!cancelled) { setPhotos([]); setPhotosLoading(false) } })
+    return () => { cancelled = true }
+  }, [planting, events, fetch])
 
   // ── State 1: loading ──────────────────────────────────────────────────────────────────────
   if (loading) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div></Shell>
@@ -254,6 +282,41 @@ export default function PlantingDetail() {
           </div>
         )}
       </div>
+
+      {/* ── Photos (V3-PHOTOMULTI-001 V1: every photo for this planting, display-only) ── */}
+      {(photosLoading || photos.length > 0) && (
+        <>
+          <SectionHeader>
+            Photos
+            {!photosLoading && photos.length > 0 && (
+              <span style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.82rem', color: P.light }}>({photos.length})</span>
+            )}
+          </SectionHeader>
+          <div style={cardStyle}>
+            {photosLoading ? (
+              <div style={{ padding: '8px 0', color: P.light, fontSize: '0.875rem' }}>Loading photos…</div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: 10 }}>
+                {photos.map(ph => (
+                  <figure key={ph.id} style={{ margin: 0 }}>
+                    <ZoomableImage
+                      src={ph.view_url}
+                      alt={ph.caption || `${pl.name || 'Planting'} photo`}
+                      loading="lazy"
+                      style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 8, border: `1px solid ${P.border}`, display: 'block' }}
+                    />
+                    {ph.caption && (
+                      <figcaption style={{ marginTop: 4, fontSize: '0.72rem', color: P.light, lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {ph.caption}
+                      </figcaption>
+                    )}
+                  </figure>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* ── Event log (planting-scoped, HS-2) ─────────────────────────────────────────────── */}
       <SectionHeader>
