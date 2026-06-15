@@ -193,6 +193,7 @@ export default function EventNew() {
   const [searchParams] = useSearchParams()
   const preselectedProjectId = searchParams.get('project') || ''
   const preselectedEventType = searchParams.get('event_type') || ''
+  const preselectedPlantId = searchParams.get('plant') || ''
   const { fetch: apiFetch, getToken } = useApiFetch()
   // M1 telemetry (Inc 0) — log_watering flow. Only counts when the event is a watering.
   // Fire-and-forget; never affects the save flow.
@@ -214,7 +215,7 @@ export default function EventNew() {
     notes:         '',
     private_notes: '',
     quantity:      '',
-    plant_id:      '',
+    plant_id:      preselectedPlantId,
     is_public:     true,
   })
 
@@ -264,9 +265,16 @@ export default function EventNew() {
   useEffect(() => {
     if (!form.project_id) { setPlantsForProject([]); return }
     apiFetch('/api/plants?project_id=' + form.project_id)
-      .then(data => setPlantsForProject((data ?? []).filter(p => !p.archived_at)))
+      .then(data => {
+        const live = (data ?? []).filter(p => !p.archived_at)
+        setPlantsForProject(live)
+        // V3-LOG-001 deep-link safety: clear a ?plant= prefill not in this project.
+        if (preselectedPlantId && !live.some(p => p.id === preselectedPlantId)) {
+          setForm(f => (f.plant_id === preselectedPlantId ? { ...f, plant_id: '' } : f))
+        }
+      })
       .catch(() => setPlantsForProject([]))
-  }, [apiFetch, form.project_id])
+  }, [apiFetch, form.project_id, preselectedPlantId])
 
   // Load projects + locations
   useEffect(() => {
