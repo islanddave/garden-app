@@ -64,7 +64,7 @@ describe('ProjectNew — V1.2a-4 S1 kind dropdown', () => {
   it('shows the guidance text when cultivar option is hidden', async () => {
     wireApiFetch()
     await act(async () => { render(<ProjectNew />) })
-    expect(screen.getByText(/Just a planting for now — cultivars get a better home soon\./)).toBeDefined()
+    expect(screen.getByText(/Just a planting for now\./)).toBeDefined()
   })
 
   it('renders the target_end_date input', async () => {
