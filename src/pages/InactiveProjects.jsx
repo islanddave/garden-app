@@ -183,7 +183,7 @@ export default function InactiveProjects() {
               <h2 style={sectionHeadStyle}>Dismissed</h2>
               {dismissedRows.length > 0 && (
                 <p style={{ color: P.light, fontSize: '0.78rem', margin: '0 0 12px' }}>
-                  Restoring dismissed projects is coming soon.
+                  Restoring dismissed projects isn't available yet.
                 </p>
               )}
               {dismissedRows.length === 0 ? (
