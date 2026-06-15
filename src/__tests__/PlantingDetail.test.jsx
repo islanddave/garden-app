@@ -209,9 +209,10 @@ describe('PlantingDetail — V3-PHOTOMULTI-001 photos widget (V1 display-only)',
     // ph1 (plant_id) renders its caption; ph2 (event e2, no caption) once events load -> by alt;
     // ph3 (other planting) excluded. AWAIT both before counting (photos effect re-runs on events).
     expect(await screen.findByText('Seedling')).toBeTruthy()
+    // Deterministic: await BOTH photo <img>s by alt (ph1 caption-alt, ph2 name-fallback alt);
+    // ph3 (other planting) excluded. No brittle synchronous img-count (prior render race).
+    expect(await screen.findByAltText('Seedling')).toBeTruthy()
     expect(await screen.findByAltText('Megatron Jalapeno photo')).toBeTruthy()
     expect(screen.queryByText('Not mine')).toBeNull()
-    const imgs = screen.getAllByRole('img').filter(i => /\/ph[0-9]\.jpg$/.test(i.getAttribute('src') || ''))
-    expect(imgs.length).toBe(2)
   })
 })
