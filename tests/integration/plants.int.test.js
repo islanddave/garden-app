@@ -43,6 +43,9 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  // entity registry (DRG-ENGINE-002) FK is ON DELETE RESTRICT — clear the auto-created
+  // planting entity rows before hard-deleting fixtures (test-teardown carve-out).
+  await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (SELECT id FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
   await directSql`DELETE FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER})`
   await directSql`DELETE FROM plant_projects WHERE created_by IN (${USER}, ${FOREIGN_USER})`
 })

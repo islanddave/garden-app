@@ -272,6 +272,8 @@ describe('variety surface (TICKET-VARIETY-INV — Lambda now wired)', () => {
   })
   afterAll(async () => {
     await directSql`DELETE FROM inventory_items WHERE created_by = ${USER} AND variety_id IS NOT NULL`
+    // entity registry FK ON DELETE RESTRICT — clear auto-created cultivar entity rows first.
+    await directSql`DELETE FROM entity WHERE entity_type='cultivar' AND cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ${USER})`
     await directSql`DELETE FROM plant_varieties WHERE created_by = ${USER}`
   })
 
