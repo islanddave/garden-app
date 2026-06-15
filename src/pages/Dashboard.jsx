@@ -322,14 +322,21 @@ export default function Dashboard() {
               borderRadius: '10px',
               overflow: 'hidden',
             }}>
-              {recentEvents.map((ev, i) => (
-                <div key={ev.id} style={{
+              {recentEvents.map((ev, i) => {
+                const single = (ev.batch_count ?? 1) <= 1
+                const to = single && ev.plant_id
+                  ? `/projects/${ev.project_id}/plantings/${ev.plant_id}`
+                  : `/projects/${ev.project_id}`
+                return (
+                <Link key={ev.id} to={to} style={{
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   padding: '11px 16px',
                   borderBottom: i < recentEvents.length - 1 ? `1px solid ${P.border}` : 'none',
                   gap: '12px',
+                  textDecoration: 'none',
+                  color: 'inherit',
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
                     <span style={{
@@ -343,7 +350,7 @@ export default function Dashboard() {
                       flexShrink: 0,
                       whiteSpace: 'nowrap',
                     }}>
-                      {(ev.batch_count ?? 1) > 1 ? `${ev.event_type?.replace(/_/g, ' ')} × ${ev.batch_count}` : ev.event_type?.replace(/_/g, ' ')}
+                      {single ? ev.event_type?.replace(/_/g, ' ') : `${ev.event_type?.replace(/_/g, ' ')} × ${ev.batch_count}`}
                     </span>
                     <div style={{ minWidth: 0 }}>
                       <div style={{
@@ -354,15 +361,16 @@ export default function Dashboard() {
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                       }}>
-                        {(ev.batch_count ?? 1) > 1 ? `${ev.batch_count} plantings` : (ev.project_name ?? '—')}
+                        {single ? (ev.plant_name || ev.project_name || '—') : `${ev.batch_count} plantings`}
                       </div>
                     </div>
                   </div>
                   <span style={{ fontSize: '0.75rem', color: P.light, flexShrink: 0, whiteSpace: 'nowrap' }}>
                     {relativeTime(ev.created_at)}
                   </span>
-                </div>
-              ))}
+                </Link>
+                )
+              })}
             </div>
           </section>
         )}
