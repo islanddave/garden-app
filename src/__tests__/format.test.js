@@ -7,10 +7,11 @@ describe('formatQty', () => {
     expect(formatQty('10.000')).toBe('10')
     expect(formatQty('100.000')).toBe('100')
   })
-  it('preserves significant decimals', () => {
-    expect(formatQty('3.500')).toBe('3.5')
-    expect(formatQty('3.125')).toBe('3.125')
-    expect(formatQty(2.5)).toBe('2.5')
+  it('rounds decimals to nearest integer (Dave directive: integers everywhere)', () => {
+    expect(formatQty('3.500')).toBe('4')
+    expect(formatQty('3.125')).toBe('3')
+    expect(formatQty(2.4)).toBe('2')
+    expect(formatQty(2.5)).toBe('3')
   })
   it('handles integers cleanly', () => {
     expect(formatQty(0)).toBe('0')
@@ -26,7 +27,7 @@ describe('formatQty', () => {
     expect(formatQty('abc')).toBe('abc')
   })
   it('handles negative numbers', () => {
-    expect(formatQty(-3.5)).toBe('-3.5')
+    expect(formatQty(-3.4)).toBe('-3')
     expect(formatQty('-3.000')).toBe('-3')
   })
 })

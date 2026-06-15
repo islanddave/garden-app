@@ -99,7 +99,7 @@ function M1Panel({ byFlow, windowDays }) {
                 <td style={{ padding: '6px 8px', fontWeight: 600 }}>{FLOW_LABELS[f]}</td>
                 <td style={{ padding: '6px 8px' }}>{r?.samples ?? '—'}</td>
                 <td style={{ padding: '6px 8px' }}>{r?.avg_taps ?? '—'}</td>
-                <td style={{ padding: '6px 8px' }}>{r?.median_taps != null ? Number(r.median_taps).toFixed(1) : '—'}</td>
+                <td style={{ padding: '6px 8px' }}>{r?.median_taps != null ? Math.round(Number(r.median_taps)) : '—'}</td>
                 <td style={{ padding: '6px 8px' }}>{r?.min_taps ?? '—'}</td>
                 <td style={{ padding: '6px 8px' }}>{r?.max_taps ?? '—'}</td>
               </tr>

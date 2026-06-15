@@ -18,6 +18,10 @@ const CATEGORY_LABELS = {
   other:                    'Other',
 }
 
+// Full, alphabetized category list for the filter — guarantees Seeds (and every category) is
+// always selectable even when no item of that category is currently in stock (brahmagupta #7).
+const CATEGORY_OPTIONS = Object.entries(CATEGORY_LABELS).sort((a, b) => a[1].localeCompare(b[1]))
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Inventory() {
   const { items, loading, error, toast, dismissToast, adjustQuantity } = useInventory()
@@ -63,10 +67,7 @@ export default function Inventory() {
     (i.quantity_on_hand ?? 0) <= i.reorder_threshold
   )
 
-  const fmt = n => '$' + n.toFixed(2)
-
-  // Category options for filter (only present in data)
-  const presentCategories = [...new Set(items.map(i => i.category))]
+  const fmt = n => '$' + Math.round(n)
 
   return (
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
@@ -99,8 +100,8 @@ export default function Inventory() {
 
           <FilterSelect label="Category" value={filterCategory} onChange={setFilterCategory}>
             <option value="all">All categories</option>
-            {presentCategories.map(c => (
-              <option key={c} value={c}>{CATEGORY_LABELS[c] ?? c}</option>
+            {CATEGORY_OPTIONS.map(([val, label]) => (
+              <option key={val} value={val}>{label}</option>
             ))}
           </FilterSelect>
 
@@ -383,7 +384,7 @@ function InventoryRow({ item, onAdjust }) {
             {item.status !== 'active' && <DetailCell label="Status" value={item.status} />}
             {item.location_text   && <DetailCell label="Location"  value={item.location_text} />}
             {item.source          && <DetailCell label="Source"    value={item.source} />}
-            {item.unit_cost != null && <DetailCell label="Unit cost" value={`$${Number(item.unit_cost).toFixed(2)}`} />}
+            {item.unit_cost != null && <DetailCell label="Unit cost" value={`$${Math.round(Number(item.unit_cost))}`} />}
             {item.purchase_date   && <DetailCell label="Purchased" value={item.purchase_date} />}
             {item.brand           && <DetailCell label="Brand"     value={item.brand} />}
             {item.model           && <DetailCell label="Model"     value={item.model} />}

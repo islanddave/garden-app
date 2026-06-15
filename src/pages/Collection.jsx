@@ -85,8 +85,8 @@ const LABEL_GOLD = '#ffcf7a'
 // ─── Card geometry ───────────────────────────────────────────────────────────────
 const TILE_H      = 212
 const STAGE_PCT   = '86%'
-const STAGE_MAX   = 108   // BUG-CROP-001: cap art so 8+STAGE_MAX+8+NAME_H+CAPTION_H ≤ TILE_H reserves the 2-line name band at every column width
-const NAME_H      = 36    // rigid 2-line name band (0.88rem × 1.2 line-height × 2)
+const STAGE_MAX   = 100   // BUG-CROP-001 / no-ellipsis: cap art so 8+STAGE_MAX+8+NAME_H+CAPTION_H ≤ TILE_H reserves the name band at every column width
+const NAME_H      = 44    // name band: up to 3 lines + length-responsive font so the longest roster name fits WITHOUT ellipsis
 const CAPTION_H   = 42
 const CARD_RADIUS = 14
 const CARD_SHADOW = '0 2px 4px rgba(40,30,10,.10), 0 6px 16px rgba(40,30,10,.16)'
@@ -247,9 +247,12 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
         transition: 'opacity 600ms ease',
       }}>
         <span title={got ? c.name : undefined} style={{
-          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-          overflow: 'hidden', textOverflow: 'ellipsis',
-          fontSize: '0.88rem', fontWeight: 700, lineHeight: 1.2, letterSpacing: '-0.005em',
+          display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+          // Length-responsive size: short names large; long names shrink to fit the 3-line band
+          // with no ellipsis (longest roster name = 27 chars). No-ellipsis goal (Dave 2026-06-15).
+          fontSize: (c.name || '').length <= 14 ? '0.86rem' : (c.name || '').length <= 20 ? '0.78rem' : '0.7rem',
+          fontWeight: 700, lineHeight: 1.18, letterSpacing: '-0.005em',
           color: theme.name, textAlign: 'center',
           wordBreak: 'break-word', overflowWrap: 'anywhere',
         }}>

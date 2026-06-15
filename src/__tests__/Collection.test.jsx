@@ -118,7 +118,8 @@ describe('Collection — V007 candy-pastel float-free redesign', () => {
     expect(nameSpan).toBeDefined()
     // 2-line clamp styles present -> caps at 2 lines + ellipsis, kills descender shear on one-liners.
     expect(nameSpan.style.display).toBe('-webkit-box')
-    expect(nameSpan.style.WebkitLineClamp || nameSpan.style.webkitLineClamp).toBe('2')
+    expect(nameSpan.style.WebkitLineClamp || nameSpan.style.webkitLineClamp).toBe('3')
+    expect(nameSpan.style.fontSize).toBe('0.7rem')
     expect(nameSpan.style.WebkitBoxOrient || nameSpan.style.webkitBoxOrient).toBe('vertical')
     expect(nameSpan.style.overflow).toBe('hidden')
     // Full-name recovery on hover/long-press.
