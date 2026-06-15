@@ -91,9 +91,17 @@ describe('byName comparator', () => {
 })
 
 describe('applyNameSort', () => {
-  it('returns the SAME array reference under recency (no copy, server order preserved)', () => {
+  it('returns server order under recency when there are no activity timestamps (stable)', () => {
     const arr = [{ name: 'Z' }, { name: 'A' }]
-    expect(applyNameSort(arr, SORT_RECENCY)).toBe(arr)
+    expect(applyNameSort(arr, SORT_RECENCY).map(x => x.name)).toEqual(['Z', 'A'])
+  })
+  it('sorts by last_activity_at DESC under recency (BUG-ORDER-001)', () => {
+    const arr = [
+      { name: 'old', created_at: '2026-01-01T00:00:00Z' },
+      { name: 'fresh', last_activity_at: '2026-06-10T00:00:00Z' },
+      { name: 'mid', last_activity_at: '2026-03-01T00:00:00Z' },
+    ]
+    expect(applyNameSort(arr, SORT_RECENCY).map(x => x.name)).toEqual(['fresh', 'mid', 'old'])
   })
   it('returns a NEW sorted array under alpha without mutating the input', () => {
     const arr = [{ name: 'Z' }, { name: 'A' }]
