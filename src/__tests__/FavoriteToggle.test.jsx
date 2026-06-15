@@ -65,7 +65,16 @@ describe('FavoriteToggle', () => {
         <FavoriteToggle entityType="project" entityId="proj-9" />
       </div>
     )
-    await waitFor(() => expect(screen.getByRole('button').textContent).toBe('☆'))
+    // Gate on the mount status-check RESOLVING (loading->false) before clicking. The initial
+    // render shows the empty star regardless of fetch state, so asserting it alone races the
+    // click ahead of the mount GET — and toggle() no-ops while loading===true, leaving the
+    // empty star (the :77 flake). opacity flips 0.4->1 only after setLoading(false): a
+    // deterministic "mount done" signal.
+    await waitFor(() => {
+      const btn = screen.getByRole('button')
+      expect(btn.textContent).toBe('☆')
+      expect(btn.style.opacity).toBe('1')
+    })
 
     fetchSpy.mockResolvedValueOnce({ favorited: true, id: 'fav-9' }) // POST response
     await act(async () => {
