@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
-import { formatQty } from '../lib/format.js'
+import { formatQty, formatMoney } from '../lib/format.js'
 
 // ── Enums (must match inventory_items schema) ─────────────────────────────────
 const CATEGORY_LABELS = {
@@ -67,7 +67,7 @@ export default function Inventory() {
     (i.quantity_on_hand ?? 0) <= i.reorder_threshold
   )
 
-  const fmt = n => '$' + Math.round(n)
+  const fmt = formatMoney
 
   return (
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
@@ -384,7 +384,7 @@ function InventoryRow({ item, onAdjust }) {
             {item.status !== 'active' && <DetailCell label="Status" value={item.status} />}
             {item.location_text   && <DetailCell label="Location"  value={item.location_text} />}
             {item.source          && <DetailCell label="Source"    value={item.source} />}
-            {item.unit_cost != null && <DetailCell label="Unit cost" value={`$${Math.round(Number(item.unit_cost))}`} />}
+            {item.unit_cost != null && <DetailCell label="Unit cost" value={formatMoney(item.unit_cost)} />}
             {item.purchase_date   && <DetailCell label="Purchased" value={item.purchase_date} />}
             {item.brand           && <DetailCell label="Brand"     value={item.brand} />}
             {item.model           && <DetailCell label="Model"     value={item.model} />}

@@ -10,3 +10,13 @@ export function formatQty(n) {
   if (!Number.isFinite(num)) return String(n)
   return String(Math.round(num))
 }
+
+// Money rendering. Always 2 decimals. Dave directive 2026-06-15: money stays decimal
+// at exactly 2 places (numeric columns serialize as "12.990"; this trims to "$12.99").
+// Display-only; DB column unchanged. Returns '' for null/empty, String(n) when not finite.
+export function formatMoney(n) {
+  if (n == null || n === '') return ''
+  const num = Number(n)
+  if (!Number.isFinite(num)) return String(n)
+  return '$' + num.toFixed(2)
+}
