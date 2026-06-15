@@ -13,7 +13,6 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Locations from './pages/Locations.jsx'
-import Tasks from './pages/Tasks.jsx'
 import ProjectList from './pages/ProjectList.jsx'
 import ProjectNew from './pages/ProjectNew.jsx'
 import ProjectDetail from './pages/ProjectDetail.jsx'
@@ -105,7 +104,7 @@ function AppRoutes() {
               <Route path="/dashboard"     element={<Protected><Dashboard /></Protected>} />
               <Route path="/locations"     element={<Protected><Locations /></Protected>} />
               <Route path="/locations/:id" element={<Protected><LocationDetail /></Protected>} />
-              <Route path="/tasks"         element={<Protected><Tasks /></Protected>} />
+              <Route path="/tasks"         element={<Navigate to="/dashboard" replace />} />
               <Route path="/zone"          element={<Protected><ZonePicker /></Protected>} />
               <Route path="/projects"      element={<Protected><ProjectList /></Protected>} />
               <Route path="/projects/new"  element={<Protected><ProjectNew /></Protected>} />
