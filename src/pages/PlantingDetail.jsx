@@ -215,21 +215,37 @@ export default function PlantingDetail() {
             {variety && <span style={{ fontSize: '0.85rem', color: P.mid }}>{variety}</span>}
           </div>
         </div>
-        {/* V3-EDIT-001: edit affordance — deep-links to the Garden PlantingEditor for this planting. */}
-        <Link
-          to={`/garden?edit=${plantingId}`}
-          aria-label="Edit this planting"
-          style={{
-            flexShrink: 0, alignSelf: 'flex-start',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            backgroundColor: P.white, color: P.green,
-            border: `1px solid ${P.greenLight}`, borderRadius: 8,
-            padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
-            textDecoration: 'none', whiteSpace: 'nowrap',
-          }}
-        >
-          ✏️ Edit
-        </Link>
+        {/* Actions: Log event (V3-LOG-001) + Edit (V3-EDIT-001), stacked. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, alignSelf: 'flex-start' }}>
+          <Link
+            to={`/log?project=${pl.project_id}&plant=${pl.id}`}
+            aria-label="Log an event for this planting"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              backgroundColor: P.green, color: P.white,
+              border: `1px solid ${P.green}`, borderRadius: 8,
+              padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
+              textDecoration: 'none', whiteSpace: 'nowrap',
+            }}
+          >
+            📝 Log event
+          </Link>
+          {/* V3-EDIT-001: edit affordance — deep-links to the Garden PlantingEditor for this planting. */}
+          <Link
+            to={`/garden?edit=${plantingId}`}
+            aria-label="Edit this planting"
+            style={{
+              flexShrink: 0, alignSelf: 'flex-start',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              backgroundColor: P.white, color: P.green,
+              border: `1px solid ${P.greenLight}`, borderRadius: 8,
+              padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
+              textDecoration: 'none', whiteSpace: 'nowrap',
+            }}
+          >
+            ✏️ Edit
+          </Link>
+        </div>
       </div>
 
       {/* ── Details ───────────────────────────────────────────────────────────────────────── */}
