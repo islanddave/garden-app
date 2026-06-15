@@ -93,12 +93,15 @@ export function queryRecentEvents(sql, userId) {
   return sql`
       SELECT
         e.id, e.event_type, e.event_date, e.created_at,
+        e.project_id, e.plant_id,
         e.metadata->>'batch_id' AS batch_id,
         eb.item_count,
         pp.display_name AS project_name,
+        gn.display_name AS plant_name,
         pr.display_name
       FROM event_log e
       JOIN public.container pp ON pp.id = e.project_id
+      LEFT JOIN public.garden_node gn ON gn.id = e.plant_id
       LEFT JOIN profiles pr ON pr.id = e.logged_by
       LEFT JOIN event_batches eb ON eb.id::text = e.metadata->>'batch_id'
       WHERE pp.created_by = ANY(${householdIds})
