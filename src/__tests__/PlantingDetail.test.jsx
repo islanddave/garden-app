@@ -187,3 +187,27 @@ describe('PlantingDetail — V3-EDIT-001 edit affordance', () => {
     expect(link.getAttribute('href')).toBe('/garden?edit=pl1')
   })
 })
+
+describe('PlantingDetail — V3-PHOTOMULTI-001 photos widget (V1 display-only)', () => {
+  it('shows a Photos section with photos linked by plant_id or event_id, excluding others', async () => {
+    const PHOTOS = [
+      { id: 'ph1', plant_id: 'pl1', event_id: null, view_url: 'https://img/ph1.jpg', caption: 'Seedling' },
+      { id: 'ph2', plant_id: null, event_id: 'e2', view_url: 'https://img/ph2.jpg', caption: null },
+      { id: 'ph3', plant_id: 'other', event_id: null, view_url: 'https://img/ph3.jpg', caption: 'Not mine' },
+    ]
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING)
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      if (path.startsWith('/api/photos')) return Promise.resolve(PHOTOS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    expect(await screen.findByRole('heading', { name: /Photos/ })).toBeTruthy()
+    // ph1 (plant_id) + ph2 (event e2) included; ph3 (other planting) excluded.
+    expect(screen.getByText('Seedling')).toBeTruthy()
+    expect(screen.queryByText('Not mine')).toBeNull()
+    const imgs = screen.getAllByRole('img').filter(i => /\/ph[0-9]\.jpg$/.test(i.getAttribute('src') || ''))
+    expect(imgs.length).toBe(2)
+  })
+})
