@@ -117,7 +117,7 @@ describe('InactiveProjects — dismiss / undo flow', () => {
     expect(screen.getByText('Undo')).toBeTruthy()
 
     // Row now sits under Dismissed (caption appears; no Restore button).
-    expect(screen.getByText(/Restoring dismissed projects is coming soon/i)).toBeTruthy()
+    expect(screen.getByText(/Restoring dismissed projects isn't available yet/i)).toBeTruthy()
     expect(screen.queryByText('Restore')).toBeNull()
     // No POST fired yet.
     expect(fetchSpy).toHaveBeenCalledTimes(1)
@@ -171,7 +171,7 @@ describe('InactiveProjects — dismissed rows have no Restore affordance', () =>
     // No fake Restore affordance on dismissed rows.
     expect(screen.queryByText('Restore')).toBeNull()
     // Caption signposts the future capability.
-    expect(screen.getByText(/Restoring dismissed projects is coming soon/i)).toBeTruthy()
+    expect(screen.getByText(/Restoring dismissed projects isn't available yet/i)).toBeTruthy()
     // Only the mount load — no endpoint hit.
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
