@@ -16,8 +16,19 @@ export function byName(a, b) {
   return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' })
 }
 
+// BUG-ORDER-001: recency comparator — most-recently-active first. Prefers the
+// server-computed last_activity_at (max event date), else updated_at, else
+// created_at. Missing/equal keys -> 0 so a stable sort preserves server order.
+function recencyKey(x) {
+  const t = Date.parse(x?.last_activity_at || x?.updated_at || x?.created_at || '')
+  return Number.isNaN(t) ? 0 : t
+}
+export function byRecency(a, b) {
+  return recencyKey(b) - recencyKey(a)
+}
+
 // Sort orders. 'alpha' = byName (case-insensitive, numeric-aware) — the DEFAULT.
-// 'recency' = server order (created_at DESC for plantings; API order for projects).
+// 'recency' = most-recently-active first (last_activity_at from the server; created_at fallback).
 // OWNER OVERRIDE (Dave, 2026-06-04): alphabetical is the default per Dave's explicit decision,
 // overriding the Crucible's recency-default (V002 §5 / V3-ORDER-001). This restores Dave's
 // original ss1-screenshot intent. Recency remains available and persists one tap away via the
@@ -29,8 +40,10 @@ export const SORT_ALPHA = 'alpha'
 // (preserves server/recency order without copying). Null-safe.
 export function applyNameSort(arr, order) {
   const list = arr || []
-  if (order !== SORT_ALPHA) return list
-  return [...list].sort(byName)
+  if (order === SORT_ALPHA) return [...list].sort(byName)
+  // BUG-ORDER-001: recency = most-recently-active first; stable sort preserves
+  // server order when activity timestamps are equal/absent.
+  return [...list].sort(byRecency)
 }
 
 // Depth-ordered flat list: root projects first, each followed immediately by its descendants.
