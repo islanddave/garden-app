@@ -103,6 +103,7 @@ jobs:
           VITE_API_VARIETIES:         ${{ vars.VITE_API_VARIETIES }}
           VITE_API_APP_EVENTS:        ${{ vars.VITE_API_APP_EVENTS }}
           VITE_API_ACHIEVEMENTS:      ${{ vars.VITE_API_ACHIEVEMENTS }}
+          VITE_API_FINDINGS:          ${{ vars.VITE_API_FINDINGS }}
           VITE_API_CRITTERS:          ${{ vars.VITE_API_CRITTERS }}
           VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
           VITE_API_SHARED_STATE:      ${{ vars.VITE_API_SHARED_STATE }}
@@ -122,6 +123,7 @@ jobs:
           VITE_API_VARIETIES:         ${{ vars.VITE_API_VARIETIES }}
           VITE_API_APP_EVENTS:        ${{ vars.VITE_API_APP_EVENTS }}
           VITE_API_ACHIEVEMENTS:      ${{ vars.VITE_API_ACHIEVEMENTS }}
+          VITE_API_FINDINGS:          ${{ vars.VITE_API_FINDINGS }}
           VITE_API_CRITTERS:          ${{ vars.VITE_API_CRITTERS }}
           VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
           VITE_API_SHARED_STATE:      ${{ vars.VITE_API_SHARED_STATE }}
@@ -245,6 +247,7 @@ jobs:
           VITE_API_VARIETIES:    ${{ vars.VITE_API_VARIETIES }}
           VITE_API_APP_EVENTS:   ${{ vars.VITE_API_APP_EVENTS }}
           VITE_API_ACHIEVEMENTS: ${{ vars.VITE_API_ACHIEVEMENTS }}
+          VITE_API_FINDINGS:          ${{ vars.VITE_API_FINDINGS }}
         run: |
           set -uo pipefail
           SMOKE_FAIL=0

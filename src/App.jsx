@@ -42,6 +42,7 @@ import GardenHelper from './pages/GardenHelper.jsx'
 import FieldCapture from './pages/FieldCapture.jsx'
 import Settings from './pages/Settings.jsx'
 import SettingsNotifications from './pages/SettingsNotifications.jsx'
+import Findings from './pages/Findings.jsx'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -126,6 +127,7 @@ function AppRoutes() {
                   (fresh fetch surface) mirrors /inactive, /log, /settings/notifications. */}
               <Route path="/projects/:id/plantings/:plantingId" element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected>} />
               <Route path="/achievements" element={<Protected><Achievements /></Protected>} />
+              <Route path="/findings"     element={<Protected><Findings /></Protected>} />
               <Route path="/collection" element={<Protected><Collection /></Protected>} />
               {/* V1.2a-4 S6 admin classify route. Jen-invisible (no nav link).
                   Desktop-only viewport guard inside the component. Lambda-side

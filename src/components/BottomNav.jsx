@@ -221,6 +221,28 @@ export default function BottomNav() {
             Achievements
           </Link>
 
+          {/* DrG findings tab — care read model surface (DRG-TAB-001 / slice 8).
+              Instrumentation entry in the More menu; consumes GET /api/findings. No character
+              (the character is a separate V4 track). */}
+          <Link
+            to="/findings"
+            onClick={closeMore}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 16,
+              width: '100%',
+              padding: '14px 24px',
+              borderTop: `1px solid ${P.border}`,
+              background: 'none', textAlign: 'left',
+              cursor: 'pointer', textDecoration: 'none',
+              color: P.dark, fontSize: '1rem', fontWeight: 500,
+              fontFamily: 'inherit',
+              minHeight: 48,
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🩺</span>
+            Doctor Gardener
+          </Link>
+
           {/* Garden Helper — Post-V2 UX overhaul Inc 2 Bite 1 (Rung-1 advisory).
               /helper route + GardenHelper.jsx. Non-recording scaffold: composes a
               Claude-ready prompt with a C4 untrusted-data fence; user shares or

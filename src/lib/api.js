@@ -20,6 +20,7 @@
 //   /api/achievements       → VITE_API_ACHIEVEMENTS  achievements list
 //   /api/ux-events          → VITE_API_UX_EVENTS     UX success-metric sink (Inc 0; admin-read + telemetry write)
 //   /api/shared-state       → VITE_API_SHARED_STATE  shared-garden reward substrate (V3-REWARDSTATE-001)
+//   /api/findings           → VITE_API_FINDINGS      DRG care findings read model (DRG-TAB-001)
 
 import { useAuth } from '@clerk/react'
 import { useCallback } from 'react'
@@ -39,6 +40,7 @@ const FUNCTION_URLS = {
   '/api/achievements':      import.meta.env.VITE_API_ACHIEVEMENTS  ?? '',
   '/api/ux-events':         import.meta.env.VITE_API_UX_EVENTS     ?? '',
   '/api/shared-state':      import.meta.env.VITE_API_SHARED_STATE  ?? '',
+  '/api/findings':          import.meta.env.VITE_API_FINDINGS      ?? '',
 }
 
 export function resolveUrl(path, urls = FUNCTION_URLS) {
