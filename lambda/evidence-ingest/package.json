@@ -1,0 +1,11 @@
+{
+  "name": "garden-lambda-evidence-ingest",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "DRG-ENGINE-003 evidence-ingest (slice 7) — POST-only append-only evidence write path. Validates payload (validate.js) + entity_id against the registry. Additive + dormant (shipped-but-unwired) in V1.",
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.0",
+    "@clerk/backend": "^1.0.0",
+    "@aws-sdk/client-secrets-manager": "^3.0.0"
+  }
+}
