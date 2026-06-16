@@ -12,11 +12,18 @@ const issueRow = (over = {}) => ({
 });
 
 describe('normalizeSeverity', () => {
-  it('maps medium → moderate and defaults unknown to moderate', () => {
+  it('maps numeric smallint 1/2/3 (prod event_log.severity scheme) to bands', () => {
+    expect(normalizeSeverity(1)).toBe('low');
+    expect(normalizeSeverity(2)).toBe('moderate');
+    expect(normalizeSeverity(3)).toBe('high');
+    expect(normalizeSeverity('2')).toBe('moderate'); // string-numeric also resolves
+  });
+  it('maps legacy strings and defaults unknown/null/out-of-range to moderate', () => {
     expect(normalizeSeverity('medium')).toBe('moderate');
     expect(normalizeSeverity('HIGH')).toBe('high');
     expect(normalizeSeverity(null)).toBe('moderate');
     expect(normalizeSeverity('weird')).toBe('moderate');
+    expect(normalizeSeverity(9)).toBe('moderate');
   });
 });
 
@@ -76,7 +83,8 @@ describe('assemble → engine end-to-end (the read-model contract)', () => {
   });
   it('every assembled finding validates against the schema', () => {
     const rows = [issueRow(), issueRow({ event_id: 'evt-2', resolved_at: iso(2) }),
-                  issueRow({ event_id: 'evt-3', event_type: 'underwatered', severity: 'medium' })];
+                  issueRow({ event_id: 'evt-3', event_type: 'underwatered', severity: 'medium' }),
+                  issueRow({ event_id: 'evt-4', severity: 3 }), issueRow({ event_id: 'evt-5', severity: 1 })];
     for (const raw of assembleIssueFindings(rows)) {
       expect(validateFinding(composeFinding(raw, NOW)).valid).toBe(true);
     }

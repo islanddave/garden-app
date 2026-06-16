@@ -8,8 +8,15 @@
 // emits 0 (C2); Critters room deferred. Each issue becomes ONE finding, run through the full engine.
 
 const SEVERITY_MAP = { low: 'low', medium: 'moderate', moderate: 'moderate', high: 'high' };
+// event_log.severity is a smallint in {1,2,3} (validator: lambda/events/validators.js) — 1=low, 2=moderate,
+// 3=high. Legacy/string inputs still resolve via SEVERITY_MAP. Unknown/out-of-range → 'moderate' (neutral;
+// flagged issues always carry a 1/2/3 severity per the validator, so this default only guards bad data).
+const NUMERIC_SEVERITY = { 1: 'low', 2: 'moderate', 3: 'high' };
 function normalizeSeverity(s) {
-  return SEVERITY_MAP[String(s ?? '').toLowerCase()] ?? 'moderate';
+  if (s == null) return 'moderate';
+  const str = String(s).trim();
+  if (/^\d+$/.test(str)) return NUMERIC_SEVERITY[Number(str)] ?? 'moderate';
+  return SEVERITY_MAP[str.toLowerCase()] ?? 'moderate';
 }
 
 // Coarse event_type → finding_type mapping (templates in engine/config.js). Unknown → open_issue.
