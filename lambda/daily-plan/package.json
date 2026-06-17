@@ -1,0 +1,11 @@
+{
+  "name": "garden-lambda-daily-plan",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Overnight Daily Plan generator (DRG-TODAY-001). CJS; entry index.handler. Staged; deploy-list wiring per AE-050 is HELD.",
+  "main": "index.js",
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.0",
+    "@aws-sdk/client-secrets-manager": "^3.0.0"
+  }
+}
