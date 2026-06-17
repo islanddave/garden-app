@@ -53,7 +53,7 @@ jobs:
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     strategy:
       matrix:
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events, critter, shared-state, findings, evidence-ingest]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events, critter, shared-state, findings, daily-plan-read, evidence-ingest]
       max-parallel: 4
       fail-fast: false
 

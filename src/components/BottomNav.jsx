@@ -180,6 +180,28 @@ export default function BottomNav() {
             </div>
           )}
 
+          {/* Today's Plan — DRG-TODAY-002 daily care surface. Consumes GET /api/daily-plan (the
+              overnight Daily Plan engine read model). More-menu entry for now; candidate for a
+              first-class tab once validated on-device. */}
+          <Link
+            to="/today"
+            onClick={closeMore}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 16,
+              width: '100%',
+              padding: '14px 24px',
+              borderTop: `1px solid ${P.border}`,
+              background: 'none', textAlign: 'left',
+              cursor: 'pointer', textDecoration: 'none',
+              color: P.dark, fontSize: '1rem', fontWeight: 500,
+              fontFamily: 'inherit',
+              minHeight: 48,
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🗓️</span>
+            Today&rsquo;s Plan
+          </Link>
+
           {/* Inventory — moved off the first-class tab row (V3-IA, 2026-06-10);
               its old slot went to Critters/Photos promotion. */}
           <Link

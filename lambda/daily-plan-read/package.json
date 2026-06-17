@@ -1,0 +1,11 @@
+{
+  "name": "garden-lambda-daily-plan-read",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "DRG-TODAY-002 — Daily Plan read model. GET /api/daily-plan: Clerk-authed, per-user, read-only seam over the daily_plan table the overnight engine (garden-daily-plan / DRG-TODAY-001) writes. Mirrors lambda/findings on the auth/secrets seam.",
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.0",
+    "@clerk/backend": "^1.0.0",
+    "@aws-sdk/client-secrets-manager": "^3.0.0"
+  }
+}
