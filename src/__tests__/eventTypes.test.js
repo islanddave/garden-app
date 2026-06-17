@@ -83,6 +83,37 @@ describe('BATCH_EVENT_TYPES (derived)', () => {
   });
 });
 
+describe('achievement-arc milestone vocab (V010 spec §5/§6 precondition #7)', () => {
+  // These event types are the children of the Full Circle, Overwintered, and
+  // The Long Keeper arcs (plus garlic's clonal Full Circle loop). A long arc
+  // won't reveal a missing/removed child for many earn-rate cycles, so this is a
+  // build-time guard (spec §7 coverage/arc-integrity).
+  const ARC_MILESTONE_TYPES = [
+    'seed_saved',          // Full Circle (true-seed crops)
+    'cloves_saved',        // garlic's parallel Full Circle (clonal, NOT seed)
+    'overwinter_survived', // Overwintered
+    'scape_cut',           // The Long Keeper
+    'cured',               // The Long Keeper
+  ];
+
+  it('every arc milestone type is in the master enum with a complete META entry', () => {
+    for (const t of ARC_MILESTONE_TYPES) {
+      expect(EVENT_TYPES.includes(t), `${t} missing from EVENT_TYPES`).toBe(true);
+      const meta = EVENT_TYPE_META[t];
+      expect(meta, `${t} missing META`).toBeTruthy();
+      for (const f of REQUIRED_META_FIELDS) {
+        expect(typeof meta[f], `${t}.${f}`).toBe('string');
+        expect(meta[f].length, `${t}.${f} empty`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('keeps seed_saved and cloves_saved distinct (clonal vs sexual — never aliased)', () => {
+    expect(EVENT_TYPES.includes('seed_saved')).toBe(true);
+    expect(EVENT_TYPES.includes('cloves_saved')).toBe(true);
+  });
+});
+
 describe('buildSecondaryGroups', () => {
   it('omits primary values and groups the rest by META category', () => {
     const groups = buildSecondaryGroups(['watering', 'fertilizing']);
