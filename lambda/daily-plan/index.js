@@ -6,10 +6,13 @@
 //    field names/indices against LIVE responses. The daily index assumption [D-2,D-1,D0,D1,D2] (past_days=2,
 //    forecast_days=3) must hold. Confirm @neondatabase/serverless Pool .query() shape matches handler's pg.
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
-// HTTP driver (fetch-based). Lambda nodejs20 has NO global WebSocket, so Pool (WebSocket) fails at runtime
-// ("All attempts to open a WebSocket ... failed") even though it works in node>=22. neon() http matches the
-// proven xp-reconcile sibling; {fullResults:true} makes .query(text,params) return {rows,rowCount} = handler's pg contract.
-const { neon } = require('@neondatabase/serverless');
+// Lambda nodejs20 has NO global WebSocket. The pinned @neondatabase/serverless@^0.10.0 neon() http client has
+// NO .query(text,params) method (that was added in 1.x), and Pool needs an explicit WebSocket constructor.
+// Fix: Pool + ws via neonConfig.webSocketConstructor. Pool.query(text,params)->{rows} matches handler's pg
+// contract. Both failure modes caught by live DRY_RUN invokes; this combo validated against prod. (busy-brave-hamilton)
+const { Pool, neonConfig } = require('@neondatabase/serverless');
+const ws = require('ws');
+neonConfig.webSocketConstructor = ws;
 const { run } = require('./handler');
 
 const SECRET_NAME = process.env.SECRET_NAME || 'garden-app/secrets';
@@ -82,15 +85,15 @@ exports.handler = async () => {
   const today = todayET();
   const started = Date.now();
   const { NEON_DATABASE_URL } = await getSecrets();
-  const sql = neon(NEON_DATABASE_URL, { fullResults: true }); // http; .query(text,params) -> {rows,rowCount}
-  const pg = { query: (text, params) => sql.query(text, params) };
+  const pool = new Pool({ connectionString: NEON_DATABASE_URL });
   try {
-    const res = await run({ pg, today, dryRun, geocodeZip, fetchNWS, fetchPrecip });
+    const res = await run({ pg: pool, today, dryRun, geocodeZip, fetchNWS, fetchPrecip });
     console.log(JSON.stringify({ msg: 'daily-plan', today, dryRun, rows: res.rows, ms: Date.now() - started }));
     return { ok: true, today, dryRun, rows: res.rows };
   } catch (e) {
     console.error(JSON.stringify({ msg: 'daily-plan ERROR', today, dryRun, error: e.message }));
     throw e;
+  } finally {
+    await pool.end().catch(() => {});
   }
-  // no pool.end(): the http driver is stateless (no connection to close)
 };
