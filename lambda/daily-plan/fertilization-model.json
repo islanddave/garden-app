@@ -1,0 +1,50 @@
+{
+  "schema": "garden.fertilization_model.v1",
+  "note": "Substrate-aware fertilization for the Daily Plan Engine. Suppresses feeding while the MG slow-release mix is active; when due, recommends a specific amendment that is ACTUALLY in inventory, by crop+stage+need, with the default application method. Hard well-water aware.",
+  "substrate": {
+    "mix": "Miracle-Gro 3-6 month slow-release potting mix + 10-20% perlite (+ sometimes 10% cow manure)",
+    "feed_months_min": 3,
+    "feed_months_max": 6,
+    "rationale": "MG mix has built-in slow-release fertilizer feeding ~3-6 months; cow manure adds slow N. Feeding on top of fresh mix risks salt burn / excess foliage / poor fruiting. Hold routine feeding until the mix tapers."
+  },
+  "default_application": {
+    "liquids": "hose-end sprayer (Dave's default attachment)",
+    "granular": "top-dress + water in"
+  },
+  "water_quality": {
+    "source": "well water (likely HARD)",
+    "implications": [
+      "Hard water (high Ca/Mg/bicarbonate) slowly raises root-zone pH -> micronutrient (Fe/Mn) lockout, worst for acid-lovers (blueberry).",
+      "Mg is usually already present -> Epsom salt rarely needed; apply ONLY on visible Mg deficiency, not routinely.",
+      "For acid-lovers (blueberry) prefer rainwater / periodic acidification; kelp helps chelate micronutrients.",
+      "Periodic plain-water flush of containers reduces salt buildup from hard water + slow-release mix."
+    ]
+  },
+  "feed_phases": {
+    "establishment_0_2wk": {"feed": "none", "allowed": ["mycorrhizal_at_transplant", "kelp_transplant_stress"], "msg": "Just potted — let roots establish. No N feed. Kelp (sprayer) optional for transplant stress; Mykos belongs at the transplant itself."},
+    "mg_active_3_12wk": {"feed": "none_routine", "allowed": ["kelp_optional", "symptom_targeted"], "msg": "MG mix is actively feeding. No routine fertilizer. Targeted only: Epsom for visible Mg deficiency, gypsum for blossom-end rot. Kelp (sprayer) optional."},
+    "mg_tapering_13_24wk": {"feed": "begin_light", "allowed": ["fruiting_feed", "veg_feed", "kelp", "castings"], "msg": "Mix tapering — begin light feeding for heavy/fruiting feeders."},
+    "needs_feed_24wk_plus": {"feed": "regular", "allowed": ["fruiting_feed", "veg_feed", "kelp", "castings"], "msg": "Mix is spent — feed on the crop's regular cadence."}
+  },
+  "amendments_in_inventory": {
+    "kelp": {"item": "Bloom City Seaweed & Kelp (liquid)", "form": "liquid", "apply": "sprayer", "use": "transplant stress, micronutrients, gentle low-N support; safe any phase", "npk": "low"},
+    "veg_feed": {"item": "FoxFarm Grow Big 6-4-4 (liquid)", "form": "liquid", "apply": "sprayer", "use": "vegetative/leafy growth feed once mix tapers; the N-weighted liquid (stands in for 20-20-20)", "npk": "6-4-4"},
+    "fruiting_feed": {"item": "Espoma Tomato-Tone 3-4-6 (granular)", "form": "granular", "apply": "top-dress + water in", "use": "fruiting/flowering crops (peppers, tomatoes, cucurbits) once mix tapers", "npk": "3-4-6"},
+    "castings": {"item": "Worm Castings (Brut 12lb + Wiggle Worm 30lb)", "form": "granular", "apply": "top-dress", "use": "gentle all-purpose + microbial top-dress; safe any phase, won't burn", "npk": "very low"},
+    "mycorrhizal_at_transplant": {"item": "Xtreme Gardening Mykos (1lb)", "form": "granular", "apply": "in planting hole at transplant (root contact)", "use": "transplant only — root inoculant; not a top-dress later", "npk": "none"},
+    "epsom": {"item": "Epsom Salt / Magnesium Sulfate (3lb)", "form": "soluble", "apply": "sprayer (foliar) or soil drench", "use": "ONLY on visible Mg deficiency (interveinal yellowing on older leaves); hard water already Mg-rich so rarely needed", "npk": "Mg"},
+    "gypsum": {"item": "Gypsum / Calcium Sulfate (3lb)", "form": "granular", "apply": "top-dress + water in", "use": "calcium for blossom-end-rot prevention (tomato/pepper) without changing pH", "npk": "Ca"}
+  },
+  "crop_stage_recommendation": {
+    "fruiting_or_flowering": "fruiting_feed (Tomato-Tone 3-4-6) once tapering; kelp sprayer optional anytime; gypsum if BER appears",
+    "vegetative_leafy": "veg_feed (Grow Big 6-4-4, sprayer) once tapering; castings top-dress anytime",
+    "transplant_new": "mycorrhizal at the transplant + kelp (sprayer) for establishment; no N",
+    "acid_lover_blueberry": "NEEDS acidic fertilizer (e.g. Holly-Tone — NOT in inventory, flag to acquire); use rainwater not hard well water; kelp ok",
+    "herbs_mediterranean": "minimal feeding ever; castings only; never force with N"
+  },
+  "inventory_gaps_flagged": [
+    "No straight 20-20-20 in inventory — FoxFarm Grow Big 6-4-4 fills the vegetative liquid-feed role.",
+    "The 'MG all-purpose shake-on (fruiting-weighted)' Dave mentioned is NOT itemized in Inventory — add it if on hand (Espoma Tomato-Tone 3-4-6 currently covers the fruiting granular role).",
+    "No acidic fertilizer (Holly-Tone/soil acidifier) for blueberry — acquire for the acid-lovers."
+  ]
+}
