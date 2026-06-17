@@ -173,7 +173,7 @@ export const handler = async (event) => {
                    pp.parent_id AS parent_project_id, pp.featured_photo_id,
                    pp.classification AS kind,
                    to_char(pp.target_end_date, 'YYYY-MM-DD') AS target_end_date,
-                   pp.kind_set_at, pp.archived_at,
+                   pp.kind_set_at, pp.archived_at, pp.assignee_user_id,
                    p.display_name AS parent_project_name,
                    fp.storage_path AS featured_photo_storage_path
             FROM public.container pp
@@ -300,6 +300,7 @@ export const handler = async (event) => {
         // linked to this project via photos.project_id. Otherwise return 400.
         // Field-presence test (not truthy test) lets callers set it to null to clear.
         const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
+        const hasAssignee = Object.prototype.hasOwnProperty.call(body, 'assignee_user_id');
         if (hasFeatured && body.featured_photo_id != null) {
           const linkRows = await sql`
             SELECT 1 FROM photos
@@ -340,7 +341,11 @@ export const handler = async (event) => {
               WHEN ${hasKind && body.kind != null} AND classification IS NULL THEN NOW()
               ELSE kind_set_at
             END,
-            target_end_date = COALESCE(${body.target_end_date ?? null}, target_end_date)
+            target_end_date = COALESCE(${body.target_end_date ?? null}, target_end_date),
+            assignee_user_id = CASE
+              WHEN ${hasAssignee} THEN ${body.assignee_user_id ?? null}
+              ELSE assignee_user_id
+            END
           WHERE id = ${projectId}
             AND created_by = ANY(${householdIds})
             AND deleted_at IS NULL
@@ -350,7 +355,8 @@ export const handler = async (event) => {
                     parent_id AS parent_project_id, featured_photo_id,
                     classification AS kind,
                     to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
-                    kind_set_at
+                    kind_set_at,
+                    assignee_user_id
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
@@ -392,6 +398,7 @@ export const handler = async (event) => {
                  parent_id AS parent_project_id,
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at,
+                 assignee_user_id,
                  COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
           FROM public.container
           WHERE deleted_at IS NULL
@@ -415,6 +422,7 @@ export const handler = async (event) => {
                  is_public, location_id, created_at, updated_at, parent_id AS parent_project_id,
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at,
+                 assignee_user_id,
                  COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
           FROM public.container
           WHERE created_by = ANY(${householdIds})
@@ -430,6 +438,7 @@ export const handler = async (event) => {
                  is_public, location_id, created_at, updated_at, parent_id AS parent_project_id,
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at,
+                 assignee_user_id,
                  COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
           FROM public.container
           WHERE created_by = ANY(${householdIds})
@@ -445,6 +454,7 @@ export const handler = async (event) => {
                  is_public, location_id, created_at, updated_at, parent_id AS parent_project_id,
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at,
+                 assignee_user_id,
                  COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
           FROM public.container
           WHERE created_by = ANY(${householdIds})

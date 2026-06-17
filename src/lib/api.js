@@ -22,6 +22,7 @@
 //   /api/shared-state       → VITE_API_SHARED_STATE  shared-garden reward substrate (V3-REWARDSTATE-001)
 //   /api/findings           → VITE_API_FINDINGS      DRG care findings read model (DRG-TAB-001)
 //   /api/daily-plan         → VITE_API_DAILY_PLAN_READ  Daily Plan read model — Today surface (DRG-TODAY-002)
+//   /api/members            → VITE_API_MEMBERS       household roster for the caretaker picker (PLANT-ASSIGN-001)
 
 import { useAuth } from '@clerk/react'
 import { useCallback } from 'react'
@@ -43,6 +44,7 @@ const FUNCTION_URLS = {
   '/api/shared-state':      import.meta.env.VITE_API_SHARED_STATE  ?? '',
   '/api/findings':          import.meta.env.VITE_API_FINDINGS      ?? '',
   '/api/daily-plan':        import.meta.env.VITE_API_DAILY_PLAN_READ ?? '',
+  '/api/members':           import.meta.env.VITE_API_MEMBERS        ?? '',
 }
 
 export function resolveUrl(path, urls = FUNCTION_URLS) {

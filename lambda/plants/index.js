@@ -163,7 +163,7 @@ export const handler = async (event) => {
                  p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
                  p.source_type, p.source_ref, p.source_generation,
                  p.parent_plant_id, p.divergence_type, p.lineage_note,
-                 p.succession_group_id, p.succession_order,
+                 p.succession_group_id, p.succession_order, p.assignee_user_id,
                  pp.display_name AS project_name,
                  CASE WHEN pv.id IS NOT NULL THEN
                    jsonb_build_object(
@@ -218,6 +218,7 @@ export const handler = async (event) => {
         // COALESCE can SET but not unset (NULL collapses to the existing value); mirror the
         // featured_photo_id CASE pattern below. No explicit casts — same proven-in-prod shape.
         const hasVariety = Object.prototype.hasOwnProperty.call(body, 'variety_id');
+        const hasAssignee = Object.prototype.hasOwnProperty.call(body, 'assignee_user_id');
         if (hasFeatured && body.featured_photo_id != null) {
           const linkRows = await sql`
             SELECT 1 FROM photos
@@ -268,13 +269,17 @@ export const handler = async (event) => {
             divergence_type          = COALESCE(${body.divergence_type ?? null}, p.divergence_type),
             lineage_note             = COALESCE(${body.lineage_note ?? null}, p.lineage_note),
             succession_group_id      = COALESCE(${body.succession_group_id ?? null}, p.succession_group_id),
-            succession_order         = COALESCE(${body.succession_order ?? null}, p.succession_order)
+            succession_order         = COALESCE(${body.succession_order ?? null}, p.succession_order),
+            assignee_user_id         = CASE
+              WHEN ${hasAssignee} THEN ${body.assignee_user_id ?? null}
+              ELSE p.assignee_user_id
+            END
           FROM public.container pp
           WHERE p.id = ${plantId}
             AND p.container_id = pp.id
             AND pp.created_by = ANY(${householdIds})
             AND p.deleted_at IS NULL
-          RETURNING p.id, p.container_id AS project_id, p.display_name AS name, p.quantity, p.notes, p.status, p.planted_at, p.created_by, p.created_at, p.updated_at, p.deleted_at, p.location_id, p.featured_image_id, p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata, p.featured_photo_id, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at, p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx, p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause, p.source_type, p.source_ref, p.source_generation, p.parent_plant_id, p.divergence_type, p.lineage_note, p.succession_group_id, p.succession_order, p.container_type, p.container_size, p.kind, p.workspace_id, p.last_seen_at, p.attr_override, p.version
+          RETURNING p.id, p.container_id AS project_id, p.display_name AS name, p.quantity, p.notes, p.status, p.planted_at, p.created_by, p.created_at, p.updated_at, p.deleted_at, p.location_id, p.featured_image_id, p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata, p.featured_photo_id, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at, p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx, p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause, p.source_type, p.source_ref, p.source_generation, p.parent_plant_id, p.divergence_type, p.lineage_note, p.succession_group_id, p.succession_order, p.assignee_user_id, p.container_type, p.container_size, p.kind, p.workspace_id, p.last_seen_at, p.attr_override, p.version
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
@@ -324,7 +329,7 @@ export const handler = async (event) => {
                    p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
                    p.source_type, p.source_ref, p.source_generation,
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
-                   p.succession_group_id, p.succession_order,
+                   p.succession_group_id, p.succession_order, p.assignee_user_id,
                    pp.display_name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(
@@ -361,7 +366,7 @@ export const handler = async (event) => {
                    p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
                    p.source_type, p.source_ref, p.source_generation,
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
-                   p.succession_group_id, p.succession_order,
+                   p.succession_group_id, p.succession_order, p.assignee_user_id,
                    pp.display_name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(

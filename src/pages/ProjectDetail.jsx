@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
+import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
 import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { getStatusColors } from '../lib/status.js'
@@ -417,6 +418,8 @@ export default function ProjectDetail() {
             {/* V1.2a-3 Increment A (I3-affordance): projects were the one favoritable
                 entity type with no star control anywhere. */}
             <FavoriteToggle entityType="project" entityId={project.id} />
+            {/* PLANT-ASSIGN-001: whole-project caretaker (engine routes plantings here unless overridden) */}
+            <AssigneePicker entityType="project" entityId={project.id} value={project.assignee_user_id ?? null} onChanged={(v) => setProject(p => ({ ...p, assignee_user_id: v }))} />
             <span style={{
               backgroundColor: sc.bg, color: sc.text, border: `1px solid ${sc.border}`,
               fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600,

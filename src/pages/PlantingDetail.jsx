@@ -19,6 +19,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
+import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P } from '../lib/constants.js'
 import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { formatQty } from '../lib/format.js'
@@ -262,6 +263,8 @@ export default function PlantingDetail() {
           {/* V3-FAV-001: favorite this planting (entity_type=plant = garden_node id). Ambient star,
               no interrupt — Reward-UX compliant. Sits before the Edit affordance in the header. */}
           <FavoriteToggle entityType="plant" entityId={pl.id} size="1.4rem" />
+          {/* PLANT-ASSIGN-001: per-planting caretaker override; blank = inherit the project's caretaker */}
+          <AssigneePicker entityType="plant" entityId={pl.id} value={pl.assignee_user_id ?? null} onChanged={(v) => setPlanting(prev => ({ ...prev, assignee_user_id: v }))} inheritLabel={pl.project_name ? `Inherits project: ${pl.project_name}` : 'Inherits the project caretaker'} />
           {/* V3-EDIT-001: edit affordance — deep-links to the Garden PlantingEditor for this planting. */}
           <Link
             to={`/garden?edit=${plantingId}`}

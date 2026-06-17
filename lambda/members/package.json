@@ -1,0 +1,10 @@
+{
+  "name": "garden-lambda-members",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "PLANT-ASSIGN-001 household roster read model — GET /api/members. Clerk-backed (no DB); lists app users for the caretaker assignee picker.",
+  "dependencies": {
+    "@clerk/backend": "^1.0.0",
+    "@aws-sdk/client-secrets-manager": "^3.0.0"
+  }
+}
