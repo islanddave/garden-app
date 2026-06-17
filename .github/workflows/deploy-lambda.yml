@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         # One job per Lambda function directory under lambda/
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, ux-events, xp-reconcile, critter, shared-state, findings, evidence-ingest]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, ux-events, xp-reconcile, critter, shared-state, findings, evidence-ingest, daily-plan]
       # No max-parallel cap: all 12 functions dispatch in one wave so the
       # environment:production approval gate prompts ONCE (not 3 batches of 4).
       # Re-add `max-parallel: N` here only if Lambda control-plane rate limits appear.
@@ -134,7 +134,7 @@ jobs:
           fi
 
       - name: Ensure Function URL exists for ${{ matrix.function }}
-        if: matrix.function != 'xp-reconcile'  # xp-reconcile is EventBridge-invoked, no Function URL
+        if: matrix.function != 'xp-reconcile' && matrix.function != 'daily-plan'  # xp-reconcile is EventBridge-invoked, no Function URL
         continue-on-error: true  # requires lambda:CreateFunctionUrlConfig + lambda:GetFunctionUrlConfig + lambda:AddPermission on deploy role
         run: |
           FUNCTION_NAME="garden-${{ matrix.function }}"
@@ -167,7 +167,7 @@ jobs:
           fi
 
       - name: Restore Lambda Function URL CORS (prod garden.futureishere.net)
-        if: matrix.function != 'xp-reconcile'  # xp-reconcile has no Function URL
+        if: matrix.function != 'xp-reconcile' && matrix.function != 'daily-plan'  # xp-reconcile has no Function URL
         continue-on-error: true  # requires lambda:UpdateFunctionUrlConfig on deploy role
         run: |
           # Set CORS to allow garden.futureishere.net (the prod SPA origin).
@@ -225,6 +225,48 @@ jobs:
             --principal events.amazonaws.com \
             --source-arn "$RULE_ARN" 2>/dev/null || echo "AddPermission already exists (expected on re-deploy)."
           echo "EventBridge rule $RULE_NAME wired to garden-xp-reconcile (cron 0 4 * * ? *)"
+
+      - name: Set daily-plan DRY_RUN + OWNER_FALLBACK_SUB env on first deploy
+        if: matrix.function == 'daily-plan'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration; idempotent
+        run: |
+          FN=garden-daily-plan
+          OWNER=user_3D2gM0hIl03gjW3JM2DjtPzm0jI
+          CURRENT=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables.DRY_RUN' --output text 2>/dev/null || echo "None")
+          EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+          if [[ "$CURRENT" == "None" || -z "$CURRENT" ]]; then
+            echo "First deploy: DRY_RUN=true + OWNER_FALLBACK_SUB (dormant)."
+            UPDATED=$(echo "$EXISTING" | jq --arg o "$OWNER" '. + {DRY_RUN:"true", OWNER_FALLBACK_SUB:$o}')
+          else
+            echo "DRY_RUN=$CURRENT preserved; ensuring OWNER_FALLBACK_SUB present."
+            UPDATED=$(echo "$EXISTING" | jq --arg o "$OWNER" 'if has("OWNER_FALLBACK_SUB") then . else . + {OWNER_FALLBACK_SUB:$o} end')
+          fi
+          echo "{\"Variables\": $UPDATED}" > /tmp/env-daily-plan.json
+          aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-daily-plan.json >/dev/null
+          aws lambda wait function-updated --function-name "$FN"
+          echo "env ensured on $FN"
+
+      - name: Ensure EventBridge cron rule for daily-plan (DORMANT - DISABLED)
+        if: matrix.function == 'daily-plan'
+        continue-on-error: true  # requires events:PutRule + events:PutTargets + lambda:AddPermission
+        run: |
+          RULE_NAME=garden-daily-plan-nightly
+          # Ships DORMANT: rule DISABLED (double-dark w/ DRY_RUN=true). Enable later: aws events enable-rule --name garden-daily-plan-nightly
+          aws events put-rule \
+            --name "$RULE_NAME" \
+            --schedule-expression 'cron(0 6 * * ? *)' \
+            --state DISABLED \
+            --description 'Overnight Daily Plan generation (DRG-TODAY-001). DORMANT until enabled.'
+          LAMBDA_ARN=$(aws lambda get-function --function-name garden-daily-plan --query 'Configuration.FunctionArn' --output text)
+          aws events put-targets --rule "$RULE_NAME" --targets "Id=1,Arn=$LAMBDA_ARN"
+          RULE_ARN=$(aws events describe-rule --name "$RULE_NAME" --query 'Arn' --output text)
+          aws lambda add-permission \
+            --function-name garden-daily-plan \
+            --statement-id EventBridgeInvokeNightly \
+            --action lambda:InvokeFunction \
+            --principal events.amazonaws.com \
+            --source-arn "$RULE_ARN" 2>/dev/null || echo "AddPermission already exists (expected on re-deploy)."
+          echo "EventBridge rule $RULE_NAME wired to garden-daily-plan (DISABLED, cron 0 6 * * ? *)"
 
 # Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
 # at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).
