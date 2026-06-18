@@ -39,6 +39,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     select p.id, p.name, p.status, p.container_type, p.container_size,
            pv.name as variety, pv.genus, pj.name as project, p.workspace_id,
            coalesce(p.assignee_user_id, pj.assignee_user_id) as assignee_user_id,
+           vrc.resolved_profile as db_cadence,  -- CARE-CADENCE-001: system||cultivar||leaf merged cadence (NULL/_seeded-absent -> engine bundled fallback)
            -- Dates returned as 'YYYY-MM-DD' TEXT (UTC): the neon driver hands timestamptz back as JS Date objects, and
            -- engine.daysBetween does iso.slice(0,10) -> a Date object crashes it (TypeError). to_char + AT TIME ZONE 'UTC'
            -- matches the engine's own UTC date math (new Date(iso.slice(0,10)+'T00:00:00Z')). Soft-deleted events excluded.
@@ -53,6 +54,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     from plants p
     left join plant_varieties pv on pv.id=p.variety_id
     left join plant_projects  pj on pj.id=p.project_id
+    left join v_resolved_care vrc on vrc.leaf_id = p.id
     where p.deleted_at is null and (p.status is null or p.status not in ('ended','failed','dead','archived','harvested'))`);
   const { rows: spaces } = await pg.query(`select id, postal_code, weather_lat, weather_lng from spaces`);
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.

@@ -13,6 +13,9 @@ function daysBetween(today, iso){ if(!iso) return null;
 function weeksSince(today, iso){ const d=daysBetween(today,iso); return d==null?null:Math.floor(d/7); }
 
 function resolveCadence(p, cad){
+  // CARE-CADENCE-001: prefer the DB-resolved per-cultivar/leaf profile (v_resolved_care) when seeded;
+  // falls back to the bundled cadence-data-v2.json for any planting whose variety has no care_profile row.
+  if(p && p.db_cadence && p.db_cadence._seeded) return {...p.db_cadence, _via:'db'};
   const byV=cad.by_variety||{};
   const key=[p.variety, p.name].find(k=>k && byV[k]);
   if(key) return {...byV[key], _via:'variety:'+key};
