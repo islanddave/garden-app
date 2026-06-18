@@ -32,7 +32,7 @@
 import React from 'react'
 import { Field, Input, Select, Textarea, Button, StatusSelect, ErrorBanner } from './index.js'
 import VarietyPicker from '../VarietyPicker.jsx'
-import { PLANT_SOURCE_OPTIONS } from '../../lib/dropdownRegistry.js'
+import { PLANT_SOURCE_OPTIONS, PLANT_CONTAINER_TYPE_OPTIONS } from '../../lib/dropdownRegistry.js'
 
 
 export default function PlantForm({
@@ -157,6 +157,21 @@ export default function PlantForm({
               onChange={e => set({ lineage_note: e.target.value })}
               placeholder="e.g. Dave's Glass Gem F4 selection" />
           </Field>
+
+          {/* PLANT-CONTAINER-001 / V4-POT-001: pot/bag descriptor; columns live on prod.
+              container_size is free text (accepts gal/L/in/cm/etc). */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <Field label="Pot / bag type" htmlFor={`${pid}-ctype`} optional>
+              <Select id={`${pid}-ctype`} value={v.container_type ?? ''}
+                onChange={e => set({ container_type: e.target.value || null })}
+                options={PLANT_CONTAINER_TYPE_OPTIONS} />
+            </Field>
+            <Field label="Pot size" htmlFor={`${pid}-csize`} optional help="e.g. 3 gal, 1 L, 4 in">
+              <Input id={`${pid}-csize`} value={v.container_size ?? ''}
+                onChange={e => set({ container_size: e.target.value || null })}
+                placeholder="e.g. 3 gal, 5 L, 4 in" />
+            </Field>
+          </div>
 
           {/* V3-LINEAGE-001: link this planting to the source planting it was cloned/cut from.
               Optional; rendered only when candidate plantings are supplied. The parent_plant_id
