@@ -5,3 +5,6 @@ dist/
 .env.*.local
 .DS_Store
 *.local
+
+# ignore a node_modules symlink too (dir-only pattern above misses symlinks)
+node_modules
