@@ -4,7 +4,7 @@ import { useApiFetch } from '../lib/api.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
 import { EVENT_TYPE_META } from '../lib/eventTypes.js'
-import { getStatusColors } from '../lib/status.js'
+import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
@@ -390,7 +390,6 @@ export default function ProjectDetail() {
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
   if (!project) return null
 
-  const sc = getStatusColors(project.status)
 
   return (
     <Shell>
@@ -420,12 +419,7 @@ export default function ProjectDetail() {
             <FavoriteToggle entityType="project" entityId={project.id} />
             {/* PLANT-ASSIGN-001: whole-project caretaker (engine routes plantings here unless overridden) */}
             <AssigneePicker entityType="project" entityId={project.id} value={project.assignee_user_id ?? null} onChanged={(v) => setProject(p => ({ ...p, assignee_user_id: v }))} />
-            <span style={{
-              backgroundColor: sc.bg, color: sc.text, border: `1px solid ${sc.border}`,
-              fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600,
-            }}>
-              {project.status}
-            </span>
+            <ProjectStatusBadge status={project.status} />
             {project.archived_at && (
               <span style={{
                 backgroundColor: P.greenPale, color: P.green, border: `1px solid ${P.greenLight}`,

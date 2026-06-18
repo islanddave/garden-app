@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import { getStatusColors } from '../lib/status.js'
+import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import CritterSprite from '../components/CritterSprite.jsx'
 import LoveMehPopover from '../components/LoveMehPopover.jsx'
@@ -451,7 +451,6 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
   const { project: p, depth, children, plantings } = node
   const hasKids = nodeHasChildren(node)
   const isOpen  = hasKids && expanded.has(p.id)
-  const sc = getStatusColors(p.status)
   const indent = depth * 20
 
   const summary = hasKids
@@ -499,10 +498,7 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
 
         <FavoriteToggle entityType="project" entityId={p.id} />
 
-        <span style={{ backgroundColor: sc.bg, color: sc.text, border: `1px solid ${sc.border}`,
-          fontSize: '0.72rem', padding: '3px 9px', borderRadius: 12, fontWeight: 600, flexShrink: 0 }}>
-          {p.status}
-        </span>
+        <ProjectStatusBadge status={p.status} />
 
         {hasKids ? (
           <button type="button" onClick={() => onToggle(p.id)} aria-hidden="true" tabIndex={-1}

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import { useParams, Link } from 'react-router-dom'
 import { apiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -55,7 +56,7 @@ export default function ProjectPublic() {
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
             {project.variety && <span style={{ fontSize: '0.9rem', color: P.mid }}>{project.variety}</span>}
             {project.species && <span style={{ fontSize: '0.85rem', color: P.light, fontStyle: 'italic' }}>{project.species}</span>}
-            <StatusBadge status={project.status} />
+            <ProjectStatusBadge status={project.status} />
           </div>
           {locPath && <div style={{ fontSize: '0.875rem', color: P.mid, marginBottom: 8 }}>📍 {locPath}</div>}
           {project.start_date && <div style={{ fontSize: '0.82rem', color: P.light }}>Started {formatDate(project.start_date)}</div>}
@@ -97,11 +98,6 @@ function EventEntry({ event: ev, isLast }) {
   )
 }
 
-function StatusBadge({ status }) {
-  const colors = { planning:{bg:'#fff8e6',text:'#7a5c00',border:'#c9a84c'}, active:{bg:'#d8f3dc',text:'#2d6a4f',border:'#52b788'}, harvested:{bg:'#eee',text:'#4a4a4a',border:'#d4c9be'}, ended:{bg:'#eee',text:'#777',border:'#d4c9be'} }
-  const c = colors[status] ?? colors.planning
-  return <span style={{ backgroundColor: c.bg, color: c.text, border: `1px solid ${c.border}`, fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600 }}>{status}</span>
-}
 
 function Page({ children }) {
   return <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>{children}</div>

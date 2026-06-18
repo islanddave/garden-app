@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import { getStatusColors } from '../lib/status.js'
+import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import { buildDisplayList, loadSortOrder, saveSortOrder } from '../lib/projectTree.js'
 import SortToggle from '../components/SortToggle.jsx'
@@ -71,7 +71,6 @@ export default function ProjectList() {
 }
 
 function ProjectCard({ project: p, depth }) {
-  const sc = getStatusColors(p.status)
   // V1.2a-3 I6-glyph fix (2026-05-15): replace the broken `└` pseudo-tree glyph
   // (rendered outside the card in a proportional font, looked like a literal
   // letter "L") with a clean left-border accent on child cards + larger indent
@@ -131,12 +130,7 @@ function ProjectCard({ project: p, depth }) {
           <FavoriteToggle entityType="project" entityId={p.id} />
 
           {/* Status badge */}
-          <span style={{
-            backgroundColor: sc.bg, color: sc.text, border: `1px solid ${sc.border}`,
-            fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600, flexShrink: 0,
-          }}>
-            {p.status}
-          </span>
+          <ProjectStatusBadge status={p.status} />
 
           {/* Arrow */}
           <span style={{ color: P.border, fontSize: '1rem', flexShrink: 0 }}>›</span>
