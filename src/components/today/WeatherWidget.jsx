@@ -61,10 +61,14 @@ const PotIcon = ({ color }) => (
 )
 const BedIcon = ({ color }) => (
   <svg width="23" height="23" viewBox="0 0 24 24" aria-label="in-ground beds" style={{ color }}>
-    <path d="M2.5 19 Q12 10 21.5 19 Z" fill="currentColor" opacity="0.85" />
-    <path d="M12 14 V8.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    <path d="M12 10.2 Q8.8 8.6 9 11.4 Q11.6 11.6 12 10.2Z" fill="currentColor" />
-    <path d="M12 10.2 Q15.2 8.6 15 11.4 Q12.4 11.6 12 10.2Z" fill="currentColor" />
+    {/* sprout */}
+    <path d="M12 14.5 V9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    <path d="M12 10.8 Q8.8 9.2 9 12 Q11.6 12.2 12 10.8Z" fill="currentColor" />
+    <path d="M12 10.8 Q15.2 9.2 15 12 Q12.4 12.2 12 10.8Z" fill="currentColor" />
+    {/* flat soil surface + a tilled furrow row (in the ground, not a mound) */}
+    <path d="M3 15.5 H21" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    <path d="M4.5 18.6 H19.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" opacity="0.55" />
+    <path d="M6.5 15.5 V18.6 M9.5 15.5 V18.6 M14.5 15.5 V18.6 M17.5 15.5 V18.6" stroke="currentColor" strokeWidth="1" opacity="0.4" />
   </svg>
 )
 const PauseIcon = () => (
@@ -121,11 +125,15 @@ function ConditionIcon({ code = 3 }) {
 
 export default function WeatherWidget({
   weather = { tonightLow: 50, highToday: 78, code: 3, hot: false },
-  hydrology = { recent_precip_in: 0.05, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true },
+  hydrology = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true },
 }) {
   const scale = computeWateringScale(hydrology, weather)
-  const rainIn = hydrology.tomorrow_precip_in ?? hydrology.upcoming_precip_in ?? 0
-  const rainPop = hydrology.tomorrow_pop ?? 0
+  // Prefer TODAY's rain in the note when there is any (the case the old widget missed); else tomorrow.
+  const todayIn = hydrology.today_precip_in ?? 0
+  const showToday = todayIn > 0
+  const rainIn = showToday ? todayIn : (hydrology.tomorrow_precip_in ?? hydrology.upcoming_precip_in ?? 0)
+  const rainPop = showToday ? (hydrology.today_pop ?? 0) : (hydrology.tomorrow_pop ?? 0)
+  const rainWhen = showToday ? 'today' : 'tomorrow'
 
   const Pill = ({ level, Target }) => {
     const state = pillState(level)
@@ -172,7 +180,7 @@ export default function WeatherWidget({
       {rainIn > 0 && (
         <div style={{ marginTop: 8, textAlign: 'center', fontSize: 11.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
           <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16a5 5 0 0 1 .5-9.9A6 6 0 0 1 19 8a4 4 0 0 1-.5 8Z" fill="#B9C6D6" /><g stroke="#7FA8D8" strokeWidth="2" strokeLinecap="round"><path d="M9 19l-1 2M13 19l-1 2M17 19l-1 2" /></g></svg>
-          {rainIn.toFixed(2)}&Prime; rain expected tomorrow &middot; {rainPop}%
+          {rainIn.toFixed(2)}&Prime; rain expected {rainWhen} &middot; {rainPop}%
         </div>
       )}
     </div>

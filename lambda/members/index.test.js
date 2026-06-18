@@ -26,4 +26,9 @@ describe('members lambda (GET /api/members)', () => {
     expect(SRC).toMatch(/members/);
     expect(SRC).toMatch(/display_name/);
   });
+
+  it('excludes the System bot by a stable marker, never Jen’s sub (DRG-ASSIGN-FIX)', () => {
+    expect(SRC).toMatch(/islanddave\+clerk\+system@gmail\.com/);
+    expect(SRC).not.toMatch(/user_3E2xA85kQhr1vSZhiv4W1GLudJV/);
+  });
 });

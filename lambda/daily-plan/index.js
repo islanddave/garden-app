@@ -83,6 +83,8 @@ async function fetchPrecip(lat, lng) {
     const tomorrow = ps[3] || 0;
     return {
       recent_precip_in: round2((ps[0] || 0) + (ps[1] || 0)),
+      today_precip_in: round2(ps[2] || 0),                 // D0 — rain falling TODAY (was fetched but dropped; DRG-WX-TODAY-FIX)
+      today_pop: pop[2] != null ? pop[2] : null,
       upcoming_precip_in: round2(tomorrow + (ps[4] || 0)),
       tomorrow_precip_in: round2(tomorrow),
       tomorrow_pop: pop[3] != null ? pop[3] : null,

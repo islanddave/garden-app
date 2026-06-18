@@ -58,7 +58,11 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     where p.deleted_at is null and (p.status is null or p.status not in ('ended','failed','dead','archived','harvested'))
       and (pj.status is null or pj.status <> 'planning')`);
   // Guard: remap System-account assignees -> null so ownerFallback applies (stray-pick guard).
-  const SYSTEM_SUBS = new Set([process.env.SYSTEM_CLERK_SUB || 'user_3E2xA85kQhr1vSZhiv4W1GLudJV']);
+  // Real System/bot account = user_3D7u…; the prior default here (user_3E2x…) is actually Jen in the live
+  // Clerk instance and wrongly nulled her assignments. Env override supports a comma-separated list. (DRG-ASSIGN-FIX)
+  const SYSTEM_SUBS = new Set(
+    (process.env.SYSTEM_CLERK_SUB || 'user_3D7uvqWjyxdq3jgVwTZs0mKT7Xd')
+      .split(',').map((s) => s.trim()).filter(Boolean));
   for (const p of plantings) { if (SYSTEM_SUBS.has(p.assignee_user_id)) p.assignee_user_id = null; }
   const { rows: spaces } = await pg.query(`select id, postal_code, weather_lat, weather_lng from spaces`);
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.

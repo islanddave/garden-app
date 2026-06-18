@@ -9,7 +9,21 @@ const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east
 const SCHEMA_VERSION = 1;
 
 // Service/bot accounts — excluded from the caretaker roster so they can't be re-picked via the UI.
-const SYSTEM_SUBS = new Set(['user_3E2xA85kQhr1vSZhiv4W1GLudJV']);
+// Service/bot accounts excluded from the caretaker roster. Identify by STABLE markers (system email +
+// optional env sub list) — NOT a hardcoded sub literal. The old literal here (user_3E2x…) is actually a
+// real caretaker (Jen) in the LIVE Clerk instance, which wrongly hid her from the picker; the real System
+// account is user_3D7u…. DRG-ASSIGN-FIX (2026-06-18).
+const SYSTEM_EMAILS = new Set(
+  (process.env.SYSTEM_CLERK_EMAILS || 'islanddave+clerk+system@gmail.com')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
+const SYSTEM_SUBS = new Set(
+  (process.env.SYSTEM_CLERK_SUB || 'user_3D7uvqWjyxdq3jgVwTZs0mKT7Xd')
+    .split(',').map((s) => s.trim()).filter(Boolean));
+function isSystemUser(u) {
+  if (SYSTEM_SUBS.has(u.id)) return true;
+  const email = (u.emailAddresses?.[0]?.emailAddress || '').toLowerCase();
+  return SYSTEM_EMAILS.has(email);
+}
 
 let _secrets = null;
 async function getSecrets() {
@@ -65,7 +79,7 @@ export const handler = async (event) => {
     // v1 returns { data, totalCount }; tolerate an array too.
     const users = Array.isArray(list) ? list : (list?.data ?? []);
     const members = users
-      .filter((u) => !SYSTEM_SUBS.has(u.id))  // exclude service/bot accounts from caretaker roster
+      .filter((u) => !isSystemUser(u))  // exclude service/bot accounts from caretaker roster (DRG-ASSIGN-FIX)
       .map((u) => ({
         id: u.id,
         display_name: displayName(u),

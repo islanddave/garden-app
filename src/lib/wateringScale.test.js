@@ -29,6 +29,26 @@ describe('computeWateringScale', () => {
     expect(s.containers).toBeLessThanOrEqual(3)
     expect(s.beds % 0.5).toBe(0)
   })
+
+  it('heavy rain TODAY (the storm case) zeroes beds and drops containers', () => {
+    const s = computeWateringScale(
+      { recent_precip_in: 0, today_precip_in: 0.9, today_pop: 90, tomorrow_precip_in: 0 },
+      { hot: false },
+    )
+    expect(s.beds).toBe(0)
+    expect(s.containers).toBe(0)
+    expect(s.rainToday).toBe(true)
+  })
+
+  it('moderate rain today defers beds but only eases containers', () => {
+    const s = computeWateringScale(
+      { recent_precip_in: 0, today_precip_in: 0.4, today_pop: 80, tomorrow_precip_in: 0 },
+      { hot: false },
+    )
+    expect(s.beds).toBe(0)
+    expect(s.containers).toBe(1)
+    expect(s.rainToday).toBe(true)
+  })
 })
 
 describe('canRail', () => {
