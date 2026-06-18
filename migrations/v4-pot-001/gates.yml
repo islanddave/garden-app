@@ -1,0 +1,65 @@
+# gates.yml
+# V4-POT-001 S1 — container_type enum constraint.
+#
+# Sweep: any existing rows with a non-null container_type that violates the enum.
+# Expected 0: columns were unpopulated before PLANT-CONTAINER-001 UI shipped.
+# Runner re-runs sweep between 0a and 0c per its codified pattern.
+#
+# Pre: no constraint yet, columns exist (or will be added by 0a).
+# Post: constraint present + validated; schema_version recorded.
+
+pre:
+  - name: pre_no_container_type_constraint
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname = 'chk_plants_container_type'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_plants_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  - name: sweep_container_type_violations
+    sql: |
+      SELECT id FROM public.plants
+       WHERE container_type IS NOT NULL
+         AND container_type NOT IN (
+           'fabric_bag','plastic_pot','terracotta','ceramic',
+           'raised_bed','in_ground','tray_cell','hanging_basket',
+           'window_box','other'
+         )
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_container_type_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants'
+         AND column_name='container_type'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_container_size_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants'
+         AND column_name='container_size'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_constraint_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint WHERE conname = 'chk_plants_container_type'
+    expect: scalar_eq
+    value: true
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.0.0-pot-001'
+    expect: rowcount_eq
+    value: 1
