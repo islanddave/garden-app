@@ -7,6 +7,7 @@
 // coercions for source/status, source_inventory_item_id passthrough on POST.
 import React, { useState, useEffect } from 'react'
 import { P } from '../lib/constants.js'
+import { formatQty } from '../lib/format.js'
 import ProjectOptions from './ProjectOptions.jsx'
 import { PlantForm } from './forms'
 
@@ -17,12 +18,12 @@ function formFromPlant(plant) {
     name:     plant.name,
     variety:  plant.variety_ref ?? null,
     varietyText: plant.variety_ref?.name ?? '',
-    quantity: String(plant.quantity ?? 1),
+    quantity: formatQty(plant.quantity ?? 1),
     notes:    plant.notes ?? '',
     status:   plant.status ?? '',
     sown_at:           (plant.sown_at ?? '').slice(0, 10),
     sown_at_approx:    !!plant.sown_at_approx,
-    qty_initial:       plant.qty_initial != null ? String(plant.qty_initial) : '',
+    qty_initial:       formatQty(plant.qty_initial),
     source_type:       plant.source_type ?? '',
     source_ref:        plant.source_ref ?? '',
     source_generation: plant.source_generation ?? '',

@@ -7,6 +7,7 @@ import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS, INVENTORY_STATUSES as STATUSES } from '../lib/inventoryEnums.js'
 import { EnumSelect, Field, Input, Textarea, Button } from '../components/forms'
+import { formatQty } from '../lib/format.js'
 
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
 // the former local duplicates here were removed (Lane D dedup).
@@ -57,14 +58,14 @@ export default function InventoryDetail() {
       type:               i.type              ?? 'consumable',
       category:           i.category          ?? '',
       status:             i.status            ?? 'active',
-      quantity_on_hand:   i.quantity_on_hand  != null ? String(Number(i.quantity_on_hand)) : '',
-      quantity:           i.quantity          != null ? String(Number(i.quantity))          : '',
+      quantity_on_hand:   formatQty(i.quantity_on_hand),
+      quantity:           formatQty(i.quantity),
       unit:               i.unit              ?? '',
-      reorder_threshold:  i.reorder_threshold != null ? String(Number(i.reorder_threshold)) : '',
-      reorder_quantity:   i.reorder_quantity  != null ? String(Number(i.reorder_quantity))  : '',
+      reorder_threshold:  formatQty(i.reorder_threshold),
+      reorder_quantity:   formatQty(i.reorder_quantity),
       condition:          i.condition         ?? '',
       unit_cost:          i.unit_cost         != null ? Number(i.unit_cost).toFixed(2)         : '',
-      quantity_purchased: i.quantity_purchased!= null ? String(Number(i.quantity_purchased)): '',
+      quantity_purchased: formatQty(i.quantity_purchased),
       purchase_date:      i.purchase_date     ?? '',
       source:             i.source            ?? '',
       source_url:         i.source_url        ?? '',
@@ -280,7 +281,7 @@ export default function InventoryDetail() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <Field label="Qty on hand" error={errors.quantity_on_hand}>
                   <Input
-                    type="number" min="0" step="any"
+                    type="number" min="0" step="1"
                     value={form.quantity_on_hand}
                     onChange={e => set('quantity_on_hand', e.target.value)}
                     error={!!errors.quantity_on_hand}
@@ -318,14 +319,14 @@ export default function InventoryDetail() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <Field label="Reorder when below">
                   <Input
-                    type="number" min="0" step="any"
+                    type="number" min="0" step="1"
                     value={form.reorder_threshold}
                     onChange={e => set('reorder_threshold', e.target.value)}
                   />
                 </Field>
                 <Field label="Reorder quantity">
                   <Input
-                    type="number" min="0" step="any"
+                    type="number" min="0" step="1"
                     value={form.reorder_quantity}
                     onChange={e => set('reorder_quantity', e.target.value)}
                   />
@@ -379,7 +380,7 @@ export default function InventoryDetail() {
               </Field>
               <Field label="Qty purchased">
                 <Input
-                  type="number" min="0" step="any"
+                  type="number" min="0" step="1"
                   value={form.quantity_purchased}
                   onChange={e => set('quantity_purchased', e.target.value)}
                 />

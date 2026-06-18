@@ -305,7 +305,7 @@ export default function InventoryAdd() {
                   <Input
                     type="number"
                     min="0"
-                    step="any"
+                    step="1"
                     value={form.quantity_on_hand}
                     onChange={e => set('quantity_on_hand', e.target.value)}
                     error={!!errors.quantity_on_hand}
@@ -367,7 +367,7 @@ export default function InventoryAdd() {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       <Field label="Reorder when below">
                         <Input
-                          type="number" min="0" step="any"
+                          type="number" min="0" step="1"
                           value={form.reorder_threshold}
                           onChange={e => set('reorder_threshold', e.target.value)}
                           placeholder="e.g. 1"
@@ -375,7 +375,7 @@ export default function InventoryAdd() {
                       </Field>
                       <Field label="Reorder quantity">
                         <Input
-                          type="number" min="0" step="any"
+                          type="number" min="0" step="1"
                           value={form.reorder_quantity}
                           onChange={e => set('reorder_quantity', e.target.value)}
                           placeholder="e.g. 3"
@@ -434,7 +434,7 @@ export default function InventoryAdd() {
                   </Field>
                   <Field label="Total qty purchased">
                     <Input
-                      type="number" min="0" step="any"
+                      type="number" min="0" step="1"
                       value={form.quantity_purchased}
                       onChange={e => set('quantity_purchased', e.target.value)}
                       placeholder="All time"

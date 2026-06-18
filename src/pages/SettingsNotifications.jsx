@@ -30,7 +30,7 @@ const OPTION_LABELS = {
 
 const OPTION_DESCRIPTIONS = {
   off:         'No critter notifications.',
-  in_app_only: 'Critters appear ambiently in the app. No system notifications.',
+  in_app_only: 'Critters appear ambiently in the app — never as interruptions.',
   system:      'System notifications when critters arrive (requires Add to Home Screen).',
 }
 

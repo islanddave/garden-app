@@ -20,3 +20,20 @@ export function formatMoney(n) {
   if (!Number.isFinite(num)) return String(n)
   return '$' + num.toFixed(2)
 }
+
+// Date rendering. numeric/timestamp date columns can serialize as a full ISO
+// string ("2026-06-01T00:00:00.000Z") OR a date-only "2026-06-01". Render a clean
+// friendly date from the leading YYYY-MM-DD WITHOUT a Date object (avoids the
+// midnight-UTC off-by-one TZ bug, L-107). Returns '' for null/empty, and the input
+// untouched if it doesn't start with an ISO date (defensive — free-text passes through).
+const _MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+export function formatDate(s) {
+  if (s == null || s === '') return ''
+  const str = String(s)
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return str
+  const [, y, mo, d] = m
+  const mi = Number(mo) - 1
+  if (mi < 0 || mi > 11) return str
+  return `${_MONTHS[mi]} ${Number(d)}, ${y}`
+}

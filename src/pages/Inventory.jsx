@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
-import { formatQty, formatMoney } from '../lib/format.js'
+import { formatQty, formatMoney, formatDate } from '../lib/format.js'
 
 // ── Enums (must match inventory_items schema) ─────────────────────────────────
 const CATEGORY_LABELS = {
@@ -385,7 +385,7 @@ function InventoryRow({ item, onAdjust }) {
             {item.location_text   && <DetailCell label="Location"  value={item.location_text} />}
             {item.source          && <DetailCell label="Source"    value={item.source} />}
             {item.unit_cost != null && <DetailCell label="Unit cost" value={formatMoney(item.unit_cost)} />}
-            {item.purchase_date   && <DetailCell label="Purchased" value={item.purchase_date} />}
+            {item.purchase_date   && <DetailCell label="Purchased" value={formatDate(item.purchase_date)} />}
             {item.brand           && <DetailCell label="Brand"     value={item.brand} />}
             {item.model           && <DetailCell label="Model"     value={item.model} />}
           </div>
