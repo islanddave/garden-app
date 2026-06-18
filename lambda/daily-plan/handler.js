@@ -55,8 +55,10 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     left join plant_varieties pv on pv.id=p.variety_id
     left join plant_projects  pj on pj.id=p.project_id
     left join v_resolved_care vrc on vrc.leaf_id = p.id
-    where p.deleted_at is null and (p.status is null or p.status not in ('ended','failed','dead','archived','harvested'))
-      and (pj.status is null or pj.status <> 'planning')`);
+    where p.deleted_at is null and p.archived_at is null
+      and (p.status is null or p.status not in ('ended','failed','dead','archived','harvested'))
+      and (pj.status is null or pj.status <> 'planning')
+      and pj.archived_at is null`);
   // Guard: remap System-account assignees -> null so ownerFallback applies (stray-pick guard).
   // Real System/bot account = user_3D7u…; the prior default here (user_3E2x…) is actually Jen in the live
   // Clerk instance and wrongly nulled her assignments. Env override supports a comma-separated list. (DRG-ASSIGN-FIX)

@@ -110,7 +110,8 @@ export default function LogMany() {
     Promise.all([fetch('/api/projects'), fetch('/api/locations')])
       .then(([proj, locs]) => {
         if (!on) return
-        proj = proj ?? []; locs = locs ?? []
+        // V3-ARCHIVE-001: archived projects must not appear in the Log Many scope picker.
+        proj = (proj ?? []).filter(pr => !pr.archived_at); locs = locs ?? []
         setProjects(proj); setLocations(locs)
         const seedProject = params.get('project_id')
         const seedLocation = params.get('location_id')
