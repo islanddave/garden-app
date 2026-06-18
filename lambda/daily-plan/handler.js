@@ -56,6 +56,9 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     left join plant_projects  pj on pj.id=p.project_id
     left join v_resolved_care vrc on vrc.leaf_id = p.id
     where p.deleted_at is null and (p.status is null or p.status not in ('ended','failed','dead','archived','harvested'))`);
+  // Guard: remap System-account assignees -> null so ownerFallback applies (stray-pick guard).
+  const SYSTEM_SUBS = new Set([process.env.SYSTEM_CLERK_SUB || 'user_3E2xA85kQhr1vSZhiv4W1GLudJV']);
+  for (const p of plantings) { if (SYSTEM_SUBS.has(p.assignee_user_id)) p.assignee_user_id = null; }
   const { rows: spaces } = await pg.query(`select id, postal_code, weather_lat, weather_lng from spaces`);
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.
   const wxBySpace = {}, hyBySpace = {};
