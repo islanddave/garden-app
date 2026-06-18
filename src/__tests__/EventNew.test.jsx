@@ -326,3 +326,47 @@ describe('EventNew — non-harvest POST unchanged', () => {
     expect(postCalls[0].event_type).toBe('watering')
   })
 })
+
+describe('EventNew — V3-EVENTCONTSIZE-001 container capture on potting_up/transplant', () => {
+  it('PUTs the planting container_type/size when a potting_up event captures a new container', async () => {
+    dataRef.plants = [{ id: 'pl-1', name: 'Cayenne #1' }]
+    renderEventNew('event_type=potting_up')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await waitFor(() => expect(screen.getByText('Cayenne #1')).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
+    fireEvent.change(screen.getByLabelText(/Pot \/ bag type/i), { target: { value: 'fabric_bag' } })
+    fireEvent.change(screen.getByLabelText(/Pot size/i), { target: { value: '5 gal' } })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('+ Log event'))
+    })
+
+    expect(postCalls.length).toBe(1)
+    expect(postCalls[0].event_type).toBe('potting_up')
+    const putCall = apiFetchSpy.mock.calls.find(
+      ([path, opts]) => path === '/api/plants/pl-1' && opts && opts.method === 'PUT'
+    )
+    expect(putCall).toBeTruthy()
+    expect(JSON.parse(putCall[1].body)).toEqual({ container_type: 'fabric_bag', container_size: '5 gal' })
+  })
+
+  it('does NOT PUT the planting when no container is entered', async () => {
+    dataRef.plants = [{ id: 'pl-1', name: 'Cayenne #1' }]
+    renderEventNew('event_type=potting_up')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await waitFor(() => expect(screen.getByText('Cayenne #1')).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('+ Log event'))
+    })
+
+    expect(postCalls.length).toBe(1)
+    const putCall = apiFetchSpy.mock.calls.find(
+      ([path, opts]) => typeof path === 'string' && path.startsWith('/api/plants/') && opts && opts.method === 'PUT'
+    )
+    expect(putCall).toBeUndefined()
+  })
+})

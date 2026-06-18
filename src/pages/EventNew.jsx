@@ -11,7 +11,7 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button } from '../components/forms/index.js'
-import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS } from '../lib/dropdownRegistry.js'
+import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 
 // V3-EVENT-008: EVENT_TYPE_META lives in the canonical src/lib/eventTypes.js
 // (single source of truth). Re-exported here so existing importers from
@@ -222,6 +222,11 @@ export default function EventNew() {
   // Tier 2 metadata state — { [field.key]: value } — only populated keys submitted
   const [metadataState, setMetadataState] = useState({})
 
+  // V3-EVENTCONTSIZE-001: optional new-container capture, shown for potting_up/transplant on a specific
+  // planting. On submit it also PUTs the planting's container_type/container_size via the live /api/plants
+  // endpoint (reuses the PLANT-CONTAINER-001 write path; not stored as event metadata).
+  const [container, setContainer] = useState({ type: '', size: '' })
+
   // V1.2a-2 Wave 3: harvest panel state — only submitted for event_type=harvest.
   const [harvest, setHarvest] = useState(() => ({
     quantity:       '',
@@ -253,6 +258,9 @@ export default function EventNew() {
     setHarvest({ quantity: '', unit: readLastHarvestUnit(), quality_rating: null })
     setHarvestError(null)
   }, [form.event_type])
+
+  // V3-EVENTCONTSIZE-001: clear the captured container when the event type or target planting changes.
+  useEffect(() => { setContainer({ type: '', size: '' }) }, [form.event_type, form.plant_id])
 
   // M1 telemetry: reset the flow on mount; mark start-capture the first time the
   // event type is set to watering (the "started a watering log" signal).
@@ -412,6 +420,24 @@ export default function EventNew() {
       try { localStorage.setItem('lastHarvestUnit', harvest.unit) } catch { /* noop */ }
     }
 
+    // V3-EVENTCONTSIZE-001: if a potting_up/transplant event captured a new container, persist it to the
+    // planting via the live /api/plants PUT (COALESCE leaves untouched fields). Non-fatal: the event is
+    // already saved, so a container-write failure surfaces a notice but never blocks the success flow.
+    const isPot = form.event_type === 'potting_up' || form.event_type === 'transplant'
+    if (isPot && form.plant_id && (container.type || container.size.trim())) {
+      try {
+        await apiFetch('/api/plants/' + form.plant_id, {
+          method: 'PUT',
+          body: JSON.stringify({
+            container_type: container.type || null,
+            container_size: container.size.trim() || null,
+          }),
+        })
+      } catch {
+        setNotice("Event saved, but the container update didn't go through — set it on the plant's edit screen.")
+      }
+    }
+
     // V1.2a-1 Lambda 2.1.x response shape: event_row fields at top level + updated_streak / xp_gained / newly_earned_achievements / daily_xp_remaining.
     const { id: eventId, updated_streak, xp_gained, newly_earned_achievements } = result
     // V-4 removed (reward-ux-conformance-audit V001 §V-4, ratified jolly-fervent-ritchie):
@@ -563,6 +589,24 @@ export default function EventNew() {
               )}
             </Select>
           </Section>
+
+          {/* ── V3-EVENTCONTSIZE-001: new-container capture for potting_up / transplant on a chosen planting ── */}
+          {(form.event_type === 'potting_up' || form.event_type === 'transplant') && form.plant_id && (
+            <Section label="New container (optional)">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <Field label="Pot / bag type" htmlFor="evt-ctype" optional>
+                  <Select id="evt-ctype" value={container.type}
+                    onChange={e => setContainer(c => ({ ...c, type: e.target.value }))}
+                    options={PLANT_CONTAINER_TYPE_OPTIONS} />
+                </Field>
+                <Field label="Pot size" htmlFor="evt-csize" optional help="e.g. 3 gal, 5 L, 4 in">
+                  <Input id="evt-csize" value={container.size}
+                    onChange={e => setContainer(c => ({ ...c, size: e.target.value }))}
+                    placeholder="e.g. 3 gal, 5 L, 4 in" />
+                </Field>
+              </div>
+            </Section>
+          )}
 
           {/* ── Tier 2: per-type metadata enrichment (collapsible) ── */}
           <MetadataSection
