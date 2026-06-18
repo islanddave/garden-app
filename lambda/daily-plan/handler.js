@@ -37,7 +37,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // active plantings + last water/fert + caretaker + the planting's Space (workspace_id -> spaces).
   const { rows: plantings } = await pg.query(`
     select p.id, p.name, p.status, p.container_type, p.container_size,
-           pv.name as variety, pv.genus, pj.name as project, p.workspace_id,
+           pv.name as variety, pv.genus, pj.name as project, pj.status as project_status, p.workspace_id,
            coalesce(p.assignee_user_id, pj.assignee_user_id) as assignee_user_id,
            vrc.resolved_profile as db_cadence,  -- CARE-CADENCE-001: system||cultivar||leaf merged cadence (NULL/_seeded-absent -> engine bundled fallback)
            -- Dates returned as 'YYYY-MM-DD' TEXT (UTC): the neon driver hands timestamptz back as JS Date objects, and
@@ -55,7 +55,8 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     left join plant_varieties pv on pv.id=p.variety_id
     left join plant_projects  pj on pj.id=p.project_id
     left join v_resolved_care vrc on vrc.leaf_id = p.id
-    where p.deleted_at is null and (p.status is null or p.status not in ('ended','failed','dead','archived','harvested'))`);
+    where p.deleted_at is null and (p.status is null or p.status not in ('ended','failed','dead','archived','harvested'))
+      and (pj.status is null or pj.status <> 'planning')`);
   // Guard: remap System-account assignees -> null so ownerFallback applies (stray-pick guard).
   const SYSTEM_SUBS = new Set([process.env.SYSTEM_CLERK_SUB || 'user_3E2xA85kQhr1vSZhiv4W1GLudJV']);
   for (const p of plantings) { if (SYSTEM_SUBS.has(p.assignee_user_id)) p.assignee_user_id = null; }

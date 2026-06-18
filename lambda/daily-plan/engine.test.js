@@ -59,3 +59,15 @@ describe('engine substrate-aware fert (regression guard, ported)', () => {
     expect(plan.users.dave.counts.cold).toBe(0);
   });
 });
+
+describe('DRG-WATERSTAGE-001: plantings under a planning-stage project are excluded from the plan', () => {
+  it('a planting whose parent project is in planning generates no watering task', () => {
+    const plan = generatePlan({ plantings: [
+      { id: 'veg', name: 'Active Tomato', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', project: 'Active', project_id: 'pa', project_status: 'active', substrate_start: '2026-05-01', last_water: '2026-06-10', last_fert: null, db_cadence: null },
+      { id: 'plan', name: 'Future Bed Tomato', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', project: 'Planning', project_id: 'pp', project_status: 'planning', substrate_start: null, last_water: null, last_fert: null, db_cadence: null }],
+      cadence: cad, fertModel: fm, today: '2026-06-20', weather: { tonightLow: 60, highToday: 80, unit: 'F' }, ownerFallback: 'dave' });
+    const all = Object.values(plan.users).flatMap(u => [...u.tasks.water_due, ...u.tasks.no_history]);
+    expect(all.some(w => w.id === 'plan')).toBe(false);
+    expect(all.some(w => w.id === 'veg')).toBe(true);
+  });
+});

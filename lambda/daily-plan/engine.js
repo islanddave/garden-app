@@ -89,6 +89,10 @@ function generatePlanForUser(plantings, cad, fm, today, weather){
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
   for(const p of plantings){
+    // DRG-WATERSTAGE-001: skip plantings whose parent PROJECT is still in 'planning' — not yet physically
+    // planted, so they must not generate watering (or any other) care tasks. Plantings carry no 'planning'
+    // status of their own; the planning state lives on the parent project (passed through as p.project_status).
+    if(p.project_status==='planning') continue;
     const c=resolveCadence(p, cad);
     if(c.exclude) continue;
     const ph=feedPhase(weeksSince(today,p.substrate_start)); phaseCounts[ph]=(phaseCounts[ph]||0)+1;
