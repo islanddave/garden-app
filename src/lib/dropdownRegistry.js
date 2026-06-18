@@ -77,3 +77,20 @@ export const HARVEST_QUALITY_LABELS = {
   4: 'good',
   5: 'excellent',
 }
+// PLANT-CONTAINER-001 / V4-POT-001: container type for pot/bag descriptor
+export const PLANT_CONTAINER_TYPE_OPTIONS = [
+  { value: '', label: '— Not specified —' },
+  { value: 'fabric_bag', label: 'Fabric grow bag' },
+  { value: 'plastic_pot', label: 'Plastic pot' },
+  { value: 'terracotta', label: 'Terracotta / clay' },
+  { value: 'ceramic', label: 'Ceramic / glazed' },
+  { value: 'raised_bed', label: 'Raised bed' },
+  { value: 'in_ground', label: 'In ground' },
+  { value: 'tray_cell', label: 'Seedling tray / cell' },
+  { value: 'hanging_basket', label: 'Hanging basket' },
+  { value: 'window_box', label: 'Window box' },
+  { value: 'other', label: 'Other' },
+]
+export const PLANT_CONTAINER_TYPE_LABELS = Object.fromEntries(
+  PLANT_CONTAINER_TYPE_OPTIONS.filter(o => o.value !== '').map(o => [o.value, o.label])
+)
