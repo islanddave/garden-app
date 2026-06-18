@@ -45,39 +45,52 @@ async function geocodeZip(zip) {
 
 // NWS = authoritative cold low + high (its precip fields are unreliable here). WMO `code` for the widget
 // icon comes from Open-Meteo daily (NWS returns text/icon, not WMO codes).
+// Wrapped in try/catch: api.weather.gov intermittently returns HTML (503/outage) which throws on .json().
+// Weather is optional — handler.weatherForSpace returns null safely; engine runs without it.
 async function fetchNWS(lat, lng) {
-  const hdr = { 'User-Agent': 'garden-app daily-plan (islanddave@gmail.com)', Accept: 'application/geo+json' };
-  const pts = await (await fetch(`https://api.weather.gov/points/${lat},${lng}`, { headers: hdr })).json();
-  const fc = await (await fetch(pts.properties.forecast, { headers: hdr })).json();
-  const periods = (fc.properties && fc.properties.periods) || [];
-  const day = periods.find((p) => p.isDaytime);
-  const night = periods.find((p) => !p.isDaytime);
-  let code = null;
   try {
-    const om = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&daily=weather_code&timezone=America/New_York&forecast_days=1`)).json();
-    code = om.daily && om.daily.weather_code && om.daily.weather_code[0];
-  } catch (_) { /* code is cosmetic (icon); proceed without */ }
-  return {
-    tonightLow: night ? night.temperature : null,
-    highToday: day ? day.temperature : null,
-    code, unit: 'F', short: (day || night || {}).shortForecast || '',
-  };
+    const hdr = { 'User-Agent': 'garden-app daily-plan (islanddave@gmail.com)', Accept: 'application/geo+json' };
+    const pts = await (await fetch(`https://api.weather.gov/points/${lat},${lng}`, { headers: hdr })).json();
+    const fc = await (await fetch(pts.properties.forecast, { headers: hdr })).json();
+    const periods = (fc.properties && fc.properties.periods) || [];
+    const day = periods.find((p) => p.isDaytime);
+    const night = periods.find((p) => !p.isDaytime);
+    let code = null;
+    try {
+      const om = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&daily=weather_code&timezone=America/New_York&forecast_days=1`)).json();
+      code = om.daily && om.daily.weather_code && om.daily.weather_code[0];
+    } catch (_) { /* code is cosmetic (icon); proceed without */ }
+    return {
+      tonightLow: night ? night.temperature : null,
+      highToday: day ? day.temperature : null,
+      code, unit: 'F', short: (day || night || {}).shortForecast || '',
+    };
+  } catch (e) {
+    console.warn(JSON.stringify({ msg: 'fetchNWS failed — weather null', lat, lng, error: e.message }));
+    return null;
+  }
 }
 
 // Open-Meteo = full hydrology window in inches. recent = D-2+D-1 actuals; upcoming = D1+D2; tomorrow + PoP.
+// Wrapped in try/catch: network failures should not crash the entire run — hydrology degrades gracefully to null.
 async function fetchPrecip(lat, lng) {
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
-    `&daily=precipitation_sum,precipitation_probability_max&precipitation_unit=inch&timezone=America/New_York&past_days=2&forecast_days=3`;
-  const j = await (await fetch(url)).json();
-  const ps = (j.daily && j.daily.precipitation_sum) || [];   // [D-2, D-1, D0, D1, D2]
-  const pop = (j.daily && j.daily.precipitation_probability_max) || [];
-  const tomorrow = ps[3] || 0;
-  return {
-    recent_precip_in: round2((ps[0] || 0) + (ps[1] || 0)),
-    upcoming_precip_in: round2(tomorrow + (ps[4] || 0)),
-    tomorrow_precip_in: round2(tomorrow),
-    tomorrow_pop: pop[3] != null ? pop[3] : null,
-  };
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
+      `&daily=precipitation_sum,precipitation_probability_max&precipitation_unit=inch&timezone=America/New_York&past_days=2&forecast_days=3`;
+    const j = await (await fetch(url)).json();
+    const ps = (j.daily && j.daily.precipitation_sum) || [];   // [D-2, D-1, D0, D1, D2]
+    const pop = (j.daily && j.daily.precipitation_probability_max) || [];
+    const tomorrow = ps[3] || 0;
+    return {
+      recent_precip_in: round2((ps[0] || 0) + (ps[1] || 0)),
+      upcoming_precip_in: round2(tomorrow + (ps[4] || 0)),
+      tomorrow_precip_in: round2(tomorrow),
+      tomorrow_pop: pop[3] != null ? pop[3] : null,
+    };
+  } catch (e) {
+    console.warn(JSON.stringify({ msg: 'fetchPrecip failed — hydrology null', lat, lng, error: e.message }));
+    return null;
+  }
 }
 
 exports.handler = async () => {
