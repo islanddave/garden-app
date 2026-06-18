@@ -97,16 +97,16 @@ function AppRoutes() {
         }}>
           <div style={{ flex: 1 }}>
             <Routes>
-              <Route path="/"              element={<Navigate to="/dashboard" replace />} />
+              <Route path="/"              element={<Navigate to="/today" replace />} />
               <Route path="/garden/:slug"  element={<ProjectPublic />} />
               <Route path="/garden"        element={<Protected><Garden /></Protected>} />
               <Route path="/feed"          element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><FeedPage /></ErrorBoundary></Protected>} />
               <Route path="/auth/callback" element={<AuthCallback />} />
-              <Route path="/login"         element={user ? <Navigate to="/dashboard" replace /> : <Login />} />
+              <Route path="/login"         element={user ? <Navigate to="/today" replace /> : <Login />} />
               <Route path="/dashboard"     element={<Protected><Dashboard /></Protected>} />
               <Route path="/locations"     element={<Protected><Locations /></Protected>} />
               <Route path="/locations/:id" element={<Protected><LocationDetail /></Protected>} />
-              <Route path="/tasks"         element={<Navigate to="/dashboard" replace />} />
+              <Route path="/tasks"         element={<Navigate to="/today" replace />} />
               <Route path="/zone"          element={<Protected><ZonePicker /></Protected>} />
               <Route path="/projects"      element={<Protected><ProjectList /></Protected>} />
               <Route path="/projects/new"  element={<Protected><ProjectNew /></Protected>} />
@@ -161,7 +161,7 @@ function AppRoutes() {
                   redirect to /dashboard. SURFACE ONLY — Bite 4 wires real
                   getUserMedia + IndexedDB. */}
               <Route path="/field"         element={<Protected><FieldCapture /></Protected>} />
-              <Route path="*"             element={<Navigate to="/dashboard" replace />} />
+              <Route path="*"             element={<Navigate to="/today" replace />} />
             </Routes>
           </div>
           <Footer />

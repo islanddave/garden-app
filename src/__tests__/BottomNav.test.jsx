@@ -77,6 +77,8 @@ describe('BottomNav — V3-IA layout', () => {
     expect(screen.queryByText('Projects')).toBeNull()
     expect(screen.queryByText('Plants')).toBeNull()
     expect(screen.queryByText('Inventory')).toBeNull()
+    // DRG-TODAY-003 Option A: Today is the color-coded bar above the nav, NOT a bottom-nav tab.
+    expect(screen.queryByText('Today')).toBeNull()
   })
 
   it('FAB keeps the center slot: tab order is Garden · Critters · +LOG · Photos · More', () => {
@@ -149,6 +151,14 @@ describe('BottomNav — More menu', () => {
     const link = screen.getByText('Inventory').closest('a')
     expect(link).not.toBeNull()
     expect(link.getAttribute('href')).toBe('/inventory')
+  })
+
+  it('More menu shows the Dashboard link pointing to /dashboard (DRG-TODAY-003 demotion)', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    const link = screen.getByText('Dashboard').closest('a')
+    expect(link).not.toBeNull()
+    expect(link.getAttribute('href')).toBe('/dashboard')
   })
 
   it('More menu has NO Plants entry (Plantings page retired) and no duplicate Photos/Critters entries', () => {

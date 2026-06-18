@@ -3,9 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 const navigateMock = vi.fn()
+const locationRef = { pathname: '/garden' }
 vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
-  useLocation: () => ({ pathname: '/garden' }),
+  useLocation: () => locationRef,
 }))
 const fetchMock = vi.fn()
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
@@ -17,52 +18,62 @@ const mockDash = (d) => fetchMock.mockImplementation((url) => Promise.resolve(ur
 
 beforeEach(() => {
   navigateMock.mockReset(); fetchMock.mockReset()
+  locationRef.pathname = '/garden'
   document.documentElement.style.removeProperty('--today-band-height')
 })
 
-describe('TodayBand (global, above-nav)', () => {
-  it('renders nothing + reserves no space when nothing needs attention', async () => {
+describe('TodayBand \u2014 color-coded Today bar (DRG-TODAY-003)', () => {
+  it('all-caught-up: calm bar + reserves layout space even when nothing is waiting', async () => {
     mockDash({ water_due: [], harvest_ready: [], heads_up: [] })
+    render(<TodayBand />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/dashboard'))
+    const bar = await screen.findByRole('button', { name: /Today/ })
+    expect(bar.getAttribute('data-tier')).toBe('clear')
+    expect(bar.textContent).toMatch(/all caught up/i)
+    await waitFor(() => expect(document.documentElement.style.getPropertyValue('--today-band-height')).not.toBe('0px'))
+  })
+
+  it('waiting: an unseen (stale) project shows the gold "needs a look" state', async () => {
+    mockDash({ water_due: [], heads_up: [{ project_id: 's', name: 'Thyme', reason: 'stale', days_stale: 9 }] })
+    render(<TodayBand />)
+    const bar = await screen.findByRole('button', { name: /Today/ })
+    expect(bar.getAttribute('data-tier')).toBe('waiting')
+    expect(bar.textContent).toMatch(/needs a look/i)
+  })
+
+  it('urgent: overdue watering shows the terra urgent state + the specific callout', async () => {
+    mockDash({ water_due: [{ project_id: 'a', project_name: 'Chilis', next_water_at: overdue3, location_type: 'outdoor' }] })
+    render(<TodayBand />)
+    const bar = await screen.findByRole('button', { name: /Today/ })
+    expect(bar.getAttribute('data-tier')).toBe('urgent')
+    expect(bar.textContent).toMatch(/Chilis/)
+    expect(bar.textContent).toMatch(/overdue/)
+  })
+
+  it('tapping the bar opens the Today home (/today), not an inline log', async () => {
+    mockDash({ water_due: [{ project_id: 'a', project_name: 'Chilis', next_water_at: overdue3, location_type: 'outdoor' }] })
+    render(<TodayBand />)
+    fireEvent.click(await screen.findByRole('button', { name: /Today/ }))
+    expect(navigateMock).toHaveBeenCalledWith('/today')
+  })
+
+  it('is hidden (and reserves no space) on the /today page itself', async () => {
+    locationRef.pathname = '/today'
+    mockDash({ water_due: [{ project_id: 'a', project_name: 'Chilis', next_water_at: overdue3, location_type: 'outdoor' }] })
     const { container } = render(<TodayBand />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/dashboard'))
     expect(container.querySelector('button')).toBeNull()
     expect(document.documentElement.style.getPropertyValue('--today-band-height')).toBe('0px')
   })
 
-  it('shows the most-urgent item and reserves layout space when present', async () => {
-    mockDash({ water_due: [{ project_id: 'a', project_name: 'Chilis', next_water_at: overdue3, location_type: 'outdoor' }] })
-    render(<TodayBand />)
-    expect(await screen.findByText('Chilis')).toBeDefined()
-    expect(screen.getByText('NEEDS WATER')).toBeDefined()
-    await waitFor(() => expect(document.documentElement.style.getPropertyValue('--today-band-height')).not.toBe('0px'))
-  })
-
-  it('1-tap on the top row logs that item', async () => {
-    mockDash({ water_due: [{ project_id: 'a', project_name: 'Chilis', next_water_at: overdue3, location_type: 'outdoor' }] })
-    render(<TodayBand />)
-    fireEvent.click(await screen.findByLabelText(/Needs water: Chilis/))
-    expect(navigateMock).toHaveBeenCalledWith('/log?project=a&event_type=watering')
-  })
-
-  it('tapping the count expands to the full ranked list (harvest + flagged excluded)', async () => {
+  it('harvest-ready and flagged rows never surface in the bar (V3-HARVEST-001 / FLAG-REMOVAL)', async () => {
     mockDash({
-      water_due: [{ project_id: 'a', project_name: 'Chilis', next_water_at: overdue3, location_type: 'outdoor' }],
-      // harvest_ready is supplied but must NOT surface in the band (V3-HARVEST-001).
+      water_due: [],
       harvest_ready: [{ project_id: 'h', name: 'Beans', days_since_obs: 2 }],
-      heads_up: [
-        { project_id: 'f', name: 'Basil', reason: 'flagged', severity: 3 },
-        { project_id: 's', name: 'Thyme', reason: 'stale', days_stale: 9 },
-      ],
+      heads_up: [{ project_id: 'f', name: 'Basil', reason: 'flagged', severity: 3 }],
     })
     render(<TodayBand />)
-    // 2 band items: water + stale. Harvest (V3-HARVEST-001) and flagged (FLAG-REMOVAL
-    // 2026-06-10) are intentionally NOT band items.
-    expect(await screen.findByText(/\+1 more/)).toBeDefined()
-    fireEvent.click(screen.getByRole('button', { name: /Show all 2 items/ }))
-    expect(await screen.findByText('Thyme')).toBeDefined()
-    // Flagged 'Basil' must NOT appear (flagging UI retired).
-    expect(screen.queryByText('Basil')).toBeNull()
-    // Harvest-ready 'Beans' must NOT appear in the above-nav band (V3-HARVEST-001).
-    expect(screen.queryByText('Beans')).toBeNull()
+    const bar = await screen.findByRole('button', { name: /Today/ })
+    expect(bar.getAttribute('data-tier')).toBe('clear')
   })
 })

@@ -180,11 +180,11 @@ export default function BottomNav() {
             </div>
           )}
 
-          {/* Today's Plan — DRG-TODAY-002 daily care surface. Consumes GET /api/daily-plan (the
-              overnight Daily Plan engine read model). More-menu entry for now; candidate for a
-              first-class tab once validated on-device. */}
+          {/* Dashboard — the "Gardens at Home" overview. Demoted from the landing route to the
+              More menu (DRG-TODAY-003): /today is now home, surfaced via the color-coded Today bar
+              above the nav. Still reachable here and via the TopBar app-name link. */}
           <Link
-            to="/today"
+            to="/dashboard"
             onClick={closeMore}
             style={{
               display: 'flex', alignItems: 'center', gap: 16,
@@ -198,8 +198,8 @@ export default function BottomNav() {
               minHeight: 48,
             }}
           >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🗓️</span>
-            Today&rsquo;s Plan
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏡</span>
+            Dashboard
           </Link>
 
           {/* Inventory — moved off the first-class tab row (V3-IA, 2026-06-10);
