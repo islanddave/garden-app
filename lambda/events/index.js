@@ -27,6 +27,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { validatePostBody, validateBatchBody, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate } from './validators.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope } from './household.js';
+import { FRUITING_SOURCE_STATUSES } from './statusTransitions.js';
 import { awardCritterServer, awardCrittersForBatch, readUserPrefs as readPrefsForCritter, readSpeciesPrefs as readSpeciesPrefsForCritter } from './critterAward.js';
 import { randomUUID } from 'node:crypto';
 
@@ -800,6 +801,22 @@ export const handler = async (event) => {
             END,
             updated_at = NOW()
         `,
+        // V3-FRUITSET-001: logging a `fruit_set` event on a specific planting auto-advances
+        // it to 'fruiting' (forward-only). garden_node has no RLS, so ownership is scoped
+        // explicitly via container.created_by = ANY(householdIds) (L-087). No-op on every
+        // non-fruit_set event (the ${eventType} gate) and when plant_id is null / status is
+        // terminal / already fruiting. Status-change-as-event row is V3-EVENT-003, not here.
+        sql`
+          UPDATE public.garden_node p
+             SET status = 'fruiting', updated_at = NOW()
+            FROM public.container pp
+           WHERE ${eventType}::text = 'fruit_set'
+             AND p.id = ${body.plant_id ?? null}
+             AND p.container_id = pp.id
+             AND pp.created_by = ANY(${householdIds})
+             AND p.deleted_at IS NULL
+             AND p.status = ANY(${FRUITING_SOURCE_STATUSES})
+        `,
       ]);
 
       // F12 — JS-side extraction of harvest sub-row from the joined CTE row.
@@ -1060,3 +1077,4 @@ export const handler = async (event) => {
     return resp(500, { error: 'Internal server error' });
   }
 };
+
