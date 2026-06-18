@@ -34,6 +34,10 @@ function extractSelectBlocks(src) {
   const blocks = [];
   let m;
   while ((m = re.exec(src)) !== null) {
+    // V3-EVENT-003: skip the internal status pre-fetch (a single-column `AS old_status`
+    // read used only to detect a real status change) — NOT a client GET read, so it
+    // intentionally does not expose the PROJ-RESCOPE columns.
+    if (/\bAS old_status\b/.test(m[1])) continue;
     blocks.push(m[1]);
   }
   return blocks;
@@ -60,3 +64,4 @@ describe('projects Lambda SELECT clauses (S1.A-hotfix regression guard)', () => 
     });
   }
 });
+

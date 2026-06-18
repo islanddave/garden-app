@@ -4,6 +4,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope } from './household.js';
+import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // S3 client for featured-photo view URL enrichment.
@@ -315,7 +316,24 @@ export const handler = async (event) => {
 
         // V1.2a-4 S1: when kind transitions NULL -> non-NULL, stamp kind_set_at = NOW().
         // Otherwise leave kind_set_at alone. Handled inline in the UPDATE using CASE.
-        const rows = await sql`
+        const cur = await sql`
+          SELECT c.status AS old_status
+          FROM public.container c
+          WHERE c.id = ${projectId}
+            AND c.created_by = ANY(${householdIds})
+            AND c.deleted_at IS NULL
+        `;
+        if (!cur.length) return resp(404, { error: 'Not found' });
+        const _oldStatus = cur[0].old_status ?? null;
+        const _newStatus = body.status != null ? body.status : _oldStatus;
+        const _statusChanged = isStatusChange(_oldStatus, _newStatus);
+
+        // V3-EVENT-003 (project-level): emit a status_change audit event IN THE SAME
+        // TRANSACTION as the project status UPDATE, only on a real change. container has no
+        // RLS (explicit household scope above); event_log + entity_memory do -> set_config.
+        const _stmts = [
+          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+          sql`
           UPDATE public.container
           SET
             display_name     = COALESCE(${body.name ?? null}, display_name),
@@ -357,7 +375,27 @@ export const handler = async (event) => {
                     to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                     kind_set_at,
                     assignee_user_id
-        `;
+        `,
+        ];
+        if (_statusChanged) {
+          const _note = formatStatusChangeNote(_oldStatus, _newStatus, 'project');
+          const _meta = buildStatusChangeMetadata(_oldStatus, _newStatus, 'project');
+          _stmts.push(sql`
+            INSERT INTO event_log
+              (project_id, plant_id, event_type, event_date, notes, metadata, logged_by, created_by)
+            VALUES
+              (${projectId}, ${null}, ${STATUS_CHANGE_EVENT_TYPE}, NOW(), ${_note}, ${_meta}, ${userId}, ${userId})
+          `);
+          _stmts.push(sql`
+            INSERT INTO entity_memory (project_id, last_event_at)
+            VALUES (${projectId}, NOW())
+            ON CONFLICT (project_id) DO UPDATE SET
+              last_event_at = GREATEST(COALESCE(entity_memory.last_event_at, NOW()), NOW()),
+              updated_at = NOW()
+          `);
+        }
+        const _txr = await sql.transaction(_stmts);
+        const rows = _txr[1];
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
       }
@@ -519,3 +557,4 @@ export const handler = async (event) => {
     return resp(500, { error: 'Internal server error' });
   }
 };
+
