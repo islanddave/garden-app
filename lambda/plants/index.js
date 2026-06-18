@@ -237,16 +237,16 @@ export const handler = async (event) => {
         }
 
         const cur = await sql`
-          SELECT p.status AS old_status, p.container_id AS project_id
-          FROM public.garden_node p
-          JOIN public.container pp ON pp.id = p.container_id
-          WHERE p.id = ${plantId}
+          SELECT gn.status AS old_status, gn.container_id AS proj_id
+          FROM public.garden_node gn
+          JOIN public.container pp ON pp.id = gn.container_id
+          WHERE gn.id = ${plantId}
             AND pp.created_by = ANY(${householdIds})
-            AND p.deleted_at IS NULL
+            AND gn.deleted_at IS NULL
         `;
         if (!cur.length) return resp(404, { error: 'Not found' });
         const _oldStatus = cur[0].old_status ?? null;
-        const _projectId = cur[0].project_id;
+        const _projectId = cur[0].proj_id;
         const _newStatus = body.status != null ? body.status : _oldStatus;
         const _statusChanged = isStatusChange(_oldStatus, _newStatus);
 
