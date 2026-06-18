@@ -33,8 +33,8 @@ BEGIN
   END IF;
 END$$;
 
-INSERT INTO public.schema_version (version, applied_at, notes)
-VALUES ('4.0.0-pot-001', now(), 'V4-POT-001 S1: container_type/size column safety + CHECK constraint NOT VALID')
+INSERT INTO public.schema_version (version, description)
+VALUES ('4.0.0-pot-001', 'V4-POT-001 S1: container_type/size column safety + CHECK constraint NOT VALID')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
