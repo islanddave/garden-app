@@ -10,6 +10,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope } from './household.js';
+import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -235,7 +236,27 @@ export const handler = async (event) => {
           }
         }
 
-        const rows = await sql`
+        const cur = await sql`
+          SELECT p.status AS old_status, p.container_id AS project_id
+          FROM public.garden_node p
+          JOIN public.container pp ON pp.id = p.container_id
+          WHERE p.id = ${plantId}
+            AND pp.created_by = ANY(${householdIds})
+            AND p.deleted_at IS NULL
+        `;
+        if (!cur.length) return resp(404, { error: 'Not found' });
+        const _oldStatus = cur[0].old_status ?? null;
+        const _projectId = cur[0].project_id;
+        const _newStatus = body.status != null ? body.status : _oldStatus;
+        const _statusChanged = isStatusChange(_oldStatus, _newStatus);
+
+        // V3-EVENT-003: emit a status_change audit event IN THE SAME TRANSACTION as the status
+        // UPDATE (atomic — a missed audit row is data loss, so unlike the best-effort critter
+        // hook this is in-txn). event_log + entity_memory have RLS -> set_config the actor;
+        // garden_node has none (explicit household scope, verified 2026-06-18).
+        const _stmts = [
+          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+          sql`
           UPDATE public.garden_node p
           SET
             display_name             = COALESCE(${body.name ?? null}, p.display_name),
@@ -286,7 +307,27 @@ export const handler = async (event) => {
             AND pp.created_by = ANY(${householdIds})
             AND p.deleted_at IS NULL
           RETURNING p.id, p.container_id AS project_id, p.display_name AS name, p.quantity, p.notes, p.status, p.planted_at, p.created_by, p.created_at, p.updated_at, p.deleted_at, p.location_id, p.featured_image_id, p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata, p.featured_photo_id, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at, p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx, p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause, p.source_type, p.source_ref, p.source_generation, p.parent_plant_id, p.divergence_type, p.lineage_note, p.succession_group_id, p.succession_order, p.assignee_user_id, p.container_type, p.container_size, p.kind, p.workspace_id, p.last_seen_at, p.attr_override, p.version
-        `;
+        `,
+        ];
+        if (_statusChanged) {
+          const _note = formatStatusChangeNote(_oldStatus, _newStatus, 'plant');
+          const _meta = buildStatusChangeMetadata(_oldStatus, _newStatus, 'plant');
+          _stmts.push(sql`
+            INSERT INTO event_log
+              (project_id, plant_id, event_type, event_date, notes, metadata, logged_by, created_by)
+            VALUES
+              (${_projectId}, ${plantId}, ${STATUS_CHANGE_EVENT_TYPE}, NOW(), ${_note}, ${_meta}, ${userId}, ${userId})
+          `);
+          _stmts.push(sql`
+            INSERT INTO entity_memory (project_id, last_event_at)
+            VALUES (${_projectId}, NOW())
+            ON CONFLICT (project_id) DO UPDATE SET
+              last_event_at = GREATEST(COALESCE(entity_memory.last_event_at, NOW()), NOW()),
+              updated_at = NOW()
+          `);
+        }
+        const _txr = await sql.transaction(_stmts);
+        const rows = _txr[1];
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
       }
@@ -509,3 +550,4 @@ export const handler = async (event) => {
     return resp(500, { error: 'Internal server error' });
   }
 };
+

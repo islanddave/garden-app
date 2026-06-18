@@ -22,6 +22,12 @@ export function validatePostBody(body) {
   if (!body.event_type) return { status: 400, error: 'event_type is required' };
   if (!body.project_id) return { status: 400, error: 'project_id is required' };
 
+  // V3-EVENT-003 §3.1 — status_change is emitted ONLY by the server-side status-transition
+  // path (plants/projects PUT). Reserve it from the public POST so a client cannot forge one.
+  if (body.event_type === 'status_change') {
+    return { status: 400, error: 'status_change is set automatically and cannot be logged directly' };
+  }
+
   // F22 — event_date range validation
   if (body.event_date != null) {
     const ed = new Date(body.event_date);
@@ -145,3 +151,4 @@ export function normalizeEventDate(v) {
   const d = new Date(iso);
   return Number.isFinite(d.getTime()) ? d.toISOString() : null;
 }
+

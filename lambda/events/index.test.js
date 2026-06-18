@@ -233,3 +233,13 @@ describe('normalizeEventDate — event-date off-by-one fix (2.1.x)', () => {
     expect(normalizeEventDate('not-a-date')).toBeNull();
   });
 });
+
+
+describe('validatePostBody — V3-EVENT-003 status_change reservation', () => {
+  it('rejects a client-supplied status_change event_type', () => {
+    bad(basicEvent({ event_type: 'status_change' }), /automatically/);
+  });
+  it('still accepts normal event types', () => {
+    ok(basicEvent({ event_type: 'fruit_set' }));
+  });
+});
