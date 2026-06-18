@@ -202,6 +202,7 @@ export const handler = async (event) => {
         const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
         const ALLOWED_SOURCE = ['seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'unknown', 'cutting_taken', 'rescued'];
         const ALLOWED_DIVERGENCE = ['mutation', 'cross', 'selection', 'unknown'];
+        const ALLOWED_CONTAINER = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','other'];
         if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
           return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
         }
@@ -210,6 +211,9 @@ export const handler = async (event) => {
         }
         if (body.divergence_type != null && !ALLOWED_DIVERGENCE.includes(body.divergence_type)) {
           return resp(400, { error: `divergence_type must be one of ${ALLOWED_DIVERGENCE.join(', ')} or null` });
+        }
+        if (body.container_type != null && !ALLOWED_CONTAINER.includes(body.container_type)) {
+          return resp(400, { error: `container_type must be one of ${ALLOWED_CONTAINER.join(', ')} or null` });
         }
 
         // V2-PHOTO-F1: strict validation for featured_photo_id (linkage = photos.plant_id).
@@ -273,7 +277,9 @@ export const handler = async (event) => {
             assignee_user_id         = CASE
               WHEN ${hasAssignee} THEN ${body.assignee_user_id ?? null}
               ELSE p.assignee_user_id
-            END
+            END,
+            container_type           = COALESCE(${body.container_type ?? null}, p.container_type),
+            container_size           = COALESCE(${body.container_size ?? null}, p.container_size)
           FROM public.container pp
           WHERE p.id = ${plantId}
             AND p.container_id = pp.id
@@ -407,6 +413,7 @@ export const handler = async (event) => {
       const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
       const ALLOWED_SOURCE = ['seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'unknown'];
       const ALLOWED_DIVERGENCE = ['mutation', 'cross', 'selection', 'unknown'];
+      const ALLOWED_CONTAINER = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','other'];
       if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
         return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
       }
@@ -415,6 +422,9 @@ export const handler = async (event) => {
       }
       if (body.divergence_type != null && !ALLOWED_DIVERGENCE.includes(body.divergence_type)) {
         return resp(400, { error: `divergence_type must be one of ${ALLOWED_DIVERGENCE.join(', ')} or null` });
+      }
+      if (body.container_type != null && !ALLOWED_CONTAINER.includes(body.container_type)) {
+        return resp(400, { error: `container_type must be one of ${ALLOWED_CONTAINER.join(', ')} or null` });
       }
 
       const qty = parseInt(body.quantity, 10);
@@ -432,7 +442,8 @@ export const handler = async (event) => {
            qty_initial, qty_current, qty_harvested, qty_lost, loss_cause,
            source_type, source_ref, source_generation,
            parent_plant_id, divergence_type, lineage_note,
-           succession_group_id, succession_order)
+           succession_group_id, succession_order,
+           container_type, container_size)
         VALUES (
           ${body.project_id},
           ${body.name},
@@ -463,7 +474,9 @@ export const handler = async (event) => {
           ${body.divergence_type ?? null},
           ${body.lineage_note ?? null},
           ${body.succession_group_id ?? null},
-          ${body.succession_order ?? null}
+          ${body.succession_order ?? null},
+          ${body.container_type ?? null},
+          ${body.container_size ?? null}
         )
         RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, kind, workspace_id, last_seen_at, attr_override, version
       `;
