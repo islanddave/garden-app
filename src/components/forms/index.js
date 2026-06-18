@@ -1,5 +1,7 @@
 // src/components/forms/index.js
 // Lane D / Phase A barrel — canonical shared form primitives.
+// FROZEN SET (V3-PRIMITIVES-001): see ./FROZEN.md. The export surface below is pinned by
+// src/__tests__/formsPrimitivesFreeze.test.js — adding/removing a primitive must update both.
 export { default as Field } from './Field.jsx'
 export { default as Input } from './Input.jsx'
 export { default as Select } from './Select.jsx'
