@@ -8,6 +8,9 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const SCHEMA_VERSION = 1;
 
+// Service/bot accounts — excluded from the caretaker roster so they can't be re-picked via the UI.
+const SYSTEM_SUBS = new Set(['user_3E2xA85kQhr1vSZhiv4W1GLudJV']);
+
 let _secrets = null;
 async function getSecrets() {
   if (_secrets) return _secrets;
@@ -62,6 +65,7 @@ export const handler = async (event) => {
     // v1 returns { data, totalCount }; tolerate an array too.
     const users = Array.isArray(list) ? list : (list?.data ?? []);
     const members = users
+      .filter((u) => !SYSTEM_SUBS.has(u.id))  // exclude service/bot accounts from caretaker roster
       .map((u) => ({
         id: u.id,
         display_name: displayName(u),
