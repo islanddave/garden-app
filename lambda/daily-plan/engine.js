@@ -42,7 +42,11 @@ function isLeek(p,crop){ return /leek/i.test(((p.name||'')+' '+(p.variety||'')+'
 // Dave is the responsible party for cucurbits + leeks + in-ground (his explicit call) — these never default to Jen.
 function ownerFor(p,c,fallback){ if(p.assignee_user_id) return p.assignee_user_id;
   if(isCucurbit(p,c&&c.crop)||isLeek(p,c&&c.crop)) return fallback; return fallback; }
-function likelyInGround(p,c){ return isCucurbit(p,c&&c.crop)||isLeek(p,c&&c.crop); }
+function likelyInGround(p,c){
+  // CARE-PROFILES-001: prefer explicit container_type when set; fall back to crop heuristic.
+  if(p.container_type) return p.container_type==='in_ground'||p.container_type==='raised_bed';
+  return isCucurbit(p,c&&c.crop)||isLeek(p,c&&c.crop);
+}
 
 // Returns a fertilize recommendation object IF one is warranted now, else null. Substrate-aware.
 function fertilizeRec(p, c, fm, today){
@@ -89,11 +93,15 @@ function generatePlanForUser(plantings, cad, fm, today, weather){
     if(c.exclude) continue;
     const ph=feedPhase(weeksSince(today,p.substrate_start)); phaseCounts[ph]=(phaseCounts[ph]||0)+1;
     if(c.dormant_skip){ dormant.push({id:p.id,name:p.name,crop:c.crop,note:c.notes}); continue; }
-    let wi=c.water_interval_days_container ?? cad.default.water_interval_days_container;
+    // CARE-PROFILES-001: select inground or container cadence based on container_type.
+    const inGround=likelyInGround(p,c);
+    let wi=(inGround ? c.water_interval_days_inground : c.water_interval_days_container)
+          ?? c.water_interval_days_container
+          ?? cad.default.water_interval_days_container;
     if(hot && c.drought_tolerance==='low' && wi>1) wi=wi-1;
     const dW=daysBetween(today,p.last_water);
-    if(dW!=null && dW>=wi) water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:likelyInGround(p,c),days_since:dW,interval:wi,overdue_by:dW-wi,method:c.water_method,moisture:c.soil_moisture_target,never:false});
-    else if(dW==null) water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:likelyInGround(p,c),days_since:null,interval:wi,overdue_by:null,method:c.water_method,moisture:c.soil_moisture_target,never:true});
+    if(dW!=null && dW>=wi) water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:dW,interval:wi,overdue_by:dW-wi,method:c.water_method,moisture:c.soil_moisture_target,never:false});
+    else if(dW==null) water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:null,interval:wi,overdue_by:null,method:c.water_method,moisture:c.soil_moisture_target,never:true});
     const fr=fertilizeRec(p,c,fm,today); if(fr) fertilize.push(fr);
     const pw=cad.pest_watch&&cad.pest_watch.cucurbit_beetle;
     if(pw&&pw.active){ const txt=((p.name||'')+' '+(p.variety||'')+' '+(c.crop||'')).toLowerCase();
