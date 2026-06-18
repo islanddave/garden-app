@@ -28,7 +28,7 @@ import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import ZoomableImage from '../components/ZoomableImage.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
-import { PLANT_SOURCE_LABELS } from '../lib/dropdownRegistry.js'
+import { PLANT_SOURCE_LABELS , PLANT_CONTAINER_TYPE_LABELS } from '../lib/dropdownRegistry.js'
 
 
 
@@ -207,6 +207,8 @@ export default function PlantingDetail() {
     ['Transplanted', fmtDate(pl.transplanted_at) ? `${fmtDate(pl.transplanted_at)}${pl.transplanted_at_approx ? ' (approx.)' : ''}` : null],
     ['First harvest', fmtDate(firstHarvest)],
     ['Source', PLANT_SOURCE_LABELS[pl.source_type] ?? (pl.source_type || null)],
+    ['Pot / bag', pl.container_type ? (PLANT_CONTAINER_TYPE_LABELS[pl.container_type] ?? pl.container_type) : null],
+    ['Pot size', pl.container_size || null],
     ['Source ref', pl.source_ref],
     ['Generation', pl.source_generation],
     ['Source planting', pl.parent_plant_id && pl.parent_plant_name
