@@ -8,7 +8,7 @@
 //
 // WHY this file exists: the events Lambda ships as a standalone zip with NO
 // bundler, so it cannot import from src/lib/ at runtime. validators.js imports
-// THIS sibling instead. (Source byte-length at generation: 9694.)
+// THIS sibling instead. (Source byte-length at generation: 9697.)
 
 export const EVENT_TYPES = [
   'sowing',

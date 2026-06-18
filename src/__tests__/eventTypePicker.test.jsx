@@ -20,8 +20,9 @@ describe('EventTypePicker', () => {
   })
   it('the More toggle reveals secondary-group types (hidden by default)', () => {
     render(<EventTypePicker value="" onChange={() => {}} />)
-    expect(screen.queryByText('Mulched')).toBeNull()
+    expect(screen.queryByText('Brought inside')).toBeNull()
     fireEvent.click(screen.getByText('More event types'))
-    expect(screen.getByText('Mulched')).toBeDefined()
+    expect(screen.getByText('Brought inside')).toBeDefined()
   })
 })
+

@@ -13,19 +13,18 @@ import React, { useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { EVENT_TYPE_META, buildSecondaryGroups } from '../../lib/eventTypes.js'
 
-// Primary quick-picks (Dave 2026-06-01: in/out promoted to primary, hardening_off
-// promoted, observation demoted to "More"). slice(0,3) → 3-col grid; slice(3) → 2-col.
-// hardening_off glyph ⛅ (not ☀️) so it doesn't collide with brought_outside ☀️.
+// Primary quick-picks (V3-EVENTZONE-001, Dave 2026-06-18: braindump-exact first-class set —
+// Watered / Transplanted / Fertilized / Mulched / Suckered / Fruit Set / Harvested. The prior
+// V3-EVENT-004/005 picks — in/out, hardening_off, pruned, photo, potted-up — drop to "More").
+// slice(0,3) → 3-col grid; slice(3) → 2-col grid. Emojis are unique across the primary set.
 export const EVENT_TYPES_UI = [
-  { value: 'watering',        label: 'Watered',                 emoji: '💧' },
-  { value: 'transplant',      label: 'Transplanted\n/ Planted', emoji: '🌱' },
-  { value: 'fertilizing',     label: 'Fertilized\n/ Fed',       emoji: '🌿' },
-  { value: 'pruning',         label: 'Pruned\n/ Topped',        emoji: '✂️' },
-  { value: 'hardening_off',   label: 'Hardening\nOff',          emoji: '⛅' },
-  { value: 'brought_inside',  label: 'Brought\nInside',         emoji: '🏠' },
-  { value: 'brought_outside', label: 'Brought\nOutside',        emoji: '☀️' },
-  { value: 'photo',           label: 'Photo\nOnly',             emoji: '📷' },
-  { value: 'potting_up',      label: 'Potted Up\n/ Repotted',  emoji: '🪴' },
+  { value: 'watering',    label: 'Watered',                 emoji: '💧' },
+  { value: 'transplant',  label: 'Transplanted\n/ Planted', emoji: '🌱' },
+  { value: 'fertilizing', label: 'Fertilized\n/ Fed',       emoji: '🌿' },
+  { value: 'mulched',     label: 'Mulched',                 emoji: '🍂' },
+  { value: 'suckered',    label: 'Suckered',                emoji: '✂️' },
+  { value: 'fruit_set',   label: 'Fruit Set',               emoji: '🍅' },
+  { value: 'harvest',     label: 'Harvested',               emoji: '🧺' },
 ]
 
 const PRIMARY_VALUES = new Set(EVENT_TYPES_UI.map(t => t.value))
@@ -127,3 +126,4 @@ export default function EventTypePicker({ value, onChange }) {
     </>
   )
 }
+

@@ -22,22 +22,19 @@ import { EVENT_TYPES } from '../lib/constants.js'
 // i.e. the value leaked through unmapped. Human labels carry caps/spaces/glyphs.
 const isRaw = (s) => /^[a-z_]+$/.test(s)
 
-describe('Phase 1 — primary quick-pick rebalance', () => {
+describe('V3-EVENTZONE-001 — first-class quick-pick set (braindump-exact, Dave 2026-06-18)', () => {
   const primary = EVENT_TYPES_UI.map((t) => t.value)
+  // Supersedes the V3-EVENT-004/005 rebalance: Dave chose the braindump set exactly.
+  const FIRST_CLASS = ['watering', 'transplant', 'fertilizing', 'mulched', 'suckered', 'fruit_set', 'harvest']
 
-  it('promotes brought_inside, brought_outside, hardening_off to primary', () => {
-    expect(primary).toContain('brought_inside')
-    expect(primary).toContain('brought_outside')
-    expect(primary).toContain('hardening_off')
+  it('primary quick-picks are exactly the braindump first-class set, in order', () => {
+    expect(primary).toEqual(FIRST_CLASS)
   })
 
-  it('V3-EVENT-005: promotes photo and potting_up to primary', () => {
-    expect(primary).toContain('photo')
-    expect(primary).toContain('potting_up')
-  })
-
-  it('demotes observation out of the primary quick-picks', () => {
-    expect(primary).not.toContain('observation')
+  it('demotes the former primaries (in/out, hardening, pruned, photo, potted-up) + observation to "More"', () => {
+    for (const v of ['brought_inside', 'brought_outside', 'hardening_off', 'pruning', 'photo', 'potting_up', 'observation']) {
+      expect(primary, v).not.toContain(v)
+    }
   })
 
   it('every primary pick has a glyph and a non-raw label', () => {
@@ -47,10 +44,9 @@ describe('Phase 1 — primary quick-pick rebalance', () => {
     }
   })
 
-  it('hardening_off glyph does not collide with brought_outside', () => {
-    const hg = EVENT_TYPES_UI.find((t) => t.value === 'hardening_off').emoji
-    const bo = EVENT_TYPES_UI.find((t) => t.value === 'brought_outside').emoji
-    expect(hg).not.toBe(bo)
+  it('no emoji collision among the primary picks', () => {
+    const emojis = EVENT_TYPES_UI.map((t) => t.emoji)
+    expect(new Set(emojis).size).toBe(emojis.length)
   })
 })
 
@@ -99,3 +95,4 @@ describe('Phase 1 — EVENT_TYPES master soft-enum', () => {
     expect(EVENT_TYPES).toContain('mesh_netting')
   })
 })
+

@@ -123,8 +123,8 @@ export const EVENT_TYPE_META = {
   seed_saved:          { label: 'Seed saved',           emoji: '🫘', category: 'Harvest' },
   cloves_saved:        { label: 'Cloves saved',         emoji: '🧄', category: 'Harvest' },
   overwinter_survived: { label: 'Overwinter survived',  emoji: '🧥', category: 'Environmental' },
-  observation:     { label: 'Observed / Note',      emoji: '👁️', category: 'Pest & Health' },
-  photo:           { label: 'Photo only',           emoji: '📷', category: 'Pest & Health' },
+  observation:     { label: 'Observed / Note',      emoji: '👁️', category: 'Notes & Photos' },
+  photo:           { label: 'Photo only',           emoji: '📷', category: 'Notes & Photos' },
   other:           { label: 'Other',                emoji: '📝', category: 'Environmental' },
 }
 
@@ -181,3 +181,4 @@ export function buildSecondaryGroups(primaryValues, values = EVENT_TYPES) {
   })
   return Object.entries(cats)
 }
+
