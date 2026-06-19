@@ -226,7 +226,7 @@ export function queryWaterDue(sql, userId) {
         em.location_type, em.watering_interval_days
       FROM entity_memory em
       JOIN public.container pp ON pp.id = em.project_id
-      WHERE pp.created_by = ANY(${householdIds})
+      WHERE pp.created_by = ${userId}
         AND pp.deleted_at IS NULL
         AND pp.archived_at IS NULL
         AND em.next_water_at IS NOT NULL
@@ -274,7 +274,7 @@ export function queryHeadsUp(sql, userId) {
           (NOW()::date - el.created_at::date)::int AS days_stale
         FROM event_log el
         JOIN public.container pp ON pp.id = el.project_id
-          AND pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
+          AND pp.created_by = ${userId} AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
         WHERE el.flagged_as_issue = true
           AND el.resolved_at IS NULL
           AND el.deleted_at IS NULL
@@ -290,7 +290,7 @@ export function queryHeadsUp(sql, userId) {
         FROM public.container pp
         LEFT JOIN entity_memory em ON em.project_id = pp.id
         WHERE pp.status IN ('sprouting','growing','flowering','fruiting')
-          AND pp.created_by = ANY(${householdIds})
+          AND pp.created_by = ${userId}
           AND pp.deleted_at IS NULL
           AND pp.archived_at IS NULL
           AND (
