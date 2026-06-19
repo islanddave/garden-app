@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { getFlavor } from '../lib/critterFlavor.js'
 
 const REDUCE_MOTION = typeof window !== 'undefined' && window.matchMedia
   && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -26,6 +27,10 @@ export default function CritterFactsPopover({ critter, theme, content, onClose }
   const altText = (content && content.alt_facts) || ''
   const accent = theme.strip
   const para = { margin: 0, fontSize: '0.96rem', lineHeight: 1.62, color: '#2c2a24' }
+  const flavor = getFlavor(critter)
+  const firstSeen = critter && critter.firstSeenAt
+    ? (() => { try { return new Date(critter.firstSeenAt).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }) } catch { return '' } })()
+    : ''
 
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="cfp-title" onClick={onClose}
@@ -52,6 +57,14 @@ export default function CritterFactsPopover({ critter, theme, content, onClose }
               textTransform: 'uppercase', color: accent, opacity: 0.85 }}>
               {GROUP_LABEL[critter.group] || GROUP_LABEL.wild}
             </div>
+            {flavor && flavor.fun_fact && (
+              <div style={{ marginTop: 6, fontSize: '0.82rem', lineHeight: 1.4, fontStyle: 'italic',
+                color: theme.name, opacity: 0.92 }}>{flavor.fun_fact}</div>
+            )}
+            {firstSeen && (
+              <div style={{ marginTop: 5, fontSize: '0.68rem', fontWeight: 600, letterSpacing: '0.02em',
+                color: accent, opacity: 0.8 }}>First seen in your garden on {firstSeen}</div>
+            )}
           </div>
           <button ref={closeRef} onClick={onClose} aria-label="Close"
             style={{ position: 'absolute', top: 10, right: 10, width: 30, height: 30, border: 'none',
@@ -71,13 +84,27 @@ export default function CritterFactsPopover({ critter, theme, content, onClose }
 
         <div style={{ padding: '18px 18px 22px', overflowY: 'auto' }}>
           {tab === 'facts'
-            ? (hasSource
-                ? <p style={para}>{factsText}</p>
-                : <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center',
-                    justifyContent: 'center', textAlign: 'center', padding: '18px 0 8px' }}>
-                    <div className="cfp-q" style={{ fontSize: 52, fontWeight: 700, color: accent, lineHeight: 1 }}>?</div>
-                    <div style={{ marginTop: 12, fontSize: '0.86rem', color: '#7a7567' }}>No verified facts yet — coming soon.</div>
-                  </div>)
+            ? (<>
+                {hasSource
+                  ? <p style={para}>{factsText}</p>
+                  : (flavor && flavor.fun_fact
+                      ? <p style={para}>{flavor.fun_fact}</p>
+                      : <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center',
+                          justifyContent: 'center', textAlign: 'center', padding: '18px 0 8px' }}>
+                          <div className="cfp-q" style={{ fontSize: 52, fontWeight: 700, color: accent, lineHeight: 1 }}>?</div>
+                          <div style={{ marginTop: 12, fontSize: '0.86rem', color: '#7a7567' }}>No verified facts yet — coming soon.</div>
+                        </div>)}
+                {flavor && flavor.call && (
+                  <p style={{ ...para, marginTop: 14, fontSize: '0.9rem', fontStyle: 'italic', color: '#5b574c' }}>
+                    <span style={{ fontStyle: 'normal', fontWeight: 700, color: accent }}>Listen for: </span>{flavor.call}
+                  </p>
+                )}
+                {flavor && flavor.lore && (
+                  <p style={{ ...para, marginTop: 14, fontSize: '0.9rem', color: '#4a463d' }}>
+                    <span style={{ fontWeight: 700, color: accent }}>{critter.group === 'cryptid' ? 'Lore: ' : 'Once here: '}</span>{flavor.lore}
+                  </p>
+                )}
+              </>)
             : <p style={para}>{altText || 'No alt facts yet.'}</p>}
         </div>
       </div>

@@ -137,8 +137,8 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
   const handleCardClick = useCallback(() => {
     if (!got) return
     if (phase === 'pending') { trigger(); return }
-    if (phase === 'full') onOpenFacts(c)
-  }, [got, phase, trigger, onOpenFacts, c])
+    if (phase === 'full') onOpenFacts({ ...c, firstSeenAt: entry?.firstSeenAt })
+  }, [got, phase, trigger, onOpenFacts, c, entry])
 
   // BUG-A/BUG-B fix: useCritterCollection loads async, so the phase initializer above can
   // run while `got` is still false (empty Map during load). When the row resolves, a stuck

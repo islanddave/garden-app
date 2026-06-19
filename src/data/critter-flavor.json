@@ -1,0 +1,584 @@
+{
+"schema": 1,
+"note": "Critter flavor (fun_fact all / call 46 / lore 24). Keyed by roster id. flag=true => Dave-review gated, getFlavor returns null until cleared. Source: critter-flavor-V100-20260617.json (V3-CRITFLAVOR-001).",
+"flavor": {
+"C001": {
+"fun_fact": "A honeybee must visit roughly two million flowers to make a single pound of honey, pollinating your garden all the while."
+},
+"C002": {
+"fun_fact": "Monarchs migrate thousands of miles to Mexico, but no single butterfly makes the whole round trip—it takes several generations."
+},
+"C003": {
+"fun_fact": "A single convergent ladybug can eat thousands of aphids in its lifetime, making it a gardener's tiny pest-control ally."
+},
+"C004": {
+"fun_fact": "The Big Dipper firefly males flash a distinctive J-shaped swoop of light on warm summer evenings to attract a mate."
+},
+"C005": {
+"fun_fact": "Green lacewing larvae are such fierce aphid hunters they're nicknamed 'aphid lions.'"
+},
+"C006": {
+"fun_fact": "Earthworms tunnel through soil eating their way along, and their castings enrich garden beds with nutrients plants love."
+},
+"C007": {
+"fun_fact": "A ruby-throated hummingbird's wings beat about 50 times a second, letting it hover and even fly backward at your flowers."
+},
+"C008": {
+"fun_fact": "The common green darner is one of the few dragonflies that migrates, with generations relaying south and north each year."
+},
+"C009": {
+"fun_fact": "Female eastern tiger swallowtails come in two color forms—the familiar yellow and a dark form that mimics the toxic pipevine swallowtail."
+},
+"C010": {
+"fun_fact": "Eastern cottontails don't dig their own burrows; they rest in shallow grass nests called forms, often right at the garden's edge."
+},
+"C011": {
+"fun_fact": "Northern cardinals don't migrate and keep their brilliant red all winter, glowing against New England snow.",
+"call": "birdy-birdy-birdy / cheer-cheer-cheer"
+},
+"C012": {
+"fun_fact": "Black-capped chickadees hide thousands of seeds each fall and can remember where they stashed them months later.",
+"call": "chick-a-dee-dee-dee"
+},
+"C013": {
+"fun_fact": "American robins don't smell worms—they cock their heads to watch and listen for them moving in the soil.",
+"call": "cheerily, cheer-up, cheer-o"
+},
+"C014": {
+"fun_fact": "Eastern bluebirds readily nest in garden boxes and feast on the insects and grubs that trouble your plants.",
+"call": "chur-lee, chur-lee",
+"flag": true
+},
+"C015": {
+"fun_fact": "An eastern chipmunk can stuff its cheek pouches with food until they swell to the size of its head before scurrying home."
+},
+"C016": {
+"fun_fact": "Red squirrels are fiercely territorial and famously noisy, scolding intruders—including gardeners—with loud chatter."
+},
+"C017": {
+"fun_fact": "Gray treefrogs can change color from gray to green to match their perch, and they survive winter by partly freezing solid."
+},
+"C018": {
+"fun_fact": "Eastern garter snakes are harmless garden helpers that eat slugs, grubs, and other pests among your plants."
+},
+"C019": {
+"fun_fact": "A white-tailed deer flashes the bright white underside of its tail as an alarm signal when it bounds away."
+},
+"C020": {
+"fun_fact": "Red foxes can hear a mouse rustling underground and leap high to pounce straight down through grass or snow."
+},
+"C022": {
+"fun_fact": "The woodchuck (groundhog) is a true hibernator, sleeping so deeply through winter that its heartbeat slows to just a few beats a minute."
+},
+"C023": {
+"fun_fact": "A raccoon's dexterous paws get even more sensitive when wet, which is why it often appears to 'wash' its garden-raided food before eating."
+},
+"C024": {
+"fun_fact": "The Barred Owl's hooting sounds remarkably like a spoken phrase, a classic voice of New England's wooded edges at dusk.",
+"call": "Who cooks for you? Who cooks for you-all?"
+},
+"C027": {
+"fun_fact": "Despite their bulk, black bears are excellent tree climbers and can sprint over 30 mph, and they're now common across much of Massachusetts."
+},
+"C028": {
+"fun_fact": "The bobcat is named for its short 'bobbed' tail, and this elusive cat lives throughout New England yet is rarely seen by people."
+},
+"C029": {
+"fun_fact": "American Goldfinches are strict vegetarians that nest late in summer so they can feed their young the thistle and seed they love.",
+"call": "po-ta-to-chip"
+},
+"C030": {
+"fun_fact": "The Downy is North America's smallest woodpecker, a frequent backyard visitor that drums on branches to claim territory rather than to find food."
+},
+"C031": {
+"fun_fact": "Nearly all domestic duck breeds descend from the wild Mallard, and only the female gives the loud, classic 'quack.'",
+"call": "quack"
+},
+"C039": {
+"fun_fact": "The giant Polyphemus moth has no working mouthparts as an adult and never eats, living only about a week to find a mate."
+},
+"C040": {
+"fun_fact": "Giant pandas eat bamboo almost exclusively and have a 'pseudo-thumb,' an enlarged wrist bone that helps them grip stalks."
+},
+"C041": {
+"fun_fact": "Flamingos aren't born pink; their feathers turn rosy from pigments in the algae and tiny crustaceans they eat."
+},
+"C042": {
+"fun_fact": "Galapagos tortoises are among the longest-lived animals on land, with some individuals living well over a century."
+},
+"C043": {
+"fun_fact": "The male Resplendent Quetzal grows shimmering tail streamers that can be nearly three feet long, twice its body length."
+},
+"C044": {
+"fun_fact": "Every Bengal tiger's stripe pattern is unique, like a fingerprint, and the stripes mark the skin as well as the fur."
+},
+"C045": {
+"fun_fact": "A snow leopard's enormously thick tail can be nearly as long as its body and doubles as a warm wrap in the cold high mountains."
+},
+"C046": {
+"fun_fact": "The Tufted Titmouse hoards seeds for winter and will even pluck hair from live animals to line its nest.",
+"call": "peter-peter-peter"
+},
+"C047": {
+"fun_fact": "American Crows are remarkably intelligent, able to recognize individual human faces and remember them for years.",
+"call": "caw caw"
+},
+"C048": {
+"fun_fact": "The Red-bellied Woodpecker is named for a faint reddish wash on its belly, though its bright red cap is what people usually notice."
+},
+"C049": {
+"fun_fact": "The Mourning Dove's mournful song is often mistaken for an owl, and its wings whistle audibly when it bursts into flight.",
+"call": "coo-OO-oo-oo-oo"
+},
+"C050": {
+"fun_fact": "Blue Jays aren't actually blue; their feathers are brown, and the blue we see is a trick of light scattering in their structure.",
+"call": "jay! jay!"
+},
+"C051": {
+"fun_fact": "The White-breasted Nuthatch walks headfirst down tree trunks, a trick that lets it spot insects other birds miss.",
+"call": "yank-yank"
+},
+"C052": {
+"fun_fact": "Eastern Gray Squirrels bury far more nuts than they recover, and the forgotten caches help plant New England's oak and hickory trees."
+},
+"C053": {
+"fun_fact": "A skunk's spray can reach about 10 feet, but it would rather stamp its front feet and warn you first."
+},
+"C054": {
+"fun_fact": "The green frog's call sounds like a loose banjo string being plucked near the garden pond.",
+"call": "gunk! (like a plucked banjo string)"
+},
+"C055": {
+"fun_fact": "A single American toad can eat thousands of insects in a season, making it a gardener's quiet pest-control ally.",
+"call": "a long, high musical trill"
+},
+"C056": {
+"fun_fact": "This lungless salamander breathes entirely through its skin and is one of New England's most abundant forest vertebrates."
+},
+"C057": {
+"fun_fact": "Wild turkeys can sprint over 12 mph and burst into flight, despite Ben Franklin praising them as respectable birds.",
+"call": "gobble-gobble"
+},
+"C058": {
+"fun_fact": "Ravens are among the smartest birds, using tools, mimicking sounds, and even playing by sliding down snowbanks.",
+"call": "a deep croaking gronk"
+},
+"C059": {
+"fun_fact": "The woodcock performs a spiraling sky-dance at dusk and bobs its body in a comical rocking walk while probing for worms.",
+"call": "a nasal buzzy peent"
+},
+"C060": {
+"fun_fact": "Juncos are nicknamed snowbirds because these tidy gray-and-white sparrows arrive in New England as winter sets in.",
+"call": "an even, ringing musical trill"
+},
+"C061": {
+"fun_fact": "The hairy woodpecker looks like a larger twin of the downy, with a noticeably longer, chisel-like bill.",
+"call": "a sharp, loud peek"
+},
+"C062": {
+"fun_fact": "Sapsuckers drill neat rows of small wells in trees, then return to sip the leaking sap and the insects it traps."
+},
+"C063": {
+"fun_fact": "The crow-sized pileated woodpecker chisels rectangular holes so big they can topple weakened trees.",
+"call": "a loud, ringing wuk-wuk-wuk"
+},
+"C064": {
+"fun_fact": "North America's only marsupial, the opossum can eat thousands of ticks and is largely resistant to rabies."
+},
+"C065": {
+"fun_fact": "A single big brown bat can devour hundreds of beetles and mosquitoes in one night over the garden."
+},
+"C066": {
+"fun_fact": "This mole's powerful, outward-turned hands dig tunnels so fast it can tunnel several feet in an hour.",
+"flag": true
+},
+"C067": {
+"fun_fact": "A porcupine can't shoot its quills, but its roughly 30,000 barbed quills detach easily on contact."
+},
+"C068": {
+"fun_fact": "The wide-eyed deer mouse is a key food source for owls and foxes, and an agile climber and jumper.",
+"call": "a soft, high-pitched buzzing trill",
+"flag": true
+},
+"C069": {
+"fun_fact": "Meadow voles carve tidy runways through grass and can have several litters a season, fueling local hawks and foxes."
+},
+"C070": {
+"fun_fact": "A snapping turtle can live decades, and on land its long neck strikes surprisingly fast when it feels cornered."
+},
+"C071": {
+"fun_fact": "For its tiny size, the spring peeper's chorus is astonishingly loud and is one of New England's first sounds of spring.",
+"call": "a high, clear peep"
+},
+"C072": {
+"fun_fact": "The milk snake is a harmless rodent-eater that earned its name from an old myth that it milked cows in barns."
+},
+"C073": {
+"fun_fact": "Though often mistaken for a venomous cottonmouth, the northern water snake is harmless and hunts fish and frogs."
+},
+"C074": {
+"fun_fact": "Canada Geese mate for life and often return to the very pond where they hatched to raise their own goslings.",
+"call": "honk"
+},
+"C075": {
+"fun_fact": "The Great Horned Owl is one of the few predators that regularly eats skunks, seemingly unbothered by the spray.",
+"call": "hoo-hoo-hoooo-hoo-hoo"
+},
+"C076": {
+"fun_fact": "The Indigo Bunting isn't truly blue—its feathers have no blue pigment, and the dazzling color comes entirely from light refracting off their structure."
+},
+"C077": {
+"fun_fact": "The brilliant red male Scarlet Tanager molts to olive-green for winter, swapping his showy summer suit for camouflage."
+},
+"C078": {
+"fun_fact": "Cedar Waxwings are so fond of fruit they sometimes get tipsy on overripe, fermented berries."
+},
+"C079": {
+"fun_fact": "You can lure Baltimore Orioles to the garden with orange halves and grape jelly, which they adore."
+},
+"C080": {
+"fun_fact": "North America's smallest falcon, the American Kestrel can hover in place and even see ultraviolet trails of vole urine while hunting.",
+"call": "killy-killy-killy"
+},
+"C081": {
+"fun_fact": "The Peregrine Falcon is the fastest animal on Earth, diving at over 200 miles per hour to strike prey in midair."
+},
+"C082": {
+"fun_fact": "Cooper's Hawks are agile songbird-hunters that learned to thrive in towns, often staking out backyard bird feeders."
+},
+"C083": {
+"fun_fact": "Despite its name, the Ring-necked Duck is far easier to identify by the bold white ring around its bill than the faint neck ring."
+},
+"C084": {
+"fun_fact": "The Willow Flycatcher looks nearly identical to its cousins, so birders identify it mainly by its sneezy song.",
+"call": "fitz-bew"
+},
+"C085": {
+"fun_fact": "In spring, the male Ruffed Grouse drums a hollow thumping by beating his wings against the air, a sound you feel as much as hear."
+},
+"C086": {
+"fun_fact": "The Yellow-billed Cuckoo is a gardener's friend, one of the few birds that readily devours hairy, spiny tent caterpillars.",
+"call": "kuk-kuk-kuk-kowlp-kowlp"
+},
+"C087": {
+"fun_fact": "The Ovenbird builds a domed, oven-shaped nest on the forest floor, complete with a side entrance.",
+"call": "teacher-teacher-teacher"
+},
+"C088": {
+"fun_fact": "The Eastern Racer lives up to its name as one of our fastest snakes, and it hunts with its head raised to peer over the grass."
+},
+"C089": {
+"fun_fact": "A Bald Eagle's nest is among the largest of any bird, growing over the years into a structure that can weigh a ton."
+},
+"C090": {
+"fun_fact": "The Gray Fox is one of the only canids that can climb trees, scaling trunks with hooked claws to escape danger or reach fruit."
+},
+"C091": {
+"fun_fact": "Beavers' orange front teeth never stop growing, and the iron in the enamel makes them tough enough to fell whole trees."
+},
+"C092": {
+"fun_fact": "The American Mink is a superb swimmer with partly webbed feet, hunting both on land and underwater."
+},
+"C093": {
+"fun_fact": "The Long-tailed Weasel turns white in northern winters, swapping its brown coat for snowy camouflage."
+},
+"C094": {
+"fun_fact": "A single Little Brown Bat can snap up hundreds of mosquitoes and other insects in a single hour of nighttime hunting."
+},
+"C095": {
+"fun_fact": "The summer tanager is a bee and wasp specialist, catching them in flight and wiping the stingers off on a branch before eating."
+},
+"C096": {
+"fun_fact": "This shy boreal flycatcher nests on or near the ground in mossy spruce bogs, unusual for a flycatcher.",
+"call": "a soft, whistled 'chu-wee' or 'che-bunk'"
+},
+"C097": {
+"fun_fact": "The sky-blue cerulean warbler forages so high in the forest canopy that birders nickname its neck strain 'warbler neck.'"
+},
+"C098": {
+"fun_fact": "In its courtship dive the male nighthawk pulls up sharply so air rushing through his wings makes a deep booming 'voom.'",
+"call": "a nasal, buzzy 'peent' given in flight"
+},
+"C099": {
+"fun_fact": "Red-headed woodpeckers are skilled flycatchers and one of the few woodpeckers that store food, wedging insects and nuts into bark crevices."
+},
+"C100": {
+"fun_fact": "This sparrow is named for its song, a thin, dry, insect-like buzz that really does sound like a grasshopper.",
+"call": "an insect-like 'tip-tip-tip-zeeeee' buzz"
+},
+"C101": {
+"fun_fact": "The black-billed cuckoo is one of the few birds that gorges on hairy tent caterpillars, shedding its spine-lined stomach lining when it gets too matted."
+},
+"C102": {
+"fun_fact": "The orange-crowned warbler's namesake orange crown is usually hidden, flashing only when the bird is excited or displaying."
+},
+"C103": {
+"fun_fact": "The merlin is a compact, fast falcon that hunts by powering down small birds in level flight rather than diving on them."
+},
+"C104": {
+"fun_fact": "In the East, purple martins nest almost entirely in human-supplied housing, a tradition reaching back to Indigenous peoples who hung hollow gourds for them."
+},
+"C105": {
+"fun_fact": "The orchard oriole is North America's smallest oriole, and males wear a deep chestnut instead of the usual oriole orange."
+},
+"C106": {
+"fun_fact": "A bull moose grows and sheds a fresh set of antlers every year, regrowing the massive rack in a single summer."
+},
+"C107": {
+"fun_fact": "The fisher is one of the few predators that regularly hunts porcupines, flipping them to attack the unquilled face."
+},
+"C108": {
+"fun_fact": "The American ermine turns from brown to pure white in winter, keeping only a black tail tip year-round."
+},
+"C109": {
+"fun_fact": "The eastern red bat roosts alone in tree foliage, hanging by one foot so it looks just like a dead leaf."
+},
+"C110": {
+"fun_fact": "The snowshoe hare swaps its brown summer coat for white in winter and grows oversized, furry hind feet that act like snowshoes."
+},
+"C111": {
+"fun_fact": "The star-nosed mole's 22 pink tentacles let it identify and eat prey in under a quarter second, the fastest forager ever recorded."
+},
+"C112": {
+"fun_fact": "The eastern wood-pewee sings its lazy, drawn-out name from a high perch, often at dawn and dusk when other birds fall quiet.",
+"call": "a plaintive, slurred 'pee-a-wee'"
+},
+"C113": {
+"fun_fact": "The eastern phoebe wags its tail constantly and was the first banded bird in North America, marked by Audubon to prove birds return to the same nest site.",
+"call": "a raspy, emphatic 'fee-bee'"
+},
+"C114": {
+"fun_fact": "The veery's song spirals downward in an ethereal, flute-like cascade, produced using both sides of its voicebox at once.",
+"call": "a breezy, downward-spiraling 'veer-veer-veer'"
+},
+"C115": {
+"fun_fact": "The hermit thrush is the only brown thrush that winters in the Northeast and is celebrated for its clear, flute-like opening note.",
+"call": "an ethereal, flute-like song opening with one clear held note"
+},
+"C116": {
+"fun_fact": "This tiny warbler builds its nest tucked inside hanging clumps of beard lichen or Spanish moss, almost never anywhere else."
+},
+"C117": {
+"fun_fact": "Its blue-gray head and bold white 'spectacles' around the eyes make it one of the easiest vireos to recognize in a New England forest."
+},
+"C118": {
+"fun_fact": "Despite its name it rarely screeches, instead giving a soft descending whinny or an even monotone trill, and comes in both gray and rusty-red color forms.",
+"call": "a descending horse-like whinny and a soft monotone trill"
+},
+"C119": {
+"fun_fact": "Blue Jays are notorious for imitating this hawk's screaming 'kee-aah' call, often to scatter other birds from a feeder.",
+"call": "a loud, drawn-out 'kee-aah'"
+},
+"C120": {
+"fun_fact": "This frog can freeze nearly solid in winter, its heart stopping for weeks, then thaw out alive in spring thanks to natural antifreeze in its blood.",
+"call": "a duck-like clucking 'quack'"
+},
+"C121": {
+"fun_fact": "The bright orange red eft is the land-roaming teenage stage of the eastern newt, wandering the forest floor for years before returning to water as a greenish adult."
+},
+"C122": {
+"fun_fact": "North America's only mildly poisonous native frog, it secretes skin toxins that make it distasteful to many predators.",
+"call": "a low, snore-like drawn-out croak"
+},
+"C123": {
+"fun_fact": "Males and females look so different - he's crisp blue, black and white, she's plain olive - that early naturalists mistook them for two separate species.",
+"call": "a buzzy, rising 'zur-zur-zur-zree'"
+},
+"C124": {
+"fun_fact": "One of the smallest owls in the East, it's named for a call said to sound like a saw being sharpened on a whetstone.",
+"call": "a steady, repeated whistled 'toot-toot-toot'"
+},
+"C125": {
+"fun_fact": "This nocturnal bird is so devoted to its name-song that it can repeat the phrase hundreds of times in a row without pausing.",
+"call": "a rhythmic, whistled 'whip-poor-WILL'"
+},
+"C126": {
+"fun_fact": "Surprisingly clever, wood turtles have solved maze tests in the lab and will stomp their feet on the ground to coax earthworms to the surface."
+},
+"C127": {
+"fun_fact": "This gentle, slender snake is bright grass-green, eats mostly insects and spiders, and almost never bites - making it a true friend to the garden."
+},
+"C128": {
+"fun_fact": "On the first warm rainy nights of spring, these big black-and-yellow salamanders migrate en masse to breeding pools in an event known as 'Big Night.'"
+},
+"C129": {
+"fun_fact": "This wide-eyed nocturnal squirrel doesn't truly fly - it glides between trees on a furred membrane, and many can glow faintly pink under ultraviolet light."
+},
+"C130": {
+"fun_fact": "A giant pale-green silk moth with long trailing tails, the adult has no mouth and never eats, living only about a week to find a mate."
+},
+"C131": {
+"fun_fact": "The largest native moth in North America, the cecropia can span six inches, yet the adult lives only a week or two and never feeds."
+},
+"C132": {
+"fun_fact": "Named for the spiky cogwheel crest on its back, this fierce predator hunts garden pests but can deliver a painful jab if handled, so admire it hands-off."
+},
+"C133": {
+"fun_fact": "Males sing a bubbling, banjo-like jumble of notes over hayfields, then migrate roughly 12,000 miles round-trip to South America and back each year.",
+"call": "a bubbling, metallic, banjo-like song"
+},
+"C134": {
+"fun_fact": "Not a true lark but a member of the blackbird family, the male flashes a bright yellow breast with a black 'V' and sings a clear, slurred whistle from a fencepost.",
+"call": "a clear, slurred, descending whistle"
+},
+"C135": {
+"fun_fact": "One of North America's most threatened songbirds, it hybridizes readily with the blue-winged warbler, blurring the line between the two species.",
+"call": "a buzzy 'bee-bzz-bzz'"
+},
+"C136": {
+"fun_fact": "The largest and most powerful of the woodland accipiters, this fierce gray raptor will boldly defend its nest, sometimes diving at intruders who wander too close."
+},
+"C137": {
+"fun_fact": "This flycatcher perches atop dead snags and sallies out for insects, singing a whistled phrase often described as 'quick, three beers!'",
+"call": "quick, three beers!"
+},
+"C138": {
+"fun_fact": "This tiny bat hibernates in caves and was pushed to federally endangered status by white-nose syndrome, a fungal disease that devastated its colonies."
+},
+"C139": {
+"fun_fact": "Named for its tricolored fur, this small bat is one of the first to emerge at dusk and has been hit hard by white-nose syndrome."
+},
+"C140": {
+"fun_fact": "New England's only native cottontail rabbit, it needs dense young-forest thickets and has dwindled to a fraction of its former range."
+},
+"C141": {
+"fun_fact": "This turtle's bright yellow throat and gentle smile are unmistakable, and it can live over 70 years, often traveling far overland between wetlands."
+},
+"C142": {
+"fun_fact": "Unlike most salamanders, this boldly banded species lays its eggs on land in autumn, with the female guarding them until rains flood the nest."
+},
+"C143": {
+"fun_fact": "This fuzzy bumblebee with a rusty smudge on its back was once common but is now federally endangered, the first U.S. bee to earn that status."
+},
+"C144": {
+"fun_fact": "This iridescent, lightning-fast predatory beetle sprints down sandy beaches after prey and is so rare it's federally threatened."
+},
+"C145": {
+"fun_fact": "This small, dusky-blue butterfly depends entirely on wild lupine and indigo, and its vanishing habitat has made it a protected species in many states."
+},
+"C146": {
+"fun_fact": "The most familiar bumblebee in eastern gardens, it 'buzz-pollinates' tomatoes and blueberries by vibrating flowers to shake pollen loose."
+},
+"C147": {
+"fun_fact": "Often mistaken for bumblebees, the males can't sting at all and the females rarely do, while both are busy pollinators of spring blooms."
+},
+"C148": {
+"fun_fact": "Paper wasps build their open, umbrella-shaped nests from chewed wood pulp and patrol your garden hunting caterpillars to feed their young."
+},
+"C149": {
+"fun_fact": "This harmless fly mimics a bee for protection, sipping nectar as an adult while its larvae devour garden-pest aphids by the hundreds."
+},
+"C150": {
+"fun_fact": "Despite the name, this is actually a large wasp that builds a football-shaped paper nest and helps control flies and other garden pests."
+},
+"C151": {
+"fun_fact": "This gentle, solitary wasp sculpts little tubes of mud for its nest and rarely stings, while hunting spiders to stock its nursery."
+},
+"C152": {
+"fun_fact": "This striking orange-legged solitary wasp is a calm pollinator that paralyzes katydids and crickets to provision its underground burrows."
+},
+"C153": {
+"fun_fact": "This solitary bee snips neat circles from leaves to line its nest and is such an efficient pollinator that it's farmed for alfalfa crops."
+},
+"C154": {
+"fun_fact": "A garden snail can retract entirely into its spiral shell and seal the opening with dried mucus to wait out dry spells for months."
+},
+"L001": {
+"fun_fact": "This sleek, tree-climbing weasel relative is a nimble forest hunter prized for its rich brown fur.",
+"lore": "The American marten was trapped out and lost its old-growth forest across much of New England by the early 1900s, though it survives elsewhere and is slowly returning."
+},
+"L002": {
+"fun_fact": "A wolf of the northeastern woods, it hunted deer and beaver in family packs that shaped the whole ecosystem.",
+"lore": "The eastern wolf was hunted, trapped, and poisoned out of New England by the late 1800s; debate continues over whether it is a distinct species or wolf-coyote lineage.",
+"flag": true
+},
+"L003": {
+"fun_fact": "Once the most abundant bird in North America, its migrating flocks darkened the sky for hours and could number in the billions.",
+"lore": "The passenger pigeon was hunted relentlessly into oblivion; the last wild birds vanished by the 1900s and Martha, the final survivor, died at the Cincinnati Zoo in 1914."
+},
+"L004": {
+"fun_fact": "The heath hen was a coastal grouse whose males boomed and danced on communal 'booming grounds' each spring to court females.",
+"lore": "Once common from New England to Virginia, the heath hen dwindled to a final flock on Martha's Vineyard; the last bird, 'Booming Ben,' died there in 1932."
+},
+"L005": {
+"fun_fact": "Wild turkeys can run up to 25 mph and roost in trees at night, and males fan their tails and gobble to draw a crowd of hens.",
+"lore": "Overhunting and forest clearing wiped Massachusetts' wild turkeys out by the mid-1800s; the gobblers seen today descend from birds reintroduced in the 1970s."
+},
+"L006": {
+"fun_fact": "The eastern elk was a towering subspecies whose bugling bulls grew massive antlers and roamed forests and meadows in large herds.",
+"lore": "Hunting and habitat loss erased the eastern elk from its range by the late 1800s; it was declared extinct, with the last animals gone around 1880."
+},
+"L007": {
+"fun_fact": "Woodland caribou grow hollow hair for insulation and broad, splayed hooves that work like snowshoes across deep snow and bog.",
+"lore": "Logging, hunting, and warming winters pushed caribou out of New England; they vanished from the region by the early 1900s, surviving only far to the north."
+},
+"L008": {
+"fun_fact": "Wild Atlantic salmon hatch in rivers, journey thousands of miles to sea, then navigate back to spawn in the very stream where they were born.",
+"lore": "Dams, pollution, and overfishing destroyed New England's wild salmon runs; the self-sustaining native populations were effectively lost by the late 20th century."
+},
+"L009": {
+"fun_fact": "The sea mink was the largest known mink, a coastal animal of the rocky New England and Maritime shoreline that hunted among the tide pools.",
+"lore": "Prized by fur trappers, the sea mink was hunted relentlessly along the coast and driven to extinction in the late 1800s, around 1894."
+},
+"L010": {
+"fun_fact": "The great auk was a flightless North Atlantic seabird that 'flew' underwater with its wings, chasing fish like a northern penguin.",
+"lore": "Hunted for feathers, eggs, and oil, the great auk's last confirmed pair was killed on Iceland's Eldey island in 1844."
+},
+"L011": {
+"fun_fact": "The Labrador duck was a sea duck with an oddly fringed, sensitive bill suited to sifting tiny shellfish from sandy coastal shallows.",
+"lore": "Never abundant and poorly understood, the Labrador duck disappeared rapidly; the last one was recorded around 1875, one of the first known post-Columbian North American bird extinctions."
+},
+"L012": {
+"fun_fact": "The Eskimo curlew migrated in vast flocks between the Arctic and South America, one of the longest journeys of any New World shorebird.",
+"lore": "Market hunting and prairie habitat loss collapsed its flocks by the early 1900s; with no confirmed sighting in decades, it is considered likely extinct."
+},
+"L013": {
+"fun_fact": "The Carolina parakeet was the only parrot native to the United States, a green-and-yellow bird that traveled in noisy, social flocks.",
+"lore": "Killed as a crop pest and for its feathers, it dwindled to nothing; the last captive bird, 'Incas,' died at the Cincinnati Zoo in 1918."
+},
+"Y001": {
+"fun_fact": "Cougars are remarkably wide-ranging cats, and a single young male documented traveling from the Midwest to Connecticut in 2011 covered over 1,500 miles.",
+"lore": "The eastern cougar was declared extinct by U.S. Fish & Wildlife (proposed 2011, finalized 2018), yet sightings of a 'big cat' are still reported across the Northeast."
+},
+"Y002": {
+"fun_fact": "Melanistic (all-black) bobcats are genuinely real but extraordinarily rare, with only a small handful ever documented, most from Florida.",
+"lore": "An all-black bobcat is occasionally reported in New England woods, but verified melanistic bobcats are so few that any local sighting remains unconfirmed."
+},
+"Y003": {
+"fun_fact": "The wolverine is the largest land-dwelling weasel, strong enough to drive larger predators off a kill and able to travel huge distances over snow.",
+"lore": "Wolverines are not resident in New England, so reports here are told as tales of a rare lone wanderer far from its northern range."
+},
+"Y004": {
+"fun_fact": "White gray squirrels are usually leucistic, with reduced pigment but normal dark eyes, and a few towns are famous for their thriving white colonies.",
+"lore": "Pale squirrels are reported here and there, and some communities so prize their rare white populations that the squirrels become local mascots."
+},
+"Y005": {
+"fun_fact": "Lake Champlain is one of the largest freshwater lakes in the U.S., deep and cold enough to fuel over a century of monster lore.",
+"lore": "Legend says 'Champ,' America's answer to Loch Ness, lurks in Lake Champlain; sightings have been reported on the Vermont-New York lake since the 1800s."
+},
+"Y006": {
+"fun_fact": "Pukwudgies appear in Wampanoag and wider Algonquian folklore as small, knee-high beings tied to the forests of southeastern New England.",
+"lore": "In Wampanoag legend the Pukwudgie is a mischievous, sometimes dangerous little forest spirit, said to haunt Massachusetts' Bridgewater Triangle."
+},
+"Y007": {
+"fun_fact": "The Dover Demon is one of New England's most famous one-night cryptid cases, known only from a cluster of teenage eyewitness reports.",
+"lore": "Legend holds that over two nights in 1977, teens in Dover, Massachusetts, reported a small, big-headed, big-eyed creature glimpsed along roadsides."
+},
+"Y008": {
+"fun_fact": "The Glawackus is a classic regional 'panic beast,' a creature whose description shifted with each retelling of the scare.",
+"lore": "Legend says a fierce, growling beast prowled Glastonbury, Connecticut, in 1939, spawning newspaper headlines, posses, and the nickname 'Glawackus.'"
+},
+"Y009": {
+"fun_fact": "The 1817 Gloucester sea serpent reports were so numerous and detailed that a scientific society formally collected sworn eyewitness affidavits.",
+"lore": "In 1817, dozens reportedly saw a long, humped sea serpent in the harbor off Gloucester and Cape Ann, Massachusetts, fueling one of America's great sea-monster legends."
+},
+"Y010": {
+"fun_fact": "The Pioneer Valley's red sandstone is world-famous for dinosaur tracks, which 1800s Amherst scientist Edward Hitchcock believed were left by giant ancient birds.",
+"lore": "House legend says the Visitor is that track-maker still abroad: a tall, three-toed fog-walker with eyes like wet river stones who wanders the Connecticut River bottoms at dawn, paying calls on tobacco fields and gardens and leaving behind a single muddy footprint and a faint smell of river mud and crushed mint."
+},
+"Y011": {
+"fun_fact": "Lake Memphremagog is a long, deep glacial lake straddling the Vermont-Quebec border, the kind of cold, murky water that breeds monster lore.",
+"lore": "Legend says 'Memphre,' a serpentine lake creature, surfaces in Lake Memphremagog on the Vermont-Quebec border, with sightings reported for generations."
+}
+}
+}
