@@ -1,7 +1,9 @@
 // HOUSEHOLD-MODE static-source guard (dashboard handlers).
-// Each ownership-filtering builder computes householdIds and widens created_by/pp.created_by
-// to = ANY(${householdIds}). Per-user surfaces (user_stats, favorites, dismissals) stay
-// user_id = ${userId}, and the dismissal INSERT stays per-user. Static-source (L-072), DB-free.
+// Informational builders compute householdIds and widen created_by to = ANY(${householdIds}).
+// ACTIONABLE surfaces (queryWaterDue, queryHeadsUp) are PERSONAL-scoped (created_by = ${userId})
+// so a member's Today band / heads-up shows only their own plantings (V3-SCOPE-001). Per-user
+// surfaces (user_stats, favorites, dismissals) stay user_id = ${userId}; dismissal INSERT stays
+// per-user. Static-source (L-072), DB-free.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -20,14 +22,14 @@ describe('dashboard handlers — Household Mode scope widening', () => {
     expect(SRC).not.toMatch(/from '@neondatabase\/serverless'/);
   });
 
-  it('9 ownership-filtering builders each compute householdIds', () => {
+  it('7 informational ownership-filtering builders each compute householdIds', () => {
     const matches = SRC.match(/const householdIds = householdScope\(userId\)/g) ?? [];
-    expect(matches.length).toBe(9);
+    expect(matches.length).toBe(7);
   });
 
-  it('11 ownership filter sites widened to = ANY(${householdIds})', () => {
+  it('8 informational ownership filter sites stay widened to = ANY(${householdIds})', () => {
     const matches = SRC.match(/created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(11);
+    expect(matches.length).toBe(8);
   });
 
   it('queryFavoriteCount stays per-user (user_id, no householdIds)', () => {
@@ -60,6 +62,21 @@ describe('dashboard handlers — Household Mode scope widening', () => {
     const ownedIdx = SRC.indexOf('WITH owned AS', i);
     const block = SRC.slice(ownedIdx, ownedIdx + 250);
     expect(block).toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
+  });
+
+  it('V3-SCOPE-001: queryWaterDue is personal-scoped (created_by = ${userId}, not household)', () => {
+    const i = SRC.indexOf('export function queryWaterDue');
+    const block = SRC.slice(i, SRC.indexOf('export function', i + 1));
+    expect(block).toMatch(/pp\.created_by = \$\{userId\}/);
+    expect(block).not.toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
+  });
+
+  it('V3-SCOPE-001: queryHeadsUp both CTEs personal-scoped (created_by = ${userId}, not household)', () => {
+    const i = SRC.indexOf('export function queryHeadsUp');
+    const block = SRC.slice(i, SRC.indexOf('export function', i + 1));
+    const m = block.match(/pp\.created_by = \$\{userId\}/g) ?? [];
+    expect(m.length).toBe(2);
+    expect(block).not.toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
   });
 
   it('no array spread (42P18 guard)', () => {

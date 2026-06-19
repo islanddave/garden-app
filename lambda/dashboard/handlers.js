@@ -217,8 +217,6 @@ export function queryActivityDays(sql, userId) {
 }
 
 export function queryWaterDue(sql, userId) {
-  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
-  const householdIds = householdScope(userId);
   return sql`
       SELECT
         em.project_id, pp.display_name AS project_name,
@@ -261,8 +259,6 @@ export function queryHarvestReady(sql, userId) {
 // SQL-layer NOT EXISTS dedup ensures a project surfaces ONCE (as 'flagged' if it has both).
 // ORDER BY severity DESC NULLS LAST → severity=3 sorts before severity=1; stale (NULL severity) last.
 export function queryHeadsUp(sql, userId) {
-  // HOUSEHOLD-MODE: widened at V3-ROLES teardown
-  const householdIds = householdScope(userId);
   return sql`
       WITH flagged AS (
         SELECT DISTINCT ON (el.project_id)
