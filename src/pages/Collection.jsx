@@ -6,6 +6,7 @@ import GardenArrival from '../components/GardenArrival.jsx'
 import critterFacts from '../data/critter-facts.json'
 import CritterFactsPopover from '../components/CritterFactsPopover.jsx'
 import CritterOfDay from '../components/CritterOfDay.jsx'
+import { animatedArtUrl } from '../lib/critterArt.js'
 import TallyDisplay from '../components/TallyDisplay.jsx'
 
 // Critter Collection.
@@ -171,6 +172,8 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
     return () => clearTimeout(t)
   }, [phase])
 
+  const animateArt = got && phase === 'full' && !REDUCE_MOTION  // V3-CRITANIM-001: ambient looping art only when fully revealed + motion allowed
+  const artSrc = animateArt ? animatedArtUrl(c.image_url) : c.image_url
   const quiet = phase === 'veil' || phase === 'pending'   // soft-veil resting look
   const blooming = phase === 'blooming'
   const lit = phase === 'full' || blooming                // colour revealed
@@ -230,7 +233,7 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
         <img
-          src={c.image_url}
+          src={artSrc}
           alt={got ? c.name : ''}
           loading="lazy"
           draggable={false}

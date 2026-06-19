@@ -26,6 +26,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { useIntersectionObserver } from '../hooks/useIntersectionObserver.js'
+import { resolveCritterArt } from '../lib/critterArt.js'
 
 const LANDING_MS = 3500
 const FRESHNESS_THRESHOLD_MS = 24 * 60 * 60 * 1000 // 24h
@@ -143,7 +144,7 @@ export default function CritterSprite({
     ? { opacity: 0, transition: `opacity ${FADE_MS}ms ease-out` }
     : {}
 
-  const spriteSrc = `/critters/${species.sprite_filename}`
+  const spriteSrc = resolveCritterArt(`/critters/${species.sprite_filename}`, { reducedMotion })
 
   return (
     <div
