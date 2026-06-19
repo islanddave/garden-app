@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Gloucester Sea Serpent — Atlantic coast (Cryptid)</title>
+<desc>The head bobs slowly, the water band shimmers with opacity pulses, and the amber eyes glow faintly.</desc>
+<g transform="translate(100, 100)">
+  <!-- water band — shimmer -->
+  <path d="M -95,65 Q -90,70 -85,68 L 95,68 Q 95,72 90,72 L -90,72 Q -95,72 -95,65 Z" fill="#3a5a7a" opacity="0.5">
+    <animate attributeName="opacity" values="0.5;0.3;0.5;0.7;0.5" keyTimes="0;0.25;0.5;0.75;1" dur="2.8s" repeatCount="indefinite"/>
+  </path>
+  <!-- body humps (static) -->
+  <path d="M -90,50 Q -75,55 -70,50 L -50,50 L -50,68 L -90,68 Z" fill="#2a4a6a"/>
+  <path d="M -50,30 Q -30,20 -10,40 L 5,40 L 5,68 L -50,68 Z" fill="#3a6080"/>
+  <path d="M 5,15 Q 25,5 45,30 L 50,30 L 50,68 L 5,68 Z" fill="#2a4a6a"/>
+  <!-- head group — slow bob -->
+  <g>
+    <animateTransform attributeName="transform" type="translate"
+      values="0 0; 0 -5; 0 -2; 0 3; 0 0"
+      keyTimes="0;0.3;0.5;0.75;1"
+      dur="3.8s" repeatCount="indefinite"/>
+    <circle cx="-60" cy="2" r="24" fill="#4a7090"/>
+    <ellipse cx="-60" cy="-10" rx="24" ry="22" fill="#5a80a0"/>
+    <!-- head fin spikes -->
+    <path d="M -68,-30 L -64,-38 L -56,-30 Z" fill="#7a9ab8"/>
+    <path d="M -56,-30 L -52,-38 L -44,-30 Z" fill="#7a9ab8"/>
+    <!-- eye whites -->
+    <ellipse cx="-69" cy="-5" rx="7" ry="9" fill="#fff"/>
+    <ellipse cx="-51" cy="-5" rx="7" ry="9" fill="#fff"/>
+    <!-- iris amber — glow pulse -->
+    <ellipse cx="-68" cy="-3" rx="4" ry="6" fill="#f5a623">
+      <animate attributeName="opacity" values="1;0.5;1" dur="2.4s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="-50" cy="-3" rx="4" ry="6" fill="#f5a623">
+      <animate attributeName="opacity" values="1;0.5;1" dur="2.4s" repeatCount="indefinite"/>
+    </ellipse>
+    <!-- pupils -->
+    <path d="M -69,-7 L -69,2 L -67,2 L -67,-7 Z" fill="#000"/>
+    <path d="M -51,-7 L -51,2 L -49,2 L -49,-7 Z" fill="#000"/>
+    <!-- catchlights -->
+    <circle cx="-66" cy="-5" r="1.2" fill="#fff"/>
+    <circle cx="-48" cy="-5" r="1.2" fill="#fff"/>
+    <!-- mouth -->
+    <path d="M -68,12 Q -60,18 -52,12 L -60,22 Z" fill="#000"/>
+    <line x1="-62" y1="14" x2="-60" y2="22" stroke="#fff" stroke-width="1"/>
+    <line x1="-58" y1="14" x2="-60" y2="22" stroke="#fff" stroke-width="1"/>
+    <!-- brow arch -->
+    <path d="M -78,-25 Q -70,-32 -64,-25" stroke="#2a4a6a" stroke-width="2" fill="none"/>
+  </g>
+</g>
+</svg>

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Barred owl — Strix varia</title>
+<desc>Slow blink of both eyes (iris+pupil opacity fade) with a gentle head tilt on a 5s loop.</desc>
+<g transform="translate(100, 100)">
+<!-- wings -->
+<ellipse cx="-32" cy="14" rx="26" ry="14" fill="#7a5028" opacity="0.85" transform="rotate(-20 -32 14)" stroke="#5a3818" stroke-width="0.5"/>
+<path d="M -42 6 L -36 8 M -42 14 L -36 16 M -42 22 L -36 24" stroke="#ffffff" stroke-width="1.2" stroke-linecap="round"/>
+<ellipse cx="32" cy="14" rx="26" ry="14" fill="#7a5028" opacity="0.85" transform="rotate(20 32 14)" stroke="#5a3818" stroke-width="0.5"/>
+<path d="M 42 6 L 36 8 M 42 14 L 36 16 M 42 22 L 36 24" stroke="#ffffff" stroke-width="1.2" stroke-linecap="round"/>
+<!-- belly -->
+<ellipse cx="0" cy="28" rx="24" ry="20" fill="#f4ead6"/>
+<path d="M -18 18 L 18 18 M -20 24 L 20 24 M -18 30 L 18 30 M -16 36 L 16 36" stroke="#7a5028" stroke-width="2.5" stroke-linecap="round"/>
+<!-- feet -->
+<line x1="-5" y1="44" x2="-5" y2="52" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="44" x2="5" y2="52" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<!-- head group — slow tilt -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 0 -10; 3 0 -10; 0 0 -10; -3 0 -10; 0 0 -10"
+    keyTimes="0; 0.25; 0.5; 0.75; 1"
+    dur="5s" repeatCount="indefinite"/>
+  <circle cx="0" cy="-10" r="28" fill="#8a6038"/>
+  <circle cx="0" cy="-6" r="22" fill="#e8d8c0"/>
+  <ellipse cx="-12" cy="-8" rx="9" ry="11" fill="#f4ead6"/>
+  <ellipse cx="12" cy="-8" rx="9" ry="11" fill="#f4ead6"/>
+  <!-- sclera -->
+  <circle cx="-10" cy="-8" r="8" fill="#ffffff"/>
+  <circle cx="10" cy="-8" r="8" fill="#ffffff"/>
+  <!-- left iris+pupil+catchlight — blink via opacity -->
+  <g>
+    <animate attributeName="opacity" values="1;1;0;1" keyTimes="0;0.90;0.95;1" dur="4.5s" repeatCount="indefinite"/>
+    <circle cx="-10" cy="-7" r="6.5" fill="#3a2418"/>
+    <circle cx="-10" cy="-6" r="4" fill="#0d0d0d"/>
+    <circle cx="-8" cy="-10" r="1.8" fill="#ffffff"/>
+  </g>
+  <!-- right iris+pupil+catchlight — blink same timing -->
+  <g>
+    <animate attributeName="opacity" values="1;1;0;1" keyTimes="0;0.90;0.95;1" dur="4.5s" repeatCount="indefinite"/>
+    <circle cx="10" cy="-7" r="6.5" fill="#3a2418"/>
+    <circle cx="10" cy="-6" r="4" fill="#0d0d0d"/>
+    <circle cx="12" cy="-10" r="1.8" fill="#ffffff"/>
+  </g>
+  <!-- eyelid overlay left (matches sclera color, slides down on blink) -->
+  <g>
+    <animate attributeName="opacity" values="0;0;1;0" keyTimes="0;0.90;0.95;1" dur="4.5s" repeatCount="indefinite"/>
+    <ellipse cx="-10" cy="-8" rx="8" ry="4" fill="#8a6038"/>
+  </g>
+  <!-- eyelid overlay right -->
+  <g>
+    <animate attributeName="opacity" values="0;0;1;0" keyTimes="0;0.90;0.95;1" dur="4.5s" repeatCount="indefinite"/>
+    <ellipse cx="10" cy="-8" rx="8" ry="4" fill="#8a6038"/>
+  </g>
+  <!-- beak -->
+  <path d="M -3 2 L 3 2 L 0 8 Z" fill="#fbbf24"/>
+</g>
+</g>
+</svg>

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Eastern gray squirrel — Sciurus carolinensis</title>
+<desc>Gentle body breathe, ear twitches, and slow bushy tail sway.</desc>
+<g transform="translate(100, 100)">
+<!-- tail sway — pivot at tail base near body (~18,4) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 18 4;5 18 4;0 18 4;-5 18 4;0 18 4"
+    keyTimes="0;0.25;0.5;0.75;1"
+    dur="5.0s" repeatCount="indefinite"/>
+  <path d="M 18 4 Q 44 -14 46 14 Q 42 40 20 34 Q 24 18 18 4 Z" fill="#a89888"/>
+  <path d="M 24 2 Q 38 -8 38 14 Q 34 26 24 24" fill="none" stroke="#8a7a6a" stroke-width="0.8"/>
+  <path d="M 32 -4 Q 40 -8 42 6" fill="none" stroke="#8a7a6a" stroke-width="0.5"/>
+</g>
+<!-- body breathe: scale about body center (0,24) -->
+<g transform="translate(0,24)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1.03 1.03;1 1" keyTimes="0;0.5;1"
+    dur="3.4s" repeatCount="indefinite"/>
+  <g transform="translate(0,-24)">
+    <ellipse cx="0" cy="24" rx="22" ry="25" fill="#a89888"/>
+    <ellipse cx="0" cy="30" rx="12" ry="15" fill="#f4ead6"/>
+    <ellipse cx="-10" cy="44" rx="4" ry="3" fill="#8a7a6a"/>
+    <ellipse cx="10" cy="44" rx="4" ry="3" fill="#8a7a6a"/>
+    <ellipse cx="0" cy="50" rx="5" ry="6" fill="#a06820"/>
+    <ellipse cx="0" cy="45" rx="6" ry="3" fill="#6a4818"/>
+    <line x1="0" y1="42" x2="0" y2="39" stroke="#5a3818" stroke-width="1.5" stroke-linecap="round"/>
+    <ellipse cx="-6" cy="48" rx="3.5" ry="2.5" fill="#8a7a6a"/>
+    <ellipse cx="6" cy="48" rx="3.5" ry="2.5" fill="#8a7a6a"/>
+  </g>
+</g>
+<!-- head -->
+<circle cx="0" cy="-14" r="24" fill="#a89888"/>
+<!-- left ear twitch — pivot at ear base (-16,-24) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 -16 -24;0 -16 -24;-9 -16 -24;3 -16 -24;0 -16 -24"
+    keyTimes="0;0.80;0.86;0.93;1"
+    dur="4.0s" repeatCount="indefinite"/>
+  <circle cx="-16" cy="-32" r="6.5" fill="#a89888"/>
+  <circle cx="-16" cy="-32" r="3.3" fill="#f4b6b6"/>
+</g>
+<!-- right ear twitch — pivot at ear base (16,-24), offset phase -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 16 -24;0 16 -24;9 16 -24;-3 16 -24;0 16 -24"
+    keyTimes="0;0.38;0.44;0.51;1"
+    dur="5.1s" repeatCount="indefinite"/>
+  <circle cx="16" cy="-32" r="6.5" fill="#a89888"/>
+  <circle cx="16" cy="-32" r="3.3" fill="#f4b6b6"/>
+</g>
+<!-- eyes -->
+<circle cx="-9" cy="-14" r="6.5" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="6.5" fill="#ffffff"/>
+<circle cx="-9" cy="-13" r="5" fill="#7c2d12"/>
+<circle cx="9" cy="-13" r="5" fill="#7c2d12"/>
+<circle cx="-9" cy="-12" r="2.6" fill="#0d0d0d"/>
+<circle cx="9" cy="-12" r="2.6" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+<ellipse cx="0" cy="0" rx="2.5" ry="1.8" fill="#1a1a1a"/>
+<path d="M -5 6 Q 0 11 5 6" stroke="#1a1a1a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

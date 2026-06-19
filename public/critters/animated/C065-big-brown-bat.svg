@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Big brown bat — Eptesicus fuscus</title>
+<desc>Wing membrane flap — left and right wing paths rotate at the body, mirrored, on a 0.4s loop.</desc>
+<g transform="translate(100, 100)">
+<!-- left wing — rotates at shoulder (inner top ~(-18,18)) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="-8 -18 18; 10 -18 18; -8 -18 18"
+    dur="0.4s" repeatCount="indefinite"/>
+  <path d="M -38 -4 Q -50 8 -42 28 Q -32 32 -18 18 Q -24 8 -38 -4 Z" fill="#5a3818"/>
+  <path d="M -34 4 L -28 12 M -30 16 L -22 22 M -38 14 L -32 24" stroke="#3a2010" stroke-width="0.8" stroke-linecap="round"/>
+</g>
+<!-- right wing — mirrored rotation at shoulder (~(18,18)) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="8 18 18; -10 18 18; 8 18 18"
+    dur="0.4s" repeatCount="indefinite"/>
+  <path d="M 38 -4 Q 50 8 42 28 Q 32 32 18 18 Q 24 8 38 -4 Z" fill="#5a3818"/>
+  <path d="M 34 4 L 28 12 M 30 16 L 22 22 M 38 14 L 32 24" stroke="#3a2010" stroke-width="0.8" stroke-linecap="round"/>
+</g>
+<!-- body -->
+<ellipse cx="0" cy="22" rx="20" ry="22" fill="#6a3818"/>
+<!-- feet -->
+<line x1="-5" y1="42" x2="-5" y2="48" stroke="#3a2010" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="42" x2="5" y2="48" stroke="#3a2010" stroke-width="1.6" stroke-linecap="round"/>
+<!-- head -->
+<circle cx="0" cy="-14" r="22" fill="#6a3818"/>
+<!-- ear tufts -->
+<path d="M -18 -32 L -10 -42 L -8 -22 Z" fill="#6a3818"/>
+<path d="M 18 -32 L 10 -42 L 8 -22 Z" fill="#6a3818"/>
+<path d="M -16 -30 L -10 -38 L -10 -26 Z" fill="#3a2010"/>
+<path d="M 16 -30 L 10 -38 L 10 -26 Z" fill="#3a2010"/>
+<!-- sclera -->
+<circle cx="-9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="6" fill="#ffffff"/>
+<!-- eyes -->
+<circle cx="-9" cy="-13" r="4.5" fill="#b91c1c"/>
+<circle cx="9" cy="-13" r="4.5" fill="#b91c1c"/>
+<circle cx="-9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+<!-- face details -->
+<path d="M -2 -2 L 2 -2 L 0 2 Z" fill="#1a1a1a"/>
+<path d="M -5 6 Q 0 10 5 6" stroke="#1a1a1a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+<path d="M -2 8 L -2 10 M 2 8 L 2 10" stroke="#ffffff" stroke-width="0.8" stroke-linecap="round"/>
+</g>
+</svg>

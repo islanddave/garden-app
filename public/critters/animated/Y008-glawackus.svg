@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Glawackus — Glastonbury beast (Cryptid)</title>
+<desc>The bright yellow eye inner-dots pulse with an eerie glow, and the body breathes with a slow scale.</desc>
+<g transform="translate(100, 100)">
+  <!-- breathe: gentle body scale, additive on outer group -->
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1.02 1.02;1 1;0.985 0.985;1 1"
+    keyTimes="0;0.38;0.62;0.8;1"
+    dur="3.9s" repeatCount="indefinite"/>
+  <!-- body -->
+  <ellipse cx="22" cy="40" rx="42" ry="24" fill="#3a2818"/>
+  <!-- head -->
+  <circle cx="-22" cy="-12" r="42" fill="#4a3525"/>
+  <!-- ears -->
+  <path d="M -48,-38 L -54,-58 L -36,-44 Z" fill="#3a2818"/>
+  <path d="M 4,-38 L 10,-58 L -8,-44 Z" fill="#3a2818"/>
+  <!-- snout/muzzle -->
+  <ellipse cx="-22" cy="6" rx="22" ry="15" fill="#6a4a30"/>
+  <!-- eye whites -->
+  <circle cx="-33" cy="-13" r="10" fill="#fff"/>
+  <circle cx="-11" cy="-15" r="10" fill="#fff"/>
+  <!-- iris red-orange glow -->
+  <circle cx="-32" cy="-11" r="6" fill="#ff4400"/>
+  <circle cx="-10" cy="-13" r="6" fill="#ff4400"/>
+  <!-- pupils -->
+  <path d="M -34,-17 L -34,-5 L -30,-5 L -30,-17 Z" fill="#000"/>
+  <path d="M -12,-19 L -12,-7 L -8,-7 L -8,-19 Z" fill="#000"/>
+  <!-- glowing yellow inner dots — eerie pulse -->
+  <circle cx="-29" cy="-15" r="1.4" fill="#ffeb3b">
+    <animate attributeName="opacity" values="1;0.1;1;0.4;1" keyTimes="0;0.3;0.58;0.78;1" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="-7" cy="-17" r="1.4" fill="#ffeb3b">
+    <animate attributeName="opacity" values="1;0.1;1;0.4;1" keyTimes="0;0.3;0.58;0.78;1" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <!-- nose -->
+  <ellipse cx="-22" cy="4" rx="5" ry="3" fill="#000"/>
+  <!-- mouth/fangs -->
+  <path d="M -32,12 L -22,14 L -12,12 L -22,22 Z" fill="#000"/>
+  <path d="M -28,14 L -26,20 L -24,15 Z" fill="#fff"/>
+  <path d="M -20,15 L -18,20 L -16,14 Z" fill="#fff"/>
+  <!-- tail -->
+  <path d="M 58,38 Q 80,30 84,8 Q 78,32 64,32" fill="#3a2818"/>
+  <path d="M 84,8 L 90,0 L 86,12 Z" fill="#7a5a3a"/>
+  <!-- legs -->
+  <line x1="52" y1="62" x2="52" y2="80" stroke="#2a1808" stroke-width="5"/>
+  <line x1="35" y1="62" x2="33" y2="80" stroke="#2a1808" stroke-width="5"/>
+</g>
+</svg>

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Marbled salamander — Ambystoma opacum</title>
+<desc>Body breathes gently; tail sways slowly; eyes blink.</desc>
+<g transform="translate(100, 100)">
+<!-- body breathe -->
+<ellipse cx="6" cy="0" rx="34" ry="11" fill="#0d0d0d">
+  <animate attributeName="ry" values="11;11.7;11" keyTimes="0;0.5;1" dur="3.2s" repeatCount="indefinite"/>
+</ellipse>
+<!-- tail sway -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 40 0; 4 40 0; -3 40 0; 0 40 0" keyTimes="0;0.35;0.7;1"
+    dur="3.4s" repeatCount="indefinite"/>
+  <path d="M 40 0 Q 52 -2 56 -4 Q 52 4 40 6 Z" fill="#0d0d0d"/>
+</g>
+<path d="M -18 -8 L 18 -8 M -18 -2 L 18 -2 M -18 4 L 18 4" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+<ellipse cx="-14" cy="12" rx="3.5" ry="3" fill="#0d0d0d"/>
+<ellipse cx="-2" cy="12" rx="3.5" ry="3" fill="#0d0d0d"/>
+<ellipse cx="14" cy="12" rx="3.5" ry="3" fill="#0d0d0d"/>
+<ellipse cx="26" cy="12" rx="3.5" ry="3" fill="#0d0d0d"/>
+<!-- head -->
+<ellipse cx="-30" cy="-1" rx="15" ry="12" fill="#0d0d0d"/>
+<path d="M -42 -6 L -32 -2" stroke="#ffffff" stroke-width="1.8"/>
+<!-- left sclera -->
+<circle cx="-36" cy="-3" r="4.5" fill="#ffffff"/>
+<!-- right sclera -->
+<circle cx="-24" cy="-3" r="4.5" fill="#ffffff"/>
+<!-- left iris+pupil+catchlight blink -->
+<g transform="translate(-36,-3)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.88;0.93;1" dur="5.2s" repeatCount="indefinite"/>
+  <circle cx="0" cy="1" r="3.2" fill="#ca8a04"/>
+  <circle cx="0" cy="2" r="1.8" fill="#0d0d0d"/>
+  <circle cx="1" cy="-1" r="1.1" fill="#ffffff"/>
+</g>
+<!-- right iris+pupil+catchlight blink -->
+<g transform="translate(-24,-3)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.88;0.93;1" dur="5.2s" repeatCount="indefinite"/>
+  <circle cx="0" cy="1" r="3.2" fill="#ca8a04"/>
+  <circle cx="0" cy="2" r="1.8" fill="#0d0d0d"/>
+  <circle cx="1" cy="-1" r="1.1" fill="#ffffff"/>
+</g>
+<path d="M -40 5 Q -30 9 -20 5" stroke="#3a3a3a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

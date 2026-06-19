@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>White-tailed deer (fawn) — Odocoileus virginianus</title>
+<desc>Gentle body breathe with prominent ear twitches — ears are the star on this fawn.</desc>
+<g transform="translate(-492, -150)">
+<!-- legs static -->
+<line x1="580" y1="286" x2="576" y2="298" stroke="#a87148" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="596" y1="286" x2="600" y2="298" stroke="#a87148" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="608" y1="286" x2="614" y2="296" stroke="#a87148" stroke-width="3.5" stroke-linecap="round"/>
+<!-- body breathe: scale about body center (592,272) -->
+<g transform="translate(592,272)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1.025 1.025;1 1" keyTimes="0;0.5;1"
+    dur="3.8s" repeatCount="indefinite"/>
+  <g transform="translate(-592,-272)">
+    <ellipse cx="592" cy="278" rx="22" ry="14" fill="#a87148"/>
+    <circle cx="582" cy="272" r="2" fill="#f0e6d8"/>
+    <circle cx="592" cy="270" r="2" fill="#f0e6d8"/>
+    <circle cx="602" cy="272" r="2" fill="#f0e6d8"/>
+    <circle cx="586" cy="280" r="1.8" fill="#f0e6d8"/>
+    <circle cx="598" cy="280" r="1.8" fill="#f0e6d8"/>
+    <ellipse cx="612" cy="272" rx="4" ry="3" fill="#f0e6d8"/>
+  </g>
+</g>
+<!-- head -->
+<circle cx="592" cy="252" r="22" fill="#a87148"/>
+<!-- left ear twitch — pivot at ear base (576,242) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 576 242;0 576 242;-10 576 242;4 576 242;0 576 242"
+    keyTimes="0;0.78;0.84;0.91;1"
+    dur="4.2s" repeatCount="indefinite"/>
+  <ellipse cx="576" cy="232" rx="5" ry="12" fill="#a87148" transform="rotate(-20 576 232)"/>
+  <ellipse cx="576" cy="232" rx="2.5" ry="8" fill="#f4b6b6" transform="rotate(-20 576 232)"/>
+</g>
+<!-- right ear twitch — pivot at ear base (608,242), offset phase -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 608 242;0 608 242;9 608 242;-4 608 242;0 608 242"
+    keyTimes="0;0.35;0.41;0.48;1"
+    dur="5.1s" repeatCount="indefinite"/>
+  <ellipse cx="608" cy="232" rx="5" ry="12" fill="#a87148" transform="rotate(20 608 232)"/>
+  <ellipse cx="608" cy="232" rx="2.5" ry="8" fill="#f4b6b6" transform="rotate(20 608 232)"/>
+</g>
+<!-- eyes -->
+<circle cx="582" cy="250" r="7" fill="#ffffff"/>
+<circle cx="602" cy="250" r="7" fill="#ffffff"/>
+<circle cx="582" cy="252" r="4.5" fill="#1a1a1a"/>
+<circle cx="602" cy="252" r="4.5" fill="#1a1a1a"/>
+<circle cx="583" cy="250" r="1.6" fill="#ffffff"/>
+<circle cx="603" cy="250" r="1.6" fill="#ffffff"/>
+<path d="M 578 244 L 575 242" stroke="#1a1a1a" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M 606 244 L 609 242" stroke="#1a1a1a" stroke-width="0.8" stroke-linecap="round"/>
+<ellipse cx="592" cy="262" rx="3" ry="2" fill="#1a1a1a"/>
+<path d="M 588 268 Q 592 271 596 268" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

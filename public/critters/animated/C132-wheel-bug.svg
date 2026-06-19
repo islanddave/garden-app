@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Wheel bug — Arilus cristatus</title>
+<desc>Antennae twitch gently and the eyes blink slowly in a calm idle loop.</desc>
+<g transform="translate(100, 100)">
+  <!-- wings -->
+  <ellipse cx="-28" cy="-2" rx="18" ry="8" fill="#e8f0f5" opacity="0.6" transform="rotate(-22 -28 -2)" stroke="#9aa5ab" stroke-width="0.5"/>
+  <ellipse cx="28" cy="-2" rx="18" ry="8" fill="#e8f0f5" opacity="0.6" transform="rotate(22 28 -2)" stroke="#9aa5ab" stroke-width="0.5"/>
+  <!-- abdomen -->
+  <ellipse cx="0" cy="24" rx="14" ry="22" fill="#5a3818"/>
+  <!-- cog/wheel shape on pronotum -->
+  <path d="M -16 -6 L 16 -6 L 14 0 Q 0 -10 -14 0 Z" fill="#3a2010"/>
+  <!-- crest teeth -->
+  <path d="M -12 -8 L -10 -14 L -8 -10 L -6 -16 L -4 -10 L -2 -14 L 0 -10 L 2 -14 L 4 -10 L 6 -16 L 8 -10 L 10 -14 L 12 -8" stroke="#0d0d0d" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- head -->
+  <circle cx="0" cy="-22" r="14" fill="#5a3818"/>
+  <!-- eye whites -->
+  <circle cx="-7" cy="-22" r="5" fill="#ffffff"/>
+  <circle cx="7" cy="-22" r="5" fill="#ffffff"/>
+  <!-- iris -->
+  <circle cx="-7" cy="-21" r="3.6" fill="#94a3b8"/>
+  <circle cx="7" cy="-21" r="3.6" fill="#94a3b8"/>
+  <!-- pupils + catchlights — blink group left -->
+  <g transform="translate(-7 -20)">
+    <animateTransform attributeName="transform" type="scale"
+      values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.88;0.93;1"
+      dur="5s" repeatCount="indefinite" additive="sum"/>
+    <circle cx="0" cy="0" r="2" fill="#0d0d0d"/>
+    <circle cx="1" cy="-3" r="1.3" fill="#ffffff"/>
+  </g>
+  <!-- pupils + catchlights — blink group right -->
+  <g transform="translate(7 -20)">
+    <animateTransform attributeName="transform" type="scale"
+      values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.88;0.93;1"
+      dur="5s" repeatCount="indefinite" additive="sum"/>
+    <circle cx="0" cy="0" r="2" fill="#0d0d0d"/>
+    <circle cx="2" cy="-3" r="1.3" fill="#ffffff"/>
+  </g>
+  <!-- left antenna — twitch at base near (-5,-36) -->
+  <g>
+    <animateTransform attributeName="transform" type="rotate"
+      values="0 -5 -36; -8 -5 -36; 0 -5 -36; 4 -5 -36; 0 -5 -36"
+      keyTimes="0;0.2;0.4;0.6;1"
+      dur="2.8s" repeatCount="indefinite"/>
+    <path d="M -5 -36 L -8 -42" stroke="#0d0d0d" stroke-width="1.2" stroke-linecap="round"/>
+  </g>
+  <!-- right antenna — twitch opposite phase -->
+  <g>
+    <animateTransform attributeName="transform" type="rotate"
+      values="0 5 -36; 8 5 -36; 0 5 -36; -4 5 -36; 0 5 -36"
+      keyTimes="0;0.2;0.4;0.6;1"
+      dur="2.8s" repeatCount="indefinite"/>
+    <path d="M 5 -36 L 8 -42" stroke="#0d0d0d" stroke-width="1.2" stroke-linecap="round"/>
+  </g>
+</g>
+</svg>

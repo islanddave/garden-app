@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Black Bear — Ursus americanus</title>
+<desc>Gentle body breathe with round ear twitches on a big calm bear.</desc>
+<g transform="translate(100, 100)">
+<!-- body breathe: scale about body center (0,20) -->
+<g transform="translate(0,20)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1.025 1.025;1 1" keyTimes="0;0.5;1"
+    dur="4.0s" repeatCount="indefinite"/>
+  <g transform="translate(0,-20)">
+    <ellipse cx="0" cy="42" rx="46" ry="26" fill="#1a1a1a"/>
+    <circle cx="0" cy="-8" r="48" fill="#2a2a2a"/>
+    <ellipse cx="0" cy="16" rx="26" ry="18" fill="#c8a070"/>
+  </g>
+</g>
+<!-- left ear twitch — pivot at ear base (-32,-26) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 -32 -26;0 -32 -26;-7 -32 -26;3 -32 -26;0 -32 -26"
+    keyTimes="0;0.82;0.88;0.94;1"
+    dur="4.6s" repeatCount="indefinite"/>
+  <circle cx="-32" cy="-38" r="11" fill="#1a1a1a"/>
+  <circle cx="-32" cy="-38" r="6" fill="#3a3a3a"/>
+</g>
+<!-- right ear twitch — pivot at ear base (32,-26), offset phase -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 32 -26;0 32 -26;7 32 -26;-3 32 -26;0 32 -26"
+    keyTimes="0;0.41;0.47;0.54;1"
+    dur="5.6s" repeatCount="indefinite"/>
+  <circle cx="32" cy="-38" r="11" fill="#1a1a1a"/>
+  <circle cx="32" cy="-38" r="6" fill="#3a3a3a"/>
+</g>
+<!-- eyes -->
+<circle cx="-15" cy="-10" r="9" fill="#fff"/>
+<circle cx="15" cy="-10" r="9" fill="#fff"/>
+<circle cx="-14" cy="-9" r="6" fill="#8b5a2b"/>
+<circle cx="16" cy="-9" r="6" fill="#8b5a2b"/>
+<circle cx="-13" cy="-10" r="3" fill="#000"/>
+<circle cx="17" cy="-10" r="3" fill="#000"/>
+<circle cx="-11" cy="-12" r="1.5" fill="#fff"/>
+<circle cx="19" cy="-12" r="1.5" fill="#fff"/>
+<ellipse cx="0" cy="13" rx="6" ry="4" fill="#000"/>
+<path d="M -8,22 Q 0,28 8,22" stroke="#000" stroke-width="2" fill="none"/>
+</g>
+</svg>

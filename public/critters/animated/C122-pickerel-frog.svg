@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Pickerel frog — Lithobates palustris</title>
+<desc>Body pulses with a gentle throat breathe; yellow eyes blink slowly.</desc>
+<g transform="translate(100, 100)">
+<!-- body breathe -->
+<ellipse cx="0" cy="20" rx="26" ry="18" fill="#d4c08a">
+  <animate attributeName="ry" values="18;19.2;18" keyTimes="0;0.5;1" dur="1.6s" repeatCount="indefinite"/>
+</ellipse>
+<rect x="-18" y="6" width="6" height="6" fill="#5a4020"/>
+<rect x="-4" y="8" width="6" height="6" fill="#5a4020"/>
+<rect x="10" y="6" width="6" height="6" fill="#5a4020"/>
+<rect x="-12" y="22" width="6" height="6" fill="#5a4020"/>
+<rect x="4" y="22" width="6" height="6" fill="#5a4020"/>
+<ellipse cx="-12" cy="34" rx="6" ry="5" fill="#fb923c"/>
+<ellipse cx="12" cy="34" rx="6" ry="5" fill="#fb923c"/>
+<ellipse cx="-20" cy="36" rx="6" ry="4" fill="#a89472" transform="rotate(-15 -20 36)"/>
+<ellipse cx="20" cy="36" rx="6" ry="4" fill="#a89472" transform="rotate(15 20 36)"/>
+<!-- left eye surround -->
+<ellipse cx="-10" cy="-8" rx="10" ry="10" fill="#d4c08a"/>
+<!-- right eye surround -->
+<ellipse cx="10" cy="-8" rx="10" ry="10" fill="#d4c08a"/>
+<!-- left sclera -->
+<circle cx="-10" cy="-8" r="7.5" fill="#ffffff"/>
+<!-- right sclera -->
+<circle cx="10" cy="-8" r="7.5" fill="#ffffff"/>
+<!-- left iris+pupil+catchlight blink -->
+<g transform="translate(-10,-8)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.90;0.95;1" dur="5.4s" repeatCount="indefinite"/>
+  <circle cx="0" cy="1" r="5.5" fill="#facc15"/>
+  <ellipse cx="0" cy="1" rx="2.2" ry="4.5" fill="#0d0d0d"/>
+  <circle cx="2" cy="-2" r="1.6" fill="#ffffff"/>
+</g>
+<!-- right iris+pupil+catchlight blink -->
+<g transform="translate(10,-8)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.90;0.95;1" dur="5.4s" repeatCount="indefinite"/>
+  <circle cx="0" cy="1" r="5.5" fill="#facc15"/>
+  <ellipse cx="0" cy="1" rx="2.2" ry="4.5" fill="#0d0d0d"/>
+  <circle cx="2" cy="-2" r="1.6" fill="#ffffff"/>
+</g>
+<path d="M -14 4 Q 0 12 14 4" stroke="#0d0d0d" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

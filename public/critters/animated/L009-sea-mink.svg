@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Sea Mink — Neogale macrodon (Legacy)</title>
+<desc>Sea mink breathes gently with a slow chest rise and twitches its left ear periodically.</desc>
+<g transform="translate(100, 100)">
+  <animateTransform attributeName="transform" type="scale" additive="sum" values="1 1;1.02 1.02;1 1" dur="3.5s" repeatCount="indefinite"/>
+  <ellipse cx="0" cy="38" rx="38" ry="22" fill="#3a2818"/>
+  <circle cx="0" cy="-5" r="44" fill="#4a3525"/>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" additive="sum" values="0 -30 -34;0 -30 -34;-8 -30 -34;3 -30 -34;0 -30 -34" keyTimes="0;0.8;0.86;0.92;1" dur="4.2s" repeatCount="indefinite"/>
+    <path d="M -34,-32 L -38,-46 L -22,-38 Z" fill="#3a2818"/>
+  </g>
+  <path d="M 34,-32 L 38,-46 L 22,-38 Z" fill="#3a2818"/>
+  <ellipse cx="0" cy="15" rx="20" ry="14" fill="#7a5a3a"/>
+  <circle cx="-14" cy="-5" r="9" fill="#fff"/>
+  <circle cx="14" cy="-5" r="9" fill="#fff"/>
+  <circle cx="-13" cy="-4" r="6" fill="#d4a82f"/>
+  <circle cx="15" cy="-4" r="6" fill="#d4a82f"/>
+  <circle cx="-12" cy="-5" r="3" fill="#000"/>
+  <circle cx="16" cy="-5" r="3" fill="#000"/>
+  <circle cx="-10" cy="-7" r="1.5" fill="#fff"/>
+  <circle cx="18" cy="-7" r="1.5" fill="#fff"/>
+  <ellipse cx="0" cy="13" rx="4.5" ry="2.5" fill="#000"/>
+  <path d="M -6,20 Q 0,25 6,20" stroke="#000" stroke-width="1.5" fill="none"/>
+</g>
+</svg>

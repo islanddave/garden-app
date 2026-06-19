@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>North American beaver — Castor canadensis</title>
+<desc>North American beaver breathes slowly and twitches a small rounded ear.</desc>
+<g transform="translate(100, 100)">
+  <animateTransform attributeName="transform" type="scale" additive="sum" values="1 1;1.02 1.02;1 1" dur="3.6s" repeatCount="indefinite"/>
+  <ellipse cx="34" cy="38" rx="22" ry="10" fill="#5a3818"/>
+  <path d="M 22 32 L 50 30 M 22 38 L 52 38 M 22 44 L 50 46" stroke="#3a2010" stroke-width="0.8"/>
+  <ellipse cx="0" cy="26" rx="28" ry="24" fill="#7a5028"/>
+  <ellipse cx="0" cy="32" rx="16" ry="14" fill="#a87238" opacity="0.5"/>
+  <ellipse cx="-14" cy="48" rx="5" ry="3" fill="#5a3818"/>
+  <ellipse cx="14" cy="48" rx="5" ry="3" fill="#5a3818"/>
+  <circle cx="0" cy="-12" r="22" fill="#7a5028"/>
+  <ellipse cx="12" cy="-26" rx="5" ry="4" fill="#7a5028"/>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" additive="sum" values="0 -12 -28;0 -12 -28;-6 -12 -28;2 -12 -28;0 -12 -28" keyTimes="0;0.8;0.86;0.92;1" dur="5s" repeatCount="indefinite"/>
+    <ellipse cx="-12" cy="-26" rx="5" ry="4" fill="#7a5028"/>
+  </g>
+  <circle cx="-8" cy="-12" r="5.5" fill="#ffffff"/>
+  <circle cx="8" cy="-12" r="5.5" fill="#ffffff"/>
+  <circle cx="-8" cy="-11" r="4" fill="#a16207"/>
+  <circle cx="8" cy="-11" r="4" fill="#a16207"/>
+  <circle cx="-8" cy="-10" r="2.3" fill="#0d0d0d"/>
+  <circle cx="8" cy="-10" r="2.3" fill="#0d0d0d"/>
+  <circle cx="-7" cy="-13" r="1.4" fill="#ffffff"/>
+  <circle cx="10" cy="-13" r="1.4" fill="#ffffff"/>
+  <ellipse cx="0" cy="2" rx="3" ry="2" fill="#1a1a1a"/>
+  <path d="M -3 6 L -1 12 L 1 12 L 3 6" stroke="#f97316" stroke-width="2" fill="#f97316" stroke-linejoin="round"/>
+</g>
+</svg>

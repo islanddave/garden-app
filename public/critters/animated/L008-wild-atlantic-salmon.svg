@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Wild Atlantic Salmon — Salmo salar (Legacy)</title>
+<desc>Whole body sways gently side to side with a fish-sway oscillation, and the tail fin wags in counter-phase.</desc>
+<!-- fish sway: gentle additive translate oscillation on the whole group -->
+<g transform="translate(100, 100)">
+  <animateTransform attributeName="transform" type="translate" additive="sum"
+    values="0 0; 3 2; 0 0; -3 -2; 0 0"
+    keyTimes="0;0.25;0.5;0.75;1"
+    dur="1.6s" repeatCount="indefinite"/>
+  <!-- also a gentle rotate sway for body wave feel -->
+  <animateTransform attributeName="transform" type="rotate" additive="sum"
+    values="0 0 0; 3 0 0; 0 0 0; -3 0 0; 0 0 0"
+    keyTimes="0;0.25;0.5;0.75;1"
+    dur="1.6s" repeatCount="indefinite"/>
+  <!-- tail fin — wag in counter-phase via separate group -->
+  <g>
+    <animateTransform attributeName="transform" type="rotate"
+      values="0 50 0; -8 50 0; 0 50 0; 8 50 0; 0 50 0"
+      keyTimes="0;0.25;0.5;0.75;1"
+      dur="1.6s" repeatCount="indefinite"/>
+    <path d="M 50,-10 L 70,-30 L 70,10 Z" fill="#a8b8c8"/>
+  </g>
+  <!-- main body -->
+  <ellipse cx="0" cy="0" rx="55" ry="38" fill="#c8d4dc"/>
+  <!-- belly stripe -->
+  <ellipse cx="0" cy="-8" rx="48" ry="20" fill="#e8b89c"/>
+  <!-- dorsal fin -->
+  <path d="M -18,-5 L -22,-25 L -8,-15 Z" fill="#a8b8c8"/>
+  <!-- pectoral/ventral fin -->
+  <path d="M -5,30 L -15,42 L 5,42 Z" fill="#a8b8c8"/>
+  <!-- eyes -->
+  <circle cx="-20" cy="-8" r="9" fill="#fff"/>
+  <circle cx="20" cy="-8" r="9" fill="#fff"/>
+  <circle cx="-19" cy="-7" r="6" fill="#2d8a6f"/>
+  <circle cx="21" cy="-7" r="6" fill="#2d8a6f"/>
+  <circle cx="-18" cy="-8" r="3" fill="#000"/>
+  <circle cx="22" cy="-8" r="3" fill="#000"/>
+  <circle cx="-16" cy="-10" r="1.5" fill="#fff"/>
+  <circle cx="24" cy="-10" r="1.5" fill="#fff"/>
+  <!-- spot marks -->
+  <circle cx="-30" cy="8" r="2" fill="#7a4040"/>
+  <circle cx="-12" cy="12" r="2" fill="#7a4040"/>
+  <circle cx="15" cy="15" r="2" fill="#7a4040"/>
+  <circle cx="32" cy="6" r="2" fill="#7a4040"/>
+  <!-- mouth -->
+  <path d="M -8,18 Q 0,24 8,18" stroke="#000" stroke-width="1.5" fill="none"/>
+</g>
+</svg>

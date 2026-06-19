@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Fisher — Pekania pennanti</title>
+<desc>Fisher breathes with a slow body rise; the left ear twitches periodically.</desc>
+<g transform="translate(100, 100)">
+  <animateTransform attributeName="transform" type="scale" additive="sum" values="1 1;1.02 1.02;1 1" dur="3.5s" repeatCount="indefinite"/>
+  <ellipse cx="38" cy="14" rx="14" ry="5" fill="#2a1808" transform="rotate(20 38 14)"/>
+  <ellipse cx="0" cy="14" rx="34" ry="14" fill="#3a2010"/>
+  <ellipse cx="-12" cy="10" rx="14" ry="6" fill="#5a3018" opacity="0.5"/>
+  <ellipse cx="-18" cy="24" rx="4" ry="3" fill="#1a0808"/>
+  <ellipse cx="-4" cy="24" rx="4" ry="3" fill="#1a0808"/>
+  <ellipse cx="14" cy="24" rx="4" ry="3" fill="#1a0808"/>
+  <ellipse cx="-32" cy="6" rx="14" ry="11" fill="#3a2010"/>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" additive="sum" values="0 -42 -3;0 -42 -3;-8 -42 -3;3 -42 -3;0 -42 -3" keyTimes="0;0.8;0.86;0.92;1" dur="4.0s" repeatCount="indefinite"/>
+    <ellipse cx="-42" cy="-2" rx="4" ry="3" fill="#3a2010"/>
+  </g>
+  <ellipse cx="-28" cy="-4" rx="4" ry="3" fill="#3a2010"/>
+  <circle cx="-38" cy="4" r="4" fill="#ffffff"/>
+  <circle cx="-26" cy="2" r="4" fill="#ffffff"/>
+  <circle cx="-38" cy="5" r="2.8" fill="#14b8a6"/>
+  <circle cx="-26" cy="3" r="2.8" fill="#14b8a6"/>
+  <circle cx="-38" cy="6" r="1.6" fill="#0d0d0d"/>
+  <circle cx="-26" cy="4" r="1.6" fill="#0d0d0d"/>
+  <circle cx="-37" cy="3" r="1" fill="#ffffff"/>
+  <circle cx="-25" cy="1" r="1" fill="#ffffff"/>
+  <ellipse cx="-32" cy="12" rx="2" ry="1.5" fill="#1a1a1a"/>
+  <path d="M -36 16 Q -32 19 -28 16" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

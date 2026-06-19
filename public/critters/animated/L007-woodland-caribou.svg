@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Woodland Caribou — Rangifer tarandus caribou (Legacy)</title>
+<desc>Caribou breathes gently with a slow chest rise and twitches its left ear; antlers remain completely still.</desc>
+<g transform="translate(100, 100)">
+  <animateTransform attributeName="transform" type="scale" additive="sum" values="1 1;1.02 1.02;1 1" dur="3.8s" repeatCount="indefinite"/>
+  <path d="M -25,-45 L -38,-70 L -28,-72 L -45,-78 L -32,-78 L -42,-85 M -25,-55 L -22,-50" stroke="#3a2818" stroke-width="3" fill="none"/>
+  <path d="M 25,-45 L 38,-70 L 28,-72 L 45,-78 L 32,-78 L 42,-85 M 25,-55 L 22,-50" stroke="#3a2818" stroke-width="3" fill="none"/>
+  <ellipse cx="0" cy="35" rx="36" ry="22" fill="#7a6850"/>
+  <circle cx="0" cy="-8" r="42" fill="#a08770"/>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" additive="sum" values="0 -32 -34;0 -32 -34;-7 -32 -34;3 -32 -34;0 -32 -34" keyTimes="0;0.8;0.86;0.92;1" dur="4.4s" repeatCount="indefinite"/>
+    <ellipse cx="-32" cy="-28" rx="6" ry="12" fill="#7a6850"/>
+  </g>
+  <ellipse cx="32" cy="-28" rx="6" ry="12" fill="#7a6850"/>
+  <path d="M -38,8 Q -42,-2 -36,-5 L -36,10 Z" fill="#f5f0e6"/>
+  <ellipse cx="0" cy="18" rx="22" ry="14" fill="#f5f0e6"/>
+  <circle cx="-14" cy="-8" r="8" fill="#fff"/>
+  <circle cx="14" cy="-8" r="8" fill="#fff"/>
+  <circle cx="-13" cy="-7" r="5" fill="#6b8e8a"/>
+  <circle cx="15" cy="-7" r="5" fill="#6b8e8a"/>
+  <circle cx="-12" cy="-8" r="2.5" fill="#000"/>
+  <circle cx="16" cy="-8" r="2.5" fill="#000"/>
+  <circle cx="-10" cy="-10" r="1.2" fill="#fff"/>
+  <circle cx="18" cy="-10" r="1.2" fill="#fff"/>
+  <ellipse cx="0" cy="16" rx="4" ry="2.5" fill="#000"/>
+  <path d="M -6,23 Q 0,28 6,23" stroke="#000" stroke-width="1.5" fill="none"/>
+</g>
+</svg>

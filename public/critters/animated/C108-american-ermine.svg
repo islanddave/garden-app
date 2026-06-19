@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>American ermine — Mustela richardsonii</title>
+<desc>Ermine breathes with a gentle body swell; the left ear twitches periodically.</desc>
+<g transform="translate(100, 100)">
+  <animateTransform attributeName="transform" type="scale" additive="sum" values="1 1;1.02 1.02;1 1" dur="3.5s" repeatCount="indefinite"/>
+  <path d="M 38 18 Q 48 22 50 18 Q 50 26 38 24 Z" fill="#0d0d0d"/>
+  <ellipse cx="0" cy="14" rx="36" ry="11" fill="#ffffff"/>
+  <ellipse cx="-18" cy="24" rx="4" ry="3" fill="#e5e7eb"/>
+  <ellipse cx="-4" cy="24" rx="4" ry="3" fill="#e5e7eb"/>
+  <ellipse cx="10" cy="24" rx="4" ry="3" fill="#e5e7eb"/>
+  <ellipse cx="24" cy="24" rx="4" ry="3" fill="#e5e7eb"/>
+  <ellipse cx="-34" cy="6" rx="14" ry="11" fill="#ffffff"/>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" additive="sum" values="0 -42 -3;0 -42 -3;-8 -42 -3;3 -42 -3;0 -42 -3" keyTimes="0;0.8;0.86;0.92;1" dur="4.8s" repeatCount="indefinite"/>
+    <ellipse cx="-42" cy="-2" rx="4" ry="3" fill="#ffffff"/>
+  </g>
+  <ellipse cx="-30" cy="-4" rx="4" ry="3" fill="#ffffff"/>
+  <circle cx="-40" cy="4" r="4" fill="#ffffff"/>
+  <circle cx="-28" cy="2" r="4" fill="#ffffff"/>
+  <circle cx="-40" cy="5" r="2.8" fill="#fbbf24"/>
+  <circle cx="-28" cy="3" r="2.8" fill="#fbbf24"/>
+  <circle cx="-40" cy="6" r="1.6" fill="#0d0d0d"/>
+  <circle cx="-28" cy="4" r="1.6" fill="#0d0d0d"/>
+  <circle cx="-39" cy="3" r="1" fill="#ffffff"/>
+  <circle cx="-27" cy="1" r="1" fill="#ffffff"/>
+  <ellipse cx="-34" cy="12" rx="2" ry="1.5" fill="#0d0d0d"/>
+  <path d="M -38 16 Q -34 19 -30 16" stroke="#3a3a3a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

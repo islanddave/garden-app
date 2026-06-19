@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Wood frog — Lithobates sylvaticus</title>
+<desc>Body pulses with a gentle throat breathe; amber eyes blink slowly.</desc>
+<g transform="translate(100, 100)">
+<!-- body breathe -->
+<ellipse cx="0" cy="20" rx="28" ry="20" fill="#8a6038">
+  <animate attributeName="ry" values="20;21.4;20" keyTimes="0;0.5;1" dur="1.6s" repeatCount="indefinite"/>
+</ellipse>
+<path d="M 0 -2 Q 0 20 0 38" stroke="#5a3818" stroke-width="2" fill="none" stroke-linecap="round"/>
+<ellipse cx="-22" cy="36" rx="7" ry="4" fill="#6a4020" transform="rotate(-20 -22 36)"/>
+<ellipse cx="22" cy="36" rx="7" ry="4" fill="#6a4020" transform="rotate(20 22 36)"/>
+<!-- left eye surround -->
+<ellipse cx="-12" cy="-8" rx="11" ry="11" fill="#8a6038"/>
+<!-- right eye surround -->
+<ellipse cx="12" cy="-8" rx="11" ry="11" fill="#8a6038"/>
+<!-- mask stripes -->
+<path d="M -22 -10 L -2 -10" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+<path d="M 2 -10 L 22 -10" stroke="#1a1a1a" stroke-width="4" stroke-linecap="round"/>
+<!-- left sclera -->
+<circle cx="-12" cy="-8" r="7" fill="#ffffff"/>
+<!-- right sclera -->
+<circle cx="12" cy="-8" r="7" fill="#ffffff"/>
+<!-- left iris+pupil+catchlight blink -->
+<g transform="translate(-12,-8)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.90;0.95;1" dur="4.6s" repeatCount="indefinite"/>
+  <circle cx="0" cy="1" r="5" fill="#f59e0b"/>
+  <ellipse cx="0" cy="1" rx="2" ry="4" fill="#0d0d0d"/>
+  <circle cx="2" cy="-2" r="1.6" fill="#ffffff"/>
+</g>
+<!-- right iris+pupil+catchlight blink -->
+<g transform="translate(12,-8)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.90;0.95;1" dur="4.6s" repeatCount="indefinite"/>
+  <circle cx="0" cy="1" r="5" fill="#f59e0b"/>
+  <ellipse cx="0" cy="1" rx="2" ry="4" fill="#0d0d0d"/>
+  <circle cx="2" cy="-2" r="1.6" fill="#ffffff"/>
+</g>
+<path d="M -16 6 Q 0 16 16 6" stroke="#0d0d0d" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

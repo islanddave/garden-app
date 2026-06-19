@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Downy woodpecker — Dryobates pubescens</title>
+<desc>Wings flap at the shoulder with a gentle ambient beat; white spot circles stay static.</desc>
+<g transform="translate(100, 100)">
+<!-- Left wing: wrap the 2 wing ellipses only; spot circles stay outside -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="-8 -30 6; 12 -30 6; -8 -30 6" dur="0.50s" repeatCount="indefinite"/>
+  <ellipse cx="-30" cy="6" rx="24" ry="11" fill="#3a3a3a" opacity="0.85" transform="rotate(-25 -30 6)" stroke="#1a1a1a" stroke-width="0.5"/>
+  <ellipse cx="-30" cy="8" rx="21" ry="8" fill="#1a1a1a" opacity="0.6" transform="rotate(-18 -30 8)"/>
+</g>
+<!-- Left wing spot circles (static) -->
+<circle cx="-34" cy="-1" r="1.6" fill="#ffffff"/>
+<circle cx="-40" cy="7" r="1.6" fill="#ffffff"/>
+<circle cx="-28" cy="9" r="1.6" fill="#ffffff"/>
+<circle cx="-34" cy="15" r="1.6" fill="#ffffff"/>
+<!-- Right wing: wrap the 2 wing ellipses only; spot circles stay outside -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="8 30 6; -12 30 6; 8 30 6" dur="0.50s" repeatCount="indefinite"/>
+  <ellipse cx="30" cy="6" rx="24" ry="11" fill="#3a3a3a" opacity="0.85" transform="rotate(25 30 6)" stroke="#1a1a1a" stroke-width="0.5"/>
+  <ellipse cx="30" cy="8" rx="21" ry="8" fill="#1a1a1a" opacity="0.6" transform="rotate(18 30 8)"/>
+</g>
+<!-- Right wing spot circles (static) -->
+<circle cx="34" cy="-1" r="1.6" fill="#ffffff"/>
+<circle cx="40" cy="7" r="1.6" fill="#ffffff"/>
+<circle cx="28" cy="9" r="1.6" fill="#ffffff"/>
+<circle cx="34" cy="15" r="1.6" fill="#ffffff"/>
+<!-- Body -->
+<ellipse cx="0" cy="24" rx="22" ry="24" fill="#ffffff"/>
+<line x1="-5" y1="46" x2="-5" y2="54" stroke="#3a3a3a" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="54" stroke="#3a3a3a" stroke-width="1.5" stroke-linecap="round"/>
+<!-- Head -->
+<circle cx="0" cy="-14" r="24" fill="#ffffff"/>
+<path d="M -24 -18 Q -24 -36 0 -40 Q 24 -36 24 -18 Q 13 -24 0 -24 Q -13 -24 -24 -18 Z" fill="#0d0d0d"/>
+<!-- Red crown spot -->
+<ellipse cx="0" cy="-34" rx="5" ry="3" fill="#d02020"/>
+<!-- Eyes -->
+<circle cx="-7" cy="-14" r="5" fill="#ffffff"/>
+<circle cx="7" cy="-14" r="5" fill="#ffffff"/>
+<circle cx="-7" cy="-13" r="3.6" fill="#10b981"/>
+<circle cx="7" cy="-13" r="3.6" fill="#10b981"/>
+<circle cx="-7" cy="-12" r="2.1" fill="#0d0d0d"/>
+<circle cx="7" cy="-12" r="2.1" fill="#0d0d0d"/>
+<circle cx="-6" cy="-14" r="1.1" fill="#ffffff"/>
+<circle cx="8" cy="-14" r="1.1" fill="#ffffff"/>
+<!-- Beak -->
+<g transform="rotate(-12 0 0)">
+<path d="M -2 -4 L 6 -3 Q 9 0 6 3 L -2 4 Z" fill="#1a1a1a"/>
+<line x1="-2" y1="0" x2="7" y2="0" stroke="#3a3a3a" stroke-width="0.4"/>
+<path d="M 5 -1.5 L 9 0 L 5 1.5 Z" fill="#0d0d0d"/>
+</g>
+<path d="M -3 9 Q 0 12 3 9" stroke="#3a3a3a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

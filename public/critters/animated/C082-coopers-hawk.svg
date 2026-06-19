@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Cooper's hawk — Accipiter cooperii</title>
+<desc>Fierce slow blink and a small head turn on a 4s loop.</desc>
+<g transform="translate(100, 100)">
+<!-- wings -->
+<ellipse cx="-32" cy="6" rx="28" ry="12" fill="#5a6878" opacity="0.85" transform="rotate(-25 -32 6)" stroke="#3a4858" stroke-width="0.5"/>
+<ellipse cx="-32" cy="8" rx="24" ry="9" fill="#3a4858" opacity="0.6" transform="rotate(-18 -32 8)"/>
+<ellipse cx="32" cy="6" rx="28" ry="12" fill="#5a6878" opacity="0.85" transform="rotate(25 32 6)" stroke="#3a4858" stroke-width="0.5"/>
+<ellipse cx="32" cy="8" rx="24" ry="9" fill="#3a4858" opacity="0.6" transform="rotate(18 32 8)"/>
+<!-- body -->
+<ellipse cx="0" cy="24" rx="22" ry="25" fill="#fce7d4"/>
+<path d="M -16 12 L 16 12 M -16 20 L 16 20 M -16 28 L 16 28 M -14 36 L 14 36" stroke="#c2410c" stroke-width="2" stroke-linecap="round"/>
+<!-- feet -->
+<line x1="-5" y1="46" x2="-5" y2="54" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="54" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round"/>
+<!-- head group — small head turn -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 0 -14; 6 0 -14; 0 0 -14"
+    keyTimes="0; 0.5; 1"
+    dur="4s" repeatCount="indefinite"/>
+  <circle cx="0" cy="-14" r="24" fill="#3a4858"/>
+  <!-- sclera -->
+  <circle cx="-9" cy="-14" r="6" fill="#ffffff"/>
+  <circle cx="9" cy="-14" r="6" fill="#ffffff"/>
+  <!-- left iris+pupil+catchlight — fierce blink -->
+  <g>
+    <animate attributeName="opacity" values="1;1;0;1" keyTimes="0;0.87;0.92;1" dur="4s" repeatCount="indefinite"/>
+    <circle cx="-9" cy="-13" r="4.5" fill="#fb7185"/>
+    <circle cx="-9" cy="-12" r="2.5" fill="#0d0d0d"/>
+    <circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+  </g>
+  <!-- right iris+pupil+catchlight -->
+  <g>
+    <animate attributeName="opacity" values="1;1;0;1" keyTimes="0;0.87;0.92;1" dur="4s" repeatCount="indefinite"/>
+    <circle cx="9" cy="-13" r="4.5" fill="#fb7185"/>
+    <circle cx="9" cy="-12" r="2.5" fill="#0d0d0d"/>
+    <circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+  </g>
+  <!-- eyelid overlays -->
+  <g>
+    <animate attributeName="opacity" values="0;0;1;0" keyTimes="0;0.87;0.92;1" dur="4s" repeatCount="indefinite"/>
+    <ellipse cx="-9" cy="-14" rx="6" ry="3" fill="#3a4858"/>
+  </g>
+  <g>
+    <animate attributeName="opacity" values="0;0;1;0" keyTimes="0;0.87;0.92;1" dur="4s" repeatCount="indefinite"/>
+    <ellipse cx="9" cy="-14" rx="6" ry="3" fill="#3a4858"/>
+  </g>
+  <!-- beak -->
+  <path d="M -2 -4 L 7 -3 Q 10 0 7 3 L -2 4 Z" fill="#fbbf24"/>
+  <path d="M 5 -2 L 10 0 L 5 2 Z" fill="#0d0d0d"/>
+</g>
+</g>
+</svg>

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Golden-winged warbler — Vermivora chrysoptera</title>
+<desc>Wings flap gently at the shoulder in a calm ambient loop.</desc>
+<g transform="translate(100, 100)">
+<g>
+<animateTransform attributeName="transform" type="rotate" values="-6 -8 6; 18 -8 6; -6 -8 6" dur="0.50s" repeatCount="indefinite"/>
+<ellipse cx="-30" cy="6" rx="22" ry="10" fill="#fde047" opacity="0.85" transform="rotate(-25 -30 6)" stroke="#ca8a04" stroke-width="0.5"/>
+<ellipse cx="-30" cy="8" rx="19" ry="7" fill="#ca8a04" opacity="0.55" transform="rotate(-18 -30 8)"/>
+</g>
+<g>
+<animateTransform attributeName="transform" type="rotate" values="6 8 6; -18 8 6; 6 8 6" dur="0.50s" repeatCount="indefinite"/>
+<ellipse cx="30" cy="6" rx="22" ry="10" fill="#fde047" opacity="0.85" transform="rotate(25 30 6)" stroke="#ca8a04" stroke-width="0.5"/>
+<ellipse cx="30" cy="8" rx="19" ry="7" fill="#ca8a04" opacity="0.55" transform="rotate(18 30 8)"/>
+</g>
+<ellipse cx="0" cy="22" rx="20" ry="22" fill="#d1d5db"/>
+<ellipse cx="0" cy="12" rx="20" ry="12" fill="#9ca3af"/>
+<line x1="-5" y1="42" x2="-5" y2="50" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="42" x2="5" y2="50" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="20" fill="#9ca3af"/>
+<ellipse cx="0" cy="-26" rx="14" ry="6" fill="#fde047"/>
+<ellipse cx="0" cy="-2" rx="14" ry="6" fill="#1a1a1a"/>
+<circle cx="-8" cy="-14" r="5" fill="#ffffff"/>
+<circle cx="8" cy="-14" r="5" fill="#ffffff"/>
+<circle cx="-8" cy="-13" r="3.6" fill="#fb923c"/>
+<circle cx="8" cy="-13" r="3.6" fill="#fb923c"/>
+<circle cx="-8" cy="-12" r="2" fill="#0d0d0d"/>
+<circle cx="8" cy="-12" r="2" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.3" fill="#ffffff"/>
+<circle cx="9" cy="-15" r="1.3" fill="#ffffff"/>
+<path d="M -2 4 L 4 5 Q 5 6 4 7 L -2 7 Z" fill="#2a2a2a"/>
+</g>
+</svg>

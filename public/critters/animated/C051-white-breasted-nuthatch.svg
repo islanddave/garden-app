@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>White-breasted nuthatch — Sitta carolinensis</title>
+<desc>Wings flap at the shoulder with a gentle ambient beat.</desc>
+<g transform="translate(100, 100)">
+<!-- Left wing: 2 ellipses at (-30, 6/8) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="-8 -30 6; 12 -30 6; -8 -30 6" dur="0.50s" repeatCount="indefinite"/>
+  <ellipse cx="-30" cy="6" rx="24" ry="11" fill="#7a96b8" opacity="0.85" transform="rotate(-22 -30 6)" stroke="#3a5878" stroke-width="0.5"/>
+  <ellipse cx="-30" cy="8" rx="21" ry="8" fill="#5a7eba" opacity="0.6" transform="rotate(-15 -30 8)"/>
+</g>
+<!-- Right wing: 2 ellipses at (30, 6/8) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="8 30 6; -12 30 6; 8 30 6" dur="0.50s" repeatCount="indefinite"/>
+  <ellipse cx="30" cy="6" rx="24" ry="11" fill="#7a96b8" opacity="0.85" transform="rotate(22 30 6)" stroke="#3a5878" stroke-width="0.5"/>
+  <ellipse cx="30" cy="8" rx="21" ry="8" fill="#5a7eba" opacity="0.6" transform="rotate(15 30 8)"/>
+</g>
+<!-- Body -->
+<ellipse cx="0" cy="24" rx="23" ry="25" fill="#ffffff"/>
+<ellipse cx="0" cy="14" rx="23" ry="14" fill="#5a7eba"/>
+<line x1="-5" y1="46" x2="-5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<!-- Head -->
+<circle cx="0" cy="-14" r="25" fill="#ffffff"/>
+<path d="M -25 -20 Q -25 -38 0 -42 Q 25 -38 25 -20 L 25 -12 Q 0 -30 -25 -12 Z" fill="#0d0d0d"/>
+<!-- Eyes -->
+<circle cx="-7" cy="-14" r="4.5" fill="#ffffff"/>
+<circle cx="7" cy="-14" r="4.5" fill="#ffffff"/>
+<circle cx="-7" cy="-13" r="3" fill="#38bdf8"/>
+<circle cx="7" cy="-13" r="3" fill="#38bdf8"/>
+<circle cx="-7" cy="-11" r="1.7" fill="#0d0d0d"/>
+<circle cx="7" cy="-11" r="1.7" fill="#0d0d0d"/>
+<circle cx="-6" cy="-15" r="1.1" fill="#ffffff"/>
+<circle cx="8" cy="-15" r="1.1" fill="#ffffff"/>
+<circle cx="-8" cy="-12" r="0.5" fill="#ffffff"/>
+<circle cx="6" cy="-12" r="0.5" fill="#ffffff"/>
+<!-- Beak -->
+<g transform="rotate(35 0 0)">
+<path d="M -1 -1.8 L 22 -1 L 24 0 L 22 1 L -1 1.8 Z" fill="#2a2a2a"/>
+<line x1="-1" y1="0" x2="22" y2="0" stroke="#0d0d0d" stroke-width="0.4"/>
+</g>
+<path d="M -3 9 Q 0 12 3 9" stroke="#0d0d0d" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

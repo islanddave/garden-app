@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>American toad — Anaxyrus americanus</title>
+<desc>Belly and head pulse with a gentle toad breathing throat puff; eyes blink slowly.</desc>
+<g transform="translate(100, 100)">
+<!-- body breathe — animate ry -->
+<ellipse cx="0" cy="22" rx="30" ry="20" fill="#a98e6a">
+  <animate attributeName="ry" values="20;21.4;20" keyTimes="0;0.5;1" dur="1.6s" repeatCount="indefinite"/>
+</ellipse>
+<circle cx="-16" cy="16" r="1.6" fill="#8a7050"/>
+<circle cx="10" cy="20" r="1.6" fill="#8a7050"/>
+<circle cx="-8" cy="26" r="1.6" fill="#8a7050"/>
+<circle cx="16" cy="30" r="1.6" fill="#8a7050"/>
+<circle cx="-22" cy="24" r="1.6" fill="#8a7050"/>
+<circle cx="2" cy="32" r="1.6" fill="#8a7050"/>
+<circle cx="-12" cy="34" r="1.6" fill="#8a7050"/>
+<circle cx="18" cy="14" r="1.6" fill="#8a7050"/>
+<ellipse cx="-24" cy="36" rx="6" ry="3" fill="#8a7050" transform="rotate(-15 -24 36)"/>
+<ellipse cx="24" cy="36" rx="6" ry="3" fill="#8a7050" transform="rotate(15 24 36)"/>
+<!-- head with gentle throat-puff on body sync -->
+<ellipse cx="0" cy="-6" rx="24" ry="16" fill="#a98e6a">
+  <animate attributeName="ry" values="16;17.2;16" keyTimes="0;0.5;1" dur="1.6s" repeatCount="indefinite"/>
+</ellipse>
+<ellipse cx="-18" cy="-14" rx="5" ry="3.5" fill="#7a6040"/>
+<ellipse cx="18" cy="-14" rx="5" ry="3.5" fill="#7a6040"/>
+<!-- left sclera -->
+<circle cx="-9" cy="-8" r="6" fill="#ffffff"/>
+<!-- right sclera -->
+<circle cx="9" cy="-8" r="6" fill="#ffffff"/>
+<!-- left iris+pupil+catchlight blink -->
+<g transform="translate(-9,-8)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.88;0.93;1" dur="4.6s" repeatCount="indefinite"/>
+  <circle cx="0" cy="1" r="4.5" fill="#ea580c"/>
+  <ellipse cx="0" cy="1" rx="4" ry="1.5" fill="#0d0d0d"/>
+  <circle cx="1" cy="-2" r="1.5" fill="#ffffff"/>
+</g>
+<!-- right iris+pupil+catchlight blink -->
+<g transform="translate(9,-8)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.88;0.93;1" dur="4.6s" repeatCount="indefinite"/>
+  <circle cx="0" cy="1" r="4.5" fill="#ea580c"/>
+  <ellipse cx="0" cy="1" rx="4" ry="1.5" fill="#0d0d0d"/>
+  <circle cx="1" cy="-2" r="1.5" fill="#ffffff"/>
+</g>
+<path d="M -12 2 Q 0 8 12 2" stroke="#5a4030" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

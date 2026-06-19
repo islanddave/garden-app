@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Peregrine falcon — Falco peregrinus</title>
+<desc>Fierce slow blink and small head turn on a 4.2s loop.</desc>
+<g transform="translate(100, 100)">
+<!-- wings -->
+<ellipse cx="-32" cy="6" rx="28" ry="12" fill="#5a7090" opacity="0.85" transform="rotate(-25 -32 6)" stroke="#3a4868" stroke-width="0.5"/>
+<ellipse cx="-32" cy="8" rx="24" ry="9" fill="#3a4868" opacity="0.6" transform="rotate(-18 -32 8)"/>
+<ellipse cx="32" cy="6" rx="28" ry="12" fill="#5a7090" opacity="0.85" transform="rotate(25 32 6)" stroke="#3a4868" stroke-width="0.5"/>
+<ellipse cx="32" cy="8" rx="24" ry="9" fill="#3a4868" opacity="0.6" transform="rotate(18 32 8)"/>
+<!-- body -->
+<ellipse cx="0" cy="24" rx="22" ry="25" fill="#f4ead6"/>
+<line x1="-14" y1="14" x2="14" y2="14" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/>
+<line x1="-16" y1="22" x2="16" y2="22" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/>
+<line x1="-14" y1="30" x2="14" y2="30" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/>
+<line x1="-12" y1="38" x2="12" y2="38" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/>
+<!-- feet -->
+<line x1="-5" y1="46" x2="-5" y2="54" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="54" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round"/>
+<!-- head group — small head turn -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 0 -14; -6 0 -14; 0 0 -14"
+    keyTimes="0; 0.5; 1"
+    dur="4.2s" repeatCount="indefinite"/>
+  <circle cx="0" cy="-14" r="24" fill="#3a4868"/>
+  <!-- moustache marks -->
+  <path d="M -10 -10 L -6 0" stroke="#0d0d0d" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 10 -10 L 6 0" stroke="#0d0d0d" stroke-width="4" stroke-linecap="round"/>
+  <!-- sclera -->
+  <circle cx="-8" cy="-14" r="5.5" fill="#ffffff"/>
+  <circle cx="8" cy="-14" r="5.5" fill="#ffffff"/>
+  <!-- left iris+pupil+catchlight — fierce blink -->
+  <g>
+    <animate attributeName="opacity" values="1;1;0;1" keyTimes="0;0.87;0.92;1" dur="4.2s" repeatCount="indefinite"/>
+    <circle cx="-8" cy="-13" r="4" fill="#0ea5e9"/>
+    <circle cx="-8" cy="-12" r="2.3" fill="#0d0d0d"/>
+    <circle cx="-7" cy="-15" r="1.4" fill="#ffffff"/>
+  </g>
+  <!-- right iris+pupil+catchlight -->
+  <g>
+    <animate attributeName="opacity" values="1;1;0;1" keyTimes="0;0.87;0.92;1" dur="4.2s" repeatCount="indefinite"/>
+    <circle cx="8" cy="-13" r="4" fill="#0ea5e9"/>
+    <circle cx="8" cy="-12" r="2.3" fill="#0d0d0d"/>
+    <circle cx="10" cy="-15" r="1.4" fill="#ffffff"/>
+  </g>
+  <!-- eyelid overlays -->
+  <g>
+    <animate attributeName="opacity" values="0;0;1;0" keyTimes="0;0.87;0.92;1" dur="4.2s" repeatCount="indefinite"/>
+    <ellipse cx="-8" cy="-14" rx="5.5" ry="2.8" fill="#3a4868"/>
+  </g>
+  <g>
+    <animate attributeName="opacity" values="0;0;1;0" keyTimes="0;0.87;0.92;1" dur="4.2s" repeatCount="indefinite"/>
+    <ellipse cx="8" cy="-14" rx="5.5" ry="2.8" fill="#3a4868"/>
+  </g>
+  <!-- beak -->
+  <path d="M -2 -4 L 6 -3 Q 8 0 6 3 L -2 4 Z" fill="#fbbf24"/>
+  <path d="M 4 -2 L 8 0 L 4 2 Z" fill="#0d0d0d"/>
+</g>
+</g>
+</svg>

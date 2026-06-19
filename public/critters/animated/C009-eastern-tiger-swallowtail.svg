@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Eastern tiger swallowtail — Papilio glaucus</title>
+<desc>Eastern tiger swallowtail wings flutter in a quick, lively beat while tiger stripes stay crisp.</desc>
+<g transform="translate(-366, -150)">
+  <g transform="translate(466 264)">
+    <animateTransform attributeName="transform" type="scale" additive="sum" values="1 1; 0.25 1; 1 1" dur="0.7s" repeatCount="indefinite"/>
+    <path d="M 0 -12 Q -28 -42 -44 -26 Q -48 -10 -30 -2 Q -14 -4 0 -8 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="2"/>
+    <path d="M 0 -8 Q -18 4 -30 18 Q -28 30 -12 26 Q 0 18 0 4 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="2"/>
+    <path d="M 0 -12 Q 28 -42 44 -26 Q 48 -10 30 -2 Q 14 -4 0 -8 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="2"/>
+    <path d="M 0 -8 Q 18 4 30 18 Q 28 30 12 26 Q 0 18 0 4 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="2"/>
+    <path d="M -22 26 L -26 40 L -14 30 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="1.5"/>
+    <path d="M 22 26 L 26 40 L 14 30 Z" fill="#f4c430" stroke="#1a1a1a" stroke-width="1.5"/>
+    <line x1="-34" y1="-30" x2="-34" y2="-8" stroke="#1a1a1a" stroke-width="2.5"/>
+    <line x1="-24" y1="-34" x2="-24" y2="-6" stroke="#1a1a1a" stroke-width="2.5"/>
+    <line x1="-14" y1="-32" x2="-14" y2="-6" stroke="#1a1a1a" stroke-width="2.5"/>
+    <line x1="14" y1="-32" x2="14" y2="-6" stroke="#1a1a1a" stroke-width="2.5"/>
+    <line x1="24" y1="-34" x2="24" y2="-6" stroke="#1a1a1a" stroke-width="2.5"/>
+    <line x1="34" y1="-30" x2="34" y2="-8" stroke="#1a1a1a" stroke-width="2.5"/>
+    <line x1="-18" y1="6" x2="-20" y2="22" stroke="#1a1a1a" stroke-width="2"/>
+    <line x1="18" y1="6" x2="20" y2="22" stroke="#1a1a1a" stroke-width="2"/>
+    <circle cx="-16" cy="18" r="3" fill="#0077b6"/>
+    <circle cx="16" cy="18" r="3" fill="#0077b6"/>
+  </g>
+  <ellipse cx="466" cy="264" rx="5" ry="20" fill="#1a1a1a"/>
+  <circle cx="466" cy="240" r="14" fill="#1a1a1a"/>
+  <circle cx="460" cy="238" r="4" fill="#ffffff"/>
+  <circle cx="472" cy="238" r="4" fill="#ffffff"/>
+  <circle cx="460" cy="239" r="2.2" fill="#1a1a1a"/>
+  <circle cx="472" cy="239" r="2.2" fill="#1a1a1a"/>
+  <circle cx="461" cy="238" r="0.9" fill="#ffffff"/>
+  <circle cx="473" cy="238" r="0.9" fill="#ffffff"/>
+  <path d="M 462 245 Q 466 248 470 245" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+  <path d="M 460 228 Q 452 220 450 210 Q 452 207 454 209" stroke="#1a1a1a" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <path d="M 472 228 Q 480 220 482 210 Q 480 207 478 209" stroke="#1a1a1a" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

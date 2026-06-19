@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Wood turtle — Glyptemys insculpta</title>
+<desc>Head slowly bobs in and out along the neck axis; eyes blink lazily.</desc>
+<g transform="translate(100, 100)">
+<!-- shell (static) -->
+<ellipse cx="0" cy="14" rx="32" ry="22" fill="#5a3818"/>
+<ellipse cx="-12" cy="6" rx="6" ry="4" fill="#a87238"/>
+<ellipse cx="6" cy="2" rx="6" ry="4" fill="#a87238"/>
+<ellipse cx="18" cy="8" rx="6" ry="4" fill="#a87238"/>
+<ellipse cx="-6" cy="16" rx="6" ry="4" fill="#a87238"/>
+<ellipse cx="14" cy="22" rx="6" ry="4" fill="#a87238"/>
+<ellipse cx="-18" cy="20" rx="6" ry="4" fill="#a87238"/>
+<ellipse cx="0" cy="28" rx="6" ry="4" fill="#a87238"/>
+<!-- tail (static) -->
+<path d="M 30 14 Q 40 8 40 18 Q 36 26 28 22 Z" fill="#5a3818"/>
+<!-- legs (static) -->
+<ellipse cx="-22" cy="38" rx="6" ry="4" fill="#3a2010"/>
+<ellipse cx="22" cy="38" rx="6" ry="4" fill="#3a2010"/>
+<!-- head group — slow bob in/out along neck direction -->
+<g>
+  <animateTransform attributeName="transform" type="translate"
+    values="0 0; -2 -1.5; 0 0" keyTimes="0;0.5;1"
+    dur="3.5s" repeatCount="indefinite"/>
+  <ellipse cx="-26" cy="-8" rx="20" ry="14" fill="#7a5028"/>
+  <!-- beak -->
+  <path d="M -42 -2 L -28 0 L -28 2 L -42 4 Z" fill="#3a2818"/>
+  <!-- left sclera -->
+  <circle cx="-34" cy="-10" r="4" fill="#ffffff"/>
+  <!-- right sclera -->
+  <circle cx="-22" cy="-12" r="4" fill="#ffffff"/>
+  <!-- left iris+pupil+catchlight blink -->
+  <g transform="translate(-34,-10)">
+    <animateTransform attributeName="transform" type="scale" additive="sum"
+      values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.88;0.93;1" dur="5.8s" repeatCount="indefinite"/>
+    <circle cx="0" cy="1" r="2.8" fill="#14b8a6"/>
+    <circle cx="0" cy="2" r="1.6" fill="#0d0d0d"/>
+    <circle cx="1" cy="-1" r="1" fill="#ffffff"/>
+  </g>
+  <!-- right iris+pupil+catchlight blink -->
+  <g transform="translate(-22,-12)">
+    <animateTransform attributeName="transform" type="scale" additive="sum"
+      values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.88;0.93;1" dur="5.8s" repeatCount="indefinite"/>
+    <circle cx="0" cy="1" r="2.8" fill="#14b8a6"/>
+    <circle cx="0" cy="2" r="1.6" fill="#0d0d0d"/>
+    <circle cx="1" cy="-1" r="1" fill="#ffffff"/>
+  </g>
+</g>
+</g>
+</svg>

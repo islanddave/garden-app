@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Dark-eyed junco — Junco hyemalis</title>
+<desc>Wings flap gently at the shoulder with a quiet ambient beat.</desc>
+<g transform="translate(100, 100)">
+<!-- Left wing: 2 ellipses at (-30, 6/8) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="-7 -30 6; 11 -30 6; -7 -30 6" dur="0.50s" repeatCount="indefinite"/>
+  <ellipse cx="-30" cy="6" rx="22" ry="10" fill="#e8f0f5" opacity="0.6" transform="rotate(-25 -30 6)" stroke="#9aa5ab" stroke-width="0.5"/>
+  <ellipse cx="-30" cy="8" rx="19" ry="7" fill="#5a6068" opacity="0.4" transform="rotate(-18 -30 8)"/>
+</g>
+<!-- Right wing: 2 ellipses at (30, 6/8) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="7 30 6; -11 30 6; 7 30 6" dur="0.50s" repeatCount="indefinite"/>
+  <ellipse cx="30" cy="6" rx="22" ry="10" fill="#e8f0f5" opacity="0.6" transform="rotate(25 30 6)" stroke="#9aa5ab" stroke-width="0.5"/>
+  <ellipse cx="30" cy="8" rx="19" ry="7" fill="#5a6068" opacity="0.4" transform="rotate(18 30 8)"/>
+</g>
+<!-- Body -->
+<ellipse cx="0" cy="24" rx="22" ry="25" fill="#ffffff"/>
+<ellipse cx="0" cy="14" rx="22" ry="14" fill="#4a4a52"/>
+<line x1="-5" y1="46" x2="-5" y2="54" stroke="#f4c0a0" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="54" stroke="#f4c0a0" stroke-width="1.6" stroke-linecap="round"/>
+<!-- Head -->
+<circle cx="0" cy="-14" r="22" fill="#4a4a52"/>
+<!-- Eyes -->
+<circle cx="-8" cy="-14" r="5.5" fill="#ffffff"/>
+<circle cx="8" cy="-14" r="5.5" fill="#ffffff"/>
+<circle cx="-8" cy="-13" r="4" fill="#f59e0b"/>
+<circle cx="8" cy="-13" r="4" fill="#f59e0b"/>
+<circle cx="-8" cy="-12" r="2.3" fill="#0d0d0d"/>
+<circle cx="8" cy="-12" r="2.3" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.4" fill="#ffffff"/>
+<circle cx="10" cy="-15" r="1.4" fill="#ffffff"/>
+<!-- Beak -->
+<path d="M -3 -3 L 4 -2 Q 6 0 4 2 L -3 3 Z" fill="#f4c0a0"/>
+<path d="M -4 8 Q 0 11 4 8" stroke="#ffffff" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

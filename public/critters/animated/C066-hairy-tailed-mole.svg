@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Hairy-tailed mole — Parascalops breweri</title>
+<desc>Subtle nose twitch and gentle body breathe — mole recipe, no visible ears.</desc>
+<g transform="translate(100, 100)">
+<!-- body breathe: scale about body center (0,20) -->
+<g transform="translate(0,20)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1.025 1.025;1 1" keyTimes="0;0.5;1"
+    dur="3.6s" repeatCount="indefinite"/>
+  <g transform="translate(0,-20)">
+    <ellipse cx="0" cy="20" rx="24" ry="20" fill="#3a3030"/>
+    <ellipse cx="0" cy="14" rx="22" ry="12" fill="#5a4848" opacity="0.5"/>
+    <path d="M -26 18 L -34 18 Q -38 22 -34 26 L -26 26 Z" fill="#f0d8c0"/>
+    <path d="M 26 18 L 34 18 Q 38 22 34 26 L 26 26 Z" fill="#f0d8c0"/>
+    <path d="M -32 18 L -34 16 M -32 22 L -34 22 M -32 26 L -34 28" stroke="#5a4030" stroke-width="0.6"/>
+    <path d="M 32 18 L 34 16 M 32 22 L 34 22 M 32 26 L 34 28" stroke="#5a4030" stroke-width="0.6"/>
+    <line x1="-5" y1="38" x2="-5" y2="44" stroke="#f4b6b6" stroke-width="1.4" stroke-linecap="round"/>
+    <line x1="5" y1="38" x2="5" y2="44" stroke="#f4b6b6" stroke-width="1.4" stroke-linecap="round"/>
+  </g>
+</g>
+<!-- head -->
+<circle cx="0" cy="-10" r="20" fill="#3a3030"/>
+<!-- nose twitch — subtle rotate on nose/snout area -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 0 2;0 0 2;-3 0 2;3 0 2;0 0 2"
+    keyTimes="0;0.7;0.78;0.86;1"
+    dur="4.0s" repeatCount="indefinite"/>
+  <ellipse cx="0" cy="2" rx="6" ry="4" fill="#f4b6b6"/>
+  <circle cx="0" cy="0" r="2" fill="#1a1a1a"/>
+</g>
+<!-- eyes -->
+<circle cx="-6" cy="-12" r="3.5" fill="#ffffff"/>
+<circle cx="6" cy="-12" r="3.5" fill="#ffffff"/>
+<circle cx="-6" cy="-11" r="2.3" fill="#fda4af"/>
+<circle cx="6" cy="-11" r="2.3" fill="#fda4af"/>
+<circle cx="-6" cy="-10" r="1.3" fill="#0d0d0d"/>
+<circle cx="6" cy="-10" r="1.3" fill="#0d0d0d"/>
+<circle cx="-5" cy="-13" r="0.8" fill="#ffffff"/>
+<circle cx="7" cy="-13" r="0.8" fill="#ffffff"/>
+<path d="M -3 6 Q 0 8 3 6" stroke="#1a1a1a" stroke-width="1" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

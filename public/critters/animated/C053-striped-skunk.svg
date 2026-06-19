@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Striped skunk — Mephitis mephitis</title>
+<desc>Gentle body breathe, ear twitches, and slow tail sway on this distinctive skunk.</desc>
+<g transform="translate(100, 100)">
+<!-- tail sway — pivot at tail base (~26,14) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 26 14;6 26 14;0 26 14;-5 26 14;0 26 14"
+    keyTimes="0;0.25;0.5;0.75;1"
+    dur="5.0s" repeatCount="indefinite"/>
+  <path d="M 26 14 Q 42 -8 38 22 Q 32 40 22 36 Q 28 22 26 14 Z" fill="#0d0d0d"/>
+  <path d="M 26 14 Q 38 -2 34 18" stroke="#ffffff" stroke-width="2" fill="none" stroke-linecap="round"/>
+</g>
+<!-- body breathe: scale about body center (0,24) -->
+<g transform="translate(0,24)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1.025 1.025;1 1" keyTimes="0;0.5;1"
+    dur="3.8s" repeatCount="indefinite"/>
+  <g transform="translate(0,-24)">
+    <ellipse cx="0" cy="24" rx="22" ry="26" fill="#0d0d0d"/>
+    <path d="M -10 -8 Q -12 24 -10 46" stroke="#ffffff" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    <path d="M 10 -8 Q 12 24 10 46" stroke="#ffffff" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    <line x1="-5" y1="48" x2="-5" y2="54" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="5" y1="48" x2="5" y2="54" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round"/>
+  </g>
+</g>
+<!-- head -->
+<circle cx="0" cy="-14" r="20" fill="#0d0d0d"/>
+<path d="M 0 -34 Q -2 -22 -2 -16" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round"/>
+<!-- left ear twitch — pivot at ear base (-14,-22) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 -14 -22;0 -14 -22;-8 -14 -22;3 -14 -22;0 -14 -22"
+    keyTimes="0;0.81;0.87;0.94;1"
+    dur="4.3s" repeatCount="indefinite"/>
+  <ellipse cx="-14" cy="-28" rx="4" ry="5" fill="#0d0d0d"/>
+</g>
+<!-- right ear twitch — pivot at ear base (14,-22), offset phase -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 14 -22;0 14 -22;8 14 -22;-3 14 -22;0 14 -22"
+    keyTimes="0;0.40;0.46;0.53;1"
+    dur="5.4s" repeatCount="indefinite"/>
+  <ellipse cx="14" cy="-28" rx="4" ry="5" fill="#0d0d0d"/>
+</g>
+<!-- eyes -->
+<circle cx="-8" cy="-14" r="5.5" fill="#ffffff"/>
+<circle cx="8" cy="-14" r="5.5" fill="#ffffff"/>
+<circle cx="-8" cy="-13" r="4" fill="#6ee7b7"/>
+<circle cx="8" cy="-13" r="4" fill="#6ee7b7"/>
+<circle cx="-8" cy="-12" r="2.3" fill="#0d0d0d"/>
+<circle cx="8" cy="-12" r="2.3" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.5" fill="#ffffff"/>
+<circle cx="9" cy="-15" r="1.5" fill="#ffffff"/>
+<circle cx="-9" cy="-11" r="0.8" fill="#ffffff"/>
+<circle cx="7" cy="-11" r="0.8" fill="#ffffff"/>
+<ellipse cx="0" cy="0" rx="2.5" ry="1.8" fill="#e85d6d"/>
+<path d="M -3 5 Q 0 8 3 5" stroke="#5a5a5a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

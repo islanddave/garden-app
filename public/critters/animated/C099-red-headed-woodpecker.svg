@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Red-headed woodpecker — Melanerpes erythrocephalus</title>
+<desc>Wings flap gently at the shoulder; bill stays static.</desc>
+<g transform="translate(100, 100)">
+<animateTransform attributeName="transform" type="translate" additive="sum"
+   values="0 0; 0 -2; 0 0" dur="3.4s" repeatCount="indefinite"/>
+<!-- left wing (woodpecker wings: outer dark + inner white patch) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+     values="-6 -32 6; 14 -32 6; -6 -32 6" dur="0.46s" repeatCount="indefinite"/>
+  <ellipse cx="-32" cy="6" rx="26" ry="11" fill="#1a1a1a" opacity="0.9" transform="rotate(-25 -32 6)" stroke="#0d0d0d" stroke-width="0.5"/>
+  <ellipse cx="-32" cy="8" rx="23" ry="8" fill="#ffffff" opacity="0.8" transform="rotate(-18 -32 8)"/>
+</g>
+<!-- right wing -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+     values="6 32 6; -14 32 6; 6 32 6" dur="0.46s" repeatCount="indefinite"/>
+  <ellipse cx="32" cy="6" rx="26" ry="11" fill="#1a1a1a" opacity="0.9" transform="rotate(25 32 6)" stroke="#0d0d0d" stroke-width="0.5"/>
+  <ellipse cx="32" cy="8" rx="23" ry="8" fill="#ffffff" opacity="0.8" transform="rotate(18 32 8)"/>
+</g>
+<ellipse cx="0" cy="24" rx="22" ry="25" fill="#ffffff"/>
+<ellipse cx="0" cy="14" rx="22" ry="14" fill="#1a1a1a"/>
+<line x1="-5" y1="46" x2="-5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="46" x2="5" y2="54" stroke="#3a3a3a" stroke-width="1.6" stroke-linecap="round"/>
+<circle cx="0" cy="-14" r="22" fill="#dc2626"/>
+<circle cx="-9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="9" cy="-14" r="6" fill="#ffffff"/>
+<circle cx="-9" cy="-13" r="4.5" fill="#10b981"/>
+<circle cx="9" cy="-13" r="4.5" fill="#10b981"/>
+<circle cx="-9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="9" cy="-12" r="2.5" fill="#0d0d0d"/>
+<circle cx="-7" cy="-15" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-15" r="1.6" fill="#ffffff"/>
+<!-- bill group — static -->
+<g transform="rotate(-5 0 0)">
+  <path d="M -2 -5 L 14 -3 L 18 0 L 14 3 L -2 5 Z" fill="#1a1a1a"/>
+  <line x1="-2" y1="0" x2="16" y2="0" stroke="#3a3a3a" stroke-width="0.5"/>
+  <path d="M 14 -2 L 18 0 L 14 2 Z" fill="#0d0d0d"/>
+</g>
+</g>
+</svg>

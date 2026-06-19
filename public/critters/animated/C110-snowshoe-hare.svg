@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Snowshoe hare — Lepus americanus</title>
+<desc>Gentle body breathe with prominent long-ear twitches — ears are the star on this hare.</desc>
+<g transform="translate(100, 100)">
+<!-- large snowshoe feet static -->
+<ellipse cx="-22" cy="44" rx="12" ry="6" fill="#ffffff" stroke="#d1d5db" stroke-width="0.5"/>
+<ellipse cx="22" cy="44" rx="12" ry="6" fill="#ffffff" stroke="#d1d5db" stroke-width="0.5"/>
+<!-- body breathe: scale about body center (0,22) -->
+<g transform="translate(0,22)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1.025 1.025;1 1" keyTimes="0;0.5;1"
+    dur="3.5s" repeatCount="indefinite"/>
+  <g transform="translate(0,-22)">
+    <ellipse cx="0" cy="22" rx="24" ry="20" fill="#ffffff"/>
+    <ellipse cx="0" cy="26" rx="14" ry="10" fill="#f4ead6"/>
+    <circle cx="22" cy="34" r="5" fill="#ffffff"/>
+  </g>
+</g>
+<!-- head -->
+<circle cx="0" cy="-12" r="22" fill="#ffffff"/>
+<!-- left long ear twitch — pivot at ear base (-12,-18); TALL ears, very prominent -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 -12 -18;0 -12 -18;-10 -12 -18;4 -12 -18;0 -12 -18"
+    keyTimes="0;0.76;0.82;0.89;1"
+    dur="3.8s" repeatCount="indefinite"/>
+  <ellipse cx="-12" cy="-30" rx="6" ry="18" fill="#ffffff" stroke="#d1d5db" stroke-width="0.5" transform="rotate(-10 -12 -30)"/>
+  <path d="M -14 -42 L -12 -46" stroke="#0d0d0d" stroke-width="2" stroke-linecap="round"/>
+</g>
+<!-- right long ear twitch — pivot at ear base (12,-18), offset phase -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 12 -18;0 12 -18;10 12 -18;-4 12 -18;0 12 -18"
+    keyTimes="0;0.35;0.41;0.48;1"
+    dur="4.9s" repeatCount="indefinite"/>
+  <ellipse cx="12" cy="-30" rx="6" ry="18" fill="#ffffff" stroke="#d1d5db" stroke-width="0.5" transform="rotate(10 12 -30)"/>
+  <path d="M 14 -42 L 12 -46" stroke="#0d0d0d" stroke-width="2" stroke-linecap="round"/>
+</g>
+<!-- eyes -->
+<circle cx="-8" cy="-12" r="5.5" fill="#ffffff"/>
+<circle cx="8" cy="-12" r="5.5" fill="#ffffff"/>
+<circle cx="-8" cy="-11" r="4" fill="#fb923c"/>
+<circle cx="8" cy="-11" r="4" fill="#fb923c"/>
+<circle cx="-8" cy="-10" r="2.3" fill="#0d0d0d"/>
+<circle cx="8" cy="-10" r="2.3" fill="#0d0d0d"/>
+<circle cx="-7" cy="-13" r="1.4" fill="#ffffff"/>
+<circle cx="10" cy="-13" r="1.4" fill="#ffffff"/>
+<path d="M -2 0 L 2 0 L 0 4 Z" fill="#f4b6b6"/>
+<path d="M 0 4 Q -2 6 -3 7 M 0 4 Q 2 6 3 7" stroke="#1a1a1a" stroke-width="0.8" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

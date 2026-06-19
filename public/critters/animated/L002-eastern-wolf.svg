@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Eastern Wolf — Canis lycaon (Legacy)</title>
+<desc>Wolf breathes steadily with a slow chest rise and twitches its left ear periodically.</desc>
+<g transform="translate(100, 100)">
+  <animateTransform attributeName="transform" type="scale" additive="sum" values="1 1;1.02 1.02;1 1" dur="3.7s" repeatCount="indefinite"/>
+  <ellipse cx="0" cy="40" rx="38" ry="22" fill="#7a7066"/>
+  <circle cx="0" cy="-5" r="44" fill="#8a8073"/>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" additive="sum" values="0 -32 -34;0 -32 -34;-8 -32 -34;3 -32 -34;0 -32 -34" keyTimes="0;0.8;0.86;0.92;1" dur="4.3s" repeatCount="indefinite"/>
+    <path d="M -34,-32 L -40,-52 L -22,-40 Z" fill="#7a7066"/>
+  </g>
+  <path d="M 34,-32 L 40,-52 L 22,-40 Z" fill="#7a7066"/>
+  <ellipse cx="0" cy="12" rx="22" ry="16" fill="#d9d2c5"/>
+  <circle cx="-15" cy="-5" r="9" fill="#fff"/>
+  <circle cx="15" cy="-5" r="9" fill="#fff"/>
+  <circle cx="-14" cy="-4" r="6" fill="#d4a82f"/>
+  <circle cx="16" cy="-4" r="6" fill="#d4a82f"/>
+  <circle cx="-13" cy="-5" r="3" fill="#000"/>
+  <circle cx="17" cy="-5" r="3" fill="#000"/>
+  <circle cx="-11" cy="-7" r="1.5" fill="#fff"/>
+  <circle cx="19" cy="-7" r="1.5" fill="#fff"/>
+  <ellipse cx="0" cy="10" rx="5" ry="3" fill="#000"/>
+  <path d="M -8,18 Q 0,25 8,18" stroke="#000" stroke-width="2" fill="none"/>
+</g>
+</svg>

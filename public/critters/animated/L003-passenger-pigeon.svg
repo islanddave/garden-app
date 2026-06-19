@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Passenger Pigeon — Ectopistes migratorius (Legacy)</title>
+<desc>Wings flap gently at the shoulder in a calm ambient loop.</desc>
+<g transform="translate(100, 100)">
+<g>
+<animateTransform attributeName="transform" type="rotate" values="-8 -12 0; 14 -12 0; -8 -12 0" dur="0.52s" repeatCount="indefinite"/>
+<ellipse cx="-40" cy="0" rx="28" ry="18" fill="#6f7d8c" opacity="0.5"/>
+</g>
+<g>
+<animateTransform attributeName="transform" type="rotate" values="8 12 0; -14 12 0; 8 12 0" dur="0.52s" repeatCount="indefinite"/>
+<ellipse cx="40" cy="0" rx="28" ry="18" fill="#6f7d8c" opacity="0.5"/>
+</g>
+<ellipse cx="0" cy="20" rx="30" ry="36" fill="#c87d6c"/>
+<ellipse cx="0" cy="40" rx="28" ry="22" fill="#6f7d8c"/>
+<circle cx="0" cy="-20" r="36" fill="#5a6878"/>
+<circle cx="-13" cy="-22" r="8" fill="#fff"/>
+<circle cx="13" cy="-22" r="8" fill="#fff"/>
+<circle cx="-12" cy="-21" r="5" fill="#c84a4a"/>
+<circle cx="14" cy="-21" r="5" fill="#c84a4a"/>
+<circle cx="-11" cy="-22" r="2.5" fill="#000"/>
+<circle cx="15" cy="-22" r="2.5" fill="#000"/>
+<circle cx="-9" cy="-24" r="1.2" fill="#fff"/>
+<circle cx="17" cy="-24" r="1.2" fill="#fff"/>
+<path d="M -3,-8 L 0,-2 L 3,-8 Z" fill="#3a3530"/>
+<path d="M -6,3 Q 0,7 6,3" stroke="#000" stroke-width="1.5" fill="none"/>
+</g>
+</svg>

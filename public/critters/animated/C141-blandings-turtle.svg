@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Blanding's turtle — Emydoidea blandingii</title>
+<desc>Head slowly bobs in and out along the neck axis; eyes blink lazily.</desc>
+<g transform="translate(100, 100)">
+<!-- shell outer (static) -->
+<ellipse cx="0" cy="14" rx="32" ry="24" fill="#2a3818"/>
+<!-- shell inner domed (static) -->
+<ellipse cx="0" cy="6" rx="28" ry="18" fill="#4a5828"/>
+<!-- shell spots (static) -->
+<circle cx="-14" cy="6" r="2" fill="#fde047"/>
+<circle cx="-2" cy="2" r="2" fill="#fde047"/>
+<circle cx="10" cy="6" r="2" fill="#fde047"/>
+<circle cx="18" cy="14" r="2" fill="#fde047"/>
+<circle cx="-18" cy="14" r="2" fill="#fde047"/>
+<circle cx="6" cy="18" r="2" fill="#fde047"/>
+<!-- legs (static) -->
+<ellipse cx="-22" cy="38" rx="6" ry="4" fill="#2a3818"/>
+<ellipse cx="22" cy="38" rx="6" ry="4" fill="#2a3818"/>
+<!-- head group — slow bob -->
+<g>
+  <animateTransform attributeName="transform" type="translate"
+    values="0 0; -2 -1.5; 0 0" keyTimes="0;0.5;1"
+    dur="3.5s" repeatCount="indefinite"/>
+  <!-- head shell -->
+  <ellipse cx="-26" cy="-8" rx="18" ry="14" fill="#4a5828"/>
+  <!-- yellow throat band -->
+  <ellipse cx="-22" cy="0" rx="20" ry="6" fill="#fde047"/>
+  <!-- left sclera -->
+  <circle cx="-34" cy="-10" r="4" fill="#ffffff"/>
+  <!-- right sclera -->
+  <circle cx="-22" cy="-12" r="4" fill="#ffffff"/>
+  <!-- left iris+pupil+catchlight blink -->
+  <g transform="translate(-34,-10)">
+    <animateTransform attributeName="transform" type="scale" additive="sum"
+      values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.88;0.93;1" dur="6.2s" repeatCount="indefinite"/>
+    <circle cx="0" cy="1" r="2.8" fill="#fb923c"/>
+    <circle cx="0" cy="2" r="1.6" fill="#0d0d0d"/>
+    <circle cx="1" cy="-1" r="1" fill="#ffffff"/>
+  </g>
+  <!-- right iris+pupil+catchlight blink -->
+  <g transform="translate(-22,-12)">
+    <animateTransform attributeName="transform" type="scale" additive="sum"
+      values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.88;0.93;1" dur="6.2s" repeatCount="indefinite"/>
+    <circle cx="0" cy="1" r="2.8" fill="#fb923c"/>
+    <circle cx="0" cy="2" r="1.6" fill="#0d0d0d"/>
+    <circle cx="1" cy="-1" r="1" fill="#ffffff"/>
+  </g>
+  <!-- smile -->
+  <path d="M -30 4 Q -22 8 -14 4" stroke="#1a1a1a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</g>
+</svg>

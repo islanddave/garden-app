@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Eastern red bat — Lasiurus borealis</title>
+<desc>Wing membrane flap — left and right wing paths rotate at the body, mirrored, on a 0.4s loop.</desc>
+<g transform="translate(100, 100)">
+<!-- left wing — rotate at shoulder (~(-18,18)) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="-8 -18 18; 10 -18 18; -8 -18 18"
+    dur="0.4s" repeatCount="indefinite"/>
+  <path d="M -38 -4 Q -50 8 -42 28 Q -32 32 -18 18 Q -24 8 -38 -4 Z" fill="#c2410c"/>
+</g>
+<!-- right wing — mirrored -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="8 18 18; -10 18 18; 8 18 18"
+    dur="0.4s" repeatCount="indefinite"/>
+  <path d="M 38 -4 Q 50 8 42 28 Q 32 32 18 18 Q 24 8 38 -4 Z" fill="#c2410c"/>
+</g>
+<!-- body -->
+<ellipse cx="0" cy="22" rx="18" ry="22" fill="#dc2626"/>
+<!-- feet -->
+<line x1="-5" y1="42" x2="-5" y2="48" stroke="#7a1818" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="5" y1="42" x2="5" y2="48" stroke="#7a1818" stroke-width="1.6" stroke-linecap="round"/>
+<!-- head -->
+<circle cx="0" cy="-12" r="20" fill="#dc2626"/>
+<!-- ear tufts -->
+<path d="M -16 -28 L -10 -38 L -6 -22 Z" fill="#dc2626"/>
+<path d="M 16 -28 L 10 -38 L 6 -22 Z" fill="#dc2626"/>
+<!-- sclera -->
+<circle cx="-9" cy="-12" r="6" fill="#ffffff"/>
+<circle cx="9" cy="-12" r="6" fill="#ffffff"/>
+<!-- eyes -->
+<circle cx="-9" cy="-11" r="4.5" fill="#fde047"/>
+<circle cx="9" cy="-11" r="4.5" fill="#fde047"/>
+<circle cx="-9" cy="-10" r="2.5" fill="#0d0d0d"/>
+<circle cx="9" cy="-10" r="2.5" fill="#0d0d0d"/>
+<circle cx="-7" cy="-13" r="1.6" fill="#ffffff"/>
+<circle cx="11" cy="-13" r="1.6" fill="#ffffff"/>
+<!-- face details -->
+<path d="M -2 0 L 2 0 L 0 4 Z" fill="#1a1a1a"/>
+<path d="M -5 8 Q 0 12 5 8" stroke="#1a1a1a" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

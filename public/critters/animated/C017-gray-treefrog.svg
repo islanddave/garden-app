@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Gray treefrog — Hyla versicolor</title>
+<desc>Throat/belly pulses with a gentle breathing inhale-exhale; eyes blink slowly.</desc>
+<g transform="translate(-240, -150)">
+<path d="M 314 260 Q 290 265 286 280 Q 295 285 308 278 Q 318 270 322 263 Z" fill="#4caf50" stroke="#388e3c" stroke-width="1"/>
+<path d="M 366 260 Q 390 265 394 280 Q 385 285 372 278 Q 362 270 358 263 Z" fill="#4caf50" stroke="#388e3c" stroke-width="1"/>
+<circle cx="288" cy="282" r="2.5" fill="#388e3c"/>
+<circle cx="294" cy="285" r="2.5" fill="#388e3c"/>
+<circle cx="392" cy="282" r="2.5" fill="#388e3c"/>
+<circle cx="386" cy="285" r="2.5" fill="#388e3c"/>
+<ellipse cx="340" cy="262" rx="28" ry="22" fill="#4caf50"/>
+<!-- throat/belly puff — pulse rY about its center -->
+<g>
+  <animateTransform attributeName="transform" type="translate" additive="sum"
+    values="340 272; 340 272; 340 272" dur="1.6s" repeatCount="indefinite"/>
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1; 1 1.08; 1 1" keyTimes="0;0.5;1" dur="1.6s" repeatCount="indefinite"/>
+</g>
+<ellipse cx="340" cy="272" rx="18" ry="10" fill="#a5d6a7">
+  <animate attributeName="ry" values="10;10.8;10" keyTimes="0;0.5;1" dur="1.6s" repeatCount="indefinite"/>
+</ellipse>
+<circle cx="325" cy="254" r="2.5" fill="#2e7d32"/>
+<circle cx="355" cy="254" r="2.5" fill="#2e7d32"/>
+<circle cx="340" cy="248" r="2.5" fill="#2e7d32"/>
+<!-- left eye ring -->
+<circle cx="328" cy="240" r="9" fill="#4caf50"/>
+<!-- right eye ring -->
+<circle cx="352" cy="240" r="9" fill="#4caf50"/>
+<!-- left eye: sclera + iris + pupil + catchlight with blink -->
+<circle cx="328" cy="240" r="6" fill="#ffffff"/>
+<!-- left iris+pupil+catchlight blink group — translate to eye center, scale, translate back -->
+<g transform="translate(328,240)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.90;0.95;1" dur="4.8s" repeatCount="indefinite"/>
+  <circle cx="0" cy="2" r="3.5" fill="#1a1a1a"/>
+  <circle cx="1" cy="0" r="1.4" fill="#ffffff"/>
+</g>
+<!-- right eye: sclera -->
+<circle cx="352" cy="240" r="6" fill="#ffffff"/>
+<!-- right iris+pupil+catchlight blink group -->
+<g transform="translate(352,240)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.90;0.95;1" dur="4.8s" repeatCount="indefinite"/>
+  <circle cx="0" cy="2" r="3.5" fill="#1a1a1a"/>
+  <circle cx="1" cy="0" r="1.4" fill="#ffffff"/>
+</g>
+<path d="M 322 268 Q 340 277 358 268" stroke="#1a1a1a" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+</g>
+</svg>

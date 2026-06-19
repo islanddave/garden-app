@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Eastern chipmunk — Tamias striatus</title>
+<desc>Gentle body breathe with alternating ear twitches.</desc>
+<g transform="translate(-114, -150)">
+<!-- tail (static — no separate distinct tail to sway here) -->
+<path d="M 238 270 Q 254 244 246 224 Q 238 220 234 240 Q 232 258 230 268 Z" fill="#8b6f47"/>
+<path d="M 240 268 Q 252 246 244 228" stroke="#5c4a30" stroke-width="0.8" fill="none"/>
+<!-- body breathe: scale about body center (214,272) -->
+<g transform="translate(214,272)">
+  <animateTransform attributeName="transform" type="scale" additive="sum"
+    values="1 1;1.025 1.025;1 1" keyTimes="0;0.5;1"
+    dur="3.8s" repeatCount="indefinite"/>
+  <g transform="translate(-214,-272)">
+    <ellipse cx="214" cy="272" rx="22" ry="16" fill="#a88158"/>
+    <path d="M 200 266 L 222 266" stroke="#1a1a1a" stroke-width="1.5"/>
+    <path d="M 200 272 L 222 272" stroke="#f0e6d8" stroke-width="1.2"/>
+    <path d="M 200 278 L 222 278" stroke="#1a1a1a" stroke-width="1.5"/>
+    <ellipse cx="198" cy="288" rx="4" ry="3" fill="#a88158"/>
+    <ellipse cx="226" cy="288" rx="4" ry="3" fill="#a88158"/>
+  </g>
+</g>
+<!-- head -->
+<circle cx="214" cy="250" r="22" fill="#a88158"/>
+<circle cx="201" cy="262" r="7" fill="#b89168"/>
+<circle cx="227" cy="262" r="7" fill="#b89168"/>
+<!-- left ear twitch — pivot at base (202,238) -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 202 238;0 202 238;-8 202 238;3 202 238;0 202 238"
+    keyTimes="0;0.76;0.82;0.89;1"
+    dur="4.0s" repeatCount="indefinite"/>
+  <circle cx="202" cy="232" r="5" fill="#a88158"/>
+  <circle cx="202" cy="232" r="2.5" fill="#f4b6b6"/>
+</g>
+<!-- right ear twitch — pivot at base (226,238), offset phase -->
+<g>
+  <animateTransform attributeName="transform" type="rotate"
+    values="0 226 238;0 226 238;8 226 238;-3 226 238;0 226 238"
+    keyTimes="0;0.38;0.44;0.51;1"
+    dur="5.3s" repeatCount="indefinite"/>
+  <circle cx="226" cy="232" r="5" fill="#a88158"/>
+  <circle cx="226" cy="232" r="2.5" fill="#f4b6b6"/>
+</g>
+<!-- eyes -->
+<circle cx="206" cy="246" r="5" fill="#ffffff"/>
+<circle cx="222" cy="246" r="5" fill="#ffffff"/>
+<circle cx="206" cy="248" r="3" fill="#1a1a1a"/>
+<circle cx="222" cy="248" r="3" fill="#1a1a1a"/>
+<circle cx="207" cy="246" r="1.2" fill="#ffffff"/>
+<circle cx="223" cy="246" r="1.2" fill="#ffffff"/>
+<ellipse cx="214" cy="256" rx="2" ry="1.5" fill="#1a1a1a"/>
+</g>
+</svg>

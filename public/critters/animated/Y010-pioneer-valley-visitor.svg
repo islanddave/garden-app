@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Pioneer Valley Visitor — UFO entity (Cryptid)</title>
+<desc>The entity floats slowly up and down with a vertical drift, and the radial glow pulses faintly.</desc>
+<g transform="translate(100, 100)">
+  <!-- slow vertical float — additive on outer group, preserves translate -->
+  <animateTransform attributeName="transform" type="translate" additive="sum"
+    values="0 0; 0 -7; 0 -10; 0 -7; 0 0; 0 5; 0 0"
+    keyTimes="0;0.2;0.35;0.5;0.65;0.82;1"
+    dur="4.5s" repeatCount="indefinite"/>
+  <defs>
+    <radialGradient id="ufoGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#88ffaa" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#88ffaa" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- ambient glow circle — pulse -->
+  <circle cx="-22" cy="0" r="70" fill="url(#ufoGlow)">
+    <animate attributeName="opacity" values="1;0.5;1;0.7;1" keyTimes="0;0.3;0.55;0.75;1" dur="3.2s" repeatCount="indefinite"/>
+  </circle>
+  <!-- body/torso -->
+  <ellipse cx="22" cy="45" rx="28" ry="20" fill="#5a8c70"/>
+  <!-- limbs -->
+  <line x1="-4" y1="22" x2="-10" y2="50" stroke="#5a8c70" stroke-width="4"/>
+  <line x1="6" y1="22" x2="14" y2="50" stroke="#5a8c70" stroke-width="4"/>
+  <line x1="-10" y1="55" x2="-12" y2="68" stroke="#5a8c70" stroke-width="4"/>
+  <line x1="14" y1="55" x2="18" y2="68" stroke="#5a8c70" stroke-width="4"/>
+  <!-- head -->
+  <ellipse cx="-22" cy="-10" rx="38" ry="44" fill="#6aa080"/>
+  <!-- ear-like protrusions -->
+  <path d="M -56,-12 Q -68,-30 -52,-32 Q -42,-22 -44,-15 Z" fill="#6aa080"/>
+  <path d="M 12,-12 Q 24,-30 8,-32 Q -2,-22 0,-15 Z" fill="#6aa080"/>
+  <!-- large dark eyes -->
+  <ellipse cx="-32" cy="-18" rx="14" ry="20" fill="#1a1a1a"/>
+  <ellipse cx="-12" cy="-22" rx="14" ry="20" fill="#1a1a1a"/>
+  <!-- pale inner glints — eerie glow pulse -->
+  <ellipse cx="-30" cy="-22" rx="5" ry="8" fill="#fff">
+    <animate attributeName="opacity" values="1;0.2;1;0.5;1" keyTimes="0;0.3;0.6;0.8;1" dur="2.8s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse cx="-10" cy="-26" rx="5" ry="8" fill="#fff">
+    <animate attributeName="opacity" values="1;0.2;1;0.5;1" keyTimes="0;0.3;0.6;0.8;1" dur="2.8s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- nose/mouth marks -->
+  <line x1="-22" y1="0" x2="-22" y2="8" stroke="#3a5a48" stroke-width="1.5"/>
+  <line x1="-26" y1="12" x2="-18" y2="12" stroke="#3a5a48" stroke-width="1.5"/>
+</g>
+</svg>

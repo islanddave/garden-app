@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Labrador Duck — Camptorhynchus labradorius (Legacy)</title>
+<desc>Gentle body/head bob with slow additive translate on the positioning group; slow blink.</desc>
+<g transform="translate(100, 100)">
+  <animateTransform attributeName="transform" type="translate" additive="sum"
+    values="0 0; 0 -4; 0 0" dur="2.9s" repeatCount="indefinite"/>
+  <!-- dark wing patches -->
+  <ellipse cx="-40" cy="5" rx="26" ry="18" fill="#2a2a2a" opacity="0.5"/>
+  <ellipse cx="40" cy="5" rx="26" ry="18" fill="#2a2a2a" opacity="0.5"/>
+  <!-- body -->
+  <ellipse cx="0" cy="20" rx="36" ry="34" fill="#2a2a2a"/>
+  <!-- white underparts -->
+  <path d="M -32,8 Q -34,30 -28,42 Q 0,30 28,42 Q 34,30 32,8 Z" fill="#fafafa"/>
+  <!-- white head -->
+  <circle cx="0" cy="-15" r="36" fill="#fafafa"/>
+  <!-- dark crown patches -->
+  <path d="M -36,-15 Q -36,-25 -30,-30 L -22,-22 Z" fill="#2a2a2a"/>
+  <path d="M 36,-15 Q 36,-25 30,-30 L 22,-22 Z" fill="#2a2a2a"/>
+  <!-- eyes -->
+  <circle cx="-13" cy="-18" r="8" fill="#fff"/>
+  <circle cx="13" cy="-18" r="8" fill="#fff"/>
+  <g>
+    <animateTransform attributeName="transform" type="scale" additive="sum"
+      values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.92;0.96;1" dur="4.2s" repeatCount="indefinite"/>
+    <circle cx="-12" cy="-17" r="5" fill="#7a5a30"/>
+    <circle cx="-11" cy="-18" r="2.5" fill="#000"/>
+    <circle cx="-9" cy="-20" r="1.2" fill="#fff"/>
+  </g>
+  <g>
+    <animateTransform attributeName="transform" type="scale" additive="sum"
+      values="1 1;1 1;1 0.1;1 1" keyTimes="0;0.92;0.96;1" dur="4.2s" repeatCount="indefinite"/>
+    <circle cx="14" cy="-17" r="5" fill="#7a5a30"/>
+    <circle cx="15" cy="-18" r="2.5" fill="#000"/>
+    <circle cx="17" cy="-20" r="1.2" fill="#fff"/>
+  </g>
+  <!-- bill -->
+  <path d="M -10,-3 Q 0,3 10,-3 L 10,4 Q 0,9 -10,4 Z" fill="#3a5a7a" stroke="#1a3a5a" stroke-width="1"/>
+  <path d="M -6,1 Q 0,4 6,1" stroke="#1a3a5a" stroke-width="0.8" fill="none"/>
+</g>
+</svg>

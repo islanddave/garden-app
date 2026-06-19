@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<title>Green lacewing — Chrysoperla rufilabris</title>
+<desc>Green lacewing floats with a slow hover bob while all four wings blur in rapid buzz.</desc>
+<g transform="translate(-492, 20)">
+  <animateTransform attributeName="transform" type="translate" additive="sum" values="0 0; 0 -5; 0 0" dur="2.3s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1; 0.45 0 0.55 1"/>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" values="-12 570 76; 8 570 76; -12 570 76" dur="0.12s" repeatCount="indefinite" calcMode="linear"/>
+    <ellipse cx="570" cy="76" rx="24" ry="8" fill="#c8e6c9" opacity="0.55" stroke="#7cb342" stroke-width="0.5" transform="rotate(-18 570 76)"/>
+  </g>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" values="12 614 76; -8 614 76; 12 614 76" dur="0.12s" repeatCount="indefinite" calcMode="linear"/>
+    <ellipse cx="614" cy="76" rx="24" ry="8" fill="#c8e6c9" opacity="0.55" stroke="#7cb342" stroke-width="0.5" transform="rotate(18 614 76)"/>
+  </g>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" values="-8 572 92; 5 572 92; -8 572 92" dur="0.12s" repeatCount="indefinite" calcMode="linear"/>
+    <ellipse cx="572" cy="92" rx="20" ry="6" fill="#c8e6c9" opacity="0.5" stroke="#7cb342" stroke-width="0.5" transform="rotate(-12 572 92)"/>
+  </g>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" values="8 612 92; -5 612 92; 8 612 92" dur="0.12s" repeatCount="indefinite" calcMode="linear"/>
+    <ellipse cx="612" cy="92" rx="20" ry="6" fill="#c8e6c9" opacity="0.5" stroke="#7cb342" stroke-width="0.5" transform="rotate(12 612 92)"/>
+  </g>
+  <line x1="554" y1="74" x2="588" y2="79" stroke="#7cb342" stroke-width="0.4" opacity="0.6"/>
+  <line x1="596" y1="79" x2="630" y2="74" stroke="#7cb342" stroke-width="0.4" opacity="0.6"/>
+  <line x1="556" y1="92" x2="586" y2="93" stroke="#7cb342" stroke-width="0.4" opacity="0.5"/>
+  <line x1="598" y1="93" x2="628" y2="92" stroke="#7cb342" stroke-width="0.4" opacity="0.5"/>
+  <ellipse cx="592" cy="104" rx="5" ry="22" fill="#a5d6a7"/>
+  <line x1="589" y1="112" x2="595" y2="112" stroke="#7cb342" stroke-width="0.6"/>
+  <line x1="589" y1="120" x2="595" y2="120" stroke="#7cb342" stroke-width="0.6"/>
+  <circle cx="592" cy="78" r="20" fill="#a5d6a7"/>
+  <circle cx="583" cy="76" r="8" fill="#d4a017"/>
+  <circle cx="601" cy="76" r="8" fill="#d4a017"/>
+  <circle cx="583" cy="78" r="4.5" fill="#1a1a1a"/>
+  <circle cx="601" cy="78" r="4.5" fill="#1a1a1a"/>
+  <circle cx="584" cy="76" r="1.6" fill="#ffffff"/>
+  <circle cx="602" cy="76" r="1.6" fill="#ffffff"/>
+  <path d="M 587 90 Q 592 93 597 90" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+  <path d="M 582 58 Q 572 46 568 36" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+  <path d="M 602 58 Q 612 46 616 36" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</g>
+</svg>
