@@ -36,8 +36,9 @@ describe('TodayBand \u2014 color-coded Today bar (DRG-TODAY-003)', () => {
   it('waiting: an unseen (stale) project shows the gold "needs a look" state', async () => {
     mockDash({ water_due: [], heads_up: [{ project_id: 's', name: 'Thyme', reason: 'stale', days_stale: 9 }] })
     render(<TodayBand />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/dashboard'))
     const bar = await screen.findByRole('button', { name: /Today/ })
-    expect(bar.getAttribute('data-tier')).toBe('waiting')
+    await waitFor(() => expect(bar.getAttribute('data-tier')).toBe('waiting'))
     expect(bar.textContent).toMatch(/needs a look/i)
   })
 

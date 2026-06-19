@@ -49,7 +49,7 @@ export default function ProjectNew() {
       fetch('/api/projects'),
     ]).then(([locs, projects]) => {
       setLocations((locs ?? []).filter(l => l.is_active))
-      setAllProjects((projects ?? []).filter(p => p.name))
+      setAllProjects((projects ?? []).filter(p => p.name && !p.archived_at))
     }).catch(() => {})
   }, [fetch])
 

@@ -390,7 +390,7 @@ export default function Garden() {
           mode={editor.mode}
           plant={editor.plant ?? null}
           plants={plants}
-          projects={projects}
+          projects={projects.filter(p => !p.archived_at)}
           fetch={fetch}
           sourceInventoryItemId={editor.mode === 'add' ? sourceInventoryItemId : null}
           varietyId={editor.mode === 'add' ? queryVarietyId : null}
