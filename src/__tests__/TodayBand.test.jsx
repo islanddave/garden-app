@@ -46,7 +46,9 @@ describe('TodayBand \u2014 color-coded Today bar (DRG-TODAY-003)', () => {
     mockDash({ water_due: [{ project_id: 'a', project_name: 'Chilis', next_water_at: overdue3, location_type: 'outdoor' }] })
     render(<TodayBand />)
     const bar = await screen.findByRole('button', { name: /Today/ })
-    expect(bar.getAttribute('data-tier')).toBe('urgent')
+    // data-tier updates after the async /api/dashboard fetch resolves — wait for it
+    // (matches the 'waiting' test; bare assert raced the initial 'clear' state → flaky). L-140 family.
+    await waitFor(() => expect(bar.getAttribute('data-tier')).toBe('urgent'))
     expect(bar.textContent).toMatch(/Chilis/)
     expect(bar.textContent).toMatch(/overdue/)
   })
