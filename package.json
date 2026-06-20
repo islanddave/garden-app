@@ -1,18 +1,35 @@
 {
-  "name": "package.json",
-  "path": "package.json",
-  "sha": "0e23e1f92726a29fada1bdf7e95f5b47e510d5be",
-  "size": 962,
-  "url": "https://api.github.com/repos/islanddave/garden-app/contents/package.json?ref=dev",
-  "html_url": "https://github.com/islanddave/garden-app/blob/dev/package.json",
-  "git_url": "https://api.github.com/repos/islanddave/garden-app/git/blobs/0e23e1f92726a29fada1bdf7e95f5b47e510d5be",
-  "download_url": "https://raw.githubusercontent.com/islanddave/garden-app/dev/package.json",
-  "type": "file",
-  "content": "ewogICJuYW1lIjogImdhcmRlbi1hcHAiLAogICJwcml2YXRlIjogdHJ1ZSwK\nICAidmVyc2lvbiI6ICIyLjUuNDEiLAogICJ0eXBlIjogIm1vZHVsZSIsCiAg\nInNjcmlwdHMiOiB7CiAgICAiZGV2IjogInZpdGUiLAogICAgImJ1aWxkIjog\nInZpdGUgYnVpbGQiLAogICAgInByZXZpZXciOiAidml0ZSBwcmV2aWV3IiwK\nICAgICJ0ZXN0IjogInZpdGVzdCBydW4gLS1jb3ZlcmFnZSIsCiAgICAidGVz\ndDp3YXRjaCI6ICJ2aXRlc3QiLAogICAgInRlc3Q6dWkiOiAidml0ZXN0IC0t\ndWkiLAogICAgImdlbjpldmVudC10eXBlcyI6ICJub2RlIHNjcmlwdHMvZ2Vu\nLWxhbWJkYS1ldmVudC10eXBlcy5tanMiLAogICAgImNoZWNrOmV2ZW50LXR5\ncGVzIjogIm5vZGUgc2NyaXB0cy9nZW4tbGFtYmRhLWV2ZW50LXR5cGVzLm1q\ncyAtLWNoZWNrIgogIH0sCiAgImRlcGVuZGVuY2llcyI6IHsKICAgICJAY2xl\ncmsvcmVhY3QiOiAiXjYuMC4wIiwKICAgICJyZWFjdCI6ICJeMTguMi4wIiwK\nICAgICJyZWFjdC1kb20iOiAiXjE4LjIuMCIsCiAgICAicmVhY3QtaW1hZ2Ut\nY3JvcCI6ICJeMTEuMC41IiwKICAgICJyZWFjdC1yb3V0ZXItZG9tIjogIl42\nLjIyLjAiCiAgfSwKICAiZGV2RGVwZW5kZW5jaWVzIjogewogICAgIkB0ZXN0\naW5nLWxpYnJhcnkvZG9tIjogIl4xMC40LjEiLAogICAgIkB0ZXN0aW5nLWxp\nYnJhcnkvcmVhY3QiOiAiXjE2LjAuMCIsCiAgICAiQHRlc3RpbmctbGlicmFy\neS91c2VyLWV2ZW50IjogIl4xNC41LjIiLAogICAgIkB2aXRlanMvcGx1Z2lu\nLXJlYWN0IjogIl41LjAuMCIsCiAgICAiQHZpdGVzdC9jb3ZlcmFnZS12OCI6\nICJeMi4wLjAiLAogICAgImZha2UtaW5kZXhlZGRiIjogIl42LjIuNSIsCiAg\nICAianNkb20iOiAiXjI1LjAuMCIsCiAgICAidml0ZSI6ICJeOC4wLjkiLAog\nICAgInZpdGUtcGx1Z2luLXB3YSI6ICJeMC4xOS44IiwKICAgICJ2aXRlc3Qi\nOiAiXjIuMC4wIgogIH0KfQo=\n",
-  "encoding": "base64",
-  "_links": {
-    "self": "https://api.github.com/repos/islanddave/garden-app/contents/package.json?ref=dev",
-    "git": "https://api.github.com/repos/islanddave/garden-app/git/blobs/0e23e1f92726a29fada1bdf7e95f5b47e510d5be",
-    "html": "https://github.com/islanddave/garden-app/blob/dev/package.json"
+  "name": "garden-app",
+  "private": true,
+  "version": "2.6.8",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
+    "check:event-types": "node scripts/gen-lambda-event-types.mjs --check"
+  },
+  "dependencies": {
+    "@clerk/react": "^6.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-image-crop": "^11.0.5",
+    "react-router-dom": "^6.22.0"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.0.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@vitejs/plugin-react": "^5.0.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "fake-indexeddb": "^6.2.5",
+    "jsdom": "^25.0.0",
+    "vite": "^8.0.9",
+    "vite-plugin-pwa": "^0.19.8",
+    "vitest": "^2.0.0"
   }
 }
