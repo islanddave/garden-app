@@ -1,6 +1,7 @@
 import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
+import { FavoritesProvider } from './context/FavoritesContext.jsx'
 import { ZoneProvider } from './context/ZoneContext.jsx'
 import { ModeProvider } from './context/ModeContext.jsx'
 import TopBar from './components/TopBar.jsx'
@@ -183,7 +184,9 @@ export default function App() {
     <AuthProvider>
       <ModeProvider>
         <ZoneProvider>
-          <AppRoutes />
+          <FavoritesProvider>
+            <AppRoutes />
+          </FavoritesProvider>
         </ZoneProvider>
       </ModeProvider>
     </AuthProvider>

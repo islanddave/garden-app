@@ -1,33 +1,37 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'
+import { useFavorites } from '../context/FavoritesContext.jsx'
 
+// V3-PERF-FAV-001 — favorite state now comes from FavoritesContext (one bulk
+// fetch app-wide) instead of a per-toggle GET on mount. Removes the /garden
+// N+1 (150+ /api/favorites requests -> 1). Click still POST/DELETEs and updates
+// the shared Set optimistically (rolled back on failure).
 export default function FavoriteToggle({ entityType, entityId, size = '1.2rem' }) {
   const { user } = useAuth()
   const { fetch } = useApiFetch()
-  const [isFav,   setIsFav]   = useState(false)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    if (!user || !entityId) { setLoading(false); return }
-    fetch(`/api/favorites?entity_type=${entityType}&entity_id=${entityId}`)
-      .then(data => { setIsFav(!!data?.favorited); setLoading(false) })
-      .catch(() => setLoading(false))
-  }, [user, entityType, entityId, fetch])
+  const { isFavorite, setFavorite } = useFavorites()
+  const [busy, setBusy] = useState(false)
+  const isFav = isFavorite(entityType, entityId)
 
   async function toggle(e) {
     e.preventDefault()
     e.stopPropagation()
-    if (!user || loading) return
-    setLoading(true)
-    if (isFav) {
-      await fetch(`/api/favorites?entity_type=${entityType}&entity_id=${entityId}`, { method: 'DELETE' })
-      setIsFav(false)
-    } else {
-      await fetch('/api/favorites', { method: 'POST', body: JSON.stringify({ entity_type: entityType, entity_id: entityId }) })
-      setIsFav(true)
+    if (!user || busy || !entityId) return
+    setBusy(true)
+    const next = !isFav
+    setFavorite(entityType, entityId, next)
+    try {
+      if (next) {
+        await fetch('/api/favorites', { method: 'POST', body: JSON.stringify({ entity_type: entityType, entity_id: entityId }) })
+      } else {
+        await fetch(`/api/favorites?entity_type=${entityType}&entity_id=${entityId}`, { method: 'DELETE' })
+      }
+    } catch {
+      setFavorite(entityType, entityId, !next)
+    } finally {
+      setBusy(false)
     }
-    setLoading(false)
   }
 
   if (!user) return null
@@ -39,10 +43,10 @@ export default function FavoriteToggle({ entityType, entityId, size = '1.2rem' }
       style={{
         background:  'none',
         border:      'none',
-        cursor:      loading ? 'default' : 'pointer',
+        cursor:      busy ? 'default' : 'pointer',
         padding:     '4px',
         fontSize:    size,
-        opacity:     loading ? 0.4 : 1,
+        opacity:     busy ? 0.4 : 1,
         lineHeight:  1,
         transition:  'transform 150ms, opacity 150ms',
         display:     'inline-flex',
