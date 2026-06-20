@@ -90,7 +90,9 @@ export const PROJECT_STATUS_MAP = {
 // adding a value here requires widening chk_plants_status first (see
 // v3-status-source-check-widen-migration-V100, V3-STATUS-002). Single source of truth for
 // the plant-status vocabulary; do NOT redefine inline (was inline in Plants.jsx).
-export const PLANT_STATUSES = ['seed', 'rooting', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']
+// V3-STATUS-003: custom lifecycle ORDER (not alpha) — StatusSelect renders plant statuses in this
+// exact sequence. Values unchanged (subset of chk_plants_status); only order + the 'harvested' label.
+export const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'fruiting', 'harvested', 'ended', 'failed', 'rooting', 'dormant']
 
 // Display mapping for plant statuses — { label, emoji }. Mirrors PROJECT_STATUS_MAP.
 // Colors live in status.js STATUS_COLORS (shared with project stages).
@@ -101,7 +103,7 @@ export const PLANT_STATUS_MAP = {
   vegetative: { label: 'Vegetative', emoji: '🌿' },
   flowering:  { label: 'Flowering',  emoji: '🌸' },
   fruiting:   { label: 'Fruiting',   emoji: '🍅' },
-  harvested:  { label: 'Harvested',  emoji: '✅' },
+  harvested:  { label: 'Harvesting', emoji: '✅' },  // V3-STATUS-003: label-only rename (DB value stays 'harvested')
   dormant:    { label: 'Dormant',    emoji: '💤' },
   ended:      { label: 'Ended',      emoji: '⏹️' },
   failed:     { label: 'Failed',     emoji: '✕' },

@@ -36,6 +36,14 @@ describe('StatusSelect', () => {
     const vals = screen.getAllByRole('option').map(o => o.value).filter(Boolean)
     for (const v of vals) expect(PLANT_STATUSES).toContain(v)
   })
+  it('V3-STATUS-003: plant kind preserves the custom lifecycle order (not alpha)', () => {
+    render(<StatusSelect kind="plant" value="" onChange={() => {}} />)
+    const vals = screen.getAllByRole('option').map(o => o.value).filter(Boolean)
+    expect(vals).toEqual([...PLANT_STATUSES])
+  })
+  it('V3-STATUS-003: harvested planting status humanizes to "Harvesting"', () => {
+    expect(statusLabel('harvested')).toBe('Harvesting')
+  })
   it('project kind switches the vocabulary', () => {
     render(<StatusSelect kind="project" value="" onChange={() => {}} />)
     const vals = screen.getAllByRole('option').map(o => o.value).filter(Boolean)
