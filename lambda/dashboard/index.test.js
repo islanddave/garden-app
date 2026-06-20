@@ -355,26 +355,25 @@ describe('V3-SCOPE-002 + V3-ATTN-002 — caretaker scope + planting-status suppr
   it('water_due scopes by caretaker (assignee) with created_by fallback — not created_by alone', () => {
     queryWaterDue(makeSql(), 'user_alpha');
     const q = sqlCalls[0].resolved;
-    expect(q).toMatch(/pp\\.assignee_user_id\\s*=\\s*\\$\\d+/);
-    expect(q).toMatch(/pp\\.assignee_user_id IS NULL AND pp\\.created_by\\s*=\\s*\\$\\d+/);
+    expect(q).toMatch(/pp\.assignee_user_id\s*=\s*\$\d+/);
+    expect(q).toMatch(/pp\.assignee_user_id IS NULL AND pp\.created_by\s*=\s*\$\d+/);
     expect(countUserBinds(sqlCalls[0].values, 'user_alpha')).toBe(2);
   });
 
   it('water_due only alerts projects holding an actionable planting (suppress dormant/ended/failed/rooting)', () => {
     queryWaterDue(makeSql(), 'user_alpha');
     const q = sqlCalls[0].resolved;
-    expect(q).toMatch(/EXISTS\\s*\\(\\s*SELECT 1 FROM public\\.garden_node gn/);
-    expect(q).toMatch(/NOT IN \\('dormant','ended','failed','rooting'\\)/);
-    // NULL planting status fails OPEN (still alerts) — never hide a possibly-thirsty plant
-    expect(q).toMatch(/gn\\.status IS NULL OR/);
+    expect(q).toMatch(/EXISTS\s*\(\s*SELECT 1 FROM public\.garden_node gn/);
+    expect(q).toMatch(/NOT IN \('dormant','ended','failed','rooting'\)/);
+    expect(q).toMatch(/gn\.status IS NULL OR/);
   });
 
   it('heads_up stale gets caretaker scope + actionable-planting filter; project-status gate preserved', () => {
     queryHeadsUp(makeSql(), 'user_beta');
     const q = sqlCalls[0].resolved;
-    expect(q).toMatch(/pp\\.assignee_user_id\\s*=\\s*\\$\\d+/);
-    expect(q).toMatch(/EXISTS\\s*\\(\\s*SELECT 1 FROM public\\.garden_node gn/);
-    expect(q).toMatch(/pp\\.status IN \\('sprouting','growing','flowering','fruiting'\\)/);
+    expect(q).toMatch(/pp\.assignee_user_id\s*=\s*\$\d+/);
+    expect(q).toMatch(/EXISTS\s*\(\s*SELECT 1 FROM public\.garden_node gn/);
+    expect(q).toMatch(/pp\.status IN \('sprouting','growing','flowering','fruiting'\)/);
   });
 });
 
@@ -500,8 +499,7 @@ describe('per-query builders bind userId correctly', () => {
   });
   it('queryHeadsUp binds userId', async () => {
     await queryHeadsUp(makeSql(), 'user_alpha');
-    // V3-SCOPE-002: both flagged + stale CTE ownership scoped by caretaker
-    // (assignee_user_id = $ OR (assignee_user_id IS NULL AND created_by = $)) -> 2 binds per CTE = 4.
+    // V3-SCOPE-002: flagged + stale CTEs caretaker-scoped (assignee OR created_by fallback) = 2 binds each = 4.
     expect(countUserBinds(sqlCalls[0].values, 'user_alpha')).toBe(4);
   });
   it('queryInactiveCount binds twice — household array (created_by) + bare string (dismissals NOT EXISTS)', async () => {
