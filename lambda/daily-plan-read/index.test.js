@@ -19,10 +19,16 @@ describe('daily-plan-read Lambda — static read-path invariants', () => {
     expect(SRC).toMatch(/secretKey:\s*secrets\.CLERK_SECRET_KEY/);
   });
 
-  it('is READ-ONLY — exactly one SQL statement, a SELECT, no write verbs', () => {
-    expect(stmts.length).toBe(1);
-    expect(stmts[0]).toMatch(/SELECT/);
+  it('is READ-ONLY — two SELECTs (plan read + V3-TODAYDONE-001 done-derivation), no write verbs', () => {
+    expect(stmts.length).toBe(2);
+    for (const s of stmts) expect(s).toMatch(/SELECT/);
     for (const s of stmts) expect(s).not.toMatch(/\b(INSERT|UPDATE|DELETE|UPSERT|MERGE)\b/i);
+  });
+
+  it('V3-TODAYDONE-001: 2nd SELECT derives per-item done from today\'s events (event_log, ET)', () => {
+    expect(stmts[1]).toMatch(/event_log/);
+    expect(stmts[1]).toMatch(/America\/New_York/);
+    expect(SRC).toMatch(/annotateDone/);
   });
 
   it('scopes PER-USER to the authenticated subject (never household-widened)', () => {
@@ -48,7 +54,7 @@ describe('daily-plan-read Lambda — static read-path invariants', () => {
   it('returns the contract envelope (schema_version + has_plan + plan)', () => {
     expect(SRC).toMatch(/schema_version:\s*SCHEMA_VERSION/);
     expect(SRC).toMatch(/has_plan:/);
-    expect(SRC).toMatch(/plan:\s*row\.items/);
+    expect(SRC).toMatch(/plan:\s*plan\b/);
   });
 
   it('returns 401 on auth failure and 500 on query error', () => {

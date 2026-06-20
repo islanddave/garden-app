@@ -8,7 +8,15 @@ import { P } from '../../lib/constants.js'
 
 // Every task item carries { id (planting), name, crop, project, project_id, in_ground }. Deep-link to the
 // planting detail when we have both ids, else fall back to the Garden list.
-function itemHref(it) {
+// V3-TODAYDONE-001: each actionable bucket maps to a suggested event type; tapping a row opens a
+// PRE-FILLED Log (project + planting + event type) so logging it checks the item off for the day.
+const SUGGEST_EVENT = {
+  water_due: 'watering', no_history: 'watering', fertilize: 'fertilizing',
+  pest: 'observation', cold: 'brought_inside',
+}
+function itemHref(bucketKey, it) {
+  const evt = SUGGEST_EVENT[bucketKey]
+  if (evt && it.project_id && it.id) return `/log?project=${it.project_id}&plant=${it.id}&event_type=${evt}`
   return (it.project_id && it.id) ? `/projects/${it.project_id}/plantings/${it.id}` : '/garden'
 }
 
@@ -38,7 +46,7 @@ function Row({ bucketKey, it }) {
   const muted = bucketKey === 'water_due' && it.defer_for_rain
   return (
     <Link
-      to={itemHref(it)}
+      to={itemHref(bucketKey, it)}
       style={{
         display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none',
         padding: '10px 12px', borderTop: `1px solid ${P.border}`, color: P.dark,
@@ -60,7 +68,12 @@ function Row({ bucketKey, it }) {
 
 function Bucket({ def, items }) {
   const [open, setOpen] = useState(false)
-  if (!items || items.length === 0) return null
+  // V3-TODAYDONE-001: items already logged today are `done` and drop out of the bucket for the day;
+  // the bucket itself falls off once everything in it is checked.
+  const all = items || []
+  const pending = all.filter(it => !it.done)
+  const doneCount = all.length - pending.length
+  if (pending.length === 0) return null
   const panelId = `bucket-${def.key}`
   return (
     <div style={{ border: `1px solid ${P.border}`, borderRadius: 12, background: P.white, overflow: 'hidden' }}>
@@ -80,12 +93,17 @@ function Bucket({ def, items }) {
         <span style={{
           fontSize: '0.78rem', fontWeight: 800, color: def.accent || P.green,
           background: def.accentBg || P.greenPale, borderRadius: 999, padding: '2px 9px', flexShrink: 0,
-        }}>{items.length}</span>
+        }}>{pending.length}</span>
         <span aria-hidden="true" style={{ color: P.light, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }}>▾</span>
       </button>
       {open && (
         <div id={panelId} role="list">
-          {items.map((it, i) => <Row key={it.id || i} bucketKey={def.key} it={it} />)}
+          {pending.map((it, i) => <Row key={it.id || i} bucketKey={def.key} it={it} />)}
+          {doneCount > 0 && (
+            <div style={{ padding: '8px 12px', borderTop: `1px solid ${P.border}`, fontSize: '0.74rem', color: P.light }}>
+              ✓ {doneCount} done today
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -102,7 +120,7 @@ const BUCKETS = [
 ]
 
 export default function PlanBuckets({ plan }) {
-  const total = BUCKETS.reduce((n, b) => n + ((plan?.[b.key]?.length) || 0), 0)
+  const total = BUCKETS.reduce((n, b) => n + ((plan?.[b.key] || []).filter(it => !it.done).length), 0)
   if (total === 0) {
     return (
       <div style={{ padding: '28px 16px', textAlign: 'center', color: P.light }}>

@@ -62,7 +62,29 @@ describe('Today surface', () => {
     expect(screen.queryByText('Bhut Jolokia')).toBeNull()
     fireEvent.click(waterBtn)
     const link = screen.getByText('Bhut Jolokia').closest('a')
-    expect(link.getAttribute('href')).toBe('/projects/pr1/plantings/pl1')
+    expect(link.getAttribute('href')).toBe('/log?project=pr1&plant=pl1&event_type=watering')
     expect(screen.getByText(/2d overdue/)).toBeTruthy()
   })
+
+  it('V3-TODAYDONE-001: a done item drops out of its bucket (checked off for the day)', () => {
+    planState.current = {
+      data: {
+        has_plan: true, plan_date: '2026-06-17',
+        plan: {
+          water_due: [
+            { id: 'pl1', name: 'Bhut Jolokia', project_id: 'pr1', overdue_by: 2, done: false },
+            { id: 'pl2', name: 'Habanero', project_id: 'pr1', overdue_by: 1, done: true },
+          ],
+          no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
+        },
+      },
+      loading: false, error: null,
+    }
+    render(<Today />)
+    fireEvent.click(screen.getByRole('button', { name: /Water/i }))
+    expect(screen.getByText('Bhut Jolokia')).toBeTruthy()
+    expect(screen.queryByText('Habanero')).toBeNull()
+    expect(screen.getByText(/1 done today/)).toBeTruthy()
+  })
+
 })

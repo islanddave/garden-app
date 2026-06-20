@@ -71,15 +71,52 @@ export const handler = async (event) => {
       LIMIT 1
     `;
     const row = rows[0] ?? {};
+    let plan = row.items ?? null;
+    if (plan) {
+      // V3-TODAYDONE-001: best-effort read-time check-off — never let it break the prod Today read.
+      try { plan = await annotateDone(sql, plan); }
+      catch (e) { console.error('done-annotate (non-fatal):', e?.message ?? String(e)); }
+    }
     return resp(200, {
       schema_version: SCHEMA_VERSION,
       plan_date: row.plan_date ?? null,
       generated_at: row.generated_at ?? null,
       has_plan: row.items != null,
-      plan: row.items ?? null,
+      plan: plan,
     });
   } catch (err) {
     console.error('daily-plan-read lambda error', err);
     return resp(500, { error: 'Internal server error' });
   }
 };
+
+// V3-TODAYDONE-001 — read-time check-off. An actionable plan item is "done" for the day when a satisfying
+// event was logged today (ET) for that planting. Derived from event_log, never stored (cross-device truthful).
+// Placed AFTER the handler so the plan SELECT remains the first tagged query in the file (static-guard ordering).
+const DONE_EVENTS = {
+  water_due:  ['watering'],
+  no_history: ['watering'],
+  fertilize:  ['fertilizing'],
+  pest:       ['observation', 'pest_treatment'],
+  cold:       ['brought_inside', 'cover'],
+};
+export async function annotateDone(sql, plan) {
+  const ids = [];
+  for (const k of Object.keys(DONE_EVENTS)) for (const it of (plan?.[k] || [])) if (it && it.id) ids.push(it.id);
+  if (ids.length === 0) return plan;
+  const rows = await sql`
+    SELECT DISTINCT e.plant_id, e.event_type
+    FROM event_log e
+    WHERE e.plant_id = ANY(${ids})
+      AND e.deleted_at IS NULL
+      AND (e.event_date AT TIME ZONE 'America/New_York')::date
+          = (now() AT TIME ZONE 'America/New_York')::date
+  `;
+  const sat = new Set(rows.map((r) => `${r.plant_id}|${r.event_type}`));
+  const out = { ...plan };
+  for (const [k, types] of Object.entries(DONE_EVENTS)) {
+    if (!Array.isArray(plan[k])) continue;
+    out[k] = plan[k].map((it) => ({ ...it, done: !!(it && it.id && types.some((t) => sat.has(`${it.id}|${t}`))) }));
+  }
+  return out;
+}
