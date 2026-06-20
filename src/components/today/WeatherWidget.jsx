@@ -13,7 +13,7 @@ import { computeWateringScale, canRail, pillState } from '../../lib/wateringScal
 const PAL = {
   cardBg: '#FFFDF7', cardBorder: '#EBE4D3',
   tempHi: '#2E2A22', tempLo: '#A29684', micro: '#A89C88',
-  doBg: '#D6F7E6', doBorder: '#A7E7C6', doInk: '#055E45', doCan: '#047A57', doGhost: '#9FCBB6',
+  doBg: '#D6F7E6', doBorder: '#A7E7C6', doInk: '#055E45', doCan: '#2563EB', doGhost: '#A7C7F2',  // V3-WATERICON-001: watering can BLUE (water, not green) — also distinguishes the action can from the green location (pot/bed) icon
   waitBg: '#FCE3DC', waitBorder: '#F2C3B4', waitInk: '#9A3412',
 }
 
