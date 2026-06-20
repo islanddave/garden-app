@@ -1,6 +1,7 @@
 // HOUSEHOLD-MODE static-source guard (dashboard handlers).
 // Informational builders compute householdIds and widen created_by to = ANY(${householdIds}).
-// ACTIONABLE surfaces (queryWaterDue, queryHeadsUp) are PERSONAL-scoped (created_by = ${userId})
+// ACTIONABLE surfaces (queryWaterDue, queryHeadsUp) are CARETAKER-scoped (assignee_user_id with
+// created_by fallback when unassigned) so a member's Today band shows their own plantings (V3-SCOPE-002)
 // so a member's Today band / heads-up shows only their own plantings (V3-SCOPE-001). Per-user
 // surfaces (user_stats, favorites, dismissals) stay user_id = ${userId}; dismissal INSERT stays
 // per-user. Static-source (L-072), DB-free.
@@ -64,17 +65,18 @@ describe('dashboard handlers — Household Mode scope widening', () => {
     expect(block).toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
   });
 
-  it('V3-SCOPE-001: queryWaterDue is personal-scoped (created_by = ${userId}, not household)', () => {
+  it('V3-SCOPE-002: queryWaterDue is caretaker-scoped (assignee_user_id w/ created_by fallback, not household)', () => {
     const i = SRC.indexOf('export function queryWaterDue');
     const block = SRC.slice(i, SRC.indexOf('export function', i + 1));
-    expect(block).toMatch(/pp\.created_by = \$\{userId\}/);
+    expect(block).toMatch(/pp\.assignee_user_id = \$\{userId\}/);
+    expect(block).toMatch(/pp\.assignee_user_id IS NULL AND pp\.created_by = \$\{userId\}/);
     expect(block).not.toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
   });
 
-  it('V3-SCOPE-001: queryHeadsUp both CTEs personal-scoped (created_by = ${userId}, not household)', () => {
+  it('V3-SCOPE-002: queryHeadsUp both CTEs caretaker-scoped (assignee w/ created_by fallback, not household)', () => {
     const i = SRC.indexOf('export function queryHeadsUp');
     const block = SRC.slice(i, SRC.indexOf('export function', i + 1));
-    const m = block.match(/pp\.created_by = \$\{userId\}/g) ?? [];
+    const m = block.match(/pp\.assignee_user_id = \$\{userId\}/g) ?? [];
     expect(m.length).toBe(2);
     expect(block).not.toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
   });

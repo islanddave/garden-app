@@ -217,6 +217,12 @@ export function queryActivityDays(sql, userId) {
 }
 
 export function queryWaterDue(sql, userId) {
+  // V3-SCOPE-002: caretaker scope — surface a project if assigned to this user, OR unassigned and
+  //   created by this user. A planting assigned to another household member must NOT show on this
+  //   user's bar (V3-SCOPE-001 scoped by created_by only, which missed reassigned-but-Dave-created rows).
+  // V3-ATTN-002: suppress projects with no actionable planting — only alert when the container holds at
+  //   least one planting NOT in dormant/ended/failed/rooting (NULL status counts as actionable, fail-open
+  //   toward alerting). Empty/all-inactive containers never alert (alerts are planting-driven, not project-driven).
   return sql`
       SELECT
         em.project_id, pp.display_name AS project_name,
@@ -224,11 +230,18 @@ export function queryWaterDue(sql, userId) {
         em.location_type, em.watering_interval_days
       FROM entity_memory em
       JOIN public.container pp ON pp.id = em.project_id
-      WHERE pp.created_by = ${userId}
+      WHERE (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
         AND pp.deleted_at IS NULL
         AND pp.archived_at IS NULL
         AND em.next_water_at IS NOT NULL
         AND em.next_water_at < NOW()
+        AND EXISTS (
+          SELECT 1 FROM public.garden_node gn
+          WHERE gn.container_id = pp.id
+            AND gn.deleted_at IS NULL
+            AND gn.archived_at IS NULL
+            AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
+        )
       ORDER BY em.next_water_at ASC
     `;
 }
@@ -270,7 +283,7 @@ export function queryHeadsUp(sql, userId) {
           (NOW()::date - el.created_at::date)::int AS days_stale
         FROM event_log el
         JOIN public.container pp ON pp.id = el.project_id
-          AND pp.created_by = ${userId} AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
+          AND (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId})) AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
         WHERE el.flagged_as_issue = true
           AND el.resolved_at IS NULL
           AND el.deleted_at IS NULL
@@ -286,9 +299,16 @@ export function queryHeadsUp(sql, userId) {
         FROM public.container pp
         LEFT JOIN entity_memory em ON em.project_id = pp.id
         WHERE pp.status IN ('sprouting','growing','flowering','fruiting')
-          AND pp.created_by = ${userId}
+          AND (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
           AND pp.deleted_at IS NULL
           AND pp.archived_at IS NULL
+          AND EXISTS (
+          SELECT 1 FROM public.garden_node gn
+          WHERE gn.container_id = pp.id
+            AND gn.deleted_at IS NULL
+            AND gn.archived_at IS NULL
+            AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
+        )
           AND (
             (em.last_observed_at IS NULL
               AND COALESCE(em.last_event_at, pp.created_at) < NOW() - INTERVAL '21 days')
