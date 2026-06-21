@@ -96,7 +96,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather){
     const c=resolveCadence(p, cad);
     if(c.exclude) continue;
     const ph=feedPhase(weeksSince(today,p.substrate_start)); phaseCounts[ph]=(phaseCounts[ph]||0)+1;
-    if(c.dormant_skip){ dormant.push({id:p.id,name:p.name,crop:c.crop,note:c.notes}); continue; }
+    if(c.dormant_skip){ dormant.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,note:c.notes}); continue; }
     // CARE-PROFILES-001: select inground or container cadence based on container_type.
     const inGround=likelyInGround(p,c);
     let wi=(inGround ? c.water_interval_days_inground : c.water_interval_days_container)
@@ -110,7 +110,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather){
     const pw=cad.pest_watch&&cad.pest_watch.cucurbit_beetle;
     if(pw&&pw.active){ const txt=((p.name||'')+' '+(p.variety||'')+' '+(c.crop||'')).toLowerCase();
       if((p.genus&&pw.genera.includes(p.genus))||pw.name_keywords.some(k=>txt.includes(k))) pest.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:likelyInGround(p,c),label:pw.label}); }
-    const cd=coldFor(p,cad,low); if(cd) cold.push({id:p.id,name:p.name,crop:c.crop,...cd});
+    const cd=coldFor(p,cad,low); if(cd) cold.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,...cd});
   }
   const ovk=a=>a.never?-1:(a.overdue_by??-1);
   const due=water.filter(w=>!w.never).sort((a,b)=>ovk(b)-ovk(a));
