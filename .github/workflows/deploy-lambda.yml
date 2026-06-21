@@ -246,17 +246,17 @@ jobs:
           aws lambda wait function-updated --function-name "$FN"
           echo "env ensured on $FN"
 
-      - name: Ensure EventBridge cron rule for daily-plan (DORMANT - DISABLED)
+      - name: Ensure EventBridge cron rule for daily-plan (ENABLED - engine live)
         if: matrix.function == 'daily-plan'
         continue-on-error: true  # requires events:PutRule + events:PutTargets + lambda:AddPermission
         run: |
           RULE_NAME=garden-daily-plan-nightly
-          # Ships DORMANT: rule DISABLED (double-dark w/ DRY_RUN=true). Enable later: aws events enable-rule --name garden-daily-plan-nightly
+          # Engine is LIVE: rule ENABLED so the nightly run SURVIVES every deploy. Was DISABLED, which silently re-darkened the engine on each prod deploy (L-186 recurrence, fixed 2026-06-21).
           aws events put-rule \
             --name "$RULE_NAME" \
             --schedule-expression 'cron(0 6 * * ? *)' \
-            --state DISABLED \
-            --description 'Overnight Daily Plan generation (DRG-TODAY-001). DORMANT until enabled.'
+            --state ENABLED \
+            --description 'Overnight Daily Plan generation (DRG-TODAY-001). LIVE.'
           LAMBDA_ARN=$(aws lambda get-function --function-name garden-daily-plan --query 'Configuration.FunctionArn' --output text)
           aws events put-targets --rule "$RULE_NAME" --targets "Id=1,Arn=$LAMBDA_ARN"
           RULE_ARN=$(aws events describe-rule --name "$RULE_NAME" --query 'Arn' --output text)
