@@ -170,7 +170,7 @@ export default function WeatherWidget({
       <button type="button"
         onClick={() => setWhyLane(w => (w === laneKey ? null : laneKey))}
         aria-expanded={open}
-        aria-label={`Why this ${laneKey === 'beds' ? 'in-ground bed' : 'container'} watering recommendation`}
+        aria-label={`Why this ${laneKey === 'beds' ? 'in-ground bed' : 'container'} recommendation`}
         style={{
           flex: 1, borderRadius: 13, display: 'flex', alignItems: 'center', justifyContent: 'center',
           gap: 8, padding: '8px 10px', background: c.bg, cursor: 'pointer', font: 'inherit',

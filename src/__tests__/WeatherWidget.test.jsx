@@ -34,14 +34,14 @@ describe('WeatherWidget — V3-WATERWHY-001 tap-to-explain', () => {
     const hydro = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
     render(<WeatherWidget weather={weather} hydrology={hydro} />)
     expect(screen.queryByRole('region', { name: /watering explanation/i })).toBeNull()
-    const bedsBtn = screen.getByRole('button', { name: /in-ground bed watering recommendation/i })
+    const bedsBtn = screen.getByRole('button', { name: /in-ground bed recommendation/i })
     fireEvent.click(bedsBtn)
     const panel = screen.getByRole('region', { name: /watering explanation/i })
     expect(panel).toBeTruthy()
     expect(panel.textContent.toLowerCase()).toMatch(/soak is coming/)
     expect(panel.textContent.toLowerCase()).toMatch(/hold/)
     // Pill is an inline component (remounts each render); re-query the live node before re-tapping.
-    fireEvent.click(screen.getByRole('button', { name: /in-ground bed watering recommendation/i }))
+    fireEvent.click(screen.getByRole('button', { name: /in-ground bed recommendation/i }))
     expect(screen.queryByRole('region', { name: /watering explanation/i })).toBeNull()
   })
 })
