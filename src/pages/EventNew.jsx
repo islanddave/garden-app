@@ -253,6 +253,7 @@ export default function EventNew() {
   // frozen operational Toast primitive (Reward-UX carve-out: confirmation of a save
   // the user explicitly started — never a reward/celebration channel).
   const [showSavedToast, setShowSavedToast] = useState(false)
+  const [savedToastMsg,  setSavedToastMsg]  = useState('Saved')
 
   // Reset metadata when event type changes
   useEffect(() => {
@@ -363,16 +364,20 @@ export default function EventNew() {
   // logging) and the localStorage-persisted harvest unit. CLEARS event_type (forces a
   // deliberate re-pick — see DECISION note), event_date→now, notes/quantity/private_notes,
   // and all type-specific panels. Collapses add-details/private back to defaults.
-  function resetForNext() {
+  function resetForNext(mode) {
+    // mode 'plant' -> keep the planting (project+plant), clear event_type: log the next
+    // event for THIS plant. mode 'type' -> keep event_type, clear plant_id: log the SAME
+    // event for the next plant. project_id is preserved both ways so the (project-scoped)
+    // plant picker stays populated.
     setForm(f => ({
-      event_type:    '',
+      event_type:    mode === 'type' ? f.event_type : '',
       project_id:    f.project_id,
       location_id:   '',
       event_date:    toDatetimeLocal(new Date()),
       notes:         '',
       private_notes: '',
       quantity:      '',
-      plant_id:      f.plant_id,
+      plant_id:      mode === 'type' ? '' : f.plant_id,
       is_public:     f.is_public,
     }))
     setMetadataState({})
@@ -386,7 +391,7 @@ export default function EventNew() {
     setSaving(false)
   }
 
-  async function handleSubmit(e, { keepOpen = false } = {}) {
+  async function handleSubmit(e, { keepMode = 'plant' } = {}) {
     e.preventDefault()
     if (!form.event_type)  { setError('Select an event type above.'); return }
     if (!form.project_id)  { setError('Select a project.'); return }
@@ -501,34 +506,17 @@ export default function EventNew() {
     setSaving(false)
     if (form.event_type === 'watering') ux.complete({ outcome: 'logged' })  // M1 watering complete
 
-    // V3-EVENT-001 "Save & Next": keepOpen path — reset for another entry (scope
-    // preserved) and surface an ambient confirmation toast. Do NOT navigate, and do
-    // NOT use the dashboard toast path (location.state.logged) — that's for the
-    // navigate-away flow only.
-    if (keepOpen) {
-      resetForNext()
-      setShowSavedToast(true)
-      return
-    }
-
-    // V1.2a-1 §C-V1.2a-1-D: skip success screen, navigate straight to dashboard.
-    // Dashboard reads location.state.logged → refetches data + renders achievement toasts + 5s undo toast.
-    const projectRow = projects.find(p => p.id === form.project_id)
-    navigate('/dashboard', {
-      replace: true,
-      state: {
-        // Stage 1 critter is now rendered via Dashboard backfill, NOT location state.
-        logged: {
-          id: eventId,
-          project_id:                form.project_id,
-          project_name:              projectRow?.name ?? null,
-          event_type:                form.event_type,
-          updated_streak,
-          xp_gained,
-          newly_earned_achievements: newly_earned_achievements ?? [],
-        },
-      },
-    })
+    // V3-EVENT-001 (redesign 2026-06-22, Dave): every save is a rapid-entry save — reset
+    // and STAY on the form, never navigate away ("no more Save and go back to Garden").
+    // Two entry points: keepMode 'plant' (default / Enter) and keepMode 'type'.
+    const earned = (newly_earned_achievements ?? []).length
+    resetForNext(keepMode)
+    setSavedToastMsg(
+      earned ? '🏆 Achievement unlocked — saved!'
+      : keepMode === 'type' ? 'Saved — pick the next plant'
+      : 'Saved — log the next event'
+    )
+    setShowSavedToast(true)
   }
 
   return (
@@ -901,7 +889,7 @@ export default function EventNew() {
 
           {/* ── Floating Save — V3-EVENT-005 (Dave to eyeball bottom offset) ── */}
           {/* Spacer so content isn't hidden behind the fixed buttons */}
-          <div style={{ height: 72 }} aria-hidden="true" />
+          <div style={{ height: 120 }} aria-hidden="true" />
           {/* V3-EVENT-001: Save & Next sits beside the primary Save. It submits with
               keepOpen so the form resets for another entry (scope preserved) instead
               of navigating to the dashboard. Secondary variant to subordinate it to
@@ -913,6 +901,8 @@ export default function EventNew() {
               right: 20,
               zIndex: 200,
               display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-end',
               gap: 10,
             }}
           >
@@ -921,32 +911,33 @@ export default function EventNew() {
               variant="secondary"
               loading={saving}
               loadingLabel="Saving…"
-              onClick={e => handleSubmit(e, { keepOpen: true })}
+              onClick={e => handleSubmit(e, { keepMode: 'type' })}
               style={{
                 boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
-                minWidth: 130,
+                minWidth: 180,
               }}
             >
-              Save & Next
+              Save · Next of Type
             </Button>
             <Button
-              type="submit"
+              type="button"
               variant="primary"
               loading={saving}
               loadingLabel="Saving…"
+              onClick={e => handleSubmit(e, { keepMode: 'plant' })}
               style={{
                 boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
-                minWidth: 140,
+                minWidth: 180,
               }}
             >
-              + Log event
+              Save · Next of Plant
             </Button>
           </div>
 
           {/* V3-EVENT-001: ambient confirmation for the keepOpen save. Frozen Toast
               primitive, auto-dismisses; does NOT steal focus. */}
           <Toast
-            message="Saved — log another"
+            message={savedToastMsg}
             show={showSavedToast}
             onDone={() => setShowSavedToast(false)}
           />
