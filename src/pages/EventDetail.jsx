@@ -5,7 +5,7 @@ import { P, EVENT_TYPES } from '../lib/constants.js'
 import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
-import { Field, Input, Select, Textarea, Button } from '../components/forms/index.js'
+import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
 
 
 // Shared metadata field label map — mirrors EVENT_METADATA_FIELDS keys from EventNew
@@ -119,7 +119,7 @@ export default function EventDetail() {
 
   if (loading) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div></Shell>
   // Full-page error only when the page never loaded. Post-load errors (e.g. a failed
-  // Delete) surface inline via ErrBanner so the event content stays visible.
+  // Delete) surface inline via ErrorBanner so the event content stays visible.
   if (error && !event) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{error}</div></Shell>
   if (!event || !project) return null
 
@@ -148,12 +148,12 @@ export default function EventDetail() {
         )}
       </div>
 
-      {!editing && error && <ErrBanner msg={error} />}
+      {!editing && error && <ErrorBanner style={{ marginBottom: 16 }}>{error}</ErrorBanner>}
 
       {editing ? (
         <form onSubmit={handleSave} style={cardStyle}>
           <h2 style={{ margin: '0 0 18px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>Edit event</h2>
-          {saveErr && <ErrBanner msg={saveErr} />}
+          {saveErr && <ErrorBanner style={{ marginBottom: 16 }}>{saveErr}</ErrorBanner>}
 
           <Field label="Event type *" htmlFor="ev-event-type" style={{ marginBottom: 14 }}>
             <Select
@@ -344,14 +344,6 @@ function Shell({ children }) {
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px' }}>
         {children}
       </div>
-    </div>
-  )
-}
-
-function ErrBanner({ msg }) {
-  return (
-    <div style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: '0.875rem', color: '#7a2a10' }}>
-      {msg}
     </div>
   )
 }

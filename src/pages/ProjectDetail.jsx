@@ -721,71 +721,67 @@ export default function ProjectDetail() {
             {logErr && <ErrBanner msg={logErr} />}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-              <FormRow label="Event type *">
-                <select
+              <Field label="Event type *" style={{ marginBottom: 14 }}>
+                <Select
                   value={eventForm.event_type}
                   onChange={e => setEventForm(f => ({ ...f, event_type: e.target.value }))}
-                  style={inputStyle}
                 >
                   {[...EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
                     <option key={t} value={t}>
                       {(EVENT_TYPE_META[t]?.emoji ?? '📝') + ' ' + t.replace(/_/g, ' ')}
                     </option>
                   ))}
-                </select>
-              </FormRow>
+                </Select>
+              </Field>
 
-              <FormRow label="Date *">
-                <input
+              <Field label="Date *" style={{ marginBottom: 14 }}>
+                <Input
                   type="date"
                   required
                   value={eventForm.event_date}
                   onChange={e => setEventForm(f => ({ ...f, event_date: e.target.value }))}
-                  style={inputStyle}
                 />
-              </FormRow>
+              </Field>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
-              <FormRow label="Title (optional)">
-                <input
+              <Field label="Title (optional)" style={{ marginBottom: 14 }}>
+                <Input
                   value={eventForm.title}
                   onChange={e => setEventForm(f => ({ ...f, title: e.target.value }))}
                   placeholder="e.g. First true leaves visible"
-                  style={inputStyle}
                 />
-              </FormRow>
-              <FormRow label="Quantity (optional)">
-                <input
+              </Field>
+              <Field label="Quantity (optional)" style={{ marginBottom: 14 }}>
+                <Input
                   value={eventForm.quantity}
                   onChange={e => setEventForm(f => ({ ...f, quantity: e.target.value }))}
                   placeholder="e.g. 6 plants"
-                  style={inputStyle}
                 />
-              </FormRow>
+              </Field>
             </div>
 
-            <FormRow label="Notes (public)">
-              <textarea
+            <Field label="Notes (public)" style={{ marginBottom: 14 }}>
+              <Textarea
                 value={eventForm.notes}
                 onChange={e => setEventForm(f => ({ ...f, notes: e.target.value }))}
                 placeholder="Visible on public page…"
-                style={{ ...inputStyle, height: 64, resize: 'vertical' }}
+                style={{ height: 64 }}
               />
-            </FormRow>
+            </Field>
 
-            <FormRow label="Private notes (never public)">
-              <textarea
+            <Field label="Private notes (never public)" style={{ marginBottom: 14 }}>
+              <Textarea
                 value={eventForm.private_notes}
                 onChange={e => setEventForm(f => ({ ...f, private_notes: e.target.value }))}
                 placeholder="Dosage, stress signs, anything you don't want to share…"
-                style={{ ...inputStyle, height: 52, resize: 'vertical', borderColor: P.warnBorder, backgroundColor: P.warn }}
+                style={{ height: 52, borderColor: P.warnBorder, backgroundColor: P.warn }}
               />
-            </FormRow>
+            </Field>
 
             {/* V2-PHOTO-F1 S2: inline photo capture for the mini-logger.
                 Uses staged-file pattern (file picked here, uploaded after event POST). */}
-            <FormRow label="Photo · optional">
+            <Field label="Photo · optional" style={{ marginBottom: 14 }}>
               {miniPhotoPreview ? (
                 <div style={{ position: 'relative', display: 'inline-block' }}>
                   <img
@@ -822,7 +818,7 @@ export default function ProjectDetail() {
                   />
                 </label>
               )}
-            </FormRow>
+            </Field>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
               <input
@@ -1065,16 +1061,7 @@ function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center'
 function ErrBanner({ msg }) {
   return <div style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: '0.875rem', color: '#7a2a10' }}>{msg}</div>
 }
-function FormRow({ label, children }) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>{label}</label>
-      {children}
-    </div>
-  )
-}
 
-const inputStyle = { width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }
 const cardStyle  = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 28 }
 const primaryBtn = (disabled) => ({ backgroundColor: disabled ? P.light : P.green, color: P.white, border: 'none', borderRadius: 6, padding: '9px 20px', fontSize: '0.88rem', fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer' })
 const ghostBtn   = { backgroundColor: 'transparent', color: P.mid, border: `1px solid ${P.border}`, borderRadius: 6, padding: '9px 20px', fontSize: '0.88rem', cursor: 'pointer' }

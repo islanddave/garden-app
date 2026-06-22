@@ -10,7 +10,7 @@ import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
-import { Field, Input, Select, Textarea, Button } from '../components/forms/index.js'
+import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
 import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 
 // V3-EVENT-008: EVENT_TYPE_META lives in the canonical src/lib/eventTypes.js
@@ -517,8 +517,8 @@ export default function EventNew() {
           </div>
         </div>
 
-        {error && <ErrBanner msg={error} />}
-        {notice && <ErrBanner msg={notice} />}
+        {error && <ErrorBanner style={{ marginBottom: 16 }}>{error}</ErrorBanner>}
+        {notice && <ErrorBanner style={{ marginBottom: 16 }}>{notice}</ErrorBanner>}
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
@@ -897,18 +897,6 @@ function Section({ label, children }) {
         {label}
       </label>
       {children}
-    </div>
-  )
-}
-
-function ErrBanner({ msg }) {
-  return (
-    <div role="alert" style={{
-      backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`,
-      borderRadius: 8, padding: '12px 16px', marginBottom: 16,
-      fontSize: '0.875rem', color: '#7a2a10',
-    }}>
-      {msg}
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_CATEGORIES } from '../lib/constants.js'
+import { Field, Input, Select, Button } from '../components/forms'
 
 const DEFAULT_ICONS = ['🌳','🌿','🪴','🌱','🥕','🍅','🌻','🌾','🪵','🏠','🚜','🔨','🛠️','📦','💧','🌍']
 
@@ -87,21 +88,18 @@ export default function ProjectTypes() {
           <form onSubmit={handleCreate} style={{ ...card, marginBottom: 24 }}>
             <h3 style={{ margin: '0 0 18px', color: P.mid, fontSize: '0.95rem', fontWeight: 700 }}>New project type</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
-              <div>
-                <label style={labelStyle}>Name *</label>
-                <input required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={inputStyle} placeholder="e.g. Fruit Trees" />
-              </div>
-              <div>
-                <label style={labelStyle}>Category *</label>
-                <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} style={inputStyle}>
+              <Field label="Name *" htmlFor="pt-name">
+                <Input id="pt-name" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Fruit Trees" />
+              </Field>
+              <Field label="Category *" htmlFor="pt-category">
+                <Select id="pt-category" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
                   {PROJECT_CATEGORIES.map(c => <option key={c.v} value={c.v}>{c.label}</option>)}
-                </select>
-              </div>
+                </Select>
+              </Field>
             </div>
-            <div style={{ marginBottom: 14 }}>
-              <label style={labelStyle}>Description</label>
-              <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} style={inputStyle} placeholder="Optional — shown when choosing a template" />
-            </div>
+            <Field label="Description" htmlFor="pt-description" style={{ marginBottom: 14 }}>
+              <Input id="pt-description" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Optional — shown when choosing a template" />
+            </Field>
             <div style={{ marginBottom: 18 }}>
               <label style={labelStyle}>Icon</label>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
@@ -111,11 +109,11 @@ export default function ProjectTypes() {
                     {ic}
                   </button>
                 ))}
-                <input value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} style={{ ...inputStyle, width: 60 }} placeholder="✏️" maxLength={4} />
+                <Input value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} style={{ width: 60 }} placeholder="✏️" maxLength={4} />
               </div>
             </div>
             <div style={{ display: 'flex', gap: 12 }}>
-              <button type="submit" disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Create type'}</button>
+              <Button type="submit" variant="primary" disabled={saving} loading={saving} loadingLabel="Saving…">Create type</Button>
             </div>
           </form>
         )}
@@ -175,7 +173,6 @@ function ErrBanner({ msg, onClose }) {
 }
 
 const card = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 20 }
-const inputStyle = { width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }
 const labelStyle = { display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }
 const btnPrimary = { backgroundColor: P.green, color: P.white, border: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600, cursor: 'pointer' }
 function Spinner() { return <div style={{ padding: 40, textAlign: 'center', color: P.light }}>Loading…</div> }
