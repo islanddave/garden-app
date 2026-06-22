@@ -190,15 +190,16 @@ describe('handleDashboard — aggregation', () => {
   function queueAggregationResults({
     recent = [], counts = [{ project_count: 0, plant_count: 0, location_count: 0 }],
     fav = [{ count: 0 }], active = [], stats = [], water = [],
-    harvest = [], heads = [], inactive = [{ count: 0 }], activity = [], attention = [],
+    harvest = [], heads = [], inactive = [{ count: 0 }],
   } = {}) {
-    sqlResults.push(recent, counts, fav, active, stats, water, harvest, heads, inactive, activity, attention);
+    sqlResults.push(recent, counts, fav, active, stats, water, harvest, heads, inactive);
   }
 
   it('V3-ATTNFILTER-001: give_attention is plantings-only (oldest stale planting, server-ranked)', async () => {
-    queueAggregationResults({ attention: [
+    queueAggregationResults();
+    sqlResults.push([], [
       { plant_id: 'pl1', plant_name: 'Greek Oregano', project_id: 'pr1', project_name: 'Oregano', last_event_at: '2026-06-14T12:00:00Z', days_stale: 8 },
-    ] });
+    ]); // 10th = queryActivityDays (empty), 11th = queryGiveAttention
     const res = await handleDashboard(makeSql(), 'user_alpha');
     const body = parseBody(res);
     expect(body.give_attention).toEqual({ plant_id: 'pl1', plant_name: 'Greek Oregano', project_id: 'pr1', project_name: 'Oregano', last_event_at: '2026-06-14T12:00:00Z', days_stale: 8 });
