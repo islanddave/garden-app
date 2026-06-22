@@ -58,21 +58,9 @@ function DashboardFallback({ error, retry } = {}) {
 // intentionally excluded here — they surface in the dedicated Harvest Ready tile instead.
 const ATTENTION_LIST_STATUSES = PROJECT_STATUSES.filter(s => s !== 'harvesting')
 
-// Stale threshold for Tile 1 "Give attention to" — surface only projects engaged within last 30 days.
-// Never-touched and very-stale projects defer to V1.2a-2 "Inactive projects" surface.
-const STALE_MS = 30 * 86400000
-
-function getProjectActivity(p) {
-  const candidates = [
-    { at: p.last_watered_at,    type: 'watering' },
-    { at: p.last_observed_at,   type: 'observation' },
-    { at: p.last_fertilized_at, type: 'fertilizing' },
-    { at: p.last_pruned_at,     type: 'pruning' },
-    { at: p.last_harvested_at,  type: 'harvest' },
-  ].filter(c => c.at).sort((a, b) => b.at.localeCompare(a.at))
-  if (!candidates.length) return null
-  return { last_event_at: candidates[0].at, last_event_type: candidates[0].type }
-}
+// V3-ATTNFILTER-001 (2026-06-22): "Give attention to" is now a PLANTING-level surface computed
+// server-side (dashboard Lambda `give_attention`). The old client-side project staleness ranking was
+// removed — a project being "stale" is meaningless; care-need is a property of the individual planting.
 
 // V002 §C-V1.2a-1-D Tile 2 severity tier: green=on-time, gold=due today,
 // terra=1-2 days over, terra-bold=3+ days over OR indoor_seedling >24h over.
@@ -121,32 +109,8 @@ export default function Dashboard() {
       // emits reason='flagged' heads_up rows (server intentionally untouched); drop them here.
       setHeadsUp((dashData.heads_up ?? []).filter(r => r?.reason !== 'flagged'))
 
-      // memMap drives the "give attention to" stale-project ranking below.
-      const memMap = {}
-      activeProjects.forEach(p => {
-        const activity = getProjectActivity(p)
-        if (activity) memMap[p.id] = activity
-      })
-
-      // V002: surface recently-engaged-but-stale first (last_event_at within 30d, oldest ASC).
-      // Never-touched and very-stale (>30d) defer to V1.2a-2 "Inactive projects" surface.
-      const now = Date.now()
-      const stale = activeProjects
-        .filter(p => memMap[p.id] && (now - new Date(memMap[p.id].last_event_at).getTime()) < STALE_MS)
-        .sort((a, b) => memMap[a.id].last_event_at.localeCompare(memMap[b.id].last_event_at))
-
-      // Define "needs attention" = last_event_at >= 24h ago. Anything fresher = "caught up".
-      const oldest = stale.find(p => (now - new Date(memMap[p.id].last_event_at).getTime()) >= 86400000)
-
-      if (oldest) {
-        setNextAttention({
-          id: oldest.id,
-          name: oldest.name,
-          last_event_at: memMap[oldest.id].last_event_at,
-        })
-      } else {
-        setNextAttention(null) // triggers "All caught up 🌱" zero state if projects.length > 0
-      }
+      // V3-ATTNFILTER-001: the oldest stale PLANTING (server-ranked, plantings-only). null → "All caught up".
+      setNextAttention(dashData.give_attention ?? null)
     } catch (err) {
       if (isMounted) setError(err.message)
     } finally {
@@ -566,7 +530,7 @@ function GiveAttentionTile({ nextAttention, hasProjects }) {
   }
 
   return (
-    <Link to={`/projects/${nextAttention.id}`} style={{ textDecoration: 'none', display: 'block', marginBottom: '12px' }}>
+    <Link to={`/projects/${nextAttention.project_id}/plantings/${nextAttention.plant_id}`} style={{ textDecoration: 'none', display: 'block', marginBottom: '12px' }}>
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -584,8 +548,13 @@ function GiveAttentionTile({ nextAttention, hasProjects }) {
               GIVE ATTENTION TO
             </div>
             <div style={{ fontWeight: 700, color: P.green, fontSize: '0.95rem' }}>
-              {nextAttention.name}
+              {nextAttention.plant_name}
             </div>
+            {nextAttention.project_name && (
+              <div style={{ fontSize: '0.72rem', color: P.light, marginTop: 1 }}>
+                {nextAttention.project_name}
+              </div>
+            )}
           </div>
         </div>
         <span style={{ fontSize: '0.8rem', color: P.mid, flexShrink: 0 }}>

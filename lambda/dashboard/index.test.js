@@ -46,6 +46,7 @@ import {
   queryHarvestReady,
   queryHeadsUp,
   queryInactiveCount,
+  queryGiveAttention,
   queryInactiveList,
   queryDismissInactive,
   handleDashboard,
@@ -189,10 +190,31 @@ describe('handleDashboard — aggregation', () => {
   function queueAggregationResults({
     recent = [], counts = [{ project_count: 0, plant_count: 0, location_count: 0 }],
     fav = [{ count: 0 }], active = [], stats = [], water = [],
-    harvest = [], heads = [], inactive = [{ count: 0 }],
+    harvest = [], heads = [], inactive = [{ count: 0 }], activity = [], attention = [],
   } = {}) {
-    sqlResults.push(recent, counts, fav, active, stats, water, harvest, heads, inactive);
+    sqlResults.push(recent, counts, fav, active, stats, water, harvest, heads, inactive, activity, attention);
   }
+
+  it('V3-ATTNFILTER-001: give_attention is plantings-only (oldest stale planting, server-ranked)', async () => {
+    queueAggregationResults({ attention: [
+      { plant_id: 'pl1', plant_name: 'Greek Oregano', project_id: 'pr1', project_name: 'Oregano', last_event_at: '2026-06-14T12:00:00Z', days_stale: 8 },
+    ] });
+    const res = await handleDashboard(makeSql(), 'user_alpha');
+    const body = parseBody(res);
+    expect(body.give_attention).toEqual({ plant_id: 'pl1', plant_name: 'Greek Oregano', project_id: 'pr1', project_name: 'Oregano', last_event_at: '2026-06-14T12:00:00Z', days_stale: 8 });
+    const q = findSql(x => x.includes('planting_activity'));
+    expect(q).toBeDefined();
+    expect(q.resolved).toMatch(/FROM public\.garden_node/);
+    expect(q.resolved).toMatch(/INTERVAL '30 days'/);
+    expect(q.resolved).toMatch(/INTERVAL '24 hours'/);
+    expect(q.resolved).toMatch(/LIMIT 1/);
+  });
+
+  it('give_attention is null when no planting is stale', async () => {
+    queueAggregationResults();
+    const res = await handleDashboard(makeSql(), 'user_alpha');
+    expect(parseBody(res).give_attention).toBeNull();
+  });
 
   it('T1: harvest_ready computes days_since_obs via calendar-day arithmetic (F1)', async () => {
     queueAggregationResults({
@@ -297,10 +319,10 @@ describe('handleDashboard — aggregation', () => {
     expect(countSql.resolved).toMatch(/d\.user_id\s*=\s*\$\d+/);
   });
 
-  it('T19: Promise.all parallelization — all 10 aggregation queries fire', async () => {
+  it('T19: Promise.all parallelization — all 11 aggregation queries fire', async () => {
     queueAggregationResults();
     await handleDashboard(makeSql(), 'user_alpha');
-    expect(sqlCalls.length).toBe(10);
+    expect(sqlCalls.length).toBe(11);
   });
 
   it('userStats defaults when no row present', async () => {
@@ -347,7 +369,7 @@ describe('handleDashboard — aggregation', () => {
     // the counts query which DOES bind userId for the outer projects + plants sub-counts).
     // HOUSEHOLD-MODE: 7 ownership builders bind ['user_alpha'] (array); favorites + userStats bind the bare string.
     const userBound = sqlCalls.filter(c => bindsUserAnyForm(c.values, 'user_alpha'));
-    expect(userBound.length).toBe(10);
+    expect(userBound.length).toBe(11);
   });
 });
 
@@ -595,5 +617,18 @@ describe('collapseBatches — V3-FEED-001 log-many feed collapse', () => {
     expect(re).toHaveLength(2);
     expect(re[0]).toMatchObject({ id: 'e1', batch_count: 2 });
     expect(re[1]).toMatchObject({ id: 'e3', batch_count: 1 });
+  });
+});
+
+describe('V3-ATTNFILTER-001 — queryGiveAttention builder', () => {
+  it('targets plantings (garden_node), caretaker-scoped, 24h-30d window, LIMIT 1', () => {
+    queryGiveAttention(makeSql(), 'user_alpha');
+    const q = sqlCalls[0].resolved;
+    expect(q).toMatch(/FROM public\.garden_node/);
+    expect(q).toMatch(/pp\.assignee_user_id\s*=\s*\$\d+/);
+    expect(q).toMatch(/pp\.assignee_user_id IS NULL AND pp\.created_by\s*=\s*\$\d+/);
+    expect(q).toMatch(/gn\.status NOT IN \('dormant','ended','failed','rooting'\)/);
+    expect(q).toMatch(/LIMIT 1/);
+    expect(countUserBinds(sqlCalls[0].values, 'user_alpha')).toBe(2);
   });
 });

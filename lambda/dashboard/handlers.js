@@ -415,6 +415,42 @@ export function queryDismissInactive(sql, userId, projectId) {
   `;
 }
 
+export function queryGiveAttention(sql, userId) {
+  // V3-ATTNFILTER-001 (2026-06-22) — "Give attention to" is a PLANTING-level surface, not project-level.
+  // A project being "stale" is meaningless (Dave: the tile showed "Herb Plants — 8 days ago", a container).
+  // Rank individual plantings by last activity (a planting-specific event OR a project-wide event with no
+  // plant_id), and surface the single oldest one still inside the 24h-30d "engaged-but-going-stale" window.
+  // Caretaker-scoped (assignee, created_by fallback) like water_due/heads_up; excludes planning/harvested/
+  // ended projects and dormant/ended/failed/rooting plantings (same actionable-planting filter as water_due).
+  // >30d defers to the inactive surface, matching the prior project-level threshold.
+  return sql`
+      WITH planting_activity AS (
+        SELECT gn.id AS plant_id, gn.display_name AS plant_name,
+               gn.container_id AS project_id, pp.display_name AS project_name,
+               MAX(e.event_date) AS last_event_at
+        FROM public.garden_node gn
+        JOIN public.container pp ON pp.id = gn.container_id
+        LEFT JOIN event_log e
+          ON (e.plant_id = gn.id OR (e.project_id = gn.container_id AND e.plant_id IS NULL))
+         AND e.deleted_at IS NULL
+        WHERE (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
+          AND gn.deleted_at IS NULL AND gn.archived_at IS NULL
+          AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
+          AND pp.status NOT IN ('planning','harvested','ended')
+          AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
+        GROUP BY gn.id, gn.display_name, gn.container_id, pp.display_name
+      )
+      SELECT plant_id, plant_name, project_id, project_name, last_event_at,
+             (NOW()::date - last_event_at::date)::int AS days_stale
+      FROM planting_activity
+      WHERE last_event_at IS NOT NULL
+        AND last_event_at < NOW() - INTERVAL '24 hours'
+        AND last_event_at >= NOW() - INTERVAL '30 days'
+      ORDER BY last_event_at ASC
+      LIMIT 1
+    `;
+}
+
 // ---- Composite handler bodies --------------------------------------------
 // These compose the per-query builders. Pure in the sense that they don't
 // import neon/Clerk — they accept `sql` from the caller.
@@ -433,6 +469,7 @@ export async function handleDashboard(sql, userId) {
     headsUp,
     inactiveCountRows,
     activityDaysRows,
+    giveAttnRows,
   ] = await Promise.all([
     queryRecentEvents(sql, userId),
     queryCounts(sql, userId),
@@ -444,6 +481,7 @@ export async function handleDashboard(sql, userId) {
     queryHeadsUp(sql, userId),
     queryInactiveCount(sql, userId),
     queryActivityDays(sql, userId),
+    queryGiveAttention(sql, userId),
   ]);
 
   const storedStats = userStatsRows[0] ?? {
@@ -480,6 +518,7 @@ export async function handleDashboard(sql, userId) {
     harvest_ready: harvestReady,
     heads_up: headsUp,
     inactive_projects_count: inactiveCountRows[0]?.count ?? 0,
+    give_attention: giveAttnRows[0] ?? null,
   });
 }
 
