@@ -1,5 +1,5 @@
 import React from 'react'
-import { computeWateringScale, canRail, pillState } from '../../lib/wateringScale.js'
+import { computeWateringScale, canRail, pillState, wateringReason } from '../../lib/wateringScale.js'
 
 // Weather widget — LOCKED v1 (icon-first, slim), ported from the Tailwind design artifact
 // (daily-plan-engine-build/weather-widget-redesign/WeatherWidget.jsx) to INLINE styles, because the
@@ -149,6 +149,8 @@ export default function WeatherWidget({
   planDate = null,
 }) {
   const scale = computeWateringScale(hydrology, weather)
+  const reason = wateringReason(hydrology, weather)
+  const [whyLane, setWhyLane] = React.useState(null)
   // Prefer TODAY's rain in the note when there is any (the case the old widget missed); else tomorrow.
   const todayIn = hydrology.today_precip_in ?? 0
   const showToday = todayIn > 0
@@ -158,23 +160,29 @@ export default function WeatherWidget({
   const asOf = asOfLabel(generatedAt)
   const stale = isStaleSnapshot(generatedAt, planDate)
 
-  const Pill = ({ level, Target }) => {
+  const Pill = ({ level, Target, laneKey }) => {
     const state = pillState(level)
     const c = state === 'do'
       ? { bg: PAL.doBg, br: PAL.doBorder, ink: PAL.doInk, can: PAL.doCan, ghost: PAL.doGhost }
       : { bg: PAL.waitBg, br: PAL.waitBorder, ink: PAL.waitInk }
+    const open = whyLane === laneKey
     return (
-      <div style={{
-        flex: 1, borderRadius: 13, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        gap: 8, padding: '8px 10px', background: c.bg, border: `1px solid ${c.br}`,
-      }}>
+      <button type="button"
+        onClick={() => setWhyLane(w => (w === laneKey ? null : laneKey))}
+        aria-expanded={open}
+        aria-label={`Why this ${laneKey === 'beds' ? 'in-ground bed' : 'container'} watering recommendation`}
+        style={{
+          flex: 1, borderRadius: 13, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 8, padding: '8px 10px', background: c.bg, cursor: 'pointer', font: 'inherit',
+          border: `${open ? 2 : 1}px solid ${open ? PAL.doCan : c.br}`,
+        }}>
         <Target color={c.ink} />
         {state === 'do' ? (
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3 }}>
             {canRail(level).map((f, i) => <Can key={i} fill={f} color={c.can} ghost={c.ghost} />)}
           </div>
         ) : <PauseIcon />}
-      </div>
+      </button>
     )
   }
 
@@ -196,9 +204,23 @@ export default function WeatherWidget({
       </div>
 
       <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-        <Pill level={scale.containers} Target={PotIcon} />
-        <Pill level={scale.beds} Target={BedIcon} />
+        <Pill level={scale.containers} Target={PotIcon} laneKey="containers" />
+        <Pill level={scale.beds} Target={BedIcon} laneKey="beds" />
       </div>
+
+      {whyLane && (
+        <div role="region" aria-label="watering explanation" style={{
+          marginTop: 8, borderRadius: 11, padding: '9px 11px', textAlign: 'left',
+          background: '#FBF7EE', border: `1px solid ${PAL.cardBorder}`,
+        }}>
+          <div style={{ fontWeight: 700, fontSize: 12, color: PAL.tempHi, marginBottom: 4 }}>
+            {reason[whyLane].verdict}
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, lineHeight: 1.45, color: PAL.tempLo }}>
+            {reason[whyLane].lines.map((l, i) => <li key={i}>{l}</li>)}
+          </ul>
+        </div>
+      )}
 
       {rainIn > 0 && (
         <div style={{ marginTop: 8, textAlign: 'center', fontSize: 11.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
