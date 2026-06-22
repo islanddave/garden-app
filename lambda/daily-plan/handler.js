@@ -48,7 +48,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            -- Dates returned as 'YYYY-MM-DD' TEXT (UTC): the neon driver hands timestamptz back as JS Date objects, and
            -- engine.daysBetween does iso.slice(0,10) -> a Date object crashes it (TypeError). to_char + AT TIME ZONE 'UTC'
            -- matches the engine's own UTC date math (new Date(iso.slice(0,10)+'T00:00:00Z')). Soft-deleted events excluded.
-           to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='watering'    and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_water,
+           to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type in ('watering','rain') and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_water,
            to_char((select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='fertilizing' and e.deleted_at is null) at time zone 'UTC','YYYY-MM-DD') as last_fert,
            -- substrate_start = when the current MG-amended substrate began (the feed-phase clock). NOT a column; derived from the
            -- latest potting_up event, else transplant/plant/created date. engine reads p.substrate_start for feedPhase; without it

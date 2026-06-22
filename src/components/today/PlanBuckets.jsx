@@ -23,9 +23,9 @@ function itemHref(bucketKey, it) {
 function subLine(bucketKey, it) {
   switch (bucketKey) {
     case 'water_due': {
+      if (it.rain_note) return it.rain_note   // DRG-WATERCREDIT-001: engine's reason string (rain credit / under-threshold / fresh transplant)
       const overdue = it.overdue_by > 0 ? `${it.overdue_by}d overdue` : 'due today'
-      const rain = it.defer_for_rain ? ' · can wait for rain' : ''
-      return `${overdue}${it.project ? ' · ' + it.project : ''}${rain}`
+      return `${overdue}${it.project ? ' · ' + it.project : ''}`
     }
     case 'no_history':
       return `No watering logged yet${it.project ? ' · ' + it.project : ''}`
@@ -43,14 +43,13 @@ function subLine(bucketKey, it) {
 }
 
 function Row({ bucketKey, it }) {
-  const muted = bucketKey === 'water_due' && it.defer_for_rain
   return (
     <Link
       to={itemHref(bucketKey, it)}
       style={{
         display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none',
         padding: '10px 12px', borderTop: `1px solid ${P.border}`, color: P.dark,
-        opacity: muted ? 0.62 : 1, minHeight: 48,
+        opacity: 1, minHeight: 48,
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -121,6 +120,13 @@ const BUCKETS = [
 
 export default function PlanBuckets({ plan }) {
   const total = BUCKETS.reduce((n, b) => n + ((plan?.[b.key] || []).filter(it => !it.done).length), 0)
+  // DRG-WATERCREDIT-001: ambient note so rain-credited plantings aren't silently absent from Water.
+  const skipped = Array.isArray(plan?.rain_skipped) ? plan.rain_skipped.length : 0
+  const rainLine = skipped > 0 ? (
+    <div style={{ fontSize: '0.78rem', color: P.light, padding: '4px 6px', textAlign: total === 0 ? 'center' : 'left' }}>
+      🌧️ {skipped} planting{skipped > 1 ? 's' : ''} skipped — recent rain counts as watering
+    </div>
+  ) : null
   if (total === 0) {
     return (
       <div style={{ padding: '28px 16px', textAlign: 'center', color: P.light }}>
@@ -131,12 +137,14 @@ export default function PlanBuckets({ plan }) {
         <div style={{ fontSize: '0.82rem', lineHeight: 1.4 }}>
           Your plants are on track — enjoy the garden.
         </div>
+        {rainLine}
       </div>
     )
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {BUCKETS.map(def => <Bucket key={def.key} def={def} items={plan?.[def.key]} />)}
+      {rainLine}
     </div>
   )
 }
