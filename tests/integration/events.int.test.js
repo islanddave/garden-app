@@ -341,3 +341,50 @@ describe('PATCH /api/events/:id — issue resolve', () => {
     expect(rows[0].resolved_by).toBe(USER)
   })
 })
+
+// DRG-CARESTATUS-002 — rain events must advance entity_memory water memory the same
+// as watering, so the dashboard water_due / bottom Alert bar drops the plant same-day.
+// Split-path regression: daily-plan-read honored 'rain' (v2.8.0 DONE_EVENTS) but the
+// entity_memory upsert in lambda/events/index.js only fired on 'watering'. Falsifiable:
+// before the fix a rain POST left next_water_at NULL (water_due kept showing the plant).
+describe('POST /api/events — rain advances water memory (Alert-bar split-path fix)', () => {
+  it('rain event sets last_watered_at + future next_water_at (watering parity)', async () => {
+    await directSql`DELETE FROM event_log WHERE project_id = ${projectId}`
+    await directSql`DELETE FROM entity_memory WHERE project_id = ${projectId}`
+    const when = new Date().toISOString()
+    const { status } = await callHandler(handler, {
+      method: 'POST', path: '/api/events',
+      body: { project_id: projectId, event_type: 'rain', event_date: when },
+    })
+    expect(status).toBe(201)
+    const em = await directSql`
+      SELECT last_watered_at, next_water_at FROM entity_memory WHERE project_id = ${projectId}
+    `
+    expect(em.length).toBe(1)
+    expect(em[0].last_watered_at).toBeTruthy()
+    // next_water_at = event_date + watering interval (>= +1 day) → strictly after the rain time.
+    expect(em[0].next_water_at).toBeTruthy()
+    expect(new Date(em[0].next_water_at).getTime()).toBeGreaterThan(new Date(when).getTime())
+  })
+
+  it('undoing the only rain event clears water memory (undo guard fires for rain)', async () => {
+    await directSql`DELETE FROM event_log WHERE project_id = ${projectId}`
+    await directSql`DELETE FROM entity_memory WHERE project_id = ${projectId}`
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/events',
+      body: { project_id: projectId, event_type: 'rain', event_date: new Date().toISOString() },
+    })
+    expect(created.status).toBe(201)
+    const id = created.body.id
+    const before = await directSql`SELECT next_water_at FROM entity_memory WHERE project_id = ${projectId}`
+    expect(before[0].next_water_at).toBeTruthy()
+    const undo = await callHandler(handler, { method: 'DELETE', path: `/api/events/${id}` })
+    expect(undo.status).toBe(200)
+    const after = await directSql`
+      SELECT last_watered_at, next_water_at FROM entity_memory WHERE project_id = ${projectId}
+    `
+    // No surviving watering/rain events → memory recomputed to NULL.
+    expect(after[0].last_watered_at).toBeNull()
+    expect(after[0].next_water_at).toBeNull()
+  })
+})

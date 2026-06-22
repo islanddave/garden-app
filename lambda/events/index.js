@@ -227,21 +227,21 @@ export const handler = async (event) => {
              next_water_at, last_issue_at)
           SELECT DISTINCT p.container_id,
             ${eventDate}::timestamptz,
-            CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} IN ('watering','rain')      THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'fertilizing' THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'pruning'       THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'observation'   THEN ${eventDate}::timestamptz ELSE NULL END,
             NULL::timestamptz,
-            CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
+            CASE WHEN ${eventType} IN ('watering','rain')      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
             NULL::timestamptz
           FROM public.garden_node p WHERE p.id = ANY(${plantIds})
           ON CONFLICT (project_id) DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
-            last_watered_at    = CASE WHEN ${eventType} = 'watering'      THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
+            last_watered_at    = CASE WHEN ${eventType} IN ('watering','rain')      THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
             last_fertilized_at = CASE WHEN ${eventType} = 'fertilizing' THEN GREATEST(COALESCE(entity_memory.last_fertilized_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_fertilized_at END,
             last_pruned_at     = CASE WHEN ${eventType} = 'pruning'       THEN GREATEST(COALESCE(entity_memory.last_pruned_at,     ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_pruned_at     END,
             last_observed_at   = CASE WHEN ${eventType} = 'observation'   THEN GREATEST(COALESCE(entity_memory.last_observed_at,   ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_observed_at   END,
-            next_water_at      = CASE WHEN ${eventType} = 'watering'
+            next_water_at      = CASE WHEN ${eventType} IN ('watering','rain')
               THEN GREATEST(COALESCE(entity_memory.last_watered_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz)
                    + (COALESCE(entity_memory.watering_interval_days,
                        CASE entity_memory.location_type
@@ -363,7 +363,7 @@ export const handler = async (event) => {
           surv AS (
             SELECT a.project_id,
               (SELECT MAX(e.event_date) FROM event_log e
-                WHERE e.project_id = a.project_id AND e.event_type = 'watering' AND e.deleted_at IS NULL) AS mw
+                WHERE e.project_id = a.project_id AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw
             FROM affected a
           )
           UPDATE entity_memory em SET
@@ -578,13 +578,13 @@ export const handler = async (event) => {
           sql`UPDATE event_log SET deleted_at = NOW(), updated_at = NOW()
               WHERE id = ${eventId} AND deleted_at IS NULL`,
         ];
-        if (owned[0].event_type === 'watering') {
+        if (owned[0].event_type === 'watering' || owned[0].event_type === 'rain') {
           // Recompute watering memory from SURVIVING events (runs after the soft-delete in
           // the same transaction, so MAX() excludes the undone event) — batch-undo parity.
           stmts.push(sql`
             WITH surv AS (
               SELECT (SELECT MAX(e.event_date) FROM event_log e
-                WHERE e.project_id = ${projectId} AND e.event_type = 'watering' AND e.deleted_at IS NULL) AS mw
+                WHERE e.project_id = ${projectId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw
             )
             UPDATE entity_memory em SET
               last_watered_at = surv.mw,
@@ -765,22 +765,22 @@ export const handler = async (event) => {
           VALUES (
             ${projectId},
             ${eventDate}::timestamptz,
-            CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} IN ('watering','rain')      THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'fertilizing' THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'pruning'       THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'observation'   THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'harvest'       THEN ${eventDate}::timestamptz ELSE NULL END,
-            CASE WHEN ${eventType} = 'watering'      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
+            CASE WHEN ${eventType} IN ('watering','rain')      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
             CASE WHEN ${flagged}::boolean = true     THEN ${eventDate}::timestamptz ELSE NULL END
           )
           ON CONFLICT (project_id) DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
-            last_watered_at    = CASE WHEN ${eventType} = 'watering'      THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
+            last_watered_at    = CASE WHEN ${eventType} IN ('watering','rain')      THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
             last_fertilized_at = CASE WHEN ${eventType} = 'fertilizing' THEN GREATEST(COALESCE(entity_memory.last_fertilized_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_fertilized_at END,
             last_pruned_at     = CASE WHEN ${eventType} = 'pruning'       THEN GREATEST(COALESCE(entity_memory.last_pruned_at,     ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_pruned_at     END,
             last_observed_at   = CASE WHEN ${eventType} = 'observation'   THEN GREATEST(COALESCE(entity_memory.last_observed_at,   ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_observed_at   END,
             last_harvested_at  = CASE WHEN ${eventType} = 'harvest'       THEN GREATEST(COALESCE(entity_memory.last_harvested_at,  ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_harvested_at  END,
-            next_water_at      = CASE WHEN ${eventType} = 'watering'
+            next_water_at      = CASE WHEN ${eventType} IN ('watering','rain')
               THEN GREATEST(COALESCE(entity_memory.last_watered_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz)
                    + (COALESCE(
                        entity_memory.watering_interval_days,
