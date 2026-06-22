@@ -47,6 +47,7 @@ export default function PlantForm({
   showProjectSelect = false,
   projects = [],
   plantingOptions = [],    // V3-LINEAGE-001: [{id,name}] candidate source plantings; picker hidden when empty
+  locations = [],          // V3-PLANTLOC-001: [{id,full_path}] active locations; field hidden when empty
   projectOptions = null,   // optional <option> children (e.g. hierarchical <ProjectOptions/>); overrides flat `projects`
   extraActions = null,     // optional node appended to the button row (e.g. a Remove button on edit)
   idPrefix = 'plant',
@@ -172,6 +173,15 @@ export default function PlantForm({
                 placeholder="e.g. 3 gal, 5 L, 4 in" />
             </Field>
           </div>
+
+          {/* V3-PLANTLOC-001: per-planting location; rendered only when active locations are supplied. */}
+          {locations.length > 0 && (
+            <Field label="Location" htmlFor={`${pid}-loc`} optional style={{ marginBottom: 14 }}>
+              <Select id={`${pid}-loc`} value={v.location_id ?? ''}
+                onChange={e => set({ location_id: e.target.value || null })}
+                options={[{ value: '', label: '— None —' }, ...locations.map(l => ({ value: l.id, label: l.full_path ?? l.name }))]} />
+            </Field>
+          )}
 
           {/* V3-LINEAGE-001: link this planting to the source planting it was cloned/cut from.
               Optional; rendered only when candidate plantings are supplied. The parent_plant_id

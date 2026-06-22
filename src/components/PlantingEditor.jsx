@@ -11,7 +11,7 @@ import { formatQty } from '../lib/format.js'
 import ProjectOptions from './ProjectOptions.jsx'
 import { PlantForm } from './forms'
 
-const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '', parent_plant_id: '', container_type: '', container_size: '' }
+const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '', parent_plant_id: '', container_type: '', container_size: '', location_id: '' }
 
 function formFromPlant(plant) {
   return {
@@ -31,6 +31,7 @@ function formFromPlant(plant) {
     parent_plant_id:   plant.parent_plant_id ?? '',
     container_type:    plant.container_type ?? '',
     container_size:    plant.container_size ?? '',
+    location_id:       plant.location_id ?? '',
   }
 }
 
@@ -57,6 +58,15 @@ export default function PlantingEditor({
   const [deleting, setDeleting] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [sourcePacket, setSourcePacket] = useState(null)
+  const [locations, setLocations] = useState([])
+
+  useEffect(() => {
+    let mounted = true
+    fetch('/api/locations/with-path')
+      .then(locs => { if (mounted) setLocations((locs ?? []).filter(l => l.is_active)) })
+      .catch(() => {})
+    return () => { mounted = false }
+  }, [fetch])
 
   useEffect(() => {
     if (isEdit) return
@@ -105,6 +115,7 @@ export default function PlantingEditor({
       parent_plant_id:   form.parent_plant_id || null,
       container_type:    form.container_type || null,
       container_size:    (form.container_size ?? '').trim() || null,
+      location_id:       form.location_id || null,
     }
     if (sourceInventoryItemId) payload.source_inventory_item_id = sourceInventoryItemId
     try {
@@ -145,6 +156,7 @@ export default function PlantingEditor({
           parent_plant_id:   form.parent_plant_id || null,
           container_type:    form.container_type || null,
           container_size:    (form.container_size ?? '').trim() || null,
+          location_id:       form.location_id || null,
         }),
       })
       onUpdated?.({ ...data, project_name: data.project_name ?? plant.project_name })
@@ -207,6 +219,7 @@ export default function PlantingEditor({
       <PlantForm
         value={form}
         onChange={patch => setForm(f => ({ ...f, ...patch }))}
+        locations={locations}
         onSubmit={isEdit ? handleEdit : handleAdd}
         submitting={saving}
         error={err}

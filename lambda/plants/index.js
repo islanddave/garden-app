@@ -224,6 +224,7 @@ export const handler = async (event) => {
         // featured_photo_id CASE pattern below. No explicit casts — same proven-in-prod shape.
         const hasVariety = Object.prototype.hasOwnProperty.call(body, 'variety_id');
         const hasAssignee = Object.prototype.hasOwnProperty.call(body, 'assignee_user_id');
+        const hasLocation = Object.prototype.hasOwnProperty.call(body, 'location_id');
         if (hasFeatured && body.featured_photo_id != null) {
           const linkRows = await sql`
             SELECT 1 FROM photos
@@ -300,7 +301,11 @@ export const handler = async (event) => {
               ELSE p.assignee_user_id
             END,
             container_type           = COALESCE(${body.container_type ?? null}, p.container_type),
-            container_size           = COALESCE(${body.container_size ?? null}, p.container_size)
+            container_size           = COALESCE(${body.container_size ?? null}, p.container_size),
+            location_id              = CASE
+              WHEN ${hasLocation} THEN ${body.location_id ?? null}
+              ELSE p.location_id
+            END
           FROM public.container pp
           WHERE p.id = ${plantId}
             AND p.container_id = pp.id
@@ -484,7 +489,7 @@ export const handler = async (event) => {
            source_type, source_ref, source_generation,
            parent_plant_id, divergence_type, lineage_note,
            succession_group_id, succession_order,
-           container_type, container_size)
+           container_type, container_size, location_id)
         VALUES (
           ${body.project_id},
           ${body.name},
@@ -517,7 +522,8 @@ export const handler = async (event) => {
           ${body.succession_group_id ?? null},
           ${body.succession_order ?? null},
           ${body.container_type ?? null},
-          ${body.container_size ?? null}
+          ${body.container_size ?? null},
+          ${body.location_id ?? null}
         )
         RETURNING id, container_id AS project_id, display_name AS name, quantity, notes, status, planted_at, created_by, created_at, updated_at, deleted_at, location_id, featured_image_id, cultivar_id AS variety_id, source_inventory_item_id, metadata, featured_photo_id, sown_at, germinated_at, transplanted_at, planted_out_at, sown_at_approx, germinated_at_approx, transplanted_at_approx, planted_out_at_approx, qty_initial, qty_current, qty_harvested, qty_lost, loss_cause, source_type, source_ref, source_generation, parent_plant_id, divergence_type, lineage_note, succession_group_id, succession_order, container_type, container_size, kind, workspace_id, last_seen_at, attr_override, version
       `;

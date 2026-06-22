@@ -34,7 +34,8 @@ describe('plants Lambda — Household Mode scope widening', () => {
 
   it('INSERT still binds created_by = ${userId}', () => {
     const insIdx = SRC.indexOf('INSERT INTO public.garden_node');
-    const block = SRC.slice(insIdx, insIdx + 800);
+    // window widened 800->1000 for the V3-PLANTLOC-001 location_id column (shifted ${userId} offset)
+    const block = SRC.slice(insIdx, insIdx + 1000);
     expect(block).toMatch(/\$\{userId\}/);
     expect(block).not.toMatch(/householdIds/);
   });

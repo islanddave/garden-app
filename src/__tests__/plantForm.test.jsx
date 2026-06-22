@@ -91,3 +91,19 @@ describe('PlantForm (E1 unified)', () => {
     expect(values).toEqual(['', 'seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'cutting_taken', 'rescued', 'unknown'])
   })
 })
+
+describe('PlantForm — V3-PLANTLOC-001 location field', () => {
+  it('renders a Location select when active locations are supplied and emits location_id on change', () => {
+    const locations = [{ id: 'loc1', full_path: 'Stable Rack A', is_active: true }]
+    const { onChange } = setup({ locations, detailsDefaultOpen: true })
+    const sel = document.getElementById('t-loc')
+    expect(sel).toBeTruthy()
+    expect(screen.getByText('Stable Rack A')).toBeTruthy()
+    fireEvent.change(sel, { target: { value: 'loc1' } })
+    expect(onChange).toHaveBeenCalledWith({ location_id: 'loc1' })
+  })
+  it('hides the Location field when no locations are supplied', () => {
+    setup({ locations: [], detailsDefaultOpen: true })
+    expect(document.getElementById('t-loc')).toBeNull()
+  })
+})

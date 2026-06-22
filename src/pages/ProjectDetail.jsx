@@ -108,7 +108,7 @@ export default function ProjectDetail() {
     qty_initial: '',
     source_type: '', source_ref: '', source_generation: '',
     lineage_note: '', parent_plant_id: '',
-    container_type: '', container_size: '',
+    container_type: '', container_size: '', location_id: '',
   })
   const [addingPlant,   setAddingPlant]   = useState(false)
   const [plantErr,      setPlantErr]      = useState(null)
@@ -203,6 +203,7 @@ export default function ProjectDetail() {
           parent_plant_id:   plantForm.parent_plant_id || null,
           container_type:    plantForm.container_type || null,
           container_size:    (plantForm.container_size ?? '').trim() || null,
+          location_id:       plantForm.location_id || null,
         }),
       })
       setPlants(p => [...p, data])
@@ -212,7 +213,7 @@ export default function ProjectDetail() {
         qty_initial: '',
         source_type: '', source_ref: '', source_generation: '',
         lineage_note: '', parent_plant_id: '',
-        container_type: '', container_size: '',
+        container_type: '', container_size: '', location_id: '',
       })
       setShowAddPlant(false)
     } catch (err) {
@@ -589,6 +590,7 @@ export default function ProjectDetail() {
               submittingLabel="Adding…"
               onCancel={() => { setShowAddPlant(false); setPlantErr(null) }}
               plantingOptions={plants.map(p => ({ id: p.id, name: p.name }))}
+              locations={locations}
               detailsDefaultOpen
               idPrefix="add-plant"
             />
