@@ -123,9 +123,30 @@ function ConditionIcon({ code = 3 }) {
   )
 }
 
+// V3-WXFRESH-001 — honest presentation. The figures below are a FROZEN nightly snapshot (the engine runs
+// ~2AM ET), NOT a live reading; for convective weather the real number can move several-fold by midday.
+// Surface an as-of stamp (date ALWAYS shown — a silently-disabled cron can leave a multi-day-old snapshot)
+// + source label, and warn when the snapshot predates the plan's own ET date (a nightly run was missed).
+function asOfLabel(generatedAt) {
+  if (!generatedAt) return null
+  const d = new Date(generatedAt)
+  if (isNaN(d.getTime())) return null
+  const f = (opts) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', ...opts }).format(d)
+  return `${f({ month: 'short', day: 'numeric' })} \u00b7 ${f({ hour: 'numeric', minute: '2-digit' })}`
+}
+function isStaleSnapshot(generatedAt, planDate) {
+  if (!generatedAt || !planDate) return false
+  const d = new Date(generatedAt)
+  if (isNaN(d.getTime())) return false
+  const genEtDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+  return genEtDate < planDate
+}
+
 export default function WeatherWidget({
   weather = { tonightLow: 50, highToday: 78, code: 3, hot: false },
   hydrology = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true },
+  generatedAt = null,
+  planDate = null,
 }) {
   const scale = computeWateringScale(hydrology, weather)
   // Prefer TODAY's rain in the note when there is any (the case the old widget missed); else tomorrow.
@@ -134,6 +155,8 @@ export default function WeatherWidget({
   const rainIn = showToday ? todayIn : (hydrology.tomorrow_precip_in ?? hydrology.upcoming_precip_in ?? 0)
   const rainPop = showToday ? (hydrology.today_pop ?? 0) : (hydrology.tomorrow_pop ?? 0)
   const rainWhen = showToday ? 'today' : 'tomorrow'
+  const asOf = asOfLabel(generatedAt)
+  const stale = isStaleSnapshot(generatedAt, planDate)
 
   const Pill = ({ level, Target }) => {
     const state = pillState(level)
@@ -181,6 +204,21 @@ export default function WeatherWidget({
         <div style={{ marginTop: 8, textAlign: 'center', fontSize: 11.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
           <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16a5 5 0 0 1 .5-9.9A6 6 0 0 1 19 8a4 4 0 0 1-.5 8Z" fill="#B9C6D6" /><g stroke="#7FA8D8" strokeWidth="2" strokeLinecap="round"><path d="M9 19l-1 2M13 19l-1 2M17 19l-1 2" /></g></svg>
           {rainIn.toFixed(2)}&Prime; rain expected {rainWhen} &middot; {rainPop}%
+        </div>
+      )}
+
+      {asOf && (
+        <div style={{ marginTop: 8, textAlign: 'center', fontSize: 10.5, color: PAL.micro }}>
+          As of {asOf} &middot; Open-Meteo
+        </div>
+      )}
+      {stale && (
+        <div style={{
+          marginTop: 6, textAlign: 'center', fontSize: 10.5, lineHeight: 1.35,
+          color: PAL.waitInk, background: PAL.waitBg, border: `1px solid ${PAL.waitBorder}`,
+          borderRadius: 9, padding: '5px 8px',
+        }}>
+          &#9888; This is an older snapshot &mdash; today&rsquo;s forecast hasn&rsquo;t refreshed yet, so numbers may be out of date.
         </div>
       )}
     </div>

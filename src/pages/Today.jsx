@@ -50,7 +50,7 @@ export default function Today() {
       {!loading && !error && hasPlan && plan && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {plan.weather && (
-            <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} />
+            <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={data?.generated_at} planDate={data?.plan_date} />
           )}
 
           {plan.substrate?.msg && (
