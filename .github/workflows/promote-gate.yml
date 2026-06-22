@@ -171,6 +171,8 @@ jobs:
   deploy:
     needs: promote
     uses: ./.github/workflows/deploy.yml
+    with:
+      ref: ${{ inputs.dev_sha }}
     secrets: inherit
 
   # OPS-VERIFY-001 (advisory REPORT-ONLY, per L-147/L-161/L-141) — runs AFTER deploy and
