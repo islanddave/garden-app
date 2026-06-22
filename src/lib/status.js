@@ -16,6 +16,7 @@ const ACTIVE_STAGE = { bg: P.greenPale, text: P.green, border: P.greenLight }
 
 export const STATUS_COLORS = {
   planning:  { bg: P.warn,  text: '#7a5c00', border: P.warnBorder },
+  preparing: { bg: '#f0e9e0', text: P.brown, border: P.border },
   active:    ACTIVE_STAGE,
   seeding:   ACTIVE_STAGE,
   sprouting: ACTIVE_STAGE,

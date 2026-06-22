@@ -50,6 +50,7 @@ export const LOCATION_TYPE_LABELS = [
 // Project statuses — V1+ lifecycle (matches new DB check constraint)
 export const PROJECT_STATUSES = [
   'planning',
+  'preparing',
   'seeding',
   'sprouting',
   'growing',
@@ -72,6 +73,7 @@ export const LOGGABLE_PROJECT_STATUSES = [...PROJECT_STATUSES, 'harvested']
 export const PROJECT_STATUS_MAP = {
   // ── New lifecycle values ──────────────────────────────────────────
   planning:   { label: 'Planning',   emoji: '📋' },
+  preparing:  { label: 'Preparing',  emoji: '🛠️' },
   seeding:    { label: 'Seeding',    emoji: '🌰' },
   sprouting:  { label: 'Sprouting',  emoji: '🌱' },
   growing:    { label: 'Growing',    emoji: '🌿' },
