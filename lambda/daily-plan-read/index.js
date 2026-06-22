@@ -94,8 +94,8 @@ export const handler = async (event) => {
 // event was logged today (ET) for that planting. Derived from event_log, never stored (cross-device truthful).
 // Placed AFTER the handler so the plan SELECT remains the first tagged query in the file (static-guard ordering).
 const DONE_EVENTS = {
-  water_due:  ['watering'],
-  no_history: ['watering'],
+  water_due:  ['watering', 'rain'],
+  no_history: ['watering', 'rain'],
   fertilize:  ['fertilizing'],
   pest:       ['observation', 'pest_treatment'],
   cold:       ['brought_inside', 'cover'],

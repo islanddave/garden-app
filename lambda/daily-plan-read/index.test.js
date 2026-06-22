@@ -31,6 +31,11 @@ describe('daily-plan-read Lambda — static read-path invariants', () => {
     expect(SRC).toMatch(/annotateDone/);
   });
 
+  it('V3-RAINDONE: a logged rain event checks off Water (rain counts as watering, 2026-06-22)', () => {
+    expect(SRC).toMatch(/water_due:\s*\[[^\]]*'rain'[^\]]*\]/);
+    expect(SRC).toMatch(/no_history:\s*\[[^\]]*'rain'[^\]]*\]/);
+  });
+
   it('scopes PER-USER to the authenticated subject (never household-widened)', () => {
     expect(stmts[0]).toMatch(/dp\.user_id = \$\{userId\}/);
     expect(SRC).not.toMatch(/householdScope/);

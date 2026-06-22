@@ -122,7 +122,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
     const c=resolveCadence(p, cad);
     if(c.exclude) continue;
     const ph=feedPhase(weeksSince(today,p.substrate_start)); phaseCounts[ph]=(phaseCounts[ph]||0)+1;
-    if(c.dormant_skip){ dormant.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,note:c.notes}); continue; }
+    if(p.status==='dormant' || c.dormant_skip){ dormant.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,note:c.dormant_skip?c.notes:'Dormant — skip routine care'}); continue; }
     // CARE-PROFILES-001: select inground or container cadence based on container_type.
     const inGround=likelyInGround(p,c);
     let wi=(inGround ? c.water_interval_days_inground : c.water_interval_days_container)

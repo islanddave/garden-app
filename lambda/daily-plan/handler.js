@@ -62,7 +62,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     left join locations       l  on l.id=pj.location_id
     left join v_resolved_care vrc on vrc.leaf_id = p.id
     where p.deleted_at is null and p.archived_at is null
-      and (p.status is null or p.status not in ('ended','failed','dead','archived','harvested'))
+      and (p.status is null or p.status not in ('ended','failed','dead','archived'))
       and (pj.status is null or pj.status <> 'planning')
       and pj.archived_at is null`);
   // Guard: remap System-account assignees -> null so ownerFallback applies (stray-pick guard).
