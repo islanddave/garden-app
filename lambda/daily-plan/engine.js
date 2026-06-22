@@ -48,6 +48,33 @@ function likelyInGround(p,c){
   return isCucurbit(p,c&&c.crop)||isLeek(p,c&&c.crop);
 }
 
+// ── DRG-WATERCREDIT-001 — Path B-plus rain credit (stateless; crucible verdict 2026-06-18) ──
+// Retire the global 0.3in cutoff. Per class subtract an initial-abstraction (first-wetting/runoff/canopy
+// loss), then credit the remaining rain over the 2-3 day window the engine already reads (recent D-2..D0),
+// capped at one cadence cycle. Manual watering resets naturally (dW from event_log). Fresh transplants are
+// carved out (a deep-soak credit desiccates a tiny root ball). Indoor (under cover) is never credited.
+const RAIN_IA = { in_ground: 0.15, container: 0.25 };   // initial abstraction, inches, per class (Dave-confirmed)
+const TRANSPLANT_CARVEOUT_DAYS = 21;                    // fresh root ball dries fast -> no rain credit (Dave-confirmed)
+function rainClass(p, inGround){
+  if(inGround) return 'in_ground';                                  // beds (in_ground/raised_bed) + cucurbit/leek heuristic
+  const ct = p.container_type;
+  if(ct==='container' || ct==='pot' || ct==='grow_bag') return 'container';   // outdoor pot — limited reservoir
+  return 'none';   // shelf/window/tray (indoor, under cover) OR unknown container_type -> never rain-credited
+}
+function windowPrecip(hy){
+  if(!hy || hy.recent_precip_in==null) return null;                 // missing precip -> no credit (uncertainty handled in hydrologyStatus)
+  return (hy.recent_precip_in||0) + (hy.today_precip_in||0);        // D-2..D0 actuals (matches the engine's past_days=2 read)
+}
+// Returns { credit_days, wp, eff } when rain qualifies for credit, else null.
+function rainCreditDays(cls, wi, hy){
+  if(cls==='none') return null;
+  const wp = windowPrecip(hy); if(wp==null) return null;
+  const eff = wp - RAIN_IA[cls];
+  if(eff <= 0) return null;                                         // didn't clear first-wetting loss
+  const hold = cls==='in_ground' ? wi : 1;                         // beds hold a full cycle; containers drain fast -> 1 day
+  return { credit_days: Math.min(hold, wi), wp: Math.round(wp*100)/100, eff: Math.round(eff*100)/100 };  // cap at one cycle
+}
+
 // Returns a fertilize recommendation object IF one is warranted now, else null. Substrate-aware.
 function fertilizeRec(p, c, fm, today){
   const wk=weeksSince(today, p.substrate_start);
@@ -84,8 +111,8 @@ function coldFor(p, cad, low){
   return null;
 }
 
-function generatePlanForUser(plantings, cad, fm, today, weather){
-  const water=[], fertilize=[], pest=[], cold=[], dormant=[];
+function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
+  const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[];
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
   for(const p of plantings){
@@ -104,7 +131,26 @@ function generatePlanForUser(plantings, cad, fm, today, weather){
           ?? cad.default.water_interval_days_container;
     if(hot && c.drought_tolerance==='low' && wi>1) wi=wi-1;
     const dW=daysBetween(today,p.last_water);
-    if(dW!=null && dW>=wi) water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:dW,interval:wi,overdue_by:dW-wi,method:c.water_method,moisture:c.soil_moisture_target,never:false});
+    // DRG-WATERCREDIT-001 Path B-plus: credit qualifying window rain against the cadence (per class), with a
+    // fresh-transplant carve-out. A credited planting drops OUT of water_due (so counts.water_due is correct —
+    // fixes the legacy defer-count bug) and lands on rain_skipped with a one-line reason string.
+    const rcls=rainClass(p,inGround);
+    const freshTransplant=(daysBetween(today,p.substrate_start)??999)<=TRANSPLANT_CARVEOUT_DAYS;
+    const rc=freshTransplant?null:rainCreditDays(rcls,wi,hydrology);
+    const effDays=(dW!=null&&rc)?dW-rc.credit_days:dW;
+    if(dW!=null && dW>=wi && rc && effDays<wi){
+      rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
+        days_since:dW,interval:wi,credited_days:rc.credit_days,
+        reason:`Skip — ${rc.wp}" rain over the last few days counts as watering${rcls==='container'?' (container: 1-day hold)':''}`});
+    } else if(dW!=null && dW>=wi){
+      const wp=windowPrecip(hydrology);
+      const rain_note=freshTransplant
+        ? 'Water — fresh transplant (no rain credit; small root ball dries fast)'
+        : (rcls!=='none' && rc==null && wp!=null && wp>0
+            ? `Water — ${Math.round(wp*100)/100}" rain under the ${RAIN_IA[rcls]}" soak-in threshold`
+            : (rc ? `Water — ${rc.wp}" rain didn't cover the gap (last watered ${dW}d ago)` : null));
+      water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:dW,interval:wi,overdue_by:dW-wi,method:c.water_method,moisture:c.soil_moisture_target,never:false,rain_note});
+    }
     else if(dW==null) water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:null,interval:wi,overdue_by:null,method:c.water_method,moisture:c.soil_moisture_target,never:true});
     const fr=fertilizeRec(p,c,fm,today); if(fr) fertilize.push(fr);
     const pw=cad.pest_watch&&cad.pest_watch.cucurbit_beetle;
@@ -123,8 +169,8 @@ function generatePlanForUser(plantings, cad, fm, today, weather){
       ? `Feeding on HOLD — fresh MG slow-release mix is feeding all ${feeding} plantings (potted recently; mix feeds 3-6 months). Optional: kelp via sprayer for transplant establishment. Watch for Mg (Epsom) / blossom-end-rot (gypsum) symptoms.`
       : `${fertilize.length} planting(s) past the MG feed window — feed per recommendation.`,
     water_note: fm.water_quality && fm.water_quality.implications[0]};
-  return {counts:{plantings:plantings.length,water_due:due.length,no_history:noHistory.length,fertilize:fertilize.length,pest:pest.length,cold:cold.length,dormant:dormant.length},
-    substrate, tasks:{water_due:due,no_history:noHistory,fertilize,pest,cold,dormant}};
+  return {counts:{plantings:plantings.length,water_due:due.length,no_history:noHistory.length,fertilize:fertilize.length,pest:pest.length,cold:cold.length,dormant:dormant.length,rain_skipped:rainSkipped.length},
+    substrate, tasks:{water_due:due,no_history:noHistory,fertilize,pest,cold,dormant,rain_skipped:rainSkipped}};
 }
 
 // Compute the single weather callout (action only) from temp + hydrology. Priority order; null = no callout (no filler).
@@ -154,13 +200,11 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
   const hy=hydrology||null; const callout=computeCallout(weather,hy); const hs=hydrologyStatus(hy);
   const rainComing = !!(hy && hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null||hy.tomorrow_pop>=50));
   const users={};
-  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather);
-    if(rainComing) for(const w of up.tasks.water_due){ if(w.in_ground){ w.defer_for_rain=true; } }
-    up.tasks.water_due.sort((a,b)=> (a.defer_for_rain?1:0)-(b.defer_for_rain?1:0));
+  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy);
     users[u]=up; }
   return {date:today,
     weather: weather? {tonightLow:weather.tonightLow, highToday:weather.highToday, code:weather.code, short:weather.short, unit:weather.unit||'F', callout} : null,
     hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop, rain_coming:rainComing, status:hs} : {status:hs},
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F};
+module.exports={generatePlan, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS};
