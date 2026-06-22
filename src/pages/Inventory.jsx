@@ -3,24 +3,12 @@ import { Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
 import { formatQty, formatMoney, formatDate } from '../lib/format.js'
+import { INVENTORY_TYPES, INVENTORY_STATUS_OPTIONS, INVENTORY_CATEGORY_OPTIONS, INVENTORY_CATEGORY_LABELS } from '../lib/inventoryEnums.js'
 
-// ── Enums (must match inventory_items schema) ─────────────────────────────────
-const CATEGORY_LABELS = {
-  seeds:                    'Seeds',
-  growing_media:            'Growing media',
-  nutrients_and_amendments: 'Nutrients & amendments',
-  pest_control:             'Pest control',
-  containers:               'Containers',
-  lighting:                 'Lighting',
-  shelving:                 'Shelving',
-  climate_control:          'Climate control',
-  tools:                    'Tools',
-  other:                    'Other',
-}
-
-// Full, alphabetized category list for the filter — guarantees Seeds (and every category) is
-// always selectable even when no item of that category is currently in stock (brahmagupta #7).
-const CATEGORY_OPTIONS = Object.entries(CATEGORY_LABELS).sort((a, b) => a[1].localeCompare(b[1]))
+// V3-CONFIG-001 — inventory filter vocabulary is single-sourced from inventoryEnums.js (the
+// drift-guarded canonical mirror of the live CHECK constraints); no local re-declaration here.
+// The alphabetized option list still guarantees every category is selectable even when empty.
+const CATEGORY_OPTIONS = INVENTORY_CATEGORY_OPTIONS
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Inventory() {
@@ -94,8 +82,7 @@ export default function Inventory() {
         }}>
           <FilterSelect label="Type" value={filterType} onChange={setFilterType}>
             <option value="all">All types</option>
-            <option value="consumable">Consumable</option>
-            <option value="durable">Durable</option>
+            {INVENTORY_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </FilterSelect>
 
           <FilterSelect label="Category" value={filterCategory} onChange={setFilterCategory}>
@@ -106,10 +93,7 @@ export default function Inventory() {
           </FilterSelect>
 
           <FilterSelect label="Status" value={filterStatus} onChange={setFilterStatus}>
-            <option value="active">Active</option>
-            <option value="depleted">Depleted</option>
-            <option value="retired">Retired</option>
-            <option value="missing">Missing</option>
+            {INVENTORY_STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             <option value="all">All</option>
           </FilterSelect>
 
@@ -282,7 +266,7 @@ function InventoryRow({ item, onAdjust }) {
           backgroundColor: '#f0ece8', borderRadius: 10,
           padding: '2px 8px', flexShrink: 0,
         }}>
-          {CATEGORY_LABELS[item.category] ?? item.category}
+          {INVENTORY_CATEGORY_LABELS[item.category] ?? item.category}
         </span>
 
         {/* Low-stock badge — triangle icon + color (WCAG 1.4.1: never color alone) */}

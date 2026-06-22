@@ -58,3 +58,12 @@ export const INVENTORY_CHECK_SETS = {
   status:    ['active', 'depleted', 'retired', 'missing'],
   unit:      ['each', 'packet', 'oz', 'fl oz', 'lb', 'gal', 'qt', 'bag', 'roll', 'sheet', 'other'],
 }
+
+
+// ── Derived option sets for filter/select consumers (V3-CONFIG-001) ──────────
+// Label derivation lives HERE so pages (Inventory.jsx etc.) never re-declare inventory vocabulary.
+export const INVENTORY_CATEGORY_OPTIONS = [...INVENTORY_CATEGORIES]
+  .sort((a, b) => a.label.localeCompare(b.label))
+  .map(c => [c.v, c.label])
+export const INVENTORY_STATUS_OPTIONS = INVENTORY_STATUSES.map(s => ({ value: s, label: s[0].toUpperCase() + s.slice(1) }))
+export const INVENTORY_CATEGORY_LABELS = Object.fromEntries(INVENTORY_CATEGORIES.map(c => [c.v, c.label]))
