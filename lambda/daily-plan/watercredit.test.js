@@ -1,7 +1,7 @@
-// DRG-WATERCREDIT-001 — Path B-plus rain-credit golden fixture (crucible verdict 2026-06-18).
-// Hand-adjudicated cases exercising the REAL generatePlanForUser decision path: per-class
-// initial-abstraction-then-credit over the recent precip window, transplant carve-out, indoor
-// never-credited, cap at one cycle, and the deferral-count-bug fix (skipped != counted as due).
+// DRG-WATERCREDIT-001 — Path B-plus rain-credit golden fixture, V1 2-class (covered vs outdoor).
+// Crucible verdict 2026-06-18 + Dave 2026-06-21: bed-vs-container isn't in the data, so V1 keys on
+// covered (under cover -> never credited) vs outdoor (one conservative profile: 0.25in soak-in threshold,
+// 1-day hold), with the transplant carve-out. Exercises the REAL generatePlanForUser decision path.
 import { describe, it, expect } from 'vitest';
 import engine from './engine.js';
 const { generatePlanForUser, rainClass, rainCreditDays, RAIN_IA } = engine;
@@ -12,14 +12,14 @@ const cad = { default: { crop: 'tomato', water_interval_days_inground: 5, water_
 const fm = { amendments_in_inventory: { fruiting_feed: { item: 'a', apply: 'b' }, kelp: { item: 'k' }, veg_feed: { item: 'v', apply: 'w' }, castings: { item: 'c', apply: 'd' } }, water_quality: null };
 const wx = { tonightLow: 60, highToday: 75 };
 const H = {
-  big:    { recent_precip_in: 0.5, today_precip_in: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
-  small:  { recent_precip_in: 0.1, today_precip_in: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
-  mid:    { recent_precip_in: 0.3, today_precip_in: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+  big:    { recent_precip_in: 0.5,  today_precip_in: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+  edge:   { recent_precip_in: 0.26, today_precip_in: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+  under:  { recent_precip_in: 0.2,  today_precip_in: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
   missing:{ recent_precip_in: null, today_precip_in: null, upcoming_precip_in: null, tomorrow_precip_in: null, tomorrow_pop: null },
   none:   null,
 };
 function bucket(ov, hy) {
-  const p = { id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, last_water: null, substrate_start: ago(81), ...ov };
+  const p = { id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81), ...ov };
   const out = generatePlanForUser([p], cad, fm, TODAY, wx, hy);
   const b = out.tasks.water_due.some(w => w.id === 't') ? 'DUE'
     : out.tasks.rain_skipped.some(w => w.id === 't') ? 'SKIP'
@@ -27,74 +27,61 @@ function bucket(ov, hy) {
   return { b, out };
 }
 
-describe('DRG-WATERCREDIT-001: rainClass keying', () => {
-  it('in-ground / raised_bed (and cucurbit/leek heuristic) => in_ground', () => {
-    expect(rainClass({ container_type: 'in_ground' }, true)).toBe('in_ground');
-    expect(rainClass({ container_type: 'raised_bed' }, true)).toBe('in_ground');
+describe('DRG-WATERCREDIT-001 V1: 2-class keying (covered vs outdoor)', () => {
+  it('covered => none (never credited); outdoor => outdoor profile', () => {
+    expect(rainClass({ covered: true })).toBe('none');
+    expect(rainClass({ covered: false })).toBe('outdoor');
   });
-  it('outdoor container => container; indoor (shelf/window/tray) + unknown => none', () => {
-    expect(rainClass({ container_type: 'container' }, false)).toBe('container');
-    expect(rainClass({ container_type: 'tray' }, false)).toBe('none');
-    expect(rainClass({ container_type: 'window' }, false)).toBe('none');
-    expect(rainClass({ container_type: null }, false)).toBe('none');
+  it('single conservative outdoor initial-abstraction = 0.25in; no in_ground class in V1', () => {
+    expect(RAIN_IA.outdoor).toBe(0.25);
+    expect(RAIN_IA.in_ground).toBeUndefined();
   });
-});
-
-describe('DRG-WATERCREDIT-001: per-class initial-abstraction', () => {
-  it('in-ground Ia 0.15, container Ia 0.25 (Dave-confirmed)', () => {
-    expect(RAIN_IA.in_ground).toBe(0.15);
-    expect(RAIN_IA.container).toBe(0.25);
-  });
-  it('credit only when window precip clears Ia', () => {
-    expect(rainCreditDays('in_ground', 5, H.small)).toBeNull();   // 0.1 < 0.15
-    expect(rainCreditDays('in_ground', 5, H.big)).not.toBeNull(); // 0.5 > 0.15
-    expect(rainCreditDays('none', 5, H.big)).toBeNull();          // indoor never
-    expect(rainCreditDays('in_ground', 5, H.missing)).toBeNull(); // missing -> no credit
-  });
-  it('caps credit at one cadence cycle', () => {
-    expect(rainCreditDays('in_ground', 5, H.big).credit_days).toBe(5);  // full cycle
-    expect(rainCreditDays('container', 3, H.big).credit_days).toBe(1);  // 1-day hold
+  it('credit only for outdoor + only when window precip clears 0.25in; capped at one cycle (1-day hold)', () => {
+    expect(rainCreditDays('none', 5, H.big)).toBeNull();
+    expect(rainCreditDays('outdoor', 5, H.under)).toBeNull();   // 0.2 < 0.25
+    expect(rainCreditDays('outdoor', 5, H.big)).not.toBeNull(); // 0.5 > 0.25
+    expect(rainCreditDays('outdoor', 5, H.big).credit_days).toBe(1);  // short hold
+    expect(rainCreditDays('outdoor', 5, H.missing)).toBeNull();
   });
 });
 
-describe('DRG-WATERCREDIT-001: golden decision fixture (real engine)', () => {
+describe('DRG-WATERCREDIT-001 V1: golden decision fixture (real engine)', () => {
   const G = [
-    ['in-ground due, no rain', { container_type: 'in_ground', last_water: ago(6) }, H.none, 'DUE'],
-    ['in-ground due, big rain -> skip', { container_type: 'in_ground', last_water: ago(6) }, H.big, 'SKIP'],
-    ['in-ground, rain under Ia -> due', { container_type: 'in_ground', last_water: ago(6) }, H.small, 'DUE'],
-    ['in-ground way overdue, big rain still due (cap 1 cycle)', { container_type: 'in_ground', last_water: ago(20) }, H.big, 'DUE'],
-    ['in-ground boundary dW==wi, big rain -> skip', { container_type: 'in_ground', last_water: ago(5) }, H.big, 'SKIP'],
-    ['raised_bed = in_ground class -> skip', { container_type: 'raised_bed', last_water: ago(6) }, H.big, 'SKIP'],
-    ['container due, no rain', { container_type: 'container', last_water: ago(4) }, H.none, 'DUE'],
-    ['container 1-day hold insufficient (dW4) -> due', { container_type: 'container', last_water: ago(4) }, H.big, 'DUE'],
-    ['container dW==wi, big rain, 1-day hold -> skip', { container_type: 'container', last_water: ago(3) }, H.big, 'SKIP'],
-    ['container mid rain 0.3>0.25 Ia, dW3 -> skip', { container_type: 'container', last_water: ago(3) }, H.mid, 'SKIP'],
-    ['container rain under Ia 0.25 -> due', { container_type: 'container', last_water: ago(4) }, H.small, 'DUE'],
-    ['indoor tray, big rain -> due (no credit)', { container_type: 'tray', last_water: ago(5) }, H.big, 'DUE'],
-    ['indoor window, big rain -> due (no credit)', { container_type: 'window', last_water: ago(5) }, H.big, 'DUE'],
-    ['unknown container null, big rain -> due (no credit)', { container_type: null, last_water: ago(6) }, H.big, 'DUE'],
-    ['fresh transplant in-ground, big rain -> due (carve-out)', { container_type: 'in_ground', last_water: ago(6), substrate_start: ago(5) }, H.big, 'DUE'],
-    ['established in-ground, big rain -> skip', { container_type: 'in_ground', last_water: ago(6), substrate_start: ago(81) }, H.big, 'SKIP'],
-    ['missing precip -> due (no credit)', { container_type: 'in_ground', last_water: ago(6) }, H.missing, 'DUE'],
-    ['cucurbit null container -> in_ground heuristic -> skip', { genus: 'cucurbita', container_type: null, last_water: ago(6) }, H.big, 'SKIP'],
-    ['never watered -> no_history', { container_type: 'in_ground', last_water: null }, H.big, 'NOHIST'],
+    ['outdoor due, no rain', { covered: false, last_water: ago(4) }, H.none, 'DUE'],
+    ['outdoor dW==wi, big rain, 1-day hold -> skip', { covered: false, last_water: ago(3) }, H.big, 'SKIP'],
+    ['outdoor 1 day overdue, 1-day hold insufficient -> due', { covered: false, last_water: ago(4) }, H.big, 'DUE'],
+    ['outdoor, rain just over Ia (0.26), dW==wi -> skip', { covered: false, last_water: ago(3) }, H.edge, 'SKIP'],
+    ['outdoor, rain under Ia (0.2) -> due', { covered: false, last_water: ago(3) }, H.under, 'DUE'],
+    ['outdoor way overdue, big rain still due (cap 1 cycle)', { covered: false, last_water: ago(10) }, H.big, 'DUE'],
+    ['covered (Stable/House/shelf), big rain -> due (no credit)', { covered: true, last_water: ago(5) }, H.big, 'DUE'],
+    ['covered, dW==wi, big rain -> due (never credited)', { covered: true, last_water: ago(3) }, H.big, 'DUE'],
+    ['fresh transplant outdoor, big rain -> due (carve-out)', { covered: false, last_water: ago(3), substrate_start: ago(5) }, H.big, 'DUE'],
+    ['established outdoor, big rain -> skip', { covered: false, last_water: ago(3), substrate_start: ago(81) }, H.big, 'SKIP'],
+    ['missing precip -> due (no credit)', { covered: false, last_water: ago(3) }, H.missing, 'DUE'],
+    ['no hydrology -> due', { covered: false, last_water: ago(3) }, H.none, 'DUE'],
+    ['never watered -> no_history', { covered: false, last_water: null }, H.big, 'NOHIST'],
   ];
   for (const [desc, ov, hy, exp] of G) {
     it(desc + ' => ' + exp, () => { expect(bucket(ov, hy).b).toBe(exp); });
   }
 });
 
-describe('DRG-WATERCREDIT-001: deferral count-bug fix', () => {
-  it('a rain-credited planting is NOT counted in water_due (lands on rain_skipped)', () => {
-    const { b, out } = bucket({ container_type: 'in_ground', last_water: ago(6) }, H.big);
+describe('DRG-WATERCREDIT-001 V1: deferral count-bug fix + reasons', () => {
+  it('a rain-credited planting is NOT counted in water_due (lands on rain_skipped with a reason)', () => {
+    const { b, out } = bucket({ covered: false, last_water: ago(3) }, H.big);
     expect(b).toBe('SKIP');
     expect(out.counts.water_due).toBe(0);
     expect(out.counts.rain_skipped).toBe(1);
     expect(out.tasks.rain_skipped[0].reason).toMatch(/counts as watering/);
   });
-  it('a due planting carries a reason string', () => {
-    const { out } = bucket({ container_type: 'in_ground', last_water: ago(6) }, H.small);
+  it('a due planting under the soak-in threshold carries a reason string', () => {
+    const { out } = bucket({ covered: false, last_water: ago(3) }, H.under);
     const w = out.tasks.water_due.find(x => x.id === 't');
     expect(w.rain_note).toMatch(/soak-in threshold/);
+  });
+  it('fresh-transplant due carries the carve-out reason', () => {
+    const { out } = bucket({ covered: false, last_water: ago(3), substrate_start: ago(5) }, H.big);
+    const w = out.tasks.water_due.find(x => x.id === 't');
+    expect(w.rain_note).toMatch(/fresh transplant/);
   });
 });

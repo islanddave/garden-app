@@ -38,6 +38,11 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   const { rows: plantings } = await pg.query(`
     select p.id, p.name, p.project_id, p.status, p.container_type, p.container_size,
            pv.name as variety, pv.genus, pj.name as project, pj.status as project_status, p.workspace_id,
+           -- DRG-WATERCREDIT-001 V1: 'covered' (under cover -> no rain credit) is location-derived from Dave's
+           -- classification (2026-06-21): the Stable potting shed + the House + indoor shelves/racks/trays are
+           -- covered; all other locations (and no-location) are outdoor. V1.1 replaces this with an editable
+           -- locations.covered flag so new indoor spots are Dave-settable, not name-matched here.
+           coalesce(l.type_label in ('shelf','rack','tray') or l.name in ('Stable','House'), false) as covered,
            coalesce(p.assignee_user_id, pj.assignee_user_id) as assignee_user_id,
            vrc.resolved_profile as db_cadence,  -- CARE-CADENCE-001: system||cultivar||leaf merged cadence (NULL/_seeded-absent -> engine bundled fallback)
            -- Dates returned as 'YYYY-MM-DD' TEXT (UTC): the neon driver hands timestamptz back as JS Date objects, and
@@ -54,6 +59,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     from plants p
     left join plant_varieties pv on pv.id=p.variety_id
     left join plant_projects  pj on pj.id=p.project_id
+    left join locations       l  on l.id=pj.location_id
     left join v_resolved_care vrc on vrc.leaf_id = p.id
     where p.deleted_at is null and p.archived_at is null
       and (p.status is null or p.status not in ('ended','failed','dead','archived','harvested'))

@@ -48,31 +48,30 @@ function likelyInGround(p,c){
   return isCucurbit(p,c&&c.crop)||isLeek(p,c&&c.crop);
 }
 
-// ── DRG-WATERCREDIT-001 — Path B-plus rain credit (stateless; crucible verdict 2026-06-18) ──
-// Retire the global 0.3in cutoff. Per class subtract an initial-abstraction (first-wetting/runoff/canopy
-// loss), then credit the remaining rain over the 2-3 day window the engine already reads (recent D-2..D0),
-// capped at one cadence cycle. Manual watering resets naturally (dW from event_log). Fresh transplants are
-// carved out (a deep-soak credit desiccates a tiny root ball). Indoor (under cover) is never credited.
-const RAIN_IA = { in_ground: 0.15, container: 0.25 };   // initial abstraction, inches, per class (Dave-confirmed)
-const TRANSPLANT_CARVEOUT_DAYS = 21;                    // fresh root ball dries fast -> no rain credit (Dave-confirmed)
-function rainClass(p, inGround){
-  if(inGround) return 'in_ground';                                  // beds (in_ground/raised_bed) + cucurbit/leek heuristic
-  const ct = p.container_type;
-  if(ct==='container' || ct==='pot' || ct==='grow_bag') return 'container';   // outdoor pot — limited reservoir
-  return 'none';   // shelf/window/tray (indoor, under cover) OR unknown container_type -> never rain-credited
-}
+// ── DRG-WATERCREDIT-001 — Path B-plus rain credit, V1 2-class (crucible verdict 2026-06-18; Dave 2026-06-21) ──
+// Retire the global 0.3in cutoff. Subtract an initial-abstraction (first-wetting/runoff/canopy loss) then credit
+// the remaining rain over the 2-3 day window the engine already reads (recent D-2..D0), capped at one cadence
+// cycle. Stateless; manual watering resets naturally (dW from event_log); fresh transplants carved out.
+// V1 KEYING = covered-vs-outdoor ONLY. bed-vs-container is NOT in the data (container_type ~unpopulated; a single
+// location mixes beds + bags), so the per-class bed/container split is deferred to V1.1 once a per-planting vessel
+// signal exists. 'covered' (under cover -> never credited) is supplied by the handler (location-derived, Dave-
+// classified). Outdoor uses one conservative shared profile (higher soak-in threshold + short hold) — safe for the
+// container/bag-dominant reality, and a light rain on a deep bed is correctly ~nothing anyway.
+const RAIN_IA = { outdoor: 0.25 };   // initial abstraction, inches — single conservative outdoor profile (V1)
+const RAIN_HOLD_DAYS = 1;            // short hold (days) for the shared outdoor default; bed full-cycle hold returns in V1.1
+const TRANSPLANT_CARVEOUT_DAYS = 21; // fresh root ball dries fast even when the bed reads moist -> no rain credit
+function rainClass(p){ return p.covered ? 'none' : 'outdoor'; }    // covered/indoor => 'none'; everything else => 'outdoor'
 function windowPrecip(hy){
   if(!hy || hy.recent_precip_in==null) return null;                 // missing precip -> no credit (uncertainty handled in hydrologyStatus)
   return (hy.recent_precip_in||0) + (hy.today_precip_in||0);        // D-2..D0 actuals (matches the engine's past_days=2 read)
 }
 // Returns { credit_days, wp, eff } when rain qualifies for credit, else null.
 function rainCreditDays(cls, wi, hy){
-  if(cls==='none') return null;
+  if(cls!=='outdoor') return null;                                  // covered/indoor never credited
   const wp = windowPrecip(hy); if(wp==null) return null;
-  const eff = wp - RAIN_IA[cls];
+  const eff = wp - RAIN_IA.outdoor;
   if(eff <= 0) return null;                                         // didn't clear first-wetting loss
-  const hold = cls==='in_ground' ? wi : 1;                         // beds hold a full cycle; containers drain fast -> 1 day
-  return { credit_days: Math.min(hold, wi), wp: Math.round(wp*100)/100, eff: Math.round(eff*100)/100 };  // cap at one cycle
+  return { credit_days: Math.min(RAIN_HOLD_DAYS, wi), wp: Math.round(wp*100)/100, eff: Math.round(eff*100)/100 };  // cap at one cycle
 }
 
 // Returns a fertilize recommendation object IF one is warranted now, else null. Substrate-aware.
@@ -134,20 +133,20 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
     // DRG-WATERCREDIT-001 Path B-plus: credit qualifying window rain against the cadence (per class), with a
     // fresh-transplant carve-out. A credited planting drops OUT of water_due (so counts.water_due is correct —
     // fixes the legacy defer-count bug) and lands on rain_skipped with a one-line reason string.
-    const rcls=rainClass(p,inGround);
+    const rcls=rainClass(p);
     const freshTransplant=(daysBetween(today,p.substrate_start)??999)<=TRANSPLANT_CARVEOUT_DAYS;
     const rc=freshTransplant?null:rainCreditDays(rcls,wi,hydrology);
     const effDays=(dW!=null&&rc)?dW-rc.credit_days:dW;
     if(dW!=null && dW>=wi && rc && effDays<wi){
       rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
         days_since:dW,interval:wi,credited_days:rc.credit_days,
-        reason:`Skip — ${rc.wp}" rain over the last few days counts as watering${rcls==='container'?' (container: 1-day hold)':''}`});
+        reason:`Skip — ${rc.wp}" rain over the last few days counts as watering`});
     } else if(dW!=null && dW>=wi){
       const wp=windowPrecip(hydrology);
       const rain_note=freshTransplant
         ? 'Water — fresh transplant (no rain credit; small root ball dries fast)'
-        : (rcls!=='none' && rc==null && wp!=null && wp>0
-            ? `Water — ${Math.round(wp*100)/100}" rain under the ${RAIN_IA[rcls]}" soak-in threshold`
+        : (rcls==='outdoor' && rc==null && wp!=null && wp>0
+            ? `Water — ${Math.round(wp*100)/100}" rain under the ${RAIN_IA.outdoor}" soak-in threshold`
             : (rc ? `Water — ${rc.wp}" rain didn't cover the gap (last watered ${dW}d ago)` : null));
       water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:dW,interval:wi,overdue_by:dW-wi,method:c.water_method,moisture:c.soil_moisture_target,never:false,rain_note});
     }
