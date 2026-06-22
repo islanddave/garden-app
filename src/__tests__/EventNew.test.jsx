@@ -53,6 +53,7 @@ vi.mock('react-router-dom', () => ({
 }))
 
 import EventNew from '../pages/EventNew.jsx'
+import { ToastProvider } from '../context/ToastContext.jsx'
 
 // ── apiFetch behavior: route GETs to fixture data, capture POSTs ────────
 function wireApiFetch() {
@@ -72,7 +73,7 @@ function wireApiFetch() {
 // Simulate deep-link query params, then render.
 function renderEventNew(query = '') {
   searchParamsRef.current = new URLSearchParams(query)
-  return render(<EventNew />)
+  return render(<ToastProvider><EventNew /></ToastProvider>)
 }
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
@@ -400,7 +401,8 @@ describe('EventNew — V3-EVENT-001 two-mode rapid entry (Save · Next of Plant 
     expect(screen.getByLabelText('Plant or group').value).toBe('pl-1')
     expect(screen.getByLabelText('Notes').value).toBe('')
     expect(screen.queryByLabelText('Harvest quantity')).toBeNull()
-    await waitFor(() => { expect(screen.getByText('Saved — log the next event')).toBeTruthy() })
+    await waitFor(() => { expect(screen.getByText('Logged event for Tomatoes 2026')).toBeTruthy() })
+    expect(screen.getByText('Undo')).toBeTruthy()
 
     fireEvent.click(screen.getByText('Watered'))
     await act(async () => { fireEvent.click(screen.getByText('Save · Next of Plant')) })
@@ -426,7 +428,8 @@ describe('EventNew — V3-EVENT-001 two-mode rapid entry (Save · Next of Plant 
     expect(navigateSpy).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Project').value).toBe('proj-1')
     expect(screen.getByLabelText('Plant or group').value).toBe('')
-    await waitFor(() => { expect(screen.getByText('Saved — pick the next plant')).toBeTruthy() })
+    await waitFor(() => { expect(screen.getByText('Logged event for Tomatoes 2026')).toBeTruthy() })
+    expect(screen.getByText('Undo')).toBeTruthy()
 
     // log the SAME type against the next plant WITHOUT re-picking the type
     fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-2' } })
@@ -444,5 +447,16 @@ describe('EventNew — V3-EVENT-001 two-mode rapid entry (Save · Next of Plant 
     expect(screen.queryByText('+ Log event')).toBeNull()
     await act(async () => { fireEvent.click(screen.getByText('Save · Next of Plant')) })
     expect(navigateSpy).not.toHaveBeenCalled()
+  })
+
+  it('global undo toast: clicking Undo soft-deletes the just-logged event', async () => {
+    renderEventNew('event_type=watering')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await act(async () => { fireEvent.click(screen.getByText('Save · Next of Plant')) })
+    await waitFor(() => screen.getByText('Undo'))
+    await act(async () => { fireEvent.click(screen.getByText('Undo')) })
+    const del = apiFetchSpy.mock.calls.find(([p, o]) => p === '/api/events/evt-1' && o && o.method === 'DELETE')
+    expect(del).toBeTruthy()
   })
 })

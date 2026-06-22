@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { FavoritesProvider } from './context/FavoritesContext.jsx'
 import { ZoneProvider } from './context/ZoneContext.jsx'
 import { ModeProvider } from './context/ModeContext.jsx'
+import { ToastProvider } from './context/ToastContext.jsx'
 import TopBar from './components/TopBar.jsx'
 import BottomNav from './components/BottomNav.jsx'
 import PlantsRedirect from './components/PlantsRedirect.jsx'
@@ -185,7 +186,9 @@ export default function App() {
       <ModeProvider>
         <ZoneProvider>
           <FavoritesProvider>
-            <AppRoutes />
+            <ToastProvider>
+              <AppRoutes />
+            </ToastProvider>
           </FavoritesProvider>
         </ZoneProvider>
       </ModeProvider>

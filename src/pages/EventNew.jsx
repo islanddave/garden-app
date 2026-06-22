@@ -10,7 +10,8 @@ import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
-import { Field, Input, Select, Textarea, Button, ErrorBanner, Toast } from '../components/forms'
+import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
+import { useToast } from '../context/ToastContext.jsx'
 import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 
 // V3-EVENT-008: EVENT_TYPE_META lives in the canonical src/lib/eventTypes.js
@@ -220,6 +221,7 @@ export default function EventNew() {
   })
 
   // Tier 2 metadata state — { [field.key]: value } — only populated keys submitted
+  const { show: showToast, showUndo } = useToast()
   const [metadataState, setMetadataState] = useState({})
 
   // V3-EVENTCONTSIZE-001: optional new-container capture, shown for potting_up/transplant on a specific
@@ -249,11 +251,7 @@ export default function EventNew() {
   // Default collapsed unless the feature flag flips it open. Fields stay reachable.
   const [showAddDetails, setShowAddDetails] = useState(EVENTNEW_ADD_DETAILS_EXPANDED)
   const [plantsForProject, setPlantsForProject] = useState([])
-  // V3-EVENT-001 "Save & Next": ambient confirmation on the keepOpen path. Uses the
-  // frozen operational Toast primitive (Reward-UX carve-out: confirmation of a save
   // the user explicitly started — never a reward/celebration channel).
-  const [showSavedToast, setShowSavedToast] = useState(false)
-  const [savedToastMsg,  setSavedToastMsg]  = useState('Saved')
 
   // Reset metadata when event type changes
   useEffect(() => {
@@ -509,14 +507,19 @@ export default function EventNew() {
     // V3-EVENT-001 (redesign 2026-06-22, Dave): every save is a rapid-entry save — reset
     // and STAY on the form, never navigate away ("no more Save and go back to Garden").
     // Two entry points: keepMode 'plant' (default / Enter) and keepMode 'type'.
-    const earned = (newly_earned_achievements ?? []).length
+    const projName = projects.find(p => p.id === form.project_id)?.name ?? 'event'
     resetForNext(keepMode)
-    setSavedToastMsg(
-      earned ? '🏆 Achievement unlocked — saved!'
-      : keepMode === 'type' ? 'Saved — pick the next plant'
-      : 'Saved — log the next event'
-    )
-    setShowSavedToast(true)
+    // Operational confirmation + undo via the GLOBAL toast layer (renders on THIS tab,
+    // not just Dashboard). Undo = soft-delete the just-logged event. Rewards stay
+    // ambient per Reward-UX V101 — never dispatched here.
+    if (eventId) {
+      showUndo({
+        message: `Logged event for ${projName}`,
+        onUndo: () => { apiFetch('/api/events/' + eventId, { method: 'DELETE' }).catch(() => {}) },
+      })
+    } else {
+      showToast({ message: keepMode === 'type' ? 'Saved — pick the next plant' : 'Saved — log the next event' })
+    }
   }
 
   return (
@@ -934,13 +937,6 @@ export default function EventNew() {
             </Button>
           </div>
 
-          {/* V3-EVENT-001: ambient confirmation for the keepOpen save. Frozen Toast
-              primitive, auto-dismisses; does NOT steal focus. */}
-          <Toast
-            message={savedToastMsg}
-            show={showSavedToast}
-            onDone={() => setShowSavedToast(false)}
-          />
 
         </form>
       </div>
