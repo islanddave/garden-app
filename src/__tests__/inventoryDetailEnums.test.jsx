@@ -17,10 +17,13 @@ vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => null }))
 vi.mock('../components/PhotoUpload.jsx', () => ({ default: () => null }))
 
 import InventoryDetail from '../pages/InventoryDetail.jsx'
+import { ToastProvider } from '../context/ToastContext.jsx'
 
 const renderPage = () => render(
   <MemoryRouter initialEntries={['/inventory/abc']}>
-    <Routes><Route path="/inventory/:id" element={<InventoryDetail />} /></Routes>
+    <ToastProvider>
+      <Routes><Route path="/inventory/:id" element={<InventoryDetail />} /></Routes>
+    </ToastProvider>
   </MemoryRouter>
 )
 const optionTexts = (sel) => within(sel).getAllByRole('option').map(o => o.textContent)

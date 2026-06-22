@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useZone } from '../context/ZoneContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P, PROJECT_STATUSES } from '../lib/constants.js'
+import { useToast } from '../context/ToastContext.jsx'
 import { severityTier, SEVERITY_STYLES } from '../lib/waterDue.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
@@ -73,6 +74,7 @@ export default function Dashboard() {
   const { activeZone }    = useZone()
   const location          = useLocation()
   const navigate          = useNavigate()
+  const { showUndo }      = useToast()
 
   const [projects,      setProjects]      = useState([])
   const [nextAttention, setNextAttention] = useState(null)
@@ -85,7 +87,6 @@ export default function Dashboard() {
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState(null)
   const [streakModalOpen, setStreakModalOpen] = useState(false)
-  const [undoState, setUndoState] = useState(null) // { eventId, projectName, expiresAt }
 
   // Pulse trigger keyed on streak value — increments cause animation re-fire.
   const prevStreakRef = useRef(null)
@@ -148,12 +149,12 @@ export default function Dashboard() {
     // Achievements earned this session are visible on the /achievements page —
     // ambient surfacing per Reward UX V100 (no dashboard overlay/toast/haptic).
 
-    // Show undo toast for 5 seconds.
+    // Operational confirmation + undo via the GLOBAL toast layer (replaces the
+    // retired Dashboard-local UndoToast). Undo = soft-delete the just-logged event.
     if (logged.id) {
-      setUndoState({
-        eventId: logged.id,
-        projectName: logged.project_name ?? 'event',
-        expiresAt: Date.now() + 5000,
+      showUndo({
+        message: `Logged event for ${logged.project_name ?? 'event'}`,
+        onUndo: () => handleUndo(logged.id),
       })
     }
 
@@ -164,21 +165,10 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state, loadDashboard, navigate])
 
-  // Auto-dismiss undo toast.
-  useEffect(() => {
-    if (!undoState) return
-    const remaining = undoState.expiresAt - Date.now()
-    if (remaining <= 0) { setUndoState(null); return }
-    const t = setTimeout(() => setUndoState(null), remaining)
-    return () => clearTimeout(t)
-  }, [undoState])
-
-  async function handleUndo() {
-    if (!undoState) return
-    const evId = undoState.eventId
-    setUndoState(null)
+  async function handleUndo(eventId) {
+    if (!eventId) return
     try {
-      await apiFetch(`/api/events/${evId}`, { method: 'DELETE' })
+      await apiFetch(`/api/events/${eventId}`, { method: 'DELETE' })
       // Reload — note Lambda 2.1.x doesn't reverse user_stats/xp/achievements on DELETE;
       // streak/XP recovery is a V1.2a-2 reconciliation cron concern.
       loadDashboard(true)
@@ -351,9 +341,6 @@ export default function Dashboard() {
       {/* MVP-Critter Stage 1 — moved to App.jsx global mount (CritterArrivalController + CritterArrival).
           Fires on whatever route the user is on at award time (Dave directive 2026-05-30 evening:
           "shouldn't require navigating to find"). */}
-
-      {/* Undo toast (bottom, 5s) */}
-      {undoState && <UndoToast state={undoState} onUndo={handleUndo} onDismiss={() => setUndoState(null)} />}
 
       {/* Pulse keyframes */}
       <style>{`
@@ -700,59 +687,6 @@ function WaterMeTile({ waterDue, hasProjects }) {
 // — out-of-scope channels per Reward UX V100. Achievements are intrinsic-delight rewards
 // and the /achievements page IS the canonical celebration surface. No dashboard toast,
 // no haptic, no replacement signal — silence is more ambient than a banner.
-
-function UndoToast({ state, onUndo, onDismiss }) {
-  return (
-    <div
-      role="status"
-      style={{
-        position: 'fixed',
-        bottom: 70,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        backgroundColor: P.dark,
-        color: P.white,
-        borderRadius: 10,
-        padding: '10px 14px 10px 18px',
-        boxShadow: '0 6px 18px rgba(0,0,0,0.3)',
-        fontSize: '0.88rem',
-        zIndex: 1000,
-        display: 'flex', alignItems: 'center', gap: 14,
-        maxWidth: 'calc(100% - 32px)',
-      }}
-    >
-      <span>Logged event for {state.projectName}.</span>
-      <button
-        type="button"
-        onClick={onUndo}
-        style={{
-          background: 'transparent',
-          color: P.greenLight,
-          border: `1px solid ${P.greenLight}`,
-          borderRadius: 6,
-          padding: '5px 12px',
-          fontSize: '0.85rem',
-          fontWeight: 700,
-          cursor: 'pointer',
-        }}
-      >
-        Undo
-      </button>
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label="Dismiss"
-        style={{
-          background: 'transparent', color: P.light,
-          border: 'none', cursor: 'pointer',
-          fontSize: '0.95rem', padding: '0 4px',
-        }}
-      >
-        ✕
-      </button>
-    </div>
-  )
-}
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 function daysAgo(dateStr) {

@@ -22,6 +22,7 @@ vi.mock('../lib/api.js', () => ({
 }))
 
 import InactiveProjects, { relativeActivity } from '../pages/InactiveProjects.jsx'
+import { ToastProvider } from '../context/ToastContext.jsx'
 
 function iso(daysAgo) {
   return new Date(Date.now() - daysAgo * 86400000).toISOString()
@@ -51,7 +52,9 @@ const DISMISSED_NEW = {
 function renderPage() {
   return render(
     <MemoryRouter>
-      <InactiveProjects />
+      <ToastProvider>
+        <InactiveProjects />
+      </ToastProvider>
     </MemoryRouter>
   )
 }

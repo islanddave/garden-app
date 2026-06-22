@@ -49,6 +49,7 @@ vi.mock('../components/ErrorBoundary.jsx', () => ({
 }))
 
 import Dashboard from '../pages/Dashboard.jsx'
+import { ToastProvider } from '../context/ToastContext.jsx'
 
 const BASE_DASH = {
   active_projects: [],
@@ -74,7 +75,7 @@ beforeEach(() => {
 describe('Dashboard — I10-greeting (first-name only per L-063)', () => {
   it('renders first name only when display_name is a full name', async () => {
     primeDash()
-    render(<Dashboard />)
+    render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
     const heading = screen.getByRole('heading', { level: 1 })
     expect(heading.textContent).toMatch(/Welcome back, Dave/)
@@ -84,7 +85,7 @@ describe('Dashboard — I10-greeting (first-name only per L-063)', () => {
   it('handles single-name display_name without surname', async () => {
     authMock.profile = { display_name: 'Jen' }
     primeDash()
-    render(<Dashboard />)
+    render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
     expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/Welcome back, Jen/)
   })
@@ -92,7 +93,7 @@ describe('Dashboard — I10-greeting (first-name only per L-063)', () => {
   it('falls back to "Dave" when display_name is missing', async () => {
     authMock.profile = {}
     primeDash()
-    render(<Dashboard />)
+    render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
     expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/Welcome back, Dave/)
   })
@@ -101,7 +102,7 @@ describe('Dashboard — I10-greeting (first-name only per L-063)', () => {
 describe('Dashboard — DASH-LOC-REDUNDANT', () => {
   it('does NOT render the "WHERE ARE YOU?" zone link (covered by TopBar pill)', async () => {
     primeDash()
-    render(<Dashboard />)
+    render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
     expect(screen.queryByText(/WHERE ARE YOU/i)).toBeNull()
   })
@@ -115,7 +116,7 @@ describe('Dashboard — DASH-ORDER-HARVEST-GATE', () => {
         { id: 'p2', name: 'Tomato', status: 'seeding' },
       ],
     })
-    render(<Dashboard />)
+    render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
     expect(screen.queryByTestId('harvest-ready-tile')).toBeNull()
     // HeadsUp still renders
@@ -129,7 +130,7 @@ describe('Dashboard — DASH-ORDER-HARVEST-GATE', () => {
         { id: 'p2', name: 'Tomato', status: 'fruiting' },
       ],
     })
-    render(<Dashboard />)
+    render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
     expect(screen.getByTestId('harvest-ready-tile')).toBeDefined()
   })
@@ -140,7 +141,7 @@ describe('Dashboard — DASH-ORDER-HARVEST-GATE', () => {
         { id: 'p1', name: 'Basil', status: 'flowering' },
       ],
     })
-    render(<Dashboard />)
+    render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
     expect(screen.getByTestId('harvest-ready-tile')).toBeDefined()
   })
@@ -149,7 +150,7 @@ describe('Dashboard — DASH-ORDER-HARVEST-GATE', () => {
     primeDash({
       active_projects: [{ id: 'p1', name: 'Tomato', status: 'fruiting' }],
     })
-    render(<Dashboard />)
+    render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toBeDefined())
     const harvest = screen.getByTestId('harvest-ready-tile')
     const headsUp = screen.getByTestId('heads-up-tile')
@@ -167,7 +168,7 @@ describe('Dashboard — V3-FEED-001 recent-activity batch entries', () => {
         { id: 's1', event_type: 'observation', created_at: now, batch_count: 1, project_name: 'Basil' },
       ],
     })
-    render(<Dashboard />)
+    render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(screen.getByText('Recent activity')).toBeDefined())
     expect(screen.getByText('watering × 12')).toBeDefined()
     expect(screen.getByText('12 plantings')).toBeDefined()
@@ -184,7 +185,7 @@ describe('Dashboard — V3-FEED-001 recent-activity batch entries', () => {
         { id: 'l1', event_type: 'watering', created_at: now, project_name: 'Fig' },
       ],
     })
-    render(<Dashboard />)
+    render(<ToastProvider><Dashboard /></ToastProvider>)
     await waitFor(() => expect(screen.getByText('Recent activity')).toBeDefined())
     expect(screen.getByText('watering')).toBeDefined()
     expect(screen.getByText('Fig')).toBeDefined()

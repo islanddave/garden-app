@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
+import { useToast } from '../context/ToastContext.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 
 import { INVENTORY_TYPES as TYPES, INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS } from '../lib/inventoryEnums.js'
@@ -12,6 +13,7 @@ import { EnumSelect, Field, Input, Textarea, Button } from '../components/forms'
 export default function InventoryAdd() {
   const navigate = useNavigate()
   const { createItem } = useInventory()
+  const { show } = useToast()
 
   const [form, setForm] = useState({
     name:             '',
@@ -43,7 +45,6 @@ export default function InventoryAdd() {
   const [showFull,      setShowFull]      = useState(false)
   const [saving,        setSaving]        = useState(false)
   const [errors,        setErrors]        = useState({})
-  const [successToast,  setSuccessToast]  = useState(false)
   const [typeWarning,   setTypeWarning]   = useState(false) // pending type switch
 
   const visibleCategories = (form.type
@@ -124,8 +125,8 @@ export default function InventoryAdd() {
         return
       }
 
-      // Success toast (2500ms) then navigate
-      setSuccessToast(true)
+      // Operational confirmation via the GLOBAL toast layer (2500ms), then navigate.
+      show({ message: '✓ Item added' })
       setTimeout(() => {
         navigate('/inventory')
       }, 2500)
@@ -487,19 +488,6 @@ export default function InventoryAdd() {
         </form>
       </div>
 
-      {/* Success toast */}
-      {successToast && (
-        <div role="status" aria-live="polite" style={{
-          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
-          backgroundColor: P.greenLight, color: P.white,
-          padding: '12px 24px', borderRadius: 8,
-          fontSize: '0.9rem', fontWeight: 600,
-          boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
-          zIndex: 1000, whiteSpace: 'nowrap',
-        }}>
-          ✓ Item added
-        </div>
-      )}
     </div>
   )
 }

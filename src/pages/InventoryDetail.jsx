@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { useToast } from '../context/ToastContext.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS, INVENTORY_STATUSES as STATUSES } from '../lib/inventoryEnums.js'
@@ -18,6 +19,7 @@ export default function InventoryDetail() {
   const navigate     = useNavigate()
   const { updateItem, deleteItem } = useInventory()
   const { fetch } = useApiFetch()
+  const { show } = useToast()
 
   const [item,         setItem]         = useState(null)
   const [form,         setForm]         = useState(null)
@@ -25,7 +27,6 @@ export default function InventoryDetail() {
   const [loadErr,      setLoadErr]      = useState(null)
   const [saving,       setSaving]       = useState(false)
   const [errors,       setErrors]       = useState({})
-  const [savedToast,   setSavedToast]   = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting,     setDeleting]     = useState(false)
 
@@ -153,8 +154,8 @@ export default function InventoryDetail() {
     if (error) {
       setErrors({ _form: error })
     } else {
-      setSavedToast(true)
-      setTimeout(() => setSavedToast(false), 2500)
+      // Operational confirmation via the GLOBAL toast layer (auto-dismisses).
+      show({ message: '✓ Saved' })
     }
   }
 
@@ -480,19 +481,6 @@ export default function InventoryDetail() {
         )}
       </div>
 
-      {/* Saved toast */}
-      {savedToast && (
-        <div style={{
-          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
-          backgroundColor: P.green, color: P.white,
-          padding: '12px 24px', borderRadius: 8,
-          fontSize: '0.9rem', fontWeight: 600,
-          boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
-          zIndex: 1000, whiteSpace: 'nowrap',
-        }}>
-          ✓ Saved
-        </div>
-      )}
     </div>
   )
 }

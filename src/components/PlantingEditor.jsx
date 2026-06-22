@@ -11,7 +11,7 @@ import { formatQty } from '../lib/format.js'
 import ProjectOptions from './ProjectOptions.jsx'
 import { PlantForm } from './forms'
 
-const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '', parent_plant_id: '' }
+const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '', parent_plant_id: '', container_type: '', container_size: '' }
 
 function formFromPlant(plant) {
   return {
@@ -29,6 +29,8 @@ function formFromPlant(plant) {
     source_generation: plant.source_generation ?? '',
     lineage_note:      plant.lineage_note ?? '',
     parent_plant_id:   plant.parent_plant_id ?? '',
+    container_type:    plant.container_type ?? '',
+    container_size:    plant.container_size ?? '',
   }
 }
 
@@ -101,6 +103,8 @@ export default function PlantingEditor({
       source_generation: form.source_generation.trim() || null,
       lineage_note:      form.lineage_note.trim() || null,
       parent_plant_id:   form.parent_plant_id || null,
+      container_type:    form.container_type || null,
+      container_size:    (form.container_size ?? '').trim() || null,
     }
     if (sourceInventoryItemId) payload.source_inventory_item_id = sourceInventoryItemId
     try {
@@ -139,6 +143,8 @@ export default function PlantingEditor({
           source_generation: form.source_generation.trim() || null,
           lineage_note:      form.lineage_note.trim() || null,
           parent_plant_id:   form.parent_plant_id || null,
+          container_type:    form.container_type || null,
+          container_size:    (form.container_size ?? '').trim() || null,
         }),
       })
       onUpdated?.({ ...data, project_name: data.project_name ?? plant.project_name })

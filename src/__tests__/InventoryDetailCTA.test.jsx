@@ -57,6 +57,7 @@ vi.mock('../hooks/useInventory.js', () => ({
 }))
 
 import InventoryDetail from '../pages/InventoryDetail.jsx'
+import { ToastProvider } from '../context/ToastContext.jsx'
 
 const SEED_WITH_STOCK = {
   id: 'item-seed-1',
@@ -83,20 +84,20 @@ beforeEach(() => {
 describe('InventoryDetail — Plant-from-packet CTA visibility', () => {
   it('shows CTA when category=seeds and quantity_on_hand > 0', async () => {
     fetchSpy.mockResolvedValueOnce(SEED_WITH_STOCK)
-    render(<InventoryDetail />)
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => expect(screen.getByText(/Plant from this packet/)).toBeDefined())
   })
 
   it('hides CTA when quantity_on_hand === 0', async () => {
     fetchSpy.mockResolvedValueOnce(SEED_NO_STOCK)
-    render(<InventoryDetail />)
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByText('Black Krim seeds'))
     expect(screen.queryByText(/Plant from this packet/)).toBeNull()
   })
 
   it('hides CTA when category != seeds', async () => {
     fetchSpy.mockResolvedValueOnce(NON_SEED)
-    render(<InventoryDetail />)
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByText('Black Krim seeds'))
     expect(screen.queryByText(/Plant from this packet/)).toBeNull()
   })
@@ -104,14 +105,14 @@ describe('InventoryDetail — Plant-from-packet CTA visibility', () => {
   it('hides CTA for durable items', async () => {
     paramsRef.current = { id: 'item-2' }
     fetchSpy.mockResolvedValueOnce(DURABLE)
-    render(<InventoryDetail />)
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByText('Trowel'))
     expect(screen.queryByText(/Plant from this packet/)).toBeNull()
   })
 
   it('hides CTA when quantity_on_hand is null', async () => {
     fetchSpy.mockResolvedValueOnce({ ...SEED_WITH_STOCK, quantity_on_hand: null })
-    render(<InventoryDetail />)
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByText('Black Krim seeds'))
     expect(screen.queryByText(/Plant from this packet/)).toBeNull()
   })
@@ -120,7 +121,7 @@ describe('InventoryDetail — Plant-from-packet CTA visibility', () => {
 describe('InventoryDetail — Plant-from-packet CTA navigation', () => {
   it('navigates with source_inventory_item_id and variety_id query params on click', async () => {
     fetchSpy.mockResolvedValueOnce(SEED_WITH_STOCK)
-    render(<InventoryDetail />)
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByText(/Plant from this packet/))
 
     fireEvent.click(screen.getByLabelText(/Plant from Black Krim seeds/i))
@@ -135,7 +136,7 @@ describe('InventoryDetail — Plant-from-packet CTA navigation', () => {
 
   it('omits variety_id when packet has no variety_id', async () => {
     fetchSpy.mockResolvedValueOnce(SEED_NO_VARIETY)
-    render(<InventoryDetail />)
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByText(/Plant from this packet/))
 
     fireEvent.click(screen.getByLabelText(/Plant from Black Krim seeds/i))
@@ -148,7 +149,7 @@ describe('InventoryDetail — Plant-from-packet CTA navigation', () => {
 
   it('CTA button is a 44px+ tap target (mobile-first)', async () => {
     fetchSpy.mockResolvedValueOnce(SEED_WITH_STOCK)
-    render(<InventoryDetail />)
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByText(/Plant from this packet/))
 
     const cta = screen.getByLabelText(/Plant from Black Krim seeds/i)
@@ -160,7 +161,7 @@ describe('InventoryDetail — Plant-from-packet CTA navigation', () => {
 describe('InventoryDetail — V2-PHOTO-F1 S2 inventory photo upload', () => {
   it('mounts PhotoUpload with inventory keyPrefix and inventory_item_id linkage', async () => {
     fetchSpy.mockResolvedValueOnce(SEED_WITH_STOCK)
-    render(<InventoryDetail />)
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByTestId('inventory-photo-upload-item-seed-1'))
     const node = screen.getByTestId('inventory-photo-upload-item-seed-1')
     expect(node.dataset.keyPrefix).toBe('inventory')
@@ -171,7 +172,7 @@ describe('InventoryDetail — V2-PHOTO-F1 S2 inventory photo upload', () => {
   it('photo section renders for durable items too', async () => {
     paramsRef.current = { id: 'item-2' }
     fetchSpy.mockResolvedValueOnce(DURABLE)
-    render(<InventoryDetail />)
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByTestId('inventory-photo-upload-item-2'))
   })
 })

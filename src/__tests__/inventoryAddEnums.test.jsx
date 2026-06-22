@@ -13,8 +13,9 @@ vi.mock('../hooks/useInventory.js', () => ({ useInventory: () => ({ createItem: 
 vi.mock('../components/VarietyPicker.jsx', () => ({ default: () => null }))
 
 import InventoryAdd from '../pages/InventoryAdd.jsx'
+import { ToastProvider } from '../context/ToastContext.jsx'
 
-const renderPage = () => render(<MemoryRouter><InventoryAdd /></MemoryRouter>)
+const renderPage = () => render(<MemoryRouter><ToastProvider><InventoryAdd /></ToastProvider></MemoryRouter>)
 const categorySelect = () => screen.getByLabelText('Category')
 const optionTexts = (sel) => within(sel).getAllByRole('option').map(o => o.textContent)
 

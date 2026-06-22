@@ -108,6 +108,7 @@ export default function ProjectDetail() {
     qty_initial: '',
     source_type: '', source_ref: '', source_generation: '',
     lineage_note: '', parent_plant_id: '',
+    container_type: '', container_size: '',
   })
   const [addingPlant,   setAddingPlant]   = useState(false)
   const [plantErr,      setPlantErr]      = useState(null)
@@ -200,6 +201,8 @@ export default function ProjectDetail() {
           lineage_note:      plantForm.lineage_note.trim()      || null,
           // V3-FORM-001: parity with Garden-path add (PlantingEditor) — capture lineage parent.
           parent_plant_id:   plantForm.parent_plant_id || null,
+          container_type:    plantForm.container_type || null,
+          container_size:    (plantForm.container_size ?? '').trim() || null,
         }),
       })
       setPlants(p => [...p, data])
@@ -209,6 +212,7 @@ export default function ProjectDetail() {
         qty_initial: '',
         source_type: '', source_ref: '', source_generation: '',
         lineage_note: '', parent_plant_id: '',
+        container_type: '', container_size: '',
       })
       setShowAddPlant(false)
     } catch (err) {

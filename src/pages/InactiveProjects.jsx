@@ -20,18 +20,25 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
+import { useToast } from '../context/ToastContext.jsx'
 import { useInactiveProjects } from '../hooks/useInactiveProjects.js'
 
 const UNDO_WINDOW_MS = 5000
 
 export default function InactiveProjects() {
   const { projects, loading, error, dismiss } = useInactiveProjects()
+  const { showUndo, dismiss: dismissToast } = useToast()
 
   // Local-only dismiss overlay: project ids the user has dismissed in-page but
   // whose 5s undo window hasn't elapsed yet. These render in the Dismissed section
   // (with a local dismissed_at) but no POST has fired.
   const [pendingDismissed, setPendingDismissed] = useState({}) // { [id]: dismissed_at iso }
+  // Tracks the project whose 5s undo window is currently open (used to commit the
+  // previous pending dismiss when a new one starts). The toast itself is now rendered
+  // by the GLOBAL provider via showUndo(); toastIdRef holds its id so a superseding
+  // dismiss can clear the prior toast.
   const [undoState, setUndoState] = useState(null) // { projectId, projectName }
+  const toastIdRef = useRef(null)
 
   // Timer handles, keyed so unmount cleanup can clear everything.
   const dismissTimerRef = useRef(null)
@@ -60,13 +67,27 @@ export default function InactiveProjects() {
       dismiss(undoState.projectId)
     }
 
+    // Clear any prior global toast still on screen (superseded by this dismiss).
+    if (toastIdRef.current != null) { dismissToast(toastIdRef.current); toastIdRef.current = null }
+
     const dismissedAt = new Date().toISOString()
     setPendingDismissed(prev => ({ ...prev, [project.id]: dismissedAt }))
     setUndoState({ projectId: project.id, projectName: project.name })
 
+    // Operational undo via the GLOBAL toast layer (replaces the retired local UndoToast).
+    // The page's own UNDO_WINDOW_MS timer below remains the authority that fires the
+    // actual dismiss POST on elapse; the toast's Undo button routes to handleUndo, which
+    // cancels that timer. Both windows are UNDO_WINDOW_MS so they stay in lockstep.
+    toastIdRef.current = showUndo({
+      message: `Dismissed ${project.name}`,
+      onUndo: handleUndo,
+      duration: UNDO_WINDOW_MS,
+    })
+
     dismissTimerRef.current = setTimeout(() => {
       dismissTimerRef.current = null
       setUndoState(null)
+      toastIdRef.current = null
       // Window elapsed with no Undo — fire the actual POST.
       dismiss(project.id)
     }, UNDO_WINDOW_MS)
@@ -77,15 +98,18 @@ export default function InactiveProjects() {
       clearTimeout(dismissTimerRef.current)
       dismissTimerRef.current = null
     }
-    if (undoState) {
-      const id = undoState.projectId
-      setPendingDismissed(prev => {
-        const next = { ...prev }
-        delete next[id]
-        return next
-      })
-    }
-    setUndoState(null)
+    setUndoState(prev => {
+      if (prev) {
+        const id = prev.projectId
+        setPendingDismissed(p => {
+          const next = { ...p }
+          delete next[id]
+          return next
+        })
+      }
+      return null
+    })
+    if (toastIdRef.current != null) { dismissToast(toastIdRef.current); toastIdRef.current = null }
   }
 
   // Build the two sections, applying the local pendingDismissed overlay.
@@ -198,15 +222,6 @@ export default function InactiveProjects() {
         )}
       </div>
 
-      {/* Undo toast (bottom, 5s) — mirrors Dashboard.jsx UndoToast */}
-      {undoState && (
-        <UndoToast
-          state={undoState}
-          onUndo={handleUndo}
-          onDismiss={handleUndo}
-        />
-      )}
-
     </div>
   )
 }
@@ -279,61 +294,6 @@ function EmptySectionNote({ text }) {
       fontSize: '0.82rem',
     }}>
       {text}
-    </div>
-  )
-}
-
-// ─── Toasts ──────────────────────────────────────────────────────────────────
-// Mirrors Dashboard.jsx UndoToast: fixed bottom, dark bg, Undo button + dismiss.
-function UndoToast({ state, onUndo, onDismiss }) {
-  return (
-    <div
-      role="status"
-      style={{
-        position: 'fixed',
-        bottom: 70,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        backgroundColor: P.dark,
-        color: P.white,
-        borderRadius: 10,
-        padding: '10px 14px 10px 18px',
-        boxShadow: '0 6px 18px rgba(0,0,0,0.3)',
-        fontSize: '0.88rem',
-        zIndex: 1000,
-        display: 'flex', alignItems: 'center', gap: 14,
-        maxWidth: 'calc(100% - 32px)',
-      }}
-    >
-      <span>Dismissed {state.projectName}.</span>
-      <button
-        type="button"
-        onClick={onUndo}
-        style={{
-          background: 'transparent',
-          color: P.greenLight,
-          border: `1px solid ${P.greenLight}`,
-          borderRadius: 6,
-          padding: '5px 12px',
-          fontSize: '0.85rem',
-          fontWeight: 700,
-          cursor: 'pointer',
-        }}
-      >
-        Undo
-      </button>
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label="Dismiss"
-        style={{
-          background: 'transparent', color: P.light,
-          border: 'none', cursor: 'pointer',
-          fontSize: '0.95rem', padding: '0 4px',
-        }}
-      >
-        ✕
-      </button>
     </div>
   )
 }
