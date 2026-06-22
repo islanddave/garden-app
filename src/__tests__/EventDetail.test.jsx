@@ -9,7 +9,7 @@
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 // ── Hoisted mock plumbing ───────────────────────────────────────────────
@@ -115,5 +115,23 @@ describe('EventDetail — flagging UI removed (FLAG-REMOVAL regression)', () => 
     await flushLoad()
     expect(screen.queryByText('Resolve')).toBeNull()
     expect(screen.queryByTestId('severity-badge')).toBeNull()
+  })
+})
+
+// V3-CONFIG-001 — the edit-mode event-type <select> is now sourced from the dropdownRegistry
+// (EVENT_TYPE_OPTIONS), derived from the canonical EVENT_TYPES taxonomy. This pins that the
+// edit picker offers exactly the registry's options with its exact (behavior-preserving) labels.
+import { EVENT_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
+
+describe('EventDetail — edit event-type select sourced from dropdownRegistry (V3-CONFIG-001)', () => {
+  it('renders one option per EVENT_TYPE_OPTIONS entry with the registry label, in registry order', async () => {
+    renderEventDetail()
+    await flushLoad()
+    fireEvent.click(screen.getByText('Edit'))
+    const sel = document.getElementById('ev-event-type')
+    expect(sel).toBeTruthy()
+    const opts = Array.from(sel.options)
+    expect(opts.map(o => o.value)).toEqual(EVENT_TYPE_OPTIONS.map(o => o.value))
+    expect(opts.map(o => o.textContent)).toEqual(EVENT_TYPE_OPTIONS.map(o => o.label))
   })
 })

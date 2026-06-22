@@ -50,3 +50,47 @@ describe('StatusSelect', () => {
     expect(vals.sort()).toEqual([...PROJECT_STATUSES].sort())
   })
 })
+
+// V3-CONFIG-001 ext — dropdownRegistry drift guards. Each new set must keep its derived
+// label map in lockstep with its option array (label-set == option-set, no orphans), and
+// stay sourced from the canonical taxonomy (so the registry can never drift from the SSoT).
+import {
+  EVENT_TYPE_OPTIONS, EVENT_TYPE_LABELS,
+  PROJECT_CATEGORY_OPTIONS, PROJECT_CATEGORY_LABELS,
+} from '../lib/dropdownRegistry.js'
+import { EVENT_TYPES, EVENT_TYPE_META } from '../lib/eventTypes.js'
+import { PROJECT_CATEGORIES } from '../lib/constants.js'
+
+describe('dropdownRegistry — EVENT_TYPE set (V3-CONFIG-001)', () => {
+  it('label map keys exactly mirror the option values (no drift, no orphans)', () => {
+    const optValues = EVENT_TYPE_OPTIONS.map(o => o.value).sort()
+    const labelKeys = Object.keys(EVENT_TYPE_LABELS).sort()
+    expect(labelKeys).toEqual(optValues)
+    for (const o of EVENT_TYPE_OPTIONS) expect(EVENT_TYPE_LABELS[o.value]).toBe(o.label)
+  })
+  it('is sourced from the canonical EVENT_TYPES taxonomy (same value set)', () => {
+    expect(EVENT_TYPE_OPTIONS.map(o => o.value).sort()).toEqual([...EVENT_TYPES].sort())
+  })
+  it('options are alpha-sorted by raw value (legacy EventDetail ordering preserved)', () => {
+    const vals = EVENT_TYPE_OPTIONS.map(o => o.value)
+    expect(vals).toEqual([...vals].sort((a, b) => a.localeCompare(b)))
+  })
+  it('label shape is emoji + de-snaked value (behavior-preserving, not the META prose label)', () => {
+    const t = 'pest_treatment'
+    const expected = (EVENT_TYPE_META[t]?.emoji ?? '📝') + ' ' + t.replace(/_/g, ' ')
+    expect(EVENT_TYPE_LABELS[t]).toBe(expected)
+    expect(EVENT_TYPE_LABELS[t]).toContain('pest treatment')
+  })
+})
+
+describe('dropdownRegistry — PROJECT_CATEGORY set (V3-CONFIG-001)', () => {
+  it('label map keys exactly mirror the option values (no drift, no orphans)', () => {
+    const optValues = PROJECT_CATEGORY_OPTIONS.map(o => o.value).sort()
+    const labelKeys = Object.keys(PROJECT_CATEGORY_LABELS).sort()
+    expect(labelKeys).toEqual(optValues)
+    for (const o of PROJECT_CATEGORY_OPTIONS) expect(PROJECT_CATEGORY_LABELS[o.value]).toBe(o.label)
+  })
+  it('is sourced from the canonical PROJECT_CATEGORIES taxonomy (value + label parity)', () => {
+    expect(PROJECT_CATEGORY_OPTIONS).toEqual(PROJECT_CATEGORIES.map(c => ({ value: c.v, label: c.label })))
+  })
+})

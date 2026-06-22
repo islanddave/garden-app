@@ -221,3 +221,52 @@ describe('ProjectDetail — V1.2a-4 S1 plantForm extension', () => {
     })
   })
 })
+
+describe('ProjectDetail — V3-FORM-001 / V3-FORM-002 (launch-point parity)', () => {
+  it('FORM-002: planting-details disclosure is open by default on add', async () => {
+    wireApiFetch()
+    await act(async () => { render(<ProjectDetail />) })
+    await openAddPlantForm()
+    expect(screen.getByTestId('planting-details').open).toBe(true)
+  })
+
+  it('FORM-001: POST body carries parent_plant_id (null when blank) — parity with Garden-path add', async () => {
+    wireApiFetch()
+    await act(async () => { render(<ProjectDetail />) })
+    await openAddPlantForm()
+    const nameInput = screen.getByPlaceholderText(/Megatron Jalapeno/)
+    await act(async () => { fireEvent.change(nameInput, { target: { value: 'Lineage Test' } }) })
+    const form = nameInput.closest('form')
+    await act(async () => { fireEvent.submit(form) })
+    await waitFor(() => expect(postCalls.length).toBeGreaterThan(0))
+    expect(postCalls[0]).toHaveProperty('parent_plant_id', null)
+  })
+
+  it('FORM-001: lineage picker renders and propagates a selected parent_plant_id', async () => {
+    // Plants present in the project -> the lineage picker (hidden when empty) now renders,
+    // matching the Garden-path add (PlantingEditor passes plantingOptions too).
+    apiFetchSpy.mockImplementation((path, options = {}) => {
+      if (options.method === 'POST' && path === '/api/plants') {
+        postCalls.push(JSON.parse(options.body))
+        return Promise.resolve({ id: 'plant-new', name: 'Child' })
+      }
+      if (path === '/api/projects/proj-1') return Promise.resolve(PROJECT)
+      if (path.startsWith('/api/events')) return Promise.resolve([])
+      if (path === '/api/locations/with-path') return Promise.resolve([])
+      if (path === '/api/projects') return Promise.resolve([])
+      if (path.startsWith('/api/plants')) return Promise.resolve([{ id: 'parent-9', name: 'Mother Plant' }])
+      return Promise.resolve(null)
+    })
+    await act(async () => { render(<ProjectDetail />) })
+    await openAddPlantForm()
+    const nameInput = screen.getByPlaceholderText(/Megatron Jalapeno/)
+    await act(async () => { fireEvent.change(nameInput, { target: { value: 'Child' } }) })
+    const parentSelect = document.getElementById('add-plant-parent')
+    expect(parentSelect).toBeTruthy()
+    await act(async () => { fireEvent.change(parentSelect, { target: { value: 'parent-9' } }) })
+    const form = nameInput.closest('form')
+    await act(async () => { fireEvent.submit(form) })
+    await waitFor(() => expect(postCalls.length).toBeGreaterThan(0))
+    expect(postCalls[0]).toHaveProperty('parent_plant_id', 'parent-9')
+  })
+})

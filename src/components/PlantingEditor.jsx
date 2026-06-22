@@ -210,6 +210,7 @@ export default function PlantingEditor({
         showProjectSelect={!isEdit}
         projectOptions={!isEdit ? <>{projects.length === 0 && <option value="">No projects yet</option>}<ProjectOptions projects={projects} /></> : null}
         plantingOptions={(isEdit ? plants.filter(p => p.id !== plant?.id) : plants).map(p => ({ id: p.id, name: p.name }))}
+        detailsDefaultOpen={!isEdit}
         idPrefix={isEdit ? `edit-${plant?.id}` : 'add-plant'}
         extraActions={isEdit ? (
           <>

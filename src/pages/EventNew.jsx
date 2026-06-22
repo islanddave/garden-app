@@ -10,7 +10,7 @@ import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
-import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
+import { Field, Input, Select, Textarea, Button, ErrorBanner, Toast } from '../components/forms'
 import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 
 // V3-EVENT-008: EVENT_TYPE_META lives in the canonical src/lib/eventTypes.js
@@ -249,6 +249,10 @@ export default function EventNew() {
   // Default collapsed unless the feature flag flips it open. Fields stay reachable.
   const [showAddDetails, setShowAddDetails] = useState(EVENTNEW_ADD_DETAILS_EXPANDED)
   const [plantsForProject, setPlantsForProject] = useState([])
+  // V3-EVENT-001 "Save & Next": ambient confirmation on the keepOpen path. Uses the
+  // frozen operational Toast primitive (Reward-UX carve-out: confirmation of a save
+  // the user explicitly started — never a reward/celebration channel).
+  const [showSavedToast, setShowSavedToast] = useState(false)
 
   // Reset metadata when event type changes
   useEffect(() => {
@@ -354,7 +358,35 @@ export default function EventNew() {
     return null
   }
 
-  async function handleSubmit(e) {
+  // V3-EVENT-001: reset the form for another entry on the "Save & Next" path.
+  // PRESERVES project_id + plant_id + is_public (scope continuity for rapid sequential
+  // logging) and the localStorage-persisted harvest unit. CLEARS event_type (forces a
+  // deliberate re-pick — see DECISION note), event_date→now, notes/quantity/private_notes,
+  // and all type-specific panels. Collapses add-details/private back to defaults.
+  function resetForNext() {
+    setForm(f => ({
+      event_type:    '',
+      project_id:    f.project_id,
+      location_id:   '',
+      event_date:    toDatetimeLocal(new Date()),
+      notes:         '',
+      private_notes: '',
+      quantity:      '',
+      plant_id:      f.plant_id,
+      is_public:     f.is_public,
+    }))
+    setMetadataState({})
+    setHarvest({ quantity: '', unit: readLastHarvestUnit(), quality_rating: null })
+    setHarvestError(null)
+    setContainer({ type: '', size: '' })
+    clearPhoto()
+    setShowAddDetails(EVENTNEW_ADD_DETAILS_EXPANDED)
+    setShowPrivate(false)
+    setError(null)
+    setSaving(false)
+  }
+
+  async function handleSubmit(e, { keepOpen = false } = {}) {
     e.preventDefault()
     if (!form.event_type)  { setError('Select an event type above.'); return }
     if (!form.project_id)  { setError('Select a project.'); return }
@@ -468,6 +500,17 @@ export default function EventNew() {
 
     setSaving(false)
     if (form.event_type === 'watering') ux.complete({ outcome: 'logged' })  // M1 watering complete
+
+    // V3-EVENT-001 "Save & Next": keepOpen path — reset for another entry (scope
+    // preserved) and surface an ambient confirmation toast. Do NOT navigate, and do
+    // NOT use the dashboard toast path (location.state.logged) — that's for the
+    // navigate-away flow only.
+    if (keepOpen) {
+      resetForNext()
+      setShowSavedToast(true)
+      return
+    }
+
     // V1.2a-1 §C-V1.2a-1-D: skip success screen, navigate straight to dashboard.
     // Dashboard reads location.state.logged → refetches data + renders achievement toasts + 5s undo toast.
     const projectRow = projects.find(p => p.id === form.project_id)
@@ -857,24 +900,56 @@ export default function EventNew() {
           </Section>
 
           {/* ── Floating Save — V3-EVENT-005 (Dave to eyeball bottom offset) ── */}
-          {/* Spacer so content isn't hidden behind the fixed button */}
+          {/* Spacer so content isn't hidden behind the fixed buttons */}
           <div style={{ height: 72 }} aria-hidden="true" />
-          <Button
-            type="submit"
-            variant="primary"
-            loading={saving}
-            loadingLabel="Saving…"
+          {/* V3-EVENT-001: Save & Next sits beside the primary Save. It submits with
+              keepOpen so the form resets for another entry (scope preserved) instead
+              of navigating to the dashboard. Secondary variant to subordinate it to
+              the primary save action. */}
+          <div
             style={{
               position: 'fixed',
               bottom: 68,
               right: 20,
               zIndex: 200,
-              boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
-              minWidth: 140,
+              display: 'flex',
+              gap: 10,
             }}
           >
-            + Log event
-          </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              loading={saving}
+              loadingLabel="Saving…"
+              onClick={e => handleSubmit(e, { keepOpen: true })}
+              style={{
+                boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
+                minWidth: 130,
+              }}
+            >
+              Save & Next
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={saving}
+              loadingLabel="Saving…"
+              style={{
+                boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
+                minWidth: 140,
+              }}
+            >
+              + Log event
+            </Button>
+          </div>
+
+          {/* V3-EVENT-001: ambient confirmation for the keepOpen save. Frozen Toast
+              primitive, auto-dismisses; does NOT steal focus. */}
+          <Toast
+            message="Saved — log another"
+            show={showSavedToast}
+            onDone={() => setShowSavedToast(false)}
+          />
 
         </form>
       </div>

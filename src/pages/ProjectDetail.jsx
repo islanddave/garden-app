@@ -107,7 +107,7 @@ export default function ProjectDetail() {
     sown_at: '', sown_at_approx: false,
     qty_initial: '',
     source_type: '', source_ref: '', source_generation: '',
-    lineage_note: '',
+    lineage_note: '', parent_plant_id: '',
   })
   const [addingPlant,   setAddingPlant]   = useState(false)
   const [plantErr,      setPlantErr]      = useState(null)
@@ -198,6 +198,8 @@ export default function ProjectDetail() {
           source_ref:        plantForm.source_ref.trim()        || null,
           source_generation: plantForm.source_generation.trim() || null,
           lineage_note:      plantForm.lineage_note.trim()      || null,
+          // V3-FORM-001: parity with Garden-path add (PlantingEditor) — capture lineage parent.
+          parent_plant_id:   plantForm.parent_plant_id || null,
         }),
       })
       setPlants(p => [...p, data])
@@ -206,7 +208,7 @@ export default function ProjectDetail() {
         sown_at: '', sown_at_approx: false,
         qty_initial: '',
         source_type: '', source_ref: '', source_generation: '',
-        lineage_note: '',
+        lineage_note: '', parent_plant_id: '',
       })
       setShowAddPlant(false)
     } catch (err) {
@@ -582,6 +584,8 @@ export default function ProjectDetail() {
               submitLabel="Add planting"
               submittingLabel="Adding…"
               onCancel={() => { setShowAddPlant(false); setPlantErr(null) }}
+              plantingOptions={plants.map(p => ({ id: p.id, name: p.name }))}
+              detailsDefaultOpen
               idPrefix="add-plant"
             />
           </div>

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { P, EVENT_TYPES } from '../lib/constants.js'
+import { P } from '../lib/constants.js'
 import { EVENT_TYPE_META } from '../lib/eventTypes.js'
+import { EVENT_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
@@ -161,10 +162,8 @@ export default function EventDetail() {
               value={form.event_type}
               onChange={e => setForm(f => ({ ...f, event_type: e.target.value }))}
             >
-              {[...EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
-                <option key={t} value={t}>
-                  {(EVENT_TYPE_META[t]?.emoji ?? '📝') + ' ' + t.replace(/_/g, ' ')}
-                </option>
+              {EVENT_TYPE_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </Select>
           </Field>

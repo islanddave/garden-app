@@ -370,3 +370,87 @@ describe('EventNew — V3-EVENTCONTSIZE-001 container capture on potting_up/tran
     expect(putCall).toBeUndefined()
   })
 })
+
+describe('EventNew — V3-EVENT-001 "Save & Next" rapid sequential entry', () => {
+  it('still fires the POST when "Save & Next" is clicked', async () => {
+    renderEventNew('event_type=watering')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('Save & Next'))
+    })
+    expect(postCalls.length).toBe(1)
+    expect(postCalls[0].event_type).toBe('watering')
+    expect(postCalls[0].project_id).toBe('proj-1')
+  })
+
+  it('does NOT navigate on the "Save & Next" path', async () => {
+    renderEventNew('event_type=watering')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('Save & Next'))
+    })
+    expect(postCalls.length).toBe(1)
+    expect(navigateSpy).not.toHaveBeenCalled()
+  })
+
+  it('resets the form for another entry while project_id / plant_id persist', async () => {
+    dataRef.plants = [{ id: 'pl-1', name: 'Cayenne #1' }]
+    renderEventNew('event_type=watering')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await waitFor(() => screen.getByText('Cayenne #1'))
+    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
+
+    // Type some notes that should be cleared on reset.
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'first watering' } })
+    expect(screen.getByLabelText('Notes').value).toBe('first watering')
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Save & Next'))
+    })
+
+    expect(postCalls.length).toBe(1)
+    expect(navigateSpy).not.toHaveBeenCalled()
+
+    // Scope preserved: project + plant still selected for the next entry.
+    expect(screen.getByLabelText('Project').value).toBe('proj-1')
+    expect(screen.getByLabelText('Plant or group').value).toBe('pl-1')
+    // Per-entry fields cleared.
+    expect(screen.getByLabelText('Notes').value).toBe('')
+    // event_type cleared (deliberate re-pick) — the harvest panel must be gone since
+    // event_type is no longer 'harvest' and is now empty (no type-specific panel shows).
+    expect(screen.queryByLabelText('Harvest quantity')).toBeNull()
+
+    // Ambient confirmation toast surfaces (operational Toast, role="status").
+    await waitFor(() => {
+      expect(screen.getByText('Saved — log another')).toBeTruthy()
+    })
+
+    // A second entry can be logged in the same mounted form. event_type was cleared
+    // by the reset (deliberate re-pick), so re-select a type via the picker before
+    // the second save — this validates the form is fully reusable post-reset.
+    fireEvent.click(screen.getByText('Watered'))
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'second watering' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('Save & Next'))
+    })
+    expect(postCalls.length).toBe(2)
+    expect(postCalls[1].event_type).toBe('watering')
+    expect(postCalls[1].project_id).toBe('proj-1')
+    expect(postCalls[1].plant_id).toBe('pl-1')
+    expect(navigateSpy).not.toHaveBeenCalled()
+  })
+
+  it('plain Save (+ Log event) still navigates to /dashboard (unchanged)', async () => {
+    renderEventNew('event_type=watering')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('+ Log event'))
+    })
+    expect(postCalls.length).toBe(1)
+    expect(navigateSpy).toHaveBeenCalledWith('/dashboard', expect.objectContaining({ replace: true }))
+  })
+})

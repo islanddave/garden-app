@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'
-import { P, PROJECT_CATEGORIES } from '../lib/constants.js'
+import { P } from '../lib/constants.js'
+import { PROJECT_CATEGORY_OPTIONS } from '../lib/dropdownRegistry.js'
 import { Field, Input, Select, Button } from '../components/forms'
 
 const DEFAULT_ICONS = ['🌳','🌿','🪴','🌱','🥕','🍅','🌻','🌾','🪵','🏠','🚜','🔨','🛠️','📦','💧','🌍']
@@ -93,7 +94,7 @@ export default function ProjectTypes() {
               </Field>
               <Field label="Category *" htmlFor="pt-category">
                 <Select id="pt-category" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
-                  {PROJECT_CATEGORIES.map(c => <option key={c.v} value={c.v}>{c.label}</option>)}
+                  {PROJECT_CATEGORY_OPTIONS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                 </Select>
               </Field>
             </div>

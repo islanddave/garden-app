@@ -3,10 +3,10 @@ import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { P, PROJECT_STATUSES, projectKindOptions } from '../lib/constants.js'
+import { P, projectKindOptions } from '../lib/constants.js'
 import { VARIETY_REF_UI_SHIPPED } from '../lib/featureFlags.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
-import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
+import { Field, Input, Select, Textarea, Button, ErrorBanner, StatusSelect } from '../components/forms'
 
 function slugify(str) {
   return str.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -229,9 +229,7 @@ export default function ProjectNew() {
               <Input type="date" value={form.start_date} onChange={e => handleDateChange(e.target.value)} />
             </Field>
             <Field label="Status" style={{ marginBottom: 16 }}>
-              <Select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-                {[...PROJECT_STATUSES].sort((a, b) => a.localeCompare(b)).map(s => <option key={s} value={s}>{s}</option>)}
-              </Select>
+              <StatusSelect kind="project" emptyLabel={null} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} />
             </Field>
           </div>
 

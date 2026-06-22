@@ -6,6 +6,11 @@
 // here too (event metadata fields + harvest quality labels currently trapped in EventNew.jsx;
 // location-type labels). Plain JS, no framework deps.
 
+// Canonical taxonomies consumed below (V3-CONFIG-001 ext). These are the SINGLE
+// sources; the option/label sets here are DERIVED from them so they cannot drift.
+import { EVENT_TYPES, EVENT_TYPE_META } from './eventTypes.js'
+import { PROJECT_CATEGORIES } from './constants.js'
+
 // Mirrors the plants Lambda ALLOWED_SOURCE enum verbatim. The empty sentinel is the form
 // Select's "not specified" option; the host coerces '' -> null before sending.
 export const PLANT_SOURCE_OPTIONS = [
@@ -93,4 +98,30 @@ export const PLANT_CONTAINER_TYPE_OPTIONS = [
 ]
 export const PLANT_CONTAINER_TYPE_LABELS = Object.fromEntries(
   PLANT_CONTAINER_TYPE_OPTIONS.filter(o => o.value !== '').map(o => [o.value, o.label])
+)
+
+// V3-CONFIG-001 ext: event-type vocab for plain <select> edit surfaces (EventDetail).
+// Sourced from the canonical EVENT_TYPES taxonomy + EVENT_TYPE_META emojis (single
+// source — labels are DERIVED, never hand-listed, so they cannot drift from EVENT_TYPES).
+// Label shape mirrors the legacy EventDetail rendering exactly: emoji + de-snaked value
+// (e.g. "🌰 sowing"), NOT the META prose label — this is a sourcing refactor, not a UX
+// change. Options are pre-sorted alpha by the raw value (matching the old in-place sort).
+const eventTypeLabel = (t) => (EVENT_TYPE_META[t]?.emoji ?? '📝') + ' ' + t.replace(/_/g, ' ')
+
+export const EVENT_TYPE_OPTIONS = [...EVENT_TYPES]
+  .sort((a, b) => a.localeCompare(b))
+  .map(t => ({ value: t, label: eventTypeLabel(t) }))
+
+export const EVENT_TYPE_LABELS = Object.fromEntries(
+  EVENT_TYPE_OPTIONS.map(o => [o.value, o.label])
+)
+
+// V3-CONFIG-001 ext: project-category vocab (project_types.category). Sourced from the
+// canonical PROJECT_CATEGORIES taxonomy in constants.js (which uses the {v,label} shape).
+// Re-exported as {value,label} so it composes with the Select primitive uniformly; the
+// label map is derived so it cannot drift from the option set.
+export const PROJECT_CATEGORY_OPTIONS = PROJECT_CATEGORIES.map(c => ({ value: c.v, label: c.label }))
+
+export const PROJECT_CATEGORY_LABELS = Object.fromEntries(
+  PROJECT_CATEGORY_OPTIONS.map(o => [o.value, o.label])
 )
