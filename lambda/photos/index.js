@@ -246,6 +246,40 @@ export const handler = async (event) => {
         console.error('auto-promote non-fatal failure', promoteErr?.message ?? promoteErr);
       }
 
+      // DRG-ENGINE-003 V1.1 — auto-capture on photo log (Dave 2026-06-21): a photo logged against a
+      // planting is first-party observational evidence. Resolve the canonical entity_id (entity registry,
+      // DRG-ENGINE-002) and append ONE evidence row mirroring the evidence-ingest contract. Canonical
+      // source = lambda/evidence-ingest/{index,validate}.js (per-dir Lambda zips cannot import it, so the
+      // enum literals are duplicated here — keep in sync). Best-effort + non-fatal (same posture as the
+      // auto-promote block above): the photo is already persisted; an evidence-write failure must never
+      // 500 the upload. Household-scoped (entity's container.created_by) + append-only (Soft-Delete-Only).
+      if (inserted.plant_id) {
+        try {
+          const entRows = await sql`
+            SELECT ent.id AS entity_id
+              FROM public.entity ent
+              JOIN public.garden_node p ON p.id = ent.planting_ref_id AND p.deleted_at IS NULL
+              JOIN public.container pp  ON pp.id = p.container_id AND pp.deleted_at IS NULL
+             WHERE ent.entity_type = 'planting'
+               AND ent.planting_ref_id = ${inserted.plant_id}
+               AND ent.deleted_at IS NULL
+               AND pp.created_by = ANY(${householdIds})
+             LIMIT 1
+          `;
+          if (entRows.length > 0) {
+            await sql`
+              INSERT INTO public.evidence
+                (entity_id, schema_version, tier, axis, polarity, finding_type, observed_at, note, photo_ref, source, created_by)
+              VALUES
+                (${entRows[0].entity_id}::uuid, 1, 'first_party_log', 'local', 'supporting',
+                 NULL, NOW(), ${inserted.caption ?? null}, ${inserted.id}, 'photo_log', ${userId})
+            `;
+          }
+        } catch (evErr) {
+          console.error('evidence auto-capture non-fatal failure', evErr?.message ?? evErr);
+        }
+      }
+
       return resp(201, inserted);
     }
 
