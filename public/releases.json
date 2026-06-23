@@ -1,5 +1,12 @@
 [
   {
+    "version": "2.14.0",
+    "date": "2026-06-23",
+    "highlights": [
+      "Today weather: the rain figure now refreshes live through the day instead of staying stuck on the pre-dawn reading — so showery days show the current amount, not the 2 AM guess"
+    ]
+  },
+  {
     "version": "2.13.0",
     "date": "2026-06-23",
     "highlights": [
