@@ -55,6 +55,13 @@ export function secondaryGroupsExcluding(primaryValues) {
 
 const SCOPE_KEY = 'quicklog.lastScope'
 
+// V3-LOGMANY-001: GET /api/locations returns {locations,...} (object), not a bare array.
+// Unwrap to the array LogMany/ScopeChecklist expect; tolerate either shape.
+export function normalizeLocations(x) {
+  return Array.isArray(x) ? x : (x?.locations ?? [])
+}
+
+
 function genKey() {
   try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID() } catch (e) {}
   return 'k-' + Date.now() + '-' + Math.random().toString(16).slice(2)
@@ -111,7 +118,7 @@ export default function LogMany() {
       .then(([proj, locs]) => {
         if (!on) return
         // V3-ARCHIVE-001: archived projects must not appear in the Log Many scope picker.
-        proj = (proj ?? []).filter(pr => !pr.archived_at); locs = locs ?? []
+        proj = (proj ?? []).filter(pr => !pr.archived_at); locs = normalizeLocations(locs)
         setProjects(proj); setLocations(locs)
         const seedProject = params.get('project_id')
         const seedLocation = params.get('location_id')

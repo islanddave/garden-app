@@ -107,3 +107,21 @@ describe('PlantForm — V3-PLANTLOC-001 location field', () => {
     expect(document.getElementById('t-loc')).toBeNull()
   })
 })
+
+describe('PlantForm — V3-SOLOCUP-001 container autofill', () => {
+  it('selecting Solo cup autofills container_size to 0.5 qt when size is blank', () => {
+    const { onChange } = setup({ value: { container_type: '', container_size: '' } })
+    fireEvent.change(document.getElementById('t-ctype'), { target: { value: 'solo_cup' } })
+    expect(onChange).toHaveBeenCalledWith({ container_type: 'solo_cup', container_size: '0.5 qt' })
+  })
+  it('selecting Solo cup does NOT overwrite an existing size', () => {
+    const { onChange } = setup({ value: { container_type: '', container_size: '1 gal' } })
+    fireEvent.change(document.getElementById('t-ctype'), { target: { value: 'solo_cup' } })
+    expect(onChange).toHaveBeenCalledWith({ container_type: 'solo_cup' })
+  })
+  it('selecting a non-solo_cup type only patches container_type', () => {
+    const { onChange } = setup({ value: { container_type: '', container_size: '' } })
+    fireEvent.change(document.getElementById('t-ctype'), { target: { value: 'trough' } })
+    expect(onChange).toHaveBeenCalledWith({ container_type: 'trough' })
+  })
+})

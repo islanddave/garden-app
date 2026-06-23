@@ -94,6 +94,10 @@ export const PLANT_CONTAINER_TYPE_OPTIONS = [
   { value: 'tray_cell', label: 'Seedling tray / cell' },
   { value: 'hanging_basket', label: 'Hanging basket' },
   { value: 'window_box', label: 'Window box' },
+  { value: 'trough', label: 'Trough' },
+  { value: 'whiskey_barrel', label: 'Whiskey barrel' },
+  { value: 'soil_block', label: 'Soil block' },
+  { value: 'solo_cup', label: 'Solo cup' },
   { value: 'other', label: 'Other' },
 ]
 export const PLANT_CONTAINER_TYPE_LABELS = Object.fromEntries(

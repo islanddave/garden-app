@@ -164,7 +164,12 @@ export default function PlantForm({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <Field label="Pot / bag type" htmlFor={`${pid}-ctype`} optional>
               <Select id={`${pid}-ctype`} value={v.container_type ?? ''}
-                onChange={e => set({ container_type: e.target.value || null })}
+                onChange={e => {
+                  const ct = e.target.value || null
+                  // V3-SOLOCUP-001: Solo cup defaults size to 0.5 qt (2 cups) when size is blank.
+                  if (ct === 'solo_cup' && !(v.container_size ?? '').trim()) set({ container_type: ct, container_size: '0.5 qt' })
+                  else set({ container_type: ct })
+                }}
                 options={PLANT_CONTAINER_TYPE_OPTIONS} />
             </Field>
             <Field label="Pot size" htmlFor={`${pid}-csize`} optional help="e.g. 3 gal, 1 L, 4 in">
