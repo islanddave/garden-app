@@ -8,15 +8,20 @@ import { severityTier, SEVERITY_STYLES, overdueLabel } from './waterDue.js'
 // UI was retired (server still emits reason='flagged' heads_up rows — ignored here).
 // V3-HARVEST-001 (2026-06-08): harvest-ready is INTENTIONALLY EXCLUDED from this above-nav band —
 // a harvesting project stays harvest-ready for weeks, so surfacing it here was a constant nag.
-// Harvest-ready still lives on the Dashboard HarvestReadyTile; harvest alerting may be rethought later.
-// Each row
-// carrying a reason-label + a tap-to-log route. This is an OPERATIONAL surface (harm-prevention
-// + time-sensitive opportunity), NOT a reward surface: no streaks/badges/celebration, and
-// recent-activity (a non-actionable recognition feed) is deliberately EXCLUDED — it stays on the
-// Dashboard. Frontend-only: composes an endpoint that already exists; no backend/schema change.
 //
-// Render-time merged-set cap (C5 / ADHD-overwhelm): at most TODAY_RENDER_CAP items render; any
-// remainder is reported as a non-interactive "+N more" count, never auto-expanded.
+// V3-ATTN-001 (2026-06-23): alerts should name the PLANTING, not the project/container grouping
+// ("Houseplants needs water" -> "Dracaena needs water"). The dashboard rows now carry a `plantings`
+// array (each actionable garden_node in the container: {id,name}). Rule: a container that holds
+// EXACTLY ONE actionable planting collapses to that planting (name + planting-scoped deep-link) — the
+// reported case. A container with MANY plantings (e.g. a "Peppers" bed of 50+) stays a single grouped
+// row keyed by the container (expanding would flood the 5-item band; the bed shares one care cadence,
+// so it is genuinely one action). Rows without a `plantings` array (older payloads / safety) fall back
+// to the legacy project-level row so the band never goes blank.
+//
+// Each row carries a reason-label + a tap-to-log route. OPERATIONAL surface (harm-prevention +
+// time-sensitive opportunity), NOT a reward surface: no streaks/badges/celebration; recent-activity
+// stays on the Dashboard. Render-time cap (C5 / ADHD-overwhelm): at most TODAY_RENDER_CAP render;
+// remainder reported as a non-interactive "+N more", never auto-expanded.
 
 export const TODAY_RENDER_CAP = 5
 
@@ -29,49 +34,69 @@ const STALE_STYLE   = SEVERITY_STYLES.gold
 function num(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null }
 function projName(row) { return row.project_name ?? row.name ?? 'Untitled' }
 
+// The single actionable planting to name when a container holds exactly one; else null (grouped row).
+// `plantings` is the V3-ATTN-001 additive field; absent on legacy payloads (-> null -> project fallback).
+function lonePlanting(row) {
+  const ps = Array.isArray(row.plantings) ? row.plantings.filter(p => p && p.id) : []
+  return ps.length === 1 ? ps[0] : null
+}
+
 function waterItem(row) {
   const tier = severityTier(row.next_water_at, row.location_type)
-  return {
-    key: `water:${row.project_id}`, kind: 'water', priority: KIND_PRIORITY.water,
-    sort: -(Date.now() - new Date(row.next_water_at).getTime()), // most-overdue first
+  const style = SEVERITY_STYLES[tier] || SEVERITY_STYLES.gold
+  const detail = overdueLabel(row.next_water_at)
+  const sort = -(Date.now() - new Date(row.next_water_at).getTime()) // most-overdue first
+  const p = lonePlanting(row)
+  if (p) return {
+    key: `water:plant:${p.id}`, kind: 'water', priority: KIND_PRIORITY.water, sort,
     emoji: '\u{1F4A7}', label: 'Needs water',
-    projectId: row.project_id, projectName: projName(row),
-    detail: overdueLabel(row.next_water_at),
-    to: `/log?project=${row.project_id}&event_type=watering`,
-    style: SEVERITY_STYLES[tier] || SEVERITY_STYLES.gold,
+    plantId: p.id, projectId: row.project_id, projectName: p.name || projName(row),
+    detail, to: `/log?project=${row.project_id}&plant=${p.id}&event_type=watering`, style,
+  }
+  return {
+    key: `water:${row.project_id}`, kind: 'water', priority: KIND_PRIORITY.water, sort,
+    emoji: '\u{1F4A7}', label: 'Needs water',
+    plantId: null, projectId: row.project_id, projectName: projName(row),
+    detail, to: `/log?project=${row.project_id}&event_type=watering`, style,
   }
 }
 
 function staleItem(row) {
   const d = num(row.days_stale)
-  return {
-    key: `stale:${row.project_id}`, kind: 'stale', priority: KIND_PRIORITY.stale,
-    sort: -(d ?? 0), // longest-unseen first
+  const detail = d != null ? `${d} days unseen` : 'not seen lately'
+  const sort = -(d ?? 0) // longest-unseen first
+  const p = lonePlanting(row)
+  if (p) return {
+    key: `stale:plant:${p.id}`, kind: 'stale', priority: KIND_PRIORITY.stale, sort,
     emoji: '\u{1F440}', label: 'Not seen lately',
-    projectId: row.project_id, projectName: projName(row),
-    detail: d != null ? `${d} days unseen` : 'not seen lately',
-    to: `/log?project=${row.project_id}&event_type=observation`,
-    style: STALE_STYLE,
+    plantId: p.id, projectId: row.project_id, projectName: p.name || projName(row),
+    detail, to: `/log?project=${row.project_id}&plant=${p.id}&event_type=observation`, style: STALE_STYLE,
+  }
+  return {
+    key: `stale:${row.project_id}`, kind: 'stale', priority: KIND_PRIORITY.stale, sort,
+    emoji: '\u{1F440}', label: 'Not seen lately',
+    plantId: null, projectId: row.project_id, projectName: projName(row),
+    detail, to: `/log?project=${row.project_id}&event_type=observation`, style: STALE_STYLE,
   }
 }
 
 // Build the ranked, de-duplicated Today list from a /api/dashboard payload. Defensive against a
-// null / array / partial payload (a dashboard fetch failure must never throw here). De-dup: each
-// project surfaces ONCE, under its single most-urgent reason (lowest KIND_PRIORITY).
+// null / array / partial payload (a dashboard fetch failure must never throw here). De-dup target =
+// the PLANTING when one was named, else the project: each surfaces ONCE under its most-urgent reason.
 export function buildTodayItems(dashboard) {
   const d = (dashboard && !Array.isArray(dashboard)) ? dashboard : {}
   const items = []
   for (const r of (d.water_due || []))     if (r && r.project_id) items.push(waterItem(r))
-  // V3-HARVEST-001: harvest_ready is deliberately NOT merged into the band (see header note).
-  // FLAG-REMOVAL (2026-06-10): reason='flagged' heads_up rows are deliberately ignored.
+  // V3-HARVEST-001: harvest_ready deliberately NOT merged. FLAG-REMOVAL: reason='flagged' ignored.
   for (const r of (d.heads_up || []))      if (r && r.project_id && r.reason === 'stale') items.push(staleItem(r))
 
-  const byProject = new Map()
+  const byTarget = new Map()
   for (const it of items) {
-    const prev = byProject.get(it.projectId)
-    if (!prev || it.priority < prev.priority) byProject.set(it.projectId, it)
+    const k = it.plantId != null ? `plant:${it.plantId}` : `proj:${it.projectId}`
+    const prev = byTarget.get(k)
+    if (!prev || it.priority < prev.priority) byTarget.set(k, it)
   }
-  return [...byProject.values()].sort(
+  return [...byTarget.values()].sort(
     (a, b) => a.priority - b.priority || a.sort - b.sort || a.projectName.localeCompare(b.projectName)
   )
 }

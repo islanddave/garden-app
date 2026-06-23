@@ -227,7 +227,14 @@ export function queryWaterDue(sql, userId) {
       SELECT
         em.project_id, pp.display_name AS project_name,
         em.last_watered_at, em.next_water_at,
-        em.location_type, em.watering_interval_days
+        em.location_type, em.watering_interval_days,
+        -- V3-ATTN-001: actionable plantings in this container, so the band can alert the PLANTING not the project.
+        COALESCE((
+          SELECT json_agg(json_build_object('id', gn.id, 'name', gn.display_name) ORDER BY gn.display_name, gn.id)
+          FROM public.garden_node gn
+          WHERE gn.container_id = pp.id AND gn.deleted_at IS NULL AND gn.archived_at IS NULL
+            AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
+        ), '[]'::json) AS plantings
       FROM entity_memory em
       JOIN public.container pp ON pp.id = em.project_id
       WHERE (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
@@ -280,7 +287,8 @@ export function queryHeadsUp(sql, userId) {
           'flagged'::text AS reason,
           el.severity,
           el.created_at AS event_at,
-          (NOW()::date - el.created_at::date)::int AS days_stale
+          (NOW()::date - el.created_at::date)::int AS days_stale,
+          '[]'::json AS plantings
         FROM event_log el
         JOIN public.container pp ON pp.id = el.project_id
           AND (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId})) AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
@@ -295,7 +303,14 @@ export function queryHeadsUp(sql, userId) {
                'stale'::text AS reason,
                NULL::smallint AS severity,
                em.last_observed_at AS event_at,
-               (NOW()::date - em.last_observed_at::date)::int AS days_stale
+               (NOW()::date - em.last_observed_at::date)::int AS days_stale,
+               -- V3-ATTN-001: actionable plantings so the stale alert names the PLANTING not the project.
+               COALESCE((
+                 SELECT json_agg(json_build_object('id', gn.id, 'name', gn.display_name) ORDER BY gn.display_name, gn.id)
+                 FROM public.garden_node gn
+                 WHERE gn.container_id = pp.id AND gn.deleted_at IS NULL AND gn.archived_at IS NULL
+                   AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
+               ), '[]'::json) AS plantings
         FROM public.container pp
         LEFT JOIN entity_memory em ON em.project_id = pp.id
         WHERE pp.status IN ('sprouting','growing','flowering','fruiting')

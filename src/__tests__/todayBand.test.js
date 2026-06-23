@@ -97,3 +97,51 @@ describe('todayBand cap', () => {
     expect(band.more).toBe(0)
   })
 })
+
+// V3-ATTN-001 — alerts name the PLANTING when a container holds exactly one; many-plant beds stay grouped.
+describe('buildTodayItems — V3-ATTN-001 plantings-aware', () => {
+  const daysAgo2 = (d) => new Date(Date.now() - d * 86400000).toISOString()
+
+  it('a 1-planting container surfaces the PLANTING (name + plant-scoped log link), not the project', () => {
+    const items = buildTodayItems({
+      water_due: [{ project_id: 'house', project_name: 'Houseplants', next_water_at: daysAgo2(1), location_type: 'pot',
+        plantings: [{ id: 'drac', name: 'Dracaena' }] }],
+    })
+    expect(items).toHaveLength(1)
+    expect(items[0].projectName).toBe('Dracaena')
+    expect(items[0].plantId).toBe('drac')
+    expect(items[0].to).toBe('/log?project=house&plant=drac&event_type=watering')
+  })
+
+  it('a many-planting container stays ONE grouped row keyed by the project (no band flood)', () => {
+    const plantings = Array.from({ length: 54 }, (_, i) => ({ id: 'p' + i, name: 'Pepper ' + i }))
+    const items = buildTodayItems({
+      water_due: [{ project_id: 'peppers', project_name: 'Peppers', next_water_at: daysAgo2(1), location_type: 'bed', plantings }],
+    })
+    expect(items).toHaveLength(1)
+    expect(items[0].projectName).toBe('Peppers')
+    expect(items[0].plantId).toBeNull()
+    expect(items[0].to).toBe('/log?project=peppers&event_type=watering')
+  })
+
+  it('a 1-planting stale container names the planting + observation log link', () => {
+    const items = buildTodayItems({
+      heads_up: [{ project_id: 'house', name: 'Houseplants', reason: 'stale', days_stale: 30,
+        plantings: [{ id: 'drac', name: 'Dracaena' }] }],
+    })
+    expect(items[0].projectName).toBe('Dracaena')
+    expect(items[0].to).toBe('/log?project=house&plant=drac&event_type=observation')
+  })
+
+  it('de-dups the same PLANTING across water + stale to its most-urgent reason (water)', () => {
+    const items = buildTodayItems({
+      water_due: [{ project_id: 'house', project_name: 'Houseplants', next_water_at: daysAgo2(1), location_type: 'pot',
+        plantings: [{ id: 'drac', name: 'Dracaena' }] }],
+      heads_up: [{ project_id: 'house', name: 'Houseplants', reason: 'stale', days_stale: 30,
+        plantings: [{ id: 'drac', name: 'Dracaena' }] }],
+    })
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe('water')
+    expect(items[0].plantId).toBe('drac')
+  })
+})
