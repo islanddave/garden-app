@@ -1,6 +1,7 @@
 import React from 'react'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import WeatherWidget from '../components/today/WeatherWidget.jsx'
+import { useLiveRain } from '../hooks/useLiveRain.js'
 import PlanBuckets from '../components/today/PlanBuckets.jsx'
 import { P } from '../lib/constants.js'
 
@@ -21,6 +22,9 @@ export default function Today() {
   const { data, loading, error } = useDailyPlan()
   const plan = data?.plan ?? null
   const hasPlan = !!data?.has_plan
+  // DRG-WXROLL-001 — refresh the displayed rain figure live (Open-Meteo) using the plan's resolved coords;
+  // display-only, the watering recommendation stays the nightly plan. No coords/offline -> nightly snapshot.
+  const { liveHydrology, refreshedAt } = useLiveRain(plan?.weather_coords ?? plan?.coords)
 
   return (
     <div style={{ padding: 16, paddingBottom: 32, maxWidth: 640, margin: '0 auto' }}>
@@ -50,7 +54,7 @@ export default function Today() {
       {!loading && !error && hasPlan && plan && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {plan.weather && (
-            <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={data?.generated_at} planDate={data?.plan_date} />
+            <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={data?.generated_at} planDate={data?.plan_date} liveHydrology={liveHydrology} refreshedAt={refreshedAt} />
           )}
 
           {plan.substrate?.msg && (

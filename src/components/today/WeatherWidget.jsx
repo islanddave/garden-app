@@ -132,7 +132,7 @@ function asOfLabel(generatedAt) {
   const d = new Date(generatedAt)
   if (isNaN(d.getTime())) return null
   const f = (opts) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', ...opts }).format(d)
-  return `${f({ month: 'short', day: 'numeric' })} \u00b7 ${f({ hour: 'numeric', minute: '2-digit' })}`
+  return `${f({ month: 'short', day: 'numeric' })} · ${f({ hour: 'numeric', minute: '2-digit' })}`
 }
 function isStaleSnapshot(generatedAt, planDate) {
   if (!generatedAt || !planDate) return false
@@ -141,36 +141,55 @@ function isStaleSnapshot(generatedAt, planDate) {
   const genEtDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
   return genEtDate < planDate
 }
+// DRG-WXROLL-001 — clock label for a live intraday refresh (ET, the user's garden timezone).
+function liveTimeLabel(refreshedAt) {
+  if (!refreshedAt) return 'just now'
+  const d = new Date(refreshedAt)
+  if (isNaN(d.getTime())) return 'just now'
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(d)
+}
 
 export default function WeatherWidget({
   weather = { tonightLow: 50, highToday: 78, code: 3, hot: false },
   hydrology = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true },
   generatedAt = null,
   planDate = null,
+  liveHydrology = null,
+  refreshedAt = null,
 }) {
   const scale = computeWateringScale(hydrology, weather)
   const reason = wateringReason(hydrology, weather)
   const [whyLane, setWhyLane] = React.useState(null)
+
+  // DRG-WXROLL-001 — intraday freshness. When the client has fetched live precip (Open-Meteo, the SAME source
+  // + URL as the nightly engine) we overlay it on the INFORMATIONAL rain figure + stamp ONLY. The watering
+  // recommendation (pills/scale + reason, above) STAYS on the nightly `hydrology`, so the widget can never
+  // contradict the task list below it. No live data (no coords / offline / fetch failed) -> the nightly
+  // snapshot + as-of/stale/uncertainty caveats render exactly as before (full back-compat).
+  const live = !!(liveHydrology && (liveHydrology.today_precip_in != null || liveHydrology.tomorrow_precip_in != null))
   const asOf = asOfLabel(generatedAt)
-  const stale = isStaleSnapshot(generatedAt, planDate)
-  // DRG-WX Phase 2 — the engine flags hydrology.status.uncertainty when the frozen ~2AM precip snapshot is
-  // volatile (showery/convective regime, or missing data). Surface it as presentation honesty. A prior-day
-  // stale snapshot is the stronger signal and takes precedence, so we don't double up.
-  const uncertain = !!(hydrology && hydrology.status && hydrology.status.uncertainty && hydrology.status.uncertainty.flag) && !stale
-  // Prefer TODAY's rain in the note when any fell; also lead with today when today is the uncertainty driver
-  // (high-PoP / trace amount — the case the precise figure most misleads on).
-  const todayIn = hydrology.today_precip_in ?? 0
-  const todayPop = hydrology.today_pop ?? 0
-  const showToday = todayIn > 0 || (uncertain && todayPop >= 50)
-  const rainIn = showToday ? todayIn : (hydrology.tomorrow_precip_in ?? hydrology.upcoming_precip_in ?? 0)
-  const rainPop = showToday ? todayPop : (hydrology.tomorrow_pop ?? 0)
+  const liveAt = live ? liveTimeLabel(refreshedAt) : null
+  // A live reading is current by definition: the stale-snapshot + pre-dawn-uncertainty caveats only apply to
+  // the frozen nightly figure, so they are suppressed when live data is in hand.
+  const stale = !live && isStaleSnapshot(generatedAt, planDate)
+  const uncertain = !live && !!(hydrology && hydrology.status && hydrology.status.uncertainty && hydrology.status.uncertainty.flag) && !stale
+
+  // Figures come from the live reading when present, else the nightly snapshot. Prefer TODAY when any fell,
+  // or when today is the uncertainty/live driver (high-PoP — the case the precise figure most misleads on).
+  const rainSrc = live ? liveHydrology : hydrology
+  const todayIn = rainSrc.today_precip_in ?? 0
+  const todayPop = rainSrc.today_pop ?? 0
+  const showToday = todayIn > 0 || ((uncertain || live) && todayPop >= 50)
+  const rainIn = showToday ? todayIn : (rainSrc.tomorrow_precip_in ?? rainSrc.upcoming_precip_in ?? 0)
+  const rainPop = showToday ? todayPop : (rainSrc.tomorrow_pop ?? 0)
   const rainWhen = showToday ? 'today' : 'tomorrow'
-  // Honest rain note: drop false precision when the snapshot is volatile, and lead with the chance.
+  // Honest rain note: drop false precision when the (nightly) snapshot is volatile; a live reading is current
+  // so it shows the plain figure.
   const rainNote = uncertain
     ? (rainIn >= 0.1
-        ? `~${rainIn.toFixed(2)}\u2033 ${rainWhen} \u00b7 ${rainPop}% \u2014 could climb`
-        : `${rainPop}% chance ${rainWhen} \u00b7 little so far, could climb`)
-    : `${rainIn.toFixed(2)}\u2033 rain expected ${rainWhen} \u00b7 ${rainPop}%`
+        ? `~${rainIn.toFixed(2)}″ ${rainWhen} · ${rainPop}% — could climb`
+        : `${rainPop}% chance ${rainWhen} · little so far, could climb`)
+    : `${rainIn.toFixed(2)}″ rain expected ${rainWhen} · ${rainPop}%`
 
   const Pill = ({ level, Target, laneKey }) => {
     const state = pillState(level)
@@ -234,18 +253,22 @@ export default function WeatherWidget({
         </div>
       )}
 
-      {(rainIn > 0 || uncertain) && (
+      {(rainIn > 0 || uncertain || live) && (
         <div style={{ marginTop: 8, textAlign: 'center', fontSize: 11.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
           <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16a5 5 0 0 1 .5-9.9A6 6 0 0 1 19 8a4 4 0 0 1-.5 8Z" fill="#B9C6D6" /><g stroke="#7FA8D8" strokeWidth="2" strokeLinecap="round"><path d="M9 19l-1 2M13 19l-1 2M17 19l-1 2" /></g></svg>
           {rainNote}
         </div>
       )}
 
-      {asOf && (
+      {live ? (
+        <div style={{ marginTop: 8, textAlign: 'center', fontSize: 10.5, color: PAL.micro }}>
+          Updated {liveAt} &middot; live
+        </div>
+      ) : asOf ? (
         <div style={{ marginTop: 8, textAlign: 'center', fontSize: 10.5, color: PAL.micro }}>
           As of {asOf} &middot; Open-Meteo
         </div>
-      )}
+      ) : null}
       {stale && (
         <div style={{
           marginTop: 6, textAlign: 'center', fontSize: 10.5, lineHeight: 1.35,

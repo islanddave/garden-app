@@ -33,6 +33,18 @@ async function hydrologyForSpace(space, { geocodeZip, fetchPrecip }) {
   return fetchPrecip(lat, lng);
 }
 
+// DRG-WXROLL-001 — resolve a Space's coordinates once (cached spaces.weather_lat/lng, else geocoded zip) so
+// they can be embedded in the stored plan, letting the Today client re-fetch live precip for the SAME point.
+// Returns null when no location is resolvable (weather is simply absent; the engine still runs).
+async function coordsForSpace(space, { geocodeZip }) {
+  let { weather_lat: lat, weather_lng: lng, postal_code } = space;
+  if ((lat == null || lng == null) && postal_code && geocodeZip) {
+    try { const g = await geocodeZip(postal_code); lat = g.lat; lng = g.lng; } catch (_) { return null; }
+  }
+  if (lat == null || lng == null) return null;
+  return { lat: Number(lat), lng: Number(lng) };
+}
+
 async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip }) {
   // active plantings + last water/fert + caretaker + the planting's Space (workspace_id -> spaces).
   const { rows: plantings } = await pg.query(`
@@ -82,10 +94,11 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   for (const p of plantings) { if (SYSTEM_SUBS.has(p.assignee_user_id)) p.assignee_user_id = null; }
   const { rows: spaces } = await pg.query(`select id, postal_code, weather_lat, weather_lng from spaces`);
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.
-  const wxBySpace = {}, hyBySpace = {};
+  const wxBySpace = {}, hyBySpace = {}, coordsBySpace = {};
   for (const s of spaces) {
     wxBySpace[s.id] = await weatherForSpace(s, { geocodeZip, fetchNWS });
     hyBySpace[s.id] = await hydrologyForSpace(s, { geocodeZip, fetchPrecip });  // assembled BEFORE suggestions
+    coordsBySpace[s.id] = await coordsForSpace(s, { geocodeZip });               // DRG-WXROLL-001: for client live-refresh
   }
   // Group plantings by Space so each gets its own forecast; within a Space, engine splits per caretaker.
   const owner = process.env.OWNER_FALLBACK_SUB || null;     // unassigned -> Space owner (Dave); NEVER leaks to Jen.
@@ -101,10 +114,10 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           `insert into daily_plan (user_id, plan_date, items, generated_at)
            values ($1,$2,$3, now())
            on conflict (user_id, plan_date) do update set items=excluded.items, generated_at=now()`,
-          [user_id, today, JSON.stringify({ weather: { ...plan.weather, hot: plan.hot }, hydrology: plan.hydrology, substrate: userPlan.substrate, counts: userPlan.counts, ...userPlan.tasks })]);
+          [user_id, today, JSON.stringify({ weather: { ...plan.weather, hot: plan.hot }, hydrology: plan.hydrology, coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, ...userPlan.tasks })]);
       }
     }
   }
   return { today, dryRun, rows: plans.length, plans };
 }
-module.exports = { run, weatherForSpace, hydrologyForSpace };
+module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace };

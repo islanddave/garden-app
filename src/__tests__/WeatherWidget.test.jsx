@@ -83,3 +83,39 @@ describe('WeatherWidget — DRG-WX Phase 2 snapshot-volatility caveat', () => {
     expect(screen.queryByText(/Showery pattern/i)).toBeNull()
   })
 })
+
+
+describe('WeatherWidget — DRG-WXROLL-001 live intraday rain overlay', () => {
+  const nightlyUncertain = {
+    recent_precip_in: 0.05, today_precip_in: 0.21, today_pop: 88, tomorrow_precip_in: 0.74, tomorrow_pop: 63,
+    status: { ok: true, uncertainty: { flag: true, reason: 'showery today (88% on 0.21")' } },
+  }
+  const live = { recent_precip_in: 0.10, today_precip_in: 0.61, today_pop: 92, tomorrow_precip_in: 0.20, tomorrow_pop: 30 }
+
+  it('overlays the LIVE figure + "Updated … live" stamp and suppresses the stale + uncertainty caveats', () => {
+    render(<WeatherWidget weather={weather} hydrology={nightlyUncertain} liveHydrology={live}
+      refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-20T06:00:41Z" planDate="2026-06-22" />)
+    expect(screen.getByText(/0\.61/)).toBeTruthy()        // live D0 amount, not the 0.21 nightly
+    expect(screen.getByText(/· live/i)).toBeTruthy()
+    expect(screen.queryByText(/As of/i)).toBeNull()       // live stamp replaces the as-of stamp
+    expect(screen.queryByText(/older snapshot/i)).toBeNull()   // stale suppressed when live
+    expect(screen.queryByText(/Showery pattern/i)).toBeNull()  // uncertainty suppressed when live
+    expect(screen.queryByText(/could climb/i)).toBeNull()
+  })
+
+  it('falls back to the nightly snapshot + caveats when no liveHydrology (back-compat)', () => {
+    render(<WeatherWidget weather={weather} hydrology={nightlyUncertain}
+      generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+    expect(screen.getByText(/As of/i)).toBeTruthy()
+    expect(screen.queryByText(/· live/i)).toBeNull()
+    expect(screen.getByText(/Showery pattern/i)).toBeTruthy()
+  })
+
+  it('still shows the rain line live even when nothing fell today (reassurance, not blank)', () => {
+    const dry = { recent_precip_in: 0, today_precip_in: 0, today_pop: 8, tomorrow_precip_in: 0, tomorrow_pop: 5 }
+    render(<WeatherWidget weather={weather} hydrology={{ ...dry }} liveHydrology={dry}
+      refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+    expect(screen.getByText(/· live/i)).toBeTruthy()
+    expect(screen.getByText(/rain expected/i)).toBeTruthy()
+  })
+})
