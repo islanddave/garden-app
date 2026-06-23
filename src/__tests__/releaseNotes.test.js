@@ -1,8 +1,8 @@
 // V3-RELEASENOTES-001 — latestReleases() caps to the most recent N (newest-first input),
 // and the seeded public/releases.json is well-formed + ordered newest-first.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { latestReleases } from '../pages/ReleaseNotes.jsx';
+import data from '../../public/releases.json';
 
 describe('latestReleases', () => {
   const mk = n => Array.from({ length: n }, (_, i) => ({ version: `9.0.${n - i}` }));
@@ -19,7 +19,6 @@ describe('latestReleases', () => {
 });
 
 describe('public/releases.json seed', () => {
-  const data = JSON.parse(readFileSync(new URL('../../public/releases.json', import.meta.url), 'utf8'));
   it('is a non-empty array', () => {
     expect(Array.isArray(data)).toBe(true);
     expect(data.length).toBeGreaterThan(0);
