@@ -19,7 +19,7 @@ const H = {
   none:   null,
 };
 function bucket(ov, hy) {
-  const p = { id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81), ...ov };
+  const p = { id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81), transplant_at: null, ...ov };
   const out = generatePlanForUser([p], cad, fm, TODAY, wx, hy);
   const b = out.tasks.water_due.some(w => w.id === 't') ? 'DUE'
     : out.tasks.rain_skipped.some(w => w.id === 't') ? 'SKIP'
@@ -55,7 +55,8 @@ describe('DRG-WATERCREDIT-001 V1: golden decision fixture (real engine)', () => 
     ['outdoor way overdue, big rain still due (cap 1 cycle)', { covered: false, last_water: ago(10) }, H.big, 'DUE'],
     ['covered (Stable/House/shelf), big rain -> due (no credit)', { covered: true, last_water: ago(5) }, H.big, 'DUE'],
     ['covered, dW==wi, big rain -> due (never credited)', { covered: true, last_water: ago(3) }, H.big, 'DUE'],
-    ['fresh transplant outdoor, big rain -> due (carve-out)', { covered: false, last_water: ago(3), substrate_start: ago(5) }, H.big, 'DUE'],
+    ['fresh transplant outdoor (transplant_at recent), big rain -> due (carve-out)', { covered: false, last_water: ago(3), transplant_at: ago(5) }, H.big, 'DUE'],
+    ['DRG-WATERCREDIT-002: established, recent substrate_start but transplant_at NULL, big rain -> skip (created_at no longer carves out)', { covered: false, last_water: ago(3), substrate_start: ago(5), transplant_at: null }, H.big, 'SKIP'],
     ['established outdoor, big rain -> skip', { covered: false, last_water: ago(3), substrate_start: ago(81) }, H.big, 'SKIP'],
     ['missing precip -> due (no credit)', { covered: false, last_water: ago(3) }, H.missing, 'DUE'],
     ['no hydrology -> due', { covered: false, last_water: ago(3) }, H.none, 'DUE'],
@@ -80,7 +81,7 @@ describe('DRG-WATERCREDIT-001 V1: deferral count-bug fix + reasons', () => {
     expect(w.rain_note).toMatch(/soak-in threshold/);
   });
   it('fresh-transplant due carries the carve-out reason', () => {
-    const { out } = bucket({ covered: false, last_water: ago(3), substrate_start: ago(5) }, H.big);
+    const { out } = bucket({ covered: false, last_water: ago(3), transplant_at: ago(5) }, H.big);
     const w = out.tasks.water_due.find(x => x.id === 't');
     expect(w.rain_note).toMatch(/fresh transplant/);
   });

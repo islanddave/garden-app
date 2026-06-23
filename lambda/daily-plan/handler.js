@@ -55,7 +55,15 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            -- every plant -> phase 'unknown' -> zero fert recs (silent dead feature). Validated on prod: 168 active, 28 via potting_up, 0 null.
            to_char(coalesce(
              (select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='potting_up' and e.deleted_at is null),
-             p.transplanted_at, p.planted_at, p.planted_out_at, p.created_at) at time zone 'UTC','YYYY-MM-DD') as substrate_start
+             p.transplanted_at, p.planted_at, p.planted_out_at, p.created_at) at time zone 'UTC','YYYY-MM-DD') as substrate_start,
+           -- DRG-WATERCREDIT-002: transplant_at drives the fresh-transplant rain-credit carve-out ONLY.
+           -- Real horticultural transplant/potting events ONLY (potting_up event | transplanted_at |
+           -- planted_out_at). DELIBERATELY excludes created_at (DB row-creation -> the carve-out bug) and
+           -- planted_at (sow date, not a transplant). NULL => established/unknown => NOT carved out => gets
+           -- rain credit. Kept separate from substrate_start so the fert feed-phase clock is unchanged.
+           to_char(coalesce(
+             (select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='potting_up' and e.deleted_at is null),
+             p.transplanted_at, p.planted_out_at) at time zone 'UTC','YYYY-MM-DD') as transplant_at
     from plants p
     left join plant_varieties pv on pv.id=p.variety_id
     left join plant_projects  pj on pj.id=p.project_id

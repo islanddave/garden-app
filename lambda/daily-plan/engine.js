@@ -134,7 +134,12 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
     // fresh-transplant carve-out. A credited planting drops OUT of water_due (so counts.water_due is correct —
     // fixes the legacy defer-count bug) and lands on rain_skipped with a one-line reason string.
     const rcls=rainClass(p);
-    const freshTransplant=(daysBetween(today,p.substrate_start)??999)<=TRANSPLANT_CARVEOUT_DAYS;
+    // DRG-WATERCREDIT-002 fix: key the fresh-transplant carve-out on a REAL transplant/potting event
+    // (p.transplant_at), NOT substrate_start. substrate_start falls back to created_at (DB row-creation
+    // date), so plantings entered into the app recently but established in the ground/pots long ago were
+    // wrongly flagged "fresh" and denied rain credit (98/167 on 2026-06-23). transplant_at is NULL when no
+    // potting_up/transplant/plant-out event exists -> treated as established -> rain credit applies.
+    const freshTransplant=(daysBetween(today,p.transplant_at)??999)<=TRANSPLANT_CARVEOUT_DAYS;
     const rc=freshTransplant?null:rainCreditDays(rcls,wi,hydrology);
     const effDays=(dW!=null&&rc)?dW-rc.credit_days:dW;
     if(dW!=null && dW>=wi && rc && effDays<wi){
