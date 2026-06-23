@@ -151,14 +151,26 @@ export default function WeatherWidget({
   const scale = computeWateringScale(hydrology, weather)
   const reason = wateringReason(hydrology, weather)
   const [whyLane, setWhyLane] = React.useState(null)
-  // Prefer TODAY's rain in the note when there is any (the case the old widget missed); else tomorrow.
-  const todayIn = hydrology.today_precip_in ?? 0
-  const showToday = todayIn > 0
-  const rainIn = showToday ? todayIn : (hydrology.tomorrow_precip_in ?? hydrology.upcoming_precip_in ?? 0)
-  const rainPop = showToday ? (hydrology.today_pop ?? 0) : (hydrology.tomorrow_pop ?? 0)
-  const rainWhen = showToday ? 'today' : 'tomorrow'
   const asOf = asOfLabel(generatedAt)
   const stale = isStaleSnapshot(generatedAt, planDate)
+  // DRG-WX Phase 2 — the engine flags hydrology.status.uncertainty when the frozen ~2AM precip snapshot is
+  // volatile (showery/convective regime, or missing data). Surface it as presentation honesty. A prior-day
+  // stale snapshot is the stronger signal and takes precedence, so we don't double up.
+  const uncertain = !!(hydrology && hydrology.status && hydrology.status.uncertainty && hydrology.status.uncertainty.flag) && !stale
+  // Prefer TODAY's rain in the note when any fell; also lead with today when today is the uncertainty driver
+  // (high-PoP / trace amount — the case the precise figure most misleads on).
+  const todayIn = hydrology.today_precip_in ?? 0
+  const todayPop = hydrology.today_pop ?? 0
+  const showToday = todayIn > 0 || (uncertain && todayPop >= 50)
+  const rainIn = showToday ? todayIn : (hydrology.tomorrow_precip_in ?? hydrology.upcoming_precip_in ?? 0)
+  const rainPop = showToday ? todayPop : (hydrology.tomorrow_pop ?? 0)
+  const rainWhen = showToday ? 'today' : 'tomorrow'
+  // Honest rain note: drop false precision when the snapshot is volatile, and lead with the chance.
+  const rainNote = uncertain
+    ? (rainIn >= 0.1
+        ? `~${rainIn.toFixed(2)}\u2033 ${rainWhen} \u00b7 ${rainPop}% \u2014 could climb`
+        : `${rainPop}% chance ${rainWhen} \u00b7 little so far, could climb`)
+    : `${rainIn.toFixed(2)}\u2033 rain expected ${rainWhen} \u00b7 ${rainPop}%`
 
   const Pill = ({ level, Target, laneKey }) => {
     const state = pillState(level)
@@ -222,10 +234,10 @@ export default function WeatherWidget({
         </div>
       )}
 
-      {rainIn > 0 && (
+      {(rainIn > 0 || uncertain) && (
         <div style={{ marginTop: 8, textAlign: 'center', fontSize: 11.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
           <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16a5 5 0 0 1 .5-9.9A6 6 0 0 1 19 8a4 4 0 0 1-.5 8Z" fill="#B9C6D6" /><g stroke="#7FA8D8" strokeWidth="2" strokeLinecap="round"><path d="M9 19l-1 2M13 19l-1 2M17 19l-1 2" /></g></svg>
-          {rainIn.toFixed(2)}&Prime; rain expected {rainWhen} &middot; {rainPop}%
+          {rainNote}
         </div>
       )}
 
@@ -241,6 +253,15 @@ export default function WeatherWidget({
           borderRadius: 9, padding: '5px 8px',
         }}>
           &#9888; This is an older snapshot &mdash; today&rsquo;s forecast hasn&rsquo;t refreshed yet, so numbers may be out of date.
+        </div>
+      )}
+      {uncertain && (
+        <div style={{
+          marginTop: 6, textAlign: 'center', fontSize: 10.5, lineHeight: 1.35,
+          color: PAL.tempLo, background: '#FBF7EE', border: `1px solid ${PAL.cardBorder}`,
+          borderRadius: 9, padding: '5px 8px',
+        }}>
+          &#9888; Showery pattern &mdash; these amounts are a pre-dawn snapshot and can change through the day. The watering call above already plays it safe.
         </div>
       )}
     </div>

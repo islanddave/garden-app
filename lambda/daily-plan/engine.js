@@ -189,13 +189,30 @@ function computeCallout(weather, hy){
     return {icon:'wet', text:`${hy.recent_precip_in}" fell recently — soil is wet, skip outdoor watering`};
   return null;
 }
-// Full-picture gate + uncertainty: flag when a significant precip event is also uncertain, or data is missing.
+// Full-picture gate + uncertainty. The plan's precip figures are a FROZEN ~2AM snapshot; in showery/
+// convective regimes the amount can move several-fold by midday, so the OLD 40-60%-PoP-only band missed
+// the common high-PoP cases (e.g. 88% PoP with a trace or modest amount — DRG-WXROLL/bell). Flag the
+// snapshot as volatile whenever rain is reasonably likely today or tomorrow, or when data is missing.
+// METADATA ONLY — no watering recommendation reads this flag (presentation honesty for the Today widget;
+// the conservative watering model is unchanged). DRG-WX Phase 2.
+const SHOWERY_POP = 50;
 function hydrologyStatus(hy){
   if(!hy || hy.recent_precip_in==null || hy.upcoming_precip_in==null)
     return {ok:false, uncertainty:{flag:true, reason:'precip data incomplete — watering advice assumes no rain credit'}};
-  const u = (hy.tomorrow_precip_in>=0.3 && hy.tomorrow_pop!=null && hy.tomorrow_pop>=40 && hy.tomorrow_pop<=60)
-    ? {flag:true, reason:`rain tomorrow uncertain (${hy.tomorrow_pop}% on ${hy.tomorrow_precip_in}")`} : {flag:false};
-  return {ok:true, uncertainty:u};
+  const tPop=hy.today_pop, mPop=hy.tomorrow_pop;
+  const tIn=hy.today_precip_in??0, mIn=hy.tomorrow_precip_in??0;
+  let reason=null;
+  if(tPop!=null && tPop>=SHOWERY_POP)
+    reason = tIn<0.1
+      ? `rain likely today (${tPop}%) but little in the pre-dawn snapshot — the amount may climb`
+      : `showery today (${tPop}% on ${tIn}") — a pre-dawn snapshot can shift by midday`;
+  else if(mPop!=null && mPop>=SHOWERY_POP)
+    reason = mIn<0.1
+      ? `rain likely tomorrow (${mPop}%) but little in the pre-dawn snapshot — the amount may climb`
+      : `showery tomorrow (${mPop}% on ${mIn}") — a pre-dawn snapshot can shift`;
+  else if((tPop!=null && tPop>=40 && tIn>=0.1) || (mPop!=null && mPop>=40 && mIn>=0.1))
+    reason = `rain amounts uncertain — pre-dawn estimate (today ${tPop==null?'?':tPop}% / tomorrow ${mPop==null?'?':mPop}%)`;
+  return {ok:true, uncertainty: reason ? {flag:true, reason} : {flag:false}};
 }
 
 function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback}){
@@ -211,4 +228,4 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop, rain_coming:rainComing, status:hs} : {status:hs},
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS};
+module.exports={generatePlan, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout};

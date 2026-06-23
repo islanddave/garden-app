@@ -45,3 +45,41 @@ describe('WeatherWidget — V3-WATERWHY-001 tap-to-explain', () => {
     expect(screen.queryByRole('region', { name: /watering explanation/i })).toBeNull()
   })
 })
+
+
+describe('WeatherWidget — DRG-WX Phase 2 snapshot-volatility caveat', () => {
+  const uncertainHydro = (extra = {}) => ({
+    recent_precip_in: 0.05, today_precip_in: 0.21, today_pop: 88,
+    tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true,
+    status: { ok: true, uncertainty: { flag: true, reason: 'showery today (88% on 0.21")' } },
+    ...extra,
+  })
+
+  it('shows the showery caveat + softened ("could climb") note when the engine flags uncertainty', () => {
+    render(<WeatherWidget weather={weather} hydrology={uncertainHydro()} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+    expect(screen.getByText(/Showery pattern/i)).toBeTruthy()
+    expect(screen.getByText(/could climb/i)).toBeTruthy()
+    expect(screen.getByText(/plays it safe/i)).toBeTruthy()
+  })
+
+  it('shows the chance-forward note even when the snapshot has a trace amount (88% / 0")', () => {
+    const h = uncertainHydro({ today_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 5,
+      status: { ok: true, uncertainty: { flag: true, reason: 'rain likely today (88%) ... may climb' } } })
+    render(<WeatherWidget weather={weather} hydrology={h} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+    expect(screen.getByText(/88% chance today/i)).toBeTruthy()
+    expect(screen.getByText(/Showery pattern/i)).toBeTruthy()
+  })
+
+  it('does NOT show the caveat when no uncertainty status is present (back-compat)', () => {
+    const h = { recent_precip_in: 0.05, today_precip_in: 0.21, today_pop: 88, tomorrow_precip_in: 0.74, tomorrow_pop: 63 }
+    render(<WeatherWidget weather={weather} hydrology={h} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+    expect(screen.queryByText(/Showery pattern/i)).toBeNull()
+    expect(screen.getByText(/rain expected/i)).toBeTruthy()
+  })
+
+  it('prior-day stale warning takes precedence over the showery caveat (no double-up)', () => {
+    render(<WeatherWidget weather={weather} hydrology={uncertainHydro()} generatedAt="2026-06-20T06:00:41Z" planDate="2026-06-22" />)
+    expect(screen.getByText(/older snapshot/i)).toBeTruthy()
+    expect(screen.queryByText(/Showery pattern/i)).toBeNull()
+  })
+})
