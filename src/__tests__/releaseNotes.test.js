@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { latestReleases } from '../pages/ReleaseNotes.jsx';
 import data from '../../public/releases.json';
+import pkg from '../../package.json';
 
 describe('latestReleases', () => {
   const mk = n => Array.from({ length: n }, (_, i) => ({ version: `9.0.${n - i}` }));
@@ -23,8 +24,8 @@ describe('public/releases.json seed', () => {
     expect(Array.isArray(data)).toBe(true);
     expect(data.length).toBeGreaterThan(0);
   });
-  it('newest entry is the current prod version 2.11.0', () => {
-    expect(data[0].version).toBe('2.11.0');
+  it('newest entry matches the current package.json version (add-release ritual invariant)', () => {
+    expect(data[0].version).toBe(pkg.version);
   });
   it('every entry has a version and at least one highlight', () => {
     for (const r of data) {
