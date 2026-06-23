@@ -10,7 +10,6 @@ import BottomNav from './components/BottomNav.jsx'
 import PlantsRedirect from './components/PlantsRedirect.jsx'
 import TodayBand from './components/TodayBand.jsx'
 import CritterArrivalController from './components/CritterArrivalController.jsx'
-import Footer from './components/Footer.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
@@ -45,6 +44,8 @@ import FieldCapture from './pages/FieldCapture.jsx'
 import Settings from './pages/Settings.jsx'
 import SettingsNotifications from './pages/SettingsNotifications.jsx'
 import Findings from './pages/Findings.jsx'
+import About from './pages/About.jsx'
+import ReleaseNotes from './pages/ReleaseNotes.jsx'
 import Today from './pages/Today.jsx'
 
 function AppFallback({ error, retry } = {}) {
@@ -163,10 +164,11 @@ function AppRoutes() {
                   redirect to /dashboard. SURFACE ONLY — Bite 4 wires real
                   getUserMedia + IndexedDB. */}
               <Route path="/field"         element={<Protected><FieldCapture /></Protected>} />
+              <Route path="/about"        element={<Protected><About /></Protected>} />
+              <Route path="/releases"     element={<Protected><ReleaseNotes /></Protected>} />
               <Route path="*"             element={<Navigate to="/today" replace />} />
             </Routes>
           </div>
-          <Footer />
         </div>
         {user && <TodayBand />}
         {user && <BottomNav />}
