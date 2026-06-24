@@ -1,9 +1,17 @@
 [
   {
+    "version": "2.15.1",
+    "date": "2026-06-24",
+    "highlights": [
+      "Reliability: your watering alerts and the Today page are now protected against a rare internal data-format mismatch \u2014 if it ever happened they\u2019d show an honest empty state instead of wrong or missing plants.",
+      "The dashboard is sturdier: if one section has a hiccup loading, the rest of the page still comes up instead of the whole screen failing."
+    ]
+  },
+  {
     "version": "2.15.0",
     "date": "2026-06-24",
     "highlights": [
-      "Your watering alerts and the Today page now agree — the alert bar shows the same plants as your daily plan, so a plant won't say it needs water in one place but not the other.",
+      "Your watering alerts and the Today page now agree \u2014 the alert bar shows the same plants as your daily plan, so a plant won't say it needs water in one place but not the other.",
       "Plants you've already watered, or that got enough rain today, now drop off the alert bar just like they do on Today.",
       "Established plants in larger pots and bags (about 5 gallons and up) now get credit for recent rain instead of being treated as fragile new transplants that need watering anyway."
     ]
@@ -12,14 +20,14 @@
     "version": "2.14.0",
     "date": "2026-06-23",
     "highlights": [
-      "Today weather: the rain figure now refreshes live through the day instead of staying stuck on the pre-dawn reading — so showery days show the current amount, not the 2 AM guess"
+      "Today weather: the rain figure now refreshes live through the day instead of staying stuck on the pre-dawn reading \u2014 so showery days show the current amount, not the 2 AM guess"
     ]
   },
   {
     "version": "2.13.0",
     "date": "2026-06-23",
     "highlights": [
-      "Today alerts now name the specific plant when a pot holds just one (e.g. “Dracaena needs water”) instead of its container",
+      "Today alerts now name the specific plant when a pot holds just one (e.g. \u201cDracaena needs water\u201d) instead of its container",
       "Weather: on showery days the rain amount is now flagged as a changeable pre-dawn snapshot, so the watering call stays honest"
     ]
   },
@@ -28,7 +36,7 @@
     "date": "2026-06-23",
     "highlights": [
       "New About tab (app info + version)",
-      "New Release Notes tab — see what's new right here",
+      "New Release Notes tab \u2014 see what's new right here",
       "Removed the bottom footer (its info moved to About)"
     ]
   },
@@ -37,7 +45,7 @@
     "date": "2026-06-23",
     "highlights": [
       "Today watering: established/rained-on plants no longer show a false \"water\" reminder",
-      "Log Many → By space tab fixed (log one event to every planting in a Space, e.g. all of Pasture)",
+      "Log Many \u2192 By space tab fixed (log one event to every planting in a Space, e.g. all of Pasture)",
       "Planting edit: container picker now includes trough, whiskey barrel, and soil block",
       "New container option: Solo cup (autofills 0.5 qt)"
     ]
@@ -56,7 +64,7 @@
     "version": "2.9.0",
     "date": "2026-06-22",
     "highlights": [
-      "Forms refresh: parent-plant lineage, expand details while adding, Save · Next on event logging",
+      "Forms refresh: parent-plant lineage, expand details while adding, Save \u00b7 Next on event logging",
       "Global undo restored across the app"
     ]
   },
@@ -107,7 +115,7 @@
     "highlights": [
       "Alerts scoped to the right caretaker",
       "Check off Today items inline",
-      "\"Harvested\" → \"Harvesting\""
+      "\"Harvested\" \u2192 \"Harvesting\""
     ]
   },
   {
