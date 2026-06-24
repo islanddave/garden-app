@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.0.0",
+    "date": "2026-06-24",
+    "highlights": [
+      "🎉 Version 3.0 — the V3 milestone is complete. Everything from this development cycle is now live: the Doctor Gardener daily care plan, the Today view, photo-first capture, native Move/reorganize, household sharing, critters & rewards, and dozens of polish fixes. Next up: the V4 foundation — smarter tags and grouping, plus a fuller design refresh."
+    ]
+  },
+  {
     "version": "2.16.0",
     "date": "2026-06-24",
     "highlights": [
