@@ -38,6 +38,8 @@ function extractSelectBlocks(src) {
     // read used only to detect a real status change) — NOT a client GET read, so it
     // intentionally does not expose the PROJ-RESCOPE columns.
     if (/\bAS old_status\b/.test(m[1])) continue;
+    // V3-REPARENT-001: skip reparent-internal selects (not client GET reads).
+    if (/reparent-internal/.test(m[1])) continue;
     blocks.push(m[1]);
   }
   return blocks;

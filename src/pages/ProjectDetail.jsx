@@ -13,6 +13,7 @@ import VarietyPicker from '../components/VarietyPicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { loadSortOrder, saveSortOrder, applyNameSort } from '../lib/projectTree.js'
+import ProjectOptions from '../components/ProjectOptions.jsx'
 import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import { PlantForm, Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
@@ -116,6 +117,11 @@ export default function ProjectDetail() {
   const [deleting,        setDeleting]        = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [childProjects,    setChildProjects]    = useState([])
+  const [moveOpen,  setMoveOpen]  = useState(false)
+  const [moveSel,   setMoveSel]   = useState('')   // '' = top level
+  const [moving,    setMoving]    = useState(false)
+  const [moveErr,   setMoveErr]   = useState(null)
+  const [lastMove,  setLastMove]  = useState(null) // { op_id, toName } for inline Undo
 
   // Load project + events + locations + all projects in parallel
   useEffect(() => {
@@ -293,6 +299,60 @@ export default function ProjectDetail() {
     setDeletingId(null)
   }
 
+  // V3-REPARENT-001: first-class Move (atomic reparent + pre-move snapshot) with inline Undo.
+  // Uses the dedicated /reparent endpoint (op_id dedup + optimistic version + restore path),
+  // distinct from the edit-form parent select (which stays a plain PUT for now).
+  function openMove() {
+    setMoveSel(project.parent_project_id ?? '')
+    setMoveErr(null)
+    setMoveOpen(true)
+  }
+
+  function reparentErrCopy(err) {
+    const st = err?.status
+    if (st === 409) return 'This project changed on another device. Reload and try again.'
+    if (st === 422 && /cycle/i.test(err?.message ?? '')) return "You can't move a project into one of its own sub-projects."
+    if (st === 422) return err?.message || 'That destination isn’t valid.'
+    return err?.message || 'Move failed.'
+  }
+
+  async function handleMove() {
+    const newParentId = moveSel || null
+    if (newParentId === project.id) { setMoveErr("A project can't be its own parent."); return }
+    setMoving(true); setMoveErr(null)
+    const op_id = crypto.randomUUID()
+    try {
+      const res = await fetch('/api/projects/' + id + '/reparent', {
+        method: 'POST',
+        body: JSON.stringify({ new_parent_id: newParentId, op_id, expected_version: project.version }),
+      })
+      const toName = allProjects.find(p => p.id === newParentId)?.name ?? 'top level'
+      setProject(p => ({ ...p, parent_project_id: res.parent_project_id ?? null, version: res.version ?? p.version }))
+      setLastMove({ op_id, toName })
+      setMoveOpen(false)
+    } catch (err) {
+      setMoveErr(reparentErrCopy(err))
+    }
+    setMoving(false)
+  }
+
+  async function handleUndoMove() {
+    if (!lastMove) return
+    setMoving(true); setMoveErr(null)
+    const op_id = crypto.randomUUID()
+    try {
+      const res = await fetch('/api/projects/' + id + '/reparent/restore', {
+        method: 'POST',
+        body: JSON.stringify({ op_id, source_op_id: lastMove.op_id, expected_version: project.version }),
+      })
+      setProject(p => ({ ...p, parent_project_id: res.parent_project_id ?? null, version: res.version ?? p.version }))
+      setLastMove(null)
+    } catch (err) {
+      setMoveErr(reparentErrCopy(err))
+    }
+    setMoving(false)
+  }
+
   function startEdit() {
     setForm({
       name:              project.name,
@@ -460,6 +520,7 @@ export default function ProjectDetail() {
                 {deleting ? 'Working…' : 'Unarchive'}
               </button>
             )}
+            <button onClick={openMove} style={outlineBtn}>Move</button>
             <button onClick={startEdit} style={outlineBtn}>Edit</button>
             <button
               onClick={handleDeleteClick}
@@ -471,6 +532,45 @@ export default function ProjectDetail() {
           </div>
         )}
       </div>
+
+      {/* V3-REPARENT-001 inline Undo (ambient, non-toast) */}
+      {lastMove && !moveOpen && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0',
+          background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 8,
+          padding: '8px 12px', fontSize: '0.85rem', color: P.green }}>
+          <span>Moved to {lastMove.toName === 'top level' ? 'top level' : `“${lastMove.toName}”`}.</span>
+          <button onClick={handleUndoMove} disabled={moving} style={{ ...ghostBtn, padding: '4px 12px' }}>
+            {moving ? 'Undoing…' : 'Undo'}
+          </button>
+        </div>
+      )}
+
+      {/* V3-REPARENT-001 Move modal */}
+      {moveOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}
+          onClick={() => !moving && setMoveOpen(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: P.white, borderRadius: 12,
+            padding: 22, width: '100%', maxWidth: 420 }}>
+            <h2 style={{ margin: '0 0 14px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>
+              Move “{project.name}”
+            </h2>
+            <label style={{ display: 'block', fontSize: '0.8rem', color: P.mid, marginBottom: 6 }}>New parent</label>
+            <select value={moveSel} onChange={e => setMoveSel(e.target.value)} disabled={moving}
+              style={{ width: '100%', padding: '9px 10px', borderRadius: 6, border: `1px solid ${P.border}`, fontSize: '0.9rem' }}>
+              <option value="">— Top level (no parent) —</option>
+              <ProjectOptions projects={allProjects} />
+            </select>
+            {moveErr && <p style={{ color: P.terra, fontSize: '0.82rem', marginTop: 10 }}>{moveErr}</p>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
+              <button onClick={() => setMoveOpen(false)} disabled={moving} style={ghostBtn}>Cancel</button>
+              <button onClick={handleMove} disabled={moving} style={primaryBtn(moving)}>
+                {moving ? 'Moving…' : 'Move'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete confirmation dialog */}
       {deleteDialogOpen && (

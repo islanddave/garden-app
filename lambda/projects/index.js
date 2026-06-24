@@ -46,6 +46,88 @@ function resp(statusCode, body, extra = {}) {
   };
 }
 
+// V3-REPARENT-001: native reparent core. One atomic CTE (a single neon request = one txn):
+// pre-move snapshot -> reparent_event (op_id-deduped) -> version-guarded parent UPDATE.
+// The base-table trigger container_reparent_after fires on the parent_project_id change,
+// running in-txn acyclicity (RAISE on cycle -> the whole statement aborts) + closure
+// maintenance. (container is an auto-updatable view over plant_projects; we write the base.)
+export async function reparentCore(sql, { subjectId, newParentId, opId, expectedVersion, userId, householdIds }) {
+  // 1. Idempotent replay: this op_id already recorded -> return the prior outcome, no re-move.
+  const prior = await sql`
+    SELECT subject_id, new_parent_id, moved_at FROM reparent_event WHERE op_id = ${opId}
+  `;
+  if (prior.length) {
+    return { status: 200, body: { id: prior[0].subject_id, parent_project_id: prior[0].new_parent_id, moved_at: prior[0].moved_at, replayed: true } };
+  }
+  // 2. Load the target (household-scoped, live).
+  const tgt = await sql`
+    SELECT /* reparent-internal */ id, parent_project_id AS old_parent, version
+    FROM plant_projects
+    WHERE id = ${subjectId} AND deleted_at IS NULL AND created_by = ANY(${householdIds})
+  `;
+  if (!tgt.length) return { status: 404, body: { error: 'Project not found' } };
+  if (newParentId === subjectId) return { status: 400, body: { error: 'A project cannot be its own parent' } };
+  if (tgt[0].version !== expectedVersion) {
+    return { status: 409, body: { error: 'Version conflict — reload and retry', current_version: tgt[0].version } };
+  }
+  // 3. Validate the new parent (FK is a backstop; this enforces household + not-deleted for clean UX).
+  if (newParentId != null) {
+    const p = await sql`
+      SELECT /* reparent-internal */ id FROM plant_projects
+      WHERE id = ${newParentId} AND deleted_at IS NULL AND created_by = ANY(${householdIds})
+    `;
+    if (!p.length) return { status: 422, body: { error: 'New parent not found in your garden' } };
+  }
+  // 4. Atomic move: snapshot + event + version-guarded update in one statement.
+  try {
+    const rows = await sql`
+      WITH tgt AS (
+        SELECT /* reparent-internal */ id, parent_project_id AS old_parent, version, workspace_id,
+               jsonb_build_object(
+                 'parent_project_id', parent_project_id,
+                 'version', version,
+                 'name', name,
+                 'status', status,
+                 'snapshot_at', NOW()
+               ) AS snap
+        FROM plant_projects
+        WHERE id = ${subjectId} AND deleted_at IS NULL
+          AND created_by = ANY(${householdIds})
+          AND version = ${expectedVersion}
+      ),
+      ev AS (
+        INSERT INTO reparent_event
+          (subject, subject_id, old_parent_id, new_parent_id, snapshot, op_id, moved_by, workspace_id)
+        SELECT 'container'::node_class, t.id, t.old_parent, ${newParentId}, t.snap, ${opId}, ${userId}, t.workspace_id
+        FROM tgt t
+        RETURNING subject_id, old_parent_id
+      ),
+      upd AS (
+        UPDATE plant_projects
+        SET parent_project_id = ${newParentId}, version = version + 1, updated_at = NOW()
+        WHERE id = (SELECT subject_id FROM ev)
+        RETURNING id, version, parent_project_id
+      )
+      SELECT u.id, u.version, u.parent_project_id, e.old_parent_id
+      FROM upd u JOIN ev e ON e.subject_id = u.id
+    `;
+    if (!rows.length) {
+      const cur = await sql`SELECT /* reparent-internal */ version FROM plant_projects WHERE id = ${subjectId}`;
+      return { status: 409, body: { error: 'Version conflict — reload and retry', current_version: cur[0]?.version } };
+    }
+    return { status: 200, body: { id: rows[0].id, parent_project_id: rows[0].parent_project_id, version: rows[0].version, old_parent_id: rows[0].old_parent_id } };
+  } catch (err) {
+    const msg = err?.message ?? String(err);
+    if (/cycle/i.test(msg)) return { status: 422, body: { error: 'Move would create a cycle (target is a descendant of itself)' } };
+    if (/reparent_op_uniq|duplicate key/i.test(msg)) {
+      const r = await sql`SELECT subject_id, new_parent_id, moved_at FROM reparent_event WHERE op_id = ${opId}`;
+      if (r.length) return { status: 200, body: { id: r[0].subject_id, parent_project_id: r[0].new_parent_id, moved_at: r[0].moved_at, replayed: true } };
+    }
+    if (/foreign key|fkey/i.test(msg)) return { status: 422, body: { error: 'New parent does not exist' } };
+    throw err;
+  }
+}
+
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return { statusCode: 204, headers: CORS, body: '' };
@@ -92,6 +174,10 @@ export const handler = async (event) => {
 
   // V3-ARCHIVE-001: soft-archive toggle. Extra path segment, so idMatch above won't catch it.
   const archiveMatch = rawPath.match(/^\/api\/projects\/([^/]+)\/archive$/);
+
+  // V3-REPARENT-001: native reparent + restore. Extra path segments (won't hit idMatch).
+  const reparentMatch = rawPath.match(/^\/api\/projects\/([^/]+)\/reparent$/);
+  const reparentRestoreMatch = rawPath.match(/^\/api\/projects\/([^/]+)\/reparent\/restore$/);
 
   try {
     const sql = neon(secrets.NEON_DATABASE_URL);
@@ -161,6 +247,51 @@ export const handler = async (event) => {
       return resp(200, rows[0]);
     }
 
+    // --- /api/projects/:id/reparent/restore (V3-REPARENT-001) ---
+    // Undo a prior move: re-point the subject to the old_parent_id captured in source_op_id's
+    // reparent_event. The restore is itself a reparent (own op_id, own snapshot) — fully auditable.
+    if (reparentRestoreMatch) {
+      const subjectId = reparentRestoreMatch[1];
+      if (method !== 'POST') return resp(405, { error: 'Method not allowed' });
+      const body = JSON.parse(event.body ?? '{}');
+      if (!body.op_id) return resp(400, { error: 'op_id is required (idempotency key)' });
+      if (!body.source_op_id) return resp(400, { error: 'source_op_id is required (the move to undo)' });
+      if (typeof body.expected_version !== 'number') return resp(400, { error: 'expected_version (number) is required' });
+      const src = await sql`
+        SELECT old_parent_id FROM reparent_event
+        WHERE op_id = ${body.source_op_id} AND subject_id = ${subjectId}
+      `;
+      if (!src.length) return resp(404, { error: 'No reparent event found for source_op_id' });
+      const out = await reparentCore(sql, {
+        subjectId,
+        newParentId: src[0].old_parent_id,
+        opId: body.op_id,
+        expectedVersion: body.expected_version,
+        userId,
+        householdIds,
+      });
+      return resp(out.status, out.body);
+    }
+
+    // --- /api/projects/:id/reparent (V3-REPARENT-001) ---
+    if (reparentMatch) {
+      const subjectId = reparentMatch[1];
+      if (method !== 'POST') return resp(405, { error: 'Method not allowed' });
+      const body = JSON.parse(event.body ?? '{}');
+      if (!body.op_id) return resp(400, { error: 'op_id is required (idempotency key)' });
+      if (typeof body.expected_version !== 'number') return resp(400, { error: 'expected_version (number) is required' });
+      const newParentId = body.new_parent_id ?? null; // null = move to root
+      const out = await reparentCore(sql, {
+        subjectId,
+        newParentId,
+        opId: body.op_id,
+        expectedVersion: body.expected_version,
+        userId,
+        householdIds,
+      });
+      return resp(out.status, out.body);
+    }
+
     // --- /api/projects/:id ---
     if (idMatch) {
       const projectId = idMatch[1];
@@ -171,7 +302,7 @@ export const handler = async (event) => {
             SELECT pp.id, pp.display_name AS name, pp.slug, pp.status, pp.variety, pp.description,
                    to_char(pp.start_date, 'YYYY-MM-DD') AS start_date,
                    pp.is_public, pp.location_id, pp.created_at, pp.updated_at, pp.created_by,
-                   pp.parent_id AS parent_project_id, pp.featured_photo_id,
+                   pp.parent_id AS parent_project_id, pp.version, pp.featured_photo_id,
                    pp.classification AS kind,
                    to_char(pp.target_end_date, 'YYYY-MM-DD') AS target_end_date,
                    pp.kind_set_at, pp.archived_at, pp.assignee_user_id,
