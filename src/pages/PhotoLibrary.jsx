@@ -353,11 +353,19 @@ export default function PhotoLibrary() {
             <p style={{ margin: '6px 0 0', fontSize: '0.82rem' }}>Upload your first one above.</p>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-            {photos.map(photo => (
-              <PhotoCard key={photo.id} photo={photo} onClick={() => openModal(photo)} />
-            ))}
-          </div>
+          // V3-PHOTODBG-001 (4/4): the grid render is wrapped in an ErrorBoundary so a render-time
+          // fault in any PhotoCard (malformed photo shape, bad view_url) degrades to a dismissable
+          // retry card instead of white-screening the whole Photos page. Mirrors the tag-modal net.
+          <ErrorBoundary
+            scope="photo-grid"
+            fallback={(err, retry) => <PhotoGridErrorFallback retry={() => { retry(); loadPhotos() }} />}
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              {photos.map(photo => (
+                <PhotoCard key={photo.id} photo={photo} onClick={() => openModal(photo)} />
+              ))}
+            </div>
+          </ErrorBoundary>
         )}
       </div>
 
@@ -560,6 +568,21 @@ function ErrBanner({ msg }) {
 // ErrorBoundary fallback for the photo-tag modal. Modal-shaped so a render fault
 // still reads as "the modal broke" rather than dumping the user back to the grid
 // with no explanation. Friendly copy only — never the raw error string.
+// ErrorBoundary fallback for the photo GRID (V3-PHOTODBG-001 4/4). A render fault in the grid
+// degrades to a contained retry card matching the load-error styling — never a white screen.
+function PhotoGridErrorFallback({ retry }) {
+  return (
+    <div role="alert" style={{ textAlign: 'center', padding: '40px 16px', background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 10 }}>
+      <div style={{ fontSize: '2.2rem', marginBottom: 10 }}>⚠️</div>
+      <p style={{ margin: 0, fontSize: '0.92rem', color: P.dark, fontWeight: 600 }}>Couldn’t display your photos</p>
+      <p style={{ margin: '6px 0 14px', fontSize: '0.82rem', color: P.mid }}>
+        Something went wrong rendering the gallery. Your photos are safe — please retry.
+      </p>
+      <button type="button" onClick={retry} style={{ padding: '8px 18px', fontSize: '0.85rem', borderRadius: 8, border: `1px solid ${P.alertBorder}`, background: P.white, color: P.dark, cursor: 'pointer' }}>Retry</button>
+    </div>
+  )
+}
+
 function PhotoModalErrorFallback({ retry, onClose }) {
   return (
     <div

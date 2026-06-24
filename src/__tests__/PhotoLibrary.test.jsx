@@ -198,4 +198,22 @@ describe('PhotoLibrary — V3-PHOTODBG-001 visible load-failure state', () => {
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
     expect(screen.getByText(/No photos yet/i)).toBeDefined()
   })
+
+  // V3-PHOTODBG-001 (4/4): a render-time fault in any PhotoCard must be contained by the
+  // grid ErrorBoundary (contained retry card) and must NOT white-screen the whole page.
+  it('contains a PhotoCard render fault in the grid ErrorBoundary (page header survives)', async () => {
+    const poison = { id: 'p-bad', view_url: 'https://example/p.jpg', get project_name() { throw new Error('render boom') } }
+    fetchSpy.mockResolvedValueOnce([SAMPLE_PROJECT])   // /api/projects
+    fetchSpy.mockResolvedValueOnce([SAMPLE_LOCATION])  // /api/locations/with-path
+    fetchSpy.mockResolvedValueOnce([poison])           // /api/photos -> poison row
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<PhotoLibrary />)
+    // Fallback copy appears…
+    await waitFor(() => expect(screen.getByText(/Couldn.t display your photos/i)).toBeDefined())
+    // …with a Retry affordance…
+    expect(screen.getByText('Retry')).toBeDefined()
+    // …and the page chrome (header) is NOT taken down by the fault (boundary contained it).
+    expect(screen.getByRole('heading', { name: 'Photos' })).toBeDefined()
+    errSpy.mockRestore()
+  })
 })
