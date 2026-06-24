@@ -61,14 +61,16 @@ describe('POST /api/plants — validation + create', () => {
     expect(body.error).toMatch(/name is required/i)
   })
 
-  it('missing project_id → 400', async () => {
+  it('missing project_id → 201 project-less planting (V3-CAPTURE-001)', async () => {
+    // V3-CAPTURE-001: photo-first capture can create a planting with no project;
+    // V4 tagging will group it later. container_id (project_id) is nullable.
     setTestUserId(USER)
     const { status, body } = await callHandler(handler, {
       method: 'POST', path: '/api/plants',
       body: { name: 'no-project' },
     })
-    expect(status).toBe(400)
-    expect(body.error).toMatch(/project_id is required/i)
+    expect(status).toBe(201)
+    expect(body.project_id ?? null).toBeNull()
   })
 
   it('invalid loss_cause enum → 400', async () => {
