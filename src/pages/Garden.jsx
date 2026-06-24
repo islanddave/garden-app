@@ -382,6 +382,7 @@ export default function Garden() {
       {/* V3-IA: no page title — the Garden tab is self-evident. Controls keep the row. */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginBottom: 24 }}>
         <SortToggle order={sortOrder} onChange={onSortChange} label="Sort garden" />
+        <Link to="/capture" data-testid="snap-entry-garden" style={btnGhost}>📸 Snap</Link>
         <Link to="/log/many" style={btnGhost}>⚡ Log many</Link>
       </div>
 

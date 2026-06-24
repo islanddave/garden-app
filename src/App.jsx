@@ -47,6 +47,7 @@ import Findings from './pages/Findings.jsx'
 import About from './pages/About.jsx'
 import ReleaseNotes from './pages/ReleaseNotes.jsx'
 import Today from './pages/Today.jsx'
+import CaptureFlow from './pages/CaptureFlow.jsx'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -136,6 +137,7 @@ function AppRoutes() {
                   the overnight Daily Plan engine, DRG-TODAY-001). Route-level ErrorBoundary (fresh fetch
                   surface) mirrors /findings, /inactive. */}
               <Route path="/today"        element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Today /></ErrorBoundary></Protected>} />
+              <Route path="/capture"      element={<Protected><CaptureFlow /></Protected>} />
               <Route path="/collection" element={<Protected><Collection /></Protected>} />
               {/* V1.2a-4 S6 admin classify route. Jen-invisible (no nav link).
                   Desktop-only viewport guard inside the component. Lambda-side

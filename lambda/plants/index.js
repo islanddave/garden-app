@@ -453,7 +453,9 @@ export const handler = async (event) => {
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.name) return resp(400, { error: 'name is required' });
-      if (!body.project_id) return resp(400, { error: 'project_id is required' });
+      // V3-CAPTURE-001: project_id is now OPTIONAL (DB container_id is nullable). Photo-first
+      // capture can create a project-less planting; V4 tagging will group/re-home it later.
+      // Existing callers still pass project_id, so their behavior is unchanged.
 
       // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation. NULL allowed.
       const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
