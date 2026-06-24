@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.16.0",
+    "date": "2026-06-24",
+    "highlights": [
+      "Snap → create: a new 📸 Snap button on Today and your Garden lets you take a photo and turn it straight into a new planting, a quick event log, an updated planting photo, or an inventory item — with Save & Next for logging several in a row.",
+      "Move plantings and projects safely: a new Move action reorganizes a project under a different parent in one step, with an instant Undo if you change your mind — and it now guards against accidental loops and two-device conflicts."
+    ]
+  },
+  {
     "version": "2.15.4",
     "date": "2026-06-24",
     "highlights": [
