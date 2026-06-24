@@ -653,9 +653,10 @@ describe('DRG-WATERRECON-001 — queryWaterDueFromPlan (alert bar reads the DrG 
     expect(q.resolved).toMatch(/public\.container/);
     expect(q.resolved).toMatch(/last_watered_at/);
     expect(q.resolved).toMatch(/location_type/);
-    // observable fallback source flag + legacy branch gated on absence of a plan row
+    // observable fallback source flag + legacy branch gated on a COMPATIBLE plan (DRG-WATERRECON-002:
+    // has_plan replaced by the schema_version compat gate — present-but-incompatible -> legacy fallback)
     expect(q.resolved).toMatch(/water_due_source/);
-    expect(q.resolved).toMatch(/NOT \(SELECT hp FROM has_plan\)/);
+    expect(q.resolved).toMatch(/NOT \(SELECT ok FROM compat\)/);
     // binds userId (plan + legacy assignee/created_by => 3 binds)
     expect(countUserBinds(q.values, 'user_alpha')).toBeGreaterThanOrEqual(1);
   });
@@ -694,5 +695,71 @@ describe('DRG-WATERRECON-001 — bar/Today freshness filters stay in lockstep (a
     // both filter soft-deleted events out of the done-set
     expect(barSrc).toMatch(/ev\.deleted_at IS NULL/);
     expect(todaySrc).toMatch(/e\.deleted_at IS NULL/);
+  });
+});
+
+
+// ── DRG-WATERRECON-002 ───────────────────────────────────────────────────────
+// (1) the bar's plan-trust gate keys on the stored items.schema_version; (2) the version literal stays in
+// lockstep across the engine writer + both readers; (3) one failing tile no longer 500s the whole dashboard.
+describe('DRG-WATERRECON-002 — queryWaterDueFromPlan schema_version guard', () => {
+  it('only trusts a daily_plan whose stored schema_version matches; mismatch -> schema_mismatch, absent -> legacy', () => {
+    queryWaterDueFromPlan(makeSql(), 'user_alpha');
+    const q = sqlCalls[sqlCalls.length - 1];
+    expect(q.resolved).toMatch(/items->>'schema_version'/);
+    expect(q.resolved).toMatch(/compat AS \(SELECT EXISTS\(SELECT 1 FROM plan WHERE sv IS NULL OR sv = \$\d+\)/);
+    expect(q.resolved).toMatch(/THEN 'schema_mismatch' ELSE 'legacy'/);
+    // BOTH branches gate on compat.ok (compatible plan present), not bare plan presence
+    expect(q.resolved).toMatch(/FROM plan_rows\s+WHERE\s+\(SELECT ok FROM compat\)/);
+    expect(q.resolved).toMatch(/FROM legacy_rows WHERE NOT \(SELECT ok FROM compat\)/);
+    // the expected version is BOUND (parameterized), never string-inlined
+    expect(q.values).toContain(1);
+  });
+});
+
+import { readFileSync as __rfs2 } from 'fs';
+describe('DRG-WATERRECON-002 — plan schema_version stays in lockstep across engine + readers (anti-drift)', () => {
+  const grab = (src) => { const m = src.match(/PLAN_SCHEMA_VERSION\s*=\s*(\d+)/); return m ? m[1] : null; };
+  it('engine, dashboard bar, and Today reader pin the SAME PLAN_SCHEMA_VERSION integer', () => {
+    const ev = grab(__rfs2('lambda/daily-plan/engine.js', 'utf8'));
+    const bv = grab(__rfs2('lambda/dashboard/handlers.js', 'utf8'));
+    const tv = grab(__rfs2('lambda/daily-plan-read/index.js', 'utf8'));
+    expect(ev).not.toBeNull();
+    expect(bv).toBe(ev);
+    expect(tv).toBe(ev);
+  });
+  it('the engine writer STAMPS schema_version into the stored daily_plan.items jsonb', () => {
+    const handler = __rfs2('lambda/daily-plan/handler.js', 'utf8');
+    expect(handler).toMatch(/schema_version:\s*PLAN_SCHEMA_VERSION/);
+    expect(handler).toMatch(/require\('\.\/engine'\)/);
+  });
+  it('both readers FAIL LOUD on a version mismatch — no silent empty/garbage verdict', () => {
+    const bar = __rfs2('lambda/dashboard/handlers.js', 'utf8');
+    const today = __rfs2('lambda/daily-plan-read/index.js', 'utf8');
+    expect(bar).toMatch(/schema_mismatch/);
+    expect(bar).toMatch(/console\.error\([\s\S]*?schema_version MISMATCH/);
+    expect(today).toMatch(/schema_stale/);
+    expect(today).toMatch(/console\.error\([\s\S]*?schema_version mismatch/);
+  });
+});
+
+describe('DRG-WATERRECON-002 — handleDashboard per-tile isolation (Promise.allSettled)', () => {
+  it('one failing tile degrades to a safe fallback and the dashboard still returns 200', async () => {
+    let n = 0;
+    const sql = (_strings, ..._vals) => {
+      n += 1;
+      if (n === 6) return Promise.reject(new Error('water tile boom')); // queryWaterDueFromPlan
+      if (n === 2) return Promise.resolve([{ project_count: 3, plant_count: 9, location_count: 2 }]); // counts
+      if (n === 3) return Promise.resolve([{ count: 5 }]);   // favCount (indexed [0])
+      if (n === 9) return Promise.resolve([{ count: 0 }]);   // inactiveCount
+      if (n === 11) return Promise.resolve([{ plant_id: 'pl1', plant_name: 'Basil' }]); // giveAttention
+      return Promise.resolve([]);
+    };
+    const res = await handleDashboard(sql, 'user_alpha');
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.water_due).toEqual([]);                 // failed tile -> safe empty fallback (not a 500)
+    expect(body.counts.projects).toBe(3);               // sibling tiles unaffected
+    expect(body.give_attention).toEqual({ plant_id: 'pl1', plant_name: 'Basil' });
   });
 });

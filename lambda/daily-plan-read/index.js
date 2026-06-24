@@ -9,7 +9,12 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 1;       // API-response envelope version (client contract)
+// DRG-WATERRECON-002: the version the STORED daily_plan.items must carry — pinned to
+// lambda/daily-plan/engine.js PLAN_SCHEMA_VERSION (lockstep enforced by an anti-drift source test).
+// A stored plan whose schema_version differs is a field-rename/shape-drift signal: we FAIL LOUD
+// (log + schema_stale flag) and refuse to serve the now-untrustworthy task arrays as a real plan.
+const PLAN_SCHEMA_VERSION = 1;
 
 let _secrets = null;
 async function getSecrets() {
@@ -72,16 +77,29 @@ export const handler = async (event) => {
     `;
     const row = rows[0] ?? {};
     let plan = row.items ?? null;
+    // DRG-WATERRECON-002: guard the STORED plan's schema_version. A present plan whose version != expected
+    // means the engine's items shape drifted out from under this reader — FAIL LOUD (log + schema_stale)
+    // and serve an honest empty state rather than silently mapping renamed/garbage fields.
+    let schemaStale = false;
     if (plan) {
-      // V3-TODAYDONE-001: best-effort read-time check-off — never let it break the prod Today read.
-      try { plan = await annotateDone(sql, plan); }
-      catch (e) { console.error('done-annotate (non-fatal):', e?.message ?? String(e)); }
+      const storedV = (plan.schema_version ?? null);
+      if (storedV !== null && storedV !== PLAN_SCHEMA_VERSION) {  // null = pre-stamp legacy row (current shape) -> serve
+        console.error('[daily-plan] stored plan schema_version mismatch — refusing to serve stale/garbage plan',
+          { storedV, expected: PLAN_SCHEMA_VERSION });
+        schemaStale = true;
+        plan = null;
+      } else {
+        // V3-TODAYDONE-001: best-effort read-time check-off — never let it break the prod Today read.
+        try { plan = await annotateDone(sql, plan); }
+        catch (e) { console.error('done-annotate (non-fatal):', e?.message ?? String(e)); }
+      }
     }
     return resp(200, {
       schema_version: SCHEMA_VERSION,
       plan_date: row.plan_date ?? null,
       generated_at: row.generated_at ?? null,
-      has_plan: row.items != null,
+      has_plan: row.items != null && !schemaStale,
+      schema_stale: schemaStale,
       plan: plan,
     });
   } catch (err) {

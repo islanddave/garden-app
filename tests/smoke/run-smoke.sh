@@ -886,6 +886,40 @@ else
 fi
 
 
+# ── DRG-WATERRECON-002: alert bar ≡ Today equality (durable bar==Today regression guard) ──────
+# The dashboard alert bar's water_due planting-set MUST equal the Today page's pending (not-done)
+# water set — both now derive from the SAME daily_plan engine verdict (DRG-WATERRECON-001). This
+# asserts set-equality on whatever real plan exists for the smoke user, catching a future silent
+# re-divergence. Graceful skip (L-109) when STAGING_API_DAILY_PLAN is unset/placeholder, no JWT, or
+# no plan row exists for today (engine-skip; staging has no nightly engine yet so the bar serves the
+# legacy fallback and equality is genuinely N/A — a WARN, never a silent PASS).
+if [[ -n "$CLERK_JWT" && -n "${STAGING_API_DAILY_PLAN:-}" && "$STAGING_API_DAILY_PLAN" != *placeholder* ]]; then
+  CLERK_JWT=$(mint_session_token)
+  WR_DASH=$(mktemp); WR_PLAN=$(mktemp)
+  curl -s --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $CLERK_JWT" \
+    -o "$WR_DASH" "$STAGING_API_DASHBOARD" >/dev/null 2>&1 || true
+  curl -s --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $CLERK_JWT" \
+    -o "$WR_PLAN" "${STAGING_API_DAILY_PLAN%/}/api/daily-plan" >/dev/null 2>&1 || true
+  WR_HASPLAN=$(jq -r '.has_plan // false' "$WR_PLAN" 2>/dev/null || echo "false")
+  if [[ "$WR_HASPLAN" == "true" ]]; then
+    # bar set = every planting id under water_due[].plantings[]; Today set = plan.water_due[] not done.
+    BAR_IDS=$(jq -S -c '[.water_due[].plantings[].id] | sort | unique' "$WR_DASH" 2>/dev/null || echo "null")
+    TODAY_IDS=$(jq -S -c '[.plan.water_due[] | select(.done != true) | .id] | sort | unique' "$WR_PLAN" 2>/dev/null || echo "null")
+    if [[ "$BAR_IDS" != "null" && "$TODAY_IDS" != "null" && "$BAR_IDS" == "$TODAY_IDS" ]]; then
+      echo "✅ PASS [recon:bar==today] water planting-sets equal ($BAR_IDS)"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [recon:bar==today] DIVERGED — bar=$BAR_IDS today=$TODAY_IDS"
+      FAIL=$((FAIL+1))
+    fi
+  else
+    echo "⚠️  WARN [recon:bar==today] no daily_plan for smoke user today (engine-skip / staging has no nightly engine) — equality N/A"
+  fi
+  rm -f "$WR_DASH" "$WR_PLAN"
+else
+  echo "⚠️  WARN [recon:bar==today] STAGING_API_DAILY_PLAN unset/placeholder or no JWT — bar==Today equality NOT run (set repo var STAGING_API_DAILY_PLAN_READ to activate)"
+fi
+
 echo ""
 echo "=== Smoke tests: $PASS passed, $FAIL failed ==="
 if [[ "$FAIL" -gt 0 ]]; then

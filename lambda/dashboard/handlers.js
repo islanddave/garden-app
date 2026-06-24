@@ -20,6 +20,12 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 import { householdScope } from './household.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 
+// DRG-WATERRECON-002: pinned to lambda/daily-plan/engine.js PLAN_SCHEMA_VERSION (kept in lockstep by the
+// anti-drift source test). The alert bar trusts a daily_plan ONLY when its stored items.schema_version
+// matches; a present-but-mismatched plan (a field rename / shape drift) is REJECTED -> legacy fallback +
+// a LOUD error log (water_due_source='schema_mismatch'), never a silently-empty/garbage verdict.
+export const PLAN_SCHEMA_VERSION = 1;
+
 export function isValidUuid(s) {
   return typeof s === 'string' && UUID_RE.test(s);
 }
@@ -268,10 +274,15 @@ export function queryWaterDueFromPlan(sql, userId) {
   return sql`
       WITH params AS (SELECT (now() AT TIME ZONE 'America/New_York')::date AS et_today),
       plan AS (
-        SELECT items FROM daily_plan, params
+        SELECT items, (items->>'schema_version')::int AS sv FROM daily_plan, params
         WHERE user_id = ${userId} AND plan_date = et_today
       ),
-      has_plan AS (SELECT EXISTS(SELECT 1 FROM plan) AS hp),
+      -- DRG-WATERRECON-002 schema_version guard: a plan is TRUSTED when its stamped schema_version matches
+      -- (compat) OR is NULL (a pre-stamp legacy row, whose shape == current v1 — served, no false alarm on
+      -- the ship-day transition). Only a PRESENT-but-DIFFERENT version (a real shape drift) falls through to
+      -- legacy + is flagged 'schema_mismatch' so handleDashboard logs it LOUD.
+      plan_present AS (SELECT EXISTS(SELECT 1 FROM plan) AS present),
+      compat AS (SELECT EXISTS(SELECT 1 FROM plan WHERE sv IS NULL OR sv = ${PLAN_SCHEMA_VERSION}) AS ok),
       wd AS (
         -- defensive: jsonb_array_elements THROWS on a JSON scalar/null (would 500 the whole dashboard);
         -- coalesce a malformed/absent water_due to an empty array. Drop elements missing id/project_id.
@@ -316,7 +327,7 @@ export function queryWaterDueFromPlan(sql, userId) {
                  WHERE gn.container_id = pp.id AND gn.deleted_at IS NULL AND gn.archived_at IS NULL
                    AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
                ), '[]'::json) AS plantings,
-               'legacy'::text AS water_due_source
+               CASE WHEN (SELECT present FROM plan_present) THEN 'schema_mismatch' ELSE 'legacy' END AS water_due_source
         FROM entity_memory em
         JOIN public.container pp ON pp.id = em.project_id
         WHERE (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
@@ -328,9 +339,9 @@ export function queryWaterDueFromPlan(sql, userId) {
               AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
           )
       )
-      SELECT * FROM plan_rows  WHERE     (SELECT hp FROM has_plan)
+      SELECT * FROM plan_rows  WHERE     (SELECT ok FROM compat)
       UNION ALL
-      SELECT * FROM legacy_rows WHERE NOT (SELECT hp FROM has_plan)
+      SELECT * FROM legacy_rows WHERE NOT (SELECT ok FROM compat)
       ORDER BY next_water_at ASC
     `;
 }
@@ -555,19 +566,26 @@ export function queryGiveAttention(sql, userId) {
 export async function handleDashboard(sql, userId) {
   // §D Promise.all parallelization — all aggregation queries fire concurrently.
   // V1.2-streak-fix: + queryActivityDays (appended LAST) feeds the live streak recompute.
-  const [
-    recentEvents,
-    counts,
-    favCount,
-    activeProjects,
-    userStatsRows,
-    waterDue,
-    harvestReady,
-    headsUp,
-    inactiveCountRows,
-    activityDaysRows,
-    giveAttnRows,
-  ] = await Promise.all([
+  // DRG-WATERRECON-002 per-tile isolation: allSettled (not all) so ONE failing tile query degrades that
+  // tile to a safe fallback + a LOUD error log, instead of rejecting the whole dashboard (a single bad
+  // tile used to 500 the entire page). Order is the same FIFO the tile tests assert; fallbacks preserve the
+  // exact row shapes the assembly below indexes into (counts[0], favCount[0], inactiveCountRows[0]).
+  const TILE_NAMES = ['recent_events','counts','favorites','active_projects','user_stats','water_due',
+    'harvest_ready','heads_up','inactive_count','activity_days','give_attention'];
+  const TILE_FALLBACKS = [
+    [],                                                              // recentEvents
+    [{ project_count: 0, plant_count: 0, location_count: 0 }],       // counts (indexed [0])
+    [{ count: 0 }],                                                  // favCount (indexed [0])
+    [],                                                              // activeProjects
+    [],                                                              // userStatsRows
+    [],                                                              // waterDue
+    [],                                                              // harvestReady
+    [],                                                              // headsUp
+    [{ count: 0 }],                                                  // inactiveCountRows (indexed [0])
+    [],                                                              // activityDaysRows
+    [],                                                              // giveAttnRows
+  ];
+  const settled = await Promise.allSettled([
     queryRecentEvents(sql, userId),
     queryCounts(sql, userId),
     queryFavoriteCount(sql, userId),
@@ -580,6 +598,24 @@ export async function handleDashboard(sql, userId) {
     queryActivityDays(sql, userId),
     queryGiveAttention(sql, userId),
   ]);
+  const [
+    recentEvents,
+    counts,
+    favCount,
+    activeProjects,
+    userStatsRows,
+    waterDue,
+    harvestReady,
+    headsUp,
+    inactiveCountRows,
+    activityDaysRows,
+    giveAttnRows,
+  ] = settled.map((r, i) => {
+    if (r.status === 'fulfilled') return r.value;
+    console.error('[dashboard] tile query failed — served fallback (per-tile isolation, DRG-WATERRECON-002)',
+      { userId, tile: TILE_NAMES[i], error: r.reason?.message ?? String(r.reason) });
+    return TILE_FALLBACKS[i];
+  });
 
   const storedStats = userStatsRows[0] ?? {
     current_streak: 0,
@@ -603,7 +639,12 @@ export async function handleDashboard(sql, userId) {
 
   // OBSERVABILITY (DRG-WATERRECON-001): the bar fell back to the legacy entity_memory verdict because no
   // daily_plan row exists for today (engine-skip) — surfaces the otherwise-silent bar/Today divergence on skip days.
-  if (Array.isArray(waterDue) && waterDue.some((r) => r && r.water_due_source === 'legacy')) {
+  if (Array.isArray(waterDue) && waterDue.some((r) => r && r.water_due_source === 'schema_mismatch')) {
+    // DRG-WATERRECON-002: a daily_plan row exists today but its items.schema_version != PLAN_SCHEMA_VERSION
+    // — a field rename / shape drift. Reject-and-fall-back is LOUD here so it never silently empties the bar.
+    console.error('[water_due] daily_plan schema_version MISMATCH — rejected plan, served legacy fallback '
+      + '(bump the bar + Today readers in lockstep with the engine)', { userId, expected: PLAN_SCHEMA_VERSION });
+  } else if (Array.isArray(waterDue) && waterDue.some((r) => r && r.water_due_source === 'legacy')) {
     console.warn('[water_due] legacy fallback served — no daily_plan for today', { userId });
   }
   return resp(200, {

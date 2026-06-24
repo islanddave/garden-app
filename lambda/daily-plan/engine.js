@@ -5,6 +5,12 @@
 // never-logged-aware, temp-aware, per-variety cold, strict per-user. No I/O; caller passes today/weather/cadence/fertModel.
 const DAY = 86400000;
 const HOT_F = 88;
+// DRG-WATERRECON-002: canonical version stamped into the stored daily_plan.items jsonb (by handler.js).
+// The dashboard bar (lambda/dashboard/handlers.js) and the Today reader (lambda/daily-plan-read/index.js)
+// assert this value and FAIL LOUD on mismatch — a silent field-rename/shape-drift would otherwise yield an
+// empty/garbage watering verdict. Bump ONLY when the items task-array shape changes, in lockstep with both
+// readers' PLAN_SCHEMA_VERSION literals (pinned by an anti-drift source test).
+const PLAN_SCHEMA_VERSION = 1;
 const PEPPER_TOMATO = /pepper|tomato|eggplant|tomatillo|chile|chili|capsicum|solanum/i;
 
 function daysBetween(today, iso){ if(!iso) return null;
@@ -256,4 +262,4 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop, rain_coming:rainComing, status:hs} : {status:hs},
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall};
+module.exports={generatePlan, PLAN_SCHEMA_VERSION, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall};

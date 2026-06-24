@@ -381,6 +381,9 @@ jobs:
           STAGING_API_FAVORITES: ${{ env.STAGING_API_FAVORITES }}
           STAGING_API_PHOTOS:    ${{ env.STAGING_API_PHOTOS }}
           STAGING_API_DASHBOARD: ${{ env.STAGING_API_DASHBOARD }}
+          # DRG-WATERRECON-002 bar==Today equality smoke: staging daily-plan-read Function URL.
+          # Set repo variable STAGING_API_DAILY_PLAN_READ to activate; unset -> graceful WARN-skip.
+          STAGING_API_DAILY_PLAN: ${{ vars.STAGING_API_DAILY_PLAN_READ }}
           STAGING_API_SHARED_STATE: ${{ env.STAGING_API_SHARED_STATE }}
           STAGING_API_VARIETIES: ${{ env.STAGING_API_VARIETIES }}
           STAGING_API_INVENTORY: ${{ env.STAGING_API_INVENTORY }}

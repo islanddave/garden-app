@@ -3,7 +3,7 @@
 // Pattern mirrors garden-xp-reconcile: EventBridge nightly (midnight ET), DRY_RUN-gated, no Fn URL, kill-switchable.
 // Reads Neon (conn from Secrets Manager SECRET_ARN_NEON — NEVER hardcode), resolves weather from each Space's
 // postal_code (zip-driven, not hardcoded), runs ./engine per CARETAKER, idempotent upsert into daily_plan.
-const { generatePlan } = require('./engine');
+const { generatePlan, PLAN_SCHEMA_VERSION } = require('./engine');
 const cadence = require('./cadence-data-v2.json'); // per-variety research cadence (161). Swap to v_resolved_care once care_profile is seeded (CARE-CADENCE-001).
 const fertModel = require('./fertilization-model.json'); // substrate-aware feed model. REQUIRED by engine.generatePlan (it derefs fertModel.water_quality / .amendments_in_inventory); omitting it crashes every run.
 
@@ -114,7 +114,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           `insert into daily_plan (user_id, plan_date, items, generated_at)
            values ($1,$2,$3, now())
            on conflict (user_id, plan_date) do update set items=excluded.items, generated_at=now()`,
-          [user_id, today, JSON.stringify({ weather: { ...plan.weather, hot: plan.hot }, hydrology: plan.hydrology, coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, ...userPlan.tasks })]);
+          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: plan.hydrology, coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, ...userPlan.tasks })]);
       }
     }
   }

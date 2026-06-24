@@ -67,3 +67,19 @@ describe('daily-plan-read Lambda — static read-path invariants', () => {
     expect(SRC).toMatch(/return resp\(500/);
   });
 });
+
+describe('DRG-WATERRECON-002 — stored-plan schema_version guard (fail loud)', () => {
+  it('pins PLAN_SCHEMA_VERSION and validates the stored plan against it', () => {
+    expect(SRC).toMatch(/const PLAN_SCHEMA_VERSION\s*=\s*\d+/);
+    expect(SRC).toMatch(/plan\.schema_version/);
+    expect(SRC).toMatch(/storedV !== PLAN_SCHEMA_VERSION/);
+    expect(SRC).toMatch(/storedV !== null/); // pre-stamp legacy rows tolerated (no ship-day false alarm)
+  });
+  it('fails loud + serves an honest empty state on mismatch (never garbage)', () => {
+    expect(SRC).toMatch(/console\.error\([\s\S]*?schema_version mismatch/);
+    expect(SRC).toMatch(/schemaStale = true/);
+    expect(SRC).toMatch(/plan = null/);
+    expect(SRC).toMatch(/schema_stale:\s*schemaStale/);
+    expect(SRC).toMatch(/has_plan:\s*row\.items != null && !schemaStale/);
+  });
+});
