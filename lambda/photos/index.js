@@ -18,12 +18,14 @@ const s3 = new S3Client({
 const BUCKET = process.env.S3_PHOTOS_BUCKET;
 if (!BUCKET) throw new Error('S3_PHOTOS_BUCKET env var not set — check Lambda configuration');
 
-let _secrets = null;
+let _secrets = null, _secretsAt = 0;
+const SECRETS_TTL_MS = 5 * 60 * 1000; // V3-PHOTODBG-001: refetch after 5min so a rotated secret doesn't strand a warm Lambda
 async function getSecrets() {
-  if (_secrets) return _secrets;
+  if (_secrets && (Date.now() - _secretsAt) < SECRETS_TTL_MS) return _secrets;
   const cmd = new GetSecretValueCommand({ SecretId: process.env.SECRET_NAME ?? 'garden-app/secrets' });
   const res = await sm.send(cmd);
   _secrets = JSON.parse(res.SecretString);
+  _secretsAt = Date.now();
   return _secrets;
 }
 
@@ -35,6 +37,14 @@ function resp(statusCode, body) {
     headers: { 'Content-Type': 'application/json', ...CORS },
     body: JSON.stringify(body),
   };
+}
+
+// V3-PHOTODBG-001: classify transient upstream failures (DB / Secrets Manager / network unreachable) so the
+// client receives a retryable 503 with a proper JSON+CORS envelope rather than a generic 500 — or worse, a
+// raw CORS-less 502 from an unhandled throw that the frontend can't even read.
+function isUpstream(err) {
+  const m = `${err?.code ?? ''} ${err?.name ?? ''} ${err?.message ?? ''}`.toLowerCase();
+  return /econn|etimedout|enotfound|getaddrinfo|fetch failed|socket hang up|timeout|throttl|serviceunavailable|connection terminated/.test(m);
 }
 
 // Pre-signed PUT URL — browser uploads directly to S3, Lambda never touches the bytes
@@ -60,7 +70,13 @@ export const handler = async (event) => {
     return { statusCode: 204, headers: CORS, body: '' };
   }
 
-  const secrets = await getSecrets();
+  let secrets;
+  try {
+    secrets = await getSecrets();
+  } catch (err) {
+    console.error('getSecrets failed', err?.message ?? err);
+    return resp(503, { error: 'Service temporarily unavailable' });
+  }
 
   const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
   const token = authHeader.replace(/^Bearer\s+/i, '');
@@ -315,6 +331,8 @@ export const handler = async (event) => {
 
   } catch (err) {
     console.error('photos lambda error', err);
-    return resp(500, { error: 'Internal server error' });
+    return isUpstream(err)
+      ? resp(503, { error: 'Service temporarily unavailable' })
+      : resp(500, { error: 'Internal server error' });
   }
 };

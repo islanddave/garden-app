@@ -25,6 +25,7 @@ export default function PhotoLibrary() {
 
   const [photos,        setPhotos]        = useState([])
   const [loading,       setLoading]       = useState(true)
+  const [error,         setError]         = useState(null)  // V3-PHOTODBG-001: visible load-failure state
   const [projects,      setProjects]      = useState([])
   const [locations,     setLocations]     = useState([])
 
@@ -72,14 +73,16 @@ export default function PhotoLibrary() {
   // ---- Photos query ----
   const loadPhotos = useCallback(async () => {
     setLoading(true)
+    setError(null)
     const qs = filterProject ? `?project_id=${filterProject}` : ''
     try {
       let data = await apiFetch('/api/photos' + qs) ?? []
       if (filterMode === 'standalone') data = data.filter(p => !p.event_id)
       if (filterMode === 'untagged')   data = data.filter(p => !p.event_id && !p.project_id)
       setPhotos(data)
-    } catch {
+    } catch (err) {
       setPhotos([])
+      setError(err)   // apiFetch throws with .status on non-2xx; surface instead of masking as empty
     }
     setLoading(false)
   }, [apiFetch, filterProject, filterMode])
@@ -332,6 +335,17 @@ export default function PhotoLibrary() {
         {/* ── Grid ── */}
         {loading ? (
           <p style={{ color: P.light, fontSize: '0.9rem' }}>Loading…</p>
+        ) : error ? (
+          <div role="alert" style={{ textAlign: 'center', padding: '40px 16px', background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 10 }}>
+            <div style={{ fontSize: '2.2rem', marginBottom: 10 }}>⚠️</div>
+            <p style={{ margin: 0, fontSize: '0.92rem', color: P.dark, fontWeight: 600 }}>Couldn’t load your photos</p>
+            <p style={{ margin: '6px 0 14px', fontSize: '0.82rem', color: P.mid }}>
+              {(error?.status == null || error.status >= 500)
+                ? 'The photo service had a problem. This is usually temporary — please retry.'
+                : 'Something went wrong loading the gallery.'}
+            </p>
+            <button type="button" onClick={loadPhotos} style={{ padding: '8px 18px', fontSize: '0.85rem', borderRadius: 8, border: `1px solid ${P.alertBorder}`, background: P.white, color: P.dark, cursor: 'pointer' }}>Retry</button>
+          </div>
         ) : photos.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '48px 16px', color: P.light }}>
             <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📷</div>

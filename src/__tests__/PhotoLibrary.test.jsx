@@ -178,3 +178,26 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     expect(body.project_id).toBe('proj-1')
   })
 })
+
+describe('PhotoLibrary — V3-PHOTODBG-001 visible load-failure state', () => {
+  it('shows a visible error + Retry (not the empty state) when /api/photos fails with a 5xx', async () => {
+    fetchSpy.mockResolvedValueOnce([SAMPLE_PROJECT])   // /api/projects
+    fetchSpy.mockResolvedValueOnce([SAMPLE_LOCATION])  // /api/locations/with-path
+    const e = new Error('HTTP 502'); e.status = 502
+    fetchSpy.mockRejectedValueOnce(e)                  // /api/photos -> fail
+    render(<PhotoLibrary />)
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/load your photos/i)
+    // must NOT masquerade as the empty state
+    expect(screen.queryByText(/No photos yet/i)).toBeNull()
+    const retry = screen.getByText('Retry')
+    expect(retry).toBeDefined()
+    // retry succeeds -> error clears
+    fetchSpy.mockResolvedValueOnce([SAMPLE_PROJECT])
+    fetchSpy.mockResolvedValueOnce([SAMPLE_LOCATION])
+    fetchSpy.mockResolvedValueOnce([])
+    fireEvent.click(retry)
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(screen.getByText(/No photos yet/i)).toBeDefined()
+  })
+})
