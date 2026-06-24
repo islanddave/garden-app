@@ -1,5 +1,12 @@
 [
   {
+    "version": "2.15.3",
+    "date": "2026-06-24",
+    "highlights": [
+      "Archived plantings can now be brought back: open an archived planting and tap Unarchive to restore it \u2014 the same way archived projects already work. Before this, once the brief Undo window passed an archived planting was hidden with no easy way to recover it."
+    ]
+  },
+  {
     "version": "2.15.2",
     "date": "2026-06-24",
     "highlights": [
