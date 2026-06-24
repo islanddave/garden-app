@@ -1,5 +1,14 @@
 [
   {
+    "version": "2.15.0",
+    "date": "2026-06-24",
+    "highlights": [
+      "Your watering alerts and the Today page now agree — the alert bar shows the same plants as your daily plan, so a plant won't say it needs water in one place but not the other.",
+      "Plants you've already watered, or that got enough rain today, now drop off the alert bar just like they do on Today.",
+      "Established plants in larger pots and bags (about 5 gallons and up) now get credit for recent rain instead of being treated as fragile new transplants that need watering anyway."
+    ]
+  },
+  {
     "version": "2.14.0",
     "date": "2026-06-23",
     "highlights": [
