@@ -192,9 +192,7 @@ describe('PhotoLibrary — V3-PHOTODBG-001 visible load-failure state', () => {
     expect(screen.queryByText(/No photos yet/i)).toBeNull()
     const retry = screen.getByText('Retry')
     expect(retry).toBeDefined()
-    // retry succeeds -> error clears
-    fetchSpy.mockResolvedValueOnce([SAMPLE_PROJECT])
-    fetchSpy.mockResolvedValueOnce([SAMPLE_LOCATION])
+    // retry calls loadPhotos ONLY (one fetch: /api/photos) — not the projects/locations effects
     fetchSpy.mockResolvedValueOnce([])
     fireEvent.click(retry)
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
