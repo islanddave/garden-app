@@ -539,7 +539,7 @@ export default function ProjectDetail() {
           background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 8,
           padding: '8px 12px', fontSize: '0.85rem', color: P.green }}>
           <span>Moved to {lastMove.toName === 'top level' ? 'top level' : `“${lastMove.toName}”`}.</span>
-          <button onClick={handleUndoMove} disabled={moving} style={{ ...ghostBtn, padding: '4px 12px' }}>
+          <button data-testid="reparent-undo" onClick={handleUndoMove} disabled={moving} style={{ ...ghostBtn, padding: '4px 12px' }}>
             {moving ? 'Undoing…' : 'Undo'}
           </button>
         </div>
@@ -564,7 +564,7 @@ export default function ProjectDetail() {
             {moveErr && <p style={{ color: P.terra, fontSize: '0.82rem', marginTop: 10 }}>{moveErr}</p>}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
               <button onClick={() => setMoveOpen(false)} disabled={moving} style={ghostBtn}>Cancel</button>
-              <button onClick={handleMove} disabled={moving} style={primaryBtn(moving)}>
+              <button data-testid="reparent-submit" onClick={handleMove} disabled={moving} style={primaryBtn(moving)}>
                 {moving ? 'Moving…' : 'Move'}
               </button>
             </div>

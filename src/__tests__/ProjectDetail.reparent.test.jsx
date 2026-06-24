@@ -63,12 +63,12 @@ function wire({ reparentResult, reparentError = null, restoreResult } = {}) {
 beforeEach(() => { apiFetchSpy.mockReset(); navigateSpy.mockReset() })
 
 async function openMoveAndSubmit() {
-  await waitFor(() => expect(screen.getByText('Move')).toBeDefined())
-  await act(async () => { fireEvent.click(screen.getByText('Move')) })
-  const select = await screen.findByText('— Top level (no parent) —')
-  await act(async () => { fireEvent.change(select.closest('select'), { target: { value: 'cantaloupe' } }) })
-  const modalMoveBtn = screen.getAllByText('Move').find(el => el.tagName === 'BUTTON' && !el.disabled)
-  await act(async () => { fireEvent.click(modalMoveBtn) })
+  const moveBtn = await screen.findByText('Move')              // action-row button opens the modal
+  await act(async () => { fireEvent.click(moveBtn) })
+  const submit = await screen.findByTestId('reparent-submit')  // modal submit — unambiguous
+  const select = submit.closest('div').parentElement.querySelector('select')
+  await act(async () => { fireEvent.change(select, { target: { value: 'cantaloupe' } }) })
+  await act(async () => { fireEvent.click(screen.getByTestId('reparent-submit')) })
 }
 
 describe('ProjectDetail — V3-REPARENT-001 Move + Undo', () => {
@@ -88,9 +88,9 @@ describe('ProjectDetail — V3-REPARENT-001 Move + Undo', () => {
     const calls = wire()
     await act(async () => { render(<ProjectDetail />) })
     await openMoveAndSubmit()
-    await waitFor(() => expect(screen.getByText('Undo')).toBeDefined())
+    await waitFor(() => expect(screen.getByTestId('reparent-undo')).toBeDefined())
     const moveOpId = calls.find(c => c.kind === 'reparent').body.op_id
-    await act(async () => { fireEvent.click(screen.getByText('Undo')) })
+    await act(async () => { fireEvent.click(screen.getByTestId('reparent-undo')) })
     await waitFor(() => expect(calls.some(c => c.kind === 'restore')).toBe(true))
     const restore = calls.find(c => c.kind === 'restore').body
     expect(restore.source_op_id).toBe(moveOpId)
