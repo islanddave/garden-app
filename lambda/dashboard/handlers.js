@@ -253,6 +253,82 @@ export function queryWaterDue(sql, userId) {
     `;
 }
 
+// DRG-WATERRECON-001 (2026-06-24): the alert bar's "needs water" now derives from the SAME nightly DrG/care engine
+// verdict the Today page reads (daily_plan), instead of the naive entity_memory cadence — they were computing
+// "needs water" independently and disagreed on ~100% of containers (e.g. Dracaena: engine 10d not-due vs the bar's
+// 4d location-default; established 5-gal-bag peppers nagging daily). Single source of truth: the engine decides WHICH
+// plantings are due; this query (a) reads today's per-user daily_plan water_due, (b) drops plantings already satisfied
+// today via a watering/rain event_log row in ET (the SAME done-logic daily-plan-read.annotateDone uses, so bar and
+// Today stay consistent on same-day logging), (c) groups by container into the band's existing row shape, and (d)
+// LEFT JOINs entity_memory + container for the display fields the UI reads (last_watered_at, location_type). When no
+// plan row exists for today (rare engine-skip), it FALLS BACK to the legacy entity_memory query so the bar never
+// blanks — flagged via water_due_source so the silent-divergence case is observable. ONE sql call (drop-in for
+// queryWaterDue in the handleDashboard Promise.all; preserves the FIFO contract its tests assert).
+export function queryWaterDueFromPlan(sql, userId) {
+  return sql`
+      WITH params AS (SELECT (now() AT TIME ZONE 'America/New_York')::date AS et_today),
+      plan AS (
+        SELECT items FROM daily_plan, params
+        WHERE user_id = ${userId} AND plan_date = et_today
+      ),
+      has_plan AS (SELECT EXISTS(SELECT 1 FROM plan) AS hp),
+      wd AS (
+        SELECT (e->>'id') AS plant_id, (e->>'project_id') AS project_id, (e->>'name') AS name,
+               COALESCE((e->>'overdue_by')::int, 0) AS overdue_by
+        FROM plan, jsonb_array_elements(plan.items->'water_due') e
+      ),
+      fresh AS (
+        SELECT DISTINCT ev.plant_id::text AS plant_id
+        FROM event_log ev, params
+        WHERE ev.deleted_at IS NULL AND ev.event_type IN ('watering','rain')
+          AND ev.plant_id::text IN (SELECT plant_id FROM wd)
+          AND (ev.event_date AT TIME ZONE 'America/New_York')::date = et_today
+      ),
+      due AS (SELECT * FROM wd WHERE plant_id NOT IN (SELECT plant_id FROM fresh)),
+      grouped AS (
+        SELECT d.project_id, MAX(d.overdue_by) AS overdue_by,
+               json_agg(json_build_object('id', d.plant_id, 'name', d.name) ORDER BY d.name, d.plant_id) AS plantings
+        FROM due d GROUP BY d.project_id
+      ),
+      plan_rows AS (
+        SELECT g.project_id, pp.display_name AS project_name,
+               em.last_watered_at, em.location_type, em.watering_interval_days,
+               (now() - make_interval(days => GREATEST(g.overdue_by, 0)))::timestamptz AS next_water_at,
+               g.plantings, 'plan'::text AS water_due_source
+        FROM grouped g
+        JOIN public.container pp ON pp.id = g.project_id::uuid
+        LEFT JOIN entity_memory em ON em.project_id = g.project_id::uuid
+        WHERE pp.deleted_at IS NULL AND pp.archived_at IS NULL
+      ),
+      legacy_rows AS (
+        SELECT em.project_id::text AS project_id, pp.display_name AS project_name,
+               em.last_watered_at, em.location_type, em.watering_interval_days,
+               em.next_water_at,
+               COALESCE((
+                 SELECT json_agg(json_build_object('id', gn.id, 'name', gn.display_name) ORDER BY gn.display_name, gn.id)
+                 FROM public.garden_node gn
+                 WHERE gn.container_id = pp.id AND gn.deleted_at IS NULL AND gn.archived_at IS NULL
+                   AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
+               ), '[]'::json) AS plantings,
+               'legacy'::text AS water_due_source
+        FROM entity_memory em
+        JOIN public.container pp ON pp.id = em.project_id
+        WHERE (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
+          AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
+          AND em.next_water_at IS NOT NULL AND em.next_water_at < now()
+          AND EXISTS (
+            SELECT 1 FROM public.garden_node gn
+            WHERE gn.container_id = pp.id AND gn.deleted_at IS NULL AND gn.archived_at IS NULL
+              AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
+          )
+      )
+      SELECT * FROM plan_rows  WHERE     (SELECT hp FROM has_plan)
+      UNION ALL
+      SELECT * FROM legacy_rows WHERE NOT (SELECT hp FROM has_plan)
+      ORDER BY next_water_at ASC
+    `;
+}
+
 // §A Tile 3 — harvest_ready (status='harvesting', sort oldest last_observed_at).
 // F1: days_since_obs computed via calendar-day arithmetic. May be NULL.
 export function queryHarvestReady(sql, userId) {
@@ -491,7 +567,7 @@ export async function handleDashboard(sql, userId) {
     queryFavoriteCount(sql, userId),
     queryActiveProjects(sql, userId),
     queryUserStats(sql, userId),
-    queryWaterDue(sql, userId),
+    queryWaterDueFromPlan(sql, userId),
     queryHarvestReady(sql, userId),
     queryHeadsUp(sql, userId),
     queryInactiveCount(sql, userId),

@@ -60,6 +60,34 @@ function likelyInGround(p,c){
 const RAIN_IA = { outdoor: 0.25 };   // initial abstraction, inches — single conservative outdoor profile (V1)
 const RAIN_HOLD_DAYS = 1;            // short hold (days) for the shared outdoor default; bed full-cycle hold returns in V1.1
 const TRANSPLANT_CARVEOUT_DAYS = 21; // fresh root ball dries fast even when the bed reads moist -> no rain credit
+// DRG-WATERCREDIT-003 (vessel-aware carve-out, 2026-06-24): the fresh-transplant rain-credit denial applies ONLY to
+// genuinely small root balls (cells, plugs, solo cups, <=4in / <=1qt pots) which dry top-to-bottom in hours so a light
+// rain doesn't reliably reach the root zone. Established LARGE vessels (5-gal fabric bags, troughs, beds, in-ground,
+// barrels) get normal rain credit even when recently transplanted -- a 3-week-old 5-gal bag is not a fresh root ball.
+// Unknown/null vessel within the window FAILS SAFE to small (deny credit -> water it). Container vocab per the DB
+// container_type CHECK; size is free-text (e.g. '5 gal','3 in','6x2 ft','0.5qt').
+const SMALL_VESSEL_TYPES = new Set(['tray_cell','soil_block','solo_cup']);
+const LARGE_VESSEL_TYPES = new Set(['in_ground','raised_bed','trough','whiskey_barrel','window_box','hanging_basket']);
+function vesselSizeSmall(size){
+  if(!size||typeof size!=='string') return null;                       // unknown -> caller decides
+  const m=size.toLowerCase().match(/([\d.]+)\s*(inch|in\b|\"|quart|qt\b|gallon|gal\b|foot|feet|ft\b|cm\b|liter|l\b)/);
+  if(!m) return null;
+  const n=parseFloat(m[1]); if(!Number.isFinite(n)) return null;
+  const u=m[2];
+  if(u==='inch'||u.startsWith('in')||u==='\"') return n<=4;            // <=4in root ball = small
+  if(u==='quart'||u.startsWith('qt')) return n<=1;                      // <=1qt = small
+  if(u==='cm') return n<=10;                                            // ~4in
+  if(u==='liter'||u==='l') return n<=1;                                 // <=1L ~ 1qt
+  return false;                                                        // gallon/ft/foot/feet => established/large
+}
+function isSmallVessel(p){
+  const t=((p&&p.container_type)||'').toLowerCase();
+  if(SMALL_VESSEL_TYPES.has(t)) return true;
+  if(LARGE_VESSEL_TYPES.has(t)) return false;
+  const s=vesselSizeSmall(p&&p.container_size);
+  if(s!=null) return s;
+  return true;                                                         // unknown vessel in carve-out window -> fail safe (deny credit, water it)
+}
 function rainClass(p){ return p.covered ? 'none' : 'outdoor'; }    // covered/indoor => 'none'; everything else => 'outdoor'
 function windowPrecip(hy){
   if(!hy || hy.recent_precip_in==null) return null;                 // missing precip -> no credit (uncertainty handled in hydrologyStatus)
@@ -139,7 +167,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
     // date), so plantings entered into the app recently but established in the ground/pots long ago were
     // wrongly flagged "fresh" and denied rain credit (98/167 on 2026-06-23). transplant_at is NULL when no
     // potting_up/transplant/plant-out event exists -> treated as established -> rain credit applies.
-    const freshTransplant=(daysBetween(today,p.transplant_at)??999)<=TRANSPLANT_CARVEOUT_DAYS;
+    const freshTransplant=((daysBetween(today,p.transplant_at)??999)<=TRANSPLANT_CARVEOUT_DAYS) && isSmallVessel(p);
     const rc=freshTransplant?null:rainCreditDays(rcls,wi,hydrology);
     const effDays=(dW!=null&&rc)?dW-rc.credit_days:dW;
     if(dW!=null && dW>=wi && rc && effDays<wi){
@@ -228,4 +256,4 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop, rain_coming:rainComing, status:hs} : {status:hs},
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout};
+module.exports={generatePlan, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall};

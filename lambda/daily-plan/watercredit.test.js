@@ -4,7 +4,7 @@
 // 1-day hold), with the transplant carve-out. Exercises the REAL generatePlanForUser decision path.
 import { describe, it, expect } from 'vitest';
 import engine from './engine.js';
-const { generatePlanForUser, rainClass, rainCreditDays, RAIN_IA } = engine;
+const { generatePlanForUser, rainClass, rainCreditDays, RAIN_IA, isSmallVessel, vesselSizeSmall } = engine;
 
 const TODAY = '2026-06-21';
 const ago = (d) => { const t = new Date('2026-06-21T00:00:00Z'); t.setUTCDate(t.getUTCDate() - d); return t.toISOString().slice(0, 10); };
@@ -82,6 +82,54 @@ describe('DRG-WATERCREDIT-001 V1: deferral count-bug fix + reasons', () => {
   });
   it('fresh-transplant due carries the carve-out reason', () => {
     const { out } = bucket({ covered: false, last_water: ago(3), transplant_at: ago(5) }, H.big);
+    const w = out.tasks.water_due.find(x => x.id === 't');
+    expect(w.rain_note).toMatch(/fresh transplant/);
+  });
+});
+
+
+describe('DRG-WATERCREDIT-003 V1: vessel-aware fresh-transplant carve-out', () => {
+  it('isSmallVessel: small types + small sizes => true', () => {
+    expect(isSmallVessel({ container_type: 'tray_cell', container_size: '2 in' })).toBe(true);
+    expect(isSmallVessel({ container_type: 'soil_block', container_size: '4 in' })).toBe(true);
+    expect(isSmallVessel({ container_type: 'solo_cup', container_size: null })).toBe(true);
+    expect(isSmallVessel({ container_type: 'plastic_pot', container_size: '4 in' })).toBe(true);
+    expect(isSmallVessel({ container_type: 'fabric_bag', container_size: '3 in' })).toBe(true);
+  });
+  it('isSmallVessel: large types + >=1gal sizes => false (established, gets rain credit)', () => {
+    expect(isSmallVessel({ container_type: 'fabric_bag', container_size: '5 gal' })).toBe(false);
+    expect(isSmallVessel({ container_type: 'trough', container_size: '6x2 ft' })).toBe(false);
+    expect(isSmallVessel({ container_type: 'in_ground', container_size: null })).toBe(false);
+    expect(isSmallVessel({ container_type: 'plastic_pot', container_size: '6 in' })).toBe(false);
+    expect(isSmallVessel({ container_type: 'plastic_pot', container_size: '1 gal' })).toBe(false);
+  });
+  it('isSmallVessel: unknown/null vessel fails safe to small (deny credit -> water it)', () => {
+    expect(isSmallVessel({ container_type: null, container_size: null })).toBe(true);
+    expect(isSmallVessel({ container_type: 'plastic_pot', container_size: 'garbage' })).toBe(true);
+    expect(isSmallVessel({ container_type: null, container_size: '5 gal' })).toBe(false); // known-large size still wins
+  });
+  it('vesselSizeSmall: boundary + unit parsing', () => {
+    expect(vesselSizeSmall('4 in')).toBe(true);
+    expect(vesselSizeSmall('4.5 in')).toBe(false);
+    expect(vesselSizeSmall('1 qt')).toBe(true);
+    expect(vesselSizeSmall('0.5qt')).toBe(true);
+    expect(vesselSizeSmall('1 gal')).toBe(false);
+    expect(vesselSizeSmall('6x2 ft')).toBe(false);
+    expect(vesselSizeSmall(null)).toBeNull();
+    expect(vesselSizeSmall('no units here')).toBeNull();
+  });
+
+  // Behavioral: a RECENT transplant (within 21d) in a LARGE vessel now gets rain credit (no longer carved out);
+  // the SAME recency in a SMALL vessel stays carved out (Dave 2026-06-24: established 5-gal bag peppers were
+  // wrongly labeled "fresh transplant" daily after rain).
+  it('large-vessel recent transplant + big rain => SKIP (credited; carve-out no longer applies)', () => {
+    const { b, out } = bucket({ covered: false, last_water: ago(3), transplant_at: ago(5), container_type: 'fabric_bag', container_size: '5 gal' }, H.big);
+    expect(b).toBe('SKIP');
+    expect(out.tasks.rain_skipped[0].reason).toMatch(/counts as watering/);
+  });
+  it('small-vessel recent transplant + big rain => DUE (carve-out still applies)', () => {
+    const { b, out } = bucket({ covered: false, last_water: ago(3), transplant_at: ago(5), container_type: 'tray_cell', container_size: '2 in' }, H.big);
+    expect(b).toBe('DUE');
     const w = out.tasks.water_due.find(x => x.id === 't');
     expect(w.rain_note).toMatch(/fresh transplant/);
   });

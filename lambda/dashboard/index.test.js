@@ -43,6 +43,7 @@ import {
   queryActiveProjects,
   queryUserStats,
   queryWaterDue,
+  queryWaterDueFromPlan,
   queryHarvestReady,
   queryHeadsUp,
   queryInactiveCount,
@@ -631,5 +632,46 @@ describe('V3-ATTNFILTER-001 — queryGiveAttention builder', () => {
     expect(q).toMatch(/gn\.status NOT IN \('dormant','ended','failed','rooting'\)/);
     expect(q).toMatch(/LIMIT 1/);
     expect(countUserBinds(sqlCalls[0].values, 'user_alpha')).toBe(2);
+  });
+});
+
+
+// ---- DRG-WATERRECON-001: bar reads the engine verdict (daily_plan), not entity_memory --------
+describe('DRG-WATERRECON-001 — queryWaterDueFromPlan (alert bar reads the DrG engine verdict)', () => {
+  it('reads today daily_plan, freshness-filters via event_log (ET), groups, joins entity_memory, falls back to legacy', () => {
+    queryWaterDueFromPlan(makeSql(), 'user_alpha');
+    const q = findSql(s => s.includes('daily_plan') && s.includes("items->'water_due'"));
+    expect(q).toBeDefined();
+    // plan keyed per-user + ET day
+    expect(q.resolved).toMatch(/FROM daily_plan/);
+    expect(q.resolved).toMatch(/America\/New_York/);
+    // same-day done-set (mirrors daily-plan-read.annotateDone): watering/rain event today ET
+    expect(q.resolved).toMatch(/FROM event_log/);
+    expect(q.resolved).toMatch(/event_type IN \('watering','rain'\)/);
+    // display fields the UI reads (WaterMeTile + todayBand) preserved from entity_memory + container
+    expect(q.resolved).toMatch(/entity_memory/);
+    expect(q.resolved).toMatch(/public\.container/);
+    expect(q.resolved).toMatch(/last_watered_at/);
+    expect(q.resolved).toMatch(/location_type/);
+    // observable fallback source flag + legacy branch gated on absence of a plan row
+    expect(q.resolved).toMatch(/water_due_source/);
+    expect(q.resolved).toMatch(/NOT \(SELECT hp FROM has_plan\)/);
+    // binds userId (plan + legacy assignee/created_by => 3 binds)
+    expect(countUserBinds(q.values, 'user_alpha')).toBeGreaterThanOrEqual(1);
+  });
+
+  it('handleDashboard passes queryWaterDueFromPlan rows through to water_due (drop-in for queryWaterDue)', async () => {
+    // position 6 in the aggregation FIFO is now queryWaterDueFromPlan's single call
+    sqlResults.push([], [{ project_count: 0, plant_count: 0, location_count: 0 }], [{ count: 0 }], [], [],
+      [{ project_id: 'pr1', project_name: 'Peppers', last_watered_at: '2026-06-24T10:00:00Z', location_type: null,
+         watering_interval_days: null, next_water_at: '2026-06-23T00:00:00Z',
+         plantings: [{ id: 'p1', name: 'Jalapeño' }], water_due_source: 'plan' }],
+      [], [], [{ count: 0 }]);
+    const res = await handleDashboard(makeSql(), 'user_alpha');
+    const body = parseBody(res);
+    expect(body.water_due).toHaveLength(1);
+    expect(body.water_due[0].project_name).toBe('Peppers');
+    expect(body.water_due[0].last_watered_at).toBe('2026-06-24T10:00:00Z');
+    expect(body.water_due[0].water_due_source).toBe('plan');
   });
 });
