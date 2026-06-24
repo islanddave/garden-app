@@ -48,6 +48,7 @@ export default function PlantingDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [notFound, setNotFound] = useState(false)
+  const [unarchiving, setUnarchiving] = useState(false)  // V3-ARCHIVE-001: planting restore path
 
   // Event log has its OWN lifecycle (DoD: don't conflate filtered-empty with failed-load).
   const [events, setEvents] = useState([])
@@ -188,6 +189,21 @@ export default function PlantingDetail() {
 
   if (!planting) return null
 
+  // V3-ARCHIVE-001: restore an archived planting. Plantings were archivable only from the Garden row
+  // (with a 6s Undo); after that window an archived planting was hidden everywhere with no restore path.
+  // Mirror ProjectDetail: an Archived badge + Unarchive here make a by-id-reachable archived planting recoverable.
+  async function handleUnarchive() {
+    setUnarchiving(true)
+    try {
+      const res = await fetch('/api/plants/' + plantingId + '/archive', { method: 'PATCH', body: JSON.stringify({ archived: false }) })
+      setPlanting(prev => ({ ...prev, archived_at: res?.archived_at ?? null }))
+    } catch (err) {
+      console.error('unarchive failed', err)
+    } finally {
+      setUnarchiving(false)
+    }
+  }
+
   const pl = planting
   const variety = pl.variety_ref?.name
   // First-harvest date: prefer a stored field, else derive from the event log (first_harvest,
@@ -241,6 +257,11 @@ export default function PlantingDetail() {
           </h1>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             {pl.status && <PlantStatusBadge status={pl.status} size="lg" />}
+            {pl.archived_at && (
+              <span style={{ backgroundColor: P.greenPale, color: P.green, border: `1px solid ${P.greenLight}`, fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600 }}>
+                Archived
+              </span>
+            )}
             {pl.quantity > 1 && (
               <span style={{ fontSize: '0.82rem', color: P.green, fontWeight: 600 }}>×{formatQty(pl.quantity)}</span>
             )}
@@ -249,6 +270,14 @@ export default function PlantingDetail() {
         </div>
         {/* Actions: Log event (V3-LOG-001) + Edit (V3-EDIT-001), stacked. */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, alignSelf: 'flex-start' }}>
+          {pl.archived_at && (
+            <button onClick={handleUnarchive} disabled={unarchiving} aria-label="Unarchive this planting"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, backgroundColor: P.white, color: P.green,
+                border: `1px solid ${P.greenLight}`, borderRadius: 8, padding: '8px 14px', fontSize: '0.85rem',
+                fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              {unarchiving ? 'Working…' : '♻️ Unarchive'}
+            </button>
+          )}
           <Link
             to={`/log?project=${pl.project_id}&plant=${pl.id}`}
             aria-label="Log an event for this planting"

@@ -6,7 +6,7 @@
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 const { apiFetchSpy } = vi.hoisted(() => ({ apiFetchSpy: vi.fn() }))
@@ -214,5 +214,39 @@ describe('PlantingDetail — V3-PHOTOMULTI-001 photos widget (V1 display-only)',
     expect(await screen.findByAltText('Seedling')).toBeTruthy()
     expect(await screen.findByAltText('Megatron Jalapeno photo')).toBeTruthy()
     expect(screen.queryByText('Not mine')).toBeNull()
+  })
+})
+
+
+describe('PlantingDetail — V3-ARCHIVE-001 archived restore path', () => {
+  it('archived planting shows the Archived badge + Unarchive, and Unarchive PATCHes /archive {archived:false}', async () => {
+    const patchCalls = []
+    apiFetchSpy.mockImplementation((path, opts) => {
+      if (typeof path === 'string' && path.endsWith('/archive')) { patchCalls.push([path, opts]); return Promise.resolve({ archived_at: null }) }
+      if (path.startsWith('/api/plants/')) return Promise.resolve({ ...PLANTING, archived_at: '2026-06-20T00:00:00Z' })
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    expect(screen.getByText('Archived')).toBeTruthy()
+    const btn = screen.getByRole('button', { name: /Unarchive this planting/i })
+    await act(async () => { fireEvent.click(btn); await Promise.resolve() })
+    expect(patchCalls.length).toBe(1)
+    expect(patchCalls[0][0]).toBe('/api/plants/pl1/archive')
+    expect(JSON.parse(patchCalls[0][1].body)).toEqual({ archived: false })
+    await waitFor(() => expect(screen.queryByText('Archived')).toBeNull())
+  })
+
+  it('non-archived planting shows neither the Archived badge nor Unarchive', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING)
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    expect(screen.queryByText('Archived')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Unarchive/i })).toBeNull()
   })
 })
