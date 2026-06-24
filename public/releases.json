@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.15.2",
+    "date": "2026-06-24",
+    "highlights": [
+      "Watering on hot days: on days around 85\u00b0F and up, the daily plan now knows fabric grow bags dry out fast, so a light rain won't make a thirsty bag look like it's been watered.",
+      "Photo Library: if your photos can't load, you now get a clear message with a Retry button instead of the page looking empty as if you had no photos."
+    ]
+  },
+  {
     "version": "2.15.1",
     "date": "2026-06-24",
     "highlights": [
