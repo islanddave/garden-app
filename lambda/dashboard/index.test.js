@@ -675,3 +675,24 @@ describe('DRG-WATERRECON-001 — queryWaterDueFromPlan (alert bar reads the DrG 
     expect(body.water_due[0].water_due_source).toBe('plan');
   });
 });
+
+
+// DRG-WATERRECON-001 drift guard: the alert bar (queryWaterDueFromPlan `fresh` CTE) and the Today page
+// (daily-plan-read annotateDone) are two independent reimplementations of the SAME "satisfied today" filter.
+// They MUST keep the same water-done event types or bar and Today silently re-diverge (the 0%-overlap bug class).
+import { readFileSync as __readFileSync } from 'fs';
+describe('DRG-WATERRECON-001 — bar/Today freshness filters stay in lockstep (anti-drift)', () => {
+  it('the bar SQL and Today annotateDone use the same water-done event types + ET-day boundary', () => {
+    const barSrc = __readFileSync('lambda/dashboard/handlers.js', 'utf8');
+    const todaySrc = __readFileSync('lambda/daily-plan-read/index.js', 'utf8');
+    // bar: SQL literal IN ('watering','rain'); Today: DONE_EVENTS.water_due array ['watering','rain']
+    expect(barSrc).toMatch(/event_type IN \('watering','rain'\)/);
+    expect(todaySrc).toMatch(/water_due:\s*\[\s*'watering',\s*'rain'\s*\]/);
+    // both key the done-day on America/New_York ::date
+    expect(barSrc).toMatch(/event_date AT TIME ZONE 'America\/New_York'\)::date/);
+    expect(todaySrc).toMatch(/event_date AT TIME ZONE 'America\/New_York'\)::date/);
+    // both filter soft-deleted events out of the done-set
+    expect(barSrc).toMatch(/ev\.deleted_at IS NULL/);
+    expect(todaySrc).toMatch(/e\.deleted_at IS NULL/);
+  });
+});

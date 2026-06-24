@@ -273,9 +273,15 @@ export function queryWaterDueFromPlan(sql, userId) {
       ),
       has_plan AS (SELECT EXISTS(SELECT 1 FROM plan) AS hp),
       wd AS (
+        -- defensive: jsonb_array_elements THROWS on a JSON scalar/null (would 500 the whole dashboard);
+        -- coalesce a malformed/absent water_due to an empty array. Drop elements missing id/project_id.
         SELECT (e->>'id') AS plant_id, (e->>'project_id') AS project_id, (e->>'name') AS name,
                COALESCE((e->>'overdue_by')::int, 0) AS overdue_by
-        FROM plan, jsonb_array_elements(plan.items->'water_due') e
+        FROM plan,
+             jsonb_array_elements(
+               CASE WHEN jsonb_typeof(plan.items->'water_due') = 'array'
+                    THEN plan.items->'water_due' ELSE '[]'::jsonb END) e
+        WHERE (e->>'id') IS NOT NULL AND (e->>'project_id') IS NOT NULL
       ),
       fresh AS (
         SELECT DISTINCT ev.plant_id::text AS plant_id
@@ -284,7 +290,7 @@ export function queryWaterDueFromPlan(sql, userId) {
           AND ev.plant_id::text IN (SELECT plant_id FROM wd)
           AND (ev.event_date AT TIME ZONE 'America/New_York')::date = et_today
       ),
-      due AS (SELECT * FROM wd WHERE plant_id NOT IN (SELECT plant_id FROM fresh)),
+      due AS (SELECT wd.* FROM wd WHERE NOT EXISTS (SELECT 1 FROM fresh f WHERE f.plant_id = wd.plant_id)),
       grouped AS (
         SELECT d.project_id, MAX(d.overdue_by) AS overdue_by,
                json_agg(json_build_object('id', d.plant_id, 'name', d.name) ORDER BY d.name, d.plant_id) AS plantings
@@ -595,6 +601,11 @@ export async function handleDashboard(sql, userId) {
     last_active_date: activityDays.length ? activityDays[0] : storedStats.last_active_date,
   };
 
+  // OBSERVABILITY (DRG-WATERRECON-001): the bar fell back to the legacy entity_memory verdict because no
+  // daily_plan row exists for today (engine-skip) — surfaces the otherwise-silent bar/Today divergence on skip days.
+  if (Array.isArray(waterDue) && waterDue.some((r) => r && r.water_due_source === 'legacy')) {
+    console.warn('[water_due] legacy fallback served — no daily_plan for today', { userId });
+  }
   return resp(200, {
     recent_events: collapseBatches(recentEvents),
     active_projects: activeProjects,
