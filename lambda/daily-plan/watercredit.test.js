@@ -134,3 +134,38 @@ describe('DRG-WATERCREDIT-003 V1: vessel-aware fresh-transplant carve-out', () =
     expect(w.rain_note).toMatch(/fresh transplant/);
   });
 });
+
+describe('DRG-WATERCREDIT-004: hot-day fabric-bag heat-gate (>=85°F)', () => {
+  const wxHot = { tonightLow: 70, highToday: 90 };
+  const wxMild = { tonightLow: 60, highToday: 80 };
+  const wxEdge = { tonightLow: 65, highToday: 85 }; // exactly at the gate
+  const mk = (ov, hy, weather) => {
+    const p = { id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81), transplant_at: null, ...ov };
+    const out = generatePlanForUser([p], cad, fm, TODAY, weather, hy);
+    const b = out.tasks.water_due.some(w => w.id === 't') ? 'DUE'
+      : out.tasks.rain_skipped.some(w => w.id === 't') ? 'SKIP' : 'OTHER';
+    return { b, out };
+  };
+  it('established outdoor fabric bag, big rain, HOT day => DUE (credit withheld)', () => {
+    const { b, out } = mk({ container_type: 'fabric_bag', container_size: '5 gal', last_water: ago(3) }, H.big, wxHot);
+    expect(b).toBe('DUE');
+    expect(out.tasks.water_due.find(w => w.id === 't').rain_note).toMatch(/fabric bag dries fast/i);
+  });
+  it('SAME fabric bag, big rain, MILD day => SKIP (credit applies)', () => {
+    expect(mk({ container_type: 'fabric_bag', container_size: '5 gal', last_water: ago(3) }, H.big, wxMild).b).toBe('SKIP');
+  });
+  it('fabric bag at exactly 85°F => DUE (gate is inclusive)', () => {
+    expect(mk({ container_type: 'fabric_bag', container_size: '5 gal', last_water: ago(3) }, H.big, wxEdge).b).toBe('DUE');
+  });
+  it('hot day but NON-fabric vessel (in_ground) => SKIP (gate is fabric-only)', () => {
+    expect(mk({ container_type: 'in_ground', container_size: null, last_water: ago(5) }, H.big, wxHot).b).toBe('SKIP'); // in_ground uses the 5d interval
+  });
+  it('hot day, COVERED fabric bag => DUE (covered never credited; no misleading bag note)', () => {
+    const { b, out } = mk({ container_type: 'fabric_bag', container_size: '5 gal', covered: true, last_water: ago(3) }, H.big, wxHot);
+    expect(b).toBe('DUE');
+    expect(out.tasks.water_due.find(w => w.id === 't').rain_note ?? '').not.toMatch(/fabric bag dries fast/i);
+  });
+  it('hot day, fabric bag, NO qualifying rain => DUE via normal path (gate is a no-op without rain)', () => {
+    expect(mk({ container_type: 'fabric_bag', container_size: '5 gal', last_water: ago(4) }, H.none, wxHot).b).toBe('DUE');
+  });
+});

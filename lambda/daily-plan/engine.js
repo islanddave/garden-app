@@ -5,6 +5,12 @@
 // never-logged-aware, temp-aware, per-variety cold, strict per-user. No I/O; caller passes today/weather/cadence/fertModel.
 const DAY = 86400000;
 const HOT_F = 88;
+// DRG-WATERCREDIT-004: fabric grow bags have breathable sidewalls and dry top-to-bottom fast in heat, so a
+// light/moderate rain that would credit a rigid pot or bed does NOT keep a fabric bag wet on a hot day. On
+// days at/above this threshold we withhold rain credit for fabric_bag vessels (outdoor only) so a real
+// watering isn't suppressed. Intentionally LOWER than HOT_F (88, the drought-cadence accelerator): bags lose
+// moisture at more moderate heat than the cadence bump warrants. Scoped to fabric_bag; rigid/in-ground retain credit.
+const BAG_HEAT_GATE_F = 85;
 // DRG-WATERRECON-002: canonical version stamped into the stored daily_plan.items jsonb (by handler.js).
 // The dashboard bar (lambda/dashboard/handlers.js) and the Today reader (lambda/daily-plan-read/index.js)
 // assert this value and FAIL LOUD on mismatch — a silent field-rename/shape-drift would otherwise yield an
@@ -148,6 +154,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[];
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
+  const hotForBag=high!=null&&high>=BAG_HEAT_GATE_F;   // DRG-WATERCREDIT-004 fabric-bag heat-gate signal
   for(const p of plantings){
     // DRG-WATERSTAGE-001: skip plantings whose parent PROJECT is still in 'planning' — not yet physically
     // planted, so they must not generate watering (or any other) care tasks. Plantings carry no 'planning'
@@ -174,7 +181,10 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
     // wrongly flagged "fresh" and denied rain credit (98/167 on 2026-06-23). transplant_at is NULL when no
     // potting_up/transplant/plant-out event exists -> treated as established -> rain credit applies.
     const freshTransplant=((daysBetween(today,p.transplant_at)??999)<=TRANSPLANT_CARVEOUT_DAYS) && isSmallVessel(p);
-    const rc=freshTransplant?null:rainCreditDays(rcls,wi,hydrology);
+    // DRG-WATERCREDIT-004: outdoor fabric bags dry fast in heat -> withhold rain credit on hot days so they
+    // still surface for watering. Outdoor-scoped (covered bags are never credited anyway, so no misleading note).
+    const bagHeatGate=hotForBag && rcls==='outdoor' && ((p.container_type||'').toLowerCase()==='fabric_bag');
+    const rc=(freshTransplant||bagHeatGate)?null:rainCreditDays(rcls,wi,hydrology);
     const effDays=(dW!=null&&rc)?dW-rc.credit_days:dW;
     if(dW!=null && dW>=wi && rc && effDays<wi){
       rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
@@ -184,6 +194,8 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
       const wp=windowPrecip(hydrology);
       const rain_note=freshTransplant
         ? 'Water — fresh transplant (no rain credit; small root ball dries fast)'
+        : bagHeatGate
+        ? `Water — fabric bag dries fast at ${high}°F (rain credit withheld on hot days)`
         : (rcls==='outdoor' && rc==null && wp!=null && wp>0
             ? `Water — ${Math.round(wp*100)/100}" rain under the ${RAIN_IA.outdoor}" soak-in threshold`
             : (rc ? `Water — ${rc.wp}" rain didn't cover the gap (last watered ${dW}d ago)` : null));
@@ -262,4 +274,4 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop, rain_coming:rainComing, status:hs} : {status:hs},
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, PLAN_SCHEMA_VERSION, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall};
+module.exports={generatePlan, PLAN_SCHEMA_VERSION, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall};
