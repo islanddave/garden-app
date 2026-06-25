@@ -1,0 +1,62 @@
+# gates.yml
+# V4 TAGSUB — faceted tag + entity_tag M2M tables with RLS.
+#
+# L-058 SWEEP: empty by design — pure additive table creation, no CHECK / NOT VALID / VALIDATE
+#   step (the inline CHECKs are created already-valid on empty new tables). Pre-gate confirms the
+#   referenced plant_varieties table exists (cultivar entity source). Post-gates confirm both
+#   tables landed, RLS is enabled, the 8 policies exist, and the schema_version row is recorded.
+
+pre:
+  - name: plant_varieties_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plant_varieties'
+    expect: rowcount_eq
+    value: 1
+
+sweep: []
+
+post:
+  - name: tag_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='tag'
+    expect: rowcount_eq
+    value: 1
+
+  - name: entity_tag_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='entity_tag'
+    expect: rowcount_eq
+    value: 1
+
+  - name: tag_rls_enabled
+    sql: |
+      SELECT relrowsecurity FROM pg_class WHERE relname='tag'
+    expect: scalar_eq
+    value: true
+
+  - name: entity_tag_rls_enabled
+    sql: |
+      SELECT relrowsecurity FROM pg_class WHERE relname='entity_tag'
+    expect: scalar_eq
+    value: true
+
+  - name: tag_policies_count
+    sql: |
+      SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='tag'
+    expect: scalar_eq
+    value: 4
+
+  - name: entity_tag_policies_count
+    sql: |
+      SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='entity_tag'
+    expect: scalar_eq
+    value: 4
+
+  - name: schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.2.0-tagsub-001'
+    expect: rowcount_eq
+    value: 1

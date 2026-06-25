@@ -1,0 +1,66 @@
+# gates.yml
+# V4 PLANTTYPE — crop_types vocab table + plant_varieties type/lifecycle/heat columns.
+#
+# L-058 SWEEP: the two new CHECK constraints are added NOT VALID in 0a and VALIDATEd in
+#   0c-validate.sql. The sweep gate confirms both are convalidated after 0c runs.
+# Pre-gate confirms plant_varieties exists. Post-gates confirm the new table/columns landed
+#   and the schema_version row is recorded.
+
+pre:
+  - name: plant_varieties_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plant_varieties'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  - name: chk_lifecycle_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint WHERE conname='chk_plant_varieties_lifecycle'
+    expect: scalar_eq
+    value: true
+
+  - name: chk_scoville_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint WHERE conname='chk_plant_varieties_scoville'
+    expect: scalar_eq
+    value: true
+
+post:
+  - name: crop_types_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='crop_types'
+    expect: rowcount_eq
+    value: 1
+
+  - name: plant_varieties_crop_type_slug_column
+    sql: |
+      SELECT data_type FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties'
+         AND column_name='crop_type_slug'
+    expect: scalar_eq
+    value: text
+
+  - name: plant_varieties_new_columns_count
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties'
+         AND column_name IN ('crop_type_slug','lifecycle','scoville_min','scoville_max','growth_habit','produces_scape')
+    expect: scalar_eq
+    value: 6
+
+  - name: idx_plant_varieties_crop_type_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='plant_varieties'
+         AND indexname='idx_plant_varieties_crop_type'
+    expect: rowcount_eq
+    value: 1
+
+  - name: schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.1.0-planttype-001'
+    expect: rowcount_eq
+    value: 1
