@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.2.0",
+    "date": "2026-06-25",
+    "highlights": [
+      "Behind the scenes: the foundation for tag-based organization is in. Your plant varieties now automatically carry type and lifecycle tags (like pepper and annual) that will power smarter grouping and filtering in upcoming releases."
+    ]
+  },
+  {
     "version": "3.1.0",
     "date": "2026-06-25",
     "highlights": [
