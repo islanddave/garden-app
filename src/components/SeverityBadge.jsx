@@ -1,10 +1,12 @@
 import React from 'react'
+import { P } from '../lib/constants.js'
+import { T } from './forms/formStyles.js'
 
 // FLAG-REMOVAL (2026-06-10): the per-planting issue-flagging UI was retired; the flagged1/2/3
 // variants left with it. Only the system-assigned 'stale' badge remains (HeadsUpTile).
 const STALE = {
   label: 'Stale',
-  color: '#d4b556',
+  color: P.severityStaleBorder,
   title: 'Stale: no observations in 21+ days',
   icon: (c) => (
     <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
@@ -28,10 +30,10 @@ export default function SeverityBadge({ reason, daysStale }) {
         gap: 4,
         padding: '2px 8px',
         minHeight: 20,
-        borderRadius: 10,
+        borderRadius: T.radiusCard,
         border: `1px solid ${STALE.color}`,
         color: STALE.color,
-        fontSize: '0.72rem',
+        fontSize: T.type.xs,
         fontWeight: 600,
         lineHeight: 1,
         whiteSpace: 'nowrap',

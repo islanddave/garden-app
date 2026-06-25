@@ -22,6 +22,20 @@ export const P = {
   blue:        '#4a7fb5',
   brown:       '#7a5c3c',
   white:       '#ffffff',
+  // ── DESIGNSYS Pass A: drift-literal promotion (V4-DESIGNSYS-001) ──────────
+  // Hexes lifted verbatim from status.js / formStyles bannerChrome / SeverityBadge.
+  // Parity-preserving: same exact values, now single-sourced.
+  statusInkGold:       '#7a5c00',  // status.js planning/harvesting text ink
+  neutralFill:         '#eee',     // status.js harvested/ended/dormant bg
+  bannerInk:           '#7a2a10',  // formStyles bannerChrome text
+  severityStaleBorder: '#d4b556',  // SeverityBadge stale border/text/icon
+  preparingFill:       '#f0e9e0',  // status.js preparing stage bg
+  badgeInfoBg:         '#e8f0fa',  // forms/Badge info tone bg
+  // ── FACET token set (contract §4) — additive, unused until TAGSUB. AA-checked draft. ──
+  fTypeBg:     '#e6f0e8', fTypeText:     '#1f5138', fTypeBorder:     '#bcd7c4',
+  fGroupBg:    '#eef0fa', fGroupText:    '#3a3f6b', fGroupBorder:    '#c9cdec',
+  fLocationBg: '#f3ece2', fLocationText: '#6b4f2a', fLocationBorder: '#ddcdb6',
+  fFreeformBg: '#f0efed', fFreeformText: '#4a4a4a', fFreeformBorder: '#d9d4cd',
 }
 
 // Soft enum — suggested event types shown in dropdown, free text always accepted.

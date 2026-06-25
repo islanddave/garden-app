@@ -21,10 +21,19 @@ export const T = {
   radiusField:  7,    // input/select/textarea (InventoryAdd canonical)
   radiusButton: 8,    // button (InventoryAdd canonical)
   radiusCard:   10,
+  radiusBadge:  12,   // DESIGNSYS Pass A: PlantStatusBadge pill radius
   fieldPadY:    10,
   fieldPadX:    12,
   fontField:    '0.9rem',
   buttonMinHeight: 48, // frozen — accessibility tap target + Crucible §2
+  // ── DESIGNSYS Pass A: type + space ramps (values already in use; additive) ──
+  type: { xs: '0.72rem', sm: '0.82rem', base: '0.9rem', md: '0.95rem' },
+  space: { xs: 5, sm: 10, md: 16, lg: 20 },
+  // Badge tokens — exact current PlantStatusBadge values (parity-preserving).
+  badgeFontSm: '0.73rem',
+  badgeFontLg: '0.85rem',
+  badgePadSm:  '2px 9px',
+  badgePadLg:  '4px 12px',
 }
 
 // Build the select chevron data-URI from a palette color (default P.light).
@@ -132,5 +141,5 @@ export const bannerChrome = {
   borderRadius: 8,
   padding: '12px 16px',
   fontSize: '0.875rem',
-  color: '#7a2a10',
+  color: P.bannerInk,
 }

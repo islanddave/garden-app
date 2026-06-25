@@ -33,6 +33,12 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Lint (frozen primitives)
+        # DESIGNSYS Pass A (V4-DESIGNSYS-001): scoped no-raw-design-tokens guard.
+        # Fails the build if a tokenized primitive reintroduces a raw hex color or
+        # raw JSX emoji (must use lib/constants.js P / lib/tokens.js / lib/iconRegistry.js).
+        run: npm run lint
+
       - name: Build (CI — placeholder env vars)
         # VITE_ vars are inlined at build time as string literals.
         # Placeholder values allow build to succeed without real infrastructure.

@@ -14,7 +14,7 @@ const TONE_COLORS = {
   active:  { bg: P.greenPale, text: P.green,       border: P.greenLight },
   success: { bg: P.greenPale, text: P.green,       border: P.greenLight },
   warn:    { bg: P.warn,      text: P.gold,        border: P.warnBorder },
-  info:    { bg: '#e8f0fa',   text: P.blue,        border: P.blue },
+  info:    { bg: P.badgeInfoBg,   text: P.blue,        border: P.blue },
   danger:  { bg: P.alert,     text: P.alertBorder, border: P.alertBorder },
 }
 

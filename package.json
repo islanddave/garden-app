@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
-    "check:event-types": "node scripts/gen-lambda-event-types.mjs --check"
+    "check:event-types": "node scripts/gen-lambda-event-types.mjs --check",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@clerk/react": "^6.0.0",
@@ -21,11 +22,13 @@
     "react-router-dom": "^6.22.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.5.2",
     "@vitejs/plugin-react": "^5.0.0",
     "@vitest/coverage-v8": "^2.0.0",
+    "eslint": "^9.39.4",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^25.0.0",
     "vite": "^8.0.9",

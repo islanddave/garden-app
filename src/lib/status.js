@@ -15,22 +15,22 @@ import { P } from './constants.js'
 const ACTIVE_STAGE = { bg: P.greenPale, text: P.green, border: P.greenLight }
 
 export const STATUS_COLORS = {
-  planning:  { bg: P.warn,  text: '#7a5c00', border: P.warnBorder },
-  preparing: { bg: '#f0e9e0', text: P.brown, border: P.border },
+  planning:  { bg: P.warn,  text: P.statusInkGold, border: P.warnBorder },
+  preparing: { bg: P.preparingFill, text: P.brown, border: P.border },
   active:    ACTIVE_STAGE,
   seeding:   ACTIVE_STAGE,
   sprouting: ACTIVE_STAGE,
   growing:   ACTIVE_STAGE,
   flowering: ACTIVE_STAGE,
   fruiting:  ACTIVE_STAGE,
-  harvesting:{ bg: P.warn,  text: '#7a5c00', border: P.warnBorder },
-  harvested: { bg: '#eee',  text: P.mid,     border: P.border },
-  ended:     { bg: '#eee',  text: P.light,   border: P.border },
+  harvesting:{ bg: P.warn,  text: P.statusInkGold, border: P.warnBorder },
+  harvested: { bg: P.neutralFill,  text: P.mid,     border: P.border },
+  ended:     { bg: P.neutralFill,  text: P.light,   border: P.border },
   // ── Plant lifecycle statuses (V3-FORMSYS-001 §3.2 — were falling through to planning gold) ──
   seed:       ACTIVE_STAGE,
   seedling:   ACTIVE_STAGE,
   vegetative: ACTIVE_STAGE,
-  dormant:    { bg: '#eee',  text: P.mid,         border: P.border },
+  dormant:    { bg: P.neutralFill,  text: P.mid,         border: P.border },
   failed:     { bg: P.alert, text: P.alertBorder, border: P.alertBorder },
 }
 
