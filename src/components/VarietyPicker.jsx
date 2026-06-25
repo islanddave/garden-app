@@ -23,6 +23,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useVarieties } from '../hooks/useVarieties.js'
+import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
 
 const DEBOUNCE_MS = 250
@@ -38,12 +39,18 @@ export default function VarietyPicker({
   id,
 }) {
   const { varieties, loading, error, search, createVariety } = useVarieties()
+  const { cropTypes } = useCropTypes()
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [highlight, setHighlight] = useState(0)
   const [creating, setCreating] = useState(false)
   const [createErr, setCreateErr] = useState(null)
   const [touched, setTouched] = useState(false)
+  // V4-PLANTTYPE-001: two-stage create. null = picking/creating a variety; 'crop' = the
+  // crop-type chooser shown after the user commits to creating a brand-new variety, so new
+  // varieties get typed at authoring time (controlled crop_types vocab). Optional — a
+  // "No crop type" row keeps creation possible, and an empty vocab skips the stage entirely.
+  const [createStage, setCreateStage] = useState(null)
   // Disambiguation modal state for 409 conflict
   // null | { query, existing }
   const [conflict, setConflict] = useState(null)
@@ -52,6 +59,16 @@ export default function VarietyPicker({
   const listboxId = useMemo(() => `vp-list-${Math.random().toString(36).slice(2, 9)}`, [])
   const debounceRef = useRef(null)
   const lastSentRef = useRef('')
+  // Crop chosen for the in-flight create, so a 409 "Create anyway" re-submits with the same type.
+  const pendingCropRef = useRef({ slug: null, lifecycle: null })
+
+  // slug -> crop_type row, for labelling existing varieties + the selected chip.
+  const cropBySlug = useMemo(() => {
+    const m = {}
+    for (const c of cropTypes) m[c.slug] = c
+    return m
+  }, [cropTypes])
+  const cropLabel = useCallback((slug) => (slug && cropBySlug[slug]?.display_name) || null, [cropBySlug])
 
   // ── Debounced search ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -66,8 +83,8 @@ export default function VarietyPicker({
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [query, open, search])
 
-  // Reset highlight whenever results change
-  useEffect(() => { setHighlight(0) }, [varieties, query])
+  // Reset highlight whenever results change or we switch create stage
+  useEffect(() => { setHighlight(0) }, [varieties, query, createStage])
 
   // ── Filtered list (server already filtered by ?q=; this is a defensive client filter) ──
   const filtered = useMemo(() => {
@@ -90,6 +107,8 @@ export default function VarietyPicker({
 
   // total focusable items = filtered.length + (1 if create footer)
   const itemCount = filtered.length + (showCreateFooter ? 1 : 0)
+  // In the crop stage: row 0 = "No crop type", rows 1..N = crop types.
+  const cropItemCount = cropTypes.length + 1
 
   // ── Selection handlers ────────────────────────────────────────────────────
   const selectVariety = useCallback((v) => {
@@ -97,6 +116,7 @@ export default function VarietyPicker({
     setOpen(false)
     setQuery('')
     setCreateErr(null)
+    setCreateStage(null)
     setTouched(true)
   }, [onChange])
 
@@ -106,13 +126,20 @@ export default function VarietyPicker({
     setTimeout(() => inputRef.current?.focus(), 0)
   }, [onChange])
 
-  const submitCreate = useCallback(async (allowDuplicate = false) => {
+  const submitCreate = useCallback(async (allowDuplicate = false, cropSlug = null, cropLifecycle = null) => {
     const name = query.trim()
     if (!name) return
+    // Remember the chosen crop so a 409 "Create anyway" re-submits with the same type.
+    if (!allowDuplicate) pendingCropRef.current = { slug: cropSlug, lifecycle: cropLifecycle }
+    const crop = allowDuplicate ? pendingCropRef.current : { slug: cropSlug, lifecycle: cropLifecycle }
     setCreating(true)
     setCreateErr(null)
     const payload = { name }
     if (speciesFilter) payload.species = speciesFilter
+    if (crop.slug) {
+      payload.crop_type_slug = crop.slug
+      if (crop.lifecycle) payload.lifecycle = crop.lifecycle
+    }
     const res = await createVariety(payload, { allowDuplicate })
     setCreating(false)
     if (res.error && res.existing && !allowDuplicate) {
@@ -127,9 +154,25 @@ export default function VarietyPicker({
     setConflict(null)
   }, [query, speciesFilter, createVariety, selectVariety])
 
+  // Commit to creating a new variety: enter the crop-type chooser, or (no vocab) create directly.
+  const beginCreate = useCallback(() => {
+    if (cropTypes.length > 0) { setCreateStage('crop'); setHighlight(0) }
+    else submitCreate(false)
+  }, [cropTypes.length, submitCreate])
+
   // ── Keyboard nav ──────────────────────────────────────────────────────────
   const onKeyDown = (e) => {
     if (disabled) return
+    if (createStage === 'crop') {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight(h => Math.min(cropItemCount - 1, h + 1)) }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight(h => Math.max(0, h - 1)) }
+      else if (e.key === 'Enter') {
+        e.preventDefault()
+        if (highlight === 0) submitCreate(false, null, null)
+        else { const ct = cropTypes[highlight - 1]; if (ct) submitCreate(false, ct.slug, ct.default_lifecycle ?? null) }
+      } else if (e.key === 'Escape') { e.preventDefault(); setCreateStage(null) }
+      return
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (!open) setOpen(true)
@@ -143,7 +186,7 @@ export default function VarietyPicker({
       if (highlight < filtered.length) {
         selectVariety(filtered[highlight])
       } else if (showCreateFooter) {
-        submitCreate(false)
+        beginCreate()
       }
     } else if (e.key === 'Escape') {
       e.preventDefault()
@@ -154,19 +197,24 @@ export default function VarietyPicker({
 
   const onFocus = () => { if (!disabled) setOpen(true) }
   const onBlur = () => {
-    // Delay close so click on listbox lands first
+    // Delay close so a click on the listbox (which preventDefaults mousedown to keep input
+    // focus) lands first. A real blur — e.g. tabbing away — still closes the dropdown.
     setTimeout(() => setOpen(false), 150)
     setTouched(true)
   }
 
   // ── Render: selected chip mode (compact) ──────────────────────────────────
   if (value && !open) {
+    const cl = cropLabel(value.crop_type_slug)
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <div style={chipStyle(disabled)} aria-live="polite">
           <span style={{ fontSize: '0.88rem', fontWeight: 600, color: P.green }}>
             {value.name}
           </span>
+          {cl && (
+            <span style={cropTagStyle} title="Crop type">{cl}</span>
+          )}
           {value.species && (
             <span style={{ fontSize: '0.74rem', color: P.light, marginLeft: 6 }}>
               {value.species}
@@ -213,7 +261,7 @@ export default function VarietyPicker({
         aria-required={required || undefined}
         aria-invalid={hasError || undefined}
         value={query}
-        onChange={e => { setQuery(e.target.value); setOpen(true); setCreateErr(null) }}
+        onChange={e => { setQuery(e.target.value); setOpen(true); setCreateErr(null); setCreateStage(null) }}
         onFocus={onFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
@@ -230,55 +278,100 @@ export default function VarietyPicker({
           style={listStyle}
           onMouseDown={e => e.preventDefault() /* keep focus on input */}
         >
-          {loading && (
-            <li style={primerRow}>Loading varieties…</li>
-          )}
-          {!loading && error && (
-            <li style={errorRow}>Couldn't load varieties — {error}</li>
-          )}
-          {!loading && !error && filtered.length === 0 && !showCreateFooter && (
-            <li style={primerRow}>
-              {query.trim() ? 'No varieties match.' : 'Start typing to search varieties.'}
-            </li>
-          )}
-          {!loading && filtered.map((v, i) => (
-            <li
-              key={v.id}
-              role="option"
-              aria-selected={highlight === i}
-              onClick={() => selectVariety(v)}
-              onMouseEnter={() => setHighlight(i)}
-              style={rowStyle(highlight === i)}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{v.name}</span>
-                {(v.species || v.common_name) && (
-                  <span style={{ fontSize: '0.74rem', color: P.light }}>
-                    {[v.common_name, v.species].filter(Boolean).join(' • ')}
-                  </span>
-                )}
-              </div>
-            </li>
-          ))}
-          {showCreateFooter && !loading && (
-            <li
-              role="option"
-              aria-selected={highlight === filtered.length}
-              onClick={() => submitCreate(false)}
-              onMouseEnter={() => setHighlight(filtered.length)}
-              style={createRowStyle(highlight === filtered.length, creating)}
-            >
-              {creating ? (
-                <span>Creating "{query.trim()}"…</span>
-              ) : (
-                <>
-                  <span style={{ fontSize: '0.95rem' }}>＋</span>
-                  <span style={{ marginLeft: 8 }}>
-                    Create <strong>"{query.trim()}"</strong>
-                  </span>
-                </>
+          {createStage === 'crop' ? (
+            <>
+              <li style={cropHeaderRow} aria-hidden="true">
+                Crop type for <strong>"{query.trim()}"</strong>
+              </li>
+              <li
+                role="option"
+                aria-selected={highlight === 0}
+                onClick={() => submitCreate(false, null, null)}
+                onMouseEnter={() => setHighlight(0)}
+                style={rowStyle(highlight === 0)}
+              >
+                <span style={{ color: P.light, fontStyle: 'italic', fontSize: '0.88rem' }}>
+                  — No crop type —
+                </span>
+              </li>
+              {cropTypes.map((ct, i) => (
+                <li
+                  key={ct.slug}
+                  role="option"
+                  aria-selected={highlight === i + 1}
+                  onClick={() => submitCreate(false, ct.slug, ct.default_lifecycle ?? null)}
+                  onMouseEnter={() => setHighlight(i + 1)}
+                  style={rowStyle(highlight === i + 1)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                    <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{ct.display_name}</span>
+                    {ct.category && (
+                      <span style={{ fontSize: '0.7rem', color: P.light, textTransform: 'capitalize' }}>{ct.category}</span>
+                    )}
+                  </div>
+                </li>
+              ))}
+              {creating && <li style={primerRow}>Creating "{query.trim()}"…</li>}
+            </>
+          ) : (
+            <>
+              {loading && (
+                <li style={primerRow}>Loading varieties…</li>
               )}
-            </li>
+              {!loading && error && (
+                <li style={errorRow}>Couldn't load varieties — {error}</li>
+              )}
+              {!loading && !error && filtered.length === 0 && !showCreateFooter && (
+                <li style={primerRow}>
+                  {query.trim() ? 'No varieties match.' : 'Start typing to search varieties.'}
+                </li>
+              )}
+              {!loading && filtered.map((v, i) => {
+                const cl = cropLabel(v.crop_type_slug)
+                return (
+                  <li
+                    key={v.id}
+                    role="option"
+                    aria-selected={highlight === i}
+                    onClick={() => selectVariety(v)}
+                    onMouseEnter={() => setHighlight(i)}
+                    style={rowStyle(highlight === i)}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
+                        {v.name}
+                        {cl && <span style={cropTagStyle} title="Crop type">{cl}</span>}
+                      </span>
+                      {(v.species || v.common_name) && (
+                        <span style={{ fontSize: '0.74rem', color: P.light }}>
+                          {[v.common_name, v.species].filter(Boolean).join(' • ')}
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+              {showCreateFooter && !loading && (
+                <li
+                  role="option"
+                  aria-selected={highlight === filtered.length}
+                  onClick={() => beginCreate()}
+                  onMouseEnter={() => setHighlight(filtered.length)}
+                  style={createRowStyle(highlight === filtered.length, creating)}
+                >
+                  {creating ? (
+                    <span>Creating "{query.trim()}"…</span>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: '0.95rem' }}>＋</span>
+                      <span style={{ marginLeft: 8 }}>
+                        Create <strong>"{query.trim()}"</strong>
+                      </span>
+                    </>
+                  )}
+                </li>
+              )}
+            </>
           )}
         </ul>
       )}
@@ -409,6 +502,27 @@ const createRowStyle = (active, busy) => ({
   fontWeight: 600,
   minHeight: 48,
 })
+
+const cropHeaderRow = {
+  padding: '10px 12px 6px',
+  color: P.mid,
+  fontSize: '0.8rem',
+  borderBottom: `1px solid ${P.cream}`,
+  backgroundColor: '#fbf8f3',
+}
+
+const cropTagStyle = {
+  display: 'inline-block',
+  marginLeft: 8,
+  padding: '1px 7px',
+  borderRadius: 999,
+  backgroundColor: P.greenPale,
+  color: P.green,
+  fontSize: '0.66rem',
+  fontWeight: 700,
+  verticalAlign: 'middle',
+  textTransform: 'capitalize',
+}
 
 const primerRow = {
   padding: '14px 12px',

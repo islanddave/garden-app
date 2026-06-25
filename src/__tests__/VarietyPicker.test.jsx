@@ -454,3 +454,79 @@ describe('VarietyPicker — keyboard', () => {
     })
   })
 })
+
+// ── V4-PLANTTYPE-001: crop-type create flow ──────────────────────────────────
+describe('VarietyPicker — crop-type create (PLANTTYPE)', () => {
+  const CROPS = [
+    { slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'tender_perennial', category: 'vegetable', sort_order: 0 },
+    { slug: 'tomato', display_name: 'Tomato', default_lifecycle: 'tender_perennial', category: 'vegetable', sort_order: 0 },
+  ]
+
+  it('clicking Create opens the crop-type chooser; picking a crop POSTs crop_type_slug + lifecycle', async () => {
+    fetchSpy.mockImplementation((path, opts) => {
+      if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+      if (opts?.method === 'POST') return Promise.resolve({ id: 'var-new', name: 'Mystery Pepper', crop_type_slug: 'pepper' })
+      return Promise.resolve([]) // list + debounce search
+    })
+    const { onChange } = setup()
+    const input = screen.getByRole('combobox')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'Mystery Pepper' } })
+    await waitFor(() => screen.getByText(/Create/))
+
+    // Commit to create → crop chooser appears (not an immediate POST).
+    await act(async () => { fireEvent.click(screen.getByText(/Create/).closest('li')) })
+    await waitFor(() => screen.getByText('Pepper'))
+    expect(screen.getByText(/Crop type for/)).toBeDefined()
+    expect(fetchSpy.mock.calls.some(c => c[1]?.method === 'POST')).toBe(false) // no POST yet
+
+    // Pick Pepper → POST with crop_type_slug + derived lifecycle.
+    await act(async () => { fireEvent.click(screen.getByText('Pepper').closest('li')) })
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+
+    const postCall = fetchSpy.mock.calls.find(c => c[0] === '/api/varieties' && c[1]?.method === 'POST')
+    expect(postCall).toBeDefined()
+    const body = JSON.parse(postCall[1].body)
+    expect(body.name).toBe('Mystery Pepper')
+    expect(body.crop_type_slug).toBe('pepper')
+    expect(body.lifecycle).toBe('tender_perennial')
+  })
+
+  it('"No crop type" creates the variety without a crop_type_slug', async () => {
+    fetchSpy.mockImplementation((path, opts) => {
+      if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+      if (opts?.method === 'POST') return Promise.resolve({ id: 'v2', name: 'Plain' })
+      return Promise.resolve([])
+    })
+    const { onChange } = setup()
+    const input = screen.getByRole('combobox')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'Plain' } })
+    await waitFor(() => screen.getByText(/Create/))
+    await act(async () => { fireEvent.click(screen.getByText(/Create/).closest('li')) })
+    await waitFor(() => screen.getByText(/No crop type/))
+    await act(async () => { fireEvent.click(screen.getByText(/No crop type/).closest('li')) })
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+
+    const postCall = fetchSpy.mock.calls.find(c => c[0] === '/api/varieties' && c[1]?.method === 'POST')
+    const body = JSON.parse(postCall[1].body)
+    expect(body.crop_type_slug).toBeUndefined()
+    expect(body.lifecycle).toBeUndefined()
+  })
+
+  it('falls back to direct create when the crop vocab is empty (graceful)', async () => {
+    // No crop-types mock → vocab loads empty → clicking Create POSTs immediately (legacy path).
+    fetchSpy.mockImplementation((path, opts) => {
+      if (opts?.method === 'POST') return Promise.resolve({ id: 'v3', name: 'Direct' })
+      return Promise.resolve([])
+    })
+    const { onChange } = setup()
+    const input = screen.getByRole('combobox')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'Direct' } })
+    await waitFor(() => screen.getByText(/Create/))
+    await act(async () => { fireEvent.click(screen.getByText(/Create/).closest('li')) })
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    expect(screen.queryByText(/Crop type for/)).toBeNull()
+  })
+})

@@ -7,6 +7,7 @@
 // RLS: enforced in WHERE clauses, not Postgres (vestigial under Neon).
 //   - GET (list/by-id): globally readable (any authenticated user, any non-deleted row)
 //   - POST/PUT/DELETE: owner-only (created_by = JWT.sub)
+//   - GET /api/varieties/crop-types: globally readable controlled vocabulary (V4-PLANTTYPE-001)
 //
 // Audit: trigger trg_audit_plant_varieties writes to audit_events. Lambda sets
 // SET LOCAL app.actor_clerk_sub = $userId after BEGIN so trigger reads the actor.
@@ -15,11 +16,18 @@
 //   plant_varieties.create — 60/hour per actor
 //   plant_varieties.update — 120/hour per actor
 //
+// PLANTTYPE (V4-PLANTTYPE-001): crop_type_slug (FK → crop_types.slug), lifecycle, and the
+//   typed care facts scoville_min/scoville_max/growth_habit/produces_scape are read & written
+//   through public.cultivar (the auto-updatable view; 0d-cultivar-view.sql exposes the columns
+//   the base plant_varieties table gained in 0a). All optional/nullable — a body that omits them
+//   is a no-op on PUT (COALESCE) and inserts NULL on POST. Bad crop_type_slug → FK 23503 → 400.
+//
 // CORS: handler owns CORS — Lambda URL CORS config must be empty (handler sets headers).
 
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { validateBody } from './validate.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -42,29 +50,7 @@ function resp(statusCode, body) {
   };
 }
 
-const VALID_SUN = ['full_sun','part_sun','part_shade','full_shade'];
-
-export function validateBody(body, { requireName = true } = {}) {
-  if (!body || typeof body !== 'object') return 'body required';
-  if (requireName && (!body.name || typeof body.name !== 'string' || !body.name.trim())) return 'name is required';
-  if (body.sun_requirements != null && !VALID_SUN.includes(body.sun_requirements)) {
-    return `sun_requirements must be one of: ${VALID_SUN.join(', ')}`;
-  }
-  if (body.source_url != null && body.source_url !== '' && !/^https:\/\//.test(body.source_url)) {
-    return 'source_url must use https://';
-  }
-  if (body.days_to_maturity_min != null && body.days_to_maturity_max != null) {
-    const min = Number(body.days_to_maturity_min);
-    const max = Number(body.days_to_maturity_max);
-    if (!Number.isNaN(min) && !Number.isNaN(max) && min > max) {
-      return 'days_to_maturity_min must be <= days_to_maturity_max';
-    }
-  }
-  if (body.common_diseases != null && !Array.isArray(body.common_diseases)) {
-    return 'common_diseases must be an array of strings';
-  }
-  return null;
-}
+// Validators live in ./validate.js (pure, unit-testable without runtime deps).
 
 // Atomic conditional INSERT/UPDATE for rate limiting (per design doc C-S1-C).
 // Returns true if request is allowed; false if limit exceeded.
@@ -108,9 +94,22 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/varieties';
 
-  const idMatch = rawPath.match(/^\/api\/varieties\/([^/]+)$/);
-
   try {
+    // PLANTTYPE: controlled crop-type vocabulary. Globally readable; checked BEFORE the
+    // /api/varieties/:id route so "crop-types" is not mis-parsed as a variety id.
+    if (rawPath === '/api/varieties/crop-types') {
+      if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
+      const rows = await sql`
+        SELECT slug, display_name, default_lifecycle, category, sort_order
+        FROM public.crop_types
+        WHERE deleted_at IS NULL
+        ORDER BY sort_order ASC, display_name ASC
+      `;
+      return resp(200, rows);
+    }
+
+    const idMatch = rawPath.match(/^\/api\/varieties\/([^/]+)$/);
+
     if (idMatch) {
       const varietyId = idMatch[1];
 
@@ -121,6 +120,7 @@ export const handler = async (event) => {
                  care_notes, soil_notes, sun_requirements,
                  common_diseases, expected_yield_notes,
                  photo_id, source_url,
+                 crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape,
                  created_by, created_at, updated_at
           FROM public.cultivar
           WHERE id = ${varietyId}
@@ -157,11 +157,17 @@ export const handler = async (event) => {
               common_diseases      = COALESCE(${Array.isArray(cd) ? cd : null}, common_diseases),
               expected_yield_notes = COALESCE(${body.expected_yield_notes ?? null}, expected_yield_notes),
               photo_id             = COALESCE(${body.photo_id ?? null}, photo_id),
-              source_url           = COALESCE(${body.source_url ?? null}, source_url)
+              source_url           = COALESCE(${body.source_url ?? null}, source_url),
+              crop_type_slug       = COALESCE(${body.crop_type_slug ?? null}, crop_type_slug),
+              lifecycle            = COALESCE(${body.lifecycle ?? null}, lifecycle),
+              scoville_min         = COALESCE(${body.scoville_min ?? null}, scoville_min),
+              scoville_max         = COALESCE(${body.scoville_max ?? null}, scoville_max),
+              growth_habit         = COALESCE(${body.growth_habit ?? null}, growth_habit),
+              produces_scape       = COALESCE(${body.produces_scape ?? null}, produces_scape)
             WHERE id = ${varietyId}
               AND created_by = ${userId}
               AND deleted_at IS NULL
-            RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version
+            RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version
           `,
         ]);
         if (!updateRows.length) return resp(404, { error: 'Not found or not owner' });
@@ -197,7 +203,9 @@ export const handler = async (event) => {
                    days_to_maturity_min, days_to_maturity_max,
                    care_notes, soil_notes, sun_requirements,
                    common_diseases, expected_yield_notes,
-                   photo_id, source_url, created_by, created_at, updated_at
+                   photo_id, source_url,
+                   crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape,
+                   created_by, created_at, updated_at
             FROM public.cultivar
             WHERE deleted_at IS NULL
               AND LOWER(display_name) LIKE ${'%' + q.toLowerCase() + '%'}
@@ -209,7 +217,9 @@ export const handler = async (event) => {
                    days_to_maturity_min, days_to_maturity_max,
                    care_notes, soil_notes, sun_requirements,
                    common_diseases, expected_yield_notes,
-                   photo_id, source_url, created_by, created_at, updated_at
+                   photo_id, source_url,
+                   crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape,
+                   created_by, created_at, updated_at
             FROM public.cultivar
             WHERE deleted_at IS NULL
             ORDER BY display_name ASC
@@ -235,7 +245,9 @@ export const handler = async (event) => {
                  days_to_maturity_min, days_to_maturity_max,
                  care_notes, soil_notes, sun_requirements,
                  common_diseases, expected_yield_notes,
-                 photo_id, source_url, created_by, created_at, updated_at,
+                 photo_id, source_url,
+                 crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape,
+                 created_by, created_at, updated_at,
                  source_proj_rescope_project_id
           FROM public.cultivar
           WHERE source_proj_rescope_project_id = ${sourceProjId}
@@ -277,6 +289,7 @@ export const handler = async (event) => {
             care_notes, soil_notes, sun_requirements,
             common_diseases, expected_yield_notes,
             photo_id, source_url, created_by,
+            crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape,
             source_proj_rescope_project_id
           ) VALUES (
             ${body.name.trim()},
@@ -292,8 +305,14 @@ export const handler = async (event) => {
             ${body.photo_id ?? null},
             ${body.source_url ?? null},
             ${userId},
+            ${body.crop_type_slug ?? null},
+            ${body.lifecycle ?? null},
+            ${body.scoville_min ?? null},
+            ${body.scoville_max ?? null},
+            ${body.growth_habit ?? null},
+            ${body.produces_scape ?? null},
             ${sourceProjId}
-          ) RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version
+          ) RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version
         `,
       ]);
       return resp(201, insertRows[0]);
