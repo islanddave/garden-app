@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.1.0",
+    "date": "2026-06-25",
+    "highlights": [
+      "Plant varieties can now carry a crop type — pepper, tomato, basil, and 60+ more. When you add a new variety you'll pick its type, which keeps your collection tidy and sets up smarter grouping and care that's coming next."
+    ]
+  },
+  {
     "version": "3.0.0",
     "date": "2026-06-24",
     "highlights": [
