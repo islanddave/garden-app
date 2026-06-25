@@ -28,6 +28,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validateBody } from './validate.js';
+import { applyDerive } from './crop-derive.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -171,6 +172,8 @@ export const handler = async (event) => {
           `,
         ]);
         if (!updateRows.length) return resp(404, { error: 'Not found or not owner' });
+        // V4-TAGSUB-001: post-commit, fail-open derive of type:/lifecycle: tags. Never 500s a variety write.
+        try { await applyDerive(sql, varietyId); } catch (e) { console.error('TAGSUB derive (non-fatal) for cultivar', varietyId, e?.message ?? e); }
         return resp(200, updateRows[0]);
       }
 
@@ -315,6 +318,8 @@ export const handler = async (event) => {
           ) RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version
         `,
       ]);
+      // V4-TAGSUB-001: post-commit, fail-open derive of type:/lifecycle: tags. Never 500s a variety write.
+      try { await applyDerive(sql, insertRows[0].id); } catch (e) { console.error('TAGSUB derive (non-fatal) for cultivar', insertRows[0].id, e?.message ?? e); }
       return resp(201, insertRows[0]);
     }
 
