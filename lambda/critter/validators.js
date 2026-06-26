@@ -48,6 +48,7 @@ export function validateCritterPostBody(body) {
 const CRITTER_VISIT_VALUES = new Set(['off', 'in_app_only', 'system'])
 export const GARDEN_GROUP_BY_VALUES = new Set(['none', 'type', 'lifecycle', 'location', 'group', 'freeform'])
 export const GARDEN_SORT_ORDER_VALUES = new Set(['alpha', 'recency'])
+export const GARDEN_EXPANDED_MAX = 2000
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/
 
 export function validatePrefsPatchBody(body) {
@@ -67,8 +68,16 @@ export function validatePrefsPatchBody(body) {
   if (body.garden_sort_order != null && !GARDEN_SORT_ORDER_VALUES.has(body.garden_sort_order)) {
     return { status: 400, error: 'garden_sort_order must be alpha|recency' }
   }
+  if (body.garden_expanded != null) {
+    if (!Array.isArray(body.garden_expanded) || body.garden_expanded.some(x => typeof x !== 'string')) {
+      return { status: 400, error: 'garden_expanded must be an array of id strings' }
+    }
+    if (body.garden_expanded.length > GARDEN_EXPANDED_MAX) {
+      return { status: 400, error: 'garden_expanded exceeds max size' }
+    }
+  }
   // At least one updatable field must be present
-  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by', 'garden_sort_order']
+  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by', 'garden_sort_order', 'garden_expanded']
     .some(k => body[k] != null)
   if (!HAS_UPDATABLE) return { status: 400, error: 'no updatable fields present' }
   return null

@@ -7,7 +7,7 @@ import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import CritterSprite from '../components/CritterSprite.jsx'
 import LoveMehPopover from '../components/LoveMehPopover.jsx'
 import { fetchActiveCritters, markCrittersViewed, patchSpeciesPrefs } from '../lib/critterClient.js'
-import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed, saveGardenGroupBy, saveGardenSortOrder } from '../lib/notificationPrefsClient.js'
+import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed, saveGardenGroupBy, saveGardenSortOrder, saveGardenExpanded } from '../lib/notificationPrefsClient.js'
 import CritterCoachmark from '../components/CritterCoachmark.jsx'
 import CritterOptInPrompt from '../components/CritterOptInPrompt.jsx'
 import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
@@ -40,6 +40,14 @@ export default function Garden() {
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
   const [expanded, setExpanded] = useState(() => loadExpanded())
+  // V4 cross-device disclosure: localStorage paints instantly; server pref is source of truth,
+  // hydrated once below. persistExpanded wraps the local save + fire-and-forget server push; an
+  // explicit toggle latches the ref so a late server hydrate can't clobber it.
+  const expandedHydratedRef = useRef(false)
+  const persistExpanded = useCallback((set) => {
+    saveExpanded(set); expandedHydratedRef.current = true
+    saveGardenExpanded({ getToken, ids: [...set] })
+  }, [getToken])
   // V3-ORDER-001: persisted sort order. DEFAULT = recency (server order); 'alpha' is opt-in.
   const [sortOrder, setSortOrder] = useState(() => loadSortOrder())
   // V4 cross-device sort order: localStorage paints instantly; server pref is source of truth,
@@ -152,6 +160,16 @@ export default function Garden() {
         sortOrderHydratedRef.current = true
         setSortOrder(p.garden_sort_order)
         saveSortOrder(p.garden_sort_order)
+      }
+      if (on && !expandedHydratedRef.current && p && typeof p.garden_expanded === 'string') {
+        try {
+          const arr = JSON.parse(p.garden_expanded)
+          if (Array.isArray(arr)) {
+            expandedHydratedRef.current = true
+            const set = new Set(arr.filter(x => typeof x === 'string'))
+            setExpanded(set); saveExpanded(set)
+          }
+        } catch { /* corrupt server value — ignore, keep local */ }
       }
       // Fire Route 6 AFTER capturing prev prefs (the post updates last_garden_view_at).
       recordGardenViewOpened({ getToken })
@@ -280,7 +298,7 @@ export default function Garden() {
     if (pl?.project_id != null) {
       setExpanded(prev => {
         const next = new Set(prev).add(pl.project_id)
-        saveExpanded(next)
+        persistExpanded(next)
         return next
       })
     }
@@ -331,7 +349,7 @@ export default function Garden() {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
-      saveExpanded(next)
+      persistExpanded(next)
       return next
     })
   }, [])

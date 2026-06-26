@@ -1,6 +1,6 @@
 -- V4-GARDENIA-PREFS — cross-device Garden group-by preference
 -- Date: 2026-06-26
--- Scope: ADD COLUMN IF NOT EXISTS garden_group_by + garden_sort_order (text, nullable) on user_notification_prefs.
+-- Scope: ADD COLUMN IF NOT EXISTS garden_group_by + garden_sort_order + garden_expanded (text, nullable) on user_notification_prefs.
 --        Backs the faceted Garden group-by control with a per-user, cross-device server pref
 --        (localStorage stays as the instant-paint cache + offline fallback). NULL = "not set"
 --        (frontend falls back to localStorage / 'none').
@@ -17,6 +17,7 @@ BEGIN;
 
 ALTER TABLE public.user_notification_prefs
   ADD COLUMN IF NOT EXISTS garden_group_by TEXT NULL,
-  ADD COLUMN IF NOT EXISTS garden_sort_order TEXT NULL;
+  ADD COLUMN IF NOT EXISTS garden_sort_order TEXT NULL,
+  ADD COLUMN IF NOT EXISTS garden_expanded TEXT NULL;  -- JSON array of expanded project-id strings
 
 COMMIT;

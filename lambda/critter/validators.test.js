@@ -105,6 +105,17 @@ describe('validatePrefsPatchBody', () => {
   it('rejects an invalid garden_sort_order value', () => {
     expect(validatePrefsPatchBody({ garden_sort_order: 'sideways' })?.status).toBe(400)
   })
+  it('accepts a garden_expanded array of id strings (incl. empty)', () => {
+    expect(validatePrefsPatchBody({ garden_expanded: [] })).toBeNull()
+    expect(validatePrefsPatchBody({ garden_expanded: ['a', 'b', 'c'] })).toBeNull()
+  })
+  it('rejects garden_expanded that is not an array of strings', () => {
+    expect(validatePrefsPatchBody({ garden_expanded: 'nope' })?.status).toBe(400)
+    expect(validatePrefsPatchBody({ garden_expanded: [1, 2] })?.status).toBe(400)
+  })
+  it('rejects an oversized garden_expanded', () => {
+    expect(validatePrefsPatchBody({ garden_expanded: Array(2001).fill('x') })?.status).toBe(400)
+  })
 })
 
 describe('validateSpeciesPrefsPatchBody (D-INV-1 Option A)', () => {

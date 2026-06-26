@@ -41,9 +41,11 @@ vi.mock('../lib/notificationPrefsClient.js', () => ({
   CRITTER_VISIT_VALUES: ['off', 'in_app_only', 'system'],
   GARDEN_GROUP_BY_VALUES: ['none', 'type', 'lifecycle', 'location', 'group', 'freeform'],
   GARDEN_SORT_ORDER_VALUES: ['alpha', 'recency'],
+  GARDEN_EXPANDED_MAX: 2000,
   patchNotificationPrefs: vi.fn(),
   saveGardenGroupBy: vi.fn(),
   saveGardenSortOrder: vi.fn(),
+  saveGardenExpanded: vi.fn(),
 }))
 
 // Mock CritterSprite + LoveMehPopover passively. (BaselineResidents retired V101 2026-06-01.)

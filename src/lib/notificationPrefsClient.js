@@ -18,6 +18,7 @@ const CRITTER_BASE = (import.meta.env.VITE_API_CRITTERS ?? '').replace(/\/$/, ''
 export const CRITTER_VISIT_VALUES = ['off', 'in_app_only', 'system']
 export const GARDEN_GROUP_BY_VALUES = ['none', 'type', 'lifecycle', 'location', 'group', 'freeform']
 export const GARDEN_SORT_ORDER_VALUES = ['alpha', 'recency']
+export const GARDEN_EXPANDED_MAX = 2000
 
 // saveGardenGroupBy — fire-and-forget PATCH of the cross-device Garden group-by preference
 // (user_notification_prefs.garden_group_by). Mirrors patchNotificationPrefs: NEVER throws,
@@ -54,6 +55,28 @@ export async function saveGardenSortOrder({ getToken, value } = {}) {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ garden_sort_order: value }),
+      keepalive: true,
+    })
+    if (!res.ok) return null
+    return await res.json().catch(() => null)
+  } catch {
+    return null
+  }
+}
+
+// saveGardenExpanded — fire-and-forget PATCH of the cross-device project-tree disclosure set
+// (user_notification_prefs.garden_expanded, JSON array of project-id strings). Mirrors the other
+// garden pref writers: NEVER throws, silent no-op when env unset / unauth / shape invalid.
+export async function saveGardenExpanded({ getToken, ids } = {}) {
+  if (!CRITTER_BASE) return null
+  if (ids != null && (!Array.isArray(ids) || ids.some(x => typeof x !== 'string') || ids.length > GARDEN_EXPANDED_MAX)) return null
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return null
+    const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ garden_expanded: ids }),
       keepalive: true,
     })
     if (!res.ok) return null

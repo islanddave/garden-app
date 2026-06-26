@@ -182,6 +182,29 @@ describe('notificationPrefsClient', () => {
     })
   })
 
+  describe('saveGardenExpanded', () => {
+    it('returns null when VITE_API_CRITTERS unset', async () => {
+      const mod = await loadModule('')
+      expect(await mod.saveGardenExpanded({ getToken: async () => TOKEN, ids: ['a'] })).toBeNull()
+    })
+    it('returns null on a non-array / non-string-element value (no fetch)', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      expect(await mod.saveGardenExpanded({ getToken: async () => TOKEN, ids: 'nope' })).toBeNull()
+      expect(await mod.saveGardenExpanded({ getToken: async () => TOKEN, ids: [1, 2] })).toBeNull()
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+    it('PATCHes garden_expanded and returns the updated row', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ garden_expanded: '["a","b"]' }) })
+      const res = await mod.saveGardenExpanded({ getToken: async () => TOKEN, ids: ['a', 'b'] })
+      expect(res).toEqual({ garden_expanded: '["a","b"]' })
+      const [url, opts] = global.fetch.mock.calls[0]
+      expect(url).toBe('https://staging.example.com/api/notifications/prefs')
+      expect(opts.method).toBe('PATCH')
+      expect(JSON.parse(opts.body)).toEqual({ garden_expanded: ['a', 'b'] })
+    })
+  })
+
   describe('CRITTER_VISIT_VALUES', () => {
     it('exports the canonical allowed values', async () => {
       const mod = await loadModule('https://staging.example.com')
