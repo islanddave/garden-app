@@ -95,4 +95,15 @@ describe('Garden — sort toggle removed (forced alpha) + Lifecycle grouping', (
     // 'status' is always available -> the Group-by control shows even with no tags.
     expect(screen.getByText('Lifecycle')).toBeTruthy()
   })
+  it('grouped view is collapsed-by-default with an Expand all toggle that reveals rows', async () => {
+    await renderGarden()
+    await act(async () => { fireEvent.click(screen.getByText('Lifecycle')) })
+    // collapsed by default -> the planting row is hidden
+    expect(screen.queryByText('Sungold')).toBeNull()
+    const expandAll = screen.getByLabelText('Expand all sections')
+    await act(async () => { fireEvent.click(expandAll) })
+    expect(screen.getByText('Sungold')).toBeTruthy()
+    // now the toggle flips to Collapse all
+    expect(screen.getByLabelText('Collapse all sections')).toBeTruthy()
+  })
 })

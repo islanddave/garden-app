@@ -681,8 +681,18 @@ function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongP
   }), [])
   const groups = buildTagGroupedList(plants, tagMap, facet) || []
   if (groups.length === 0) return <EmptyState />
+  // Expand-all / Collapse-all — complements collapse-by-default so the whole view is one tap away.
+  const allExpanded = groups.length > 0 && groups.every(g => expandedGroups.has(g.slug))
+  const toggleAll = () => setExpandedGroups(allExpanded ? new Set() : new Set(groups.map(g => g.slug)))
   return (
     <div role="tree" aria-label="Garden grouped by tag" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button type="button" onClick={toggleAll}
+          aria-label={allExpanded ? 'Collapse all sections' : 'Expand all sections'}
+          style={{ ...btnGhost, cursor: 'pointer', padding: '4px 10px', fontSize: '0.78rem' }}>
+          {allExpanded ? 'Collapse all' : 'Expand all'}
+        </button>
+      </div>
       {groups.map(g => {
         const isCollapsed = !expandedGroups.has(g.slug)
         return (
