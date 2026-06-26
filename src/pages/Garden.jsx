@@ -7,7 +7,7 @@ import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import CritterSprite from '../components/CritterSprite.jsx'
 import LoveMehPopover from '../components/LoveMehPopover.jsx'
 import { fetchActiveCritters, markCrittersViewed, patchSpeciesPrefs } from '../lib/critterClient.js'
-import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed } from '../lib/notificationPrefsClient.js'
+import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed, saveGardenGroupBy } from '../lib/notificationPrefsClient.js'
 import CritterCoachmark from '../components/CritterCoachmark.jsx'
 import CritterOptInPrompt from '../components/CritterOptInPrompt.jsx'
 import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
@@ -46,7 +46,15 @@ export default function Garden() {
   // V4-GARDENIA-001: faceted group-by overlay. tagMap = whole-garden plant->tags map; inert/empty
   // until VITE_API_TAGS is wired, so the control stays hidden and the legacy tree is unchanged.
   const [groupBy, setGroupBy] = useState(() => loadGroupBy())
-  const onGroupByChange = useCallback((v) => { setGroupBy(v); saveGroupBy(v) }, [])
+  // V4 cross-device: localStorage paints instantly; the server pref
+  // (user_notification_prefs.garden_group_by) is the cross-device source of truth, hydrated ONCE on
+  // the first prefs fetch below. An explicit user change latches the ref so a late server hydrate
+  // never clobbers it.
+  const groupByHydratedRef = useRef(false)
+  const onGroupByChange = useCallback((v) => {
+    setGroupBy(v); saveGroupBy(v); groupByHydratedRef.current = true
+    saveGardenGroupBy({ getToken, value: v })
+  }, [getToken])
   const { entities: tagMap } = useEntityTagsBulk('plant')
   const facetOptions = useMemo(() => {
     const present = new Set()
@@ -128,6 +136,12 @@ export default function Garden() {
     async function refreshPrefsAndRecord() {
       const p = await fetchNotificationPrefs({ getToken })
       if (on) setPrefs(p)
+      // Cross-device hydrate (once): adopt the server group-by if set, caching it locally.
+      if (on && !groupByHydratedRef.current && p && typeof p.garden_group_by === 'string' && p.garden_group_by) {
+        groupByHydratedRef.current = true
+        setGroupBy(p.garden_group_by)
+        saveGroupBy(p.garden_group_by)
+      }
       // Fire Route 6 AFTER capturing prev prefs (the post updates last_garden_view_at).
       recordGardenViewOpened({ getToken })
     }
@@ -655,7 +669,7 @@ function FacetedGarden({ plants, tagMap, facet, sortOrder, crittersByPlantId, on
         const isCollapsed = collapsed.has(g.slug)
         return (
           <div key={g.slug} role="group">
-            <FacetGroupHeader label={g.label} count={g.count} facet={g.facet}
+            <FacetGroupHeader label={g.label} count={g.count} facet={g.facet} value={g.slug}
               isUnsorted={g.isUnsorted} collapsed={isCollapsed} onToggle={() => toggle(g.slug)} />
             {!isCollapsed && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>

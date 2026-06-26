@@ -6,7 +6,7 @@ import { T } from '../../lib/tokens.js'
 // Derived tags (source==='derived') are system-managed: no remove affordance even if onRemove given.
 export default function TagChip({ tag, onRemove, onClick, active = false, style }) {
   if (!tag) return null
-  const c = facetColors(tag.facet)
+  const c = facetColors(tag.facet, tag.slug)
   const label = tag.label || tag.slug || ''
   const removable = typeof onRemove === 'function' && tag.source !== 'derived'
   return (

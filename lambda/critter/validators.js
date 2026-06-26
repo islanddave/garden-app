@@ -46,6 +46,7 @@ export function validateCritterPostBody(body) {
 
 // PATCH /api/notifications/prefs body validator
 const CRITTER_VISIT_VALUES = new Set(['off', 'in_app_only', 'system'])
+export const GARDEN_GROUP_BY_VALUES = new Set(['none', 'type', 'lifecycle', 'location', 'group', 'freeform'])
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/
 
 export function validatePrefsPatchBody(body) {
@@ -59,8 +60,11 @@ export function validatePrefsPatchBody(body) {
   if (body.quiet_hours_end != null && !TIME_RE.test(body.quiet_hours_end)) {
     return { status: 400, error: 'quiet_hours_end must be HH:MM' }
   }
+  if (body.garden_group_by != null && !GARDEN_GROUP_BY_VALUES.has(body.garden_group_by)) {
+    return { status: 400, error: 'garden_group_by must be none|type|lifecycle|location|group|freeform' }
+  }
   // At least one updatable field must be present
-  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end']
+  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by']
     .some(k => body[k] != null)
   if (!HAS_UPDATABLE) return { status: 400, error: 'no updatable fields present' }
   return null

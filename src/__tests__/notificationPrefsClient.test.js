@@ -129,6 +129,36 @@ describe('notificationPrefsClient', () => {
     })
   })
 
+  describe('saveGardenGroupBy', () => {
+    it('returns null when VITE_API_CRITTERS unset', async () => {
+      const mod = await loadModule('')
+      const res = await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'type' })
+      expect(res).toBeNull()
+    })
+    it('returns null on an invalid value (no fetch)', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      const res = await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'bogus' })
+      expect(res).toBeNull()
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+    it('PATCHes garden_group_by and returns the updated row', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ garden_group_by: 'lifecycle' }) })
+      const res = await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'lifecycle' })
+      expect(res).toEqual({ garden_group_by: 'lifecycle' })
+      const [url, opts] = global.fetch.mock.calls[0]
+      expect(url).toBe('https://staging.example.com/api/notifications/prefs')
+      expect(opts.method).toBe('PATCH')
+      expect(JSON.parse(opts.body)).toEqual({ garden_group_by: 'lifecycle' })
+    })
+    it('returns null on a non-ok response', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValueOnce({ ok: false })
+      const res = await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'type' })
+      expect(res).toBeNull()
+    })
+  })
+
   describe('CRITTER_VISIT_VALUES', () => {
     it('exports the canonical allowed values', async () => {
       const mod = await loadModule('https://staging.example.com')

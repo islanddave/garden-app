@@ -90,6 +90,14 @@ describe('validatePrefsPatchBody', () => {
   it('rejects empty body', () => {
     expect(validatePrefsPatchBody({})?.status).toBe(400)
   })
+  it('accepts each valid garden_group_by value', () => {
+    for (const v of ['none', 'type', 'lifecycle', 'location', 'group', 'freeform']) {
+      expect(validatePrefsPatchBody({ garden_group_by: v })).toBeNull()
+    }
+  })
+  it('rejects an invalid garden_group_by value', () => {
+    expect(validatePrefsPatchBody({ garden_group_by: 'bogus' })?.status).toBe(400)
+  })
 })
 
 describe('validateSpeciesPrefsPatchBody (D-INV-1 Option A)', () => {

@@ -5,6 +5,8 @@ import TagChip from '../components/forms/TagChip.jsx'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
 import GroupByControl from '../components/forms/GroupByControl.jsx'
 import TagFilterBar from '../components/forms/TagFilterBar.jsx'
+import { facetColors } from '../lib/facetColors.js'
+import { LIFECYCLE_TOKENS, FACET_TOKENS } from '../lib/tokens.js'
 
 afterEach(() => cleanup())
 
@@ -71,5 +73,38 @@ describe('TagFilterBar', () => {
     expect(onRemove).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByText('Clear'))
     expect(onClear).toHaveBeenCalledTimes(1)
+  })
+})
+
+
+describe('facetColors lifecycle palette', () => {
+  it('resolves each lifecycle value to its own minted token', () => {
+    for (const v of ['annual', 'biennial', 'perennial', 'tender_perennial']) {
+      expect(facetColors('lifecycle', v)).toEqual(LIFECYCLE_TOKENS[v])
+    }
+  })
+  it('lifecycle values are distinct from each other and from the neutral fallback', () => {
+    const bgs = ['annual', 'biennial', 'perennial', 'tender_perennial'].map(v => facetColors('lifecycle', v).bg)
+    expect(new Set(bgs).size).toBe(4)
+    expect(bgs).not.toContain(FACET_TOKENS.freeform.bg)
+  })
+  it('unknown or missing lifecycle value falls back to the neutral freeform token', () => {
+    expect(facetColors('lifecycle', 'nonsense')).toEqual(FACET_TOKENS.freeform)
+    expect(facetColors('lifecycle')).toEqual(FACET_TOKENS.freeform)
+  })
+  it('non-lifecycle facets are unchanged by the value arg', () => {
+    expect(facetColors('type', 'ignored')).toEqual(FACET_TOKENS.type)
+    expect(facetColors('group')).toEqual(FACET_TOKENS.group)
+    expect(facetColors('bogus')).toEqual(FACET_TOKENS.freeform)
+  })
+})
+
+describe('TagChip lifecycle coloring', () => {
+  it('colors a lifecycle chip by its value, not the neutral fallback', () => {
+    render(<TagChip tag={{ facet: 'lifecycle', slug: 'perennial', label: 'Perennial', source: 'derived' }} />)
+    const chip = screen.getByLabelText('lifecycle: Perennial')
+    expect(chip).toBeTruthy()
+    // distinct minted perennial bg, not the freeform neutral
+    expect(chip.style.backgroundColor).not.toBe('')
   })
 })

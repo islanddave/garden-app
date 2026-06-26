@@ -1,9 +1,11 @@
 // facetColors — per-facet chip colors for the V4-GARDENIA-001 faceted render.
-// type/group/location/freeform have minted FACET_TOKENS. lifecycle's values (annual/perennial/
-// biennial) have NO palette yet — they fall back to the neutral freeform token rather than
-// gold-defaulting through getStatusColors. A dedicated lifecycle palette is a V200 design-pass item.
-import { FACET_TOKENS } from './tokens.js'
+// type/group/location/freeform have minted FACET_TOKENS. The lifecycle facet is VALUE-colored:
+// each lifecycle value (annual/biennial/perennial/tender_perennial) has its own LIFECYCLE_TOKENS
+// entry, resolved via the optional second arg. Unknown/missing lifecycle values fall back to the
+// neutral freeform token (the prior behavior for the whole facet).
+import { FACET_TOKENS, LIFECYCLE_TOKENS } from './tokens.js'
 const NEUTRAL = FACET_TOKENS.freeform
-export function facetColors(facet) {
+export function facetColors(facet, value) {
+  if (facet === 'lifecycle') return LIFECYCLE_TOKENS[value] || NEUTRAL
   return FACET_TOKENS[facet] || NEUTRAL
 }

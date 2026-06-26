@@ -29,3 +29,13 @@ export const FACET_TOKENS = {
   location: { bg: P.fLocationBg, text: P.fLocationText, border: P.fLocationBorder },
   freeform: { bg: P.fFreeformBg, text: P.fFreeformText, border: P.fFreeformBorder },
 }
+
+// Lifecycle facet is value-colored (not a single facet token): each lifecycle slug maps to its own
+// {bg,text,border}. facetColors(facet, value) resolves through here when facet === 'lifecycle'.
+// Unknown lifecycle values fall back to the neutral freeform token (same as before).
+export const LIFECYCLE_TOKENS = {
+  annual:            { bg: P.fLcAnnualBg,    text: P.fLcAnnualText,    border: P.fLcAnnualBorder },
+  biennial:          { bg: P.fLcBiennialBg,  text: P.fLcBiennialText,  border: P.fLcBiennialBorder },
+  perennial:         { bg: P.fLcPerennialBg, text: P.fLcPerennialText, border: P.fLcPerennialBorder },
+  tender_perennial:  { bg: P.fLcTenderBg,    text: P.fLcTenderText,    border: P.fLcTenderBorder },
+}

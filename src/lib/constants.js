@@ -36,6 +36,14 @@ export const P = {
   fGroupBg:    '#eef0fa', fGroupText:    '#3a3f6b', fGroupBorder:    '#c9cdec',
   fLocationBg: '#f3ece2', fLocationText: '#6b4f2a', fLocationBorder: '#ddcdb6',
   fFreeformBg: '#f0efed', fFreeformText: '#4a4a4a', fFreeformBorder: '#d9d4cd',
+  // Lifecycle facet value palette (V4 foundation-polish; each lifecycle value gets its own
+  // cohesive token rather than the neutral freeform fallback). annual=gold, biennial=violet,
+  // perennial=teal, tender_perennial=mint-green. Soft bg / dark text / mid border like the
+  // other facet tokens; hues chosen distinct from type(green)/group(indigo)/location(tan)/freeform(gray).
+  fLcAnnualBg:    '#faf2da', fLcAnnualText:    '#6b520f', fLcAnnualBorder:    '#e8d496',
+  fLcBiennialBg:  '#efe9f4', fLcBiennialText:  '#534079', fLcBiennialBorder:  '#cfc3e2',
+  fLcPerennialBg: '#def0ea', fLcPerennialText: '#14564a', fLcPerennialBorder: '#b4ddd0',
+  fLcTenderBg:    '#e8f2e9', fLcTenderText:    '#2f5d44', fLcTenderBorder:    '#c6e0cd',
 }
 
 // Soft enum — suggested event types shown in dropdown, free text always accepted.

@@ -4,8 +4,8 @@ import { T } from '../../lib/tokens.js'
 
 // FacetGroupHeader — section header for one group in the faceted Garden render. Shows label +
 // count; optional collapse chevron when onToggle is provided. Unsorted renders neutral + italic.
-export default function FacetGroupHeader({ label, count, facet, collapsed = false, onToggle, isUnsorted = false, style }) {
-  const c = facetColors(isUnsorted ? 'freeform' : facet)
+export default function FacetGroupHeader({ label, count, facet, value, collapsed = false, onToggle, isUnsorted = false, style }) {
+  const c = facetColors(isUnsorted ? 'freeform' : facet, value)
   const interactive = typeof onToggle === 'function'
   return (
     <div
