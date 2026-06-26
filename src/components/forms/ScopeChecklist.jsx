@@ -18,7 +18,7 @@
 // Net-count rule (plan §5 Phase D): never make the user mentally compute the set
 // difference — when any planting is skipped we render "N matched − M skipped → K will
 // be logged" continuously, aria-live so it's announced as toggles happen.
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { P } from '../../lib/constants.js'
 import ProjectOptions from '../ProjectOptions.jsx'
 import SelectChip from './SelectChip.jsx'
@@ -46,6 +46,37 @@ export default function ScopeChecklist({
   const [defaultAllSelected, setDefaultAllSelected] = useState(() => {
     try { const v = localStorage.getItem(DEFAULT_SEL_KEY); return v === null ? true : v === '1' } catch (e) { return true }
   })
+
+  // V4-LOGMANYLOC-001: location hierarchy for the 2-tier "By space" picker. Zones = level-0
+  // (or parentless) locations; picking a zone or sub-location cascades to descendants
+  // server-side (lambda/events batch resolver). Tolerant of the minimal {id,name} shape used
+  // in tests (no parent_id => treated as a zone).
+  const { zones, childrenByParent, rootOf } = useMemo(() => {
+    const byId = new Map(locations.map(l => [l.id, l]))
+    const childrenByParent = new Map()
+    for (const l of locations) {
+      if (l.parent_id && byId.has(l.parent_id)) {
+        if (!childrenByParent.has(l.parent_id)) childrenByParent.set(l.parent_id, [])
+        childrenByParent.get(l.parent_id).push(l)
+      }
+    }
+    for (const arr of childrenByParent.values()) {
+      arr.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || String(a.name).localeCompare(String(b.name)))
+    }
+    const zones = locations
+      .filter(l => !l.parent_id || !byId.has(l.parent_id))
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    const rootOf = (id) => {
+      let cur = byId.get(id), guard = 0
+      while (cur?.parent_id && byId.has(cur.parent_id) && guard++ < 12) cur = byId.get(cur.parent_id)
+      return cur?.id
+    }
+    return { zones, childrenByParent, rootOf }
+  }, [locations])
+
+  const activeZoneId = scope.type === 'space' ? rootOf(scope.location_id) : null
+  const activeZoneName = zones.find(z => z.id === activeZoneId)?.name
+  const activeZoneChildren = activeZoneId ? (childrenByParent.get(activeZoneId) ?? []) : []
 
   // Server-accurate dry-run preview on scope / event-type / date change. AbortController
   // makes rapid scope toggling race-safe: a superseded request can neither clobber the
@@ -99,7 +130,7 @@ export default function ScopeChecklist({
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
           <SelectChip active={scope.type === 'all'} onClick={() => onScopeChange({ type: 'all' })}>All active</SelectChip>
           <SelectChip active={scope.type === 'project'} onClick={() => onScopeChange(scope.type === 'project' ? scope : { type: 'project', project_id: projects[0]?.id })}>By project</SelectChip>
-          <SelectChip active={scope.type === 'space'} onClick={() => onScopeChange(scope.type === 'space' ? scope : { type: 'space', location_id: locations[0]?.id })}>By space</SelectChip>
+          <SelectChip active={scope.type === 'space'} onClick={() => onScopeChange(scope.type === 'space' ? scope : { type: 'space', location_id: zones[0]?.id })}>By space</SelectChip>
         </div>
         {scope.type === 'project' && (
           <select value={scope.project_id ?? ''} onChange={e => onScopeChange({ type: 'project', project_id: e.target.value })} style={selectStyle} aria-label="Project">
@@ -107,10 +138,22 @@ export default function ScopeChecklist({
           </select>
         )}
         {scope.type === 'space' && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {locations.map(l => (
-              <SelectChip key={l.id} small active={scope.location_id === l.id} onClick={() => onScopeChange({ type: 'space', location_id: l.id })}>{l.name}</SelectChip>
-            ))}
+          <div>
+            {/* Tier 1 — zones */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} role="group" aria-label="Zone">
+              {zones.map(z => (
+                <SelectChip key={z.id} small active={rootOf(scope.location_id) === z.id} onClick={() => onScopeChange({ type: 'space', location_id: z.id })}>{z.name}</SelectChip>
+              ))}
+            </div>
+            {/* Tier 2 — sub-locations of the active zone (cascade includes descendants) */}
+            {activeZoneChildren.length > 0 && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8, paddingLeft: 4 }} role="group" aria-label={`Within ${activeZoneName}`}>
+                <SelectChip small active={scope.location_id === activeZoneId} onClick={() => onScopeChange({ type: 'space', location_id: activeZoneId })}>All {activeZoneName}</SelectChip>
+                {activeZoneChildren.map(c => (
+                  <SelectChip key={c.id} small active={scope.location_id === c.id} onClick={() => onScopeChange({ type: 'space', location_id: c.id })}>{c.name}</SelectChip>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -189,7 +189,20 @@ export const handler = async (event) => {
           AND CASE ${scopeType}
                 WHEN 'all'     THEN true
                 WHEN 'project' THEN pp.id = ${projectId}
-                WHEN 'space'   THEN pp.location_id = ${locationId}
+                WHEN 'space'   THEN pp.location_id IN (
+                  -- V4-LOGMANYLOC-001: hierarchical cascade — a selected space matches its own
+                  -- plantings PLUS every descendant location (recursive parent_id walk). A leaf
+                  -- location with no children resolves to just itself (byte-identical to the old
+                  -- exact-match behavior), so this is backward-compatible.
+                  WITH RECURSIVE loc_subtree AS (
+                    SELECT id FROM locations WHERE id = ${locationId} AND deleted_at IS NULL
+                    UNION ALL
+                    SELECT l.id FROM locations l
+                      JOIN loc_subtree st ON l.parent_id = st.id
+                      WHERE l.deleted_at IS NULL
+                  )
+                  SELECT id FROM loc_subtree
+                )
                 ELSE false
               END
           AND NOT (p.id = ANY(${excludeIds}))

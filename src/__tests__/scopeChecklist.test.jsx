@@ -147,3 +147,49 @@ describe('ScopeChecklist — warnings + empty + a11y', () => {
     expect(await screen.findByText('scope blew up')).toBeDefined()
   })
 })
+
+// V4-LOGMANYLOC-001 — 2-tier "By space" hierarchy + cascade selection.
+describe('ScopeChecklist — By space 2-tier hierarchy (V4-LOGMANYLOC-001)', () => {
+  const TREE = [
+    { id: 'pasture', name: 'Pasture', level: 0, parent_id: null, sort_order: 1 },
+    { id: 'rowA', name: 'Row A', level: 1, parent_id: 'pasture', sort_order: 1 },
+    { id: 'bag', name: 'Bag Area', level: 1, parent_id: 'pasture', sort_order: 2 },
+    { id: 'drive', name: 'Drive', level: 0, parent_id: null, sort_order: 2 },
+  ]
+  function Tree({ onScope = () => {} }) {
+    const [scope, setScope] = useState({ type: 'space', location_id: 'pasture' })
+    return (
+      <ScopeChecklist
+        scope={scope} onScopeChange={(s) => { onScope(s); setScope(s) }}
+        projects={[]} locations={TREE} eventType="watering" eventDate=""
+        verbLabel="watering" runDryRun={dryRunOk()} onSelectionChange={() => {}}
+      />
+    )
+  }
+
+  it('renders zone chips and reveals the active zone’s sub-locations (+ "All {zone}")', async () => {
+    render(<Tree />)
+    await readyAnchor()
+    expect(screen.getByText('Pasture')).toBeDefined()
+    expect(screen.getByText('Drive')).toBeDefined()
+    expect(screen.getByText('All Pasture')).toBeDefined()
+    expect(screen.getByText('Row A')).toBeDefined()
+    expect(screen.getByText('Bag Area')).toBeDefined()
+  })
+
+  it('selecting a sub-location sets scope.location_id to the child', async () => {
+    const onScope = vi.fn()
+    render(<Tree onScope={onScope} />)
+    await readyAnchor()
+    fireEvent.click(screen.getByText('Bag Area'))
+    expect(onScope).toHaveBeenCalledWith({ type: 'space', location_id: 'bag' })
+  })
+
+  it('switching to a childless zone hides the sub-location row', async () => {
+    render(<Tree />)
+    await readyAnchor()
+    expect(screen.getByText('Row A')).toBeDefined()
+    fireEvent.click(screen.getByText('Drive'))
+    await waitFor(() => expect(screen.queryByText('Row A')).toBeNull())
+  })
+})
