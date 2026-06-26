@@ -48,6 +48,18 @@ export default function Garden() {
   const [groupBy, setGroupBy] = useState(() => loadGroupBy())
   const onGroupByChange = useCallback((v) => { setGroupBy(v); saveGroupBy(v) }, [])
   const { entities: tagMap } = useEntityTagsBulk('plant')
+  const facetOptions = useMemo(() => {
+    const present = new Set()
+    for (const id in (tagMap || {})) {
+      const e = tagMap[id]
+      for (const t of [...(e.direct || []), ...(e.projected || [])]) present.add(t.facet)
+    }
+    const ORDER = ['type', 'lifecycle', 'location', 'group', 'freeform']
+    const LABELS = { type: 'Type', lifecycle: 'Lifecycle', location: 'Location', group: 'Group', freeform: 'Tags' }
+    const opts = [{ value: 'none', label: 'Projects' }]
+    for (const fct of ORDER) if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
+    return opts
+  }, [tagMap])
   // MVP-Critter Session 3: active critters for this household, grouped by plant_id.
   const [critters, setCritters] = useState([])
   // D-INV-1 long-press popover state. anchorEl is the long-pressed sprite DOM node.
@@ -367,18 +379,6 @@ export default function Garden() {
   if (loading) return <Shell><Spinner /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
-  const facetOptions = useMemo(() => {
-    const present = new Set()
-    for (const id in (tagMap || {})) {
-      const e = tagMap[id]
-      for (const t of [...(e.direct || []), ...(e.projected || [])]) present.add(t.facet)
-    }
-    const ORDER = ['type', 'lifecycle', 'location', 'group', 'freeform']
-    const LABELS = { type: 'Type', lifecycle: 'Lifecycle', location: 'Location', group: 'Group', freeform: 'Tags' }
-    const opts = [{ value: 'none', label: 'Projects' }]
-    for (const fct of ORDER) if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
-    return opts
-  }, [tagMap])
   const effectiveGroupBy = facetOptions.some(o => o.value === groupBy) ? groupBy : 'none'
   const tree = buildGardenTree(projects, plants, sortOrder)
 
