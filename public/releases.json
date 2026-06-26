@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.3.0",
+    "date": "2026-06-25",
+    "highlights": [
+      "New: group your Garden by Type or Lifecycle with the 'Group by' control",
+      "Logging events to a space now also covers its sub-locations"
+    ]
+  },
+  {
     "version": "3.2.1",
     "date": "2026-06-25",
     "highlights": [
