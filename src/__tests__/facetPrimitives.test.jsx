@@ -7,6 +7,7 @@ import GroupByControl from '../components/forms/GroupByControl.jsx'
 import TagFilterBar from '../components/forms/TagFilterBar.jsx'
 import { facetColors } from '../lib/facetColors.js'
 import { LIFECYCLE_TOKENS, FACET_TOKENS } from '../lib/tokens.js'
+import { getStatusColors } from '../lib/status.js'
 
 afterEach(() => cleanup())
 
@@ -96,6 +97,10 @@ describe('facetColors lifecycle palette', () => {
     expect(facetColors('type', 'ignored')).toEqual(FACET_TOKENS.type)
     expect(facetColors('group')).toEqual(FACET_TOKENS.group)
     expect(facetColors('bogus')).toEqual(FACET_TOKENS.freeform)
+  })
+  it('status facet colors through the shared status palette', () => {
+    expect(facetColors('status', 'seedling')).toEqual(getStatusColors('seedling'))
+    expect(facetColors('status', 'ended')).toEqual(getStatusColors('ended'))
   })
 })
 

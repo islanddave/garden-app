@@ -84,22 +84,15 @@ describe('Garden — unified accordion tree', () => {
   })
 })
 
-describe('Garden — sort toggle (V3-ORDER-001, alpha default per owner override 2026-06-04)', () => {
-  it('defaults to alpha (A–Z) and persists recency when toggled', async () => {
+describe('Garden — sort toggle removed (forced alpha) + Lifecycle grouping', () => {
+  it('no longer renders the sort toggle', async () => {
     await renderGarden()
-    // Default is now alphabetical (owner override); recency is one tap away.
-    const az = screen.getByLabelText('Sort alphabetically')
-    expect(az.getAttribute('aria-checked')).toBe('true')   // alpha is the default
-    const recent = screen.getByLabelText('Sort by most recent')
-    expect(recent.getAttribute('aria-checked')).toBe('false')
-    fireEvent.click(recent)
-    expect(localStorage.getItem('garden.sortOrder.v1')).toBe('recency')
+    expect(screen.queryByLabelText('Sort alphabetically')).toBeNull()
+    expect(screen.queryByLabelText('Sort by most recent')).toBeNull()
   })
-
-  it('restores the stored choice (recency) on reload', async () => {
-    localStorage.setItem('garden.sortOrder.v1', 'recency')
+  it('offers a Lifecycle (status) grouping option', async () => {
     await renderGarden()
-    expect(screen.getByLabelText('Sort by most recent').getAttribute('aria-checked')).toBe('true')
-    expect(screen.getByLabelText('Sort alphabetically').getAttribute('aria-checked')).toBe('false')
+    // 'status' is always available -> the Group-by control shows even with no tags.
+    expect(screen.getByText('Lifecycle')).toBeTruthy()
   })
 })

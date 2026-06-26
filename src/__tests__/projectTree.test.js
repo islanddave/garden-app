@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   buildDisplayList, groupPlantingsByProjectId, buildGardenTree, nodeHasChildren,
   loadExpanded, saveExpanded,
-  byName, applyNameSort, loadSortOrder, saveSortOrder, SORT_RECENCY, SORT_ALPHA,
+  byName, applyNameSort, loadSortOrder, saveSortOrder, SORT_RECENCY, SORT_ALPHA, buildTagGroupedList,
 } from '../lib/projectTree.js'
 
 const PROJECTS = [
@@ -227,5 +227,30 @@ describe('V3-ARCHIVE-001 archived exclusion', () => {
     const tree = buildGardenTree(projects, [])
     expect(tree.map(n => n.project.id)).toEqual(['root'])
     expect(tree[0].children).toEqual([])
+  })
+})
+
+
+describe('buildTagGroupedList — Lifecycle (status) grouping', () => {
+  const PL = [
+    { id: '1', name: 'B-plant', status: 'seedling' },
+    { id: '2', name: 'A-plant', status: 'vegetative' },
+    { id: '3', name: 'C-plant', status: 'seedling' },
+    { id: '4', name: 'D-plant', status: null },
+  ]
+  it('groups by plant.status in PLANT_STATUSES (lifecycle) order, not alpha', () => {
+    const groups = buildTagGroupedList(PL, {}, 'status')
+    // seedling (idx 1) before vegetative (idx 2); status-less -> Unstaged last
+    const labels = groups.map(g => g.label)
+    expect(labels[0]).toBe('Seedling')
+    expect(labels[1]).toBe('Vegetative')
+    expect(labels[groups.length - 1]).toBe('Unstaged')
+  })
+  it('counts members and name-sorts within a status group', () => {
+    const groups = buildTagGroupedList(PL, {}, 'status')
+    const seedling = groups.find(g => g.slug === 'seedling')
+    expect(seedling.count).toBe(2)
+    expect(seedling.facet).toBe('status')
+    expect(seedling.plantings.map(p => p.name)).toEqual(['B-plant', 'C-plant'].sort((a, b) => a.localeCompare(b)))
   })
 })

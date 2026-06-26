@@ -7,14 +7,13 @@ import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import CritterSprite from '../components/CritterSprite.jsx'
 import LoveMehPopover from '../components/LoveMehPopover.jsx'
 import { fetchActiveCritters, markCrittersViewed, patchSpeciesPrefs } from '../lib/critterClient.js'
-import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed, saveGardenGroupBy, saveGardenSortOrder, saveGardenExpanded } from '../lib/notificationPrefsClient.js'
+import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed, saveGardenGroupBy, saveGardenExpanded } from '../lib/notificationPrefsClient.js'
 import CritterCoachmark from '../components/CritterCoachmark.jsx'
 import CritterOptInPrompt from '../components/CritterOptInPrompt.jsx'
 import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
 import { SYSTEM_NOTIFICATIONS_ENABLED } from '../lib/featureFlags.js'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
-import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, loadSortOrder, saveSortOrder, buildTagGroupedList, loadGroupBy, saveGroupBy } from '../lib/projectTree.js'
-import SortToggle from '../components/SortToggle.jsx'
+import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA } from '../lib/projectTree.js'
 import GroupByControl from '../components/forms/GroupByControl.jsx'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
 import { useEntityTagsBulk } from '../hooks/useTags.js'
@@ -48,15 +47,6 @@ export default function Garden() {
     saveExpanded(set); expandedHydratedRef.current = true
     saveGardenExpanded({ getToken, ids: [...set] })
   }, [getToken])
-  // V3-ORDER-001: persisted sort order. DEFAULT = recency (server order); 'alpha' is opt-in.
-  const [sortOrder, setSortOrder] = useState(() => loadSortOrder())
-  // V4 cross-device sort order: localStorage paints instantly; server pref is source of truth,
-  // hydrated once below. Explicit change latches the ref so a late server hydrate can't clobber it.
-  const sortOrderHydratedRef = useRef(false)
-  const onSortChange = useCallback((order) => {
-    setSortOrder(order); saveSortOrder(order); sortOrderHydratedRef.current = true
-    saveGardenSortOrder({ getToken, value: order })
-  }, [getToken])
   // V4-GARDENIA-001: faceted group-by overlay. tagMap = whole-garden plant->tags map; inert/empty
   // until VITE_API_TAGS is wired, so the control stays hidden and the legacy tree is unchanged.
   const [groupBy, setGroupBy] = useState(() => loadGroupBy())
@@ -77,9 +67,12 @@ export default function Garden() {
       for (const t of [...(e.direct || []), ...(e.projected || [])]) present.add(t.facet)
     }
     const ORDER = ['type', 'lifecycle', 'location', 'group', 'freeform']
-    const LABELS = { type: 'Type', lifecycle: 'Lifecycle', location: 'Location', group: 'Group', freeform: 'Tags' }
+    const LABELS = { type: 'Type', lifecycle: 'Lifespan', location: 'Location', group: 'Group', freeform: 'Tags' }
     const opts = [{ value: 'none', label: 'Projects' }]
     for (const fct of ORDER) if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
+    // 'status' groups by the planting's LIFECYCLE stage (seed->...->ended). Always available
+    // (every planting has a status), so appended unconditionally — it is NOT a tag facet.
+    opts.push({ value: 'status', label: 'Lifecycle' })
     return opts
   }, [tagMap])
   // MVP-Critter Session 3: active critters for this household, grouped by plant_id.
@@ -155,11 +148,6 @@ export default function Garden() {
         groupByHydratedRef.current = true
         setGroupBy(p.garden_group_by)
         saveGroupBy(p.garden_group_by)
-      }
-      if (on && !sortOrderHydratedRef.current && p && (p.garden_sort_order === 'alpha' || p.garden_sort_order === 'recency')) {
-        sortOrderHydratedRef.current = true
-        setSortOrder(p.garden_sort_order)
-        saveSortOrder(p.garden_sort_order)
       }
       if (on && !expandedHydratedRef.current && p && typeof p.garden_expanded === 'string') {
         try {
@@ -423,7 +411,7 @@ export default function Garden() {
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
   const effectiveGroupBy = facetOptions.some(o => o.value === groupBy) ? groupBy : 'none'
-  const tree = buildGardenTree(projects, plants, sortOrder)
+  const tree = buildGardenTree(projects, plants, SORT_ALPHA)
 
   return (
     <Shell>
@@ -448,7 +436,6 @@ export default function Garden() {
         {facetOptions.length > 1 && (
           <GroupByControl options={facetOptions} value={effectiveGroupBy} onChange={onGroupByChange} />
         )}
-        <SortToggle order={sortOrder} onChange={onSortChange} label="Sort garden" />
         <Link to="/capture" data-testid="snap-entry-garden" style={btnGhost}>📸 Snap</Link>
         <Link to="/log/many" style={btnGhost}>⚡ Log many</Link>
       </div>
@@ -472,7 +459,7 @@ export default function Garden() {
 
       {effectiveGroupBy !== 'none' ? (
         <FacetedGarden
-          plants={plants} tagMap={tagMap} facet={effectiveGroupBy} sortOrder={sortOrder}
+          plants={plants} tagMap={tagMap} facet={effectiveGroupBy}
           crittersByPlantId={crittersByPlantId} onSpriteLongPress={onSpriteLongPress}
           onSpriteIntersect={onSpriteIntersect} onPhotoUploaded={refetchPlants} flashId={flashId} />
       ) : tree.length === 0 ? (
@@ -685,17 +672,19 @@ function Shell({ children }) {
 // V4-GARDENIA-001: faceted Garden render. Group-by overlay over the SAME PlantingRow the legacy
 // tree uses, so plantings look identical; the by-project tree (effectiveGroupBy==='none') is
 // untouched and remains golden-gated. A planting may appear under multiple groups (multi-membership).
-function FacetedGarden({ plants, tagMap, facet, sortOrder, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId }) {
-  const [collapsed, setCollapsed] = useState(() => new Set())
-  const toggle = useCallback((slug) => setCollapsed(prev => {
+function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId }) {
+  // Sections COLLAPSED by default (Dave 2026-06-26): track the EXPANDED set instead of collapsed,
+  // so an empty set = everything collapsed. Toggling a header adds/removes it from expandedGroups.
+  const [expandedGroups, setExpandedGroups] = useState(() => new Set())
+  const toggle = useCallback((slug) => setExpandedGroups(prev => {
     const next = new Set(prev); next.has(slug) ? next.delete(slug) : next.add(slug); return next
   }), [])
-  const groups = buildTagGroupedList(plants, tagMap, facet, sortOrder) || []
+  const groups = buildTagGroupedList(plants, tagMap, facet) || []
   if (groups.length === 0) return <EmptyState />
   return (
     <div role="tree" aria-label="Garden grouped by tag" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {groups.map(g => {
-        const isCollapsed = collapsed.has(g.slug)
+        const isCollapsed = !expandedGroups.has(g.slug)
         return (
           <div key={g.slug} role="group">
             <FacetGroupHeader label={g.label} count={g.count} facet={g.facet} value={g.slug}

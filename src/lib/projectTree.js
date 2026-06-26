@@ -1,3 +1,5 @@
+import { PLANT_STATUSES, statusLabel } from './constants.js'
+
 // Shared project/planting tree utilities for the Garden tab (Increment 1, post-V2 UX overhaul).
 // Garden unifies Projects + Plants into one nested accordion: projects form a parent/child
 // tree (parent_project_id), and each project's plantings hang under it as leaf rows.
@@ -148,9 +150,10 @@ export function tagsForPlanting(tagMap, plantingId) {
 // tag value it carries in `facet` (multi-membership); plantings with no tag in that facet fall into
 // a trailing "Unsorted" group. Groups sort alpha by label; Unsorted is always last. Returns null
 // when `facet` is falsy — the caller then renders the legacy by-project tree (golden path).
-export function buildTagGroupedList(plantings, tagMap, facet, order = SORT_RECENCY) {
+export function buildTagGroupedList(plantings, tagMap, facet, order = SORT_ALPHA) {
   if (!facet) return null
   const live = (plantings || []).filter(p => p && !p.archived_at)
+  if (facet === 'status') return buildStatusGroupedList(live, order)
   const groups = new Map()
   const unsorted = []
   live.forEach(p => {
@@ -228,4 +231,30 @@ export function loadGroupBy() {
 }
 export function saveGroupBy(value) {
   try { localStorage.setItem(GROUPBY_KEY, value) } catch { /* private mode / quota — non-fatal */ }
+}
+
+
+// V4: group plantings by lifecycle STAGE (plant.status: seed->seedling->...->ended). Not a tag
+// facet — status is a first-class plant field. Groups order by PLANT_STATUSES (the canonical
+// lifecycle order), labelled via statusLabel(); the group `facet` is 'status' so headers color
+// through getStatusColors. Status-less plantings fall into an "Unstaged" group.
+function buildStatusGroupedList(live, order) {
+  const groups = new Map()
+  const unsorted = []
+  live.forEach(p => {
+    const st = p.status
+    if (!st) { unsorted.push(p); return }
+    let g = groups.get(st)
+    if (!g) { g = { slug: st, label: statusLabel(st), facet: 'status', plantings: [] }; groups.set(st, g) }
+    g.plantings.push(p)
+  })
+  const idx = (st) => { const i = PLANT_STATUSES.indexOf(st); return i === -1 ? 999 : i }
+  const out = [...groups.values()]
+    .sort((a, b) => idx(a.slug) - idx(b.slug) || a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+    .map(g => ({ ...g, plantings: applyNameSort(g.plantings, order), count: g.plantings.length }))
+  if (unsorted.length) {
+    out.push({ slug: UNSORTED_SLUG, label: 'Unstaged', facet: 'status', isUnsorted: true,
+      plantings: applyNameSort(unsorted, order), count: unsorted.length })
+  }
+  return out
 }

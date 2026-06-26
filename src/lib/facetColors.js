@@ -4,8 +4,11 @@
 // entry, resolved via the optional second arg. Unknown/missing lifecycle values fall back to the
 // neutral freeform token (the prior behavior for the whole facet).
 import { FACET_TOKENS, LIFECYCLE_TOKENS } from './tokens.js'
+import { getStatusColors } from './status.js'
 const NEUTRAL = FACET_TOKENS.freeform
 export function facetColors(facet, value) {
   if (facet === 'lifecycle') return LIFECYCLE_TOKENS[value] || NEUTRAL
+  // 'status' = the Lifecycle grouping (plant stage). Color through the shared status palette.
+  if (facet === 'status') return getStatusColors(value)
   return FACET_TOKENS[facet] || NEUTRAL
 }
