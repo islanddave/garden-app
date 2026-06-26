@@ -79,7 +79,8 @@ describe('PlantingDetail — four states', () => {
     expect(badge.textContent).toContain('Fruiting')
     // Grower fields.
     expect(screen.getByText('Greenhouse / Bed 2', { exact: false })).toBeTruthy()
-    expect(screen.getByText('Transplanted')).toBeTruthy()
+    // 'Transplanted' now appears in both the Details row and the V4-PLANTINGUI Life-story spine.
+    expect(screen.getAllByText('Transplanted').length).toBeGreaterThan(0)
     // First-harvest derived from the event log (earliest first_harvest) — appears only once
     // the async events fetch resolves, so wait for it rather than asserting synchronously.
     await screen.findByText('First harvest')

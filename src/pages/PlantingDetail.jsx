@@ -29,6 +29,11 @@ import ZoomableImage from '../components/ZoomableImage.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { PLANT_SOURCE_LABELS , PLANT_CONTAINER_TYPE_LABELS } from '../lib/dropdownRegistry.js'
+import HeroPhoto from '../components/planting/HeroPhoto.jsx'
+import QuickActions from '../components/planting/QuickActions.jsx'
+import LifeStoryTimeline from '../components/planting/LifeStoryTimeline.jsx'
+import CropCard from '../components/planting/CropCard.jsx'
+import { buildLifeStory } from '../lib/lifeStory.js'
 
 
 
@@ -49,6 +54,7 @@ export default function PlantingDetail() {
   const [error, setError] = useState(null)
   const [notFound, setNotFound] = useState(false)
   const [unarchiving, setUnarchiving] = useState(false)  // V3-ARCHIVE-001: planting restore path
+  const [refreshKey, setRefreshKey] = useState(0)  // V4-PLANTINGUI-001: bump to refetch events after a quick-log
 
   // Event log has its OWN lifecycle (DoD: don't conflate filtered-empty with failed-load).
   const [events, setEvents] = useState([])
@@ -124,7 +130,7 @@ export default function PlantingDetail() {
         setEventsLoading(false)
       })
     return () => { cancelled = true }
-  }, [planting, fetch])
+  }, [planting, fetch, refreshKey])
 
   // Planting photos (V1 display-only). Once the planting is owned, read the project's photos and
   // keep those linked to THIS planting (directly via plant_id, or through one of its events).
@@ -244,13 +250,11 @@ export default function PlantingDetail() {
         ]}
       />
 
-      {/* Header — status reachable without scrolling, multi-channel. */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 22 }}>
-        {pl.featured_photo_view_url
-          ? <ZoomableImage src={pl.featured_photo_view_url} alt={`${pl.name || 'Planting'} photo`} loading="lazy"
-              style={{ width: 64, height: 64, borderRadius: 10, objectFit: 'cover', flexShrink: 0, border: `1px solid ${P.border}` }} />
-          : <span aria-hidden="true" style={{ width: 64, height: 64, flexShrink: 0, display: 'flex',
-              alignItems: 'center', justifyContent: 'center', fontSize: '1.8rem', backgroundColor: P.greenPale, borderRadius: 10 }}>🌱</span>}
+      {/* V4-PLANTINGUI-001 — hero photo */}
+      <HeroPhoto src={pl.featured_photo_view_url} alt={`${pl.name || 'Planting'} photo`} />
+
+      {/* Title row: name + multi-channel status, with secondary affordances inline. */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, margin: '16px 0 16px' }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <h1 style={{ margin: '0 0 8px', color: P.green, fontSize: '1.4rem', fontWeight: 700, wordBreak: 'break-word' }}>
             {pl.name || 'Planting'}
@@ -268,8 +272,9 @@ export default function PlantingDetail() {
             {variety && <span style={{ fontSize: '0.85rem', color: P.mid }}>{variety}</span>}
           </div>
         </div>
-        {/* Actions: Log event (V3-LOG-001) + Edit (V3-EDIT-001), stacked. */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, alignSelf: 'flex-start' }}>
+        {/* Secondary affordances: Favorite + per-planting caretaker + Edit. Primary quick-actions
+            (water/photo/status) live in the QuickActions row below. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, alignSelf: 'flex-start', alignItems: 'flex-end' }}>
           {pl.archived_at && (
             <button onClick={handleUnarchive} disabled={unarchiving} aria-label="Unarchive this planting"
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, backgroundColor: P.white, color: P.green,
@@ -278,21 +283,7 @@ export default function PlantingDetail() {
               {unarchiving ? 'Working…' : '♻️ Unarchive'}
             </button>
           )}
-          <Link
-            to={`/log?project=${pl.project_id}&plant=${pl.id}`}
-            aria-label="Log an event for this planting"
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              backgroundColor: P.green, color: P.white,
-              border: `1px solid ${P.green}`, borderRadius: 8,
-              padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
-              textDecoration: 'none', whiteSpace: 'nowrap',
-            }}
-          >
-            📝 Log event
-          </Link>
-          {/* V3-FAV-001: favorite this planting (entity_type=plant = garden_node id). Ambient star,
-              no interrupt — Reward-UX compliant. Sits before the Edit affordance in the header. */}
+          {/* V3-FAV-001: favorite this planting. Ambient star, Reward-UX compliant. */}
           <FavoriteToggle entityType="plant" entityId={pl.id} size="1.4rem" />
           {/* PLANT-ASSIGN-001: per-planting caretaker override; blank = inherit the project's caretaker */}
           <AssigneePicker entityType="plant" entityId={pl.id} value={pl.assignee_user_id ?? null} onChanged={(v) => setPlanting(prev => ({ ...prev, assignee_user_id: v }))} inheritLabel={pl.project_name ? `Inherits project: ${pl.project_name}` : 'Inherits the project caretaker'} />
@@ -301,7 +292,7 @@ export default function PlantingDetail() {
             to={`/garden?edit=${plantingId}`}
             aria-label="Edit this planting"
             style={{
-              flexShrink: 0, alignSelf: 'flex-start',
+              flexShrink: 0, alignSelf: 'flex-end',
               display: 'inline-flex', alignItems: 'center', gap: 6,
               backgroundColor: P.white, color: P.green,
               border: `1px solid ${P.greenLight}`, borderRadius: 8,
@@ -313,6 +304,26 @@ export default function PlantingDetail() {
           </Link>
         </div>
       </div>
+
+      {/* V4-PLANTINGUI-001 — primary quick-actions: water / photo / status. */}
+      <QuickActions
+        planting={pl}
+        onLogged={() => setRefreshKey(k => k + 1)}
+        onStatusChanged={(status) => setPlanting(prev => ({ ...prev, status }))}
+      />
+
+      {/* V4-PLANTINGUI-001 — per-crop slot: maturity/harvest + cultivar attrs + projected facets. */}
+      <CropCard planting={pl} />
+
+      {/* V4-PLANTINGUI-001 — life-story milestone spine (lifecycle arc; full Event log remains below). */}
+      {buildLifeStory(pl).length > 0 && (
+        <>
+          <SectionHeader>Life story</SectionHeader>
+          <div style={cardStyle}>
+            <LifeStoryTimeline planting={pl} />
+          </div>
+        </>
+      )}
 
       {/* ── Details ───────────────────────────────────────────────────────────────────────── */}
       <SectionHeader>Details</SectionHeader>

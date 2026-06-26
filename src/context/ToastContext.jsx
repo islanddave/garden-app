@@ -21,6 +21,14 @@ export function useToast() {
   return ctx
 }
 
+// useOptionalToast — like useToast but resilient outside a provider (returns a no-op api).
+// For OPERATIONAL confirmations from components that may render in test harnesses or routes
+// not wrapped in <ToastProvider>. Same reward-UX boundary applies: operational-only.
+const NOOP_TOAST = { show: () => null, showUndo: () => null, dismiss: () => {} }
+export function useOptionalToast() {
+  return useContext(ToastCtx) || NOOP_TOAST
+}
+
 let _seq = 0
 
 export function ToastProvider({ children }) {
