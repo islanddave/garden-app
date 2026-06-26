@@ -16,6 +16,13 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 
+// V4: GardenHelper now calls useApiFetch (useAuth) + the prefs client for cross-device rung-1
+// dismissal. Mock both so this stays a provider-free unit test (L-160).
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ getToken: async () => null, fetch: vi.fn() }) }))
+vi.mock('../lib/notificationPrefsClient.js', () => ({
+  fetchNotificationPrefs: vi.fn(async () => null),
+  saveGardenHelperRung1: vi.fn(),
+}))
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }))

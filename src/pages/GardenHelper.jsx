@@ -12,10 +12,13 @@
 // needs the Claude app" explainer for new users. Dismissable; persisted in
 // localStorage so the same device doesn't see it twice.
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import { assembleHelperPrompt } from '../lib/helperPrompt.js'
+
+import { useApiFetch } from '../lib/api.js'
+import { fetchNotificationPrefs, saveGardenHelperRung1 } from '../lib/notificationPrefsClient.js'
 
 const RUNG1_EXPLAINER_DISMISSED_KEY = 'gardenHelper.rung1ExplainerDismissed'
 
@@ -43,6 +46,18 @@ export default function GardenHelper() {
   const [note, setNote] = useState('')
   const [status, setStatus] = useState(null) // 'shared' | 'copied' | 'error' | null
   const [showExplainer, setShowExplainer] = useState(() => !readDismissed())
+  const { getToken } = useApiFetch()
+
+  // V4 cross-device: the rung-1 explainer dismissal is now per-user server state. localStorage is
+  // the instant cache; on mount we check the server and hide (+ cache locally) if dismissed there.
+  useEffect(() => {
+    let on = true
+    ;(async () => {
+      const p = await fetchNotificationPrefs({ getToken })
+      if (on && p && p.garden_helper_rung1_seen === true) { setShowExplainer(false); writeDismissed() }
+    })()
+    return () => { on = false }
+  }, [getToken])
 
   const trimmed = note.trim()
   const canSend = trimmed.length > 0
@@ -50,6 +65,7 @@ export default function GardenHelper() {
   function dismissExplainer() {
     setShowExplainer(false)
     writeDismissed()
+    saveGardenHelperRung1({ getToken })
   }
 
   async function handleSend() {

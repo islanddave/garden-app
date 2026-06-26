@@ -224,6 +224,20 @@ describe('notificationPrefsClient', () => {
     })
   })
 
+  describe('saveGardenHelperRung1', () => {
+    it('returns null when VITE_API_CRITTERS unset', async () => {
+      const mod = await loadModule('')
+      expect(await mod.saveGardenHelperRung1({ getToken: async () => TOKEN })).toBeNull()
+    })
+    it('PATCHes garden_helper_rung1_seen=true', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ garden_helper_rung1_seen: true }) })
+      const res = await mod.saveGardenHelperRung1({ getToken: async () => TOKEN })
+      expect(res).toEqual({ garden_helper_rung1_seen: true })
+      expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ garden_helper_rung1_seen: true })
+    })
+  })
+
   describe('CRITTER_VISIT_VALUES', () => {
     it('exports the canonical allowed values', async () => {
       const mod = await loadModule('https://staging.example.com')

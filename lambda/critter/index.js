@@ -106,6 +106,7 @@ async function readUserPrefs(sql, clerkSub) {
     garden_sort_order: null,
     garden_expanded: null,
     garden_bloom_seen: null,
+    garden_helper_rung1_seen: null,
     created_at: null, updated_at: null,
   }
 }
@@ -399,8 +400,9 @@ export const handler = async (event) => {
       const ge = geArr == null ? null : JSON.stringify(geArr)
       const gbsArr = body.garden_bloom_seen ?? null
       const gbs = gbsArr == null ? null : JSON.stringify(gbsArr)
+      const ghr = body.garden_helper_rung1_seen ?? null
       const rows = await sql`
-        INSERT INTO public.user_notification_prefs (created_by, critter_visit, quiet_hours_start, quiet_hours_end, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen)
+        INSERT INTO public.user_notification_prefs (created_by, critter_visit, quiet_hours_start, quiet_hours_end, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen, garden_helper_rung1_seen)
         VALUES (
           ${userId},
           COALESCE(${cv}, 'in_app_only'),
@@ -409,7 +411,8 @@ export const handler = async (event) => {
           ${gg},
           ${gso},
           ${ge},
-          ${gbs}
+          ${gbs},
+          ${ghr}
         )
         ON CONFLICT (created_by) DO UPDATE SET
           critter_visit      = COALESCE(${cv}, public.user_notification_prefs.critter_visit),
@@ -419,9 +422,10 @@ export const handler = async (event) => {
           garden_sort_order  = COALESCE(${gso}, public.user_notification_prefs.garden_sort_order),
           garden_expanded    = COALESCE(${ge}, public.user_notification_prefs.garden_expanded),
           garden_bloom_seen  = COALESCE(${gbs}, public.user_notification_prefs.garden_bloom_seen),
+          garden_helper_rung1_seen = COALESCE(${ghr}, public.user_notification_prefs.garden_helper_rung1_seen),
           updated_at         = now()
         RETURNING critter_visit, quiet_hours_start, quiet_hours_end,
-                  coachmark_seen_at, opt_in_prompt_seen_at, last_garden_view_at, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen, updated_at
+                  coachmark_seen_at, opt_in_prompt_seen_at, last_garden_view_at, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen, garden_helper_rung1_seen, updated_at
       `
       return resp(200, rows[0])
     }

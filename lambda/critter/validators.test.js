@@ -124,6 +124,14 @@ describe('validatePrefsPatchBody', () => {
     expect(validatePrefsPatchBody({ garden_bloom_seen: 'nope' })?.status).toBe(400)
     expect(validatePrefsPatchBody({ garden_bloom_seen: [1] })?.status).toBe(400)
   })
+  it('accepts a boolean garden_helper_rung1_seen', () => {
+    expect(validatePrefsPatchBody({ garden_helper_rung1_seen: true })).toBeNull()
+    expect(validatePrefsPatchBody({ garden_helper_rung1_seen: false })).toBeNull()
+  })
+  it('rejects a non-boolean garden_helper_rung1_seen', () => {
+    expect(validatePrefsPatchBody({ garden_helper_rung1_seen: 'yes' })?.status).toBe(400)
+    expect(validatePrefsPatchBody({ garden_helper_rung1_seen: 1 })?.status).toBe(400)
+  })
 })
 
 describe('validateSpeciesPrefsPatchBody (D-INV-1 Option A)', () => {
