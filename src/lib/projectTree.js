@@ -132,6 +132,46 @@ export function nodeHasChildren(node) {
   return (node.children && node.children.length > 0) || (node.plantings && node.plantings.length > 0)
 }
 
+// ─── V4-GARDENIA-001: faceted group-by (ADDITIVE; buildGardenTree/buildDisplayList are
+//     untouched and remain golden-gated to parity hash 8a3d78f098e55ff2) ──────────────────────
+export const UNSORTED_SLUG = '__unsorted__'
+
+// Flatten a planting's bulk entity-tags entry { direct, projected } into one tag list.
+export function tagsForPlanting(tagMap, plantingId) {
+  const e = tagMap && tagMap[plantingId]
+  if (!e) return []
+  return [...(e.direct || []), ...(e.projected || [])]
+}
+
+// Group plantings by the active facet's tag values. tagMap = { [plantingId]: { direct:Tag[],
+// projected:Tag[] } } from GET /api/entity-tags?entity_type=plant. A planting appears under EVERY
+// tag value it carries in `facet` (multi-membership); plantings with no tag in that facet fall into
+// a trailing "Unsorted" group. Groups sort alpha by label; Unsorted is always last. Returns null
+// when `facet` is falsy — the caller then renders the legacy by-project tree (golden path).
+export function buildTagGroupedList(plantings, tagMap, facet, order = SORT_RECENCY) {
+  if (!facet) return null
+  const live = (plantings || []).filter(p => p && !p.archived_at)
+  const groups = new Map()
+  const unsorted = []
+  live.forEach(p => {
+    const matches = tagsForPlanting(tagMap, p.id).filter(t => t && t.facet === facet)
+    if (matches.length === 0) { unsorted.push(p); return }
+    matches.forEach(t => {
+      let g = groups.get(t.slug)
+      if (!g) { g = { slug: t.slug, label: t.label || t.slug, facet, plantings: [] }; groups.set(t.slug, g) }
+      g.plantings.push(p)
+    })
+  })
+  const out = [...groups.values()]
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+    .map(g => ({ ...g, plantings: applyNameSort(g.plantings, order), count: g.plantings.length }))
+  if (unsorted.length) {
+    out.push({ slug: UNSORTED_SLUG, label: 'Unsorted', facet, isUnsorted: true,
+      plantings: applyNameSort(unsorted, order), count: unsorted.length })
+  }
+  return out
+}
+
 const LS_KEY = 'garden.expanded.v1'
 
 // Disclosure state: a Set of expanded project ids, persisted per-browser. Default = empty
