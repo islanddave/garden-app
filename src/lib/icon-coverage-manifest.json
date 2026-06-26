@@ -1,0 +1,8 @@
+{
+  "_doc": "V4-ICON-001 (Pass B V101 §9/§14) coverage manifest. GLYPHS must be a superset of each listed family. Anchor set ships first (§16 pre-flight gate); remaining families are added as their glyphs land.",
+  "schemaVersion": 101,
+  "anchorSet": [
+    "nav.today", "nav.garden", "care.drop", "facet.type",
+    "facet.location", "severity.high", "action.heart", "care.pause"
+  ]
+}

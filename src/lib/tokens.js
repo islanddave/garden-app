@@ -39,3 +39,14 @@ export const LIFECYCLE_TOKENS = {
   perennial:         { bg: P.fLcPerennialBg, text: P.fLcPerennialText, border: P.fLcPerennialBorder },
   tender_perennial:  { bg: P.fLcTenderBg,    text: P.fLcTenderText,    border: P.fLcTenderBorder },
 }
+
+// ── V4-ICON-001 (DESIGNSYS Pass B V101) icon tokens — single source for the Icon
+// component (JS import) AND the generated CSS vars (main.jsx). §11. ──────────────
+export const ICON = {
+  stroke: 1.75, strokeSmall: 2.0, strokeInverse: 2.0, strokeHero: 2.25, minStroke: 1.6,
+  tint: '#c8e6cd', keyline: 2, cornerRadius: 2, circleD: 18,
+  defaultColor: P.greenDeep, inverseColor: P.white,
+}
+export function iconCssVars() {
+  return `:root{--icon-stroke:${ICON.stroke}px;--icon-stroke-inverse:${ICON.strokeInverse}px;--icon-stroke-hero:${ICON.strokeHero}px;--icon-tint:${ICON.tint};--icon-keyline:${ICON.keyline};--icon-corner-radius:${ICON.cornerRadius};--icon-circle-d:${ICON.circleD};--icon-color:${ICON.defaultColor};}`
+}

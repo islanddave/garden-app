@@ -43,3 +43,49 @@ const NEUTRAL_DOT = '•'
 export function statusGlyph(status) {
   return ICONS.status[status]?.glyph ?? NEUTRAL_DOT
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// V4-ICON-001 (DESIGNSYS Pass B V101) — additive go-forward registry.
+// The legacy ICONS/statusGlyph above are UNTOUCHED (PlantStatusBadge + contract
+// test still read them). GLYPHS is the V101-schema registry the custom-SVG era
+// migrates into; consumers are NOT yet routed here (inert until per-glyph swaps).
+// Entry shape (§13 additive superset): { key, glyph (legacy/null), svg24, svg18,
+// class:'mono'|'color-candidate', register:'functional'|'illustrated', variant,
+// accessibleName (string | per-state map), schemaVersion, variants? }. isSvg is
+// DERIVED (Boolean(svg24 && svg18)) — never hand-stored (removes a drift vector).
+import ANCHORS from './iconAnchors.js'
+
+const ANCHOR_META = {
+  'nav.today':      { accessibleName: 'Today' },
+  'nav.garden':     { accessibleName: 'Garden' },
+  'care.drop':      { accessibleName: 'Water' },
+  'facet.type':     { accessibleName: 'Type' },
+  'facet.location': { accessibleName: 'Location' },
+  'severity.high':  { accessibleName: 'High severity' },
+  'action.heart':   { accessibleName: { outline: 'Add to favorites', filled: 'Remove from favorites' } },
+  'care.pause':     { accessibleName: 'Pause' },
+}
+
+export const GLYPHS = Object.fromEntries(
+  Object.entries(ANCHORS).map(([key, a]) => [key, {
+    key,
+    glyph: null,                 // anchors are SVG-native (no legacy emoji backing)
+    svg24: a.svg24, svg18: a.svg18,
+    class: a.class, register: a.register, variant: a.variant,
+    variants: a.variants ?? null,
+    regionIntent: a.regionIntent ?? null,
+    accessibleName: ANCHOR_META[key]?.accessibleName ?? key,
+    schemaVersion: 101,
+  }])
+)
+
+// Neutral fallback — V101 successor to the statusGlyph '•' dot. Never throws.
+export const NEUTRAL_ICON = {
+  key: '__neutral__', glyph: '•', class: 'mono', register: 'functional', variant: 'line',
+  svg24: '<circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>',
+  svg18: '<circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>',
+  accessibleName: 'Icon', schemaVersion: 101,
+}
+
+export function isSvg(entry) { return Boolean(entry && entry.svg24 && entry.svg18) }
+export function getIcon(key) { return GLYPHS[key] ?? NEUTRAL_ICON }

@@ -22,6 +22,7 @@ export const P = {
   blue:        '#4a7fb5',
   brown:       '#7a5c3c',
   white:       '#ffffff',
+  greenDeep:    '#1f5138',  // V4-ICON-001 (Pass B V101 §11): named icon-default ink (= fTypeText value, AAA on cream).
   // ── DESIGNSYS Pass A: drift-literal promotion (V4-DESIGNSYS-001) ──────────
   // Hexes lifted verbatim from status.js / formStyles bannerChrome / SeverityBadge.
   // Parity-preserving: same exact values, now single-sourced.
