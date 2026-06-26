@@ -12,7 +12,10 @@
     "test:ui": "vitest --ui",
     "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
     "check:event-types": "node scripts/gen-lambda-event-types.mjs --check",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "icon:golden": "node scripts/icon-ci/optical-weight.mjs",
+    "icon:golden:update": "node scripts/icon-ci/optical-weight.mjs --update",
+    "icon:seam": "node scripts/icon-ci/region-seam.mjs"
   },
   "dependencies": {
     "@clerk/react": "^6.0.0",
@@ -23,6 +26,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@resvg/resvg-js": "^2.6.2",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.5.2",

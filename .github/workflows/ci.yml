@@ -39,6 +39,16 @@ jobs:
         # raw JSX emoji (must use lib/constants.js P / lib/tokens.js / lib/iconRegistry.js).
         run: npm run lint
 
+      - name: Icon optical-weight golden (V4-ICON-001)
+        # V101 §14 pre-flight gate: each migrated SVG glyph's live-area ink-coverage must
+        # stay within +/-tolerance of its approved baseline (scripts/icon-ci/icon-golden-baseline.json).
+        run: npm run icon:golden
+
+      - name: Icon region-seam (V4-ICON-001)
+        # V101 §14: color-candidate multi-region glyphs paint every region with no interior
+        # seam holes (backs the zero-geometry-redraw color-pass promise).
+        run: npm run icon:seam
+
       - name: Build (CI — placeholder env vars)
         # VITE_ vars are inlined at build time as string literals.
         # Placeholder values allow build to succeed without real infrastructure.

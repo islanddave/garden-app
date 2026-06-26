@@ -1,0 +1,17 @@
+{
+  "_doc": "V4-ICON-001 optical-weight baselines (live-area ink-coverage %, resvg). Regenerate with --update only after an APPROVED design change.",
+  "tolerance": 1.5,
+  "opticalExceptions": [
+    "care.pause"
+  ],
+  "glyphs": {
+    "nav.today": 21.75,
+    "nav.garden": 24.88,
+    "care.drop": 19.97,
+    "facet.type": 27,
+    "facet.location": 27.55,
+    "severity.high": 26.7,
+    "action.heart": 23.14,
+    "care.pause": 10.52
+  }
+}
