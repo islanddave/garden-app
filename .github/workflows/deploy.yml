@@ -92,6 +92,7 @@ jobs:
           [[ -n "${VITE_API_CRITTERS:-}" ]] || echo "WARN: VITE_API_CRITTERS not set — critter rewards will not flow until set"
           # VITE_API_SHARED_STATE — same first-deploy bootstrap (V3-REWARDSTATE-001).
           [[ -n "${VITE_API_SHARED_STATE:-}" ]] || echo "WARN: VITE_API_SHARED_STATE not set — shared-garden reward substrate unreachable until set"
+          [[ -n "${VITE_API_TAGS:-}" ]] || echo "WARN: VITE_API_TAGS not set — tag UI will not work until set (ship-then-wire; GARDENIA)"
           [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_live_* ]] || {
             echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY must be pk_live_* for prod (got ${VITE_CLERK_PUBLISHABLE_KEY:0:12}...)"
             exit 1
@@ -113,6 +114,7 @@ jobs:
           VITE_API_FINDINGS:          ${{ vars.VITE_API_FINDINGS }}
           VITE_API_DAILY_PLAN_READ:   ${{ vars.VITE_API_DAILY_PLAN_READ }}
           VITE_API_MEMBERS:          ${{ vars.VITE_API_MEMBERS }}
+          VITE_API_TAGS:              ${{ vars.VITE_API_TAGS }}
           VITE_API_CRITTERS:          ${{ vars.VITE_API_CRITTERS }}
           VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
           VITE_API_SHARED_STATE:      ${{ vars.VITE_API_SHARED_STATE }}
@@ -135,6 +137,7 @@ jobs:
           VITE_API_FINDINGS:          ${{ vars.VITE_API_FINDINGS }}
           VITE_API_DAILY_PLAN_READ:   ${{ vars.VITE_API_DAILY_PLAN_READ }}
           VITE_API_MEMBERS:          ${{ vars.VITE_API_MEMBERS }}
+          VITE_API_TAGS:              ${{ vars.VITE_API_TAGS }}
           VITE_API_CRITTERS:          ${{ vars.VITE_API_CRITTERS }}
           VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
           VITE_API_SHARED_STATE:      ${{ vars.VITE_API_SHARED_STATE }}
@@ -261,6 +264,7 @@ jobs:
           VITE_API_FINDINGS:          ${{ vars.VITE_API_FINDINGS }}
           VITE_API_DAILY_PLAN_READ:   ${{ vars.VITE_API_DAILY_PLAN_READ }}
           VITE_API_MEMBERS:          ${{ vars.VITE_API_MEMBERS }}
+          VITE_API_TAGS:              ${{ vars.VITE_API_TAGS }}
         run: |
           set -uo pipefail
           SMOKE_FAIL=0
@@ -298,6 +302,7 @@ jobs:
           probe_api varieties    "$VITE_API_VARIETIES"    varieties       no
           probe_api app-events   "$VITE_API_APP_EVENTS"   app-events      no
           probe_api achievements "$VITE_API_ACHIEVEMENTS" achievements    no
+          probe_api tags         "$VITE_API_TAGS"         tags            no
           SPA_CODE="000"; SPA_BODY=""
           for attempt in 1 2; do
             SPA_BODY=$(curl -s --max-time 25 --connect-timeout 10 -w $'\n%{http_code}' "$SPA_URL/") || SPA_BODY=$'\n000'

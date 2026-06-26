@@ -255,6 +255,7 @@ jobs:
           VITE_API_UX_EVENTS:         ${{ env.STAGING_API_UX_EVENTS }}
           VITE_API_CRITTERS:          ${{ env.STAGING_API_CRITTERS }}
           VITE_API_SHARED_STATE:      ${{ env.STAGING_API_SHARED_STATE }}
+          VITE_API_TAGS:              ${{ vars.STAGING_API_TAGS }}
 
       - name: Verify build output
         run: |

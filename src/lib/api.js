@@ -23,6 +23,8 @@
 //   /api/findings           → VITE_API_FINDINGS      DRG care findings read model (DRG-TAB-001)
 //   /api/daily-plan         → VITE_API_DAILY_PLAN_READ  Daily Plan read model — Today surface (DRG-TODAY-002)
 //   /api/members            → VITE_API_MEMBERS       household roster for the caretaker picker (PLANT-ASSIGN-001)
+//   /api/tags               → VITE_API_TAGS         faceted tag substrate CRUD (V4-TAGSUB-001)
+//   /api/entity-tags        → VITE_API_TAGS         entity↔tag attach/detach + projected derived tags
 
 import { useAuth } from '@clerk/react'
 import { useCallback } from 'react'
@@ -45,6 +47,8 @@ const FUNCTION_URLS = {
   '/api/findings':          import.meta.env.VITE_API_FINDINGS      ?? '',
   '/api/daily-plan':        import.meta.env.VITE_API_DAILY_PLAN_READ ?? '',
   '/api/members':           import.meta.env.VITE_API_MEMBERS        ?? '',
+  '/api/tags':              import.meta.env.VITE_API_TAGS           ?? '',
+  '/api/entity-tags':       import.meta.env.VITE_API_TAGS           ?? '',
 }
 
 export function resolveUrl(path, urls = FUNCTION_URLS) {

@@ -20,6 +20,8 @@ const URLS = {
   '/api/inventory-items':   'https://inventory.lambda/',
   '/api/varieties':         'https://varieties.lambda/',
   '/api/achievements':      'https://achievements.lambda/',
+  '/api/tags':              'https://tags.lambda/',
+  '/api/entity-tags':       'https://tags.lambda/',
 }
 
 describe('resolveUrl — prefix routing', () => {
@@ -60,6 +62,19 @@ describe('resolveUrl — prefix routing', () => {
 
   it('throws when prefix-less path provided', () => {
     expect(() => resolveUrl('/random', URLS)).toThrow(/No Lambda URL configured/)
+  })
+
+  it('routes /api/tags to VITE_API_TAGS', () => {
+    expect(resolveUrl('/api/tags', URLS)).toBe('https://tags.lambda/api/tags')
+  })
+
+  it('routes /api/tags/:id/merge to VITE_API_TAGS', () => {
+    expect(resolveUrl('/api/tags/abc/merge', URLS)).toBe('https://tags.lambda/api/tags/abc/merge')
+  })
+
+  it('routes /api/entity-tags to VITE_API_TAGS (not /api/tags)', () => {
+    expect(resolveUrl('/api/entity-tags?entity_type=plant&entity_id=1', URLS))
+      .toBe('https://tags.lambda/api/entity-tags?entity_type=plant&entity_id=1')
   })
 
   it('strips trailing slash from base URL before joining', () => {
