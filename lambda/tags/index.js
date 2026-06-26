@@ -15,6 +15,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';
+import { assembleBulkEntities } from './bulk.js';
 import { applyDerive } from './crop-derive.js';
 import {
   slugify, validateTagCreate, validateTagPatch, validateEntityTagCreate, isAdmin,
@@ -234,7 +235,32 @@ export const handler = async (event) => {
     if (path === '/api/entity-tags') {
       if (method === 'GET') {
         const et = qp.entity_type, eid = qp.entity_id;
-        if (!et || !eid) return resp(400, { error: 'entity_type and entity_id are required' });
+        if (!et) return resp(400, { error: 'entity_type is required' });
+        // ── BULK mode (GARDENIA, V4-GARDENIA-001): entity_type given, NO entity_id -> the household's
+        //    whole-garden planting->tags map in ONE round trip, avoiding N+1 over ~170 plantings.
+        //    Shape: { entities: { <planting_id>: { direct: Tag[], projected: Tag[] } } }. Only 'plant'
+        //    is supported (container-scope + cultivar projection are plant-specific). Read-only.
+        if (!eid) {
+          if (et !== 'plant') return resp(400, { error: 'bulk entity-tags is only supported for entity_type=plant' });
+          const directRows = await sql`
+            SELECT et.entity_id, t.id, t.facet, t.label, t.slug, t.source, t.owner_id, t.visibility, t.created_by, t.created_at, t.updated_at
+            FROM public.garden_node gn
+            JOIN public.container pp ON pp.id = gn.container_id
+            JOIN public.entity_tag et ON et.entity_type = 'plant' AND et.entity_id = gn.id AND et.deleted_at IS NULL
+            JOIN public.tag t ON t.id = et.tag_id AND t.deleted_at IS NULL
+            WHERE gn.deleted_at IS NULL AND pp.created_by = ANY(${household})
+              AND ( (t.visibility = 'private' AND t.owner_id = ${userId})
+                    OR (t.visibility = 'shared' AND t.owner_id = ANY(${household}))
+                    OR t.owner_id = 'system' )`;
+          const projRows = await sql`
+            SELECT gn.id AS entity_id, t.id, t.facet, t.label, t.slug, t.source, t.owner_id, t.visibility, t.created_by, t.created_at, t.updated_at
+            FROM public.garden_node gn
+            JOIN public.container pp ON pp.id = gn.container_id
+            JOIN public.entity_tag et ON et.entity_type = 'cultivar' AND et.entity_id = gn.cultivar_id AND et.deleted_at IS NULL
+            JOIN public.tag t ON t.id = et.tag_id AND t.deleted_at IS NULL AND t.source = 'derived'
+            WHERE gn.deleted_at IS NULL AND pp.created_by = ANY(${household})`;
+          return resp(200, { entities: assembleBulkEntities(directRows, projRows) });
+        }
         const direct = await sql`
           SELECT t.id, t.facet, t.label, t.slug, t.source, t.owner_id, t.visibility, t.created_by, t.created_at, t.updated_at
           FROM public.entity_tag et JOIN public.tag t ON t.id = et.tag_id
