@@ -172,3 +172,34 @@ export function useEntityTags(entityType, entityId) {
 
   return { direct, projected, loading, error, reload, attachTag, detachTag }
 }
+
+// useEntityTagsBulk — whole-garden tag map for the faceted Garden render (V4-GARDENIA-001).
+// Calls GET /api/entity-tags?entity_type=<type> (no entity_id) -> { entities: { <id>: {direct,projected} } }.
+// Inert (entities={}) when VITE_API_TAGS is falsy, so surfaces that mount it render unchanged
+// until the tags API is wired. Read-only; mirrors the loadCounter race-guard of the other hooks.
+export function useEntityTagsBulk(entityType) {
+  const { fetch } = useApiFetch()
+  const [entities, setEntities] = useState({})
+  const [loading, setLoading] = useState(() => tagsEnabled() && Boolean(entityType))
+  const [error, setError] = useState(null)
+  const loadCounterRef = useRef(0)
+
+  const reload = useCallback(async () => {
+    if (!tagsEnabled() || !entityType) { setEntities({}); setLoading(false); setError(null); return }
+    const my = ++loadCounterRef.current
+    setLoading(true); setError(null)
+    try {
+      const data = await fetch(`/api/entity-tags?${new URLSearchParams({ entity_type: entityType }).toString()}`)
+      if (loadCounterRef.current !== my) return
+      setEntities(data?.entities ?? {})
+    } catch (err) {
+      if (loadCounterRef.current !== my) return
+      setError(err?.message ?? 'Failed to load tags')
+    } finally {
+      if (loadCounterRef.current === my) setLoading(false)
+    }
+  }, [fetch, entityType])
+
+  useEffect(() => { reload() }, [reload])
+  return { entities, loading, error, reload }
+}

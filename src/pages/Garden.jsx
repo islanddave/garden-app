@@ -13,8 +13,11 @@ import CritterOptInPrompt from '../components/CritterOptInPrompt.jsx'
 import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
 import { SYSTEM_NOTIFICATIONS_ENABLED } from '../lib/featureFlags.js'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
-import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, loadSortOrder, saveSortOrder } from '../lib/projectTree.js'
+import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, loadSortOrder, saveSortOrder, buildTagGroupedList, loadGroupBy, saveGroupBy } from '../lib/projectTree.js'
 import SortToggle from '../components/SortToggle.jsx'
+import GroupByControl from '../components/forms/GroupByControl.jsx'
+import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
+import { useEntityTagsBulk } from '../hooks/useTags.js'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import { formatQty } from '../lib/format.js'
 import PlantingEditor from '../components/PlantingEditor.jsx'
@@ -40,6 +43,11 @@ export default function Garden() {
   // V3-ORDER-001: persisted sort order. DEFAULT = recency (server order); 'alpha' is opt-in.
   const [sortOrder, setSortOrder] = useState(() => loadSortOrder())
   const onSortChange = useCallback((order) => { setSortOrder(order); saveSortOrder(order) }, [])
+  // V4-GARDENIA-001: faceted group-by overlay. tagMap = whole-garden plant->tags map; inert/empty
+  // until VITE_API_TAGS is wired, so the control stays hidden and the legacy tree is unchanged.
+  const [groupBy, setGroupBy] = useState(() => loadGroupBy())
+  const onGroupByChange = useCallback((v) => { setGroupBy(v); saveGroupBy(v) }, [])
+  const { entities: tagMap } = useEntityTagsBulk('plant')
   // MVP-Critter Session 3: active critters for this household, grouped by plant_id.
   const [critters, setCritters] = useState([])
   // D-INV-1 long-press popover state. anchorEl is the long-pressed sprite DOM node.
@@ -359,6 +367,19 @@ export default function Garden() {
   if (loading) return <Shell><Spinner /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
+  const facetOptions = useMemo(() => {
+    const present = new Set()
+    for (const id in (tagMap || {})) {
+      const e = tagMap[id]
+      for (const t of [...(e.direct || []), ...(e.projected || [])]) present.add(t.facet)
+    }
+    const ORDER = ['type', 'lifecycle', 'location', 'group', 'freeform']
+    const LABELS = { type: 'Type', lifecycle: 'Lifecycle', location: 'Location', group: 'Group', freeform: 'Tags' }
+    const opts = [{ value: 'none', label: 'Projects' }]
+    for (const fct of ORDER) if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
+    return opts
+  }, [tagMap])
+  const effectiveGroupBy = facetOptions.some(o => o.value === groupBy) ? groupBy : 'none'
   const tree = buildGardenTree(projects, plants, sortOrder)
 
   return (
@@ -381,6 +402,9 @@ export default function Garden() {
 
       {/* V3-IA: no page title — the Garden tab is self-evident. Controls keep the row. */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginBottom: 24 }}>
+        {facetOptions.length > 1 && (
+          <GroupByControl options={facetOptions} value={effectiveGroupBy} onChange={onGroupByChange} />
+        )}
         <SortToggle order={sortOrder} onChange={onSortChange} label="Sort garden" />
         <Link to="/capture" data-testid="snap-entry-garden" style={btnGhost}>📸 Snap</Link>
         <Link to="/log/many" style={btnGhost}>⚡ Log many</Link>
@@ -403,7 +427,12 @@ export default function Garden() {
         />
       )}
 
-      {tree.length === 0 ? (
+      {effectiveGroupBy !== 'none' ? (
+        <FacetedGarden
+          plants={plants} tagMap={tagMap} facet={effectiveGroupBy} sortOrder={sortOrder}
+          crittersByPlantId={crittersByPlantId} onSpriteLongPress={onSpriteLongPress}
+          onSpriteIntersect={onSpriteIntersect} onPhotoUploaded={refetchPlants} flashId={flashId} />
+      ) : tree.length === 0 ? (
         <EmptyState />
       ) : (
         <div role="tree" aria-label="Garden" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -610,6 +639,41 @@ function Shell({ children }) {
     </div>
   )
 }
+// V4-GARDENIA-001: faceted Garden render. Group-by overlay over the SAME PlantingRow the legacy
+// tree uses, so plantings look identical; the by-project tree (effectiveGroupBy==='none') is
+// untouched and remains golden-gated. A planting may appear under multiple groups (multi-membership).
+function FacetedGarden({ plants, tagMap, facet, sortOrder, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId }) {
+  const [collapsed, setCollapsed] = useState(() => new Set())
+  const toggle = useCallback((slug) => setCollapsed(prev => {
+    const next = new Set(prev); next.has(slug) ? next.delete(slug) : next.add(slug); return next
+  }), [])
+  const groups = buildTagGroupedList(plants, tagMap, facet, sortOrder) || []
+  if (groups.length === 0) return <EmptyState />
+  return (
+    <div role="tree" aria-label="Garden grouped by tag" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {groups.map(g => {
+        const isCollapsed = collapsed.has(g.slug)
+        return (
+          <div key={g.slug} role="group">
+            <FacetGroupHeader label={g.label} count={g.count} facet={g.facet}
+              isUnsorted={g.isUnsorted} collapsed={isCollapsed} onToggle={() => toggle(g.slug)} />
+            {!isCollapsed && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                {g.plantings.map(pl => (
+                  <PlantingRow key={pl.id} planting={pl} depth={0} level={2}
+                    critters={crittersByPlantId?.get(pl.id) ?? []}
+                    onSpriteLongPress={onSpriteLongPress} onSpriteIntersect={onSpriteIntersect}
+                    onPhotoUploaded={onPhotoUploaded} flashId={flashId} />
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function Spinner() { return <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div> }
 function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div> }
 

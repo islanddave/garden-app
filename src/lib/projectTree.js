@@ -218,3 +218,14 @@ export function saveSortOrder(order) {
     if (typeof localStorage !== 'undefined') localStorage.setItem(SORT_LS_KEY, v)
   } catch (_e) { /* non-fatal: sort-order persistence is best-effort */ }
 }
+
+// V4-GARDENIA-001: persisted active group-by facet ('none' = legacy by-project tree).
+// Per-browser localStorage like sort/expanded; cross-device server-state is tracked tech-debt
+// (Cross-Device State Principle) under V4-GARDENIA-PREFS follow-up.
+const GROUPBY_KEY = 'garden.groupBy.v1'
+export function loadGroupBy() {
+  try { return localStorage.getItem(GROUPBY_KEY) || 'none' } catch { return 'none' }
+}
+export function saveGroupBy(value) {
+  try { localStorage.setItem(GROUPBY_KEY, value) } catch { /* private mode / quota — non-fatal */ }
+}
