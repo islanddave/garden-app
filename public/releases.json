@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.2.1",
+    "date": "2026-06-25",
+    "highlights": [
+      "Behind the scenes: connected the app to the new tag system's read/write layer — groundwork for the faceted organize-and-filter views coming next. No visible changes yet."
+    ]
+  },
+  {
     "version": "3.2.0",
     "date": "2026-06-25",
     "highlights": [
