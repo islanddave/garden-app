@@ -103,6 +103,7 @@ async function readUserPrefs(sql, clerkSub) {
     opt_in_prompt_seen_at: null,
     last_garden_view_at: null,
     garden_group_by: null,
+    garden_sort_order: null,
     created_at: null, updated_at: null,
   }
 }
@@ -391,23 +392,26 @@ export const handler = async (event) => {
       const qs = body.quiet_hours_start ?? null
       const qe = body.quiet_hours_end ?? null
       const gg = body.garden_group_by ?? null
+      const gso = body.garden_sort_order ?? null
       const rows = await sql`
-        INSERT INTO public.user_notification_prefs (created_by, critter_visit, quiet_hours_start, quiet_hours_end, garden_group_by)
+        INSERT INTO public.user_notification_prefs (created_by, critter_visit, quiet_hours_start, quiet_hours_end, garden_group_by, garden_sort_order)
         VALUES (
           ${userId},
           COALESCE(${cv}, 'in_app_only'),
           COALESCE(${qs}::time, '21:00'::time),
           COALESCE(${qe}::time, '07:00'::time),
-          ${gg}
+          ${gg},
+          ${gso}
         )
         ON CONFLICT (created_by) DO UPDATE SET
           critter_visit      = COALESCE(${cv}, public.user_notification_prefs.critter_visit),
           quiet_hours_start  = COALESCE(${qs}::time, public.user_notification_prefs.quiet_hours_start),
           quiet_hours_end    = COALESCE(${qe}::time, public.user_notification_prefs.quiet_hours_end),
           garden_group_by    = COALESCE(${gg}, public.user_notification_prefs.garden_group_by),
+          garden_sort_order  = COALESCE(${gso}, public.user_notification_prefs.garden_sort_order),
           updated_at         = now()
         RETURNING critter_visit, quiet_hours_start, quiet_hours_end,
-                  coachmark_seen_at, opt_in_prompt_seen_at, last_garden_view_at, garden_group_by, updated_at
+                  coachmark_seen_at, opt_in_prompt_seen_at, last_garden_view_at, garden_group_by, garden_sort_order, updated_at
       `
       return resp(200, rows[0])
     }

@@ -7,7 +7,7 @@ import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import CritterSprite from '../components/CritterSprite.jsx'
 import LoveMehPopover from '../components/LoveMehPopover.jsx'
 import { fetchActiveCritters, markCrittersViewed, patchSpeciesPrefs } from '../lib/critterClient.js'
-import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed, saveGardenGroupBy } from '../lib/notificationPrefsClient.js'
+import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed, saveGardenGroupBy, saveGardenSortOrder } from '../lib/notificationPrefsClient.js'
 import CritterCoachmark from '../components/CritterCoachmark.jsx'
 import CritterOptInPrompt from '../components/CritterOptInPrompt.jsx'
 import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
@@ -42,7 +42,13 @@ export default function Garden() {
   const [expanded, setExpanded] = useState(() => loadExpanded())
   // V3-ORDER-001: persisted sort order. DEFAULT = recency (server order); 'alpha' is opt-in.
   const [sortOrder, setSortOrder] = useState(() => loadSortOrder())
-  const onSortChange = useCallback((order) => { setSortOrder(order); saveSortOrder(order) }, [])
+  // V4 cross-device sort order: localStorage paints instantly; server pref is source of truth,
+  // hydrated once below. Explicit change latches the ref so a late server hydrate can't clobber it.
+  const sortOrderHydratedRef = useRef(false)
+  const onSortChange = useCallback((order) => {
+    setSortOrder(order); saveSortOrder(order); sortOrderHydratedRef.current = true
+    saveGardenSortOrder({ getToken, value: order })
+  }, [getToken])
   // V4-GARDENIA-001: faceted group-by overlay. tagMap = whole-garden plant->tags map; inert/empty
   // until VITE_API_TAGS is wired, so the control stays hidden and the legacy tree is unchanged.
   const [groupBy, setGroupBy] = useState(() => loadGroupBy())
@@ -141,6 +147,11 @@ export default function Garden() {
         groupByHydratedRef.current = true
         setGroupBy(p.garden_group_by)
         saveGroupBy(p.garden_group_by)
+      }
+      if (on && !sortOrderHydratedRef.current && p && (p.garden_sort_order === 'alpha' || p.garden_sort_order === 'recency')) {
+        sortOrderHydratedRef.current = true
+        setSortOrder(p.garden_sort_order)
+        saveSortOrder(p.garden_sort_order)
       }
       // Fire Route 6 AFTER capturing prev prefs (the post updates last_garden_view_at).
       recordGardenViewOpened({ getToken })

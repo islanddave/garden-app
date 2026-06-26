@@ -98,6 +98,13 @@ describe('validatePrefsPatchBody', () => {
   it('rejects an invalid garden_group_by value', () => {
     expect(validatePrefsPatchBody({ garden_group_by: 'bogus' })?.status).toBe(400)
   })
+  it('accepts each valid garden_sort_order value', () => {
+    expect(validatePrefsPatchBody({ garden_sort_order: 'alpha' })).toBeNull()
+    expect(validatePrefsPatchBody({ garden_sort_order: 'recency' })).toBeNull()
+  })
+  it('rejects an invalid garden_sort_order value', () => {
+    expect(validatePrefsPatchBody({ garden_sort_order: 'sideways' })?.status).toBe(400)
+  })
 })
 
 describe('validateSpeciesPrefsPatchBody (D-INV-1 Option A)', () => {

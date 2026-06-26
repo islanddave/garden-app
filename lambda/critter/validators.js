@@ -47,6 +47,7 @@ export function validateCritterPostBody(body) {
 // PATCH /api/notifications/prefs body validator
 const CRITTER_VISIT_VALUES = new Set(['off', 'in_app_only', 'system'])
 export const GARDEN_GROUP_BY_VALUES = new Set(['none', 'type', 'lifecycle', 'location', 'group', 'freeform'])
+export const GARDEN_SORT_ORDER_VALUES = new Set(['alpha', 'recency'])
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/
 
 export function validatePrefsPatchBody(body) {
@@ -63,8 +64,11 @@ export function validatePrefsPatchBody(body) {
   if (body.garden_group_by != null && !GARDEN_GROUP_BY_VALUES.has(body.garden_group_by)) {
     return { status: 400, error: 'garden_group_by must be none|type|lifecycle|location|group|freeform' }
   }
+  if (body.garden_sort_order != null && !GARDEN_SORT_ORDER_VALUES.has(body.garden_sort_order)) {
+    return { status: 400, error: 'garden_sort_order must be alpha|recency' }
+  }
   // At least one updatable field must be present
-  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by']
+  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by', 'garden_sort_order']
     .some(k => body[k] != null)
   if (!HAS_UPDATABLE) return { status: 400, error: 'no updatable fields present' }
   return null

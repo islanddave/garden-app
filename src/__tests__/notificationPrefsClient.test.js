@@ -159,6 +159,29 @@ describe('notificationPrefsClient', () => {
     })
   })
 
+  describe('saveGardenSortOrder', () => {
+    it('returns null when VITE_API_CRITTERS unset', async () => {
+      const mod = await loadModule('')
+      expect(await mod.saveGardenSortOrder({ getToken: async () => TOKEN, value: 'alpha' })).toBeNull()
+    })
+    it('returns null on an invalid value (no fetch)', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      const res = await mod.saveGardenSortOrder({ getToken: async () => TOKEN, value: 'sideways' })
+      expect(res).toBeNull()
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+    it('PATCHes garden_sort_order and returns the updated row', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ garden_sort_order: 'recency' }) })
+      const res = await mod.saveGardenSortOrder({ getToken: async () => TOKEN, value: 'recency' })
+      expect(res).toEqual({ garden_sort_order: 'recency' })
+      const [url, opts] = global.fetch.mock.calls[0]
+      expect(url).toBe('https://staging.example.com/api/notifications/prefs')
+      expect(opts.method).toBe('PATCH')
+      expect(JSON.parse(opts.body)).toEqual({ garden_sort_order: 'recency' })
+    })
+  })
+
   describe('CRITTER_VISIT_VALUES', () => {
     it('exports the canonical allowed values', async () => {
       const mod = await loadModule('https://staging.example.com')
