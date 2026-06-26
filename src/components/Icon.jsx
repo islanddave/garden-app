@@ -3,6 +3,7 @@
 // §4 effective stroke (size-aware so the RENDERED width holds), forks mono(currentColor)
 // vs color-candidate(authored fills), a11y-correct (role=img+label OR aria-hidden).
 // Hit-area / role=button / aria-pressed / aria-current belong to the CONSUMING control.
+import React from 'react'
 import { getIcon } from '../lib/iconRegistry.js'
 import { ICON } from '../lib/tokens.js'
 
