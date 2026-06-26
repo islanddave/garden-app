@@ -205,6 +205,25 @@ describe('notificationPrefsClient', () => {
     })
   })
 
+  describe('saveGardenBloomSeen', () => {
+    it('returns null when VITE_API_CRITTERS unset', async () => {
+      const mod = await loadModule('')
+      expect(await mod.saveGardenBloomSeen({ getToken: async () => TOKEN, ids: ['robin'] })).toBeNull()
+    })
+    it('returns null on an invalid value (no fetch)', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      expect(await mod.saveGardenBloomSeen({ getToken: async () => TOKEN, ids: [42] })).toBeNull()
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+    it('PATCHes garden_bloom_seen and returns the updated row', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ garden_bloom_seen: '["robin"]' }) })
+      const res = await mod.saveGardenBloomSeen({ getToken: async () => TOKEN, ids: ['robin'] })
+      expect(res).toEqual({ garden_bloom_seen: '["robin"]' })
+      expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ garden_bloom_seen: ['robin'] })
+    })
+  })
+
   describe('CRITTER_VISIT_VALUES', () => {
     it('exports the canonical allowed values', async () => {
       const mod = await loadModule('https://staging.example.com')

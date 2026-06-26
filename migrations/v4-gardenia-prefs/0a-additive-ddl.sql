@@ -18,6 +18,7 @@ BEGIN;
 ALTER TABLE public.user_notification_prefs
   ADD COLUMN IF NOT EXISTS garden_group_by TEXT NULL,
   ADD COLUMN IF NOT EXISTS garden_sort_order TEXT NULL,
-  ADD COLUMN IF NOT EXISTS garden_expanded TEXT NULL;  -- JSON array of expanded project-id strings
+  ADD COLUMN IF NOT EXISTS garden_expanded TEXT NULL,   -- JSON array of expanded project-id strings
+  ADD COLUMN IF NOT EXISTS garden_bloom_seen TEXT NULL;  -- JSON array of witnessed critter-id strings (V4-BLOOM-001)
 
 COMMIT;

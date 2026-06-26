@@ -2,6 +2,8 @@ import React, { useRef, useState, useEffect, useCallback } from 'react'
 import roster from '../data/critters-roster.json'
 import { P } from '../lib/constants.js'
 import { useCritterCollection } from '../hooks/useCritterCollection.js'
+import { useApiFetch } from '../lib/api.js'
+import { fetchNotificationPrefs, saveGardenBloomSeen } from '../lib/notificationPrefsClient.js'
 import GardenArrival from '../components/GardenArrival.jsx'
 import critterFacts from '../data/critter-facts.json'
 import CritterFactsPopover from '../components/CritterFactsPopover.jsx'
@@ -297,14 +299,39 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
 // ─── Component ───────────────────────────────────────────────────────────────────
 export default function Collection() {
   const { collected, loading, error } = useCritterCollection()
+  const { getToken } = useApiFetch()
 
+  // V4-BLOOM-001: bloomSeen is now cross-device. localStorage stays the instant cache (the ref is
+  // seeded from it synchronously for first paint); on mount we UNION the server set in, write the
+  // union back (so a bloom witnessed on another device converges), and re-render so initiallyBloomed
+  // recomputes. Monotonic union — bloom is "first reveal," never un-set. A brand-new device may
+  // re-bloom a critter once before the merge lands; harmless and self-healing.
   const bloomSeenRef = useRef(null)
   if (bloomSeenRef.current === null) bloomSeenRef.current = loadBloomSeen()
+  const [, forceBloomRerender] = useState(0)
+  useEffect(() => {
+    let on = true
+    ;(async () => {
+      const p = await fetchNotificationPrefs({ getToken })
+      if (!on || !p || typeof p.garden_bloom_seen !== 'string') return
+      let arr
+      try { arr = JSON.parse(p.garden_bloom_seen) } catch { return }
+      if (!Array.isArray(arr)) return
+      const before = bloomSeenRef.current.size
+      for (const id of arr) if (typeof id === 'string') bloomSeenRef.current.add(id)
+      const serverSet = new Set(arr)
+      const localHasExtras = [...bloomSeenRef.current].some(id => !serverSet.has(id))
+      if (localHasExtras) saveGardenBloomSeen({ getToken, ids: [...bloomSeenRef.current] })
+      if (bloomSeenRef.current.size > before) { persistBloomSeen(bloomSeenRef.current); forceBloomRerender(v => v + 1) }
+    })()
+    return () => { on = false }
+  }, [getToken])
   const markBloomed = useCallback((id) => {
     if (bloomSeenRef.current.has(id)) return
     bloomSeenRef.current.add(id)
     persistBloomSeen(bloomSeenRef.current)
-  }, [])
+    saveGardenBloomSeen({ getToken, ids: [...bloomSeenRef.current] })
+  }, [getToken])
 
   const byGroup = {}
   for (const c of roster) {

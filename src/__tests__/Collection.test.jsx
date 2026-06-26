@@ -6,6 +6,13 @@ import roster from '../data/critters-roster.json'
 vi.mock('../hooks/useCritterCollection.js', () => ({
   useCritterCollection: vi.fn(),
 }))
+// V4-BLOOM-001: Collection now calls useApiFetch (useAuth) + the prefs client for cross-device
+// bloom sync. Mock both so this stays a provider-free unit test (L-160).
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ getToken: async () => null, fetch: vi.fn() }) }))
+vi.mock('../lib/notificationPrefsClient.js', () => ({
+  fetchNotificationPrefs: vi.fn(async () => null),
+  saveGardenBloomSeen: vi.fn(),
+}))
 
 // V3-DELIGHT D1: the header now renders <CritterOfDay/> which calls useAuth — stub it here
 // so Collection's unit test stays provider-free and its grid assertions are unaffected.

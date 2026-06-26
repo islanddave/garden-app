@@ -86,6 +86,28 @@ export async function saveGardenExpanded({ getToken, ids } = {}) {
   }
 }
 
+// saveGardenBloomSeen — fire-and-forget PATCH of the cross-device critter first-reveal set
+// (user_notification_prefs.garden_bloom_seen, JSON array of critter-id strings). V4-BLOOM-001.
+// Monotonic union semantics live in the caller; this just persists. NEVER throws.
+export async function saveGardenBloomSeen({ getToken, ids } = {}) {
+  if (!CRITTER_BASE) return null
+  if (ids != null && (!Array.isArray(ids) || ids.some(x => typeof x !== 'string') || ids.length > GARDEN_EXPANDED_MAX)) return null
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return null
+    const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ garden_bloom_seen: ids }),
+      keepalive: true,
+    })
+    if (!res.ok) return null
+    return await res.json().catch(() => null)
+  } catch {
+    return null
+  }
+}
+
 // fetchNotificationPrefs — GETs current prefs.
 // Returns the prefs object on success, null on no-op or failure (NEVER throws).
 export async function fetchNotificationPrefs({ getToken } = {}) {

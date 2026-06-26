@@ -76,8 +76,16 @@ export function validatePrefsPatchBody(body) {
       return { status: 400, error: 'garden_expanded exceeds max size' }
     }
   }
+  if (body.garden_bloom_seen != null) {
+    if (!Array.isArray(body.garden_bloom_seen) || body.garden_bloom_seen.some(x => typeof x !== 'string')) {
+      return { status: 400, error: 'garden_bloom_seen must be an array of id strings' }
+    }
+    if (body.garden_bloom_seen.length > GARDEN_EXPANDED_MAX) {
+      return { status: 400, error: 'garden_bloom_seen exceeds max size' }
+    }
+  }
   // At least one updatable field must be present
-  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by', 'garden_sort_order', 'garden_expanded']
+  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by', 'garden_sort_order', 'garden_expanded', 'garden_bloom_seen']
     .some(k => body[k] != null)
   if (!HAS_UPDATABLE) return { status: 400, error: 'no updatable fields present' }
   return null

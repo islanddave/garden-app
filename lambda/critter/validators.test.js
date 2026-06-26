@@ -116,6 +116,14 @@ describe('validatePrefsPatchBody', () => {
   it('rejects an oversized garden_expanded', () => {
     expect(validatePrefsPatchBody({ garden_expanded: Array(2001).fill('x') })?.status).toBe(400)
   })
+  it('accepts a garden_bloom_seen array of id strings', () => {
+    expect(validatePrefsPatchBody({ garden_bloom_seen: [] })).toBeNull()
+    expect(validatePrefsPatchBody({ garden_bloom_seen: ['robin', 'honeybee'] })).toBeNull()
+  })
+  it('rejects garden_bloom_seen that is not an array of strings', () => {
+    expect(validatePrefsPatchBody({ garden_bloom_seen: 'nope' })?.status).toBe(400)
+    expect(validatePrefsPatchBody({ garden_bloom_seen: [1] })?.status).toBe(400)
+  })
 })
 
 describe('validateSpeciesPrefsPatchBody (D-INV-1 Option A)', () => {
