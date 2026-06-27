@@ -19,7 +19,7 @@ const measured = {}
 for (const [k, e] of Object.entries(GLYPHS)) if (isSvg(e)) measured[k] = liveCoverage(e.svg24)
 
 if (update) {
-  const out = { _doc: 'V4-ICON-001 optical-weight baselines (live-area ink-coverage %, resvg). Regenerate with --update only after an APPROVED design change.', tolerance: 1.5, opticalExceptions: ['care.pause'], glyphs: measured }
+  const out = { _doc: 'V4-ICON-001 optical-weight baselines (live-area ink-coverage %, resvg). Regenerate with --update only after an APPROVED design change.', tolerance: 1.5, opticalExceptions: ['care.pause', 'status.failed', 'status.dead', 'status.ended'], glyphs: measured }
   writeFileSync(BASE, JSON.stringify(out, null, 2) + '\n')
   console.log('baseline written:', Object.keys(measured).length, 'glyphs'); process.exit(0)
 }

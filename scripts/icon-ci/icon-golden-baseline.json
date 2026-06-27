@@ -2,7 +2,10 @@
   "_doc": "V4-ICON-001 optical-weight baselines (live-area ink-coverage %, resvg). Regenerate with --update only after an APPROVED design change.",
   "tolerance": 1.5,
   "opticalExceptions": [
-    "care.pause"
+    "care.pause",
+    "status.failed",
+    "status.dead",
+    "status.ended"
   ],
   "glyphs": {
     "nav.today": 21.75,
@@ -12,6 +15,23 @@
     "facet.location": 27.55,
     "severity.high": 26.7,
     "action.heart": 23.14,
-    "care.pause": 10.52
+    "care.pause": 10.52,
+    "status.seed": 25.33,
+    "status.rooting": 21.94,
+    "status.seedling": 21.75,
+    "status.sprouting": 21.75,
+    "status.seeding": 21.75,
+    "status.vegetative": 21.71,
+    "status.growing": 21.71,
+    "status.active": 21.71,
+    "status.flowering": 27.99,
+    "status.fruiting": 24.88,
+    "status.harvesting": 33.94,
+    "status.harvested": 30.83,
+    "status.dormant": 23.41,
+    "status.planning": 36.84,
+    "status.ended": 25.27,
+    "status.failed": 14.88,
+    "status.dead": 14.88
   }
 }

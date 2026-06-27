@@ -10,6 +10,7 @@ import { statusLabel } from '../lib/constants.js'
 import { getStatusColors } from '../lib/status.js'
 import { T } from './forms/formStyles.js'
 import { statusGlyph } from '../lib/iconRegistry.js'
+import Icon from './Icon.jsx'
 
 // DESIGNSYS Pass A: the lifecycle-stage glyph map moved to the shared icon registry
 // (src/lib/iconRegistry.js). statusIcon stays exported (no behavior change) but now
@@ -21,7 +22,6 @@ export function statusIcon(status) {
 export default function PlantStatusBadge({ status, size = 'sm' }) {
   if (!status) return null
   const sc = getStatusColors(status)
-  const icon = statusIcon(status)
   const fontSize = size === 'lg' ? T.badgeFontLg : T.badgeFontSm
   const pad = size === 'lg' ? T.badgePadLg : T.badgePadSm
   return (
@@ -35,7 +35,7 @@ export default function PlantStatusBadge({ status, size = 'sm' }) {
         whiteSpace: 'nowrap', flexShrink: 0,
       }}
     >
-      <span aria-hidden="true">{icon}</span>
+      <Icon name={`status.${status}`} size={size === 'lg' ? 16 : 14} decorative />
       <span>{statusLabel(status)}</span>
     </span>
   )
