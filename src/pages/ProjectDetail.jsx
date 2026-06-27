@@ -921,7 +921,6 @@ export default function ProjectDetail() {
                   <input
                     type="file"
                     accept="image/*"
-                    capture="environment"
                     onChange={handleMiniPhotoChange}
                     style={{ display: 'none' }}
                     data-testid="mini-photo-input"
