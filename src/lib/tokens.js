@@ -50,3 +50,22 @@ export const ICON = {
 export function iconCssVars() {
   return `:root{--icon-stroke:${ICON.stroke}px;--icon-stroke-inverse:${ICON.strokeInverse}px;--icon-stroke-hero:${ICON.strokeHero}px;--icon-tint:${ICON.tint};--icon-keyline:${ICON.keyline};--icon-corner-radius:${ICON.cornerRadius};--icon-circle-d:${ICON.circleD};--icon-color:${ICON.defaultColor};}`
 }
+
+// ── V4-ICONCOLOR-001 icon region-color tokens — the ONLY place icon region hex lives.
+// Registry entries reference these by NAME via entry.colorFills:{region:tokenName};
+// Icon.jsx resolves name->hex at render (masters stay hex-free, per the §14 no-hex lint).
+// Values pull from P so they stay in palette lockstep; one minted value (lcSproutLeaf)
+// because P.greenLight #52b788 fails the 3:1 silhouette floor on cream.
+export const ICON_COLORS = {
+  dropBody:      P.blue,      // #4a7fb5 teardrop (water) — 3.87:1 on cream
+  dropHighlight: P.white,     // inner sheen stroke
+  sunBody:       P.gold,      // #8a6e2a solar disc — 4.44:1
+  sunRays:       P.gold,      // rays (one-color read)
+  lcSproutLeaf:  '#349160',   // minted — fresh-growth green, 3.60:1 (greenLight fails)
+  lcStem:        P.greenDeep, // #1f5138 stem/structure — 8.42:1
+  lcSoil:        P.brown,     // #7a5c3c soil bar — 5.64:1
+  lcBud:         P.purple,    // #7b5ea7 closed bud — 4.83:1
+  lcBloomPetals: P.terra,     // #b7532a open petals — 4.51:1
+  lcBloomCenter: P.gold,      // flower center
+  lcFruit:       P.terra,     // ripe fruit body
+}

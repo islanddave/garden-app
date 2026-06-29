@@ -1,20 +1,24 @@
 // V4-ICON-001 (Pass B V101 §14, boss-added) — region-seam gate for color-candidates.
-// For every multi-region (filled) color-candidate glyph: render each declared region in a
-// DISTINCT opaque fill, then (a) assert each region actually paints (no missing region),
-// and (b) flood-fill the background from the border and assert there are NO interior
-// transparent holes — a hole between/within fill regions = the hairline seam the color
-// pass would inherit. Backs the §1 "zero geometry redraw" promise. Engine = resvg.
-import { GLYPHS, isSvg } from '../../src/lib/iconRegistry.js'
+// For every multi-region color-candidate target (the top-level master if it declares
+// regions, AND every multi-region variant): render each declared region in a DISTINCT
+// opaque fill, then (a) assert each region actually paints (no missing region), and
+// (b) flood-fill the background from the border and assert NO interior transparent holes
+// — a hole between/within fill regions = the hairline seam the color pass would inherit.
+// Backs the §1 "zero geometry redraw" promise. Engine = resvg.
+import { GLYPHS } from '../../src/lib/iconRegistry.js'
 import { renderInner } from './_render.mjs'
 
 const PALETTE = ['#ff0000', '#0000ff', '#00aa00', '#aa00aa'] // distinct per region
 let fail = 0, checked = 0
 
 for (const [key, e] of Object.entries(GLYPHS)) {
-  if (e.class !== 'color-candidate' || !e.variants) continue
-  for (const [vn, v] of Object.entries(e.variants)) {
-    if (!v.svg24) continue
-    const regions = [...v.svg24.matchAll(/data-region="([^"]+)"/g)].map(m => m[1])
+  if (e.class !== 'color-candidate') continue
+  // targets: top-level master if it declares regions, plus every multi-region variant.
+  const targets = []
+  if (e.svg24 && /data-region=/.test(e.svg24)) targets.push(['base', e])
+  if (e.variants) for (const [vn, v] of Object.entries(e.variants)) if (v.svg24) targets.push([vn, v])
+  for (const [vn, v] of targets) {
+    const regions = [...new Set([...v.svg24.matchAll(/data-region="([^"]+)"/g)].map(m => m[1]))]
     if (regions.length < 1) continue
     checked++
     const fills = Object.fromEntries(regions.map((r, i) => [r, PALETTE[i % PALETTE.length]]))
@@ -39,5 +43,5 @@ for (const [key, e] of Object.entries(GLYPHS)) {
     else console.log(`✓ ${key}:${vn} ${regions.length} region(s) paint, no interior seam (holes ${holePct}%)`)
   }
 }
-console.log(fail ? `\nREGION-SEAM: FAIL (${fail})` : `\nREGION-SEAM: PASS (${checked} color-candidate variant(s))`)
+console.log(fail ? `\nREGION-SEAM: FAIL (${fail})` : `\nREGION-SEAM: PASS (${checked} color-candidate target(s))`)
 process.exit(fail ? 1 : 0)

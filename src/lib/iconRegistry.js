@@ -66,6 +66,11 @@ const ANCHOR_META = {
   'severity.high':  { accessibleName: 'High severity' },
   'action.heart':   { accessibleName: { outline: 'Add to favorites', filled: 'Remove from favorites' } },
   'care.pause':     { accessibleName: 'Pause' },
+  'care.sun':       { accessibleName: 'Sun' },
+  'lifecycle.sprout': { accessibleName: 'Sprout' },
+  'lifecycle.bud':    { accessibleName: 'Bud' },
+  'lifecycle.bloom':  { accessibleName: 'Bloom' },
+  'lifecycle.fruit':  { accessibleName: 'Fruit' },
 }
 
 export const GLYPHS = Object.fromEntries(
@@ -76,6 +81,7 @@ export const GLYPHS = Object.fromEntries(
     class: a.class, register: a.register, variant: a.variant,
     variants: a.variants ?? null,
     regionIntent: a.regionIntent ?? null,
+    colorFills: a.colorFills ?? null,
     accessibleName: ANCHOR_META[key]?.accessibleName ?? key,
     schemaVersion: 101,
   }])

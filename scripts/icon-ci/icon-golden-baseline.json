@@ -5,7 +5,12 @@
     "care.pause",
     "status.failed",
     "status.dead",
-    "status.ended"
+    "status.ended",
+    "care.sun",
+    "lifecycle.sprout",
+    "lifecycle.bud",
+    "lifecycle.bloom",
+    "lifecycle.fruit"
   ],
   "glyphs": {
     "nav.today": 21.75,
@@ -16,6 +21,11 @@
     "severity.high": 26.7,
     "action.heart": 23.14,
     "care.pause": 10.52,
+    "care.sun": 29.11,
+    "lifecycle.sprout": 16.82,
+    "lifecycle.bud": 14.9,
+    "lifecycle.bloom": 19.98,
+    "lifecycle.fruit": 51.07,
     "status.seed": 25.33,
     "status.rooting": 21.94,
     "status.seedling": 21.75,
