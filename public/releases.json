@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.8.0",
+    "date": "2026-06-29",
+    "highlights": [
+      "Behind-the-scenes groundwork for upcoming colorful plant-stage and weather icons",
+      "Reliability fix to the release pipeline (snapshot step)"
+    ]
+  },
+  {
     "version": "3.5.0",
     "date": "2026-06-26",
     "highlights": [
