@@ -48,6 +48,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 
 import boto3
@@ -432,23 +433,58 @@ def capture_photo_versions(s3, cfg):
 
 # --- (d)(ii) Lambda versions -------------------------------------------------
 
+def _wait_lambda_idle(client, fn, timeout=120, interval=3):
+    """Best-effort wait until a function has no in-progress update.
+
+    Returns LastUpdateStatus (or None if it can't be read — e.g. the snap role lacks
+    GetFunctionConfiguration; in that case we just fall through to the publish retry).
+    """
+    waited = 0
+    while waited < timeout:
+        try:
+            st = client.get_function_configuration(FunctionName=fn).get("LastUpdateStatus")
+        except ClientError:
+            return None
+        if st != "InProgress":
+            return st
+        time.sleep(interval)
+        waited += interval
+    return "InProgress"
+
+
 def publish_lambda_versions(cfg, lambda_client=None):
     """Publish a new version for each function and record the returned Version.
 
     publish-version is idempotent at the AWS layer: if there are no unpublished
     changes, Lambda returns the existing latest published version rather than
     erroring, so re-running is safe. Returns {fn: version}.
+
+    Race-hardened (L-221): the promote FF triggers a push:main Lambda deploy, which can
+    leave a function with LastUpdateStatus=InProgress when snap runs — PublishVersion
+    then raises ResourceConflictException and reds the whole promote. We wait for each
+    function to go idle, then publish with bounded backoff retry on ResourceConflictException.
     """
     client = lambda_client or boto3.client("lambda")
     out = {}
     for fn in LAMBDA_FUNCTIONS:
-        try:
-            resp = client.publish_version(FunctionName=fn)
-        except ClientError as e:
-            raise SnapError(f"publish_version failed for {fn}: {e}")
-        ver = resp.get("Version")
+        _wait_lambda_idle(client, fn)
+        ver = None
+        last_err = None
+        for attempt in range(6):
+            try:
+                resp = client.publish_version(FunctionName=fn)
+                ver = resp.get("Version")
+                break
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code")
+                if code == "ResourceConflictException":
+                    last_err = e
+                    _wait_lambda_idle(client, fn)
+                    time.sleep(min(2 ** attempt, 20))
+                    continue
+                raise SnapError(f"publish_version failed for {fn}: {e}")
         if not ver:
-            raise SnapError(f"publish_version for {fn} returned no Version")
+            raise SnapError(f"publish_version for {fn} failed after retries: {last_err or 'no Version returned'}")
         out[fn] = ver
     return out
 
