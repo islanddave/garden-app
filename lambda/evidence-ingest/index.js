@@ -63,13 +63,22 @@ export const handler = async (event) => {
     const ent = await sql`SELECT id FROM public.entity WHERE id = ${v.value.entity_id}::uuid AND deleted_at IS NULL`;
     if (ent.length === 0) return resp(404, { error: 'Unknown entity_id' });
 
+    // CARE-ENGINE-P0 dual-write (G-EVID): ONE append-only INSERT writes BOTH the legacy cols AND the
+    // generalized V2 cols (derived in validate.js from the legacy tier). Still a single statement — the
+    // append-only invariant (index.test.js: exactly one write, no UPDATE/DELETE) holds.
+    const mp = v.value.model_provenance ? JSON.stringify(v.value.model_provenance) : null;
     const rows = await sql`
       INSERT INTO public.evidence
-        (entity_id, schema_version, tier, axis, polarity, finding_type, observed_at, note, photo_ref, source, created_by)
+        (entity_id, schema_version, tier, axis, polarity, finding_type, observed_at, note, photo_ref, source, created_by,
+         evidence_class, entity_type, claim, source_tier, trust_rank, strength_weight, claim_scope, evidence_kind,
+         garden_node_id, captured_at, observed_until, provenance, model_provenance, retracted, source_record_id)
       VALUES
         (${v.value.entity_id}::uuid, ${v.value.schema_version}, ${v.value.tier}, ${v.value.axis}, ${v.value.polarity},
-         ${v.value.finding_type}, ${v.value.observed_at}::timestamptz, ${v.value.note}, ${v.value.photo_ref}, ${v.value.source}, ${userId})
-      RETURNING id, entity_id, schema_version, created_at
+         ${v.value.finding_type}, ${v.value.observed_at}::timestamptz, ${v.value.note}, ${v.value.photo_ref}, ${v.value.source}, ${userId},
+         ${v.value.evidence_class}, ${v.value.entity_type}, ${v.value.claim}, ${v.value.source_tier}, ${v.value.trust_rank}, ${v.value.strength_weight},
+         ${v.value.claim_scope}, ${v.value.evidence_kind}, ${v.value.garden_node_id}::uuid, ${v.value.captured_at}::timestamptz,
+         ${v.value.observed_until}::timestamptz, ${v.value.provenance}, ${mp}::jsonb, ${v.value.retracted}, ${v.value.source_record_id})
+      RETURNING id, entity_id, schema_version, evidence_class, source_tier, trust_rank, created_at
     `;
     return resp(201, { evidence: rows[0] });
   } catch (err) {
