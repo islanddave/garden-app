@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import { EVENT_TYPE_META } from '../lib/eventTypes.js'
+import Icon from '../components/Icon.jsx'
 import { EVENT_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
@@ -124,7 +124,7 @@ export default function EventDetail() {
   if (error && !event) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{error}</div></Shell>
   if (!event || !project) return null
 
-  const icon = EVENT_TYPE_META[event.event_type]?.emoji ?? '📝'
+  const icon = <Icon name={`event.${event.event_type}`} size={22} decorative style={{ color: P.green, verticalAlign: '-0.15em' }} />
 
   return (
     <Shell>

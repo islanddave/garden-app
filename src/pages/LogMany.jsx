@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { BATCH_EVENT_TYPES, EVENT_TYPE_META, buildSecondaryGroups } from '../lib/eventTypes.js'
+import Icon from '../components/Icon.jsx'
 import { ScopeChecklist, SelectChip } from '../components/forms'
 
 // Bulk "Quick Log" (Unit A). Apply ONE event type to MANY plantings at once —
@@ -200,7 +201,7 @@ export default function LogMany() {
       <Shell>
         <Header />
         <div style={{ backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: 20, textAlign: 'center' }}>
-          <div style={{ fontSize: '2rem', marginBottom: 6 }} aria-hidden="true">{evMeta.emoji}</div>
+          <div style={{ marginBottom: 6, color: P.green }}><Icon name={`event.${evMeta.value}`} size={32} decorative /></div>
           <p style={{ margin: '0 0 4px', fontWeight: 700, color: P.green, fontSize: '1.05rem' }} role="status">
             ✓ {result.count} {result.count === 1 ? 'planting' : 'plantings'} {verbLabel}
           </p>
@@ -225,7 +226,7 @@ export default function LogMany() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {primaries.map(t => (
             <SelectChip key={t.value} active={eventType === t.value} onClick={() => setEventType(t.value)}>
-              <span aria-hidden="true">{t.emoji}</span> {t.label}
+              <Icon name={`event.${t.value}`} size={18} decorative style={{ verticalAlign: '-0.15em' }} /> {t.label}
             </SelectChip>
           ))}
         </div>
@@ -259,7 +260,7 @@ export default function LogMany() {
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   {types.map(t => (
                     <SelectChip key={t.value} active={eventType === t.value} onClick={() => setEventType(t.value)}>
-                      <span aria-hidden="true">{t.emoji}</span> {t.label}
+                      <Icon name={`event.${t.value}`} size={18} decorative style={{ verticalAlign: '-0.15em' }} /> {t.label}
                     </SelectChip>
                   ))}
                 </div>

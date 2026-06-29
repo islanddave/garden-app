@@ -3,7 +3,7 @@ import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import { useParams, Link } from 'react-router-dom'
 import { apiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import { EVENT_TYPE_META } from '../lib/eventTypes.js'
+import Icon from '../components/Icon.jsx'
 
 function formatDate(iso) {
   if (!iso) return ''
@@ -82,7 +82,7 @@ export default function ProjectPublic() {
 }
 
 function EventEntry({ event: ev, isLast }) {
-  const icon = EVENT_TYPE_META[ev.event_type]?.emoji ?? '📝'
+  const icon = <Icon name={`event.${ev.event_type}`} size={20} decorative style={{ color: P.green }} />
   return (
     <div style={{ display: 'flex', gap: 14, paddingBottom: isLast ? 0 : 20 }}>
       <div style={{ width: 36, height: 36, borderRadius: '50%', backgroundColor: P.white, border: `2px solid ${P.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', flexShrink: 0, position: 'relative', zIndex: 1 }}>{icon}</div>

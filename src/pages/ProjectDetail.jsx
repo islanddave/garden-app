@@ -4,6 +4,7 @@ import { useApiFetch } from '../lib/api.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
 import { EVENT_TYPE_META } from '../lib/eventTypes.js'
+import Icon from '../components/Icon.jsx'
 import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
@@ -509,7 +510,7 @@ export default function ProjectDetail() {
           </div>
           {!eventsLoading && events.length > 0 && (
             <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 6 }}>
-              Last: {EVENT_TYPE_META[events[0].event_type]?.emoji ?? '📝'} {events[0].event_type.replace(/_/g, ' ')} · {daysAgo(events[0].event_date)}
+              Last: <Icon name={`event.${events[0].event_type}`} size={14} decorative style={{ color: P.light, verticalAlign: '-0.1em' }} /> {events[0].event_type.replace(/_/g, ' ')} · {daysAgo(events[0].event_date)}
             </div>
           )}
         </div>
@@ -838,7 +839,7 @@ export default function ProjectDetail() {
                 >
                   {[...EVENT_TYPES].sort((a, b) => a.localeCompare(b)).map(t => (
                     <option key={t} value={t}>
-                      {(EVENT_TYPE_META[t]?.emoji ?? '📝') + ' ' + t.replace(/_/g, ' ')}
+                      {EVENT_TYPE_META[t]?.label ?? t.replace(/_/g, ' ')}
                     </option>
                   ))}
                 </Select>
@@ -1070,7 +1071,7 @@ function Fields({ project: p, locPath }) {
 }
 
 function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
-  const icon = EVENT_TYPE_META[ev.event_type]?.emoji ?? '📝'
+  const icon = <Icon name={`event.${ev.event_type}`} size={20} decorative style={{ color: P.green }} />
   const d = new Date(ev.event_date)
   const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 

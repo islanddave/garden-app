@@ -11,7 +11,8 @@
 // render tree + state model; they share primitives, not a `mode=` switch.
 import React, { useState } from 'react'
 import { P } from '../../lib/constants.js'
-import { EVENT_TYPE_META, buildSecondaryGroups } from '../../lib/eventTypes.js'
+import { buildSecondaryGroups } from '../../lib/eventTypes.js'
+import Icon from '../Icon.jsx'
 
 // Primary quick-picks (V3-EVENTZONE-001, Dave 2026-06-18: braindump-exact first-class set —
 // Watered / Transplanted / Fertilized / Mulched / Suckered / Fruit Set / Harvested. The prior
@@ -50,7 +51,7 @@ function TypeBtn({ type, selected, onSelect }) {
         minHeight: 80,
       }}
     >
-      <span style={{ fontSize: '1.7rem', lineHeight: 1 }}>{type.emoji}</span>
+      <Icon name={`event.${type.value}`} size={26} decorative style={{ color: isSelected ? P.green : P.mid }} />
       <span style={{
         fontSize: '0.73rem',
         fontWeight: 600,

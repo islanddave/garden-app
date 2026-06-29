@@ -21,7 +21,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P } from '../lib/constants.js'
-import { EVENT_TYPE_META } from '../lib/eventTypes.js'
+import Icon from '../components/Icon.jsx'
 import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
@@ -408,7 +408,7 @@ export default function PlantingDetail() {
                   backgroundColor: P.cream, border: `1px solid ${P.border}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.95rem',
                 }}>
-                  {EVENT_TYPE_META[ev.event_type]?.emoji ?? '📝'}
+                  <Icon name={`event.${ev.event_type}`} size={18} decorative style={{ color: P.green }} />
                 </span>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.875rem' }}>
