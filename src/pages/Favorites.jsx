@@ -95,7 +95,7 @@ export default function Favorites() {
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: '720px', margin: '0 auto', padding: '32px 20px' }}>
         <h1 style={{ color: P.green, fontSize: '1.4rem', fontWeight: 700, margin: '0 0 24px' }}>
-          ★ Favorites
+          ♥ Favorites
         </h1>
         {sections.length === 0 ? (
           <div style={{
@@ -103,7 +103,7 @@ export default function Favorites() {
             borderRadius: '10px', padding: '40px 20px',
             textAlign: 'center', color: P.light, fontSize: '0.95rem',
           }}>
-            No favorites yet. Tap ☆ on any planting, project, location, or inventory item to save it here.
+            No favorites yet. Tap ♡ on any planting, project, location, or inventory item to save it here.
           </div>
         ) : sections.map(({ type, items }) => {
           const meta = TYPE_META[type]

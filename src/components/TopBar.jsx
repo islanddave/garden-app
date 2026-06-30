@@ -112,7 +112,7 @@ export default function TopBar() {
             to={`/zone?from=${encodeURIComponent(location.pathname)}`}
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
-              color: '#c9a84c', // BUG-04: favorites nav star gold (matches FavoriteToggle favorited state)
+              color: '#c9a84c', // BUG-04: favorites nav heart gold (matches FavoriteToggle favorited state)
               textDecoration: 'none',
               backgroundColor: 'rgba(248,245,240,0.15)',
               border: '1px solid rgba(248,245,240,0.3)',
@@ -128,14 +128,14 @@ export default function TopBar() {
         )}
         */}
 
-        {/* Favorites star icon — authenticated only, persistent shortcut to /favorites */}
+        {/* Favorites heart icon — authenticated only, persistent shortcut to /favorites */}
         {user && (
           <Link
             to="/favorites"
             aria-label="Favorites"
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: '#c9a84c', // BUG-04: favorites nav star gold (matches FavoriteToggle favorited state)
+              color: '#c9a84c', // BUG-04: favorites nav heart gold (matches FavoriteToggle favorited state)
               textDecoration: 'none',
               backgroundColor: 'rgba(248,245,240,0.15)',
               border: '1px solid rgba(248,245,240,0.3)',
@@ -145,7 +145,7 @@ export default function TopBar() {
               fontWeight: 700,
             }}
           >
-            ★
+            ♥
           </Link>
         )}
 

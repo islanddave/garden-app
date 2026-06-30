@@ -45,16 +45,16 @@ beforeEach(() => {
 })
 
 describe('FavoriteToggle', () => {
-  it('renders empty star and does NOT fetch on mount (N+1 fix)', () => {
+  it('renders empty heart and does NOT fetch on mount (N+1 fix)', () => {
     render(<FavoriteToggle entityType="project" entityId="proj-1" />)
-    expect(screen.getByRole('button').textContent).toBe('☆')
+    expect(screen.getByRole('button').textContent).toBe('♡')
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
-  it('renders the filled star when already favorited (from context)', () => {
+  it('renders the filled heart when already favorited (from context)', () => {
     favState.set = new Set(['plant:plant-1'])
     render(<FavoriteToggle entityType="plant" entityId="plant-1" />)
-    expect(screen.getByRole('button').textContent).toBe('★')
+    expect(screen.getByRole('button').textContent).toBe('♥')
   })
 
   it('renders nothing when there is no signed-in user', () => {
@@ -71,7 +71,7 @@ describe('FavoriteToggle', () => {
         <FavoriteToggle entityType="project" entityId="proj-9" />
       </div>
     )
-    expect(screen.getByRole('button').textContent).toBe('☆')
+    expect(screen.getByRole('button').textContent).toBe('♡')
     await act(async () => { fireEvent.click(screen.getByRole('button')) })
     expect(setFavSpy).toHaveBeenCalledWith('project', 'proj-9', true)
     const postCall = fetchSpy.mock.calls.find(c => c[0] === '/api/favorites' && c[1]?.method === 'POST')
@@ -84,7 +84,7 @@ describe('FavoriteToggle', () => {
     favState.set = new Set(['project:proj-2'])
     fetchSpy.mockResolvedValueOnce({})
     render(<FavoriteToggle entityType="project" entityId="proj-2" />)
-    expect(screen.getByRole('button').textContent).toBe('★')
+    expect(screen.getByRole('button').textContent).toBe('♥')
     await act(async () => { fireEvent.click(screen.getByRole('button')) })
     expect(setFavSpy).toHaveBeenCalledWith('project', 'proj-2', false)
     const delCall = fetchSpy.mock.calls.find(c => c[0] === '/api/favorites?entity_type=project&entity_id=proj-2' && c[1]?.method === 'DELETE')

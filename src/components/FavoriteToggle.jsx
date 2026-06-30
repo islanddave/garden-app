@@ -54,7 +54,7 @@ export default function FavoriteToggle({ entityType, entityId, size = '1.2rem' }
         color:       isFav ? '#c9a84c' : '#aaa',
       }}
     >
-      {isFav ? '★' : '☆'}
+      {isFav ? '♥' : '♡'}
     </button>
   )
 }
