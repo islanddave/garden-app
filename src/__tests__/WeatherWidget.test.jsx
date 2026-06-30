@@ -152,3 +152,65 @@ describe('WeatherWidget — DRG-WXPROB-001 probability-gated rain AMOUNT', () =>
     expect(screen.getByText(/0\.30″ rain expected tomorrow · 30%/)).toBeTruthy()
   })
 })
+
+
+describe('WeatherWidget — V200 Slice 6 derived no-wrap headline', () => {
+  const w = { tonightLow: 50, highToday: 78, code: 3, hot: false }
+  // The headline is derived from the two lane verdicts (pillState of computeWateringScale). It carries the
+  // FULL untruncated sentence in the a11y tree via aria-label; the visible text is aria-hidden so screen
+  // readers never double-announce. The lanes + rain note restate the guidance (WCAG 1.4.10).
+  const headlineEl = (container) => {
+    // the aria-label wrapper is the only element carrying a full-sentence aria-label among the headline group
+    const nodes = container.querySelectorAll('[aria-label]')
+    for (const n of nodes) {
+      const a = n.getAttribute('aria-label')
+      if (a && /containers|beds|All set|Water both/i.test(a) && !/recommendation|watering explanation/i.test(a)) return n
+    }
+    return null
+  }
+
+  it('reads "Water both" when both lanes water (dry, no rain coming)', () => {
+    const h = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, rain_coming: false }
+    const { container } = render(<WeatherWidget weather={w} hydrology={h} />)
+    const el = headlineEl(container)
+    expect(el).toBeTruthy()
+    expect(el.getAttribute('aria-label')).toBe('Water both — containers and beds today.')
+  })
+
+  it('reads "Water containers, skip the beds" when only containers water (rain coming for beds)', () => {
+    const h = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
+    const { container } = render(<WeatherWidget weather={w} hydrology={h} />)
+    const el = headlineEl(container)
+    expect(el).toBeTruthy()
+    expect(el.getAttribute('aria-label')).toBe('Water containers, skip the beds today.')
+  })
+
+  it('reads "All set" when both lanes hold (already soaked)', () => {
+    const h = { recent_precip_in: 0.9, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, rain_coming: false }
+    const { container } = render(<WeatherWidget weather={w} hydrology={h} />)
+    const el = headlineEl(container)
+    expect(el).toBeTruthy()
+    expect(el.getAttribute('aria-label')).toBe('All set — no watering needed today.')
+  })
+
+  it('hides the visible headline text from the a11y tree (aria-hidden) so it does not double-announce', () => {
+    const h = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, rain_coming: false }
+    const { container } = render(<WeatherWidget weather={w} hydrology={h} />)
+    const el = headlineEl(container)
+    const visible = el.querySelector('[aria-hidden="true"]')
+    expect(visible).toBeTruthy()
+    expect(visible.textContent).toBe('Water both — containers and beds today.')
+  })
+
+  it('lane expand trigger carries aria-controls pointing at the watering-explanation region', () => {
+    const h = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
+    render(<WeatherWidget weather={w} hydrology={h} />)
+    const bedsBtn = screen.getByRole('button', { name: /in-ground bed recommendation/i })
+    expect(bedsBtn.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(bedsBtn)
+    const region = screen.getByRole('region', { name: /watering explanation/i })
+    const controls = screen.getByRole('button', { name: /in-ground bed recommendation/i }).getAttribute('aria-controls')
+    expect(controls).toBeTruthy()
+    expect(controls).toBe(region.getAttribute('id'))
+  })
+})
