@@ -71,6 +71,15 @@ const ANCHOR_META = {
   'lifecycle.bud':    { accessibleName: 'Bud' },
   'lifecycle.bloom':  { accessibleName: 'Bloom' },
   'lifecycle.fruit':  { accessibleName: 'Fruit' },
+  'nav.back':       { accessibleName: 'Back' },
+  'action.share':   { accessibleName: 'Share' },
+  'action.info':    { accessibleName: 'Details' },
+  'action.edit':    { accessibleName: 'Edit' },
+  'action.archive': { accessibleName: 'Archive' },
+  'media.camera':   { accessibleName: 'Add photo' },
+  'media.play':     { accessibleName: 'Play' },
+  'media.pause':    { accessibleName: 'Pause' },
+  'media.stop':     { accessibleName: 'Stop' },
 }
 
 export const GLYPHS = Object.fromEntries(

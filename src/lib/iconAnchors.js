@@ -115,6 +115,63 @@ const A = {
     svg24: '<path data-region="fruit" d="M12 21.4c-4.6 0-8.1-3.4-8.1-7.7 0-4 3-7 7-7.3 0.7-0.1 1.5-0.1 2.2 0 4 0.3 7 3.3 7 7.3 0 4.3-3.5 7.7-8.1 7.7z" fill="currentColor" stroke="none"/><path data-region="cap" d="M12 6.4V3.8" fill="none" stroke="currentColor"/><path data-region="cap" d="M12 6.2c-1.8 0-3.2-1.4-3.3-3.2 1.8 0 3.3 1.4 3.3 3.2z" fill="currentColor" stroke="none"/>',
     svg18: '<path data-region="fruit" d="M12 20.8c-4.4 0-7.6-3.3-7.6-7.4 0-4.1 3.2-7.4 7.6-7.4s7.6 3.3 7.6 7.4c0 4.1-3.2 7.4-7.6 7.4z" fill="currentColor" stroke="none"/><path data-region="cap" d="M12 6V3.4" fill="none" stroke="currentColor"/><path data-region="cap" d="M12 6.2c-1.6 0-2.9-1.2-3-2.9 1.6 0 3 1.2 3 2.9z" fill="currentColor" stroke="none"/>',
   },
+  // ── V200 Slice-5b mono utility glyphs (photo hero + fly-up; emoji-free hard rule). ──
+  // nav.back = left chevron (hero back control). mono. 18 widens the chevron angle slightly for aperture.
+  'nav.back': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M14.5 5.5L8 12l6.5 6.5"/>',
+    svg18: '<path d="M14.5 6L9 12l5.5 6"/>',
+  },
+  // action.share = iOS-style tray + up-arrow (cleaner than node-share at 18). mono.
+  // 18 drops nothing — narrows the tray gap + arrow so the up-arrow keeps aperture.
+  'action.share': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M12 3.6v10.2"/><path d="M8.4 7.2L12 3.6l3.6 3.6"/><path d="M7.4 10.4H5.6a1.4 1.4 0 0 0-1.4 1.4v7a1.4 1.4 0 0 0 1.4 1.4h12.8a1.4 1.4 0 0 0 1.4-1.4v-7a1.4 1.4 0 0 0-1.4-1.4h-1.8"/>',
+    svg18: '<path d="M12 3.8v9.4"/><path d="M8.6 7.2L12 3.8l3.4 3.4"/><path d="M7.6 10.6H5.8a1.4 1.4 0 0 0-1.4 1.4v6.6a1.4 1.4 0 0 0 1.4 1.4h12.4a1.4 1.4 0 0 0 1.4-1.4v-6.6a1.4 1.4 0 0 0-1.4-1.4h-1.8"/>',
+  },
+  // action.info = "i" in a circle (Details pill). mono + one solid dot (echoes severity.high's dot).
+  'action.info': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<circle cx="12" cy="12" r="8.4"/><path d="M12 11v5.4"/><circle cx="12" cy="7.9" r="0.8" fill="currentColor" stroke="none"/>',
+    svg18: '<circle cx="12" cy="12" r="8.6"/><path d="M12 11.2v5.2"/><circle cx="12" cy="7.8" r="0.9" fill="currentColor" stroke="none"/>',
+  },
+  // action.edit = pencil (edit affordance). mono. 18 drops the ferrule line (closes to noise <20px, §4 aperture).
+  'action.edit': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M16.4 4.6l3 3-9.5 9.5-3.6.6.6-3.6z"/><path d="M14.6 6.4l3 3"/>',
+    svg18: '<path d="M16.2 4.8l3 3-9.4 9.4-3.7.7.7-3.7z"/>',
+  },
+  // action.archive = lid + box + handle slot. mono.
+  'action.archive': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M4.4 6.2h15.2v3H4.4z"/><path d="M5.6 9.2h12.8v8.8a1.2 1.2 0 0 1-1.2 1.2H6.8a1.2 1.2 0 0 1-1.2-1.2z"/><path d="M9.6 12.6h4.8"/>',
+    svg18: '<path d="M4.6 6.4h14.8v3.2H4.6z"/><path d="M5.8 9.6h12.4v8.4a1.2 1.2 0 0 1-1.2 1.2H7a1.2 1.2 0 0 1-1.2-1.2z"/><path d="M9.8 12.8h4.4"/>',
+  },
+  // media.camera = body + viewfinder bump + lens (add-photo action). mono.
+  'media.camera': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M4.2 8.4h3l1.4-2.2h6.8l1.4 2.2h2.6a1.2 1.2 0 0 1 1.2 1.2v8.4a1.2 1.2 0 0 1-1.2 1.2H4.2a1.2 1.2 0 0 1-1.2-1.2V9.6a1.2 1.2 0 0 1 1.2-1.2z"/><circle cx="12" cy="13.4" r="3.4"/>',
+    svg18: '<path d="M4.4 8.6h3.2l1.4-2.2h6l1.4 2.2h2.2a1.2 1.2 0 0 1 1.2 1.2v8a1.2 1.2 0 0 1-1.2 1.2H4.4a1.2 1.2 0 0 1-1.2-1.2V9.8a1.2 1.2 0 0 1 1.2-1.2z"/><circle cx="12" cy="13.4" r="3.4"/>',
+  },
+  // ── media-control family (play/pause/stop) — solid fills, rounded corners, mutually consistent. ──
+  // media.play = solid right triangle w/ rounded vertices (matches set rounded-join grammar). solid.
+  'media.play': {
+    class: 'mono', register: 'functional', variant: 'filled',
+    svg24: '<path d="M8 5.9a1 1 0 0 1 1.5-.86l9.2 5.96a1 1 0 0 1 0 1.68l-9.2 5.96A1 1 0 0 1 8 17.86z" fill="currentColor" stroke="none"/>',
+    svg18: '<path d="M8.3 6.2a1 1 0 0 1 1.5-.86l8.4 5.66a1 1 0 0 1 0 1.66l-8.4 5.66A1 1 0 0 1 8.3 17.5z" fill="currentColor" stroke="none"/>',
+  },
+  // media.pause = two rounded bars (reuses care.pause geometry; own key). mono.
+  'media.pause': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M9.3 6.8v10.4"/><path d="M14.7 6.8v10.4"/>',
+    svg18: '<path d="M9.5 7v10"/><path d="M14.5 7v10"/>',
+  },
+  // media.stop = solid rounded square (time-lapse stop). solid.
+  'media.stop': {
+    class: 'mono', register: 'functional', variant: 'filled',
+    svg24: '<rect x="6.4" y="6.4" width="11.2" height="11.2" rx="1.4" fill="currentColor" stroke="none"/>',
+    svg18: '<rect x="6.6" y="6.6" width="10.8" height="10.8" rx="1.4" fill="currentColor" stroke="none"/>',
+  },
 }
 
 export const ANCHOR_KEYS = Object.keys(A)
