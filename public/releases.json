@@ -1,5 +1,16 @@
 [
   {
+    "version": "3.10.0",
+    "date": "2026-06-30",
+    "highlights": [
+      "Your garden plants now appear as photo tiles",
+      "New Photos tab — browse all your garden photos grouped by month",
+      "Tap any photo for a full-screen viewer with pinch-to-zoom and swipe",
+      "Favorites are now hearts",
+      "Refreshed bottom navigation (Today, Garden, add, Doctor Gardener, More)"
+    ]
+  },
+  {
     "version": "3.9.0",
     "date": "2026-06-29",
     "highlights": [
