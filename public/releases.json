@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.9.0",
+    "date": "2026-06-29",
+    "highlights": [
+      "Groundwork for smarter, evidence-based plant care — an upgraded internal record of what we know about each plant (no visible changes yet)",
+      "Added an internal safety net that checks the daily watering plan stays correct as the care engine evolves"
+    ]
+  },
+  {
     "version": "3.8.0",
     "date": "2026-06-29",
     "highlights": [
