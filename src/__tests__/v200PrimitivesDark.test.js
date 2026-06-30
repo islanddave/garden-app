@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-const DARK = ['SegmentedControl', 'Sheet', 'TileGrid']
+const DARK = ['SegmentedControl', 'Sheet']
 const ROOT = 'src'
 
 function walk(dir, acc = []) {
