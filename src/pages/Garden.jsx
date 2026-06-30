@@ -4,7 +4,6 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
-import CritterSprite from '../components/CritterSprite.jsx'
 import LoveMehPopover from '../components/LoveMehPopover.jsx'
 import { fetchActiveCritters, markCrittersViewed, patchSpeciesPrefs } from '../lib/critterClient.js'
 import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismissed, recordOptInDismissed, saveGardenGroupBy, saveGardenExpanded } from '../lib/notificationPrefsClient.js'
@@ -16,11 +15,10 @@ import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA } from '../lib/projectTree.js'
 import GroupByControl from '../components/forms/GroupByControl.jsx'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
+import TileGrid from '../components/forms/TileGrid.jsx'
+import PlantingTile from '../components/PlantingTile.jsx'
 import { useEntityTagsBulk } from '../hooks/useTags.js'
-import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
-import { formatQty } from '../lib/format.js'
 import PlantingEditor from '../components/PlantingEditor.jsx'
-import PhotoUpload from '../components/PhotoUpload.jsx'
 
 // Garden — Increment 1 of the post-V2 UX overhaul. Unifies the old Projects + Plants
 // tabs into ONE nested accordion: projects form a parent/child tree; each project's
@@ -342,7 +340,7 @@ export default function Garden() {
     })
   }, [])
 
-  // Group critters by plant_id (target_id falls back to plant_id) for O(1) lookup in PlantingRow.
+  // Group critters by plant_id (target_id falls back to plant_id) for O(1) lookup in PlantingTile.
   const crittersByPlantId = useMemo(() => {
     const m = new Map()
     for (const c of critters) {
@@ -572,12 +570,17 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
 
       {isOpen && (
         <div role="group" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-          {plantings.map(pl => <PlantingRow key={pl.id} planting={pl} depth={depth + 1} level={level + 1}
-            critters={crittersByPlantId?.get(pl.id) ?? []}
-            onSpriteLongPress={onSpriteLongPress}
-            onSpriteIntersect={onSpriteIntersect}
-            onPhotoUploaded={onPhotoUploaded}
-            flashId={flashId} />)}
+          {plantings.length > 0 && (
+            <TileGrid items={plantings} columns={2} gap={12} ariaLabel="Plantings"
+              renderItem={(pl) => (
+                <PlantingTile planting={pl}
+                  critters={crittersByPlantId?.get(pl.id) ?? []}
+                  onSpriteLongPress={onSpriteLongPress}
+                  onSpriteIntersect={onSpriteIntersect}
+                  onPhotoUploaded={onPhotoUploaded}
+                  flashId={flashId} />
+              )} />
+          )}
           {children.map(c => <TreeNode key={c.project.id} node={c} expanded={expanded} onToggle={onToggle} level={level + 1}
             crittersByPlantId={crittersByPlantId}
             onSpriteLongPress={onSpriteLongPress}
@@ -590,78 +593,6 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
   )
 }
 
-// Planting leaf — whole row OPENS the planting's own detail page (V3-NAV-001 / PR2).
-// Previously navigated to the owning project; now deep-links to /projects/:id/plantings/:plantingId.
-function PlantingRow({ planting: pl, depth, level, critters = [], onSpriteLongPress = null, onSpriteIntersect = null, onPhotoUploaded = null, flashId = null }) {
-  const variety = pl.variety_ref?.name
-  return (
-    <div role="treeitem" aria-level={level} style={{ paddingLeft: depth * 20, position: 'relative' }}>
-      {/* MVP-Critter sprites (Stage 2 reveal + persistent accumulation).
-          Phase B++ redesign 2026-05-30 (Dave: "should not obscure text, links, etc on the item"):
-          positioned to peek above the row's top edge near the photo, NOT over the body/status/chevron.
-          Size 22px so multiple birds can sit shoulder-to-shoulder without crowding. zIndex 5 so they
-          stay visible above the row but never block tap targets (Link nav still works underneath). */}
-      {critters.length > 0 && (
-        <div style={{ position: 'absolute', top: -10, left: 16, display: 'flex', gap: 2, zIndex: 5, pointerEvents: 'auto' }}>
-          {critters.map(c => (
-            <CritterSprite key={c.id} critter={c} onLongPress={onSpriteLongPress} onIntersect={onSpriteIntersect} spriteSize={22} />
-          ))}
-        </div>
-      )}
-      {/* V3-IA photo restore: the card div is the flex row; the Link covers thumb+body
-          (nav target) while the status badge + per-planting PhotoUpload sit OUTSIDE the
-          anchor so the camera/library buttons never trigger navigation. Wire contract is
-          identical to the retired Plants.jsx row uploader (V2-PHOTO-F1 S2): keyPrefix
-          'plants' + {plant_id, project_id} linkage -> 3-step useUploadPhoto engine ->
-          POST /api/photos; server auto-promotes first photo to featured. Hidden input id
-          `plant-list-photo-<plantId>` preserved for automated bulk-attach sessions. */}
-      <div style={{
-        backgroundColor: P.cream, border: `1px solid ${P.border}`, borderLeft: `3px solid ${P.greenLight}`,
-        borderRadius: 8, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10, minHeight: 44,
-        animation: pl.id === flashId ? 'garden-newrow-highlight 1200ms ease' : undefined,
-      }}>
-        <Link to={`/projects/${pl.project_id}/plantings/${pl.id}`} aria-label={`Open ${pl.name}`}
-          style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-          {pl.featured_photo_view_url
-            ? <img src={pl.featured_photo_view_url} alt="" style={{ ...thumbImg, width: 32, height: 32 }} />
-            : <span aria-hidden="true" style={{ fontSize: '1rem', width: 32, textAlign: 'center' }}>🌱</span>}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{pl.name}</span>
-              {pl.quantity > 1 && <span style={{ fontSize: '0.76rem', color: P.green, fontWeight: 600 }}>×{formatQty(pl.quantity)}</span>}
-              {variety && <span style={{ fontSize: '0.76rem', color: P.mid }}>{variety}</span>}
-            </div>
-          </div>
-        </Link>
-        {/* V3-FAV-001: plantings are favoritable (entity_type=plant = garden_node id). Outside the
-            Link so the star toggle never triggers row navigation (FavoriteToggle stops propagation). */}
-        <FavoriteToggle entityType="plant" entityId={pl.id} />
-        {/* Multi-channel status (WCAG 1.4.1): icon + label, never color alone. */}
-        {pl.status && <PlantStatusBadge status={pl.status} />}
-        <PhotoUpload
-          keyPrefix="plants"
-          parentId={pl.id}
-          linkage={{ plant_id: pl.id, project_id: pl.project_id }}
-          errorMode="surface"
-          mode="both"
-          takeLabel="📷"
-          chooseLabel="🖼️"
-          showPreview={false}
-          inputId={`plant-list-photo-${pl.id}`}
-          onUploadComplete={onPhotoUploaded}
-          buttonStyle={{
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            width: 34, height: 34, padding: 0,
-            background: 'transparent', color: P.mid,
-            border: `1px solid ${P.border}`, borderRadius: '50%',
-            cursor: 'pointer', fontSize: '0.9rem', userSelect: 'none',
-          }}
-        />
-      </div>
-    </div>
-  )
-}
-
 function Shell({ children }) {
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream, position: 'relative' }}>
@@ -669,7 +600,7 @@ function Shell({ children }) {
     </div>
   )
 }
-// V4-GARDENIA-001: faceted Garden render. Group-by overlay over the SAME PlantingRow the legacy
+// V4-GARDENIA-001: faceted Garden render. Group-by overlay over the SAME PlantingTile the legacy
 // tree uses, so plantings look identical; the by-project tree (effectiveGroupBy==='none') is
 // untouched and remains golden-gated. A planting may appear under multiple groups (multi-membership).
 function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId }) {
@@ -700,13 +631,14 @@ function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongP
             <FacetGroupHeader label={g.label} count={g.count} facet={g.facet} value={g.slug}
               isUnsorted={g.isUnsorted} collapsed={isCollapsed} onToggle={() => toggle(g.slug)} />
             {!isCollapsed && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-                {g.plantings.map(pl => (
-                  <PlantingRow key={pl.id} planting={pl} depth={0} level={2}
-                    critters={crittersByPlantId?.get(pl.id) ?? []}
-                    onSpriteLongPress={onSpriteLongPress} onSpriteIntersect={onSpriteIntersect}
-                    onPhotoUploaded={onPhotoUploaded} flashId={flashId} />
-                ))}
+              <div style={{ marginTop: 8 }}>
+                <TileGrid items={g.plantings} columns={2} gap={12} ariaLabel={g.label}
+                  renderItem={(pl) => (
+                    <PlantingTile planting={pl}
+                      critters={crittersByPlantId?.get(pl.id) ?? []}
+                      onSpriteLongPress={onSpriteLongPress} onSpriteIntersect={onSpriteIntersect}
+                      onPhotoUploaded={onPhotoUploaded} flashId={flashId} />
+                  )} />
               </div>
             )}
           </div>
