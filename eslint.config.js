@@ -83,6 +83,7 @@ export default [
       'src/components/forms/SelectChip.jsx',
       'src/components/forms/SegmentedControl.jsx',
       'src/components/forms/Sheet.jsx',
+      'src/components/forms/TileGrid.jsx',
       'src/components/forms/formStyles.js',
       'src/lib/status.js',
     ],

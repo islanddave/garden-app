@@ -13,7 +13,7 @@ const FROZEN = [
   'Card', 'Section', 'PageShell',
   'Field', 'Input', 'Textarea', 'Select', 'EnumSelect', 'StatusSelect', 'SelectChip',
   'Button', 'Badge',
-  'SegmentedControl', 'Sheet',
+  'SegmentedControl', 'Sheet', 'TileGrid',
   'EventTypePicker', 'ScopeChecklist', 'PlantForm',
   'Spinner', 'ErrorBanner', 'Toast',
   'formStyles',

@@ -26,6 +26,7 @@ Barrel: `src/components/forms/index.js`. Token layer: `formStyles.js` (`T`) + pa
 | **SelectChip** | Tappable chip option (chip-style single/multi pick). |
 | **SegmentedControl** | 2+-way mutually-exclusive VIEW toggle (radiogroup). V4-THEME-001. |
 | **Sheet** | Bottom-sheet fly-up (dialog, backdrop, focus-trap, safe-area). V4-THEME-001. |
+| **TileGrid** | Responsive tile-grid layout (columns/auto-fit, empty state). V4-THEME-001. |
 | **Button** | Action button (variants via prop). |
 | **Badge** | Display-only label chip (tone-colored). Not a reward surface. |
 | **EventTypePicker** | Composite: event-type taxonomy picker. |
