@@ -17,6 +17,13 @@ const PAL = {
   waitBg: '#FCE3DC', waitBorder: '#F2C3B4', waitInk: '#9A3412',
 }
 
+// DRG-WXPROB-001 — probability-gate the INFORMATIONAL rain AMOUNT. The deterministic Open-Meteo
+// precipitation_sum (grid-cell sensitive) over-reports the expected amount when the chance is low;
+// below this PoP threshold we suppress the amount and show only the chance. At/above it we show a
+// probability-weighted amount. Presentation only — the stored hydrology numbers + watering pills are untouched.
+const RAIN_POP_DISPLAY_THRESHOLD = 30 // percent; tunable display gate for the rain-amount figure
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100
+
 let _cid = 0
 function Can({ fill = 1, color, ghost }) {
   const cid = `can-clip-${_cid++}`
@@ -185,11 +192,16 @@ export default function WeatherWidget({
   const rainWhen = showToday ? 'today' : 'tomorrow'
   // Honest rain note: drop false precision when the (nightly) snapshot is volatile; a live reading is current
   // so it shows the plain figure.
+  // Clean (non-uncertain) figure is probability-gated: under the PoP threshold the deterministic amount
+  // over-reports, so show only the chance; at/above it show a probability-weighted amount.
+  const rainAmtWeighted = round2(rainIn * rainPop / 100)
   const rainNote = uncertain
     ? (rainIn >= 0.1
         ? `~${rainIn.toFixed(2)}″ ${rainWhen} · ${rainPop}% — could climb`
         : `${rainPop}% chance ${rainWhen} · little so far, could climb`)
-    : `${rainIn.toFixed(2)}″ rain expected ${rainWhen} · ${rainPop}%`
+    : (rainPop < RAIN_POP_DISPLAY_THRESHOLD
+        ? `${rainPop}% chance of rain ${rainWhen}`
+        : `${rainAmtWeighted.toFixed(2)}″ rain expected ${rainWhen} · ${rainPop}%`)
 
   const Pill = ({ level, Target, laneKey }) => {
     const state = pillState(level)

@@ -71,3 +71,24 @@ describe('DRG-WATERSTAGE-001: plantings under a planning-stage project are exclu
     expect(all.some(w => w.id === 'veg')).toBe(true);
   });
 });
+
+// DRG-WXPROB-001 — the nightly rain-AMOUNT callout mirrors the Today widget's probability gating.
+// The GATE (whether the rain callout fires at all) is unchanged — only the displayed amount is weighted.
+describe('DRG-WXPROB-001: rain callout shows a probability-weighted amount', () => {
+  const { computeCallout } = engine;
+  const baseWx = { tonightLow: 60, highToday: 80 }; // no freeze/cold/heat -> rain branch can win
+
+  it('weights the displayed amount by PoP when the rain callout fires (pop >= 30)', () => {
+    const c = computeCallout(baseWx, { recent_precip_in: 0.05, tomorrow_precip_in: 1.00, tomorrow_pop: 60 });
+    expect(c).toBeTruthy();
+    expect(c.icon).toBe('rain');
+    // 1.00 * 60% = 0.60 (not the raw 1.00)
+    expect(c.text).toBe('0.6" rain tomorrow — water containers today, let in-ground beds wait');
+  });
+
+  it('keeps the raw amount when PoP is null (cannot weight an unknown probability)', () => {
+    const c = computeCallout(baseWx, { recent_precip_in: 0.05, tomorrow_precip_in: 0.5, tomorrow_pop: null });
+    expect(c.icon).toBe('rain');
+    expect(c.text).toBe('0.5" rain tomorrow — water containers today, let in-ground beds wait');
+  });
+});

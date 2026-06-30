@@ -95,7 +95,7 @@ describe('WeatherWidget — DRG-WXROLL-001 live intraday rain overlay', () => {
   it('overlays the LIVE figure + "Updated … live" stamp and suppresses the stale + uncertainty caveats', () => {
     render(<WeatherWidget weather={weather} hydrology={nightlyUncertain} liveHydrology={live}
       refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-20T06:00:41Z" planDate="2026-06-22" />)
-    expect(screen.getByText(/0\.61/)).toBeTruthy()        // live D0 amount, not the 0.21 nightly
+    expect(screen.getByText(/0\.56/)).toBeTruthy()        // live D0 amount probability-weighted (0.61 * 92%), not the raw 0.61 or the 0.21 nightly
     expect(screen.getByText(/· live/i)).toBeTruthy()
     expect(screen.queryByText(/As of/i)).toBeNull()       // live stamp replaces the as-of stamp
     expect(screen.queryByText(/older snapshot/i)).toBeNull()   // stale suppressed when live
@@ -116,6 +116,39 @@ describe('WeatherWidget — DRG-WXROLL-001 live intraday rain overlay', () => {
     render(<WeatherWidget weather={weather} hydrology={{ ...dry }} liveHydrology={dry}
       refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
     expect(screen.getByText(/· live/i)).toBeTruthy()
-    expect(screen.getByText(/rain expected/i)).toBeTruthy()
+    // tomorrow_pop 5 is below the display threshold -> chance-only line, no amount (DRG-WXPROB-001)
+    expect(screen.getByText(/5% chance of rain/i)).toBeTruthy()
+    expect(screen.queryByText(/rain expected/i)).toBeNull()
+  })
+})
+
+
+describe('WeatherWidget — DRG-WXPROB-001 probability-gated rain AMOUNT', () => {
+  // Clean nightly snapshot (no uncertainty flag, no live overlay) — the branch the deterministic
+  // Open-Meteo amount over-reports on. Below the PoP threshold the amount is suppressed; at/above it
+  // the displayed amount is probability-weighted. Hydrology numbers + watering pills are untouched.
+  const w = { tonightLow: 50, highToday: 78, code: 3, hot: false }
+
+  it('suppresses the amount and shows ONLY "% chance of rain" when tomorrow_pop < 30', () => {
+    const h = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 10, tomorrow_precip_in: 0.84, tomorrow_pop: 20 }
+    render(<WeatherWidget weather={w} hydrology={h} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+    expect(screen.getByText(/20% chance of rain tomorrow/i)).toBeTruthy()
+    expect(screen.queryByText(/rain expected/i)).toBeNull()  // no amount shown
+    expect(screen.queryByText(/0\.84/)).toBeNull()           // the raw over-reporting figure is gone
+  })
+
+  it('shows a probability-weighted amount (not the raw figure) when tomorrow_pop >= 30', () => {
+    const h = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 10, tomorrow_precip_in: 0.84, tomorrow_pop: 63 }
+    render(<WeatherWidget weather={w} hydrology={h} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+    // 0.84 * 63% = 0.5292 -> round2 -> 0.53
+    expect(screen.getByText(/0\.53″ rain expected tomorrow · 63%/)).toBeTruthy()
+    expect(screen.queryByText(/0\.84/)).toBeNull()           // raw deterministic amount is never shown
+  })
+
+  it('treats pop exactly at the threshold (30) as the show-weighted-amount branch', () => {
+    const h = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 10, tomorrow_precip_in: 1.00, tomorrow_pop: 30 }
+    render(<WeatherWidget weather={w} hydrology={h} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+    // 1.00 * 30% = 0.30
+    expect(screen.getByText(/0\.30″ rain expected tomorrow · 30%/)).toBeTruthy()
   })
 })

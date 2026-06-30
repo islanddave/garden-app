@@ -5,6 +5,8 @@
 // never-logged-aware, temp-aware, per-variety cold, strict per-user. No I/O; caller passes today/weather/cadence/fertModel.
 const DAY = 86400000;
 const HOT_F = 88;
+// DRG-WXPROB-001 — display gate for the nightly rain-AMOUNT callout (mirrors the Today widget). Presentation only.
+const RAIN_POP_DISPLAY_THRESHOLD = 30; // percent
 // DRG-WATERCREDIT-004: fabric grow bags have breathable sidewalls and dry top-to-bottom fast in heat, so a
 // light/moderate rain that would credit a rigid pot or bed does NOT keep a fabric bag wet on a hot day. On
 // days at/above this threshold we withhold rain credit for fabric_bag vessels (outdoor only) so a real
@@ -229,8 +231,16 @@ function computeCallout(weather, hy){
   if(low!=null && low<40) return {icon:'freeze', text:`Freeze tonight (${low}°F) — cover or bring peppers & tomatoes in`};
   if(low!=null && low<45) return {icon:'cold', text:`Cool night (${low}°F) — protect flowering peppers/tomatoes`};
   if(high!=null && high>=88) return {icon:'heat', text:`Hot day (${high}°F) — deep-water thirsty crops, shade if wilting`};
-  if(hy && hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null || hy.tomorrow_pop>=50))
-    return {icon:'rain', text:`${hy.tomorrow_precip_in}" rain tomorrow — water containers today, let in-ground beds wait`};
+  if(hy && hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null || hy.tomorrow_pop>=50)){
+    // DRG-WXPROB-001 — mirror the Today widget's probability-gated rain AMOUNT in this nightly snapshot
+    // string. The GATE (whether the action callout fires) is unchanged — that's a watering decision. Only
+    // the DISPLAYED amount is probability-weighted, and only when a PoP is known (>= the display threshold;
+    // a null PoP keeps the raw figure). Presentation only — stored hydrology numbers + watering logic untouched.
+    const _amt = (hy.tomorrow_pop!=null && hy.tomorrow_pop>=RAIN_POP_DISPLAY_THRESHOLD)
+      ? Math.round((hy.tomorrow_precip_in*hy.tomorrow_pop/100 + Number.EPSILON)*100)/100
+      : hy.tomorrow_precip_in;
+    return {icon:'rain', text:`${_amt}" rain tomorrow — water containers today, let in-ground beds wait`};
+  }
   if(hy && hy.recent_precip_in>=0.4)
     return {icon:'wet', text:`${hy.recent_precip_in}" fell recently — soil is wet, skip outdoor watering`};
   return null;
