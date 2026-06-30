@@ -1,5 +1,16 @@
 [
   {
+    "version": "3.11.0",
+    "date": "2026-06-30",
+    "highlights": [
+      "Each plant now opens with a big photo at the top",
+      "A watering banner appears when a plant needs water",
+      "Watch a plant grow over time with the new photo time-lapse",
+      "Tap Details for a tidy pop-up with care info and plant facts",
+      "Tap any plant photo for the full-screen viewer"
+    ]
+  },
+  {
     "version": "3.10.0",
     "date": "2026-06-30",
     "highlights": [
