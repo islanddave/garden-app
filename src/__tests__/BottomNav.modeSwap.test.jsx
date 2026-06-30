@@ -103,18 +103,18 @@ describe('BottomNav Field/Desk mode swap (Inc 2 Bite 3)', () => {
   })
 
   describe('Mode swap is reactive', () => {
-    it('Garden, Critters, Photos, More tabs render in both modes (non-swap regression check)', () => {
+    it('Today, Garden, DrG, More tabs render in both modes (non-swap regression check)', () => {
       const { unmount } = renderAt(MODE.DESK)
+      expect(screen.getByText('Today')).toBeDefined()
       expect(screen.getByText('Garden')).toBeDefined()
-      expect(screen.getByText('Critters')).toBeDefined()
-      expect(screen.getByText('Photos')).toBeDefined()
+      expect(screen.getByText('DrG')).toBeDefined()
       expect(screen.getByText('More')).toBeDefined()
       unmount()
 
       renderAt(MODE.FIELD)
+      expect(screen.getByText('Today')).toBeDefined()
       expect(screen.getByText('Garden')).toBeDefined()
-      expect(screen.getByText('Critters')).toBeDefined()
-      expect(screen.getByText('Photos')).toBeDefined()
+      expect(screen.getByText('DrG')).toBeDefined()
       expect(screen.getByText('More')).toBeDefined()
     })
   })

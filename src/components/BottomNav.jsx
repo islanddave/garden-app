@@ -21,11 +21,16 @@ import { useMode } from '../lib/mode.js'
 // Inventory demoted to the More menu. FAB keeps its center slot (3 of 5):
 // Garden · Critters · +LOG · Photos · More. The standalone Plants page is retired —
 // /plants redirects to /garden (PlantsRedirect).
+// V200 / V4-THEME-001 nav (2026-06-30): Today·Garden·＋·DrG·More. Today promoted to a
+// first-class tab (supersedes DRG-TODAY-003 Option A "Today bar, not a tab", Dave call
+// 2026-06-30 — V200 locked design wins). DrG promoted from the More menu to a tab.
+// Critters + Photos folded into the More menu (Photos there is interim until the Garden
+// Plants/Photos sub-tab lands in Slice 3). FAB keeps the center slot (3 of 5).
 const TABS = [
-  { to: '/garden',     label: 'Garden',   icon: '🪴' },
-  { to: '/collection', label: 'Critters', icon: '🦋' },
-  { to: '/log',        label: '+Log',     icon: '+',  highlight: true },
-  { to: '/photos',     label: 'Photos',   icon: '📷' },
+  { to: '/today',    label: 'Today',  icon: '📅' },
+  { to: '/garden',   label: 'Garden', icon: '🪴' },
+  { to: '/log',      label: 'Create', icon: '+',  highlight: true },
+  { to: '/findings', label: 'DrG',    icon: '🩺' },
 ]
 
 // +LOG FAB → create action sheet (Increment 1, post-V2 UX overhaul).
@@ -180,6 +185,48 @@ export default function BottomNav() {
             </div>
           )}
 
+          {/* Critters — folded into More (V200/V4-THEME-001 nav): ambient reward surface,
+              not a daily-core tab. */}
+          <Link
+            to="/collection"
+            onClick={closeMore}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 16,
+              width: '100%',
+              padding: '14px 24px',
+              borderTop: `1px solid ${P.border}`,
+              background: 'none', textAlign: 'left',
+              cursor: 'pointer', textDecoration: 'none',
+              color: P.dark, fontSize: '1rem', fontWeight: 500,
+              fontFamily: 'inherit',
+              minHeight: 48,
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🦋</span>
+            Critters
+          </Link>
+
+          {/* Photos — folded into More (V200/V4-THEME-001 nav). Interim home until the
+              Garden Plants/Photos sub-tab toggle lands (Slice 3). */}
+          <Link
+            to="/photos"
+            onClick={closeMore}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 16,
+              width: '100%',
+              padding: '14px 24px',
+              borderTop: `1px solid ${P.border}`,
+              background: 'none', textAlign: 'left',
+              cursor: 'pointer', textDecoration: 'none',
+              color: P.dark, fontSize: '1rem', fontWeight: 500,
+              fontFamily: 'inherit',
+              minHeight: 48,
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📷</span>
+            Photos
+          </Link>
+
           {/* Dashboard — the "Gardens at Home" overview. Demoted from the landing route to the
               More menu (DRG-TODAY-003): /today is now home, surfaced via the color-coded Today bar
               above the nav. Still reachable here and via the TopBar app-name link. */}
@@ -243,27 +290,7 @@ export default function BottomNav() {
             Achievements
           </Link>
 
-          {/* DrG findings tab — care read model surface (DRG-TAB-001 / slice 8).
-              Instrumentation entry in the More menu; consumes GET /api/findings. No character
-              (the character is a separate V4 track). */}
-          <Link
-            to="/findings"
-            onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🩺</span>
-            Doctor Gardener
-          </Link>
+
 
           {/* Garden Helper — Post-V2 UX overhaul Inc 2 Bite 1 (Rung-1 advisory).
               /helper route + GardenHelper.jsx. Non-recording scaffold: composes a
@@ -446,7 +473,6 @@ export default function BottomNav() {
               style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44, position: 'relative' }}>
               <span style={{ fontSize: '1.25rem', lineHeight: 1 }}>{tab.icon}</span>
               <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400 }}>{tab.label}</span>
-              {tab.to === '/garden' && <BottomNavDot getToken={getToken} />}
             </Link>
           )
         })}
@@ -456,10 +482,13 @@ export default function BottomNav() {
           style={{
             flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
             gap: 2, background: 'none', border: 'none', cursor: 'pointer',
-            color: showMore ? P.green : P.light, padding: 0, minHeight: 44,
+            color: showMore ? P.green : P.light, padding: 0, minHeight: 44, position: 'relative',
           }}>
           <span style={{ fontSize: '1.25rem', lineHeight: 1, letterSpacing: '-1px' }}>•••</span>
           <span style={{ fontSize: '0.62rem', fontWeight: showMore ? 700 : 400 }}>More</span>
+          {/* Critter "new visitor" dot — moved here from the Garden tab now that Critters
+              lives in the More menu (V200/V4-THEME-001 nav). */}
+          <BottomNavDot getToken={getToken} />
         </button>
       </nav>
     </>

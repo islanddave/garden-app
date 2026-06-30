@@ -67,28 +67,29 @@ beforeEach(() => {
 })
 
 describe('BottomNav — V3-IA layout', () => {
-  it('renders Garden + Critters + +LOG + Photos + More (Inventory demoted to More menu)', () => {
+  it('renders Today + Garden + Create + DrG + More (V200 nav; Critters + Photos folded into More)', () => {
     render(<BottomNav />)
+    expect(screen.getByText('Today')).toBeDefined()
     expect(screen.getByText('Garden')).toBeDefined()
-    expect(screen.getByText('Critters')).toBeDefined()
     expect(screen.getByLabelText('Create')).toBeDefined()
-    expect(screen.getByText('Photos')).toBeDefined()
+    expect(screen.getByText('DrG')).toBeDefined()
     expect(screen.getByText('More')).toBeDefined()
     expect(screen.queryByText('Projects')).toBeNull()
     expect(screen.queryByText('Plants')).toBeNull()
     expect(screen.queryByText('Inventory')).toBeNull()
-    // DRG-TODAY-003 Option A: Today is the color-coded bar above the nav, NOT a bottom-nav tab.
-    expect(screen.queryByText('Today')).toBeNull()
+    // Critters + Photos are no longer first-class tabs (folded into More — V200/V4-THEME-001).
+    expect(screen.queryByText('Critters')).toBeNull()
+    expect(screen.queryByText('Photos')).toBeNull()
   })
 
-  it('FAB keeps the center slot: tab order is Garden · Critters · +LOG · Photos · More', () => {
+  it('FAB keeps the center slot: tab order is Today · Garden · ＋ · DrG · More', () => {
     render(<BottomNav />)
     const nav = screen.getByLabelText('Main navigation')
     expect(nav.children.length).toBe(5)
-    expect(nav.children[0].textContent).toContain('Garden')
-    expect(nav.children[1].textContent).toContain('Critters')
+    expect(nav.children[0].textContent).toContain('Today')
+    expect(nav.children[1].textContent).toContain('Garden')
     expect(nav.children[2].getAttribute('aria-label')).toBe('Create')
-    expect(nav.children[3].textContent).toContain('Photos')
+    expect(nav.children[3].textContent).toContain('DrG')
     expect(nav.children[4].textContent).toContain('More')
   })
 
@@ -104,10 +105,10 @@ describe('BottomNav — V3-IA layout', () => {
 
   it('tab links point to correct routes', () => {
     render(<BottomNav />)
+    expect(screen.getByText('Today').closest('a').getAttribute('href')).toBe('/today')
     expect(screen.getByText('Garden').closest('a').getAttribute('href')).toBe('/garden')
-    expect(screen.getByText('Critters').closest('a').getAttribute('href')).toBe('/collection')
-    expect(screen.getByText('Photos').closest('a').getAttribute('href')).toBe('/photos')
-    // +LOG is no longer a direct link — it's a button that opens the create action sheet.
+    expect(screen.getByText('DrG').closest('a').getAttribute('href')).toBe('/findings')
+    // Create is not a direct link — it's a button that opens the create action sheet.
     const logBtn = screen.getByLabelText('Create')
     expect(logBtn.tagName).toBe('BUTTON')
     expect(logBtn.getAttribute('aria-haspopup')).toBe('true')
@@ -161,12 +162,16 @@ describe('BottomNav — More menu', () => {
     expect(link.getAttribute('href')).toBe('/dashboard')
   })
 
-  it('More menu has NO Plants entry (Plantings page retired) and no duplicate Photos/Critters entries', () => {
+  it('More menu houses Critters (/collection) and Photos (/photos), folded in from the nav (V200)', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('More navigation options'))
     expect(screen.queryByText('Plants')).toBeNull()
-    expect(screen.getAllByText('Photos').length).toBe(1)
-    expect(screen.getAllByText('Critters').length).toBe(1)
+    const photos = screen.getAllByText('Photos')
+    expect(photos.length).toBe(1)
+    expect(photos[0].closest('a').getAttribute('href')).toBe('/photos')
+    const critters = screen.getAllByText('Critters')
+    expect(critters.length).toBe(1)
+    expect(critters[0].closest('a').getAttribute('href')).toBe('/collection')
   })
 
 
