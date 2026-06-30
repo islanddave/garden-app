@@ -1,0 +1,148 @@
+{
+  "date": "2026-06-20",
+  "hot": false,
+  "hydrology": {
+    "rain_coming": false,
+    "recent_precip_in": 0,
+    "status": {
+      "ok": true,
+      "uncertainty": {
+        "flag": false
+      }
+    },
+    "today_pop": 0,
+    "today_precip_in": 0,
+    "tomorrow_pop": 0,
+    "tomorrow_precip_in": 0,
+    "upcoming_precip_in": 0
+  },
+  "users": {
+    "dave": {
+      "counts": {
+        "cold": 0,
+        "dormant": 1,
+        "fertilize": 0,
+        "no_history": 1,
+        "pest": 0,
+        "plantings": 3,
+        "rain_skipped": 0,
+        "water_due": 1
+      },
+      "substrate": {
+        "feeding_now": 2,
+        "fertilize_recs": 0,
+        "msg": "Feeding on HOLD — fresh MG slow-release mix is feeding all 2 plantings (potted recently; mix feeds 3-6 months). Optional: kelp via sprayer for transplant establishment. Watch for Mg (Epsom) / blossom-end-rot (gypsum) symptoms.",
+        "on_hold": true,
+        "phase_counts": {
+          "establishment_0_2wk": 2,
+          "needs_feed_24wk_plus": 1
+        },
+        "water_note": "Hard water (high Ca/Mg/bicarbonate) slowly raises root-zone pH -> micronutrient (Fe/Mn) lockout, worst for acid-lovers (blueberry)."
+      },
+      "tasks": {
+        "cold": [],
+        "dormant": [
+          {
+            "crop": "fig",
+            "id": "d1",
+            "name": "Dormant Fig",
+            "note": "Dormant — skip routine care",
+            "project": "Garden",
+            "project_id": "pj1"
+          }
+        ],
+        "fertilize": [],
+        "no_history": [
+          {
+            "crop": "lettuce",
+            "days_since": null,
+            "id": "nh1",
+            "in_ground": false,
+            "interval": 2,
+            "method": "light_frequent",
+            "moisture": "consistently_moist",
+            "name": "New Basil",
+            "never": true,
+            "overdue_by": null,
+            "project": "Garden",
+            "project_id": "pj1"
+          }
+        ],
+        "pest": [],
+        "rain_skipped": [],
+        "water_due": [
+          {
+            "crop": "pepper",
+            "days_since": 5,
+            "id": "w1",
+            "in_ground": false,
+            "interval": 3,
+            "method": "deep_even",
+            "moisture": "evenly_moist",
+            "name": "Cayenne Pepper",
+            "never": false,
+            "overdue_by": 2,
+            "project": "Garden",
+            "project_id": "pj1",
+            "rain_note": null
+          }
+        ]
+      }
+    },
+    "jen": {
+      "counts": {
+        "cold": 0,
+        "dormant": 0,
+        "fertilize": 1,
+        "no_history": 0,
+        "pest": 0,
+        "plantings": 1,
+        "rain_skipped": 0,
+        "water_due": 0
+      },
+      "substrate": {
+        "feeding_now": 0,
+        "fertilize_recs": 1,
+        "msg": "1 planting(s) past the MG feed window — feed per recommendation.",
+        "on_hold": false,
+        "phase_counts": {
+          "mg_tapering_13_24wk": 1
+        },
+        "water_note": "Hard water (high Ca/Mg/bicarbonate) slowly raises root-zone pH -> micronutrient (Fe/Mn) lockout, worst for acid-lovers (blueberry)."
+      },
+      "tasks": {
+        "cold": [],
+        "dormant": [],
+        "fertilize": [
+          {
+            "alt": "Bloom City Seaweed & Kelp (liquid) (sprayer)",
+            "apply": "top-dress + water in",
+            "crop": "tomato",
+            "id": "f1",
+            "in_ground": false,
+            "item": "Espoma Tomato-Tone 3-4-6 (granular)",
+            "name": "Beefsteak Tomato",
+            "phase": "mg_tapering_13_24wk",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "fruiting",
+            "weeks_since_pot": 24
+          }
+        ],
+        "no_history": [],
+        "pest": [],
+        "rain_skipped": [],
+        "water_due": []
+      }
+    }
+  },
+  "water_source": "well water (likely HARD)",
+  "weather": {
+    "callout": null,
+    "code": 1,
+    "highToday": 78,
+    "short": "Partly cloudy",
+    "tonightLow": 58,
+    "unit": "F"
+  }
+}
