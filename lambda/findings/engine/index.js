@@ -12,4 +12,5 @@ export {
 export { classifyChannel, deriveUrgency } from './channel.js';
 export { resolveAssertionMode } from './assertion.js';
 export { renderConfidenceBasis, renderStatement } from './render.js';
+export { toPersistRow, fromPersistRow, resolveHybrid, RESERVED_DEFAULTS } from './persist.js';
 export * as config from './config.js';

@@ -53,6 +53,7 @@ export function assembleIssueFindings(rows) {
     }
     out.push({
       finding_id: `issue:${row.event_id}`,
+      plant_id: row.plant_id ?? null,   // DRG-BACKBONE-001 P1 §9 materialize seam (FLAG-1): garden_node_id source; additive, ignored by composeFinding
       entity_id: row.entity_id,
       source_room: 'Knowledge',
       finding_type: mapFindingType(row.event_type),
