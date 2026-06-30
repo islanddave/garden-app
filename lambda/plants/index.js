@@ -178,12 +178,14 @@ export const handler = async (event) => {
                      'photo_id', pv.photo_id, 'source_url', pv.source_url
                    )
                  ELSE NULL END AS variety_ref,
-                 parent.display_name AS parent_plant_name, parent.container_id AS parent_project_id
+                 parent.display_name AS parent_plant_name, parent.container_id AS parent_project_id,
+                 em.next_water_at, em.location_type, em.watering_interval_days, em.last_watered_at
           FROM public.garden_node p
           JOIN public.container pp ON pp.id = p.container_id
           LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
           LEFT JOIN photos fp ON fp.id = p.featured_photo_id
           LEFT JOIN public.garden_node parent ON parent.id = p.parent_plant_id AND parent.deleted_at IS NULL
+          LEFT JOIN entity_memory em ON em.project_id = pp.id
           WHERE p.id = ${plantId}
             AND p.deleted_at IS NULL
             AND pp.created_by = ANY(${householdIds})

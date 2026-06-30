@@ -33,6 +33,7 @@ import HeroPhoto from '../components/planting/HeroPhoto.jsx'
 import QuickActions from '../components/planting/QuickActions.jsx'
 import LifeStoryTimeline from '../components/planting/LifeStoryTimeline.jsx'
 import CropCard from '../components/planting/CropCard.jsx'
+import CareStatus from '../components/CareStatus.jsx'
 import { buildLifeStory } from '../lib/lifeStory.js'
 
 
@@ -305,10 +306,19 @@ export default function PlantingDetail() {
         </div>
       </div>
 
+      {/* Slice 5a — live care band: renders only when this planting needs water (calm → null). */}
+      <CareStatus nextWaterAt={pl.next_water_at} locationType={pl.location_type} />
+
       {/* V4-PLANTINGUI-001 — primary quick-actions: water / photo / status. */}
       <QuickActions
         planting={pl}
-        onLogged={() => setRefreshKey(k => k + 1)}
+        onLogged={() => {
+          setRefreshKey(k => k + 1)
+          // The engine recomputes next_water_at after a watering log. Optimistically clear it so
+          // the care band goes calm immediately (avoids a refetch race); the next full load of the
+          // record restores the engine-computed schedule. Preserves all other fields.
+          setPlanting(prev => (prev ? { ...prev, next_water_at: null } : prev))
+        }}
         onStatusChanged={(status) => setPlanting(prev => ({ ...prev, status }))}
       />
 

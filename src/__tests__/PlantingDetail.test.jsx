@@ -251,3 +251,30 @@ describe('PlantingDetail — V3-ARCHIVE-001 archived restore path', () => {
     expect(screen.queryByRole('button', { name: /Unarchive/i })).toBeNull()
   })
 })
+
+
+// Slice 5a — live care band (CareStatus wired between the title row and QuickActions).
+describe('PlantingDetail — Slice 5a care band', () => {
+  it('renders the Overdue care band when the by-id record has a past next_water_at', async () => {
+    const past = new Date(Date.now() - 3 * 86400000 - 5000).toISOString()
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve({ ...PLANTING, next_water_at: past, location_type: 'outdoor_bed' })
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    expect(await screen.findByText(/Overdue|Due today/)).toBeTruthy()
+  })
+
+  it('renders NO care band when next_water_at is null (calm)', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve({ ...PLANTING, next_water_at: null })
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    expect(screen.queryByText(/Overdue|Due today/)).toBeNull()
+  })
+})
