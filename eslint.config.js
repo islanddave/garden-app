@@ -81,6 +81,8 @@ export default [
       'src/components/SeverityBadge.jsx',
       'src/components/forms/Badge.jsx',
       'src/components/forms/SelectChip.jsx',
+      'src/components/forms/SegmentedControl.jsx',
+      'src/components/forms/Sheet.jsx',
       'src/components/forms/formStyles.js',
       'src/lib/status.js',
     ],
