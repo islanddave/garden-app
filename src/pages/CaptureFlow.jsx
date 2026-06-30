@@ -24,6 +24,7 @@ const card = { background: P.white, border: `1px solid ${P.border}`, borderRadiu
 const field = { width: '100%', padding: '9px 10px', borderRadius: 6, border: `1px solid ${P.border}`, fontSize: '0.9rem', boxSizing: 'border-box' }
 const primaryBtn = (d) => ({ backgroundColor: d ? P.light : P.green, color: P.white, border: 'none', borderRadius: 6, padding: '11px 20px', fontSize: '0.92rem', fontWeight: 600, cursor: d ? 'not-allowed' : 'pointer' })
 const ghostBtn = { backgroundColor: 'transparent', color: P.mid, border: `1px solid ${P.border}`, borderRadius: 6, padding: '10px 18px', fontSize: '0.9rem', cursor: 'pointer' }
+const pickBtn = { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 12px', border: `2px dashed ${P.border}`, borderRadius: 8, cursor: 'pointer', backgroundColor: P.white, color: P.mid, fontSize: '0.88rem', fontWeight: 600 }
 
 export default function CaptureFlow() {
   const navigate = useNavigate()
@@ -38,6 +39,15 @@ export default function CaptureFlow() {
   const [err, setErr]     = useState(null)
   const [result, setResult] = useState(null)     // { kind, id, label, undo }
   const fileRef = useRef(null)
+  // V4-SNAPPICK-001: one hidden input, capture toggled per choice so SNAP offers BOTH
+  // take-photo and choose-photo (mirrors EventNew openPhotoPicker / <PhotoUpload mode="both">).
+  function openPicker(useCamera) {
+    const el = fileRef.current
+    if (!el) return
+    if (useCamera) el.setAttribute('capture', 'environment')
+    else el.removeAttribute('capture')
+    el.click()
+  }
 
   const [plantings, setPlantings] = useState([])
   const [varieties, setVarieties] = useState([])
@@ -154,8 +164,15 @@ export default function CaptureFlow() {
       {step === 'photo' && (
         <div style={{ ...card, textAlign: 'center' }}>
           <p style={{ color: P.mid, marginTop: 0 }}>Take or choose a photo to begin.</p>
-          <input ref={fileRef} data-testid="capture-input" type="file" accept="image/*" capture="environment" onChange={onPick} style={{ display: 'none' }} />
-          <button onClick={() => fileRef.current?.click()} style={primaryBtn(false)}>Take / choose photo</button>
+          <input ref={fileRef} data-testid="capture-input" type="file" accept="image/*" onChange={onPick} style={{ display: 'none' }} />
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button data-testid="cap-take" type="button" onClick={() => openPicker(true)} style={pickBtn}>
+              <span style={{ fontSize: '1.3rem' }}>📷</span><span>Take photo</span>
+            </button>
+            <button data-testid="cap-choose" type="button" onClick={() => openPicker(false)} style={pickBtn}>
+              <span style={{ fontSize: '1.3rem' }}>🖼️</span><span>Choose photo</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -168,7 +185,7 @@ export default function CaptureFlow() {
               <div style={{ fontSize: '0.82rem', color: P.light, marginTop: 2 }}>{m.hint}</div>
             </button>
           ))}
-          <button onClick={() => fileRef.current?.click()} style={ghostBtn}>Retake photo</button>
+          <button type="button" onClick={() => openPicker(false)} style={ghostBtn}>Retake / choose photo</button>
         </div>
       )}
 

@@ -86,4 +86,19 @@ describe('CaptureFlow — V3-CAPTURE-001', () => {
     expect(body.project_id).toBe('proj-9')
     expect(body.event_type).toBe('watering')
   })
+
+  it('SNAP picker carries no hardcoded capture and exposes both Take and Choose controls (V4-SNAPPICK-001)', async () => {
+    wireLists()
+    await act(async () => { render(<CaptureFlow />) })
+    const input = await screen.findByTestId('capture-input')
+    // V4-SNAPPICK-001: input must NOT force the live camera — no hardcoded capture attr at render.
+    expect(input.getAttribute('capture')).toBeNull()
+    expect(input.getAttribute('type')).toBe('file')
+    const take = screen.getByTestId('cap-take')
+    const choose = screen.getByTestId('cap-choose')
+    expect(take).toBeTruthy()
+    expect(choose).toBeTruthy()
+    expect(take.textContent).toContain('Take photo')
+    expect(choose.textContent).toContain('Choose photo')
+  })
 })
