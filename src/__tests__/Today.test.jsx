@@ -1,25 +1,27 @@
 /**
- * src/__tests__/Today.test.jsx — DRG-TODAY-002 Today surface.
- * Mocks:
- *   - useDailyPlan -> controlled { data, loading, error }
- *   - react-router-dom Link -> plain anchor (PlanBuckets deep-links)
+ * src/__tests__/Today.test.jsx — DRG-TODAY-002 Today surface (Slice 7 CareNeeded child).
+ * Mocks: useDailyPlan, react-router Link, useApiFetch, ToastContext (CareNeeded deps).
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 
-const { planState } = vi.hoisted(() => ({ planState: { current: null } }))
-
-vi.mock('../hooks/useDailyPlan.js', () => ({
-  useDailyPlan: () => planState.current,
+const { planState, fetchMock, toastMock } = vi.hoisted(() => ({
+  planState: { current: null },
+  fetchMock: vi.fn(async () => ({ id: 'ev' })),
+  toastMock: { show: vi.fn(), showUndo: vi.fn(), dismiss: vi.fn() },
 }))
+
+vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: () => planState.current }))
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }))
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
+vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
 
 import Today from '../pages/Today.jsx'
 
-beforeEach(() => { planState.current = null })
+beforeEach(() => { planState.current = null; sessionStorage.clear() })
 
 describe('Today surface', () => {
   it('shows the loading state', () => {
@@ -40,40 +42,35 @@ describe('Today surface', () => {
     expect(screen.getByText(/on its way/i)).toBeTruthy()
   })
 
-  it('renders weather + collapsed buckets and expands to a deep-link', () => {
+  it('renders weather + substrate + the Care-Needed surface with a one-tap Log', () => {
     planState.current = {
       data: {
-        has_plan: true,
-        plan_date: '2026-06-17',
+        has_plan: true, plan_date: '2026-06-17',
         plan: {
           weather: { tonightLow: 50, highToday: 78, code: 3, hot: false },
           hydrology: { recent_precip_in: 0.05, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true },
           substrate: { msg: 'Feeding on HOLD — fresh MG mix is feeding everything.' },
-          water_due: [{ id: 'pl1', name: 'Bhut Jolokia', project: 'Peppers', project_id: 'pr1', overdue_by: 2 }],
+          water_due: [{ id: 'pl1', name: 'Bhut Jolokia', project: 'Peppers', project_id: 'pr1', overdue_by: 2, in_ground: false }],
           no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
         },
       },
       loading: false, error: null,
     }
     render(<Today />)
-    // substrate note + bucket header present; rows hidden until expanded (collapsed by default)
     expect(screen.getByText(/Feeding on HOLD/)).toBeTruthy()
-    const waterBtn = screen.getByRole('button', { name: /Water/i })
-    expect(screen.queryByText('Bhut Jolokia')).toBeNull()
-    fireEvent.click(waterBtn)
-    const link = screen.getByText('Bhut Jolokia').closest('a')
-    expect(link.getAttribute('href')).toBe('/log?project=pr1&plant=pl1&event_type=watering')
-    expect(screen.getByText(/2d overdue/)).toBeTruthy()
+    expect(screen.getByText('Needs care today')).toBeTruthy()
+    expect(screen.getByText('Bhut Jolokia')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Log Water for Bhut Jolokia/i })).toBeTruthy()
   })
 
-  it('V3-TODAYDONE-001: a done item drops out of its bucket (checked off for the day)', () => {
+  it('V3-TODAYDONE-001 parity: a done item does not surface', () => {
     planState.current = {
       data: {
         has_plan: true, plan_date: '2026-06-17',
         plan: {
           water_due: [
-            { id: 'pl1', name: 'Bhut Jolokia', project_id: 'pr1', overdue_by: 2, done: false },
-            { id: 'pl2', name: 'Habanero', project_id: 'pr1', overdue_by: 1, done: true },
+            { id: 'pl1', name: 'Bhut Jolokia', project: 'Peppers', project_id: 'pr1', overdue_by: 2, done: false },
+            { id: 'pl2', name: 'Habanero', project: 'Peppers', project_id: 'pr1', overdue_by: 1, done: true },
           ],
           no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
         },
@@ -81,10 +78,7 @@ describe('Today surface', () => {
       loading: false, error: null,
     }
     render(<Today />)
-    fireEvent.click(screen.getByRole('button', { name: /Water/i }))
     expect(screen.getByText('Bhut Jolokia')).toBeTruthy()
     expect(screen.queryByText('Habanero')).toBeNull()
-    expect(screen.getByText(/1 done today/)).toBeTruthy()
   })
-
 })

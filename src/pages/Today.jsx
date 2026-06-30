@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import WeatherWidget from '../components/today/WeatherWidget.jsx'
 import { useLiveRain } from '../hooks/useLiveRain.js'
-import PlanBuckets from '../components/today/PlanBuckets.jsx'
+import CareNeeded from '../components/today/CareNeeded.jsx'
 import { P } from '../lib/constants.js'
 
 // Today — the daily care surface (DRG-TODAY-002). Reads the per-user plan the overnight Daily Plan engine
@@ -70,7 +70,7 @@ export default function Today() {
             </div>
           )}
 
-          <PlanBuckets plan={plan} />
+          <CareNeeded plan={plan} />
         </div>
       )}
     </div>
