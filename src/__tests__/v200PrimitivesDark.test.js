@@ -12,9 +12,9 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 const DARK = [
-  { name: 'SegmentedControl', self: 'src/components/forms/SegmentedControl.jsx', barrel: true },
+  // Slice 3 (V200) lit up BOTH SegmentedControl (wired in Garden as the Plants|Photos sub-tab)
+  // AND Lightbox (wired in PhotosWall as the photo viewer) — removed here in that same change.
   { name: 'Sheet',            self: 'src/components/forms/Sheet.jsx',            barrel: true },
-  { name: 'Lightbox',         self: 'src/components/Lightbox.jsx',               barrel: false },
 ]
 const ROOT = 'src'
 

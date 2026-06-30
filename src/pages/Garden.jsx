@@ -19,6 +19,8 @@ import TileGrid from '../components/forms/TileGrid.jsx'
 import PlantingTile from '../components/PlantingTile.jsx'
 import { useEntityTagsBulk } from '../hooks/useTags.js'
 import PlantingEditor from '../components/PlantingEditor.jsx'
+import SegmentedControl from '../components/forms/SegmentedControl.jsx'
+import PhotosWall from '../components/PhotosWall.jsx'
 
 // Garden — Increment 1 of the post-V2 UX overhaul. Unifies the old Projects + Plants
 // tabs into ONE nested accordion: projects form a parent/child tree; each project's
@@ -30,8 +32,15 @@ import PlantingEditor from '../components/PlantingEditor.jsx'
 //   • leaf rows (no children) → whole row OPENS
 // Frontend-only: composes /api/projects + /api/plants (no backend/schema change).
 
+// V200 Slice 3: Plants|Photos sub-tab. Remembered in-session via a module-level var (NOT a
+// server pref this slice) so switching tabs and back doesn't reset the choice; each sub-tab
+// owns its own grouping state, so per-sub-tab grouping is preserved automatically.
+let lastSubtab = 'plants'
+
 export default function Garden() {
   const { fetch, getToken } = useApiFetch()
+  const [subtab, setSubtabState] = useState(lastSubtab)
+  const setSubtab = useCallback((v) => { lastSubtab = v; setSubtabState(v) }, [])
   const [projects, setProjects] = useState([])
   const [plants,   setPlants]   = useState([])
   const [loading,  setLoading]  = useState(true)
@@ -429,16 +438,29 @@ export default function Garden() {
       <CritterCoachmark eligible={coachmarkEligible} onDismiss={onCoachmarkDismiss} />
       <CritterOptInPrompt eligible={optInEligible} onDismiss={onOptInDismiss} />
 
-      {/* V3-IA: no page title — the Garden tab is self-evident. Controls keep the row. */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginBottom: 24 }}>
-        {facetOptions.length > 1 && (
-          <GroupByControl options={facetOptions} value={effectiveGroupBy} onChange={onGroupByChange} />
+      {/* V3-IA: no page title — the Garden tab is self-evident. V200 Slice 3 adds the
+          Plants|Photos sub-tab switch; Plants-only controls stay on the Plants sub-tab. */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
+        <SegmentedControl
+          options={[{ value: 'plants', label: 'Plants' }, { value: 'photos', label: 'Photos' }]}
+          value={subtab}
+          onChange={setSubtab}
+          ariaLabel="Plants or Photos"
+        />
+        {subtab === 'plants' && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+            {facetOptions.length > 1 && (
+              <GroupByControl options={facetOptions} value={effectiveGroupBy} onChange={onGroupByChange} />
+            )}
+            <Link to="/capture" data-testid="snap-entry-garden" style={btnGhost}>📸 Snap</Link>
+            <Link to="/log/many" style={btnGhost}>⚡ Log many</Link>
+          </div>
         )}
-        <Link to="/capture" data-testid="snap-entry-garden" style={btnGhost}>📸 Snap</Link>
-        <Link to="/log/many" style={btnGhost}>⚡ Log many</Link>
       </div>
 
-      {editor && (
+      {subtab === 'photos' && <PhotosWall />}
+
+      {subtab === 'plants' && editor && (
         <PlantingEditor
           mode={editor.mode}
           plant={editor.plant ?? null}
@@ -455,7 +477,7 @@ export default function Garden() {
         />
       )}
 
-      {effectiveGroupBy !== 'none' ? (
+      {subtab === 'plants' && (effectiveGroupBy !== 'none' ? (
         <FacetedGarden
           plants={plants} tagMap={tagMap} facet={effectiveGroupBy}
           crittersByPlantId={crittersByPlantId} onSpriteLongPress={onSpriteLongPress}
@@ -473,7 +495,7 @@ export default function Garden() {
               flashId={flashId} />
           ))}
         </div>
-      )}
+      ))}
 
       {/* MVP-Critter Session 3 D-INV-1: long-press species-prefs popover.
           Anchored to long-pressed sprite. Single instance at a time. */}
