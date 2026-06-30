@@ -77,12 +77,15 @@ describe('PlantingDetail — four states', () => {
     // Status: multi-channel — the label text is present AND aria-labelled (not color alone).
     const badge = screen.getByLabelText('Status: Fruiting')  // humanized via statusLabel (V3-FORMSYS-001 §3.2)
     expect(badge.textContent).toContain('Fruiting')
-    // Grower fields.
-    expect(screen.getByText('Greenhouse / Bed 2', { exact: false })).toBeTruthy()
-    // 'Transplanted' now appears in both the Details row and the V4-PLANTINGUI Life-story spine.
+    // 'Transplanted' appears in the V4-PLANTINGUI Life-story spine (visible without the fly-up).
     expect(screen.getAllByText('Transplanted').length).toBeGreaterThan(0)
-    // First-harvest derived from the event log (earliest first_harvest) — appears only once
-    // the async events fetch resolves, so wait for it rather than asserting synchronously.
+    // V200 Slice 5b: the grower Details rows moved into the tabbed Details fly-up. Open it via
+    // the Details pill on the hero, then read the Basics-tab fields (Location lives there now).
+    fireEvent.click(screen.getByRole('button', { name: /Details/ }))
+    expect(await screen.findByText('Greenhouse / Bed 2', { exact: false })).toBeTruthy()
+    // First harvest (derived from the event log) lives on the More tab — switch to it. The
+    // derivation needs the async events fetch, so await the row after switching.
+    fireEvent.click(screen.getByRole('radio', { name: 'More' }))
     await screen.findByText('First harvest')
   })
 
@@ -172,7 +175,9 @@ describe('PlantingDetail — null tolerance', () => {
     await screen.findByRole('heading', { name: 'Bare Planting' })
     // No status badge when status is null; no crash on absent variety/photo.
     expect(screen.queryByLabelText(/^Status:/)).toBeNull()
-    expect(screen.getByText('No additional details recorded yet.')).toBeTruthy()
+    // V200 Slice 5b: the "nothing recorded" copy moved into the Details fly-up. Open it to read.
+    fireEvent.click(screen.getByRole('button', { name: /Details/ }))
+    expect(await screen.findByText('No additional details recorded yet.')).toBeTruthy()
   })
 })
 
@@ -209,11 +214,11 @@ describe('PlantingDetail — V3-PHOTOMULTI-001 photos widget (V1 display-only)',
     expect(await screen.findByRole('heading', { name: /Photos/ })).toBeTruthy()
     // ph1 (plant_id) renders its caption; ph2 (event e2, no caption) once events load -> by alt;
     // ph3 (other planting) excluded. AWAIT both before counting (photos effect re-runs on events).
-    expect(await screen.findByText('Seedling')).toBeTruthy()
-    // Deterministic: await BOTH photo <img>s by alt (ph1 caption-alt, ph2 name-fallback alt);
-    // ph3 (other planting) excluded. No brittle synchronous img-count (prior render race).
-    expect(await screen.findByAltText('Seedling')).toBeTruthy()
-    expect(await screen.findByAltText('Megatron Jalapeno photo')).toBeTruthy()
+    expect((await screen.findAllByText('Seedling')).length).toBeGreaterThan(0)
+    // V200 Slice 5b: the GrowthStrip compare/thumbs render the same photos as the Photos grid,
+    // so each photo's alt can appear more than once — assert presence, not a single match.
+    expect((await screen.findAllByAltText('Seedling')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByAltText('Megatron Jalapeno photo')).length).toBeGreaterThan(0)
     expect(screen.queryByText('Not mine')).toBeNull()
   })
 })

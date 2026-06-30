@@ -22,6 +22,11 @@ export const P = {
   blue:        '#4a7fb5',
   brown:       '#7a5c3c',
   white:       '#ffffff',
+  // V200 Slice 5b — on-photo (scrim) surface tokens. The scrim GRADIENTS are rgba-black
+  // literals authored inline in HeroPhoto (no palette token — they're translucent black,
+  // like Lightbox's backdrop); onPhotoFg is the white ink that rides on those scrims.
+  onPhotoFg:    '#ffffff',  // on-photo foreground (name/icon ink over a dark scrim)
+  photoScrim:   '#000000',  // base color the hero scrim gradients fade from/to (rgba()'d inline)
   greenDeep:    '#1f5138',  // V4-ICON-001 (Pass B V101 §11): named icon-default ink (= fTypeText value, AAA on cream).
   // ── DESIGNSYS Pass A: drift-literal promotion (V4-DESIGNSYS-001) ──────────
   // Hexes lifted verbatim from status.js / formStyles bannerChrome / SeverityBadge.

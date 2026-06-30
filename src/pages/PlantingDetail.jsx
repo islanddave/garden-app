@@ -5,13 +5,14 @@
 //
 // Data: GET /api/plants/:plantingId returns the full enriched record (variety_ref, status,
 // sown_at, transplanted_at, qty_*, source_*/lineage_note, project_id, project_name,
-// featured_photo_view_url). Planting-scoped event log: GET /api/events?project_id=:id&
-// plant_id=:plantingId — the HS-2 server-side filter, so the LIMIT scopes to THIS planting
-// (no silent "no events" lie on busy projects).
+// featured_photo_view_url, next_water_at/last_watered_at/watering_interval_days). Planting-scoped
+// event log: GET /api/events?project_id=:id&plant_id=:plantingId — the HS-2 server-side filter.
 //
-// Four planting states (DoD): loading · fetch-error · 404 (not found / not in household /
-// ownership mismatch → friendly + back-link) · empty-but-exists. The event log tracks its OWN
-// loading/error/empty so a filtered-empty log is never confused with a failed-to-load page.
+// V200 Slice 5b: the header is now a full-bleed photo HERO (HeroPhoto) carrying the planting name
+// (rendered AS the page <h1>), lifecycle status, a gold key-fact pill, and a Details pill that
+// opens a tabbed Details fly-up (Basics/Care/More). The old flat "Details" card is GONE — its
+// rows live in the fly-up. A GrowthStrip narrates the plant's photo timeline; the Photos grid and
+// the hero both open the shared Lightbox gallery.
 //
 // A11y: status is multi-channel (icon + label + color via PlantStatusBadge, never color alone);
 // sticky section headers give a jump anchor for the flat single-column layout; scroll-to-top on
@@ -24,9 +25,10 @@ import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
 import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
-import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
-import ZoomableImage from '../components/ZoomableImage.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
+import Lightbox from '../components/Lightbox.jsx'
+import Sheet from '../components/forms/Sheet.jsx'
+import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { PLANT_SOURCE_LABELS , PLANT_CONTAINER_TYPE_LABELS } from '../lib/dropdownRegistry.js'
 import HeroPhoto from '../components/planting/HeroPhoto.jsx'
@@ -34,6 +36,8 @@ import QuickActions from '../components/planting/QuickActions.jsx'
 import LifeStoryTimeline from '../components/planting/LifeStoryTimeline.jsx'
 import CropCard from '../components/planting/CropCard.jsx'
 import CareStatus from '../components/CareStatus.jsx'
+import GrowthStrip from '../components/planting/GrowthStrip.jsx'
+import { formatBotanical } from '../lib/keyFact.js'
 import { buildLifeStory } from '../lib/lifeStory.js'
 
 
@@ -56,6 +60,11 @@ export default function PlantingDetail() {
   const [notFound, setNotFound] = useState(false)
   const [unarchiving, setUnarchiving] = useState(false)  // V3-ARCHIVE-001: planting restore path
   const [refreshKey, setRefreshKey] = useState(0)  // V4-PLANTINGUI-001: bump to refetch events after a quick-log
+
+  // V200 Slice 5b — Details fly-up (tabbed) + Lightbox gallery state.
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [tab, setTab] = useState('basics')
+  const [lightboxIndex, setLightboxIndex] = useState(null)  // null = closed
 
   // Event log has its OWN lifecycle (DoD: don't conflate filtered-empty with failed-load).
   const [events, setEvents] = useState([])
@@ -164,7 +173,9 @@ export default function PlantingDetail() {
       <Shell>
         <Breadcrumb path={[{ label: 'Home', href: '/dashboard' }, { label: 'Planting', href: null }]} />
         <div style={{ ...cardStyle, textAlign: 'center', padding: '40px 24px' }}>
-          <div style={{ fontSize: '2.4rem', marginBottom: 10 }}>🪴</div>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+            <Icon name="lifecycle.sprout" size={40} decorative style={{ color: P.greenLight }} />
+          </div>
           <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>
             Planting not found
           </p>
@@ -212,26 +223,62 @@ export default function PlantingDetail() {
   }
 
   const pl = planting
+  const name = pl.name || 'Planting'
   const variety = pl.variety_ref?.name
   // First-harvest date: prefer a stored field, else derive from the event log (first_harvest,
   // then any harvest). Events are ORDER BY event_date DESC, so the LAST matching row is earliest.
   const firstHarvestStored = pl.first_harvest_at ?? null
   const firstHarvestEvent = !firstHarvestStored ? deriveFirstHarvest(events) : null
   const firstHarvest = firstHarvestStored ?? firstHarvestEvent
+  const botanical = formatBotanical(pl.variety_ref)
 
-  // Grower / lifecycle fields — all null-tolerant; only rows with a value render.
-  const detailRows = [
+  // ── Gallery: one shared image list for the hero + Photos grid + GrowthStrip. The featured
+  // hero photo is index 0 (unshifted if not already represented in the photo set). ──────────
+  const galleryFromPhotos = photos.map(p => ({ src: p.view_url, alt: p.caption || name, caption: p.caption }))
+  const featuredUrl = pl.featured_photo_view_url
+  const featuredInSet = featuredUrl && photos.some(p => p.view_url === featuredUrl)
+  const galleryImages = featuredUrl && !featuredInSet
+    ? [{ src: featuredUrl, alt: `${name} photo`, caption: null }, ...galleryFromPhotos]
+    : galleryFromPhotos
+  // Map a `photos[]` entry to its index inside galleryImages (offset by the unshifted hero).
+  const photoIndexOffset = (featuredUrl && !featuredInSet) ? 1 : 0
+  // GrowthStrip wants OLDEST-first; photos[] is newest-first, so reverse a shallow copy and
+  // carry each photo's gallery index along for thumb -> Lightbox open.
+  const growthPhotos = photos
+    .map((p, i) => ({ ...p, galleryIndex: i + photoIndexOffset }))
+    .slice()
+    .reverse()
+
+  // ── Tabbed Details rows (moved out of the old flat card into the fly-up). Each row is
+  // [label, value]; only rows with a value render. Per-tab empty -> "Nothing recorded yet.";
+  // whole-set empty -> the legacy "No additional details recorded yet." copy. ───────────────
+  const basicsRows = [
     ['Variety', variety],
-    ['Species', pl.variety_ref?.species],
-    ['Location', pl.location_path ? `📍 ${pl.location_path}` : null],
+    ['Botanical', botanical ? (botanical.italic ? <i>{botanical.text}</i> : botanical.text) : null],
+    ['Location', pl.location_path
+      ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <Icon name="facet.location" size={15} decorative style={{ color: P.light }} />{pl.location_path}
+        </span>
+      : null],
     ['Quantity', pl.quantity > 1 ? `×${formatQty(pl.quantity)}` : null],
     ['Started with', pl.qty_initial && pl.qty_initial !== pl.quantity ? `×${formatQty(pl.qty_initial)}` : null],
     ['Sown', fmtDate(pl.sown_at) ? `${fmtDate(pl.sown_at)}${pl.sown_at_approx ? ' (approx.)' : ''}` : null],
     ['Transplanted', fmtDate(pl.transplanted_at) ? `${fmtDate(pl.transplanted_at)}${pl.transplanted_at_approx ? ' (approx.)' : ''}` : null],
-    ['First harvest', fmtDate(firstHarvest)],
     ['Source', PLANT_SOURCE_LABELS[pl.source_type] ?? (pl.source_type || null)],
     ['Pot / bag', pl.container_type ? (PLANT_CONTAINER_TYPE_LABELS[pl.container_type] ?? pl.container_type) : null],
     ['Pot size', pl.container_size || null],
+  ].filter(([, v]) => v)
+
+  const careRows = [
+    ['Next watering', renderNextWatering(pl)],
+    ['Last watered', fmtDate(pl.last_watered_at)],
+    ['Watering interval', Number.isFinite(pl.watering_interval_days) ? `Every ${pl.watering_interval_days} day${pl.watering_interval_days === 1 ? '' : 's'}` : null],
+    ['Light', pl.variety_ref?.sun_requirements || null],
+    ['Care notes', pl.care_notes || null],
+    ['Soil notes', pl.soil_notes || null],
+  ].filter(([, v]) => v)
+
+  const moreRows = [
     ['Source ref', pl.source_ref],
     ['Generation', pl.source_generation],
     ['Source planting', pl.parent_plant_id && pl.parent_plant_name
@@ -239,7 +286,12 @@ export default function PlantingDetail() {
       : null],
     ['Lineage', pl.lineage_note],
     ['Notes', pl.notes],
+    ['First harvest', fmtDate(firstHarvest)],
   ].filter(([, v]) => v)
+
+  const tabsEmpty = basicsRows.length === 0 && careRows.length === 0 && moreRows.length === 0
+  const activeRows = tab === 'basics' ? basicsRows : tab === 'care' ? careRows : moreRows
+  const tabLabel = tab === 'basics' ? 'Basics' : tab === 'care' ? 'Care' : 'More'
 
   return (
     <Shell>
@@ -247,63 +299,56 @@ export default function PlantingDetail() {
         path={[
           { label: 'Home', href: '/dashboard' },
           { label: pl.project_name || 'Project', href: projectId ? `/projects/${projectId}` : null },
-          { label: pl.name || 'Planting', href: null },
+          { label: name, href: null },
         ]}
       />
 
-      {/* V4-PLANTINGUI-001 — hero photo */}
-      <HeroPhoto src={pl.featured_photo_view_url} alt={`${pl.name || 'Planting'} photo`} />
+      {/* V200 Slice 5b — full-bleed photo hero (carries the page <h1>, status, key-fact + Details pill). */}
+      <HeroPhoto
+        planting={pl}
+        src={pl.featured_photo_view_url}
+        alt={`${name} photo`}
+        onOpenLightbox={(i) => setLightboxIndex(i ?? 0)}
+        onOpenDetails={() => { setTab('basics'); setDetailsOpen(true) }}
+      />
 
-      {/* Title row: name + multi-channel status, with secondary affordances inline. */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, margin: '16px 0 16px' }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <h1 style={{ margin: '0 0 8px', color: P.green, fontSize: '1.4rem', fontWeight: 700, wordBreak: 'break-word' }}>
-            {pl.name || 'Planting'}
-          </h1>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            {pl.status && <PlantStatusBadge status={pl.status} size="lg" />}
-            {pl.archived_at && (
-              <span style={{ backgroundColor: P.greenPale, color: P.green, border: `1px solid ${P.greenLight}`, fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600 }}>
-                Archived
-              </span>
-            )}
-            {pl.quantity > 1 && (
-              <span style={{ fontSize: '0.82rem', color: P.green, fontWeight: 600 }}>×{formatQty(pl.quantity)}</span>
-            )}
-            {variety && <span style={{ fontSize: '0.85rem', color: P.mid }}>{variety}</span>}
-          </div>
-        </div>
-        {/* Secondary affordances: Favorite + per-planting caretaker + Edit. Primary quick-actions
-            (water/photo/status) live in the QuickActions row below. */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, alignSelf: 'flex-start', alignItems: 'flex-end' }}>
-          {pl.archived_at && (
-            <button onClick={handleUnarchive} disabled={unarchiving} aria-label="Unarchive this planting"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, backgroundColor: P.white, color: P.green,
-                border: `1px solid ${P.greenLight}`, borderRadius: 8, padding: '8px 14px', fontSize: '0.85rem',
-                fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              {unarchiving ? 'Working…' : '♻️ Unarchive'}
-            </button>
-          )}
-          {/* V3-FAV-001: favorite this planting. Ambient star, Reward-UX compliant. */}
-          <FavoriteToggle entityType="plant" entityId={pl.id} size="1.4rem" />
-          {/* PLANT-ASSIGN-001: per-planting caretaker override; blank = inherit the project's caretaker */}
-          <AssigneePicker entityType="plant" entityId={pl.id} value={pl.assignee_user_id ?? null} onChanged={(v) => setPlanting(prev => ({ ...prev, assignee_user_id: v }))} inheritLabel={pl.project_name ? `Inherits project: ${pl.project_name}` : 'Inherits the project caretaker'} />
-          {/* V3-EDIT-001: edit affordance — deep-links to the Garden PlantingEditor for this planting. */}
-          <Link
-            to={`/garden?edit=${plantingId}`}
-            aria-label="Edit this planting"
-            style={{
-              flexShrink: 0, alignSelf: 'flex-end',
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              backgroundColor: P.white, color: P.green,
-              border: `1px solid ${P.greenLight}`, borderRadius: 8,
-              padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
-              textDecoration: 'none', whiteSpace: 'nowrap',
-            }}
-          >
-            ✏️ Edit
-          </Link>
-        </div>
+      {/* Secondary affordances row — Favorite + caretaker + Edit + (archived) Unarchive. The
+          primary name/status now live ON the hero; this row carries the per-planting controls. */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10,
+        flexWrap: 'wrap', margin: '14px 0 16px' }}>
+        {pl.archived_at && (
+          <span style={{ backgroundColor: P.greenPale, color: P.green, border: `1px solid ${P.greenLight}`, fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600, marginRight: 'auto' }}>
+            Archived
+          </span>
+        )}
+        {pl.archived_at && (
+          <button onClick={handleUnarchive} disabled={unarchiving} aria-label="Unarchive this planting"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, backgroundColor: P.white, color: P.green,
+              border: `1px solid ${P.greenLight}`, borderRadius: 8, padding: '8px 14px', fontSize: '0.85rem',
+              fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            <Icon name="action.archive" size={16} decorative style={{ color: P.green }} />
+            {unarchiving ? 'Working…' : 'Unarchive'}
+          </button>
+        )}
+        {/* V3-FAV-001: favorite this planting. Ambient star, Reward-UX compliant. */}
+        <FavoriteToggle entityType="plant" entityId={pl.id} size="1.4rem" />
+        {/* PLANT-ASSIGN-001: per-planting caretaker override; blank = inherit the project's caretaker */}
+        <AssigneePicker entityType="plant" entityId={pl.id} value={pl.assignee_user_id ?? null} onChanged={(v) => setPlanting(prev => ({ ...prev, assignee_user_id: v }))} inheritLabel={pl.project_name ? `Inherits project: ${pl.project_name}` : 'Inherits the project caretaker'} />
+        {/* V3-EDIT-001: edit affordance — deep-links to the Garden PlantingEditor for this planting. */}
+        <Link
+          to={`/garden?edit=${plantingId}`}
+          aria-label="Edit this planting"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            backgroundColor: P.white, color: P.green,
+            border: `1px solid ${P.greenLight}`, borderRadius: 8,
+            padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
+            textDecoration: 'none', whiteSpace: 'nowrap',
+          }}
+        >
+          <Icon name="action.edit" size={16} decorative style={{ color: P.green }} />
+          Edit
+        </Link>
       </div>
 
       {/* Slice 5a — live care band: renders only when this planting needs water (calm → null). */}
@@ -335,26 +380,25 @@ export default function PlantingDetail() {
         </>
       )}
 
-      {/* ── Details ───────────────────────────────────────────────────────────────────────── */}
-      <SectionHeader>Details</SectionHeader>
-      <div style={cardStyle}>
-        {detailRows.length === 0 ? (
-          <p style={{ margin: 0, color: P.light, fontSize: '0.88rem' }}>No additional details recorded yet.</p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {detailRows.map(([label, value]) => (
-              <div key={label}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 600, color: P.light, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  {label}
-                </div>
-                <div style={{ fontSize: '0.9rem', color: P.dark, lineHeight: 1.5, wordBreak: 'break-word' }}>{value}</div>
-              </div>
-            ))}
+      {/* ── Growth (V200 Slice 5b — before/after compare + time-lapse over the photo timeline) ── */}
+      {(photosLoading || photos.length > 0) && (
+        <>
+          <SectionHeader>Growth</SectionHeader>
+          <div style={cardStyle}>
+            {photosLoading ? (
+              <div style={{ padding: '8px 0', color: P.light, fontSize: '0.875rem' }}>Loading photos…</div>
+            ) : (
+              <GrowthStrip
+                photos={growthPhotos}
+                onOpen={(idx) => setLightboxIndex(idx)}
+                indexBase={growthPhotos[0]?.galleryIndex ?? 0}
+              />
+            )}
           </div>
-        )}
-      </div>
+        </>
+      )}
 
-      {/* ── Photos (V3-PHOTOMULTI-001 V1: every photo for this planting, display-only) ── */}
+      {/* ── Photos (V3-PHOTOMULTI-001 V1: every photo for this planting; tap -> Lightbox gallery) ── */}
       {(photosLoading || photos.length > 0) && (
         <>
           <SectionHeader>
@@ -368,14 +412,21 @@ export default function PlantingDetail() {
               <div style={{ padding: '8px 0', color: P.light, fontSize: '0.875rem' }}>Loading photos…</div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: 10 }}>
-                {photos.map(ph => (
+                {photos.map((ph, i) => (
                   <figure key={ph.id} style={{ margin: 0 }}>
-                    <ZoomableImage
-                      src={ph.view_url}
-                      alt={ph.caption || `${pl.name || 'Planting'} photo`}
-                      loading="lazy"
-                      style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 8, border: `1px solid ${P.border}`, display: 'block' }}
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setLightboxIndex(i + photoIndexOffset)}
+                      aria-label={`Open ${ph.caption || `${name} photo`}`}
+                      style={{ display: 'block', width: '100%', padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
+                    >
+                      <img
+                        src={ph.view_url}
+                        alt={ph.caption || `${name} photo`}
+                        loading="lazy"
+                        style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 8, border: `1px solid ${P.border}`, display: 'block' }}
+                      />
+                    </button>
                     {ph.caption && (
                       <figcaption style={{ marginTop: 4, fontSize: '0.72rem', color: P.light, lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                         {ph.caption}
@@ -436,8 +487,68 @@ export default function PlantingDetail() {
           </div>
         )}
       </div>
+
+      {/* ── V200 Slice 5b — tabbed Details fly-up (Basics / Care / More). The Sheet owns the
+          dialog contract (role=dialog/aria-modal/focus-trap+restore/Esc). ──────────────────── */}
+      <Sheet open={detailsOpen} title="Details" onClose={() => setDetailsOpen(false)}>
+        <div style={{ padding: '0 24px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <SegmentedControl
+            options={[
+              { value: 'basics', label: 'Basics' },
+              { value: 'care', label: 'Care' },
+              { value: 'more', label: 'More' },
+            ]}
+            value={tab}
+            onChange={setTab}
+            ariaLabel="Detail sections"
+          />
+          <div role="group" aria-label={tabLabel}>
+            {tabsEmpty ? (
+              <p style={{ margin: 0, color: P.light, fontSize: '0.88rem' }}>No additional details recorded yet.</p>
+            ) : activeRows.length === 0 ? (
+              <p style={{ margin: 0, color: P.light, fontSize: '0.88rem' }}>Nothing recorded yet.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {activeRows.map(([label, value]) => (
+                  <div key={label}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 600, color: P.light, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      {label}
+                    </div>
+                    <div style={{ fontSize: '0.9rem', color: P.dark, lineHeight: 1.5, wordBreak: 'break-word' }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </Sheet>
+
+      {/* V4-THEME-001 — shared Lightbox gallery (hero + Photos grid + GrowthStrip thumbs feed it). */}
+      <Lightbox
+        open={lightboxIndex != null}
+        images={galleryImages}
+        index={lightboxIndex ?? 0}
+        onIndexChange={setLightboxIndex}
+        onClose={() => setLightboxIndex(null)}
+      />
     </Shell>
   )
+}
+
+// Render the "Next watering" cell for the Care tab: formatted date + an "Overdue" marker when
+// the schedule is in the past. Returns null when there is no scheduled watering.
+function renderNextWatering(pl) {
+  const next = pl?.next_water_at
+  if (!next) return null
+  const label = fmtDate(next)
+  if (!label) return null
+  const overdue = new Date(next).getTime() < Date.now()
+  return overdue
+    ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        {label}
+        <span style={{ color: P.terra, fontWeight: 600, fontSize: '0.78rem' }}>Overdue</span>
+      </span>
+    : label
 }
 
 // Derive the earliest harvest from a DESC-ordered event list: prefer a first_harvest event,

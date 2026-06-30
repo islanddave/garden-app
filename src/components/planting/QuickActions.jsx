@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'
 import { PLANT_STATUSES, PLANT_STATUS_MAP, statusLabel, P } from '../../lib/constants.js'
+import Icon from '../Icon.jsx'
 
 const btn = (extra = {}) => ({
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -66,12 +67,14 @@ export default function QuickActions({ planting, onLogged, onStatusChanged }) {
     <div style={{ display: 'flex', gap: 8, margin: '0 0 20px' }}>
       <button type="button" onClick={handleWater} disabled={watering}
         aria-label="Log watering for this planting" style={btn({ opacity: watering ? 0.6 : 1 })}>
-        💧 {watering ? 'Logging…' : 'Water'}
+        <Icon name="care.drop" size={18} decorative style={{ color: P.green }} />
+        {watering ? 'Logging…' : 'Water'}
       </button>
 
       <Link to={`/log?project=${projectId}&plant=${plantId}`}
         aria-label="Add a photo for this planting" style={btn()}>
-        📷 Photo
+        <Icon name="media.camera" size={18} decorative style={{ color: P.green }} />
+        Photo
       </Link>
 
       <span style={{ ...btn({ cursor: 'default', padding: 0, overflow: 'hidden' }) }}>

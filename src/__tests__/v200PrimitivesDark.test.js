@@ -14,7 +14,10 @@ import { join } from 'node:path'
 const DARK = [
   // Slice 3 (V200) lit up BOTH SegmentedControl (wired in Garden as the Plants|Photos sub-tab)
   // AND Lightbox (wired in PhotosWall as the photo viewer) — removed here in that same change.
-  { name: 'Sheet',            self: 'src/components/forms/Sheet.jsx',            barrel: true },
+  // Slice 5b (V200) lit up Sheet — adopted as the tabbed Details fly-up on PlantingDetail; it
+  // ALSO re-uses SegmentedControl (already lit) and Lightbox (already lit). DARK is now empty:
+  // every V200 foundation primitive has a runtime importer. The guard remains so a regression
+  // that re-darkens one would re-add it here intentionally.
 ]
 const ROOT = 'src'
 
@@ -30,6 +33,11 @@ function walk(dir, acc = []) {
 
 describe('V200 foundation primitives ship dark (V4-THEME-001)', () => {
   const files = walk(ROOT)
+  // As of Slice 5b every V200 foundation primitive is lit (DARK is empty). This guard remains so
+  // that a future regression which re-darkens one is re-recorded above intentionally.
+  it('all V200 foundation primitives are now lit (DARK list drained)', () => {
+    expect(DARK).toEqual([])
+  })
   for (const { name, self, barrel } of DARK) {
     it(`${name} has no runtime importer yet`, () => {
       const importers = files.filter(f => {
