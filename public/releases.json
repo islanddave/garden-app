@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.12.0",
+    "date": "2026-06-30",
+    "highlights": [
+      "Rain forecast on the Today screen is more accurate — it no longer overstates rain that probably won't fall.",
+      "Adding a photo now lets you choose an existing picture from your library, not just take a new one.",
+      "The Today weather card has a fresh look with clearer watering guidance for pots versus garden beds."
+    ]
+  },
+  {
     "version": "3.11.0",
     "date": "2026-06-30",
     "highlights": [
