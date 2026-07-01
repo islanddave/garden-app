@@ -231,24 +231,43 @@ export const handler = async (event) => {
     //                              household-milestone moment (separate from personal stickerbook).
     if (rawPath === '/api/critters/active' && method === 'GET') {
       const rows = await sql`
-        SELECT cs.id, cs.species_id, cs.target_kind, cs.target_id, cs.plant_id,
-               cs.source_event_id, cs.earned_at, cs.viewed_at, cs.faded_at,
-               cs.dot_visible_after, cs.meta,
-               (SELECT COUNT(*)::int FROM public.critter_state cs2
-                 WHERE cs2.created_by = ${userId}
-                   AND cs2.species_id = cs.species_id
-                   AND cs2.deleted_at IS NULL
-               ) AS species_user_count,
-               (SELECT COUNT(*)::int FROM public.critter_state cs2
-                 WHERE cs2.created_by = ANY(${householdIds})
-                   AND cs2.species_id = cs.species_id
-                   AND cs2.deleted_at IS NULL
-               ) AS species_household_count
-          FROM public.critter_state cs
-         WHERE cs.created_by = ANY(${householdIds})
-           AND cs.faded_at IS NULL
-           AND cs.deleted_at IS NULL
-         ORDER BY cs.earned_at DESC
+        -- V4-PERFCRITTER-001: per-species lifetime counts via single-pass GROUP BY CTEs
+        -- (was correlated per-row COUNT subqueries). Counts include viewed/faded, exclude
+        -- soft-deleted — identical scope to the prior subqueries. Response shape byte-identical
+        -- (verified vs prod 2026-07-01). user_counts drives the personal "First sighting!"
+        -- celebration; hh_counts is household-scoped (plumbed, not yet surfaced).
+        WITH active AS (
+          SELECT cs.id, cs.species_id, cs.target_kind, cs.target_id, cs.plant_id,
+                 cs.source_event_id, cs.earned_at, cs.viewed_at, cs.faded_at,
+                 cs.dot_visible_after, cs.meta
+            FROM public.critter_state cs
+           WHERE cs.created_by = ANY(${householdIds})
+             AND cs.faded_at IS NULL
+             AND cs.deleted_at IS NULL
+        ),
+        user_counts AS (
+          SELECT species_id, COUNT(*)::int AS c
+            FROM public.critter_state
+           WHERE created_by = ${userId}
+             AND deleted_at IS NULL
+           GROUP BY species_id
+        ),
+        hh_counts AS (
+          SELECT species_id, COUNT(*)::int AS c
+            FROM public.critter_state
+           WHERE created_by = ANY(${householdIds})
+             AND deleted_at IS NULL
+           GROUP BY species_id
+        )
+        SELECT a.id, a.species_id, a.target_kind, a.target_id, a.plant_id,
+               a.source_event_id, a.earned_at, a.viewed_at, a.faded_at,
+               a.dot_visible_after, a.meta,
+               COALESCE(uc.c, 0) AS species_user_count,
+               COALESCE(hc.c, 0) AS species_household_count
+          FROM active a
+          LEFT JOIN user_counts uc ON uc.species_id = a.species_id
+          LEFT JOIN hh_counts hc ON hc.species_id = a.species_id
+         ORDER BY a.earned_at DESC
       `
       return resp(200, { critters: rows })
     }
