@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.18.0",
+    "date": "2026-07-01",
+    "highlights": [
+      "Refreshed the top of the main tabs with a tidy header: your garden's name plus a quick Favorites shortcut, on its own soft accent bar."
+    ]
+  },
+  {
     "version": "3.17.0",
     "date": "2026-07-01",
     "highlights": [
