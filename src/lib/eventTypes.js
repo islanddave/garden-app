@@ -56,6 +56,7 @@ export const EVENT_TYPES = [
   'cutting_taken',
   'rooting',
   'relocated',
+  'flowering',
   'fruit_set',
   'animal_damage',
   'heat_damage',
@@ -112,6 +113,7 @@ export const EVENT_TYPE_META = {
   cutting_taken:   { label: 'Cutting taken',        emoji: '🪚', category: 'Growth & Training' },
   rooting:         { label: 'Rooting',              emoji: '🫚', category: 'Growth & Training' },
   relocated:       { label: 'Relocated / Moved',    emoji: '📦', category: 'Environmental' },
+  flowering:       { label: 'Flowering',            emoji: '🌸', category: 'Growth & Training' },
   fruit_set:       { label: 'Fruit set',            emoji: '🍅', category: 'Growth & Training' },
   animal_damage:   { label: 'Animal damage',        emoji: '🐾', category: 'Pest & Health' },
   heat_damage:     { label: 'Heat damage',          emoji: '🌡️', category: 'Environmental' },
@@ -157,6 +159,7 @@ export const BATCH_EXCLUDED_TYPES = [
   'cutting_taken',
   'hand_pollinated',
   'fruit_set',
+  'flowering',
 ]
 
 // ── Derived batch allowlist (NEVER hand-listed) ─────────────────────
