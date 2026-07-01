@@ -29,7 +29,12 @@ const plan = () => ({
 
 beforeEach(() => {
   fetchMock.mockReset(); toastMock.show.mockReset(); toastMock.showUndo.mockReset()
-  fetchMock.mockResolvedValue({ id: 'ev-new' })
+  // V4-TODAYLOC-001: enrichment endpoints (mount) return [] so grouping stays project-proxy;
+  // event writes return a created id.
+  fetchMock.mockImplementation((path) =>
+    (path === '/api/plants' || path === '/api/locations/with-path')
+      ? Promise.resolve([])
+      : Promise.resolve({ id: 'ev-new' }))
   sessionStorage.clear()
 })
 
@@ -47,7 +52,7 @@ describe('CareNeeded — Slice 7', () => {
     render(<CareNeeded plan={plan()} />)
     fireEvent.click(screen.getByRole('button', { name: /Log Water for Bhut Jolokia/i }))
     await waitFor(() => expect(screen.queryByText('Bhut Jolokia')).toBeNull())
-    const [path, opts] = fetchMock.mock.calls[0]
+    const [path, opts] = fetchMock.mock.calls.find(c => c[0] === '/api/events')
     expect(path).toBe('/api/events')
     expect(opts.method).toBe('POST')
     const body = JSON.parse(opts.body)
@@ -83,7 +88,7 @@ describe('CareNeeded — Slice 7', () => {
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /^Log all \(2\)/i }))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(fetchMock.mock.calls.filter(c => c[0] === '/api/events').length).toBe(2))
     await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalled())
   })
 })

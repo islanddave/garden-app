@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildCareNeeded, groupRows, needReason, needTier, bedWaitActive, groupSeverity,
+  splitContainersBeds, isBedRow,
   NEED_EVENT_TYPE, EXPAND_ALL_THRESHOLD,
 } from '../lib/careNeeded.js'
 
@@ -90,5 +91,29 @@ describe('grouping + bed-wait + expansion', () => {
   })
   it('EXPAND_ALL_THRESHOLD is a small ADHD-friendly chunk', () => {
     expect(EXPAND_ALL_THRESHOLD).toBe(8)
+  })
+
+  it('V4-TODAYLOC-001: By location keys on real locationId/name when rows are enriched', () => {
+    const rows = [
+      { key: 'a', need: 'water_due', overdueBy: 1, project: 'Peppers', projectId: 'prP', locationId: 'locA', locationName: 'Greenhouse' },
+      { key: 'b', need: 'water_due', overdueBy: 5, project: 'Peppers', projectId: 'prP', locationId: 'locB', locationName: 'Pasture Bed' },
+    ]
+    const g = groupRows(rows, 'location')
+    expect(g.map(x => x.key)).toEqual(['locB', 'locA'])   // most-overdue location first
+    expect(g[0].label).toBe('Pasture Bed')
+  })
+
+  it('V4-TODAYLOC-001: splitContainersBeds separates in-ground/raised beds from containers', () => {
+    const rows = [
+      { key: 'c1', containerType: 'fabric_bag', inGround: false },
+      { key: 'b1', containerType: 'in_ground', inGround: true },
+      { key: 'b2', containerType: 'raised_bed', inGround: false },
+      { key: 'c2', containerType: 'trough', inGround: false },
+    ]
+    const { beds, containers } = splitContainersBeds(rows)
+    expect(beds.map(r => r.key)).toEqual(['b1', 'b2'])
+    expect(containers.map(r => r.key)).toEqual(['c1', 'c2'])
+    expect(isBedRow({ inGround: true })).toBe(true)
+    expect(isBedRow({ containerType: 'plastic_pot' })).toBe(false)
   })
 })

@@ -91,7 +91,7 @@ export default function CaptureFlow() {
   }
 
   async function attach(linkage, keyPrefix, parentId) {
-    const r = await uploader.upload(file, { keyPrefix, parentId, linkage, is_public: false })
+    const r = await uploader.upload(file, { keyPrefix, parentId, linkage, is_public: true })
     if (r?.error) throw new Error(r.error)
     return r.photo
   }
@@ -111,7 +111,7 @@ export default function CaptureFlow() {
         const pl = plantings.find(p => p.id === evPlant)
         if (!pl) throw new Error('Pick a planting')
         const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify({
-          project_id: pl.project_id ?? null, plant_id: pl.id, event_type: evType, event_date: evDate, is_public: false,
+          project_id: pl.project_id ?? null, plant_id: pl.id, event_type: evType, event_date: evDate, is_public: true,
         }) })
         const eventId = res?.eventId ?? res?.id
         await attach({ event_id: eventId, plant_id: pl.id }, 'events', eventId)

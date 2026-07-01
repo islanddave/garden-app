@@ -124,8 +124,8 @@ export function groupSeverity(rows) {
 export function groupRows(rows, mode) {
   const map = new Map()
   for (const r of rows) {
-    const gkey = mode === 'type' ? r.need : (r.projectId || '_none')
-    const glabel = mode === 'type' ? NEED_LABEL[r.need] : (r.project || 'Other')
+    const gkey = mode === 'type' ? r.need : (r.locationId || r.projectId || '_none')
+    const glabel = mode === 'type' ? NEED_LABEL[r.need] : (r.locationName || r.project || 'Other')
     if (!map.has(gkey)) map.set(gkey, { key: gkey, label: glabel, rows: [] })
     map.get(gkey).rows.push(r)
   }
@@ -142,3 +142,17 @@ export function groupRows(rows, mode) {
 // ADHD chunking: <= this many total needs => all groups expanded; more => collapse all but the
 // most-overdue group (expand-all defeats chunking — build-plan Slice 7).
 export const EXPAND_ALL_THRESHOLD = 8
+
+// V4-TODAYLOC-001 — within a location group, split rows into in-ground beds vs containers/pots.
+// A row is a BED if it's in_ground or its container_type is a ground bed; everything else is a
+// container. Rows may carry container_type only when the component enriched them from /api/plants;
+// absent => falls back to the inGround flag the plan already carries. Pure, order-preserving.
+const BED_CONTAINER_TYPES = new Set(['in_ground', 'raised_bed'])
+export function isBedRow(r) {
+  return !!(r && (r.inGround || BED_CONTAINER_TYPES.has(r.containerType)))
+}
+export function splitContainersBeds(rows) {
+  const beds = [], containers = []
+  for (const r of (rows || [])) (isBedRow(r) ? beds : containers).push(r)
+  return { beds, containers }
+}

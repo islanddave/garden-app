@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useRef } from 'react'
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
 import { SEVERITY_STYLES } from '../../lib/waterDue.js'
@@ -9,7 +9,7 @@ import Sheet from '../forms/Sheet.jsx'
 import Icon from '../Icon.jsx'
 import {
   buildCareNeeded, groupRows, bedWaitActive,
-  NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ALL_THRESHOLD,
+  NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ALL_THRESHOLD, splitContainersBeds,
 } from '../../lib/careNeeded.js'
 
 // CareNeeded — Slice 7 (V4-THEME-001) Care-Needed-Today. REPLACES the care-type PlanBuckets:
@@ -48,7 +48,7 @@ function writeSkipped(set) {
 function eventBody(row) {
   return {
     project_id: row.projectId, event_type: row.eventType, event_date: todayLocalISO(),
-    plant_id: row.plantingId, is_public: false, has_photo: false,
+    plant_id: row.plantingId, is_public: true, has_photo: false,
     notes: null, private_notes: null, quantity: null, metadata: null,
   }
 }
@@ -81,6 +81,9 @@ function Row({ row, pending, onLog, onSkip }) {
         flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10,
         padding: '10px 12px', textDecoration: 'none', color: P.dark, minHeight: 48,
       }}>
+        {row.thumb && (
+          <img src={row.thumb} alt="" loading="lazy" style={{ width: 34, height: 34, borderRadius: 7, objectFit: 'cover', flexShrink: 0, border: '1px solid ' + P.border }} />
+        )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: '0.92rem', fontWeight: 600, color: P.dark, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {row.name}
@@ -110,7 +113,13 @@ function Row({ row, pending, onLog, onSkip }) {
   )
 }
 
-function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip }) {
+function SubHeader({ label }) {
+  return (
+    <div style={{ padding: '6px 14px 2px', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase', color: P.light, background: P.white }}>{label}</div>
+  )
+}
+
+function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, mode }) {
   const panelId = 'care-group-' + group.key
   return (
     <div style={{ border: '1px solid ' + P.border, borderRadius: 12, background: P.white, overflow: 'hidden' }}>
@@ -122,9 +131,24 @@ function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip }) {
       </button>
       {expanded && (
         <div id={panelId} role="list">
-          {group.rows.map(r => (
-            <Row key={r.key} row={r} pending={pendingKeys.has(r.key)} onLog={onLog} onSkip={onSkip} />
-          ))}
+          {(() => {
+            const R = (r) => <Row key={r.key} row={r} pending={pendingKeys.has(r.key)} onLog={onLog} onSkip={onSkip} />
+            if (mode === 'location') {
+              const { beds, containers } = splitContainersBeds(group.rows)
+              // Only show the sub-split when a location actually mixes both lanes.
+              if (beds.length && containers.length) {
+                return (
+                  <>
+                    <SubHeader label={'Containers & pots (' + containers.length + ')'} />
+                    {containers.map(R)}
+                    <SubHeader label={'In-ground & beds (' + beds.length + ')'} />
+                    {beds.map(R)}
+                  </>
+                )
+              }
+            }
+            return group.rows.map(R)
+          })()}
         </div>
       )}
     </div>
@@ -143,13 +167,45 @@ export default function CareNeeded({ plan }) {
   const [bulkChecked, setBulkChecked] = useState(() => new Set())
   const [bulkProgress, setBulkProgress] = useState(null)  // { done, total } during fan-out
   const liveRef = useRef(null)
+  const [enrichById, setEnrichById] = useState(() => ({}))  // V4-TODAYLOC-001: plantingId -> {locationId,locationName,containerType,thumb}
+
+  // V4-TODAYLOC-001 — best-effort enrichment for true location grouping + thumbnails. Joins
+  // /api/plants (location_id, container_type, featured thumb) with /api/locations/with-path
+  // (id -> full_path name). Degrades silently to project-proxy grouping if either fetch fails.
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const [plants, paths] = await Promise.all([
+        Promise.resolve().then(() => fetch('/api/plants')).catch(() => null),
+        Promise.resolve().then(() => fetch('/api/locations/with-path')).catch(() => null),
+      ])
+      if (!alive) return
+      const nameById = new Map()
+      if (Array.isArray(paths)) for (const l of paths) nameById.set(l.id, l.full_path || l.name || null)
+      const map = {}
+      if (Array.isArray(plants)) for (const pl of plants) {
+        map[pl.id] = {
+          locationId: pl.location_id || null,
+          locationName: (pl.location_id && nameById.get(pl.location_id)) || null,
+          containerType: pl.container_type || null,
+          thumb: pl.featured_photo_view_url || null,
+        }
+      }
+      if (Object.keys(map).length) setEnrichById(map)
+    })()
+    return () => { alive = false }
+  }, [fetch])
 
   const allRows = useMemo(() => buildCareNeeded(plan), [plan])
   const rows = useMemo(
     () => allRows.filter(r => !logged.has(r.key) && !skipped.has(r.key)),
     [allRows, logged, skipped],
   )
-  const groups = useMemo(() => groupRows(rows, mode), [rows, mode])
+  const enrichedRows = useMemo(
+    () => rows.map(r => { const e = enrichById[r.plantingId]; return e ? { ...r, ...e } : r }),
+    [rows, enrichById],
+  )
+  const groups = useMemo(() => groupRows(enrichedRows, mode), [enrichedRows, mode])
   const total = rows.length
   const expandAll = total <= EXPAND_ALL_THRESHOLD
   const autoExpandKey = groups.length ? groups[0].key : null  // most-overdue group (groupRows sorts it first)
@@ -282,7 +338,7 @@ export default function CareNeeded({ plan }) {
           {groups.map(g => (
             <Group key={g.key} group={g} expanded={isExpanded(g)}
               onToggle={() => setOverrides(prev => ({ ...prev, [g.key]: !((g.key in prev) ? prev[g.key] : (expandAll || g.key === autoExpandKey)) }))}
-              pendingKeys={pendingKeys} onLog={logRow} onSkip={skipRow} />
+              pendingKeys={pendingKeys} onLog={logRow} onSkip={skipRow} mode={mode} />
           ))}
 
           <RainNote plan={plan} />
