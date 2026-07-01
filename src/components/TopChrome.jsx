@@ -1,13 +1,12 @@
-// V4-APPBAR-001 — top-chrome gate. Root tabs (Today/Garden/DrG/Dashboard) replace the old green
-// app-name TopBar with a V200 HEADER: a compact brand wordmark (left, -> home) + Favorites (right)
-// on a soft PEACH surface (terra family) so the bar reads as a distinct, polished header instead of
-// vanishing into the cream body. The wordmark anchors the bar so Favorites is a header action, not a
-// lone floating heart. Detail/pushed routes AND the unauthenticated app keep the full TopBar so
-// nothing becomes unreachable. Same 52px+inset height as TopBar, so every page's
-// `calc(100dvh - 52px)` layout math and notch handling are unchanged (zero page edits).
-// (Field/Desk mode toggle intentionally NOT here — it lives in Settings, per Dave 2026-07-01.)
-// Surface = peach #f9e3d6 / border #edc7b3 (Dave pick 2026-07-01). Saved alternate he also liked:
-// light-blue bg #e4eff9 / border #c6dcef (water/weather-adjacent) — kept for a future swap.
+// V4-APPBAR-001 — top-chrome gate. Root tabs (Today/Garden/DrG/Dashboard) render an 88px SEARCH-FIRST
+// V200 header on the peach surface: top row = brand wordmark (-> home) + Favorites; bottom row = the
+// universal-search launcher (-> /search) with a voice affordance. Search is the header's reason to
+// exist (the missing piece that made earlier versions feel empty). Detail/pushed routes + the
+// unauthenticated app keep the full TopBar so nothing becomes unreachable. Height is 88px+inset on root
+// tabs; the 4 root pages' min-height math is updated to match. The search launcher is intentionally
+// translucent (peach shows through muted, Dave). Next slice: a daily-rotating "first-class" garden photo
+// behind the peach (V4-APPBANNER). Field/Desk toggle lives in Settings (Dave), not here.
+// Peach surface #f9e3d6 / border #edc7b3. Saved alt Dave liked: light-blue #e4eff9 / #c6dcef.
 import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
@@ -15,27 +14,24 @@ import { P, APP_NAME } from '../lib/constants.js'
 import TopBar from './TopBar.jsx'
 
 const ROOT_TABS = ['/today', '/garden', '/findings', '/dashboard']
-const HEADER_BG = '#f9e3d6'      // V200 peach header surface (terra family)
-const HEADER_BORDER = '#edc7b3'  // peach hairline (bottom rule + heart ring)
+const HEADER_BG = '#f9e3d6'
+const HEADER_BORDER = '#edc7b3'
 
 export default function TopChrome() {
   const { user } = useAuth()
   const { pathname } = useLocation()
-
-  // Detail/pushed routes + unauthenticated -> unchanged full TopBar (Favorites + mode chip stay
-  // reachable on detail screens; no regression).
   if (!user || !ROOT_TABS.includes(pathname)) return <TopBar />
 
   return (
     <header
       style={{
-        height: 'calc(52px + env(safe-area-inset-top))',
+        height: 'calc(88px + env(safe-area-inset-top))',
         paddingTop: 'env(safe-area-inset-top)',
-        paddingLeft: 16,
-        paddingRight: 16,
+        paddingLeft: 14,
+        paddingRight: 14,
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
+        flexDirection: 'column',
+        justifyContent: 'center',
         gap: 8,
         position: 'sticky',
         top: 0,
@@ -45,41 +41,42 @@ export default function TopChrome() {
         boxSizing: 'border-box',
       }}
     >
-      {/* Brand wordmark -> home. Distinct hierarchy from each screen's own page <h1>. */}
-      <Link
-        to="/dashboard"
-        style={{
-          color: P.greenDeep,
-          textDecoration: 'none',
-          fontWeight: 700,
-          fontSize: '0.95rem',
-          letterSpacing: '0.2px',
-          whiteSpace: 'nowrap',
-          flexShrink: 0,
-        }}
-      >
-        {APP_NAME}
-      </Link>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Link to="/dashboard" style={{ color: P.greenDeep, textDecoration: 'none', fontWeight: 700, fontSize: '0.9rem', letterSpacing: '0.2px', whiteSpace: 'nowrap' }}>
+          {APP_NAME}
+        </Link>
+        <Link
+          to="/favorites"
+          aria-label="Favorites"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 30, height: 30, borderRadius: '50%',
+            backgroundColor: 'rgba(255,255,255,0.85)', border: `1px solid ${HEADER_BORDER}`,
+            color: '#c9a84c', textDecoration: 'none', fontSize: '1rem', fontWeight: 700,
+          }}
+        >
+          {'♥'}
+        </Link>
+      </div>
 
-      {/* Favorites — the persistent root-tab shortcut, anchored by the wordmark. */}
       <Link
-        to="/favorites"
-        aria-label="Favorites"
+        to="/search"
+        aria-label="Search your garden"
         style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          width: 36, height: 36,
-          borderRadius: '50%',
-          backgroundColor: P.white,
-          border: `1px solid ${HEADER_BORDER}`,
-          color: '#c9a84c',
-          textDecoration: 'none',
-          fontSize: '1.1rem',
-          fontWeight: 700,
-          boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-          flexShrink: 0,
+          display: 'flex', alignItems: 'center', gap: 8,
+          height: 36, padding: '0 12px', borderRadius: 20,
+          backgroundColor: 'rgba(255,255,255,0.58)',
+          border: '1px solid rgba(255,255,255,0.75)',
+          textDecoration: 'none', boxSizing: 'border-box',
         }}
       >
-        {'♥'}
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={P.greenDeep} strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <span style={{ color: '#6b6259', fontSize: '0.85rem', flex: 1 }}>Search your garden</span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={P.greenDeep} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0" /><line x1="12" y1="18" x2="12" y2="21" />
+        </svg>
       </Link>
     </header>
   )

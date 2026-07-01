@@ -11,6 +11,7 @@ import PlantsRedirect from './components/PlantsRedirect.jsx'
 import TodayBand from './components/TodayBand.jsx'
 import CritterArrivalController from './components/CritterArrivalController.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import Search from './pages/Search.jsx'
 import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Locations from './pages/Locations.jsx'
@@ -123,6 +124,7 @@ function AppRoutes() {
               <Route path="/log/many"      element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><LogMany /></ErrorBoundary></Protected>} />
               <Route path="/photos"        element={<Protected><PhotoLibrary /></Protected>} />
               <Route path="/favorites"     element={<Protected><Favorites /></Protected>} />
+              <Route path="/search"        element={<Protected><Search /></Protected>} />
               <Route path="/project-types" element={<Protected><ProjectTypes /></Protected>} />
               {/* V3-IA: Plants page retired; legacy links redirect into Garden (query preserved). */}
               <Route path="/plants"        element={<PlantsRedirect />} />

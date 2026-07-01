@@ -11,28 +11,28 @@ vi.mock('../components/TopBar.jsx', () => ({ default: () => <div data-testid="to
 import TopChrome from '../components/TopChrome.jsx'
 
 function renderAt(path) {
-  return render(
-    <MemoryRouter initialEntries={[path]}>
-      <TopChrome />
-    </MemoryRouter>
-  )
+  return render(<MemoryRouter initialEntries={[path]}><TopChrome /></MemoryRouter>)
 }
 
-describe('TopChrome (V4-APPBAR-001)', () => {
-  it('root tab (/today): real header — brand wordmark + Favorites, NO green app-name TopBar', () => {
+describe('TopChrome (V4-APPBAR-001) — search-first header', () => {
+  it('root tab (/today): wordmark + Favorites + search launcher, NO green TopBar', () => {
     renderAt('/today')
-    const fav = screen.getByLabelText('Favorites')
-    expect(fav.getAttribute('href')).toBe('/favorites')
     expect(screen.getByText(APP_NAME)).toBeTruthy()
+    expect(screen.getByLabelText('Favorites').getAttribute('href')).toBe('/favorites')
+    expect(screen.getByLabelText('Search your garden').getAttribute('href')).toBe('/search')
     expect(screen.queryByTestId('topbar-fallback')).toBe(null)
   })
-  it('root tab brand wordmark links home (/dashboard)', () => {
+  it('brand wordmark links home (/dashboard)', () => {
     renderAt('/garden')
     expect(screen.getByText(APP_NAME).getAttribute('href')).toBe('/dashboard')
+  })
+  it('header is 88px + safe-area inset tall', () => {
+    const { container } = renderAt('/dashboard')
+    expect(container.querySelector('header').style.height).toBe('calc(88px + env(safe-area-inset-top))')
   })
   it('detail route (/projects/abc): falls back to the full TopBar', () => {
     renderAt('/projects/abc')
     expect(screen.getByTestId('topbar-fallback')).toBeTruthy()
-    expect(screen.queryByLabelText('Favorites')).toBe(null)
+    expect(screen.queryByLabelText('Search your garden')).toBe(null)
   })
 })
