@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.13.0",
+    "date": "2026-07-01",
+    "highlights": [
+      "Tap to log care right from Today — water, feed, or check off a whole spot at once.",
+      "Skip anything you don't need today, and undo a log if you tap it by mistake.",
+      "Doctor Gardener now explains why today's list looks the way it does and flags plants worth a look."
+    ]
+  },
+  {
     "version": "3.12.0",
     "date": "2026-06-30",
     "highlights": [
