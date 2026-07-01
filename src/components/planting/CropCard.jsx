@@ -6,6 +6,7 @@ import { P } from '../../lib/constants.js'
 import { computeMaturity } from '../../lib/plantingMaturity.js'
 import { useEntityTags } from '../../hooks/useTags.js'
 import TagChip from '../forms/TagChip.jsx'
+import { shuLabel, determinacyLabel } from '../../lib/varietySpec.js'
 
 function Attr({ label, value }) {
   if (value == null || value === '') return null
@@ -22,6 +23,12 @@ export default function CropCard({ planting }) {
   const { projected } = useEntityTags('plant', planting?.id)
   const m = computeMaturity(planting)
   const v = planting?.variety_ref || {}
+  const shu = shuLabel(v)
+  const determinacy = determinacyLabel(v)
+  const specChips = [
+    shu && { key: 'shu', label: shu, bg: P.terra },
+    determinacy && { key: 'det', label: determinacy, bg: P.green },
+  ].filter(Boolean)
 
   const dtm = (v.days_to_maturity_min != null || v.days_to_maturity_max != null)
     ? (v.days_to_maturity_min != null && v.days_to_maturity_max != null && v.days_to_maturity_min !== v.days_to_maturity_max
@@ -32,7 +39,7 @@ export default function CropCard({ planting }) {
   const hasMaturity = m.ageDays != null || m.harvestWindowLabel
   const hasChips = Array.isArray(projected) && projected.length > 0
   const attrs = [dtm, v.sun_requirements, v.expected_yield_notes].filter(Boolean)
-  if (!hasMaturity && !hasChips && attrs.length === 0) return null
+  if (!hasMaturity && !hasChips && specChips.length === 0 && attrs.length === 0) return null
 
   return (
     <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 24,
@@ -59,6 +66,15 @@ export default function CropCard({ planting }) {
         </div>
       )}
 
+      {/* V4-VARSLUG-001 — first-class spec chips (SHU / determinacy) */}
+      {specChips.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {specChips.map(c => (
+            <span key={c.key} style={{ fontSize: '0.75rem', fontWeight: 700, color: P.white,
+              backgroundColor: c.bg, borderRadius: 999, padding: '3px 10px', lineHeight: 1.4 }}>{c.label}</span>
+          ))}
+        </div>
+      )}
       {/* projected faceted chips */}
       {hasChips && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
