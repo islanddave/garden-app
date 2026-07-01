@@ -5,7 +5,7 @@ import { FavoritesProvider } from './context/FavoritesContext.jsx'
 import { ZoneProvider } from './context/ZoneContext.jsx'
 import { ModeProvider } from './context/ModeContext.jsx'
 import { ToastProvider } from './context/ToastContext.jsx'
-import TopBar from './components/TopBar.jsx'
+import TopChrome from './components/TopChrome.jsx'
 import BottomNav from './components/BottomNav.jsx'
 import PlantsRedirect from './components/PlantsRedirect.jsx'
 import TodayBand from './components/TodayBand.jsx'
@@ -94,7 +94,7 @@ function AppRoutes() {
   return (
     <BrowserRouter>
       <ErrorBoundary scope="app" fallback={<AppFallback />}>
-        <TopBar />
+        <TopChrome />
         <div style={{
           display: 'flex', flexDirection: 'column', minHeight: '100dvh',
           paddingBottom: user ? 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))' : 0,
