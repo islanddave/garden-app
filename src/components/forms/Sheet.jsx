@@ -48,7 +48,7 @@ export default function Sheet({ open, onClose, title, ariaLabel, children }) {
     <>
       <div
         onClick={onClose}
-        style={{ position: 'fixed', inset: 0, zIndex: 90, backgroundColor: 'rgba(0,0,0,0.3)' }}
+        style={{ position: 'fixed', inset: 0, zIndex: 190, backgroundColor: 'rgba(0,0,0,0.3)' }}
       />
       <div
         ref={panelRef}
@@ -64,7 +64,7 @@ export default function Sheet({ open, onClose, title, ariaLabel, children }) {
           backgroundColor: P.white,
           borderRadius: '16px 16px 0 0',
           boxShadow: '0 -4px 20px rgba(0,0,0,0.14)',
-          zIndex: 100,
+          zIndex: 200,
           paddingTop: 8,
           paddingBottom: 'calc(12px + env(safe-area-inset-bottom))',
           outline: 'none',

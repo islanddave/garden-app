@@ -30,4 +30,14 @@ describe('Sheet (V4-THEME-001)', () => {
     fireEvent.click(backdrop)
     expect(onClose).toHaveBeenCalledTimes(2)
   })
+
+  it('BUG-SHEET-001: backdrop and panel sit above the bottom nav (zIndex > 100) so the sheet is modal over the nav', () => {
+    render(<Sheet open title="T" onClose={() => {}}><button>a</button></Sheet>)
+    const dlg = screen.getByRole('dialog')
+    const backdrop = dlg.previousSibling
+    expect(Number(dlg.style.zIndex)).toBeGreaterThan(100)
+    expect(Number(backdrop.style.zIndex)).toBeGreaterThan(100)
+    // panel must paint above its own backdrop
+    expect(Number(dlg.style.zIndex)).toBeGreaterThan(Number(backdrop.style.zIndex))
+  })
 })
