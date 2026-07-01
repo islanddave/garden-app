@@ -1,6 +1,6 @@
 import React from 'react'
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
 import FindingCard from '../components/findings/FindingCard.jsx'
 
 const base = {
@@ -32,5 +32,24 @@ describe('FindingCard', () => {
     render(<FindingCard finding={base} />)
     expect(screen.getByLabelText('urgency: low')).toBeTruthy()
     expect(screen.queryByText(/urgency/i)).toBeNull()
+  })
+
+  it('shows a Mark resolved control for a live issue and calls onResolve with the source event id', () => {
+    const onResolve = vi.fn().mockResolvedValue(undefined)
+    render(<FindingCard finding={{ ...base, finding_id: 'issue:evt-42', decay_state: 'fresh' }} onResolve={onResolve} />)
+    const btn = screen.getByText('Mark resolved')
+    fireEvent.click(btn)
+    expect(onResolve).toHaveBeenCalledWith('evt-42')
+  })
+
+  it('hides Mark resolved for an already-resolved finding', () => {
+    const onResolve = vi.fn()
+    render(<FindingCard finding={{ ...base, decay_state: 'resolved' }} onResolve={onResolve} />)
+    expect(screen.queryByText('Mark resolved')).toBeNull()
+  })
+
+  it('hides Mark resolved when no onResolve handler is provided', () => {
+    render(<FindingCard finding={{ ...base, decay_state: 'fresh' }} />)
+    expect(screen.queryByText('Mark resolved')).toBeNull()
   })
 })

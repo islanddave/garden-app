@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { P } from '../../lib/constants.js'
 import UrgencyIcon from './UrgencyIcon.jsx'
 import ConfidenceBasis from './ConfidenceBasis.jsx'
@@ -16,10 +16,37 @@ const DECAY_LABEL = {
 }
 const MODE_LABEL = { ask: 'Question', assert: 'Heads-up' }
 
-export default function FindingCard({ finding }) {
+// The DrG finding's source event id is carried in finding_id as `issue:<event_id>` (assemble.js).
+// Parse it for the manual-resolve action rather than adding a contract field (keeps this change
+// off the shared engine contract that the concurrent materialization seam also touches).
+function sourceEventId(findingId) {
+  return typeof findingId === 'string' && findingId.startsWith('issue:')
+    ? findingId.slice('issue:'.length)
+    : null
+}
+
+export default function FindingCard({ finding, onResolve }) {
   const f = finding ?? {}
+  const [busy, setBusy] = useState(false)
   const trend = TREND[f.trend] ?? TREND.steady
   const isAsk = f.assertion_mode === 'ask'
+
+  // Operational control (NOT a reward surface): lets the owner clear a live issue on their own
+  // timeline. Reuses PATCH /api/events/:id {resolved:true}. Hidden once resolved and when no handler.
+  const eventId = sourceEventId(f.finding_id)
+  const canResolve = typeof onResolve === 'function' && !!eventId && f.decay_state !== 'resolved'
+
+  const handleResolve = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await onResolve(eventId)
+      // success → parent reloads findings and this card unmounts; no toast (Reward-UX: not a reward).
+    } catch {
+      setBusy(false) // stay put on failure so the owner can retry
+    }
+  }
+
   return (
     <div
       data-testid="finding-card"
@@ -45,10 +72,25 @@ export default function FindingCard({ finding }) {
 
       <ConfidenceBasis band={f.confidence_band} basis={f.confidence_basis} />
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: '0.7rem', color: P.light }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: '0.7rem', color: P.light }}>
         <span style={{ color: trend.color, fontWeight: 600 }}>{trend.icon} {trend.label}</span>
         <span aria-hidden="true">·</span>
         <span>{DECAY_LABEL[f.decay_state] ?? f.decay_state}</span>
+        <span style={{ flex: 1 }} />
+        {canResolve && (
+          <button
+            type="button"
+            onClick={handleResolve}
+            disabled={busy}
+            style={{
+              background: 'none', border: 'none', padding: 0,
+              cursor: busy ? 'default' : 'pointer', fontSize: '0.7rem', fontWeight: 600,
+              color: P.green, opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {busy ? 'Resolving…' : 'Mark resolved'}
+          </button>
+        )}
       </div>
     </div>
   )

@@ -84,3 +84,8 @@ export const FINDING_TYPE_TEMPLATES = {
   GENERIC:       { ask: '{subject}: worth a look? No recent log to confirm.',
                    assert: '{subject} may need attention.' },
 };
+
+// Resolved findings render ONE decay-aware statement regardless of finding_type, so the headline never
+// contradicts a resolved decay_state (fixes the "{subject} has an open issue" template bug where a
+// resolved finding still asserted it was open). Templated, no serve-time LLM (C4).
+export const RESOLVED_STATEMENT = '{subject}: the issue you logged looks resolved.';

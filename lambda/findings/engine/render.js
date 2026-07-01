@@ -1,6 +1,6 @@
 // Deterministic render (spec §2 Render + confidence_basis). TEMPLATED ONLY — no serve-time
 // LLM-introduced claims (C4). Same inputs → same strings → byte-stable.
-import { FINDING_TYPE_TEMPLATES } from './config.js';
+import { FINDING_TYPE_TEMPLATES, RESOLVED_STATEMENT } from './config.js';
 
 const supporting = (ev) => ev.polarity !== 'contradicting';
 
@@ -43,9 +43,12 @@ export function renderConfidenceBasis({ evidence, tier, corroborator_count }) {
 }
 
 // statement [DERIVED]: templated from finding_type + assertion_mode. Unknown types use GENERIC.
-export function renderStatement({ finding_type, subject_label, assertion_mode }) {
-  const tpl = FINDING_TYPE_TEMPLATES[finding_type] ?? FINDING_TYPE_TEMPLATES.GENERIC;
+// A resolved finding (decay_state==='resolved') ALWAYS renders the resolved statement — never a
+// finding_type template — so the headline can never say "has an open issue" for a resolved finding.
+export function renderStatement({ finding_type, subject_label, assertion_mode, decay_state }) {
   const subject = subject_label ?? 'This planting';
+  if (decay_state === 'resolved') return RESOLVED_STATEMENT.replace('{subject}', subject);
+  const tpl = FINDING_TYPE_TEMPLATES[finding_type] ?? FINDING_TYPE_TEMPLATES.GENERIC;
   const text = (assertion_mode === 'ask' ? tpl.ask : tpl.assert);
   return text.replace('{subject}', subject);
 }

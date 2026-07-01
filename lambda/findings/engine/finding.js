@@ -34,7 +34,7 @@ export function composeFinding(raw, now) {
     evidence, tier: conf.tier, corroborator_count: conf.corroborator_count,
   });
   const statement = renderStatement({
-    finding_type: raw.finding_type, subject_label: raw.subject_label, assertion_mode,
+    finding_type: raw.finding_type, subject_label: raw.subject_label, assertion_mode, decay_state,
   });
 
   // Fixed key order = CONTRACT_FIELDS order → stable serialization.

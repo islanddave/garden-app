@@ -202,3 +202,30 @@ describe('validateFinding — rejects malformed envelopes', () => {
     expect(validateFinding(null).valid).toBe(false);
   });
 });
+
+
+describe('resolved findings — decay-aware headline (open-issue template bug regression)', () => {
+  it('a resolved open_issue renders a RESOLVED statement, never the open-issue template', () => {
+    const f = composeFinding(raw({
+      finding_type: 'open_issue', subject_label: 'Manitoba (Tomatoes)', severity: 'moderate',
+      evidence: [
+        ev('first_party_log', 'local', 5),                 // the logged issue
+        ev('dave_confirmed', 'local', 1, 'contradicting'), // explicit user resolve
+      ],
+    }), NOW);
+    expect(f.decay_state).toBe('resolved');
+    expect(f.trend).toBe('improving');
+    expect(f.statement).toMatch(/resolved/i);
+    expect(f.statement).not.toMatch(/open issue/i);
+    expect(validateFinding(f).valid).toBe(true);
+  });
+
+  it('an UNresolved open_issue still renders the open-issue heads-up', () => {
+    const f = composeFinding(raw({
+      finding_type: 'open_issue', subject_label: 'Manitoba (Tomatoes)', severity: 'moderate',
+      evidence: [ev('first_party_log', 'local', 2)],
+    }), NOW);
+    expect(f.decay_state).not.toBe('resolved');
+    expect(f.statement).toMatch(/open issue/i);
+  });
+});

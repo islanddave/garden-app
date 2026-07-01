@@ -1,11 +1,12 @@
 // Slice 8 (V4-THEME-001) — DrG screen composition (reasoning + Health watch + ambient visitors).
-// No jest-dom (L-182). Mocks the three data hooks + router Link + FindingsList (kept light).
+// DRG-RESOLVE-001 — resolved findings split into a "Recently resolved" disclosure, out of active.
+// No jest-dom (L-182). Mocks the data hooks + api + router Link + light children.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 
 const { findingsState, planState, critterState } = vi.hoisted(() => ({
-  findingsState: { current: { data: { findings: [] }, loading: false, error: null } },
+  findingsState: { current: { data: { findings: [] }, loading: false, error: null, reload: () => {} } },
   planState: { current: { data: null } },
   critterState: { current: { collected: new Map(), loading: false } },
 }))
@@ -16,13 +17,19 @@ vi.mock('react-router-dom', () => ({
 vi.mock('../hooks/useFindings.js', () => ({ useFindings: () => findingsState.current }))
 vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: () => planState.current }))
 vi.mock('../hooks/useCritterCollection.js', () => ({ useCritterCollection: () => critterState.current }))
+vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn().mockResolvedValue({}) }) }))
 
 import Findings from '../pages/Findings.jsx'
 
 beforeEach(() => {
-  findingsState.current = { data: { findings: [] }, loading: false, error: null }
+  findingsState.current = { data: { findings: [] }, loading: false, error: null, reload: () => {} }
   planState.current = { data: null, loading: false }
   critterState.current = { collected: new Map(), loading: false }
+})
+
+const f = (id, decay, statement) => ({
+  finding_id: id, decay_state: decay, trend: decay === 'resolved' ? 'improving' : 'worsening',
+  statement, assertion_mode: 'assert', confidence_band: 'low', confidence_basis: '', urgency_level: 'low',
 })
 
 describe('DrG screen (Findings)', () => {
@@ -56,5 +63,25 @@ describe('DrG screen (Findings)', () => {
     render(<Findings />)
     const link = screen.getByText(/Garden visitors — 2 spotted/i).closest('a')
     expect(link.getAttribute('href')).toBe('/collection')
+  })
+
+  it('keeps active findings in Health watch and moves resolved ones into a Recently resolved disclosure', () => {
+    findingsState.current = {
+      data: { findings: [f('issue:a', 'fresh', 'ACTIVE_ONE'), f('issue:b', 'resolved', 'RESOLVED_ONE')] },
+      loading: false, error: null, reload: () => {},
+    }
+    render(<Findings />)
+    expect(screen.getByText('ACTIVE_ONE')).toBeTruthy()
+    expect(screen.getByText(/Recently resolved \(1\)/)).toBeTruthy()
+    expect(screen.getByText('RESOLVED_ONE')).toBeTruthy()
+  })
+
+  it('shows no Recently resolved disclosure when there are no resolved findings', () => {
+    findingsState.current = {
+      data: { findings: [f('issue:a', 'fresh', 'ACTIVE_ONE')] },
+      loading: false, error: null, reload: () => {},
+    }
+    render(<Findings />)
+    expect(screen.queryByText(/Recently resolved/i)).toBeNull()
   })
 })
