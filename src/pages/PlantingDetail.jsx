@@ -27,6 +27,7 @@ import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import Lightbox from '../components/Lightbox.jsx'
+import { useOptionalToast } from '../context/ToastContext.jsx'
 import Sheet from '../components/forms/Sheet.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
@@ -52,6 +53,8 @@ function fmtDate(value) {
 export default function PlantingDetail() {
   const { id: projectId, plantingId } = useParams()
   const { fetch } = useApiFetch()
+  const toast = useOptionalToast()
+  const [savingFeatured, setSavingFeatured] = useState(null)  // V4-PHOTOFEATURE-001: photo id in flight
   const ux = useUxFlow(FLOWS.OPEN_PLANTING)
 
   const [planting, setPlanting] = useState(null)
@@ -231,6 +234,24 @@ export default function PlantingDetail() {
   const firstHarvestEvent = !firstHarvestStored ? deriveFirstHarvest(events) : null
   const firstHarvest = firstHarvestStored ?? firstHarvestEvent
   const botanical = formatBotanical(pl.variety_ref)
+
+  // V4-PHOTOFEATURE-001 — swap the planting's featured (profile) photo. Backend validates the
+  // photo is linked to this plant (plants PUT / V2-PHOTO-F1).
+  async function setFeatured(ph) {
+    if (!ph?.id || savingFeatured || ph.id === planting?.featured_photo_id) return
+    setSavingFeatured(ph.id)
+    try {
+      const updated = await fetch('/api/plants/' + plantingId, {
+        method: 'PUT', body: JSON.stringify({ featured_photo_id: ph.id }),
+      })
+      setPlanting(prev => ({ ...prev, featured_photo_id: updated?.featured_photo_id ?? ph.id, featured_photo_view_url: ph.view_url }))
+      toast?.show?.({ message: 'Featured photo updated', tone: 'success' })
+    } catch {
+      toast?.show?.({ message: "Couldn't set featured photo", tone: 'error' })
+    } finally {
+      setSavingFeatured(null)
+    }
+  }
 
   // ── Gallery: one shared image list for the hero + Photos grid + GrowthStrip. The featured
   // hero photo is index 0 (unshifted if not already represented in the photo set). ──────────
@@ -431,6 +452,14 @@ export default function PlantingDetail() {
                       <figcaption style={{ marginTop: 4, fontSize: '0.72rem', color: P.light, lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                         {ph.caption}
                       </figcaption>
+                    )}
+                    {ph.id === planting?.featured_photo_id ? (
+                      <div style={{ marginTop: 4, fontSize: '0.7rem', fontWeight: 700, color: P.gold }}>★ Featured</div>
+                    ) : (
+                      <button type="button" onClick={() => setFeatured(ph)} disabled={savingFeatured != null}
+                        style={{ marginTop: 4, fontSize: '0.7rem', fontWeight: 600, color: P.green, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>
+                        {savingFeatured === ph.id ? 'Setting…' : 'Set as featured'}
+                      </button>
                     )}
                   </figure>
                 ))}

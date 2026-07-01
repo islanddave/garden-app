@@ -221,6 +221,22 @@ describe('PlantingDetail — V3-PHOTOMULTI-001 photos widget (V1 display-only)',
     expect((await screen.findAllByAltText('Megatron Jalapeno photo')).length).toBeGreaterThan(0)
     expect(screen.queryByText('Not mine')).toBeNull()
   })
+
+  it('V4-PHOTOFEATURE-001: shows Set as featured on a photo and PUTs featured_photo_id', async () => {
+    const PHOTOS = [{ id: 'ph1', plant_id: 'pl1', event_id: null, view_url: 'https://img/ph1.jpg', caption: 'Seedling' }]
+    const putCalls = []
+    apiFetchSpy.mockImplementation((path, opts) => {
+      if (opts?.method === 'PUT' && path.startsWith('/api/plants/')) { putCalls.push(JSON.parse(opts.body)); return Promise.resolve({ featured_photo_id: 'ph1' }) }
+      if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING)
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      if (path.startsWith('/api/photos')) return Promise.resolve(PHOTOS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    const btn = await screen.findByRole('button', { name: /Set as featured/i })
+    fireEvent.click(btn)
+    await waitFor(() => expect(putCalls).toContainEqual({ featured_photo_id: 'ph1' }))
+  })
 })
 
 
