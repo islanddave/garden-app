@@ -1,9 +1,9 @@
 [
   {
-    "version": "3.16.1",
+    "version": "3.17.0",
     "date": "2026-07-01",
     "highlights": [
-      "Slide-up panels (menus, 'Log all', quick actions) no longer tuck their bottom button behind the navigation bar."
+      "Cleaner top on the main tabs (Today, Garden, DrG, Home): the app-name bar is replaced by a quick Favorites shortcut."
     ]
   },
   {
