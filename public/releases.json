@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.14.0",
+    "date": "2026-07-01",
+    "highlights": [
+      "New \"Flowering\" event: log when a plant starts blooming and it moves the plant to the Flowering stage for you."
+    ]
+  },
+  {
     "version": "3.13.0",
     "date": "2026-07-01",
     "highlights": [
