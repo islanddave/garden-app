@@ -1,6 +1,6 @@
 // src/lib/iconEvents.js — V4-ICON-001 (Pass B V101) event-type glyph forms.
-// 40 newly-drawn mono line forms (24+18 masters) + 7 event types that REUSE an existing
-// foundation form (sowing->seed, transplant->seedling, rooting->rooting, fruit_set->fruiting,
+// 40 newly-drawn mono line forms (24+18 masters) + 8 event types that REUSE an existing
+// foundation form (sowing->seed, transplant->seedling, rooting->rooting, flowering->flowering, fruit_set->fruiting,
 // harvest->harvesting basket, watering->care.drop, potting_up->nav.garden) by reference (no
 // redraw, no drift). EVENT_GLYPHS covers EVERY EVENT_TYPES value as event.<type>; consumers
 // route the event-type emoji render through <Icon name={`event.${type}`}>. Mono: stroke
@@ -56,6 +56,7 @@ const REUSE = {
   sowing:     STATUS_GLYPHS.seed,
   transplant: STATUS_GLYPHS.seedling,
   rooting:    STATUS_GLYPHS.rooting,
+  flowering:  STATUS_GLYPHS.flowering,
   fruit_set:  STATUS_GLYPHS.fruiting,
   harvest:    STATUS_GLYPHS.harvesting,
   watering:   ANCHORS['care.drop'],
