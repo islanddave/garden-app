@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.15.0",
+    "date": "2026-07-01",
+    "highlights": [
+      "Refreshed the More menu and the + Create menu with cleaner slide-up panels.",
+      "Behind-the-scenes speed-ups so your plant and critter lists stay fast as the garden grows."
+    ]
+  },
+  {
     "version": "3.14.0",
     "date": "2026-07-01",
     "highlights": [
@@ -10,7 +18,7 @@
     "version": "3.13.0",
     "date": "2026-07-01",
     "highlights": [
-      "Tap to log care right from Today — water, feed, or check off a whole spot at once.",
+      "Tap to log care right from Today \u2014 water, feed, or check off a whole spot at once.",
       "Skip anything you don't need today, and undo a log if you tap it by mistake.",
       "Doctor Gardener now explains why today's list looks the way it does and flags plants worth a look."
     ]
@@ -19,7 +27,7 @@
     "version": "3.12.0",
     "date": "2026-06-30",
     "highlights": [
-      "Rain forecast on the Today screen is more accurate — it no longer overstates rain that probably won't fall.",
+      "Rain forecast on the Today screen is more accurate \u2014 it no longer overstates rain that probably won't fall.",
       "Adding a photo now lets you choose an existing picture from your library, not just take a new one.",
       "The Today weather card has a fresh look with clearer watering guidance for pots versus garden beds."
     ]
@@ -40,7 +48,7 @@
     "date": "2026-06-30",
     "highlights": [
       "Your garden plants now appear as photo tiles",
-      "New Photos tab — browse all your garden photos grouped by month",
+      "New Photos tab \u2014 browse all your garden photos grouped by month",
       "Tap any photo for a full-screen viewer with pinch-to-zoom and swipe",
       "Favorites are now hearts",
       "Refreshed bottom navigation (Today, Garden, add, Doctor Gardener, More)"
@@ -50,7 +58,7 @@
     "version": "3.9.0",
     "date": "2026-06-29",
     "highlights": [
-      "Groundwork for smarter, evidence-based plant care — an upgraded internal record of what we know about each plant (no visible changes yet)",
+      "Groundwork for smarter, evidence-based plant care \u2014 an upgraded internal record of what we know about each plant (no visible changes yet)",
       "Added an internal safety net that checks the daily watering plan stays correct as the care engine evolves"
     ]
   },
@@ -66,9 +74,9 @@
     "version": "3.5.0",
     "date": "2026-06-26",
     "highlights": [
-      "Lifecycle tags now have their own colors — annual, perennial, biennial, and tender perennial are easy to tell apart at a glance",
-      "Your Garden 'Group by' choice now follows you across devices — pick it on your phone, see it on your laptop",
-      "Your Garden sort order (A–Z or most-recent) now syncs across devices too",
+      "Lifecycle tags now have their own colors \u2014 annual, perennial, biennial, and tender perennial are easy to tell apart at a glance",
+      "Your Garden 'Group by' choice now follows you across devices \u2014 pick it on your phone, see it on your laptop",
+      "Your Garden sort order (A\u2013Z or most-recent) now syncs across devices too",
       "Which Garden sections you've collapsed or expanded now stays consistent across your devices",
       "Critters you've discovered now stay revealed across all your devices"
     ]
@@ -78,7 +86,7 @@
     "date": "2026-06-26",
     "highlights": [
       "Plant pages redesigned: a big photo up top, a life-story timeline, and at-a-glance maturity",
-      "New quick actions on each plant — log watering, add a photo, or change status in one tap"
+      "New quick actions on each plant \u2014 log watering, add a photo, or change status in one tap"
     ]
   },
   {
@@ -93,7 +101,7 @@
     "version": "3.2.1",
     "date": "2026-06-25",
     "highlights": [
-      "Behind the scenes: connected the app to the new tag system's read/write layer — groundwork for the faceted organize-and-filter views coming next. No visible changes yet."
+      "Behind the scenes: connected the app to the new tag system's read/write layer \u2014 groundwork for the faceted organize-and-filter views coming next. No visible changes yet."
     ]
   },
   {
@@ -107,43 +115,43 @@
     "version": "3.1.0",
     "date": "2026-06-25",
     "highlights": [
-      "Plant varieties can now carry a crop type — pepper, tomato, basil, and 60+ more. When you add a new variety you'll pick its type, which keeps your collection tidy and sets up smarter grouping and care that's coming next."
+      "Plant varieties can now carry a crop type \u2014 pepper, tomato, basil, and 60+ more. When you add a new variety you'll pick its type, which keeps your collection tidy and sets up smarter grouping and care that's coming next."
     ]
   },
   {
     "version": "3.0.0",
     "date": "2026-06-24",
     "highlights": [
-      "🎉 Version 3.0 — the V3 milestone is complete. Everything from this development cycle is now live: the Doctor Gardener daily care plan, the Today view, photo-first capture, native Move/reorganize, household sharing, critters & rewards, and dozens of polish fixes. Next up: the V4 foundation — smarter tags and grouping, plus a fuller design refresh."
+      "\ud83c\udf89 Version 3.0 \u2014 the V3 milestone is complete. Everything from this development cycle is now live: the Doctor Gardener daily care plan, the Today view, photo-first capture, native Move/reorganize, household sharing, critters & rewards, and dozens of polish fixes. Next up: the V4 foundation \u2014 smarter tags and grouping, plus a fuller design refresh."
     ]
   },
   {
     "version": "2.16.0",
     "date": "2026-06-24",
     "highlights": [
-      "Snap → create: a new 📸 Snap button on Today and your Garden lets you take a photo and turn it straight into a new planting, a quick event log, an updated planting photo, or an inventory item — with Save & Next for logging several in a row.",
-      "Move plantings and projects safely: a new Move action reorganizes a project under a different parent in one step, with an instant Undo if you change your mind — and it now guards against accidental loops and two-device conflicts."
+      "Snap \u2192 create: a new \ud83d\udcf8 Snap button on Today and your Garden lets you take a photo and turn it straight into a new planting, a quick event log, an updated planting photo, or an inventory item \u2014 with Save & Next for logging several in a row.",
+      "Move plantings and projects safely: a new Move action reorganizes a project under a different parent in one step, with an instant Undo if you change your mind \u2014 and it now guards against accidental loops and two-device conflicts."
     ]
   },
   {
     "version": "2.15.4",
     "date": "2026-06-24",
     "highlights": [
-      "Photos page is sturdier: if something ever goes wrong drawing your photo gallery, the page now shows a clear message with a Retry button instead of going blank — the rest of the app keeps working."
+      "Photos page is sturdier: if something ever goes wrong drawing your photo gallery, the page now shows a clear message with a Retry button instead of going blank \u2014 the rest of the app keeps working."
     ]
   },
   {
     "version": "2.15.3",
     "date": "2026-06-24",
     "highlights": [
-      "Archived plantings can now be brought back: open an archived planting and tap Unarchive to restore it — the same way archived projects already work. Before this, once the brief Undo window passed an archived planting was hidden with no easy way to recover it."
+      "Archived plantings can now be brought back: open an archived planting and tap Unarchive to restore it \u2014 the same way archived projects already work. Before this, once the brief Undo window passed an archived planting was hidden with no easy way to recover it."
     ]
   },
   {
     "version": "2.15.2",
     "date": "2026-06-24",
     "highlights": [
-      "Watering on hot days: on days around 85°F and up, the daily plan now knows fabric grow bags dry out fast, so a light rain won't make a thirsty bag look like it's been watered.",
+      "Watering on hot days: on days around 85\u00b0F and up, the daily plan now knows fabric grow bags dry out fast, so a light rain won't make a thirsty bag look like it's been watered.",
       "Photo Library: if your photos can't load, you now get a clear message with a Retry button instead of the page looking empty as if you had no photos."
     ]
   },
@@ -151,7 +159,7 @@
     "version": "2.15.1",
     "date": "2026-06-24",
     "highlights": [
-      "Reliability: your watering alerts and the Today page are now protected against a rare internal data-format mismatch — if it ever happened they’d show an honest empty state instead of wrong or missing plants.",
+      "Reliability: your watering alerts and the Today page are now protected against a rare internal data-format mismatch \u2014 if it ever happened they\u2019d show an honest empty state instead of wrong or missing plants.",
       "The dashboard is sturdier: if one section has a hiccup loading, the rest of the page still comes up instead of the whole screen failing."
     ]
   },
@@ -159,7 +167,7 @@
     "version": "2.15.0",
     "date": "2026-06-24",
     "highlights": [
-      "Your watering alerts and the Today page now agree — the alert bar shows the same plants as your daily plan, so a plant won't say it needs water in one place but not the other.",
+      "Your watering alerts and the Today page now agree \u2014 the alert bar shows the same plants as your daily plan, so a plant won't say it needs water in one place but not the other.",
       "Plants you've already watered, or that got enough rain today, now drop off the alert bar just like they do on Today.",
       "Established plants in larger pots and bags (about 5 gallons and up) now get credit for recent rain instead of being treated as fragile new transplants that need watering anyway."
     ]
@@ -168,14 +176,14 @@
     "version": "2.14.0",
     "date": "2026-06-23",
     "highlights": [
-      "Today weather: the rain figure now refreshes live through the day instead of staying stuck on the pre-dawn reading — so showery days show the current amount, not the 2 AM guess"
+      "Today weather: the rain figure now refreshes live through the day instead of staying stuck on the pre-dawn reading \u2014 so showery days show the current amount, not the 2 AM guess"
     ]
   },
   {
     "version": "2.13.0",
     "date": "2026-06-23",
     "highlights": [
-      "Today alerts now name the specific plant when a pot holds just one (e.g. “Dracaena needs water”) instead of its container",
+      "Today alerts now name the specific plant when a pot holds just one (e.g. \u201cDracaena needs water\u201d) instead of its container",
       "Weather: on showery days the rain amount is now flagged as a changeable pre-dawn snapshot, so the watering call stays honest"
     ]
   },
@@ -184,7 +192,7 @@
     "date": "2026-06-23",
     "highlights": [
       "New About tab (app info + version)",
-      "New Release Notes tab — see what's new right here",
+      "New Release Notes tab \u2014 see what's new right here",
       "Removed the bottom footer (its info moved to About)"
     ]
   },
@@ -193,7 +201,7 @@
     "date": "2026-06-23",
     "highlights": [
       "Today watering: established/rained-on plants no longer show a false \"water\" reminder",
-      "Log Many → By space tab fixed (log one event to every planting in a Space, e.g. all of Pasture)",
+      "Log Many \u2192 By space tab fixed (log one event to every planting in a Space, e.g. all of Pasture)",
       "Planting edit: container picker now includes trough, whiskey barrel, and soil block",
       "New container option: Solo cup (autofills 0.5 qt)"
     ]
@@ -212,7 +220,7 @@
     "version": "2.9.0",
     "date": "2026-06-22",
     "highlights": [
-      "Forms refresh: parent-plant lineage, expand details while adding, Save · Next on event logging",
+      "Forms refresh: parent-plant lineage, expand details while adding, Save \u00b7 Next on event logging",
       "Global undo restored across the app"
     ]
   },
@@ -263,7 +271,7 @@
     "highlights": [
       "Alerts scoped to the right caretaker",
       "Check off Today items inline",
-      "\"Harvested\" → \"Harvesting\""
+      "\"Harvested\" \u2192 \"Harvesting\""
     ]
   },
   {
