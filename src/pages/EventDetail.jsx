@@ -216,18 +216,7 @@ export default function EventDetail() {
             />
           </Field>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-            <input
-              id="ev_public"
-              type="checkbox"
-              checked={form.is_public}
-              onChange={e => setForm(f => ({ ...f, is_public: e.target.checked }))}
-              style={{ width: 16, height: 16, cursor: 'pointer' }}
-            />
-            <label htmlFor="ev_public" style={{ fontSize: '0.88rem', color: P.mid, cursor: 'pointer' }}>
-              Show on public page
-            </label>
-          </div>
+          {/* V4-PUBHIDE-001: is_public toggle removed. */}
 
           <div style={{ display: 'flex', gap: 12, paddingTop: 16, borderTop: `1px solid ${P.border}` }}>
             <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
@@ -278,7 +267,6 @@ function EventFields({ event: ev }) {
     ['Date', dateStr],
     ['Type', ev.event_type.replace(/_/g, ' ')],
     ev.quantity && ['Quantity', ev.quantity],
-    ['Visibility', ev.is_public ? 'Public' : 'Private'],
     ev.notes && ['Notes', ev.notes],
     ev.private_notes && ['Private notes', ev.private_notes],
   ].filter(Boolean)

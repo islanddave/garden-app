@@ -662,7 +662,7 @@ export const handler = async (event) => {
           ${body.variety ?? null},
           ${body.description ?? null},
           ${body.start_date ?? null},
-          ${body.is_public ?? false},
+          ${body.is_public ?? true},
           ${body.location_id ?? null},
           ${userId},
           ${body.parent_project_id ?? null},

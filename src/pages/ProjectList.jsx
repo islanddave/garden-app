@@ -105,11 +105,6 @@ function ProjectCard({ project: p, depth }) {
               {p.variety && (
                 <span style={{ fontSize: '0.8rem', color: P.mid }}>{p.variety}</span>
               )}
-              {!p.is_public && (
-                <span style={{ fontSize: '0.7rem', color: P.light, backgroundColor: '#eee', borderRadius: 10, padding: '1px 7px' }}>
-                  private
-                </span>
-              )}
             </div>
             {p.location_path && (
               <div style={{ fontSize: '0.78rem', color: P.mid, marginTop: 3 }}>

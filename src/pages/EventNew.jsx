@@ -762,19 +762,7 @@ export default function EventNew() {
                   </div>
                 )}
 
-                {/* Visibility */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <input
-                    id="is_public"
-                    type="checkbox"
-                    checked={form.is_public}
-                    onChange={e => setForm(f => ({ ...f, is_public: e.target.checked }))}
-                    style={{ width: 18, height: 18, cursor: 'pointer' }}
-                  />
-                  <label htmlFor="is_public" style={{ fontSize: '0.88rem', color: P.mid, cursor: 'pointer' }}>
-                    Visible on public project page
-                  </label>
-                </div>
+                {/* V4-PUBHIDE-001: is_public toggle removed. */}
 
                 {/* Private notes (collapsible) */}
                 <div>

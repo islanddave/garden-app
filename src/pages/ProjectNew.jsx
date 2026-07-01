@@ -251,14 +251,7 @@ export default function ProjectNew() {
               placeholder="Optional — shown publicly if project is public" />
           </Field>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-            <input id="is_public" type="checkbox" checked={form.is_public}
-              onChange={e => setForm(f => ({ ...f, is_public: e.target.checked }))}
-              style={{ width: 16, height: 16, cursor: 'pointer' }} />
-            <label htmlFor="is_public" style={{ fontSize: '0.88rem', color: P.mid, cursor: 'pointer' }}>
-              Public — visible at /garden/{form.slug || '…'}
-            </label>
-          </div>
+          {/* V4-PUBHIDE-001: is_public toggle removed; all content defaults public. */}
 
           <div style={{ display: 'flex', gap: 12, marginTop: 8, paddingTop: 20, borderTop: `1px solid ${P.border}` }}>
             <Button type="submit" variant="primary" loading={saving} loadingLabel="Creating…">

@@ -496,11 +496,6 @@ export default function ProjectDetail() {
                 Archived
               </span>
             )}
-            {!project.is_public && (
-              <span style={{ fontSize: '0.75rem', color: P.light, backgroundColor: '#eee', borderRadius: 12, padding: '3px 10px' }}>
-                private
-              </span>
-            )}
             {project.is_public && (
               <a href={`${APP_URL}/garden/${project.slug}`} target="_blank" rel="noopener noreferrer"
                 style={{ fontSize: '0.75rem', color: P.green, textDecoration: 'none' }}>
@@ -641,12 +636,7 @@ export default function ProjectDetail() {
               rows={3} />
           </Field>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-            <input id="edit_public" type="checkbox" checked={form.is_public}
-              onChange={e => setForm(f => ({ ...f, is_public: e.target.checked }))}
-              style={{ width: 16, height: 16, cursor: 'pointer' }} />
-            <label htmlFor="edit_public" style={{ fontSize: '0.88rem', color: P.mid, cursor: 'pointer' }}>Public</label>
-          </div>
+          {/* V4-PUBHIDE-001: is_public toggle removed. */}
 
           <div style={{ display: 'flex', gap: 12, paddingTop: 16, borderTop: `1px solid ${P.border}` }}>
             <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
@@ -930,18 +920,7 @@ export default function ProjectDetail() {
               )}
             </Field>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-              <input
-                id="ev_public"
-                type="checkbox"
-                checked={eventForm.is_public}
-                onChange={e => setEventForm(f => ({ ...f, is_public: e.target.checked }))}
-                style={{ width: 16, height: 16, cursor: 'pointer' }}
-              />
-              <label htmlFor="ev_public" style={{ fontSize: '0.88rem', color: P.mid, cursor: 'pointer' }}>
-                Show on public page
-              </label>
-            </div>
+            {/* V4-PUBHIDE-001: inline event is_public toggle removed. */}
 
             <div style={{ display: 'flex', gap: 12, paddingTop: 14, borderTop: `1px solid ${P.border}` }}>
               <button type="submit" disabled={loggingEvent} style={primaryBtn(loggingEvent)}>
@@ -1108,14 +1087,6 @@ function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
                   backgroundColor: P.greenPale, borderRadius: 10, padding: '1px 7px',
                 }}>
                   {ev.quantity}
-                </span>
-              )}
-              {!ev.is_public && (
-                <span style={{
-                  fontSize: '0.7rem', color: P.light,
-                  backgroundColor: '#eee', borderRadius: 10, padding: '1px 7px',
-                }}>
-                  private
                 </span>
               )}
             </div>

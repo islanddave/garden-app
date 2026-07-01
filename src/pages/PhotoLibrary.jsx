@@ -258,17 +258,7 @@ export default function PhotoLibrary() {
                 />
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input
-                  id="up_pub" type="checkbox"
-                  checked={uploadForm.is_public}
-                  onChange={e => setUploadForm(f => ({ ...f, is_public: e.target.checked }))}
-                  style={{ width: 16, height: 16, cursor: 'pointer' }}
-                />
-                <label htmlFor="up_pub" style={{ fontSize: '0.85rem', color: P.mid, cursor: 'pointer' }}>
-                  Visible on public project page
-                </label>
-              </div>
+              {/* V4-PUBHIDE-001: is_public toggle removed. */}
 
               {projectIdMissing && (
                 <p style={{ margin: 0, fontSize: '0.8rem', color: P.light }}>
