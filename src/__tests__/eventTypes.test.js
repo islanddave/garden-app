@@ -63,9 +63,9 @@ describe('BATCH_EVENT_TYPES (derived)', () => {
     );
   });
 
-  it('excludes exactly the 7 expected types (3 needs-input + 4 HS-1)', () => {
+  it('excludes exactly the 8 expected types (3 needs-input + 4 HS-1 + 1 status-advance)', () => {
     expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
-      ['cutting_taken', 'divided', 'first_harvest', 'fruit_set', 'hand_pollinated', 'harvest', 'photo'],
+      ['cutting_taken', 'divided', 'first_harvest', 'flowering', 'fruit_set', 'hand_pollinated', 'harvest', 'photo'],
     );
   });
 

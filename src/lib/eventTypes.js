@@ -150,7 +150,12 @@ export const REQUIRED_META_FIELDS = ['label', 'emoji', 'category']
 //                              them across a scope is semantically wrong (you
 //                              pollinate / observe fruit-set per plant, not en masse).
 //
-// These four are treated single-event-only (like harvest/first_harvest/photo).
+// These are treated single-event-only (like harvest/first_harvest/photo).
+//
+//   status-advance (single-event only, mirrors fruit_set):
+//     flowering — logging it advances the planting to 'flowering' (forward-only).
+//                 The status flip lives ONLY on the single-event path, so keeping it
+//                 out of batch guarantees the flip always fires. (V3-FLOWERING-001)
 export const BATCH_EXCLUDED_TYPES = [
   'harvest',
   'first_harvest',
