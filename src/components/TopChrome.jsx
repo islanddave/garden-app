@@ -1,10 +1,13 @@
 // V4-APPBAR-001 — top-chrome gate. Root tabs (Today/Garden/DrG/Dashboard) replace the old green
-// app-name TopBar with a V200 cream HEADER: a compact brand wordmark (left, -> home) + Favorites
-// (right). The wordmark anchors the bar so Favorites reads as a real header action, not a lone
-// floating heart; no full-width green bar. Detail/pushed routes AND the unauthenticated app keep the
-// full TopBar so nothing becomes unreachable. Same 52px+inset height as TopBar, so every page's
+// app-name TopBar with a V200 HEADER: a compact brand wordmark (left, -> home) + Favorites (right)
+// on a soft PEACH surface (terra family) so the bar reads as a distinct, polished header instead of
+// vanishing into the cream body. The wordmark anchors the bar so Favorites is a header action, not a
+// lone floating heart. Detail/pushed routes AND the unauthenticated app keep the full TopBar so
+// nothing becomes unreachable. Same 52px+inset height as TopBar, so every page's
 // `calc(100dvh - 52px)` layout math and notch handling are unchanged (zero page edits).
 // (Field/Desk mode toggle intentionally NOT here — it lives in Settings, per Dave 2026-07-01.)
+// Surface = peach #f9e3d6 / border #edc7b3 (Dave pick 2026-07-01). Saved alternate he also liked:
+// light-blue bg #e4eff9 / border #c6dcef (water/weather-adjacent) — kept for a future swap.
 import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
@@ -12,6 +15,8 @@ import { P, APP_NAME } from '../lib/constants.js'
 import TopBar from './TopBar.jsx'
 
 const ROOT_TABS = ['/today', '/garden', '/findings', '/dashboard']
+const HEADER_BG = '#f9e3d6'      // V200 peach header surface (terra family)
+const HEADER_BORDER = '#edc7b3'  // peach hairline (bottom rule + heart ring)
 
 export default function TopChrome() {
   const { user } = useAuth()
@@ -35,8 +40,8 @@ export default function TopChrome() {
         position: 'sticky',
         top: 0,
         zIndex: 80,
-        backgroundColor: P.cream,
-        borderBottom: `1px solid ${P.border}`,
+        backgroundColor: HEADER_BG,
+        borderBottom: `1px solid ${HEADER_BORDER}`,
         boxSizing: 'border-box',
       }}
     >
@@ -56,7 +61,7 @@ export default function TopChrome() {
         {APP_NAME}
       </Link>
 
-      {/* Favorites — the persistent root-tab shortcut, now anchored by the wordmark. */}
+      {/* Favorites — the persistent root-tab shortcut, anchored by the wordmark. */}
       <Link
         to="/favorites"
         aria-label="Favorites"
@@ -65,7 +70,7 @@ export default function TopChrome() {
           width: 36, height: 36,
           borderRadius: '50%',
           backgroundColor: P.white,
-          border: `1px solid ${P.border}`,
+          border: `1px solid ${HEADER_BORDER}`,
           color: '#c9a84c',
           textDecoration: 'none',
           fontSize: '1.1rem',
