@@ -175,7 +175,7 @@ export const handler = async (event) => {
                      'sun_requirements', pv.sun_requirements,
                      'common_diseases', pv.common_diseases,
                      'expected_yield_notes', pv.expected_yield_notes,
-                     'photo_id', pv.photo_id, 'source_url', pv.source_url
+                     'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle
                    )
                  ELSE NULL END AS variety_ref,
                  parent.display_name AS parent_plant_name, parent.container_id AS parent_project_id,
@@ -205,7 +205,7 @@ export const handler = async (event) => {
         const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
         const ALLOWED_SOURCE = ['seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'unknown', 'cutting_taken', 'rescued'];
         const ALLOWED_DIVERGENCE = ['mutation', 'cross', 'selection', 'unknown'];
-        const ALLOWED_CONTAINER = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','other'];
+        const ALLOWED_CONTAINER = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','trough','whiskey_barrel','soil_block','solo_cup','other'];
         if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
           return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
         }
@@ -394,7 +394,7 @@ export const handler = async (event) => {
                        'sun_requirements', pv.sun_requirements,
                        'common_diseases', pv.common_diseases,
                        'expected_yield_notes', pv.expected_yield_notes,
-                       'photo_id', pv.photo_id, 'source_url', pv.source_url
+                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle
                      )
                    ELSE NULL END AS variety_ref
             FROM public.garden_node p
@@ -432,7 +432,7 @@ export const handler = async (event) => {
                        'sun_requirements', pv.sun_requirements,
                        'common_diseases', pv.common_diseases,
                        'expected_yield_notes', pv.expected_yield_notes,
-                       'photo_id', pv.photo_id, 'source_url', pv.source_url
+                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle
                      )
                    ELSE NULL END AS variety_ref
             FROM public.garden_node p
@@ -465,7 +465,7 @@ export const handler = async (event) => {
       const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
       const ALLOWED_SOURCE = ['seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'unknown'];
       const ALLOWED_DIVERGENCE = ['mutation', 'cross', 'selection', 'unknown'];
-      const ALLOWED_CONTAINER = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','other'];
+      const ALLOWED_CONTAINER = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','trough','whiskey_barrel','soil_block','solo_cup','other'];
       if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
         return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
       }

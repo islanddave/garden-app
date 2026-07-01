@@ -213,7 +213,7 @@ export const handler = async (event) => {
             WHERE deleted_at IS NULL
               AND LOWER(display_name) LIKE ${'%' + q.toLowerCase() + '%'}
             ORDER BY display_name ASC
-            LIMIT 50
+            LIMIT 500
           `
         : await sql`
             SELECT id, display_name AS name, species, genus,
@@ -226,7 +226,7 @@ export const handler = async (event) => {
             FROM public.cultivar
             WHERE deleted_at IS NULL
             ORDER BY display_name ASC
-            LIMIT 50
+            LIMIT 500
           `;
       return resp(200, rows);
     }
