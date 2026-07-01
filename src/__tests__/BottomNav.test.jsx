@@ -183,6 +183,14 @@ describe('BottomNav — More menu', () => {
     expect(link.getAttribute('href')).toBe('/helper')
   })
 
+  // Slice 9 (V4-THEME-001): Field/Desk mode mirror row in the More menu.
+  it('More menu shows the Field/Desk mode mirror row (useMode mock = desk)', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    expect(screen.getByText('View mode')).toBeDefined()
+    expect(screen.getByText('Desk')).toBeDefined()
+  })
+
   it('does NOT render the Catch-up badge container (hidden 2.0.1 until S1.1 editor ships)', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('More navigation options'))
@@ -231,13 +239,15 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
     expect(screen.getByLabelText('Create').getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('clicking +LOG opens the sheet with all four create options', () => {
+  it('clicking +LOG opens the sheet with the three create options', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
     expect(screen.getByText('Log an event')).toBeDefined()
+    expect(screen.getByText('Log many')).toBeDefined()
     expect(screen.getByText('Add a planting')).toBeDefined()
-    expect(screen.getByText('New project')).toBeDefined()
-    expect(screen.getByText('Add inventory')).toBeDefined()
+    // Slice 9: New project + Add inventory dropped from the FAB.
+    expect(screen.queryByText('New project')).toBeNull()
+    expect(screen.queryByText('Add inventory')).toBeNull()
     expect(screen.getByLabelText('Create').getAttribute('aria-expanded')).toBe('true')
   })
 
@@ -245,16 +255,15 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
     expect(screen.getByText('Log an event').closest('a').getAttribute('href')).toBe('/log')
+    expect(screen.getByText('Log many').closest('a').getAttribute('href')).toBe('/log/many')
     expect(screen.getByText('Add a planting').closest('a').getAttribute('href')).toBe('/garden?add=1')
-    expect(screen.getByText('New project').closest('a').getAttribute('href')).toBe('/projects/new')
-    expect(screen.getByText('Add inventory').closest('a').getAttribute('href')).toBe('/inventory/add')
   })
 
   it('selecting an option closes the sheet', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
-    fireEvent.click(screen.getByText('New project'))
-    expect(screen.queryByText('Add a planting')).toBeNull()
+    fireEvent.click(screen.getByText('Add a planting'))
+    expect(screen.queryByText('Log an event')).toBeNull()
   })
 
   it('opening More closes the create sheet (mutually exclusive)', () => {

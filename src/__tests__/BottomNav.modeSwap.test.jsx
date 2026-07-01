@@ -68,14 +68,15 @@ describe('BottomNav Field/Desk mode swap (Inc 2 Bite 3)', () => {
       expect(screen.queryByTestId('bottomnav-field-mic')).toBeNull()
     })
 
-    it('tapping +LOG opens the create action sheet with all 4 actions', () => {
+    it('tapping +LOG opens the create action sheet with the 3 actions', () => {
       renderAt(MODE.DESK)
       fireEvent.click(screen.getByLabelText('Create'))
-      // Action sheet markers from CREATE_ACTIONS (FAB restoration L-082)
+      // Action sheet markers from CREATE_ACTIONS (Slice 9: 3 first-class actions)
       expect(screen.getByText('Log an event')).toBeDefined()
+      expect(screen.getByText('Log many')).toBeDefined()
       expect(screen.getByText('Add a planting')).toBeDefined()
-      expect(screen.getByText('New project')).toBeDefined()
-      expect(screen.getByText('Add inventory')).toBeDefined()
+      expect(screen.queryByText('New project')).toBeNull()
+      expect(screen.queryByText('Add inventory')).toBeNull()
     })
   })
 

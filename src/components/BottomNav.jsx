@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { P } from '../lib/constants.js'
@@ -7,25 +7,17 @@ import { CATCH_UP_EDITOR_SHIPPED } from '../lib/featureFlags.js'
 import { useApiFetch } from '../lib/api.js'
 import BottomNavDot from './BottomNavDot.jsx'
 import { useMode } from '../lib/mode.js'
+import Sheet from './forms/Sheet.jsx'
 
-// BottomNav — NAV-IA-1 layout (V1.2a-3 Increment C / PR-C1, 2026-05-18)
-// Tabs: Projects · Plants · (centered LOG+) · Inventory · (… More menu)
-// Dashboard dropped — reachable via the "Gardens at Home" TopBar banner.
-// More menu (NOW scope): Sign Out only, with inline confirmation step.
-//   - Sign Out moved here from TopBar (top-nav More button replaced with Favorites icon).
-//   - Confirmation step is a hard gate per reconciliation plan §2 — session-ending
-//     action must not be an impulsive-mistap target.
-// Overflow is a V3 IA-revision concern, explicitly out of NAV-IA-1 scope.
-
-// V3-IA nav restructure (2026-06-10): Critters + Photos promoted to first-class tabs;
-// Inventory demoted to the More menu. FAB keeps its center slot (3 of 5):
-// Garden · Critters · +LOG · Photos · More. The standalone Plants page is retired —
-// /plants redirects to /garden (PlantsRedirect).
-// V200 / V4-THEME-001 nav (2026-06-30): Today·Garden·＋·DrG·More. Today promoted to a
-// first-class tab (supersedes DRG-TODAY-003 Option A "Today bar, not a tab", Dave call
-// 2026-06-30 — V200 locked design wins). DrG promoted from the More menu to a tab.
-// Critters + Photos folded into the More menu (Photos there is interim until the Garden
-// Plants/Photos sub-tab lands in Slice 3). FAB keeps the center slot (3 of 5).
+// BottomNav — V200 / V4-THEME-001 nav: Today·Garden·＋·DrG·More.
+// V200 Slice 9 (2026-07-01): the two hand-rolled slide-up dialogs (Create FAB sheet +
+// More menu) now adopt the shared Sheet primitive (a11y: role=dialog, aria-modal, focus
+// trap+restore, Escape, backdrop-dismiss — Sheet owns all of it, so the local Escape
+// effect is gone). More menu is grouped into labeled sections (Your garden / Rewards /
+// Help & account) instead of one flat 10-item scan. Field/Desk mode gets a mirror row
+// here (primary toggle stays in TopBar). Critters is distinguished by placement + a soft
+// subtitle only — NO badge/count/alert (Reward UX V102, ambient). Glyphs are still emoji;
+// the emoji->Icon SVG pass is the deferred Slice 9 follow-up commit.
 const TABS = [
   { to: '/today',    label: 'Today',  icon: '📅' },
   { to: '/garden',   label: 'Garden', icon: '🪴' },
@@ -33,36 +25,52 @@ const TABS = [
   { to: '/findings', label: 'DrG',    icon: '🩺' },
 ]
 
-// +LOG FAB → create action sheet (Increment 1, post-V2 UX overhaul).
-// Tapping the center +LOG opens a <=4-choice sheet so every create flow is reachable
-// without first navigating to a tab. This is a user-initiated operational/navigation
-// affordance — NOT a reward surface (no celebration / recognition / progress signal),
-// so the action-sheet pattern is appropriate (Reward UX V100 out-of-scope channels bind
-// reward surfaces, not user-triggered create menus).
-// Routes: Log -> /log (EventNew); Plant -> /garden?add=1 (Garden PlantingEditor auto-open);
-//         Project -> /projects/new (ProjectNew); Inventory -> /inventory/add (InventoryAdd).
-// Spec: postv2-ux-overhaul-phase2-build-roadmap-V001 §4 Increment 1 + garden-tab-design-V001 §3.4.
-// RESTORED 2026-05-28: clobbered by garden-helper rung1 commit a45fb013 (rode through
-// a917b51b to prod); now re-restored alongside Garden Helper menu entry.
+// +LOG FAB -> create action sheet. Slice 9: trimmed to 3 first-class quick-hit actions.
+// Log + Log many are the two rapid-capture verbs — Log many stays FIRST-CLASS (a direct
+// tap, never nested under Log, per Dave 2026-07-01); Add a planting is the one daily
+// create. New project + Add inventory dropped from the FAB (Projects de-emphasizing from
+// first-class; inventory-add is reachable via More -> Inventory). Not a reward surface
+// (user-initiated create menu), so the sheet pattern is appropriate under Reward UX V102.
 const CREATE_ACTIONS = [
-  { to: '/log',           icon: '📝', label: 'Log an event',   sub: 'Watering, harvest, a note…' },
-  { to: '/log/many',      icon: '⚡', label: 'Log many',        sub: 'One event across many plants' },
-  { to: '/garden?add=1',  icon: '🌱', label: 'Add a planting', sub: 'A plant growing in a project' },
-  { to: '/projects/new',  icon: '🪴', label: 'New project',     sub: 'A bed, crop, or grow' },
-  { to: '/inventory/add', icon: '📦', label: 'Add inventory',   sub: 'Seeds, soil, supplies…' },
+  { to: '/log',          icon: '📝', label: 'Log an event',   sub: 'Watering, harvest, a note…' },
+  { to: '/log/many',     icon: '⚡', label: 'Log many',        sub: 'One event across many plants' },
+  { to: '/garden?add=1', icon: '🌱', label: 'Add a planting', sub: 'A plant growing in a project' },
 ]
+
+// Shared menu-row style. `border:'none'` first so buttons drop their default border, then
+// `borderTop` as the row separator (later longhand wins over the shorthand).
+const menuRowStyle = {
+  display: 'flex', alignItems: 'center', gap: 16,
+  width: '100%', padding: '14px 24px',
+  border: 'none', borderTop: `1px solid ${P.border}`,
+  background: 'none', textAlign: 'left',
+  cursor: 'pointer', textDecoration: 'none',
+  color: P.dark, fontSize: '1rem', fontWeight: 500,
+  fontFamily: 'inherit', minHeight: 48,
+}
+
+function SectionLabel({ children }) {
+  return (
+    <div style={{
+      padding: '14px 24px 4px', fontSize: '0.72rem', fontWeight: 700,
+      letterSpacing: '0.04em', textTransform: 'uppercase', color: P.light,
+    }}>
+      {children}
+    </div>
+  )
+}
 
 export default function BottomNav() {
   const location = useLocation()
   const navigate = useNavigate()
   const { profile, signOut } = useAuth()
   const { getToken } = useApiFetch()
-  // Post-V2 UX overhaul Inc 2 Bite 3: Field-mode swaps the +LOG center button
-  // for a mic affordance that navigates to /field. Desk-mode unchanged.
-  const { isField } = useMode()
-  const [showMore, setShowMore]               = useState(false)
-  const [showCreate, setShowCreate]           = useState(false)
-  const [confirmSignOut, setConfirmSignOut]   = useState(false)
+  // Field-mode swaps the +LOG center button for a mic -> /field. Desk-mode unchanged.
+  // toggleMode powers the More-menu mode mirror row.
+  const { isField, toggleMode } = useMode()
+  const [showMore, setShowMore]             = useState(false)
+  const [showCreate, setShowCreate]         = useState(false)
+  const [confirmSignOut, setConfirmSignOut] = useState(false)
 
   function isActive(path) {
     return location.pathname === path || location.pathname.startsWith(path + '/')
@@ -77,17 +85,6 @@ export default function BottomNav() {
     setShowCreate(false)
   }
 
-  // Escape closes whichever sheet is open (dialog-dismissal a11y; mirrors the
-  // backdrop tap-to-close already provided by the overlay).
-  useEffect(() => {
-    if (!showMore && !showCreate) return
-    function onKey(e) {
-      if (e.key === 'Escape') { closeMore(); closeCreate() }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [showMore, showCreate])
-
   async function handleSignOutConfirmed() {
     closeMore()
     await signOut()
@@ -96,335 +93,144 @@ export default function BottomNav() {
 
   return (
     <>
-      {/* +LOG create action sheet — backdrop + slide-up dialog (mirrors More menu) */}
-      {showCreate && (
-        <div onClick={closeCreate}
-          style={{ position: 'fixed', inset: 0, zIndex: 90, backgroundColor: 'rgba(0,0,0,0.3)' }}
-        />
-      )}
-
-      {showCreate && (
-        <div role="dialog" aria-label="Create new" style={{
-          position: 'fixed',
-          bottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom))',
-          left: 0, right: 0,
-          backgroundColor: P.white,
-          borderRadius: '16px 16px 0 0',
-          boxShadow: '0 -4px 20px rgba(0,0,0,0.14)',
-          zIndex: 100,
-          paddingTop: 8, paddingBottom: 12,
-        }}>
-          <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: P.border, margin: '0 auto 8px' }} />
-          <div style={{ padding: '6px 24px 8px', fontSize: '0.8rem', color: P.light }}>
-            Add to your garden
-          </div>
-          {CREATE_ACTIONS.map(action => (
-            <Link
-              key={action.label}
-              to={action.to}
-              onClick={closeCreate}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 16,
-                width: '100%',
-                padding: '12px 24px',
-                borderTop: `1px solid ${P.border}`,
-                background: 'none', textAlign: 'left',
-                cursor: 'pointer', textDecoration: 'none',
-                color: P.dark, fontFamily: 'inherit',
-                minHeight: 48,
-              }}
-            >
-              <span aria-hidden="true" style={{ fontSize: '1.5rem' }}>{action.icon}</span>
-              <span style={{ display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontSize: '1rem', fontWeight: 600 }}>{action.label}</span>
-                <span style={{ fontSize: '0.78rem', color: P.light }}>{action.sub}</span>
-              </span>
-            </Link>
-          ))}
+      {/* +LOG create action sheet (Sheet primitive) */}
+      <Sheet open={showCreate} onClose={closeCreate} ariaLabel="Create new">
+        <div style={{ padding: '6px 24px 8px', fontSize: '0.8rem', color: P.light }}>
+          Add to your garden
         </div>
-      )}
+        {CREATE_ACTIONS.map(action => (
+          <Link
+            key={action.label}
+            to={action.to}
+            onClick={closeCreate}
+            style={{ ...menuRowStyle, padding: '12px 24px' }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '1.5rem' }}>{action.icon}</span>
+            <span style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: '1rem', fontWeight: 600 }}>{action.label}</span>
+              <span style={{ fontSize: '0.78rem', color: P.light }}>{action.sub}</span>
+            </span>
+          </Link>
+        ))}
+      </Sheet>
 
-      {showMore && (
-        <div onClick={closeMore}
-          style={{ position: 'fixed', inset: 0, zIndex: 90, backgroundColor: 'rgba(0,0,0,0.3)' }}
-        />
-      )}
+      {/* More menu (Sheet primitive) */}
+      <Sheet open={showMore} onClose={closeMore} ariaLabel="More navigation options">
+        {/* Signed-in identity */}
+        <div style={{ padding: '4px 24px 12px', fontSize: '0.8rem', color: P.light }}>
+          {profile?.display_name || profile?.email || 'Signed in'}
+        </div>
 
-      {showMore && (
-        <div role="dialog" aria-label="More navigation options" style={{
-          position: 'fixed',
-          bottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom))',
-          left: 0, right: 0,
-          backgroundColor: P.white,
-          borderRadius: '16px 16px 0 0',
-          boxShadow: '0 -4px 20px rgba(0,0,0,0.14)',
-          zIndex: 100,
-          paddingTop: 8, paddingBottom: 12,
-        }}>
-          <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: P.border, margin: '0 auto 8px' }} />
+        {/* Field/Desk mode mirror — keeps the current mode visible + switchable here too
+            (primary toggle stays in the TopBar). Toggling does NOT close the sheet so the
+            change is visible. Operational surface, not a reward surface. */}
+        <button
+          type="button"
+          onClick={toggleMode}
+          aria-label={`View mode: ${isField ? 'Field' : 'Desk'}. Activate to switch to ${isField ? 'Desk' : 'Field'} mode.`}
+          style={{ ...menuRowStyle, justifyContent: 'space-between' }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>{isField ? '🌿' : '💻'}</span>
+            View mode
+          </span>
+          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: P.green }}>
+            {isField ? 'Field' : 'Desk'}
+          </span>
+        </button>
 
-          {/* Signed-in identity row */}
+        <SectionLabel>Your garden</SectionLabel>
+        <Link to="/dashboard" onClick={closeMore} style={menuRowStyle}>
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏡</span>Dashboard
+        </Link>
+        <Link to="/photos" onClick={closeMore} style={menuRowStyle}>
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📷</span>Photos
+        </Link>
+        <Link to="/inventory" onClick={closeMore} style={menuRowStyle}>
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📦</span>Inventory
+        </Link>
+        <Link to="/achievements" onClick={closeMore} style={menuRowStyle}>
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏆</span>Achievements
+        </Link>
+        {/* Catch-up badge — gated behind CATCH_UP_EDITOR_SHIPPED (currently off). */}
+        {CATCH_UP_EDITOR_SHIPPED && (
+          <div data-testid="catch-up-nav-item" onClick={closeMore} style={{ padding: '12px 24px 4px' }}>
+            <CatchUpBadge />
+          </div>
+        )}
+
+        <SectionLabel>Rewards</SectionLabel>
+        {/* Critters — ambient reward surface (Reward UX V102): distinguished by placement +
+            subtitle, NEVER by a badge/count/alert. */}
+        <Link
+          to="/collection"
+          onClick={closeMore}
+          style={{ ...menuRowStyle, alignItems: 'flex-start' }}
+        >
+          <span aria-hidden="true" style={{ fontSize: '1.4rem', lineHeight: 1.2 }}>🦋</span>
+          <span style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontSize: '1rem', fontWeight: 500 }}>Critters</span>
+            <span style={{ fontSize: '0.78rem', color: P.light }}>Who&apos;s been visiting</span>
+          </span>
+        </Link>
+
+        <SectionLabel>Help &amp; account</SectionLabel>
+        <Link to="/helper" onClick={closeMore} style={menuRowStyle}>
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>💬</span>Garden Helper
+        </Link>
+        <Link to="/settings" onClick={closeMore} style={menuRowStyle}>
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>⚙</span>Settings
+        </Link>
+        <Link to="/about" onClick={closeMore} style={menuRowStyle}>
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>ℹ️</span>About
+        </Link>
+        <Link to="/releases" onClick={closeMore} style={menuRowStyle}>
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📋</span>Release Notes
+        </Link>
+
+        {/* Sign Out — inline 2-step confirm (BottomNav-owned; Sheet stays a dumb container).
+            A session-ending action must not be an impulsive mis-tap target. */}
+        {!confirmSignOut ? (
+          <button onClick={() => setConfirmSignOut(true)} style={menuRowStyle}>
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>↪</span>Sign out
+          </button>
+        ) : (
           <div style={{
-            padding: '10px 24px 14px',
-            borderBottom: `1px solid ${P.border}`,
-            fontSize: '0.8rem',
-            color: P.light,
+            padding: '14px 24px', display: 'flex', flexDirection: 'column', gap: 10,
+            borderTop: `1px solid ${P.border}`,
           }}>
-            {profile?.display_name || profile?.email || 'Signed in'}
+            <p style={{ margin: 0, fontSize: '0.92rem', color: P.dark, fontWeight: 500 }}>
+              Sign out of your account?
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => setConfirmSignOut(false)}
+                style={{
+                  flex: 1, minHeight: 44,
+                  border: `1px solid ${P.border}`, borderRadius: 8,
+                  background: P.cream, color: P.dark,
+                  fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSignOutConfirmed}
+                style={{
+                  flex: 1, minHeight: 44,
+                  border: 'none', borderRadius: 8,
+                  background: P.terra, color: P.white,
+                  fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                Yes, sign out
+              </button>
+            </div>
           </div>
-
-          {/* V1.2a-4 S1: Catch-up badge surfaces plants with missing lifecycle dates.
-              Render owned here, not on Dashboard (V102 §5.1 #8 + UX item 11).
-              HIDDEN 2.0.1 (gifted-busy-thompson): badge linked to /plants/catch-up, whose
-              S1.1 editor was never built — it shipped into V2 as a "coming soon" dead-end.
-              Gated behind CATCH_UP_EDITOR_SHIPPED; flip true when the S1.1 editor lands
-              (planned 2.1). See v2-increment-audit-2.0.1-to-2.1-V001. */}
-          {CATCH_UP_EDITOR_SHIPPED && (
-            <div data-testid="catch-up-nav-item" onClick={closeMore} style={{ padding: '12px 24px 4px' }}>
-              <CatchUpBadge />
-            </div>
-          )}
-
-          {/* Critters — folded into More (V200/V4-THEME-001 nav): ambient reward surface,
-              not a daily-core tab. */}
-          <Link
-            to="/collection"
-            onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🦋</span>
-            Critters
-          </Link>
-
-          {/* Photos — folded into More (V200/V4-THEME-001 nav). Interim home until the
-              Garden Plants/Photos sub-tab toggle lands (Slice 3). */}
-          <Link
-            to="/photos"
-            onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📷</span>
-            Photos
-          </Link>
-
-          {/* Dashboard — the "Gardens at Home" overview. Demoted from the landing route to the
-              More menu (DRG-TODAY-003): /today is now home, surfaced via the color-coded Today bar
-              above the nav. Still reachable here and via the TopBar app-name link. */}
-          <Link
-            to="/dashboard"
-            onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏡</span>
-            Dashboard
-          </Link>
-
-          {/* Inventory — moved off the first-class tab row (V3-IA, 2026-06-10);
-              its old slot went to Critters/Photos promotion. */}
-          <Link
-            to="/inventory"
-            onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📦</span>
-            Inventory
-          </Link>
-
-          {/* Achievements — restored to More menu (NAV-REGRESSION fix, 2026-05-22). */}
-          <Link
-            to="/achievements"
-            onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏆</span>
-            Achievements
-          </Link>
-
-
-
-          {/* Garden Helper — Post-V2 UX overhaul Inc 2 Bite 1 (Rung-1 advisory).
-              /helper route + GardenHelper.jsx. Non-recording scaffold: composes a
-              Claude-ready prompt with a C4 untrusted-data fence; user shares or
-              copies to Claude themselves. No DB writes. */}
-          <Link
-            to="/helper"
-            onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>💬</span>
-            Garden Helper
-          </Link>
-
-          {/* MVP-Critter Session 4 Phase A — Settings entry.
-              /settings parent permissively redirects to /settings/notifications
-              per revision §3.23. Placed between Garden Helper and Sign Out per
-              handoff Pending #1 (mvp-critter-pre-build-revision-V001 §3.23). */}
-          <Link
-            to="/settings"
-            onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>⚙</span>
-            Settings
-          </Link>
-
-          {/* V3-RELEASENOTES-001 — About + Release Notes (footer removed app-wide; info lives here). */}
-          <Link to="/about" onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>ℹ️</span>
-            About
-          </Link>
-          <Link to="/releases" onClick={closeMore}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              width: '100%',
-              padding: '14px 24px',
-              borderTop: `1px solid ${P.border}`,
-              background: 'none', textAlign: 'left',
-              cursor: 'pointer', textDecoration: 'none',
-              color: P.dark, fontSize: '1rem', fontWeight: 500,
-              fontFamily: 'inherit',
-              minHeight: 48,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📋</span>
-            Release Notes
-          </Link>
-
-          {/* Sign Out — inline confirmation */}
-          {!confirmSignOut ? (
-            <button
-              onClick={() => setConfirmSignOut(true)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 16,
-                width: '100%',
-                padding: '14px 24px',
-                background: 'none', border: 'none', textAlign: 'left',
-                cursor: 'pointer',
-                color: P.dark, fontSize: '1rem', fontWeight: 500,
-                fontFamily: 'inherit',
-                minHeight: 48,
-              }}
-            >
-              <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>↪</span>
-              Sign out
-            </button>
-          ) : (
-            <div style={{ padding: '14px 24px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <p style={{ margin: 0, fontSize: '0.92rem', color: P.dark, fontWeight: 500 }}>
-                Sign out of your account?
-              </p>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button
-                  onClick={() => setConfirmSignOut(false)}
-                  style={{
-                    flex: 1, minHeight: 44,
-                    border: `1px solid ${P.border}`, borderRadius: 8,
-                    background: P.cream, color: P.dark,
-                    fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer',
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSignOutConfirmed}
-                  style={{
-                    flex: 1, minHeight: 44,
-                    border: 'none', borderRadius: 8,
-                    background: P.terra, color: P.white,
-                    fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer',
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  Yes, sign out
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+        )}
+      </Sheet>
 
       <nav aria-label="Main navigation" style={{
         position: 'fixed', bottom: 0, left: 0, right: 0,
@@ -438,9 +244,8 @@ export default function BottomNav() {
         {TABS.map(tab => {
           const active = isActive(tab.to)
           if (tab.highlight) {
-            // Field mode (Bite 3): center button becomes a mic affordance that
-            // navigates to /field — no FAB action sheet. Desk mode (default):
-            // unchanged +LOG FAB that opens the create action sheet.
+            // Field mode: center button becomes a mic -> /field (no create sheet).
+            // Desk mode (default): +LOG FAB opens the create action sheet.
             if (isField) return (
               <Link key={tab.to} to="/field"
                 onClick={() => { closeMore(); closeCreate() }}
@@ -486,8 +291,7 @@ export default function BottomNav() {
           }}>
           <span style={{ fontSize: '1.25rem', lineHeight: 1, letterSpacing: '-1px' }}>•••</span>
           <span style={{ fontSize: '0.62rem', fontWeight: showMore ? 700 : 400 }}>More</span>
-          {/* Critter "new visitor" dot — moved here from the Garden tab now that Critters
-              lives in the More menu (V200/V4-THEME-001 nav). */}
+          {/* Critter "new visitor" dot lives on More now that Critters is in the menu. */}
           <BottomNavDot getToken={getToken} />
         </button>
       </nav>
