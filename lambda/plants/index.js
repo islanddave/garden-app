@@ -406,6 +406,7 @@ export const handler = async (event) => {
               AND p.deleted_at IS NULL
               AND p.archived_at IS NULL
             ORDER BY p.created_at DESC
+            LIMIT 5000
           `
         : await sql`
             SELECT p.id, p.display_name AS name, p.quantity,
@@ -442,6 +443,7 @@ export const handler = async (event) => {
               AND p.deleted_at IS NULL
               AND p.archived_at IS NULL
             ORDER BY p.created_at DESC
+            LIMIT 5000
           `;
       // Sign each featured photo's S3 URL (900s), strip the raw storage_path.
       const enriched = await Promise.all(rows.map(async (row) => {
