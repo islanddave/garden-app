@@ -9,6 +9,7 @@ import {
   BATCH_EXCLUDED_TYPES,
   BATCH_EVENT_TYPES,
   buildSecondaryGroups,
+  CATEGORY_ORDER,
 } from '../lib/eventTypes.js';
 
 const isRaw = (s) => /^[a-z_]+$/.test(s);
@@ -150,5 +151,20 @@ describe('buildSecondaryGroups', () => {
         expect(t.emoji).toBe(EVENT_TYPE_META[t.value].emoji);
       }
     }
+  });
+});
+
+describe('V4-EVENTSEL-001 — taxonomy fix + explicit category order', () => {
+  it('rain is Environmental, not Care', () => {
+    expect(EVENT_TYPE_META.rain.category).toBe('Environmental');
+  });
+  it('every EVENT_TYPE_META category is present in CATEGORY_ORDER', () => {
+    const cats = new Set(Object.values(EVENT_TYPE_META).map((m) => m.category));
+    for (const c of cats) expect(CATEGORY_ORDER, `category ${c} not in CATEGORY_ORDER`).toContain(c);
+  });
+  it('buildSecondaryGroups returns categories in CATEGORY_ORDER', () => {
+    const order = buildSecondaryGroups(['watering']).map(([cat]) => cat);
+    const expected = CATEGORY_ORDER.filter((c) => order.includes(c));
+    expect(order).toEqual(expected);
   });
 });

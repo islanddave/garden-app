@@ -90,7 +90,7 @@ export const EVENT_TYPE_META = {
   transplant:      { label: 'Transplanted / Planted', emoji: '🌱', category: 'Growth & Training' },
   hardening_off:   { label: 'Hardening off',        emoji: '⛅', category: 'Growth & Training' },
   watering:        { label: 'Watered',              emoji: '💧', category: 'Care' },
-  rain:            { label: 'Rain',                 emoji: '🌧️', category: 'Care' },
+  rain:            { label: 'Rain',                 emoji: '🌧️', category: 'Environmental' },
   fertilizing:     { label: 'Fertilized / Fed',     emoji: '🌿', category: 'Care' },
   pest_treatment:  { label: 'Pest treatment',       emoji: '🐛', category: 'Pest & Health' },
   doctored:        { label: 'Doctored / Treated',   emoji: '🩹', category: 'Pest & Health' },
@@ -173,6 +173,20 @@ export const BATCH_EVENT_TYPES = EVENT_TYPES.filter(
   (t) => !BATCH_EXCLUDED_TYPES.includes(t),
 )
 
+// ── Canonical "More"-panel category order (V4-EVENTSEL-001) ─────────
+// Explicit ordering for the secondary-group panel; categories previously fell out
+// in incidental EVENT_TYPES first-appearance order. Frequency-descending, with the
+// two exception buckets (Pest & Health, Notes & Photos) anchored last. Categories
+// not listed here are appended in first-appearance order (defensive).
+export const CATEGORY_ORDER = [
+  'Care',
+  'Growth & Training',
+  'Environmental',
+  'Harvest',
+  'Pest & Health',
+  'Notes & Photos',
+]
+
 // ── Secondary-group builder ─────────────────────────────────────────
 // Given the set of values rendered as primary quick-picks, returns the remaining
 // values grouped by EVENT_TYPE_META category, ready for the "More" panel:
@@ -189,6 +203,9 @@ export function buildSecondaryGroups(primaryValues, values = EVENT_TYPES) {
     if (!cats[meta.category]) cats[meta.category] = []
     cats[meta.category].push({ value: v, label: meta.label, emoji: meta.emoji })
   })
-  return Object.entries(cats)
+  // V4-EVENTSEL-001: order categories by the canonical CATEGORY_ORDER; unranked
+  // categories (defensive — e.g. the 'Other' fallback) keep first-appearance order.
+  const rank = (c) => { const i = CATEGORY_ORDER.indexOf(c); return i === -1 ? CATEGORY_ORDER.length : i }
+  return Object.entries(cats).sort(([a], [b]) => rank(a) - rank(b))
 }
 
