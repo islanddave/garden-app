@@ -80,6 +80,8 @@ const ANCHOR_META = {
   'media.play':     { accessibleName: 'Play' },
   'media.pause':    { accessibleName: 'Pause' },
   'media.stop':     { accessibleName: 'Stop' },
+  'care.containers': { accessibleName: 'Containers' },
+  'care.inground':  { accessibleName: 'In-ground beds' },
 }
 
 export const GLYPHS = Object.fromEntries(

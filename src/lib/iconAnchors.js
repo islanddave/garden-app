@@ -172,6 +172,16 @@ const A = {
     svg24: '<rect x="6.4" y="6.4" width="11.2" height="11.2" rx="1.4" fill="currentColor" stroke="none"/>',
     svg18: '<rect x="6.6" y="6.6" width="10.8" height="10.8" rx="1.4" fill="currentColor" stroke="none"/>',
   },
+  'care.containers': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M3.5 10.2H11.5"/><path d="M4.2 10.2H10.8L9.9 19a0.7 0.7 0 0 1-0.7 0.6H5.7a0.7 0.7 0 0 1-0.7-0.6Z"/><path d="M13 11H20"/><path d="M13.7 11H19.3L18.6 18.4a0.7 0.7 0 0 1-0.7 0.6H15.1a0.7 0.7 0 0 1-0.7-0.6Z"/>',
+    svg18: '<path d="M3.2 10.4H11"/><path d="M4 10.4H10.2L9.4 19H5.4Z"/><path d="M12.8 11.2H19.6"/><path d="M13.5 11.2H19L18.3 18.6H14.8Z"/>',
+  },
+  'care.inground': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M12 14.4V8.8"/><path d="M12 10.6C9.9 10.6 8.2 8.9 8.2 6.8c2.1 0 3.8 1.7 3.8 3.8z"/><path d="M12 9.6c0.9-1.7 2.9-2.7 4.8-2.5-0.3 1.9-1.9 3.4-3.8 3.6"/><path d="M3.2 15.5H20.8"/><path d="M5.4 18.3h2"/><path d="M10.4 18.3h3.2"/><path d="M16.6 18.3h2"/>',
+    svg18: '<path d="M12 14V8.4"/><path d="M12 10.4C9.8 10.4 8 8.6 8 6.4c2.2 0 4 1.8 4 4z"/><path d="M12 9.4c0.9-1.8 3-2.8 5-2.6-0.3 2-2 3.5-4 3.7"/><path d="M3 15.4H21"/><path d="M6 18.2h3"/><path d="M13 18.2h4"/>',
+  },
 }
 
 export const ANCHOR_KEYS = Object.keys(A)

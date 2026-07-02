@@ -1,4 +1,5 @@
 import React from 'react'
+import Icon from '../Icon.jsx'
 import { computeWateringScale, canRail, pillState, wateringReason } from '../../lib/wateringScale.js'
 import { P, tokens, ICON_COLORS } from '../../lib/tokens.js'
 import { chevronDataUri } from '../forms/formStyles.js'
@@ -71,27 +72,8 @@ function Can({ fill = 1, color, ghost }) {
   )
 }
 
-const PotIcon = ({ color }) => (
-  <svg width="23" height="23" viewBox="0 0 24 24" aria-label="containers" style={{ color }}>
-    <rect x="4.6" y="7.4" width="14.8" height="2.7" rx="0.7" fill="currentColor" />
-    <path d="M6 10.1 H18 L16.6 21 H7.4 Z" fill="currentColor" />
-    <path d="M12 7.4 V4.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    <path d="M12 6.2 Q8.8 4.6 9 7.4 Q11.6 7.6 12 6.2Z" fill="currentColor" />
-    <path d="M12 6.2 Q15.2 4.6 15 7.4 Q12.4 7.6 12 6.2Z" fill="currentColor" />
-  </svg>
-)
-const BedIcon = ({ color }) => (
-  <svg width="23" height="23" viewBox="0 0 24 24" aria-label="in-ground beds" style={{ color }}>
-    {/* sprout */}
-    <path d="M12 14.5 V9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    <path d="M12 10.8 Q8.8 9.2 9 12 Q11.6 12.2 12 10.8Z" fill="currentColor" />
-    <path d="M12 10.8 Q15.2 9.2 15 12 Q12.4 12.2 12 10.8Z" fill="currentColor" />
-    {/* flat soil surface + a tilled furrow row (in the ground, not a mound) */}
-    <path d="M3 15.5 H21" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    <path d="M4.5 18.6 H19.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" opacity="0.55" />
-    <path d="M6.5 15.5 V18.6 M9.5 15.5 V18.6 M14.5 15.5 V18.6 M17.5 15.5 V18.6" stroke="currentColor" strokeWidth="1" opacity="0.4" />
-  </svg>
-)
+const PotIcon = ({ color }) => <Icon name="care.containers" size={23} decorative style={{ color }} />
+const BedIcon = ({ color }) => <Icon name="care.inground" size={23} decorative style={{ color }} />
 // Pause SHAPE for level 0 — distinct glyph (not mere can-absence): 3-channel hold cue tinted to the gold-tint
 // wait family so the shape + the "Hold" text + the gold color all read the same verdict.
 const PauseIcon = ({ color }) => (
