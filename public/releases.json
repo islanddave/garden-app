@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.23.0",
+    "date": "2026-07-02",
+    "highlights": [
+      "Behind-the-scenes groundwork for faster photo loading, rolling out soon"
+    ]
+  },
+  {
     "version": "3.22.0",
     "date": "2026-07-02",
     "highlights": [
