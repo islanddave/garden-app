@@ -5,6 +5,11 @@
 //   • a new inventory item
 // Save & Next keeps the camera primed for rapid field capture; each save shows an
 // inline (non-toast) Undo on the just-created row before the next snap.
+//
+// V4-FORMSYS-SNAP-001 (Dave: "the choice list on Snap is out of conformity"): the form
+// fields + Back/Save/Next buttons use the canonical forms/ primitives (Field/Input/Select/
+// Button) instead of the old bespoke field/primaryBtn/ghostBtn/local <Label>. The photo
+// take/choose picker and the mode cards are distinct affordances and keep their own styling.
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -12,6 +17,10 @@ import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { EVENT_TYPES, EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { INVENTORY_TYPES, INVENTORY_CATEGORIES, INVENTORY_UNITS } from '../lib/inventoryEnums.js'
 import { P } from '../lib/constants.js'
+import Field from '../components/forms/Field.jsx'
+import Input from '../components/forms/Input.jsx'
+import Select from '../components/forms/Select.jsx'
+import Button from '../components/forms/Button.jsx'
 
 const MODES = [
   { id: 'planting',  label: 'New planting',     hint: 'Create a planting, this photo becomes its picture' },
@@ -21,9 +30,7 @@ const MODES = [
 ]
 const todayStr = () => new Date().toISOString().slice(0, 10)
 const card = { background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 16 }
-const field = { width: '100%', padding: '9px 10px', borderRadius: 6, border: `1px solid ${P.border}`, fontSize: '0.9rem', boxSizing: 'border-box' }
-const primaryBtn = (d) => ({ backgroundColor: d ? P.light : P.green, color: P.white, border: 'none', borderRadius: 6, padding: '11px 20px', fontSize: '0.92rem', fontWeight: 600, cursor: d ? 'not-allowed' : 'pointer' })
-const ghostBtn = { backgroundColor: 'transparent', color: P.mid, border: `1px solid ${P.border}`, borderRadius: 6, padding: '10px 18px', fontSize: '0.9rem', cursor: 'pointer' }
+const fieldStack = { display: 'flex', flexDirection: 'column', gap: 12 }
 const pickBtn = { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 12px', border: `2px dashed ${P.border}`, borderRadius: 8, cursor: 'pointer', backgroundColor: P.white, color: P.mid, fontSize: '0.88rem', fontWeight: 600 }
 
 export default function CaptureFlow() {
@@ -180,77 +187,90 @@ export default function CaptureFlow() {
               <div style={{ fontSize: '0.82rem', color: P.light, marginTop: 2 }}>{m.hint}</div>
             </button>
           ))}
-          <button type="button" onClick={() => openPicker(false)} style={ghostBtn}>Retake / choose photo</button>
+          <Button variant="secondary" onClick={() => openPicker(false)}>Retake / choose photo</Button>
         </div>
       )}
 
       {step === 'form' && (
         <div style={card}>
-          {mode === 'planting' && (
-            <>
-              <Label>Planting name</Label>
-              <input data-testid="cap-pname" value={pName} onChange={e => setPName(e.target.value)} placeholder="e.g. Charentais melon" style={field} />
-              <Label>Variety (optional)</Label>
-              <select value={pVariety} onChange={e => setPVariety(e.target.value)} style={field}>
-                <option value="">— none —</option>
-                {varieties.map(v => <option key={v.id} value={v.id}>{v.display_name ?? v.name}</option>)}
-              </select>
-              <Note>No project needed — you’ll group it with tags in the V4 update.</Note>
-            </>
-          )}
-          {mode === 'event' && (
-            <>
-              <Label>Planting</Label>
-              <select data-testid="cap-evplant" value={evPlant} onChange={e => setEvPlant(e.target.value)} style={field}>
-                <option value="">— pick a planting —</option>
-                {plantings.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-              <Label>Event</Label>
-              <select value={evType} onChange={e => setEvType(e.target.value)} style={field}>
-                {EVENT_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
-              </select>
-              <Label>Date</Label>
-              <input type="date" value={evDate} onChange={e => setEvDate(e.target.value)} style={field} />
-            </>
-          )}
-          {mode === 'replace' && (
-            <>
-              <Label>Planting to update</Label>
-              <select data-testid="cap-rpplant" value={rpPlant} onChange={e => setRpPlant(e.target.value)} style={field}>
-                <option value="">— pick a planting —</option>
-                {plantings.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-              <Note>This photo becomes the planting’s featured picture.</Note>
-            </>
-          )}
-          {mode === 'inventory' && (
-            <>
-              <Label>Item name</Label>
-              <input data-testid="cap-invname" value={invName} onChange={e => setInvName(e.target.value)} placeholder="e.g. Pro-Mix HP" style={field} />
-              <Label>Type</Label>
-              <select value={invType} onChange={e => { setInvType(e.target.value); }} style={field}>
-                {INVENTORY_TYPES.map(t => <option key={t.value} value={t.value}>{t.value}</option>)}
-              </select>
-              <Label>Category</Label>
-              <select value={invCat} onChange={e => setInvCat(e.target.value)} style={field}>
-                {INVENTORY_CATEGORIES.filter(c => c.types.includes(invType)).map(c => <option key={c.v} value={c.v}>{c.label}</option>)}
-              </select>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <div style={{ flex: 1 }}><Label>Quantity</Label>
-                  <input type="number" min="0" value={invQty} onChange={e => setInvQty(e.target.value)} style={field} /></div>
-                {invType === 'consumable' && (
-                  <div style={{ flex: 1 }}><Label>Unit</Label>
-                    <select value={invUnit} onChange={e => setInvUnit(e.target.value)} style={field}>
-                      {INVENTORY_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                    </select></div>
-                )}
-              </div>
-            </>
-          )}
+          <div style={fieldStack}>
+            {mode === 'planting' && (
+              <>
+                <Field label="Planting name">
+                  <Input data-testid="cap-pname" value={pName} onChange={e => setPName(e.target.value)} placeholder="e.g. Charentais melon" />
+                </Field>
+                <Field label="Variety" optional>
+                  <Select value={pVariety} onChange={e => setPVariety(e.target.value)}>
+                    <option value="">— none —</option>
+                    {varieties.map(v => <option key={v.id} value={v.id}>{v.display_name ?? v.name}</option>)}
+                  </Select>
+                </Field>
+                <Note>No project needed — you’ll group it with tags in the V4 update.</Note>
+              </>
+            )}
+            {mode === 'event' && (
+              <>
+                <Field label="Planting">
+                  <Select data-testid="cap-evplant" value={evPlant} onChange={e => setEvPlant(e.target.value)}>
+                    <option value="">— pick a planting —</option>
+                    {plantings.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Event">
+                  <Select value={evType} onChange={e => setEvType(e.target.value)}>
+                    {EVENT_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Date">
+                  <Input type="date" value={evDate} onChange={e => setEvDate(e.target.value)} />
+                </Field>
+              </>
+            )}
+            {mode === 'replace' && (
+              <>
+                <Field label="Planting to update">
+                  <Select data-testid="cap-rpplant" value={rpPlant} onChange={e => setRpPlant(e.target.value)}>
+                    <option value="">— pick a planting —</option>
+                    {plantings.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </Select>
+                </Field>
+                <Note>This photo becomes the planting’s featured picture.</Note>
+              </>
+            )}
+            {mode === 'inventory' && (
+              <>
+                <Field label="Item name">
+                  <Input data-testid="cap-invname" value={invName} onChange={e => setInvName(e.target.value)} placeholder="e.g. Pro-Mix HP" />
+                </Field>
+                <Field label="Type">
+                  <Select value={invType} onChange={e => { setInvType(e.target.value) }}>
+                    {INVENTORY_TYPES.map(t => <option key={t.value} value={t.value}>{t.value}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Category">
+                  <Select value={invCat} onChange={e => setInvCat(e.target.value)}>
+                    {INVENTORY_CATEGORIES.filter(c => c.types.includes(invType)).map(c => <option key={c.v} value={c.v}>{c.label}</option>)}
+                  </Select>
+                </Field>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Field label="Quantity" style={{ flex: 1 }}>
+                    <Input type="number" min="0" value={invQty} onChange={e => setInvQty(e.target.value)} />
+                  </Field>
+                  {invType === 'consumable' && (
+                    <Field label="Unit" style={{ flex: 1 }}>
+                      <Select value={invUnit} onChange={e => setInvUnit(e.target.value)}>
+                        {INVENTORY_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                      </Select>
+                    </Field>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
           {err && <p style={{ color: P.terra, fontSize: '0.85rem' }}>{err}</p>}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-            <button onClick={() => { setStep('mode'); setErr(null) }} disabled={saving} style={ghostBtn}>Back</button>
-            <button data-testid="cap-save" onClick={save} disabled={saving} style={primaryBtn(saving)}>{saving ? 'Saving…' : 'Save'}</button>
+            <Button variant="secondary" disabled={saving} onClick={() => { setStep('mode'); setErr(null) }}>Back</Button>
+            <Button data-testid="cap-save" variant="primary" loading={saving} loadingLabel="Saving…" onClick={save}>Save</Button>
           </div>
         </div>
       )}
@@ -261,11 +281,11 @@ export default function CaptureFlow() {
             <span style={{ fontWeight: 600, color: undone ? P.light : P.green, textDecoration: undone ? 'line-through' : 'none' }}>
               {undone ? 'Undone' : result.label}
             </span>
-            {!undone && <button data-testid="cap-undo" onClick={doUndo} disabled={saving} style={{ ...ghostBtn, padding: '5px 12px' }}>Undo</button>}
+            {!undone && <Button data-testid="cap-undo" variant="secondary" disabled={saving} onClick={doUndo} style={{ minHeight: 34, padding: '5px 12px' }}>Undo</Button>}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button data-testid="cap-next" onClick={resetForNext} style={primaryBtn(false)}>Save &amp; Next — snap another</button>
-            <button onClick={() => navigate('/today')} style={ghostBtn}>Done</button>
+            <Button data-testid="cap-next" variant="primary" onClick={resetForNext}>Save &amp; Next — snap another</Button>
+            <Button variant="secondary" onClick={() => navigate('/today')}>Done</Button>
           </div>
         </div>
       )}
@@ -273,9 +293,6 @@ export default function CaptureFlow() {
   )
 }
 
-function Label({ children }) {
-  return <label style={{ display: 'block', fontSize: '0.78rem', color: P.mid, fontWeight: 600, margin: '12px 0 4px' }}>{children}</label>
-}
 function Note({ children }) {
   return <p style={{ fontSize: '0.78rem', color: P.light, marginTop: 10 }}>{children}</p>
 }
