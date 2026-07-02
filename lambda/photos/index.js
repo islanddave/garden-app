@@ -4,6 +4,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope } from './household.js';
+import { resolvePhotoViewUrl } from './photo-access.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // requestChecksumCalculation/responseChecksumValidation: newer SDK v3 versions (3.679+) default
@@ -123,7 +124,7 @@ export const handler = async (event) => {
           AND created_by = ANY(${householdIds})
       `;
       if (!rows.length) return resp(404, { error: 'Not found' });
-      const viewUrl = await getViewUrl(rows[0].storage_path);
+      const viewUrl = await resolvePhotoViewUrl(rows[0].storage_path, { presign: getViewUrl, sm });
       return resp(200, { view_url: viewUrl, expires_in: 900 });
     }
 
@@ -161,7 +162,7 @@ export const handler = async (event) => {
       const withUrls = await Promise.all(
         rows.map(async (photo) => {
           try {
-            const view_url = await getViewUrl(photo.storage_path);
+            const view_url = await resolvePhotoViewUrl(photo.storage_path, { presign: getViewUrl, sm });
             return { ...photo, view_url };
           } catch {
             return { ...photo, view_url: null };

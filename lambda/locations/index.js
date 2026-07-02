@@ -4,6 +4,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope } from './household.js';
+import { resolvePhotoViewUrl } from './photo-access.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -158,7 +159,7 @@ export const handler = async (event) => {
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         const row = rows[0];
-        const featured_photo_view_url = await getFeaturedPhotoViewUrl(row.featured_photo_storage_path);
+        const featured_photo_view_url = await resolvePhotoViewUrl(row.featured_photo_storage_path, { presign: getFeaturedPhotoViewUrl, sm });
         const { featured_photo_storage_path: _ignore, ...rest } = row;
         return resp(200, { ...rest, featured_photo_view_url });
       }

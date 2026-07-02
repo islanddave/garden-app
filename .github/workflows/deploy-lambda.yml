@@ -115,6 +115,31 @@ jobs:
             echo "S3_PHOTOS_BUCKET=$EXPECTED on $FN"
           fi
 
+      - name: Ensure PHOTO_CDN_* config env for ${{ matrix.function }}
+        # V4-PHOTOCDN-001 P1: CDN issuance config for the 5 photo signers. Idempotent; merges into
+        # existing env. PHOTO_CDN_ENABLED is intentionally NOT set here (unset => OFF => legacy S3
+        # presign path); the CDN flip happens in a later phase by setting PHOTO_CDN_ENABLED=true.
+        # The signing private key stays in Secrets Manager (garden-app/photocdn-signing) — only the
+        # secret NAME + public-key id + distro domain are passed as env (no key material in config).
+        if: contains(fromJSON('["plants","projects","locations","inventory-items","photos"]'), matrix.function)
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
+        run: |
+          FN="garden-${{ matrix.function }}"
+          EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+          UPDATED=$(echo "$EXISTING" | jq \
+            --arg d "dovwpi82qccqi.cloudfront.net" \
+            --arg k "K1JIPLZ9SVNU1N" \
+            --arg s "garden-app/photocdn-signing" \
+            '. + {PHOTO_CDN_DOMAIN:$d, PHOTO_CDN_KEY_PAIR_ID:$k, PHOTO_CDN_SIGNING_SECRET:$s}')
+          if [[ "$UPDATED" == "$EXISTING" ]]; then
+            echo "PHOTO_CDN_* already set on $FN"
+          else
+            echo "{\"Variables\": $UPDATED}" > /tmp/env-photocdn.json
+            aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-photocdn.json >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "PHOTO_CDN_* set on $FN"
+          fi
+
       - name: Ensure ADMIN_CLERK_SUBS env for ux-events
         if: matrix.function == 'ux-events'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
