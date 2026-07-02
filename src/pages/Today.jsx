@@ -5,6 +5,7 @@ import WeatherWidget from '../components/today/WeatherWidget.jsx'
 import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import { P } from '../lib/constants.js'
+import Icon from '../components/Icon.jsx'
 
 // Today — the daily care surface (DRG-TODAY-002). Reads the per-user plan the overnight Daily Plan engine
 // (DRG-TODAY-001) persisted for today: an icon-first weather widget up top, a substrate/feeding note, and
@@ -31,7 +32,7 @@ export default function Today() {
     <div style={{ padding: 16, paddingBottom: 32, maxWidth: 640, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>Today</h1>
-        <Link to="/capture" data-testid="snap-entry-today" style={{ background: P.green, color: P.white, border: 'none', borderRadius: 20, padding: '7px 14px', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }}>📸 Snap</Link>
+        <Link to="/capture" data-testid="snap-entry-today" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: P.green, color: P.white, border: 'none', borderRadius: 20, padding: '7px 14px', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }}><Icon name="media.camera" size={15} decorative surface="inverse" /><span>Snap</span></Link>
       </div>
       <p style={{ fontSize: '0.84rem', color: P.light, marginTop: 0, marginBottom: 16 }}>
         {formatDate(data?.plan_date) || 'Your garden, at a glance'}
@@ -45,7 +46,7 @@ export default function Today() {
           padding: '28px 18px', textAlign: 'center', color: P.mid,
           background: P.white, border: `1px solid ${P.border}`, borderRadius: 12,
         }}>
-          <div style={{ fontSize: '1.6rem', marginBottom: 8 }}>🌅</div>
+          <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'center' }}><Icon name="care.sun" size={30} decorative /></div>
           <div style={{ fontSize: '1rem', fontWeight: 700, color: P.dark, marginBottom: 6 }}>
             Your first daily plan is on its way.
           </div>
@@ -66,7 +67,7 @@ export default function Today() {
               fontSize: '0.82rem', color: P.mid, lineHeight: 1.45,
               background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: '10px 12px',
             }}>
-              <span aria-hidden="true" style={{ marginRight: 6 }}>🌱</span>{plan.substrate.msg}
+              <Icon name="lifecycle.sprout" size={15} decorative style={{ marginRight: 6, verticalAlign: '-0.15em' }} />{plan.substrate.msg}
             </div>
           )}
 
