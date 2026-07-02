@@ -5,10 +5,12 @@
 const CACHE_VERSION = 'v16-20260524' // base default — deploy workflows rewrite this to v{version}-{sha} per deploy for cache-busting (deploy.yml / deploy-staging.yml). Frozen value caused stale-footer bug (2.1.1 fix).
 const STATIC_CACHE  = `static-${CACHE_VERSION}`
 const API_CACHE     = `api-${CACHE_VERSION}`
-// Image cache is intentionally UNVERSIONED — app images are stable across deploys, so we
-// persist them and bound growth by count (oldest-inserted evicted) rather than discarding
-// the whole set every deploy. Excluded from the version purge below. (V3-CACHE-001)
-const IMAGE_CACHE   = 'garden-images'
+// V4-PHOTOCDN-001 P2 (supersedes V3-CACHE-001): image cache is now VERSIONED and purged
+// on activate. The old unversioned garden-images cache persisted stale/poisoned entries forever
+// (excluded from purge), and per-request presigned URLs rotate the query string so entries
+// almost never re-matched anyway — pure growth, no hits. Versioning costs little and kills
+// the poison-persistence class. Content-type guard + signing-param normalization below.
+const IMAGE_CACHE   = `images-${CACHE_VERSION}`
 const MAX_IMAGE_ENTRIES = 150
 
 const LAMBDA_ORIGIN = 'lambda-url.us-east-1.on.aws'
@@ -34,7 +36,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys
-          .filter(k => k !== STATIC_CACHE && k !== API_CACHE && k !== IMAGE_CACHE)
+          .filter(k => k !== STATIC_CACHE && k !== API_CACHE && k !== IMAGE_CACHE) // old garden-images + prior images-* caches purge here too
           .map(k => caches.delete(k))
       )
     }).then(() => self.clients.claim())
@@ -58,9 +60,9 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Cache-first for images — separate bounded cache (persists across deploys, count-capped)
+  // Cache-first for images — separate bounded, versioned cache (count-capped).
   if (isImage(url)) {
-    event.respondWith(cacheFirst(request, IMAGE_CACHE, MAX_IMAGE_ENTRIES))
+    event.respondWith(imageCacheFirst(request))
     return
   }
 
@@ -78,6 +80,39 @@ self.addEventListener('fetch', (event) => {
 })
 
 // ---- Strategies ----
+
+// V4-PHOTOCDN-001 P2: CloudFront signed-URL params rotate per mint; keying the cache on the
+// full URL would make every re-mint a miss + an immortal entry. Strip signing params for
+// BOTH match and put. Dormant until the photo CDN issues signed URLs; harmless today.
+const SIGNING_PARAMS = ['Expires', 'Signature', 'Key-Pair-Id', 'Policy']
+function normalizeImageUrl(url) {
+  const u = new URL(url)
+  if (SIGNING_PARAMS.some(p => u.searchParams.has(p))) {
+    SIGNING_PARAMS.forEach(p => u.searchParams.delete(p))
+  }
+  return u.href
+}
+
+// Image variant of cacheFirst: normalized cache key + content-type guard. Only status-200
+// image/* responses are cached — S3/CloudFront 403s (application/xml), SPA index.html
+// poison (text/html), and opaque responses never enter the cache. (Closes V4-PHOTOSWHARDEN-001.)
+async function imageCacheFirst(request) {
+  const key = normalizeImageUrl(request.url)
+  const cache = await caches.open(IMAGE_CACHE)
+  const cached = await cache.match(key)
+  if (cached) return cached
+  try {
+    const response = await fetch(request)
+    const type = response.headers.get('content-type') ?? ''
+    if (response.status === 200 && type.startsWith('image/')) {
+      await cache.put(key, response.clone())
+      trimCache(IMAGE_CACHE, MAX_IMAGE_ENTRIES).catch(() => {})
+    }
+    return response
+  } catch {
+    return new Response('Offline', { status: 503 })
+  }
+}
 
 async function cacheFirst(request, cacheName, maxEntries) {
   const cached = await caches.match(request)
