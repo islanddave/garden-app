@@ -5,7 +5,9 @@
 //   GET /d/<variant>/<etag>/<original-key...>.webp
 //   variant ∈ {thumb, card}; etag = original's S3 ETag (hex, no quotes) —
 //   replacement at the same key yields a new etag => new derivative path (free invalidation).
-// Function URL is AuthType AWS_IAM + CloudFront Lambda-origin OAC; never public.
+// Function URL is AuthType NONE + x-origin-verify secret header (CloudFront origin
+// custom header, validated below) - IAM+OAC is unusable on origin-group failover
+// members (CloudFront doesn't sign retries; verified 2026-07-02).
 // ETag-mismatch semantics: serve from CURRENT original but SKIP the S3 write
 // (never persist a derivative under a stale-etag key).
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -27,8 +29,15 @@ const resp = (status, body, headers = {}) => ({
 });
 
 export const handler = async (event) => {
-  // In-Lambda self-test (spec §3.2 hard-abort assert): GET /d/__selftest__
+  // Origin auth: only CloudFront (which injects x-origin-verify) may use this URL.
+  // Direct boto3 Invoke (self-test) bypasses the URL layer and carries no headers -
+  // permitted only for the self-test route.
   const rawPath = event.rawPath ?? '';
+  const verify = event.headers?.['x-origin-verify'];
+  const expected = process.env.ORIGIN_VERIFY_SECRET;
+  if (rawPath !== '/d/__selftest__' && expected && verify !== expected) {
+    return resp(403, { error: 'Forbidden' });
+  }
   if (rawPath === '/d/__selftest__') {
     const png = await sharp({ create: { width: 16, height: 16, channels: 3, background: { r: 1, g: 2, b: 3 } } }).png().toBuffer();
     const webp = await sharp(png).webp().toBuffer();

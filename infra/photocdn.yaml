@@ -60,14 +60,6 @@ Resources:
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
-  LambdaOac:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: photocdn-lambda-oac
-        OriginAccessControlOriginType: lambda
-        SigningBehavior: always
-        SigningProtocol: sigv4
   SigningPublicKey:
     Type: AWS::CloudFront::PublicKey
     Properties:
@@ -144,23 +136,31 @@ Resources:
         Variables:
           ORIGINALS_BUCKET: !Ref OriginalsBucketName
           DERIVATIVES_BUCKET: !Ref DerivativesBucket
+      # V102 AMENDMENT (fact-settled 2026-07-02): NO Function URL, NO origin-group failover.
+      # Lambda URL origins cannot sit in an origin group: OAC does not sign failover
+      # retries, and without OAC CloudFront's own X-Amz-Cf-Id header trips SigV4
+      # validation on AuthType NONE URLs (both verified empirically). With derivative
+      # keys persisted on the photos row (spec B3), issuance never mints a URL for an
+      # absent derivative, so on-the-fly serving defended nothing. This Lambda is now
+      # an INTERNALLY-INVOKED generator (upload hook + P3d backfill) - zero public surface.
       Code:
         # Placeholder - real code (sharp linux-arm64) uploaded at bootstrap and thereafter
         # via deploy-lambda.yml matrix (update-function-code). CFN never re-deploys code.
         ZipFile: "exports.handler=async()=>({statusCode:503,body:'placeholder - code not yet deployed'})"
-  DerivativeLambdaUrl:
-    Type: AWS::Lambda::Url
+  StripOPrefixFunction:
+    Type: AWS::CloudFront::Function
     Properties:
-      TargetFunctionArn: !GetAtt DerivativeLambda.Arn
-      AuthType: AWS_IAM
-  DerivativeLambdaUrlPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      # Only THIS distribution may invoke the Function URL (spec B2 - never public).
-      FunctionName: !GetAtt DerivativeLambda.Arn
-      Action: lambda:InvokeFunctionUrl
-      Principal: cloudfront.amazonaws.com
-      SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${PhotosDistribution}
+      Name: photocdn-strip-o-prefix
+      AutoPublish: true
+      FunctionConfig:
+        Comment: /o/<key> viewer path -> /<key> origin path (originals bucket keys have no o/ prefix)
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var req = event.request;
+          if (req.uri.startsWith('/o/')) { req.uri = req.uri.slice(2); }
+          return req;
+        }
   PhotosDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -178,29 +178,9 @@ Resources:
             DomainName: !Sub ${OriginalsBucketName}.s3.${AWS::Region}.amazonaws.com
             OriginAccessControlId: !GetAtt S3Oac.Id
             S3OriginConfig: { OriginAccessIdentity: '' }
-          - Id: derivative-lambda
-            DomainName: !Select [2, !Split ['/', !GetAtt DerivativeLambdaUrl.FunctionUrl]]
-            OriginAccessControlId: !GetAtt LambdaOac.Id
-            CustomOriginConfig:
-              OriginProtocolPolicy: https-only
-              HTTPSPort: 443
-        OriginGroups:
-          Quantity: 1
-          Items:
-            - Id: derivatives-with-repair
-              # Failover on TRUE misses + server errors, NOT 403 (403 = real auth failure,
-              # must stay loud - spec I1). Transient repair errors must not negative-cache
-              # (error-caching TTL 0 via CustomErrorResponses below).
-              FailoverCriteria:
-                StatusCodes: { Quantity: 5, Items: [404, 500, 502, 503, 504] }
-              Members:
-                Quantity: 2
-                Items:
-                  - { OriginId: derivatives-s3 }
-                  - { OriginId: derivative-lambda }
         DefaultCacheBehavior:
           # Default = signed-only derivatives origin group; unsigned anything -> 403.
-          TargetOriginId: derivatives-with-repair
+          TargetOriginId: derivatives-s3
           ViewerProtocolPolicy: https-only
           AllowedMethods: [GET, HEAD]
           CachePolicyId: !Ref PhotoCachePolicy
@@ -208,7 +188,7 @@ Resources:
           TrustedKeyGroups: [!Ref SigningKeyGroup]
         CacheBehaviors:
           - PathPattern: /d/*
-            TargetOriginId: derivatives-with-repair
+            TargetOriginId: derivatives-s3
             ViewerProtocolPolicy: https-only
             AllowedMethods: [GET, HEAD]
             CachePolicyId: !Ref PhotoCachePolicy
@@ -216,13 +196,17 @@ Resources:
             TrustedKeyGroups: [!Ref SigningKeyGroup]
           - PathPattern: /o/*
             # Originals passthrough - NO failover (>6MB fulls can't route through the
-            # buffered Lambda; spec B1). Same key group.
+            # buffered Lambda; spec B1). Same key group. Function strips the /o prefix
+            # (bucket keys are bare). Signature validates BEFORE the function runs.
             TargetOriginId: originals-s3
             ViewerProtocolPolicy: https-only
             AllowedMethods: [GET, HEAD]
             CachePolicyId: !Ref PhotoCachePolicy
             ResponseHeadersPolicyId: !Ref PhotoCorsPolicy
             TrustedKeyGroups: [!Ref SigningKeyGroup]
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt StripOPrefixFunction.FunctionMetadata.FunctionARN
         CustomErrorResponses:
           # Error-caching TTL 0 - transient failures never stick (spec I1).
           # NO ResponsePagePath anywhere - the SPA 404->index.html poison class stays out.
