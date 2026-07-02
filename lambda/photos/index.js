@@ -283,12 +283,22 @@ export const handler = async (event) => {
              LIMIT 1
           `;
           if (entRows.length > 0) {
+            // V2 evidence schema requires the generalized NOT-NULL columns (evidence_class,
+            // entity_type, claim_scope, evidence_kind, claim, source_tier, trust_rank,
+            // strength_weight, captured_at, provenance). The old V1-shaped INSERT omitted them,
+            // so this "non-fatal" capture silently failed on EVERY plant photo (evidence_class
+            // NOT NULL) -> DrG got zero photo evidence. Mirror lambda/evidence-ingest/validate.js:
+            // first_party_log -> source_tier 'first_party_obs', trust_rank 4, strength_weight 0.700.
             await sql`
               INSERT INTO public.evidence
-                (entity_id, schema_version, tier, axis, polarity, finding_type, observed_at, note, photo_ref, source, created_by)
+                (entity_id, schema_version, tier, axis, polarity, finding_type, observed_at, note, photo_ref, source, created_by,
+                 evidence_class, entity_type, garden_node_id, claim_scope, evidence_kind, claim,
+                 source_tier, trust_rank, strength_weight, captured_at, provenance)
               VALUES
-                (${entRows[0].entity_id}::uuid, 1, 'first_party_log', 'local', 'supporting',
-                 NULL, NOW(), ${inserted.caption ?? null}, ${inserted.id}, 'photo_log', ${userId})
+                (${entRows[0].entity_id}::uuid, 2, 'first_party_log', 'local', 'supporting',
+                 NULL, NOW(), ${inserted.caption ?? null}, ${inserted.id}, 'photo_log', ${userId},
+                 'observation', 'organism', ${inserted.plant_id}::uuid, 'planting', 'photo',
+                 ${inserted.caption ?? 'Photo observation'}, 'first_party_obs', 4, 0.700, NOW(), 'user')
             `;
           }
         } catch (evErr) {
