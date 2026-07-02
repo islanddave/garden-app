@@ -228,11 +228,17 @@ export const handler = async (event) => {
         const hasAssignee = Object.prototype.hasOwnProperty.call(body, 'assignee_user_id');
         const hasLocation = Object.prototype.hasOwnProperty.call(body, 'location_id');
         if (hasFeatured && body.featured_photo_id != null) {
+          // V4-PHOTOFEATURE-002 (Dave bug: "Couldn't set featured photo"): accept a photo linked
+          // to this plant EITHER directly (photos.plant_id) OR via an event logged on this plant
+          // (photos.event_id -> event_log.plant_id). EventNew logs event photos with
+          // {project_id,event_id} and NO plant_id, so ~half of a plant's gallery photos are
+          // event-linked; the old plant_id-only check rejected them. Household-scoped as before.
           const linkRows = await sql`
-            SELECT 1 FROM photos
-             WHERE id = ${body.featured_photo_id}
-               AND plant_id = ${plantId}
-               AND created_by = ANY(${householdIds})
+            SELECT 1 FROM photos ph
+              LEFT JOIN event_log e ON e.id = ph.event_id
+             WHERE ph.id = ${body.featured_photo_id}
+               AND ph.created_by = ANY(${householdIds})
+               AND (ph.plant_id = ${plantId} OR e.plant_id = ${plantId})
           `;
           if (!linkRows.length) {
             return resp(400, { error: 'featured_photo_id must be a photo linked to this plant' });
