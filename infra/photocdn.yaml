@@ -1,0 +1,240 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  V4-PHOTOCDN-001 P0 infra SHELL (spec V101 - photocdn-build-spec-V101-20260702.1400.md).
+  Owns: derivatives bucket, dedicated photos distro (2 behaviors), OACs, public key + key group,
+  derivative Lambda RESOURCE (code ships via deploy-lambda.yml matrix; CFN Code is create-only
+  by convention). Does NOT own: garden-photos-prod bucket policy (ADDITIVE edit via script -
+  CFN would claim the whole policy). CloudFront is managed ONLY via this template
+  (UpdateDistribution is not idempotent - never hand-edit).
+Parameters:
+  SigningPublicKeyPem:
+    Type: String
+    Description: RSA public key PEM for CloudFront signed URLs (private half in Secrets Manager garden-app/photocdn-signing)
+  PublicKeyCallerReference:
+    Type: String
+    Description: Unique per key creation (parameterized so rotation = ADD a second PublicKey resource, never mutate)
+  OriginalsBucketName:
+    Type: String
+    Default: garden-photos-prod
+  SpaOrigin:
+    Type: String
+    Default: https://garden.futureishere.net
+Resources:
+  DerivativesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub garden-photos-derivatives-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  DerivativesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DerivativesBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudFrontOACRead
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub ${DerivativesBucket.Arn}/*
+            Condition:
+              StringEquals: { 'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${PhotosDistribution}' }
+          - Sid: CloudFrontOACList
+            # ListBucket makes missing keys TRUE 404s (not 403) so origin-group failover
+            # fires only on real misses (spec I1).
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:ListBucket
+            Resource: !GetAtt DerivativesBucket.Arn
+            Condition:
+              StringEquals: { 'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${PhotosDistribution}' }
+  S3Oac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: photocdn-s3-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+  LambdaOac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: photocdn-lambda-oac
+        OriginAccessControlOriginType: lambda
+        SigningBehavior: always
+        SigningProtocol: sigv4
+  SigningPublicKey:
+    Type: AWS::CloudFront::PublicKey
+    Properties:
+      PublicKeyConfig:
+        Name: photocdn-signing-key-v1
+        CallerReference: !Ref PublicKeyCallerReference
+        EncodedKey: !Ref SigningPublicKeyPem
+  SigningKeyGroup:
+    Type: AWS::CloudFront::KeyGroup
+    Properties:
+      KeyGroupConfig:
+        Name: photocdn-signers
+        Items: [!Ref SigningPublicKey]
+  PhotoCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: photocdn-no-querystring
+        # QueryStrings: none - signature params excluded from the cache key (spec I3).
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        MinTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig: { CookieBehavior: none }
+          HeadersConfig: { HeaderBehavior: none }
+          QueryStringsConfig: { QueryStringBehavior: none }
+          EnableAcceptEncodingGzip: false
+          EnableAcceptEncodingBrotli: false
+  PhotoCorsPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: photocdn-cors
+        CorsConfig:
+          AccessControlAllowCredentials: false
+          AccessControlAllowHeaders: { Items: ['*'] }
+          AccessControlAllowMethods: { Items: [GET, HEAD] }
+          AccessControlAllowOrigins: { Items: [!Ref SpaOrigin] }
+          OriginOverride: true
+  DerivativeLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: photocdn-derivative-lambda
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: photocdn-derivative
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::${OriginalsBucketName}/*
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub ${DerivativesBucket.Arn}/*
+  DerivativeLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: garden-photocdn-derivative
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      MemorySize: 2048
+      Timeout: 30
+      Handler: index.handler
+      Role: !GetAtt DerivativeLambdaRole.Arn
+      Environment:
+        Variables:
+          ORIGINALS_BUCKET: !Ref OriginalsBucketName
+          DERIVATIVES_BUCKET: !Ref DerivativesBucket
+      Code:
+        # Placeholder - real code (sharp linux-arm64) uploaded at bootstrap and thereafter
+        # via deploy-lambda.yml matrix (update-function-code). CFN never re-deploys code.
+        ZipFile: "exports.handler=async()=>({statusCode:503,body:'placeholder - code not yet deployed'})"
+  DerivativeLambdaUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt DerivativeLambda.Arn
+      AuthType: AWS_IAM
+  DerivativeLambdaUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      # Only THIS distribution may invoke the Function URL (spec B2 - never public).
+      FunctionName: !GetAtt DerivativeLambda.Arn
+      Action: lambda:InvokeFunctionUrl
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${PhotosDistribution}
+  PhotosDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: V4-PHOTOCDN-001 dedicated photos distro (spec V101). No SPA error-responses here - ever.
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: derivatives-s3
+            DomainName: !GetAtt DerivativesBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt S3Oac.Id
+            S3OriginConfig: { OriginAccessIdentity: '' }
+          - Id: originals-s3
+            DomainName: !Sub ${OriginalsBucketName}.s3.${AWS::Region}.amazonaws.com
+            OriginAccessControlId: !GetAtt S3Oac.Id
+            S3OriginConfig: { OriginAccessIdentity: '' }
+          - Id: derivative-lambda
+            DomainName: !Select [2, !Split ['/', !GetAtt DerivativeLambdaUrl.FunctionUrl]]
+            OriginAccessControlId: !GetAtt LambdaOac.Id
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              HTTPSPort: 443
+        OriginGroups:
+          Quantity: 1
+          Items:
+            - Id: derivatives-with-repair
+              # Failover on TRUE misses + server errors, NOT 403 (403 = real auth failure,
+              # must stay loud - spec I1). Transient repair errors must not negative-cache
+              # (error-caching TTL 0 via CustomErrorResponses below).
+              FailoverCriteria:
+                StatusCodes: { Quantity: 5, Items: [404, 500, 502, 503, 504] }
+              Members:
+                Quantity: 2
+                Items:
+                  - { OriginId: derivatives-s3 }
+                  - { OriginId: derivative-lambda }
+        DefaultCacheBehavior:
+          # Default = signed-only derivatives origin group; unsigned anything -> 403.
+          TargetOriginId: derivatives-with-repair
+          ViewerProtocolPolicy: https-only
+          AllowedMethods: [GET, HEAD]
+          CachePolicyId: !Ref PhotoCachePolicy
+          ResponseHeadersPolicyId: !Ref PhotoCorsPolicy
+          TrustedKeyGroups: [!Ref SigningKeyGroup]
+        CacheBehaviors:
+          - PathPattern: /d/*
+            TargetOriginId: derivatives-with-repair
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD]
+            CachePolicyId: !Ref PhotoCachePolicy
+            ResponseHeadersPolicyId: !Ref PhotoCorsPolicy
+            TrustedKeyGroups: [!Ref SigningKeyGroup]
+          - PathPattern: /o/*
+            # Originals passthrough - NO failover (>6MB fulls can't route through the
+            # buffered Lambda; spec B1). Same key group.
+            TargetOriginId: originals-s3
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD]
+            CachePolicyId: !Ref PhotoCachePolicy
+            ResponseHeadersPolicyId: !Ref PhotoCorsPolicy
+            TrustedKeyGroups: [!Ref SigningKeyGroup]
+        CustomErrorResponses:
+          # Error-caching TTL 0 - transient failures never stick (spec I1).
+          # NO ResponsePagePath anywhere - the SPA 404->index.html poison class stays out.
+          - { ErrorCode: 403, ErrorCachingMinTTL: 0 }
+          - { ErrorCode: 404, ErrorCachingMinTTL: 0 }
+          - { ErrorCode: 500, ErrorCachingMinTTL: 0 }
+          - { ErrorCode: 502, ErrorCachingMinTTL: 0 }
+          - { ErrorCode: 503, ErrorCachingMinTTL: 0 }
+          - { ErrorCode: 504, ErrorCachingMinTTL: 0 }
+Outputs:
+  DistributionId: { Value: !Ref PhotosDistribution }
+  DistributionDomain: { Value: !GetAtt PhotosDistribution.DomainName }
+  KeyGroupId: { Value: !Ref SigningKeyGroup }
+  PublicKeyId: { Value: !Ref SigningPublicKey }
+  DerivativesBucketName: { Value: !Ref DerivativesBucket }
