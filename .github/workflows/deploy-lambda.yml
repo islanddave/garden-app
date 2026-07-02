@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         # One job per Lambda function directory under lambda/
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, ux-events, xp-reconcile, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, daily-plan, tags]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, ux-events, xp-reconcile, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, daily-plan, tags, photocdn-derivative]
       # No max-parallel cap: all functions dispatch in one wave so the
       # environment:production approval gate prompts ONCE (not 3 batches of 4).
       # Re-add `max-parallel: N` here only if Lambda control-plane rate limits appear.
@@ -52,10 +52,28 @@ jobs:
           npm run check:event-types
 
       - name: Build and zip ${{ matrix.function }}
+        if: matrix.function != 'photocdn-derivative'
         run: |
           cd lambda/${{ matrix.function }}
           npm install --omit=dev
           zip -r ../${{ matrix.function }}.zip .
+
+      # V4-PHOTOCDN-001: photocdn-derivative is nodejs22.x/arm64 and depends on `sharp` (native).
+      # The GHA runner is x86_64, so a plain `npm install` would package the x64 sharp binary -> a
+      # module-load 502 on the arm64 Lambda (invisible until an internal invoke, days later). Install
+      # the linux-arm64 binary explicitly and HARD-ASSERT it is inside the zip before deploying.
+      - name: Build and zip photocdn-derivative (arm64 sharp)
+        if: matrix.function == 'photocdn-derivative'
+        run: |
+          node -v && npm -v
+          cd lambda/photocdn-derivative
+          npm install --omit=dev --os=linux --cpu=arm64 --include=optional
+          zip -r ../photocdn-derivative.zip .
+          if ! unzip -l ../photocdn-derivative.zip | grep -q 'sharp-linux-arm64'; then
+            echo "FATAL: linux-arm64 sharp binary missing from zip — refusing to deploy an x64 build to an arm64 Lambda"; exit 1
+          fi
+          unzip -l ../photocdn-derivative.zip | grep -q 'node_modules/blurhash' || { echo "FATAL: blurhash dep missing from zip"; exit 1; }
+          echo "arm64 sharp + blurhash present in photocdn-derivative.zip"
 
       - name: Deploy or create ${{ matrix.function }}
         run: |
@@ -177,7 +195,7 @@ jobs:
           fi
 
       - name: Ensure Function URL exists for ${{ matrix.function }}
-        if: matrix.function != 'xp-reconcile' && matrix.function != 'daily-plan'  # xp-reconcile is EventBridge-invoked, no Function URL
+        if: matrix.function != 'xp-reconcile' && matrix.function != 'daily-plan' && matrix.function != 'photocdn-derivative'  # xp-reconcile/daily-plan EventBridge; photocdn-derivative INTERNAL-INVOKE ONLY (spec-B2: NO public AuthType-NONE URL)
         continue-on-error: true  # requires lambda:CreateFunctionUrlConfig + lambda:GetFunctionUrlConfig + lambda:AddPermission on deploy role
         run: |
           FUNCTION_NAME="garden-${{ matrix.function }}"
@@ -210,7 +228,7 @@ jobs:
           fi
 
       - name: Restore Lambda Function URL CORS (prod garden.futureishere.net)
-        if: matrix.function != 'xp-reconcile' && matrix.function != 'daily-plan'  # xp-reconcile has no Function URL
+        if: matrix.function != 'xp-reconcile' && matrix.function != 'daily-plan' && matrix.function != 'photocdn-derivative'  # photocdn-derivative has no Function URL
         continue-on-error: true  # requires lambda:UpdateFunctionUrlConfig on deploy role
         run: |
           # Set CORS to allow garden.futureishere.net (the prod SPA origin).
@@ -224,6 +242,24 @@ jobs:
             --cors '{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE","PATCH"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}' \
             --query 'Cors.AllowOrigins[0]' --output text
           echo "CORS restored for garden-${{ matrix.function }}"
+
+      - name: Verify photocdn-derivative (arm64 self-test + no public URL)
+        if: matrix.function == 'photocdn-derivative'
+        run: |
+          # (a) Prove the deployed arm64 build actually loads sharp+blurhash+heif — the ONLY tripwire
+          # that catches an x64-sharp mismatch or a CFN placeholder-revert (both invisible to CI's
+          # static lambda tests). Internal invoke, RequestResponse.
+          aws lambda invoke --function-name garden-photocdn-derivative \
+            --cli-binary-format raw-in-base64-out \
+            --payload '{"rawPath":"/d/__selftest__"}' /tmp/selftest.json >/dev/null
+          cat /tmp/selftest.json
+          python3 -c "import json,sys; d=json.load(open('/tmp/selftest.json')); b=json.loads(d['body']); assert b.get('sharp_ok') and b.get('blurhash_ok') and b.get('heif_input') and b.get('arch')=='arm64', 'self-test failed: '+str(b); print('self-test OK', b)"
+          # (b) Spec-B2: assert this internal-invoke Lambda has NO public Function URL and no public
+          # invoke policy (a prior generic run or drift could have created one).
+          if aws lambda get-function-url-config --function-name garden-photocdn-derivative 2>/dev/null; then
+            echo "FATAL: photocdn-derivative has a Function URL — spec-B2 forbids a public surface"; exit 1
+          fi
+          echo "verified: no Function URL on garden-photocdn-derivative"
 
       - name: Set xp-reconcile DRY_RUN env on first deploy
         if: matrix.function == 'xp-reconcile'

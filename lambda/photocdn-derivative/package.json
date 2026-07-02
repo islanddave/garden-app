@@ -4,7 +4,8 @@
   "type": "module",
   "description": "V4-PHOTOCDN-001 derivative repair Lambda. MUST be packaged linux-arm64: npm install --os=linux --cpu=arm64 (Mac/darwin build = module-load failure).",
   "dependencies": {
-    "sharp": "^0.34.0",
-    "@aws-sdk/client-s3": "^3.600.0"
+    "@aws-sdk/client-s3": "^3.600.0",
+    "blurhash": "^2.0.5",
+    "sharp": "^0.34.0"
   }
 }
