@@ -25,6 +25,7 @@
 //   /api/members            → VITE_API_MEMBERS       household roster for the caretaker picker (PLANT-ASSIGN-001)
 //   /api/tags               → VITE_API_TAGS         faceted tag substrate CRUD (V4-TAGSUB-001)
 //   /api/entity-tags        → VITE_API_TAGS         entity↔tag attach/detach + projected derived tags
+//   /api/search             → VITE_API_DASHBOARD    server-side universal search (V4-SEARCH-002)
 
 import { useAuth } from '@clerk/react'
 import { useCallback } from 'react'
@@ -39,6 +40,7 @@ const FUNCTION_URLS = {
   '/api/favorites':         import.meta.env.VITE_API_FAVORITES     ?? '',
   '/api/photos':            import.meta.env.VITE_API_PHOTOS        ?? '',
   '/api/dashboard':         import.meta.env.VITE_API_DASHBOARD     ?? '',
+  '/api/search':            import.meta.env.VITE_API_DASHBOARD     ?? '',
   '/api/inventory-items':   import.meta.env.VITE_API_INVENTORY     ?? '',
   '/api/varieties':         import.meta.env.VITE_API_VARIETIES     ?? '',
   '/api/achievements':      import.meta.env.VITE_API_ACHIEVEMENTS  ?? '',

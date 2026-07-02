@@ -23,14 +23,16 @@ describe('dashboard handlers — Household Mode scope widening', () => {
     expect(SRC).not.toMatch(/from '@neondatabase\/serverless'/);
   });
 
-  it('7 informational ownership-filtering builders each compute householdIds', () => {
+  it('13 informational ownership-filtering builders each compute householdIds', () => {
+    // V4-SEARCH-002 added 6 scoped search builders (plantings/projects/locations/events/inventory/photos).
     const matches = SRC.match(/const householdIds = householdScope\(userId\)/g) ?? [];
-    expect(matches.length).toBe(7);
+    expect(matches.length).toBe(13);
   });
 
-  it('8 informational ownership filter sites stay widened to = ANY(${householdIds})', () => {
+  it('14 informational ownership filter sites stay widened to = ANY(${householdIds})', () => {
+    // V4-SEARCH-002: +6 search-builder scope sites (varieties stays global-read, unscoped).
     const matches = SRC.match(/created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(8);
+    expect(matches.length).toBe(14);
   });
 
   it('queryFavoriteCount stays per-user (user_id, no householdIds)', () => {

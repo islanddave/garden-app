@@ -35,6 +35,7 @@ import {
   handleDashboard,
   handleGetInactive,
   handleDismissInactive,
+  handleSearch,
   UUID_RE,
 } from './handlers.js';
 
@@ -88,6 +89,7 @@ export const handler = async (event) => {
   const sql = neon(secrets.NEON_DATABASE_URL);
 
   try {
+    if (route.kind === 'search') return await handleSearch(sql, userId, event.queryStringParameters?.q ?? '');
     if (route.kind === 'inactive-list') return await handleGetInactive(sql, userId);
     if (route.kind === 'inactive-dismiss') return await handleDismissInactive(sql, userId, route.projectId);
     // route.kind === 'dashboard'

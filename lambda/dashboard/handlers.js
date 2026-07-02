@@ -57,6 +57,11 @@ export function classifyRoute(method, rawPath) {
     return { kind: 'inactive-dismiss', projectId };
   }
 
+  if (path === '/api/search') {
+    if (method !== 'GET') return { kind: 'method-not-allowed' };
+    return { kind: 'search' };
+  }
+
   if (path !== '/api/dashboard' && path !== '/' && path !== '') {
     return { kind: 'not-found' };
   }
@@ -677,4 +682,189 @@ export async function handleDismissInactive(sql, userId, projectId) {
     return resp(404, { error: 'Not found' });
   }
   return resp(200, { dismissed: true, dismissed_at: row.dismissed_at });
+}
+
+// ---- V4-SEARCH-002: server-side universal search ---------------------------
+// GET /api/search?q=... — seven per-entity parameterized ILIKE queries run via
+// Promise.allSettled (one failing section degrades to [] instead of 500ing the
+// whole endpoint). Scoping predicates copied VERBATIM from each entity's
+// canonical read handler (never re-derived): plantings/events scope via parent
+// container.created_by; projects/locations/inventory/photos via own created_by;
+// varieties (cultivar) are globally readable. All queries filter
+// deleted_at IS NULL (+ archived_at where the source handler does).
+// private_notes (container, event_log) excluded from BOTH predicate and
+// projection by design. LIKE metacharacters escaped (wildcard-injection guard);
+// every pattern binds with explicit ESCAPE '\'. No S3/presign here — photo rows
+// return caption + parent ids only (dashboard Lambda has no S3 env; L-072 class).
+
+export const SEARCH_LIMIT = 20;
+export const SEARCH_MIN_LEN = 2;
+export const SEARCH_MAX_LEN = 64;
+
+export function normalizeSearchQuery(raw) {
+  const q = (raw ?? '').toString().replace(/\s+/g, ' ').trim();
+  if (q.length < SEARCH_MIN_LEN || q.length > SEARCH_MAX_LEN) return null;
+  return q;
+}
+
+// Escape LIKE metacharacters so q='%' cannot match every row.
+export function likeEscape(q) {
+  return q.replace(/[\\%_]/g, (m) => '\\' + m);
+}
+
+export function searchPlantings(sql, userId, pat, prefixPat) {
+  const householdIds = householdScope(userId);
+  return sql`
+      SELECT p.id, p.display_name AS name, p.status,
+             p.container_id AS project_id, pp.display_name AS project_name,
+             LEFT(COALESCE(p.notes, ''), 160) AS snippet
+      FROM public.garden_node p
+      JOIN public.container pp ON pp.id = p.container_id
+      WHERE pp.created_by = ANY(${householdIds})
+        AND p.deleted_at IS NULL AND p.archived_at IS NULL
+        AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
+        AND (p.display_name ILIKE ${pat} ESCAPE '\\'
+             OR p.notes ILIKE ${pat} ESCAPE '\\'
+             OR p.lineage_note ILIKE ${pat} ESCAPE '\\'
+             OR p.container_type ILIKE ${pat} ESCAPE '\\')
+      ORDER BY CASE WHEN p.display_name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END,
+               p.display_name ASC
+      LIMIT 20
+    `;
+}
+
+export function searchProjects(sql, userId, pat, prefixPat) {
+  const householdIds = householdScope(userId);
+  return sql`
+      SELECT id, display_name AS name, status, species, variety,
+             LEFT(COALESCE(description, ''), 160) AS snippet
+      FROM public.container
+      WHERE created_by = ANY(${householdIds})
+        AND deleted_at IS NULL AND archived_at IS NULL
+        AND (display_name ILIKE ${pat} ESCAPE '\\'
+             OR description ILIKE ${pat} ESCAPE '\\'
+             OR species ILIKE ${pat} ESCAPE '\\'
+             OR variety ILIKE ${pat} ESCAPE '\\')
+      ORDER BY CASE WHEN display_name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END,
+               display_name ASC
+      LIMIT 20
+    `;
+}
+
+export function searchLocations(sql, userId, pat, prefixPat) {
+  const householdIds = householdScope(userId);
+  return sql`
+      SELECT id, name, type_label
+      FROM locations
+      WHERE created_by = ANY(${householdIds})
+        AND deleted_at IS NULL
+        AND (name ILIKE ${pat} ESCAPE '\\'
+             OR description ILIKE ${pat} ESCAPE '\\'
+             OR notes ILIKE ${pat} ESCAPE '\\'
+             OR type_label ILIKE ${pat} ESCAPE '\\')
+      ORDER BY CASE WHEN name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END,
+               name ASC
+      LIMIT 20
+    `;
+}
+
+// Varieties are globally readable — no created_by filter (verbatim from
+// lambda/varieties GET list: "Globally readable — no created_by filter.").
+export function searchVarieties(sql, pat, prefixPat) {
+  return sql`
+      SELECT id, display_name AS name, species, crop_type_slug, lifecycle,
+             LEFT(COALESCE(care_notes, ''), 160) AS snippet
+      FROM public.cultivar
+      WHERE deleted_at IS NULL
+        AND (display_name ILIKE ${pat} ESCAPE '\\'
+             OR species ILIKE ${pat} ESCAPE '\\'
+             OR genus ILIKE ${pat} ESCAPE '\\'
+             OR care_notes ILIKE ${pat} ESCAPE '\\'
+             OR soil_notes ILIKE ${pat} ESCAPE '\\')
+      ORDER BY CASE WHEN display_name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END,
+               display_name ASC
+      LIMIT 20
+    `;
+}
+
+export function searchEvents(sql, userId, pat) {
+  const householdIds = householdScope(userId);
+  return sql`
+      SELECT e.id, e.event_type, e.title, e.event_date,
+             e.project_id, e.plant_id, pp.display_name AS project_name,
+             LEFT(COALESCE(e.notes, ''), 160) AS snippet
+      FROM event_log e
+      JOIN public.container pp ON pp.id = e.project_id
+      WHERE pp.created_by = ANY(${householdIds})
+        AND e.deleted_at IS NULL
+        AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
+        AND (e.title ILIKE ${pat} ESCAPE '\\'
+             OR e.notes ILIKE ${pat} ESCAPE '\\'
+             OR e.event_type ILIKE ${pat} ESCAPE '\\')
+      ORDER BY e.created_at DESC
+      LIMIT 20
+    `;
+}
+
+export function searchInventory(sql, userId, pat, prefixPat) {
+  const householdIds = householdScope(userId);
+  return sql`
+      SELECT i.id, i.name, i.category, i.status, i.location_text,
+             LEFT(COALESCE(i.notes, ''), 160) AS snippet
+      FROM inventory_items i
+      WHERE i.created_by = ANY(${householdIds})
+        AND i.deleted_at IS NULL
+        AND (i.name ILIKE ${pat} ESCAPE '\\'
+             OR i.brand ILIKE ${pat} ESCAPE '\\'
+             OR i.model ILIKE ${pat} ESCAPE '\\'
+             OR i.category ILIKE ${pat} ESCAPE '\\'
+             OR i.location_text ILIKE ${pat} ESCAPE '\\'
+             OR i.notes ILIKE ${pat} ESCAPE '\\')
+      ORDER BY CASE WHEN i.name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END,
+               i.name ASC
+      LIMIT 20
+    `;
+}
+
+export function searchPhotos(sql, userId, pat) {
+  const householdIds = householdScope(userId);
+  return sql`
+      SELECT p.id, p.caption, p.project_id, p.plant_id, p.created_at
+      FROM photos p
+      WHERE p.created_by = ANY(${householdIds})
+        AND p.deleted_at IS NULL
+        AND p.caption IS NOT NULL AND p.caption <> ''
+        AND p.caption ILIKE ${pat} ESCAPE '\\'
+      ORDER BY p.created_at DESC
+      LIMIT 20
+    `;
+}
+
+export const SEARCH_SECTIONS = ['plantings', 'projects', 'locations', 'varieties', 'events', 'inventory', 'photos'];
+
+export async function handleSearch(sql, userId, rawQ) {
+  const q = normalizeSearchQuery(rawQ);
+  if (!q) return resp(400, { error: `Query must be ${SEARCH_MIN_LEN}-${SEARCH_MAX_LEN} characters` });
+  const esc = likeEscape(q);
+  const pat = '%' + esc + '%';
+  const prefixPat = esc + '%';
+  const settled = await Promise.allSettled([
+    searchPlantings(sql, userId, pat, prefixPat),
+    searchProjects(sql, userId, pat, prefixPat),
+    searchLocations(sql, userId, pat, prefixPat),
+    searchVarieties(sql, pat, prefixPat),
+    searchEvents(sql, userId, pat),
+    searchInventory(sql, userId, pat, prefixPat),
+    searchPhotos(sql, userId, pat),
+  ]);
+  const results = {};
+  settled.forEach((s, i) => {
+    if (s.status === 'fulfilled') {
+      results[SEARCH_SECTIONS[i]] = s.value;
+    } else {
+      console.error('search section failed:', SEARCH_SECTIONS[i], s.reason?.message ?? String(s.reason));
+      results[SEARCH_SECTIONS[i]] = [];
+    }
+  });
+  return resp(200, { query: q, results });
 }

@@ -1,9 +1,13 @@
-// V4-SEARCH-001 — universal search, client-side slice. Searches the three core entities the app
-// already exposes — plantings (/api/plants), locations (/api/locations), varieties (/api/varieties) —
-// filtered in-browser (instant, offline-tolerant, no new backend). Server-side universal search across
-// ALL entities (events, projects, photos, guides) is the V4 follow-up (V4-SEARCH-002, on the roadmap).
-// Voice reuses transcribe.js's Web-Speech wrapper (iOS start/no-speech watchdogs + graceful "type it"
-// fallback); the mic only renders where isTranscriptionSupported() is true, so it's honest on iOS.
+// V4-SEARCH-001 + V4-SEARCH-002 — universal search, hybrid client/server.
+// Core three entities (plantings /api/plants, locations /api/locations, varieties /api/varieties)
+// stay CLIENT-SIDE: full lists fetched once, filtered in-browser — instant and weak-signal/offline
+// tolerant (garden use). The server slice (V4-SEARCH-002) adds GET /api/search?q= (dashboard Lambda):
+// projects, events, inventory, photos PLUS notes-column matches on the core three that the client
+// filter can't see. Merge rule: client rows win for the core three; server rows dedupe by id and
+// append. Server call is debounced 300ms with AbortController (stale responses dropped); a server
+// failure degrades gracefully to the client-side experience — never blocks it.
+// Voice reuses transcribe.js's Web-Speech wrapper (iOS start/no-speech watchdogs + graceful
+// "type it" fallback); the mic only renders where isTranscriptionSupported() is true.
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -28,6 +32,10 @@ function MicIcon({ size = 18, color = P.greenDeep }) {
   )
 }
 
+const SERVER_DEBOUNCE_MS = 300
+const SERVER_MIN_LEN = 2
+const EMPTY_SERVER = { plantings: [], projects: [], locations: [], varieties: [], events: [], inventory: [], photos: [] }
+
 export default function Search() {
   const { fetch } = useApiFetch()
   const [params] = useSearchParams()
@@ -37,6 +45,8 @@ export default function Search() {
   const [varieties, setVarieties] = useState([])
   const [loading, setLoading] = useState(true)
   const [voice, setVoice] = useState('idle') // idle | listening | error
+  const [server, setServer] = useState(null)          // /api/search payload for the CURRENT query, or null
+  const [serverState, setServerState] = useState('idle') // idle | loading | ok | error
   const inputRef = useRef(null)
   const voiceRef = useRef(null)
   const speechOk = isTranscriptionSupported()
@@ -79,6 +89,21 @@ export default function Search() {
   }, [speechOk])
 
   const query = norm(q).trim()
+
+  // V4-SEARCH-002: debounced server search. Abort-on-supersede prevents a slow
+  // stale response landing over a newer one; any failure degrades to client-only.
+  useEffect(() => {
+    if (query.length < SERVER_MIN_LEN) { setServer(null); setServerState('idle'); return }
+    const ctl = new AbortController()
+    const t = setTimeout(() => {
+      setServerState('loading')
+      fetch(`/api/search?q=${encodeURIComponent(query)}`, { signal: ctl.signal })
+        .then(data => { if (!ctl.signal.aborted) { setServer(data); setServerState('ok') } })
+        .catch(() => { if (!ctl.signal.aborted) { setServer(null); setServerState('error') } })
+    }, SERVER_DEBOUNCE_MS)
+    return () => { clearTimeout(t); ctl.abort() }
+  }, [query, fetch])
+
   const results = useMemo(() => {
     if (!query) return { plants: [], locations: [], varieties: [] }
     const hit = s => norm(s).includes(query)
@@ -88,12 +113,44 @@ export default function Search() {
       varieties: varieties.filter(v => hit(v.name)).slice(0, 40),
     }
   }, [query, plants, locations, varieties])
+
+  // Merge: server hits on the core three that the client filter missed (notes/care-notes
+  // columns live server-side only). Client rows win; dedupe by id.
+  const srv = (server && serverState === 'ok') ? { ...EMPTY_SERVER, ...(server.results ?? {}) } : EMPTY_SERVER
+  const extraPlantings = useMemo(() => {
+    const seen = new Set(results.plants.map(p => p.id))
+    return srv.plantings.filter(r => !seen.has(r.id))
+  }, [results.plants, srv.plantings])
+  const extraLocations = useMemo(() => {
+    const seen = new Set(results.locations.map(l => l.id))
+    return srv.locations.filter(r => !seen.has(r.id))
+  }, [results.locations, srv.locations])
+  const extraVarieties = useMemo(() => {
+    const seen = new Set(results.varieties.map(v => v.id))
+    return srv.varieties.filter(r => !seen.has(r.id))
+  }, [results.varieties, srv.varieties])
+
   const total = results.plants.length + results.locations.length + results.varieties.length
+    + extraPlantings.length + extraLocations.length + extraVarieties.length
+    + srv.projects.length + srv.events.length + srv.inventory.length + srv.photos.length
 
   const rowStyle = { display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, textDecoration: 'none', marginBottom: 8 }
   const nameStyle = { fontWeight: 700, color: P.dark, fontSize: '0.92rem' }
   const subStyle = { fontSize: '0.75rem', color: P.light }
   const sectionHead = { fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', color: P.mid, margin: '16px 2px 8px' }
+  const chev = <span aria-hidden="true" style={{ color: P.light }}>{'›'}</span>
+
+  const Row = ({ to, name, sub }) => {
+    const inner = (<><div style={{ flex: 1 }}><div style={nameStyle}>{name}</div>{sub && <div style={subStyle}>{sub}</div>}</div>{chev}</>)
+    return to ? <Link to={to} style={rowStyle}>{inner}</Link> : <div style={rowStyle}>{inner}</div>
+  }
+
+  const plantingRow = p => {
+    const to = p.project_id && p.id ? `/projects/${p.project_id}/plantings/${p.id}` : null
+    const sub = p.variety_ref?.name && p.variety_ref.name !== p.name ? p.variety_ref.name
+      : (p.variety_ref?.group ?? p.project_name ?? p.snippet ?? null)
+    return <Row key={p.id} to={to} name={p.name || 'Planting'} sub={sub} />
+  }
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
@@ -106,7 +163,7 @@ export default function Search() {
             type="search"
             value={q}
             onChange={e => setQ(e.target.value)}
-            placeholder="Search plantings, locations, varieties"
+            placeholder="Search your whole garden"
             aria-label="Search your garden"
             style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: '0.95rem', color: P.dark, fontFamily: 'inherit' }}
           />
@@ -130,42 +187,32 @@ export default function Search() {
 
         {!loading && !query && (
           <p style={{ color: P.mid, fontSize: '0.9rem', textAlign: 'center', marginTop: 28, lineHeight: 1.5 }}>
-            Search across your plantings, locations, and varieties.<br />
-            <span style={subStyle}>More of your garden becomes searchable soon.</span>
+            Search everything in your garden &mdash; plantings, projects, locations,<br />
+            varieties, events, inventory, and photo captions.
           </p>
         )}
 
-        {!loading && query && total === 0 && (
+        {!loading && query && total === 0 && serverState !== 'loading' && (
           <p style={{ color: P.mid, fontSize: '0.9rem', textAlign: 'center', marginTop: 28 }}>No matches for &ldquo;{q.trim()}&rdquo;.</p>
         )}
 
-        {!loading && query && results.plants.length > 0 && (
+        {!loading && query && (results.plants.length > 0 || extraPlantings.length > 0) && (
           <>
             <div style={sectionHead}>Plantings</div>
-            {results.plants.map(p => {
-              const to = p.project_id && p.id ? `/projects/${p.project_id}/plantings/${p.id}` : null
-              const sub = p.variety_ref?.name && p.variety_ref.name !== p.name ? p.variety_ref.name : (p.variety_ref?.group ?? null)
-              const inner = (<><div style={{ flex: 1 }}><div style={nameStyle}>{p.name || 'Planting'}</div>{sub && <div style={subStyle}>{sub}</div>}</div><span aria-hidden="true" style={{ color: P.light }}>{'›'}</span></>)
-              return to
-                ? <Link key={p.id} to={to} style={rowStyle}>{inner}</Link>
-                : <div key={p.id} style={rowStyle}>{inner}</div>
-            })}
+            {results.plants.map(plantingRow)}
+            {extraPlantings.map(plantingRow)}
           </>
         )}
 
-        {!loading && query && results.locations.length > 0 && (
+        {!loading && query && (results.locations.length > 0 || extraLocations.length > 0) && (
           <>
             <div style={sectionHead}>Locations</div>
-            {results.locations.map(l => (
-              <Link key={l.id} to={`/locations/${l.id}`} style={rowStyle}>
-                <div style={{ flex: 1 }}><div style={nameStyle}>{l.name}</div></div>
-                <span aria-hidden="true" style={{ color: P.light }}>{'›'}</span>
-              </Link>
-            ))}
+            {results.locations.map(l => <Row key={l.id} to={`/locations/${l.id}`} name={l.name} sub={null} />)}
+            {extraLocations.map(l => <Row key={l.id} to={`/locations/${l.id}`} name={l.name} sub={l.type_label ?? null} />)}
           </>
         )}
 
-        {!loading && query && results.varieties.length > 0 && (
+        {!loading && query && (results.varieties.length > 0 || extraVarieties.length > 0) && (
           <>
             <div style={sectionHead}>Varieties</div>
             {results.varieties.map(v => (
@@ -173,7 +220,53 @@ export default function Search() {
                 <div style={{ flex: 1 }}><div style={nameStyle}>{v.name}</div>{(v.group || v.crop_type_slug) && <div style={subStyle}>{v.group || v.crop_type_slug}</div>}</div>
               </div>
             ))}
+            {extraVarieties.map(v => (
+              <div key={v.id} style={rowStyle}>
+                <div style={{ flex: 1 }}><div style={nameStyle}>{v.name}</div>{(v.species || v.crop_type_slug) && <div style={subStyle}>{v.species || v.crop_type_slug}</div>}</div>
+              </div>
+            ))}
           </>
+        )}
+
+        {!loading && query && srv.projects.length > 0 && (
+          <>
+            <div style={sectionHead}>Projects</div>
+            {srv.projects.map(pr => <Row key={pr.id} to={`/projects/${pr.id}`} name={pr.name} sub={pr.species || pr.snippet || pr.status || null} />)}
+          </>
+        )}
+
+        {!loading && query && srv.events.length > 0 && (
+          <>
+            <div style={sectionHead}>Events</div>
+            {srv.events.map(ev => (
+              <Row key={ev.id}
+                to={ev.project_id ? `/projects/${ev.project_id}/events/${ev.id}` : null}
+                name={ev.title || ev.event_type}
+                sub={[ev.project_name, ev.event_date ? String(ev.event_date).slice(0, 10) : null, ev.snippet].filter(Boolean).join(' · ') || null} />
+            ))}
+          </>
+        )}
+
+        {!loading && query && srv.inventory.length > 0 && (
+          <>
+            <div style={sectionHead}>Inventory</div>
+            {srv.inventory.map(it => <Row key={it.id} to={`/inventory/${it.id}`} name={it.name} sub={[it.category, it.location_text].filter(Boolean).join(' · ') || null} />)}
+          </>
+        )}
+
+        {!loading && query && srv.photos.length > 0 && (
+          <>
+            <div style={sectionHead}>Photos</div>
+            {srv.photos.map(ph => (
+              <Row key={ph.id}
+                to={ph.project_id && ph.plant_id ? `/projects/${ph.project_id}/plantings/${ph.plant_id}` : (ph.project_id ? `/projects/${ph.project_id}` : '/photos')}
+                name={ph.caption} sub="Photo" />
+            ))}
+          </>
+        )}
+
+        {!loading && query && serverState === 'loading' && (
+          <p style={{ ...subStyle, textAlign: 'center', marginTop: 16 }}>Searching the rest of your garden&hellip;</p>
         )}
 
       </div>
