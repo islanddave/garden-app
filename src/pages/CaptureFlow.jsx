@@ -152,11 +152,6 @@ export default function CaptureFlow() {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>📸 Snap</h1>
-        <button onClick={() => navigate(-1)} style={ghostBtn}>Close</button>
-      </div>
-
       {preview && (
         <img src={preview} alt="capture preview" style={{ width: '100%', maxHeight: 280, objectFit: 'cover', borderRadius: 10, marginBottom: 14 }} />
       )}

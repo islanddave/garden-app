@@ -1,5 +1,5 @@
 import React from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 // import { useZone } from '../context/ZoneContext.jsx' // DISABLED pre-V2 (2026-05-22): zone pill commented out below
 import { useMode } from '../context/ModeContext.jsx'
@@ -19,11 +19,12 @@ import { P, APP_NAME } from '../lib/constants.js'
 // the sole signal). Tap to toggle. WCAG AA: cream text on a tonal cream-tinted
 // pill against P.green background = sufficient contrast.
 
-export default function TopBar() {
+export default function TopBar({ showBack = false } = {}) {
   const { user }       = useAuth()
   // const { activeZone } = useZone() // DISABLED pre-V2 (2026-05-22): zone pill commented out below
   const { mode, toggleMode, isField } = useMode()
   const location       = useLocation()
+  const navigate       = useNavigate()
 
   const modeLabel = isField ? 'Field' : 'Desk'
   const modeIcon  = isField ? '🌿' : '💻'
@@ -48,24 +49,41 @@ export default function TopBar() {
       boxSizing: 'border-box',
     }}>
 
-      {/* App name / home link → "Gardens at Home" Dashboard */}
-      <Link
-        to={user ? '/dashboard' : '/'}
-        style={{
-          color: P.cream,
-          textDecoration: 'none',
-          fontWeight: 700,
-          fontSize: '0.95rem',
-          letterSpacing: '0.2px',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          maxWidth: '55%',
-          flexShrink: 1,
-        }}
-      >
-        {APP_NAME}
-      </Link>
+      {/* Left: optional Back (pushed/detail routes, V4-APPBAR-002) + app name / home link */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+        {showBack && (
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            aria-label="Back"
+            data-testid="topbar-back"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36, marginLeft: -6, flexShrink: 0,
+              background: 'transparent', border: 'none', color: P.cream, cursor: 'pointer',
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={P.cream} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
+          </button>
+        )}
+        <Link
+          to={user ? '/dashboard' : '/'}
+          style={{
+            color: P.cream,
+            textDecoration: 'none',
+            fontWeight: 700,
+            fontSize: '0.95rem',
+            letterSpacing: '0.2px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            maxWidth: '55%',
+            flexShrink: 1,
+          }}
+        >
+          {APP_NAME}
+        </Link>
+      </div>
 
       {/* Right side controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
