@@ -36,3 +36,23 @@ describe('TopChrome (V4-APPBAR-001) — search-first header', () => {
     expect(screen.queryByLabelText('Search your garden')).toBe(null)
   })
 })
+
+describe('TopChrome (V4-APPBANNER-001) — daily banner, root variant only', () => {
+  it('root tab renders the decorative banner photo + scrim behind the controls', () => {
+    renderAt('/today')
+    const img = screen.getByTestId('header-banner')
+    expect(img.getAttribute('aria-hidden')).toBe('true')
+    expect(img.getAttribute('alt')).toBe('')
+    expect(img.getAttribute('src')).toBeTruthy()
+    expect(screen.getByTestId('header-banner-scrim')).toBeTruthy()
+  })
+  it('detail route gets NO banner (TopBar fallback)', () => {
+    renderAt('/projects/abc')
+    expect(screen.queryByTestId('header-banner')).toBe(null)
+    expect(screen.queryByTestId('header-banner-scrim')).toBe(null)
+  })
+  it('header keeps its solid peach base under the banner (image-failure fallback)', () => {
+    const { container } = renderAt('/garden')
+    expect(container.querySelector('header').style.backgroundColor).toBe('rgb(249, 227, 214)')
+  })
+})
