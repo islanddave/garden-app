@@ -168,3 +168,9 @@ describe('V4-EVENTSEL-001 — taxonomy fix + explicit category order', () => {
     expect(order).toEqual(expected);
   });
 });
+
+describe('V4-EVENTSEL-001 — Dave-approved taxonomy taste-calls', () => {
+  it('weeded is Care', () => expect(EVENT_TYPE_META.weeded.category).toBe('Care'));
+  it('caged is Growth & Training', () => expect(EVENT_TYPE_META.caged.category).toBe('Growth & Training'));
+  it('animal_damage is Environmental', () => expect(EVENT_TYPE_META.animal_damage.category).toBe('Environmental'));
+});
