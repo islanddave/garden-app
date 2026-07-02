@@ -6,7 +6,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P, projectKindOptions } from '../lib/constants.js'
 import { VARIETY_REF_UI_SHIPPED } from '../lib/featureFlags.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
-import { Field, Input, Select, Textarea, Button, ErrorBanner, StatusSelect } from '../components/forms'
+import { Field, Input, Select, Textarea, Button, ErrorBanner, StatusSelect, SelectChip } from '../components/forms'
 
 function slugify(str) {
   return str.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -140,7 +140,7 @@ export default function ProjectNew() {
               <>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: P.light, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Garden</div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-                  {gardenTypes.map(t => <TypeChip key={t.id} type={t} selected={selectedType?.id === t.id} onSelect={handleTypeSelect} />)}
+                  {gardenTypes.map(t => <SelectChip key={t.id} active={selectedType?.id === t.id} onClick={() => handleTypeSelect(t)}><span aria-hidden="true" style={{ marginRight: 4 }}>{t.icon}</span>{t.name}</SelectChip>)}
                 </div>
               </>
             )}
@@ -148,7 +148,7 @@ export default function ProjectNew() {
               <>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: P.light, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Infrastructure</div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {infraTypes.map(t => <TypeChip key={t.id} type={t} selected={selectedType?.id === t.id} onSelect={handleTypeSelect} />)}
+                  {infraTypes.map(t => <SelectChip key={t.id} active={selectedType?.id === t.id} onClick={() => handleTypeSelect(t)}><span aria-hidden="true" style={{ marginRight: 4 }}>{t.icon}</span>{t.name}</SelectChip>)}
                 </div>
               </>
             )}
@@ -265,17 +265,3 @@ export default function ProjectNew() {
   )
 }
 
-function TypeChip({ type: t, selected, onSelect }) {
-  return (
-    <button type="button" onClick={() => onSelect(t)} style={{
-      display: 'flex', alignItems: 'center', gap: 6,
-      padding: '7px 13px', borderRadius: 20,
-      border: `2px solid ${selected ? P.green : P.border}`,
-      backgroundColor: selected ? P.greenPale : P.white,
-      cursor: 'pointer', fontSize: '0.83rem', fontWeight: selected ? 700 : 400,
-      color: selected ? P.green : P.mid, transition: 'all 0.15s',
-    }}>
-      <span style={{ fontSize: '1rem' }}>{t.icon}</span> {t.name}
-    </button>
-  )
-}

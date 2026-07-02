@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useZone } from '../context/ZoneContext.jsx'
 import { P } from '../lib/constants.js'
+import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
 
 function zoneIcon(zone) {
   if (zone.icon) return zone.icon
@@ -89,30 +90,24 @@ export default function ZonePicker() {
           Zone focus is coming soon — picking one won't filter your views yet.
         </p>
 
-        <ZoneCard
-          icon="🗺️"
-          name="Everywhere"
-          subtitle="All zones — show everything"
-          selected={activeZone === null}
-          onSelect={() => select(null)}
-        />
-
-        {zones.map(zone => {
-          const count = counts[zone.id] ?? 0
-          return (
-            <ZoneCard
-              key={zone.id}
-              icon={zoneIcon(zone)}
-              name={zone.name}
-              subtitle={count === 0
-                ? 'No active projects'
-                : `${count} active project${count === 1 ? '' : 's'}`
+        <ChoiceGrid
+          layout="list"
+          ariaLabel="Zone"
+          value={activeZone?.id ?? '__all__'}
+          onChange={(id) => select(id === '__all__' ? null : zones.find(z => z.id === id))}
+          options={[
+            { value: '__all__', label: 'Everywhere', description: 'All zones — show everything', icon: '🗺️' },
+            ...zones.map(zone => {
+              const count = counts[zone.id] ?? 0
+              return {
+                value: zone.id,
+                label: zone.name,
+                description: count === 0 ? 'No active projects' : `${count} active project${count === 1 ? '' : 's'}`,
+                icon: zoneIcon(zone),
               }
-              selected={activeZone?.id === zone.id}
-              onSelect={() => select(zone)}
-            />
-          )
-        })}
+            }),
+          ]}
+        />
 
         {zones.length === 0 && (
           <div style={{
@@ -154,61 +149,3 @@ export default function ZonePicker() {
   )
 }
 
-function ZoneCard({ icon, name, subtitle, selected, onSelect }) {
-  const [pressed, setPressed] = useState(false)
-
-  return (
-    <button
-      onClick={onSelect}
-      onMouseDown={() => setPressed(true)}
-      onMouseUp={() => setPressed(false)}
-      onMouseLeave={() => setPressed(false)}
-      onTouchStart={() => setPressed(true)}
-      onTouchEnd={() => setPressed(false)}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '16px',
-        width: '100%',
-        minHeight: '80px',
-        padding: '16px 20px',
-        marginBottom: '10px',
-        backgroundColor: selected ? P.greenPale : P.white,
-        border: `2px solid ${selected ? P.green : P.border}`,
-        borderRadius: '12px',
-        cursor: 'pointer',
-        textAlign: 'left',
-        outline: 'none',
-        fontFamily: 'inherit',
-        transition: 'border-color 150ms ease, background-color 150ms ease',
-        transform: pressed ? 'scale(0.98)' : 'scale(1)',
-        boxShadow: selected ? `0 0 0 1px ${P.green}20` : 'none',
-      }}
-    >
-      <span style={{ fontSize: '2rem', lineHeight: 1, flexShrink: 0, userSelect: 'none' }}>
-        {icon}
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontWeight: 700,
-          fontSize: '1.05rem',
-          color: selected ? P.green : P.dark,
-          lineHeight: 1.25,
-        }}>
-          {name}
-        </div>
-        <div style={{
-          fontSize: '0.85rem',
-          color: P.mid,
-          marginTop: '3px',
-          lineHeight: 1.3,
-        }}>
-          {subtitle}
-        </div>
-      </div>
-      {selected && (
-        <span style={{ fontSize: '1.3rem', color: P.green, flexShrink: 0 }}>✓</span>
-      )}
-    </button>
-  )
-}

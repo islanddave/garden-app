@@ -8,6 +8,7 @@ import VarietyPicker from '../components/VarietyPicker.jsx'
 
 import { INVENTORY_TYPES as TYPES, INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS } from '../lib/inventoryEnums.js'
 import { EnumSelect, Field, Input, Textarea, Button } from '../components/forms'
+import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
 
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function InventoryAdd() {
@@ -250,17 +251,15 @@ export default function InventoryAdd() {
 
             {/* Type */}
             <Field label="Type" error={errors.type}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                {TYPES.map(t => (
-                  <TypeCard
-                    key={t.value}
-                    type={t}
-                    selected={form.type === t.value}
-                    onSelect={() => handleTypeSelect(t.value)}
-                    hasError={!!errors.type}
-                  />
-                ))}
-              </div>
+              <ChoiceGrid
+                layout="grid"
+                columns={2}
+                ariaLabel="Type"
+                value={form.type}
+                onChange={handleTypeSelect}
+                error={errors.type}
+                options={TYPES.map(t => ({ value: t.value, label: t.label, icon: t.emoji, description: t.example }))}
+              />
             </Field>
 
             {/* Category */}
@@ -493,37 +492,6 @@ export default function InventoryAdd() {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-function TypeCard({ type, selected, onSelect, hasError }) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      style={{
-        padding: '16px 12px',
-        border: `2px solid ${selected ? P.green : hasError ? P.terra : P.border}`,
-        borderRadius: 10,
-        backgroundColor: selected ? P.greenPale : P.white,
-        cursor: 'pointer',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 8,
-        transition: 'all 0.12s',
-        minHeight: 90,
-        textAlign: 'center',
-      }}
-    >
-      <span style={{ fontSize: '1.8rem', lineHeight: 1 }}>{type.emoji}</span>
-      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: selected ? P.green : P.dark }}>
-        {type.label}
-      </span>
-      <span style={{ fontSize: '0.72rem', color: P.light, lineHeight: 1.3 }}>
-        {type.example}
-      </span>
-    </button>
-  )
-}
-
 // ── Styles ────────────────────────────────────────────────────────────────────
 const card = {
   backgroundColor: P.white,
