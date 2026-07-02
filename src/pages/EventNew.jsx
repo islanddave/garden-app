@@ -389,7 +389,7 @@ export default function EventNew() {
     setSaving(false)
   }
 
-  async function handleSubmit(e, { keepMode = 'plant' } = {}) {
+  async function handleSubmit(e, { keepMode = 'type' } = {}) {
     e.preventDefault()
     if (!form.event_type)  { setError('Select an event type above.'); return }
     if (!form.project_id)  { setError('Select a project.'); return }
@@ -892,14 +892,15 @@ export default function EventNew() {
               right: 20,
               zIndex: 200,
               display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'flex-end',
-              gap: 10,
+              justifyContent: 'flex-end',
             }}
           >
+            {/* V4-EVENTSAVE-001 (Dave): one Save = the former "Next of Type" behavior
+                (keep the event_type, clear the plant, stay on the form for the next plant).
+                The old "Next of Plant" button was rarely used and was removed. */}
             <Button
               type="button"
-              variant="secondary"
+              variant="primary"
               loading={saving}
               loadingLabel="Saving…"
               onClick={e => handleSubmit(e, { keepMode: 'type' })}
@@ -908,20 +909,7 @@ export default function EventNew() {
                 minWidth: 180,
               }}
             >
-              Save · Next of Type
-            </Button>
-            <Button
-              type="button"
-              variant="primary"
-              loading={saving}
-              loadingLabel="Saving…"
-              onClick={e => handleSubmit(e, { keepMode: 'plant' })}
-              style={{
-                boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
-                minWidth: 180,
-              }}
-            >
-              Save · Next of Plant
+              Save
             </Button>
           </div>
 

@@ -176,7 +176,7 @@ describe('EventNew — harvest client-side validation', () => {
   it('blocks POST with an inline error when quantity is empty', async () => {
     await setupHarvest()
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
     expect(postCalls.length).toBe(0)
     expect(screen.getByText(/quantity greater than zero/i)).toBeTruthy()
@@ -186,7 +186,7 @@ describe('EventNew — harvest client-side validation', () => {
     await setupHarvest()
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '0' } })
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
     expect(postCalls.length).toBe(0)
     expect(screen.getByText(/quantity greater than zero/i)).toBeTruthy()
@@ -196,7 +196,7 @@ describe('EventNew — harvest client-side validation', () => {
     await setupHarvest()
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '-5' } })
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
     expect(postCalls.length).toBe(0)
     expect(screen.getByText(/quantity greater than zero/i)).toBeTruthy()
@@ -208,7 +208,7 @@ describe('EventNew — harvest client-side validation', () => {
     fireEvent.change(screen.getByLabelText('Harvest unit'), { target: { value: 'count' } })
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '99999' } })
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
     expect(postCalls.length).toBe(0)
     expect(screen.getByText(/higher than expected/i)).toBeTruthy()
@@ -226,7 +226,7 @@ describe('EventNew — valid harvest submit', () => {
     fireEvent.click(screen.getByLabelText('4 = good'))
 
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
 
     expect(postCalls.length).toBe(1)
@@ -244,7 +244,7 @@ describe('EventNew — valid harvest submit', () => {
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '3' } })
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
     expect(postCalls.length).toBe(1)
     expect(postCalls[0].harvest.quality_rating).toBeNull()
@@ -283,7 +283,7 @@ describe('EventNew — friendlyError on server failure', () => {
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '3' } })
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
     expect(screen.getByText('Quantity is unusually high — double-check?')).toBeTruthy()
     // raw server string must NOT appear
@@ -296,7 +296,7 @@ describe('EventNew — friendlyError on server failure', () => {
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
     expect(screen.getByText('Couldn’t save — try again.')).toBeTruthy()
   })
@@ -307,7 +307,7 @@ describe('EventNew — friendlyError on server failure', () => {
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
     expect(screen.getByText('Something didn’t look right — check the form and try again.')).toBeTruthy()
   })
@@ -319,7 +319,7 @@ describe('EventNew — non-harvest POST unchanged', () => {
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
     expect(postCalls.length).toBe(1)
     expect(postCalls[0].harvest).toBeUndefined()
@@ -340,7 +340,7 @@ describe('EventNew — V3-EVENTCONTSIZE-001 container capture on potting_up/tran
     fireEvent.change(screen.getByLabelText(/Pot size/i), { target: { value: '5 gal' } })
 
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
 
     expect(postCalls.length).toBe(1)
@@ -361,7 +361,7 @@ describe('EventNew — V3-EVENTCONTSIZE-001 container capture on potting_up/tran
     fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
 
     await act(async () => {
-      fireEvent.click(screen.getByText('Save · Next of Plant'))
+      fireEvent.click(screen.getByText('Save'))
     })
 
     expect(postCalls.length).toBe(1)
@@ -372,47 +372,19 @@ describe('EventNew — V3-EVENTCONTSIZE-001 container capture on potting_up/tran
   })
 })
 
-describe('EventNew — V3-EVENT-001 two-mode rapid entry (Save · Next of Plant / Type)', () => {
-  it('Save · Next of Plant fires the POST and does NOT navigate', async () => {
+describe('EventNew — V4-EVENTSAVE-001 single Save = next-of-type', () => {
+  it('Save fires the POST and does NOT navigate', async () => {
     renderEventNew('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    await act(async () => { fireEvent.click(screen.getByText('Save · Next of Plant')) })
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(postCalls.length).toBe(1)
     expect(postCalls[0].event_type).toBe('watering')
     expect(postCalls[0].project_id).toBe('proj-1')
     expect(navigateSpy).not.toHaveBeenCalled()
   })
 
-  it('Save · Next of Plant keeps project+plant, clears type and notes', async () => {
-    dataRef.plants = [{ id: 'pl-1', name: 'Cayenne #1' }]
-    renderEventNew('event_type=watering')
-    await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    await waitFor(() => screen.getByText('Cayenne #1'))
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
-    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'first watering' } })
-
-    await act(async () => { fireEvent.click(screen.getByText('Save · Next of Plant')) })
-
-    expect(postCalls.length).toBe(1)
-    expect(navigateSpy).not.toHaveBeenCalled()
-    expect(screen.getByLabelText('Project').value).toBe('proj-1')
-    expect(screen.getByLabelText('Plant or group').value).toBe('pl-1')
-    expect(screen.getByLabelText('Notes').value).toBe('')
-    expect(screen.queryByLabelText('Harvest quantity')).toBeNull()
-    await waitFor(() => { expect(screen.getByText('Logged event for Tomatoes 2026')).toBeTruthy() })
-    expect(screen.getByText('Undo')).toBeTruthy()
-
-    fireEvent.click(screen.getByText('Watered'))
-    await act(async () => { fireEvent.click(screen.getByText('Save · Next of Plant')) })
-    expect(postCalls.length).toBe(2)
-    expect(postCalls[1].project_id).toBe('proj-1')
-    expect(postCalls[1].plant_id).toBe('pl-1')
-    expect(navigateSpy).not.toHaveBeenCalled()
-  })
-
-  it('Save · Next of Type keeps the type, clears the plant', async () => {
+  it('Save keeps the type, clears the plant', async () => {
     dataRef.plants = [{ id: 'pl-1', name: 'Cayenne #1' }, { id: 'pl-2', name: 'Cayenne #2' }]
     renderEventNew('event_type=watering')
     await flushLoad()
@@ -420,7 +392,7 @@ describe('EventNew — V3-EVENT-001 two-mode rapid entry (Save · Next of Plant 
     await waitFor(() => screen.getByText('Cayenne #1'))
     fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
 
-    await act(async () => { fireEvent.click(screen.getByText('Save · Next of Type')) })
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
 
     expect(postCalls.length).toBe(1)
     expect(postCalls[0].event_type).toBe('watering')
@@ -433,7 +405,7 @@ describe('EventNew — V3-EVENT-001 two-mode rapid entry (Save · Next of Plant 
 
     // log the SAME type against the next plant WITHOUT re-picking the type
     fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-2' } })
-    await act(async () => { fireEvent.click(screen.getByText('Save · Next of Type')) })
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(postCalls.length).toBe(2)
     expect(postCalls[1].event_type).toBe('watering')
     expect(postCalls[1].plant_id).toBe('pl-2')
@@ -445,7 +417,8 @@ describe('EventNew — V3-EVENT-001 two-mode rapid entry (Save · Next of Plant 
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
     expect(screen.queryByText('+ Log event')).toBeNull()
-    await act(async () => { fireEvent.click(screen.getByText('Save · Next of Plant')) })
+    expect(screen.getAllByText('Save').length).toBe(1)
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(navigateSpy).not.toHaveBeenCalled()
   })
 
@@ -453,7 +426,7 @@ describe('EventNew — V3-EVENT-001 two-mode rapid entry (Save · Next of Plant 
     renderEventNew('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    await act(async () => { fireEvent.click(screen.getByText('Save · Next of Plant')) })
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
     await waitFor(() => screen.getByText('Undo'))
     await act(async () => { fireEvent.click(screen.getByText('Undo')) })
     const del = apiFetchSpy.mock.calls.find(([p, o]) => p === '/api/events/evt-1' && o && o.method === 'DELETE')
