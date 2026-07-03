@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.24.0",
+    "date": "2026-07-03",
+    "highlights": [
+      "Today screen and weather card now use our own clean icons instead of emoji",
+      "Tidier event-type menu when logging (Rain now filed under Environmental)"
+    ]
+  },
+  {
     "version": "3.23.0",
     "date": "2026-07-02",
     "highlights": [
