@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.25.0",
+    "date": "2026-07-04",
+    "highlights": [
+      "See who cares for what: filter your Garden and Doctor Gardener by caretaker (Mine / Jen / Everyone), with a small caretaker mark on each planting",
+      "Today can now show the rest of the household's care too — an opt-in peek at everyone's watering and to-dos, log them with one tap",
+      "A gentle dot by the header heart lets you know when there's something new in What's New"
+    ]
+  },
+  {
     "version": "3.24.0",
     "date": "2026-07-03",
     "highlights": [
