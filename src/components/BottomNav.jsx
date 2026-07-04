@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
+import WhatsNewDot from './WhatsNewDot.jsx'
 import { P } from '../lib/constants.js'
 import CatchUpBadge from './CatchUpBadge.jsx'
 import { CATCH_UP_EDITOR_SHIPPED } from '../lib/featureFlags.js'
@@ -185,7 +186,7 @@ export default function BottomNav() {
           <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>ℹ️</span>About
         </Link>
         <Link to="/releases" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📋</span>Release Notes
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📋</span>Release Notes<WhatsNewDot variant="inline" />
         </Link>
 
         {/* Sign Out — inline 2-step confirm (BottomNav-owned; Sheet stays a dumb container).

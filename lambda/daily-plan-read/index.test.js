@@ -19,8 +19,8 @@ describe('daily-plan-read Lambda — static read-path invariants', () => {
     expect(SRC).toMatch(/secretKey:\s*secrets\.CLERK_SECRET_KEY/);
   });
 
-  it('is READ-ONLY — two SELECTs (plan read + V3-TODAYDONE-001 done-derivation), no write verbs', () => {
-    expect(stmts.length).toBe(2);
+  it('is READ-ONLY — three SELECTs (plan read + V3-TODAYDONE-001 done-derivation + V4-ASSIGNLENS household read), no write verbs', () => {
+    expect(stmts.length).toBe(3);
     for (const s of stmts) expect(s).toMatch(/SELECT/);
     for (const s of stmts) expect(s).not.toMatch(/\b(INSERT|UPDATE|DELETE|UPSERT|MERGE)\b/i);
   });
@@ -36,9 +36,21 @@ describe('daily-plan-read Lambda — static read-path invariants', () => {
     expect(SRC).toMatch(/no_history:\s*\[[^\]]*'rain'[^\]]*\]/);
   });
 
-  it('scopes PER-USER to the authenticated subject (never household-widened)', () => {
+  it('DEFAULT is PER-USER (dp.user_id = ${userId}); household widening is OPT-IN only', () => {
+    // The primary plan read is still keyed strictly to the authenticated subject.
     expect(stmts[0]).toMatch(/dp\.user_id = \$\{userId\}/);
-    expect(SRC).not.toMatch(/householdScope/);
+    // householdScope is used ONLY inside the ?include=household opt-in branch — never by default.
+    expect(SRC).toMatch(/const includeHousehold = \(event\.queryStringParameters\?\.include\) === 'household'/);
+    expect(SRC).toMatch(/if \(includeHousehold\) \{\s*\n\s*const otherIds = householdScope\(userId\)/);
+    // household_plans is added to the response body ONLY under the opt-in (default envelope unchanged).
+    expect(SRC).toMatch(/if \(includeHousehold\) body\.household_plans = householdPlans;/);
+  });
+
+  it('V4-ASSIGNLENS: the household read (3rd SELECT) reuses the schema_version guard + newest-wins dedup', () => {
+    expect(stmts[2]).toMatch(/FROM daily_plan dp/);
+    expect(stmts[2]).toMatch(/dp\.user_id = ANY\(\$\{ids\}\)/);
+    expect(SRC).toMatch(/storedV !== PLAN_SCHEMA_VERSION\) \{ plan = null; \}/);
+    expect(SRC).toMatch(/if \(seen\.has\(r\.user_id\)\) continue;/);
   });
 
   it('filters soft-deleted plans', () => {

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import WeatherWidget from '../components/today/WeatherWidget.jsx'
@@ -6,6 +6,8 @@ import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
+import { useMembers } from '../hooks/useMembers.js'
+import { useAuthOptional } from '../context/AuthContext.jsx'
 
 // Today — the daily care surface (DRG-TODAY-002). Reads the per-user plan the overnight Daily Plan engine
 // (DRG-TODAY-001) persisted for today: an icon-first weather widget up top, a substrate/feeding note, and
@@ -21,9 +23,22 @@ function formatDate(iso) {
 }
 
 export default function Today() {
-  const { data, loading, error } = useDailyPlan()
+  // V4-ASSIGNLENS-001 — opt-in "also show the rest of the household's care" on Today. Default is
+  // strictly per-user (mine only). Only when the toggle is on (and there IS another caretaker) do we
+  // ask the read model to widen (?include=household). Care logging on others' items uses the same
+  // household-scoped POST /api/events, so no per-item auth change is needed.
+  const { profile } = useAuthOptional()
+  const { members } = useMembers()
+  const others = (members || []).filter(m => m && m.id && m.id !== profile?.id)
+  const canShowOthers = others.length > 0
+  const [showOthers, setShowOthers] = useState(() => { try { return localStorage.getItem('garden.today.showOthers') === '1' } catch { return false } })
+  const toggleOthers = () => setShowOthers(v => { const nv = !v; try { localStorage.setItem('garden.today.showOthers', nv ? '1' : '0') } catch { /* ignore */ } return nv })
+  const nameFor = (sub) => { const m = others.find(o => o.id === sub); const n = (m?.display_name || '').trim(); return n ? n.split(/\s+/)[0] : 'Someone else' }
+
+  const { data, loading, error } = useDailyPlan({ includeHousehold: showOthers && canShowOthers })
   const plan = data?.plan ?? null
   const hasPlan = !!data?.has_plan
+  const householdPlans = Array.isArray(data?.household_plans) ? data.household_plans : []
   // DRG-WXROLL-001 — refresh the displayed rain figure live (Open-Meteo) using the plan's resolved coords;
   // display-only, the watering recommendation stays the nightly plan. No coords/offline -> nightly snapshot.
   const { liveHydrology, refreshedAt } = useLiveRain(plan?.weather_coords ?? plan?.coords)
@@ -72,6 +87,38 @@ export default function Today() {
           )}
 
           <CareNeeded plan={plan} />
+        </div>
+      )}
+
+      {/* V4-ASSIGNLENS-001 — the rest of the household's care (opt-in, ambient, subordinate). Works
+          whether or not the current user has their own plan today. Reuses CareNeeded so logging on
+          another caretaker's planting goes through the identical one-tap events path. */}
+      {!loading && !error && canShowOthers && (
+        <div style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            onClick={toggleOthers}
+            aria-pressed={showOthers}
+            style={{
+              background: 'none', border: `1px solid ${P.border}`, borderRadius: 20,
+              padding: '6px 14px', fontSize: '0.82rem', fontWeight: 600, color: P.mid, cursor: 'pointer',
+            }}
+          >
+            {showOthers ? 'Hide' : 'Show'} the rest of the household’s care
+          </button>
+          {showOthers && householdPlans.map(hp => (
+            <details key={hp.user_id} open style={{ marginTop: 12, borderTop: `1px solid ${P.border}`, paddingTop: 12 }}>
+              <summary style={{ cursor: 'pointer', fontSize: '0.95rem', fontWeight: 700, color: P.mid, listStyle: 'revert', padding: '2px 0' }}>
+                {nameFor(hp.user_id)}’s care today
+              </summary>
+              <div style={{ marginTop: 10 }}>
+                <CareNeeded plan={hp.plan} />
+              </div>
+            </details>
+          ))}
+          {showOthers && householdPlans.length === 0 && (
+            <p style={{ fontSize: '0.82rem', color: P.light, marginTop: 10 }}>No one else has care needs today.</p>
+          )}
         </div>
       )}
     </div>

@@ -14,6 +14,7 @@ import FavoriteToggle from './FavoriteToggle.jsx'
 import PlantStatusBadge from './PlantStatusBadge.jsx'
 import CritterSprite from './CritterSprite.jsx'
 import PhotoUpload from './PhotoUpload.jsx'
+import CaretakerBadge from './CaretakerBadge.jsx'
 
 // No-photo fallback (RES-2): neutral cream 4:3 swatch + a generic seedling SVG (shape, not
 // color-only) + a "tap to add first photo" CTA. Species-agnostic: /api/plants carries no
@@ -37,6 +38,7 @@ export default function PlantingTile({
   onSpriteIntersect = null,
   onPhotoUploaded = null,
   flashId = null,
+  caretaker = null,
 }) {
   const variety = pl.variety_ref?.name
   const hasPhoto = Boolean(pl.featured_photo_view_url)
@@ -156,7 +158,10 @@ export default function PlantingTile({
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 2 }}>
-          {pl.status ? <PlantStatusBadge status={pl.status} /> : <span />}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {pl.status ? <PlantStatusBadge status={pl.status} /> : <span />}
+            {caretaker && <CaretakerBadge caretaker={caretaker} size={18} />}
+          </div>
           <PhotoUpload
             keyPrefix="plants"
             parentId={pl.id}

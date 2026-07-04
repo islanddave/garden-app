@@ -4,6 +4,7 @@
 // the mandatory version bump), so this surface auto-updates without touching the deploy YAML.
 import React, { useEffect, useState } from 'react'
 import { P } from '../lib/constants.js'
+import { writeSeen } from '../lib/whatsNew.js'
 
 // Pure + testable: newest-first list -> the most recent n entries.
 export function latestReleases(list, n = 10) {
@@ -18,7 +19,14 @@ export default function ReleaseNotes() {
     let on = true
     fetch('/releases.json', { cache: 'no-cache' })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-      .then(d => { if (on) setReleases(latestReleases(d, 10)) })
+      .then(d => {
+        if (!on) return
+        setReleases(latestReleases(d, 10))
+        // V4-WHATSNEW-001: viewing this page marks the newest release seen (clears the ambient dot,
+        // cross-instance via the SEEN_EVENT). localStorage-only; cross-device sync = V4-WHATSNEW-002.
+        const newest = Array.isArray(d) && d[0] && d[0].version ? d[0].version : null
+        writeSeen(newest)
+      })
       .catch(e => { if (on) setErr(e.message) })
     return () => { on = false }
   }, [])

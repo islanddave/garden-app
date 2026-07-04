@@ -21,6 +21,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
+import WhatsNewDot from './WhatsNewDot.jsx'
 import { P, APP_NAME } from '../lib/constants.js'
 import TopBar from './TopBar.jsx'
 import { getRouteClass, CAPTURE_TITLES } from '../lib/routeClass.js'
@@ -101,19 +102,23 @@ export default function TopChrome() {
         <Link to="/dashboard" style={{ color: P.greenDeep, textDecoration: 'none', fontWeight: 700, fontSize: '0.9rem', letterSpacing: '0.2px', whiteSpace: 'nowrap' }}>
           {APP_NAME}
         </Link>
-        <Link
-          to="/favorites"
-          aria-label="Favorites"
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 30, height: 30, borderRadius: '50%',
-            border: `1px solid ${HEADER_BORDER}`,
-            color: '#c9a84c', textDecoration: 'none', fontSize: '1rem', fontWeight: 700,
-            ...FROST, backgroundColor: 'rgba(255,255,255,0.85)',
-          }}
-        >
-          {'♥'}
-        </Link>
+        <span style={{ position: 'relative', display: 'inline-flex' }}>
+          <Link
+            to="/favorites"
+            aria-label="Favorites"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 30, height: 30, borderRadius: '50%',
+              border: `1px solid ${HEADER_BORDER}`,
+              color: '#c9a84c', textDecoration: 'none', fontSize: '1rem', fontWeight: 700,
+              ...FROST, backgroundColor: 'rgba(255,255,255,0.85)',
+            }}
+          >
+            {'♥'}
+          </Link>
+          {/* V4-WHATSNEW-001 ambient unread dot — satellite on the Favorites heart, links to /releases */}
+          <WhatsNewDot variant="satellite" />
+        </span>
       </div>
 
       <Link

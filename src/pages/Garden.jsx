@@ -21,6 +21,9 @@ import { useEntityTagsBulk } from '../hooks/useTags.js'
 import PlantingEditor from '../components/PlantingEditor.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import PhotosWall from '../components/PhotosWall.jsx'
+import { useMembers } from '../hooks/useMembers.js'
+import { useAuthOptional } from '../context/AuthContext.jsx'
+import { buildProjectsById, effectiveAssignee, buildCaretakerMap, lensOptions, hasMixedCaretakers } from '../lib/caretakers.js'
 
 // Garden — Increment 1 of the post-V2 UX overhaul. Unifies the old Projects + Plants
 // tabs into ONE nested accordion: projects form a parent/child tree; each project's
@@ -39,6 +42,10 @@ let lastSubtab = 'plants'
 
 export default function Garden() {
   const { fetch, getToken } = useApiFetch()
+  const { profile } = useAuthOptional()
+  const { members } = useMembers()
+  const [careLens, setCareLens] = useState(() => { try { return localStorage.getItem('garden.careLens') || 'all' } catch { return 'all' } })
+  const onCareLensChange = useCallback((v) => { setCareLens(v); try { localStorage.setItem('garden.careLens', v) } catch { /* ignore */ } }, [])
   const [subtab, setSubtabState] = useState(lastSubtab)
   const setSubtab = useCallback((v) => { lastSubtab = v; setSubtabState(v) }, [])
   const [projects, setProjects] = useState([])
@@ -414,11 +421,28 @@ export default function Garden() {
     recordOptInDismissed({ getToken })
   }, [getToken])
 
+  // V4-ASSIGNLENS-001 — caretaker lens derived values. Declared AFTER all useState (projects/plants/
+  // members) and BEFORE the early returns so hook order is stable (rules-of-hooks). Default 'all'
+  // (Everyone) keeps the current no-hide behaviour; 'Mine'/per-person NARROWS the view.
+  const projectsById = useMemo(() => buildProjectsById(projects), [projects])
+  const caretakerMap = useMemo(() => buildCaretakerMap(members, profile?.id), [members, profile])
+  const careLensOptions = useMemo(() => lensOptions(members, profile?.id), [members, profile])
+  const effectiveLens = careLensOptions.some(o => o.value === careLens) ? careLens : 'all'
+  const visiblePlants = useMemo(() => (
+    effectiveLens === 'all' ? plants : plants.filter(pl => effectiveAssignee(pl, projectsById) === effectiveLens)
+  ), [plants, effectiveLens, projectsById])
+  const showBadges = useMemo(() => (
+    effectiveLens === 'all' && caretakerMap.size > 1 && hasMixedCaretakers(visiblePlants, projectsById)
+  ), [effectiveLens, caretakerMap, visiblePlants, projectsById])
+  const caretakerFor = useCallback((pl) => (
+    showBadges ? (caretakerMap.get(effectiveAssignee(pl, projectsById)) || null) : null
+  ), [showBadges, caretakerMap, projectsById])
+
   if (loading) return <Shell><Spinner /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
   const effectiveGroupBy = facetOptions.some(o => o.value === groupBy) ? groupBy : 'none'
-  const tree = buildGardenTree(projects, plants, SORT_ALPHA)
+  const tree = buildGardenTree(projects, visiblePlants, SORT_ALPHA)
 
   return (
     <Shell>
@@ -458,6 +482,12 @@ export default function Garden() {
         )}
       </div>
 
+      {subtab === 'plants' && careLensOptions.length > 2 && (
+        <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16 }}>
+          <SegmentedControl options={careLensOptions} value={effectiveLens} onChange={onCareLensChange} ariaLabel="Show plantings by caretaker" />
+        </div>
+      )}
+
       {subtab === 'photos' && <PhotosWall />}
 
       {subtab === 'plants' && editor && (
@@ -479,9 +509,10 @@ export default function Garden() {
 
       {subtab === 'plants' && (effectiveGroupBy !== 'none' ? (
         <FacetedGarden
-          plants={plants} tagMap={tagMap} facet={effectiveGroupBy}
+          plants={visiblePlants} tagMap={tagMap} facet={effectiveGroupBy}
           crittersByPlantId={crittersByPlantId} onSpriteLongPress={onSpriteLongPress}
-          onSpriteIntersect={onSpriteIntersect} onPhotoUploaded={refetchPlants} flashId={flashId} />
+          onSpriteIntersect={onSpriteIntersect} onPhotoUploaded={refetchPlants} flashId={flashId}
+          caretakerFor={caretakerFor} />
       ) : tree.length === 0 ? (
         <EmptyState />
       ) : (
@@ -492,7 +523,8 @@ export default function Garden() {
               onSpriteLongPress={onSpriteLongPress}
               onSpriteIntersect={onSpriteIntersect}
               onPhotoUploaded={refetchPlants}
-              flashId={flashId} />
+              flashId={flashId}
+              caretakerFor={caretakerFor} />
           ))}
         </div>
       ))}
@@ -527,7 +559,7 @@ export default function Garden() {
   )
 }
 
-function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId }) {
+function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId, caretakerFor = () => null }) {
   const { project: p, depth, children, plantings } = node
   const hasKids = nodeHasChildren(node)
   const isOpen  = hasKids && expanded.has(p.id)
@@ -597,7 +629,8 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
                   onSpriteLongPress={onSpriteLongPress}
                   onSpriteIntersect={onSpriteIntersect}
                   onPhotoUploaded={onPhotoUploaded}
-                  flashId={flashId} />
+                  flashId={flashId}
+                  caretaker={caretakerFor(pl)} />
               )} />
           )}
           {children.map(c => <TreeNode key={c.project.id} node={c} expanded={expanded} onToggle={onToggle} level={level + 1}
@@ -605,7 +638,8 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
             onSpriteLongPress={onSpriteLongPress}
             onSpriteIntersect={onSpriteIntersect}
             onPhotoUploaded={onPhotoUploaded}
-            flashId={flashId} />)}
+            flashId={flashId}
+            caretakerFor={caretakerFor} />)}
         </div>
       )}
     </div>
@@ -622,7 +656,7 @@ function Shell({ children }) {
 // V4-GARDENIA-001: faceted Garden render. Group-by overlay over the SAME PlantingTile the legacy
 // tree uses, so plantings look identical; the by-project tree (effectiveGroupBy==='none') is
 // untouched and remains golden-gated. A planting may appear under multiple groups (multi-membership).
-function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId }) {
+function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId, caretakerFor = () => null }) {
   // Sections COLLAPSED by default (Dave 2026-06-26): track the EXPANDED set instead of collapsed,
   // so an empty set = everything collapsed. Toggling a header adds/removes it from expandedGroups.
   const [expandedGroups, setExpandedGroups] = useState(() => new Set())
@@ -656,7 +690,8 @@ function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongP
                     <PlantingTile planting={pl}
                       critters={crittersByPlantId?.get(pl.id) ?? []}
                       onSpriteLongPress={onSpriteLongPress} onSpriteIntersect={onSpriteIntersect}
-                      onPhotoUploaded={onPhotoUploaded} flashId={flashId} />
+                      onPhotoUploaded={onPhotoUploaded} flashId={flashId}
+                      caretaker={caretakerFor(pl)} />
                   )} />
               </div>
             )}

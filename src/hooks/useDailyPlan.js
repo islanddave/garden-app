@@ -7,7 +7,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
 
-export function useDailyPlan() {
+export function useDailyPlan({ includeHousehold = false } = {}) {
   const { fetch } = useApiFetch()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -19,7 +19,7 @@ export function useDailyPlan() {
     setLoading(true)
     setError(null)
     try {
-      const d = await fetch('/api/daily-plan')
+      const d = await fetch(includeHousehold ? '/api/daily-plan?include=household' : '/api/daily-plan')
       if (loadCounterRef.current !== my) return
       setData(d)
     } catch (err) {
@@ -28,7 +28,7 @@ export function useDailyPlan() {
     } finally {
       if (loadCounterRef.current === my) setLoading(false)
     }
-  }, [fetch])
+  }, [fetch, includeHousehold])
 
   useEffect(() => { reload() }, [reload])
   return { data, loading, error, reload }

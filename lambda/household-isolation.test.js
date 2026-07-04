@@ -24,6 +24,7 @@ const IN_SCOPE = [
   'critter/index.js', // shared critter stickerbook is household-scoped (created_by = ANY(householdIds))
   'findings/index.js', // DRG findings read model — household-scoped reads (created_by = ANY(householdIds))
   'tags/index.js', // V4-TAGSUB faceted tag visibility — shared tags widen to householdScope
+  'daily-plan-read/index.js', // V4-ASSIGNLENS-001 — OPT-IN ?include=household widening (default stays per-user)
 ];
 
 // Out-of-scope: must NOT import householdScope.

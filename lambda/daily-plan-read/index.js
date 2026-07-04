@@ -7,6 +7,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { householdScope } from './household.js';  // V4-ASSIGNLENS-001 opt-in household widening (per-dir copy; bundle-safe)
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const SCHEMA_VERSION = 1;       // API-response envelope version (client contract)
@@ -94,14 +95,26 @@ export const handler = async (event) => {
         catch (e) { console.error('done-annotate (non-fatal):', e?.message ?? String(e)); }
       }
     }
-    return resp(200, {
+    // V4-ASSIGNLENS-001 — OPT-IN household widening. Default (no ?include=household) is byte-identical
+    // and strictly PER-USER: the household_plans key is OMITTED unless explicitly opted in. Widening is
+    // self-authorizing (householdScope resolves the requester's OWN household; a non-member gets []),
+    // so there is no attacker-controlled sub to validate.
+    const includeHousehold = (event.queryStringParameters?.include) === 'household';
+    let householdPlans;
+    if (includeHousehold) {
+      const otherIds = householdScope(userId).filter((id) => id !== userId);
+      householdPlans = await readHouseholdPlans(sql, otherIds);
+    }
+    const body = {
       schema_version: SCHEMA_VERSION,
       plan_date: row.plan_date ?? null,
       generated_at: row.generated_at ?? null,
       has_plan: row.items != null && !schemaStale,
       schema_stale: schemaStale,
       plan: plan,
-    });
+    };
+    if (includeHousehold) body.household_plans = householdPlans;
+    return resp(200, body);
   } catch (err) {
     console.error('daily-plan-read lambda error', err);
     return resp(500, { error: 'Internal server error' });
@@ -135,6 +148,38 @@ export async function annotateDone(sql, plan) {
   for (const [k, types] of Object.entries(DONE_EVENTS)) {
     if (!Array.isArray(plan[k])) continue;
     out[k] = plan[k].map((it) => ({ ...it, done: !!(it && it.id && types.some((t) => sat.has(`${it.id}|${t}`))) }));
+  }
+  return out;
+}
+
+
+// V4-ASSIGNLENS-001 — opt-in read of OTHER household caretakers' plans for today (Today's "also show
+// Jen's care needs" section). Per-row: newest-wins dedup, the same schema_version guard as the primary
+// plan (a version-skewed row is skipped, never served as garbage), and read-time done-annotation (plant
+// -scoped, so a member's items check off from today's events regardless of who logged them). Defined
+// AFTER annotateDone so it is the last tagged query in the file (static-guard ordering invariant).
+export async function readHouseholdPlans(sql, ids) {
+  if (!ids || ids.length === 0) return [];
+  const rows = await sql`
+    SELECT dp.user_id AS user_id, dp.items AS items, dp.generated_at AS generated_at
+    FROM daily_plan dp
+    WHERE dp.user_id = ANY(${ids})
+      AND dp.plan_date = (now() AT TIME ZONE 'America/New_York')::date
+      AND dp.deleted_at IS NULL
+    ORDER BY dp.generated_at DESC NULLS LAST
+  `;
+  const out = [];
+  const seen = new Set();
+  for (const r of rows) {
+    if (seen.has(r.user_id)) continue;   // newest wins (ORDER BY generated_at DESC)
+    seen.add(r.user_id);
+    let plan = r.items ?? null;
+    if (plan) {
+      const storedV = plan.schema_version ?? null;
+      if (storedV !== null && storedV !== PLAN_SCHEMA_VERSION) { plan = null; }
+      else { try { plan = await annotateDone(sql, plan); } catch (e) { console.error('household done-annotate (non-fatal):', e?.message ?? String(e)); } }
+    }
+    if (plan) out.push({ user_id: r.user_id, generated_at: r.generated_at, plan });
   }
   return out;
 }

@@ -46,3 +46,10 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>')
   return ctx
 }
+
+// Non-throwing selector for optional consumers (e.g. page-level lenses) so a component that only
+// wants the current-user profile does not hard-require an <AuthProvider> in unit tests. In the real
+// app the provider is always mounted; without it this returns a null profile (feature no-ops).
+export function useAuthOptional() {
+  return useContext(AuthContext) ?? { user: null, profile: null, loading: false }
+}
