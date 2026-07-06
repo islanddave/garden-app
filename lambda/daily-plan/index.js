@@ -14,6 +14,7 @@ const { Pool, neonConfig } = require('@neondatabase/serverless');
 const ws = require('ws');
 neonConfig.webSocketConstructor = ws;
 const { run } = require('./handler');
+const { stationConfig } = require('./station'); // DRG-WXSTATION-001
 
 const SECRET_NAME = process.env.SECRET_NAME || 'garden-app/secrets';
 let _secrets;
@@ -95,6 +96,58 @@ async function fetchPrecip(lat, lng) {
   }
 }
 
+// DRG-WXSTATION-001 — on-site AmbientWeather WS-2902. Read lazily + fully guarded so a missing/broken AWN
+// secret or a station outage NEVER empties the nightly plan (V200 B6): any failure returns null and the run
+// falls back to Open-Meteo/NWS. Kept in a SEPARATE secret (garden-app/awn-keys) from the NEON/CLERK blob.
+const AWN_SECRET_NAME = process.env.AWN_SECRET_NAME || 'garden-app/awn-keys';
+let _awn; // cache: object {apiKey,appKey} or null (resolved once); undefined = not yet read
+async function getAwnKeys() {
+  if (_awn !== undefined) return _awn;
+  try {
+    const sm = new SecretsManagerClient({});
+    const res = await sm.send(new GetSecretValueCommand({ SecretId: AWN_SECRET_NAME }));
+    const j = JSON.parse(res.SecretString || '{}');
+    _awn = (j.apiKey && j.appKey) ? { apiKey: j.apiKey, appKey: j.appKey } : null;
+  } catch (e) {
+    console.warn(JSON.stringify({ msg: 'AWN secret read failed — station disabled', error: e.message }));
+    _awn = null;
+  }
+  return _awn;
+}
+async function awnGet(url) {
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) }); // < 30s Lambda ceiling (verified nodejs20, no VPC)
+  if (!r.ok) throw new Error(`AWN ${r.status}`);
+  return r.json();
+}
+// Paginated device history (newest-first, 5-min records). Up to 3 pages of 288 (~3 civil days) chained by
+// endDate, spaced >=1.1s for the AWN 1 req/sec limit. Returns { mac, records[] } or null on any failure.
+async function fetchStation() {
+  try {
+    const keys = await getAwnKeys();
+    if (!keys) return null;
+    const st = stationConfig()[0];
+    const mac = st.mac;
+    const base = `https://api.ambientweather.net/v1/devices/${encodeURIComponent(mac)}` +
+      `?apiKey=${encodeURIComponent(keys.apiKey)}&applicationKey=${encodeURIComponent(keys.appKey)}`;
+    let records = [];
+    let endDate = null;
+    for (let page = 0; page < 3; page++) {
+      const url = base + `&limit=288` + (endDate ? `&endDate=${endDate}` : '');
+      const chunk = await awnGet(url);
+      if (!Array.isArray(chunk) || !chunk.length) break;
+      records = records.concat(chunk);
+      const oldest = chunk[chunk.length - 1];
+      if (!oldest || !Number.isFinite(oldest.dateutc)) break;
+      endDate = oldest.dateutc - 1;
+      if (page < 2) await new Promise((r) => setTimeout(r, 1100));
+    }
+    return records.length ? { mac, records } : null;
+  } catch (e) {
+    console.warn(JSON.stringify({ msg: 'fetchStation failed — station disabled', error: e.message }));
+    return null;
+  }
+}
+
 exports.handler = async () => {
   const dryRun = (process.env.DRY_RUN ?? 'true').toLowerCase() !== 'false';
   const today = todayET();
@@ -102,7 +155,7 @@ exports.handler = async () => {
   const { NEON_DATABASE_URL } = await getSecrets();
   const pool = new Pool({ connectionString: NEON_DATABASE_URL });
   try {
-    const res = await run({ pg: pool, today, dryRun, geocodeZip, fetchNWS, fetchPrecip });
+    const res = await run({ pg: pool, today, dryRun, geocodeZip, fetchNWS, fetchPrecip, fetchStation });
     console.log(JSON.stringify({ msg: 'daily-plan', today, dryRun, rows: res.rows, ms: Date.now() - started }));
     return { ok: true, today, dryRun, rows: res.rows };
   } catch (e) {

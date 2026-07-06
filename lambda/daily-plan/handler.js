@@ -4,6 +4,7 @@
 // Reads Neon (conn from Secrets Manager SECRET_ARN_NEON — NEVER hardcode), resolves weather from each Space's
 // postal_code (zip-driven, not hardcoded), runs ./engine per CARETAKER, idempotent upsert into daily_plan.
 const { generatePlan, PLAN_SCHEMA_VERSION } = require('./engine');
+const { deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather } = require('./station'); // DRG-WXSTATION-001
 const cadence = require('./cadence-data-v2.json'); // per-variety research cadence (161). Swap to v_resolved_care once care_profile is seeded (CARE-CADENCE-001).
 const fertModel = require('./fertilization-model.json'); // substrate-aware feed model. REQUIRED by engine.generatePlan (it derefs fertModel.water_quality / .amendments_in_inventory); omitting it crashes every run.
 
@@ -45,7 +46,7 @@ async function coordsForSpace(space, { geocodeZip }) {
   return { lat: Number(lat), lng: Number(lng) };
 }
 
-async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip }) {
+async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchStation }) {
   // active plantings + last water/fert + caretaker + the planting's Space (workspace_id -> spaces).
   const { rows: plantings } = await pg.query(`
     select p.id, p.name, p.project_id, p.status, p.container_type, p.container_size,
@@ -93,11 +94,28 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       .split(',').map((s) => s.trim()).filter(Boolean));
   for (const p of plantings) { if (SYSTEM_SUBS.has(p.assignee_user_id)) p.assignee_user_id = null; }
   const { rows: spaces } = await pg.query(`select id, postal_code, weather_lat, weather_lng from spaces`);
+  // DRG-WXSTATION-001: one account-level station fetch per run (V200 §3), derived to a normalized reading.
+  // fetchStation is fully guarded (returns null on any secret/HTTP/timeout failure) so it can NEVER empty the
+  // nightly plan (B6); a null station simply leaves Open-Meteo/NWS as the source.
+  const stationRaw = fetchStation ? await fetchStation() : null;
+  const station = deriveStation(stationRaw, { nowMs: Date.now() });
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.
-  const wxBySpace = {}, hyBySpace = {}, coordsBySpace = {};
+  const wxBySpace = {}, hyBySpace = {}, coordsBySpace = {}, stationProvBySpace = {};
   for (const s of spaces) {
-    wxBySpace[s.id] = await weatherForSpace(s, { geocodeZip, fetchNWS });
-    hyBySpace[s.id] = await hydrologyForSpace(s, { geocodeZip, fetchPrecip });  // assembled BEFORE suggestions
+    let wx = await weatherForSpace(s, { geocodeZip, fetchNWS });
+    let hy = await hydrologyForSpace(s, { geocodeZip, fetchPrecip });  // assembled BEFORE suggestions
+    // Field-granular station merge (B2/B3): station rain overrides recent_precip_in on the hydrology path;
+    // station temp calibrates tonightLow on the weather path; forecast fields stay from Open-Meteo/NWS.
+    const st = bindStationToSpace(s, station);
+    let prov = {};
+    if (st) {
+      const mh = mergeStationHydrology(hy, st); hy = mh.merged;
+      const mw = mergeStationWeather(wx, st);   wx = mw.merged;
+      prov = { ...mh.prov, ...mw.prov };
+    }
+    wxBySpace[s.id] = wx;
+    hyBySpace[s.id] = hy;
+    stationProvBySpace[s.id] = prov;
     coordsBySpace[s.id] = await coordsForSpace(s, { geocodeZip });               // DRG-WXROLL-001: for client live-refresh
   }
   // Group plantings by Space so each gets its own forecast; within a Space, engine splits per caretaker.
@@ -114,7 +132,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           `insert into daily_plan (user_id, plan_date, items, generated_at)
            values ($1,$2,$3, now())
            on conflict (user_id, plan_date) do update set items=excluded.items, generated_at=now()`,
-          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: plan.hydrology, coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, ...userPlan.tasks })]);
+          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, ...userPlan.tasks })]);
       }
     }
   }
