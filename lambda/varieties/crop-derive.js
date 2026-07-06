@@ -7,6 +7,12 @@
 // visibility='shared') tag rows + entity_tag links on entity_type='cultivar'. Plantings project these
 // at render time via garden_node.variety_id -> cultivar (NOT materialized per-planting).
 //
+// V4-CLASSIFY-001 adds five more DERIVED facets (same system-owned class as type/lifecycle — NOT
+// hand-assignable, so they are intentionally NOT in lambda/tags/validate.js VALID_USER_FACETS):
+//   heat (peppers, by scoville_max ceiling), determinacy (tomatoes), day_length (onions),
+//   allium_type (bulbing|bunching), basil_use (culinary|thai|tulsi). The DB tag_facet_check must
+//   already list these facets (migrations/v4-classify/0a-additive-ddl.sql).
+//
 // Crucible V101 deltas baked in: revive-or-insert against the soft-delete partial-unique (no dup
 // accumulation, no 42P10), type-branch guarded against drifted slugs, lifecycle whitelisted, desired-vs-
 // actual reconciliation soft-deletes stale derived links only (never user links). applyDerive takes a
@@ -19,9 +25,92 @@ export function humanizeLifecycle(lc) {
   return String(lc).split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
-// Pure: cultivar {crop_type_slug, lifecycle} + cropTypesBySlug {slug:{display_name, default_lifecycle}}
-// -> array of desired derived tags [{facet, slug, label}]. Never throws on a drifted/absent crop_type_slug
-// (skip-and-log at the caller). Off-vocabulary lifecycle values are dropped (whitelist).
+// ── V4-CLASSIFY-001 derivation helpers (pure) ───────────────────────────────────────────────────
+// Heat: classify a pepper by the CEILING of its Scoville range (the hottest pod it can throw). A
+// cultivar belongs to the band its scoville_max lands in; min/width ignored — e.g. Santa Fe Grande
+// (max ~8k) = Medium, not Hot. Bands chosen so cut points fall in gaps in the real collection.
+export const HEAT_BANDS = [
+  { max: 0,        slug: 'sweet',    label: 'Sweet' },
+  { max: 999,      slug: 'mild',     label: 'Mild' },
+  { max: 9999,     slug: 'medium',   label: 'Medium' },
+  { max: 49999,    slug: 'hot',      label: 'Hot' },
+  { max: 249999,   slug: 'very_hot', label: 'Very Hot' },
+  { max: Infinity, slug: 'superhot', label: 'Superhot' },
+];
+export function heatBand(scovilleMax) {
+  if (scovilleMax == null) return null;
+  const n = Number(scovilleMax);
+  if (!Number.isFinite(n) || n < 0) return null;
+  for (const b of HEAT_BANDS) if (n <= b.max) return b;
+  return null;
+}
+
+// Determinacy from free-text growth_habit prose. Substring-safe ('indeterminate' contains
+// 'determinate'; 'semi-determinate' contains 'determinate') AND primary-term-aware: the LEFTMOST of
+// {semi_determinate, indeterminate, determinate} wins, so "indeterminate vine (semi-determinate per
+// some sources)" -> indeterminate, not semi. 'dwarf' is a REFINEMENT of determinate only (a
+// "determinate dwarf bush" -> dwarf; dwarf never overrides an indeterminate/semi primary).
+export const DETERMINACY_LABELS = { determinate: 'Determinate', semi_determinate: 'Semi-Determinate', indeterminate: 'Indeterminate', dwarf: 'Dwarf' };
+export function parseDeterminacy(prose) {
+  if (!prose) return null;
+  const s = String(prose).toLowerCase();
+  const semi = s.search(/semi[-_ ]?determinate/);
+  const indet = s.indexOf('indeterminate');
+  const blanked = s.replace(/semi[-_ ]?determinate/g, m => ' '.repeat(m.length)).replace(/indeterminate/g, m => ' '.repeat(m.length));
+  const det = blanked.indexOf('determinate');
+  const cands = [];
+  if (semi >= 0) cands.push([semi, 'semi_determinate']);
+  if (indet >= 0) cands.push([indet, 'indeterminate']);
+  if (det >= 0) cands.push([det, 'determinate']);
+  if (!cands.length) return null;
+  cands.sort((a, b) => a[0] - b[0]);
+  let primary = cands[0][1];
+  if (primary === 'determinate' && s.indexOf('dwarf') >= 0) primary = 'dwarf';
+  return primary;
+}
+
+// Onion day-length response, parsed from growth_habit prose (sourced text, never fabricated). Returns
+// null when the prose doesn't state it.
+export const DAY_LENGTH_LABELS = { long_day: 'Long-Day', short_day: 'Short-Day', day_neutral: 'Day-Neutral', intermediate: 'Intermediate' };
+export function parseDayLength(prose) {
+  if (!prose) return null;
+  const s = String(prose).toLowerCase();
+  if (/short[-_ ]?day/.test(s)) return 'short_day';
+  if (/long[-_ ]?day/.test(s)) return 'long_day';
+  if (/day[-_ ]?neutral/.test(s)) return 'day_neutral';
+  if (/intermediate[-_ ]?day/.test(s)) return 'intermediate';
+  return null;
+}
+
+// Allium bulbing vs bunching, from crop_type + (for onions) growth_habit prose. Leek and any onion
+// whose prose doesn't state its habit get no allium_type (null — never guessed).
+export const ALLIUM_LABELS = { bulbing: 'Bulbing', bunching: 'Bunching' };
+export function alliumType(cropSlug, prose) {
+  if (cropSlug === 'garlic' || cropSlug === 'shallot') return 'bulbing';
+  if (cropSlug === 'chives') return 'bunching';
+  if (cropSlug === 'onion') {
+    const s = String(prose || '').toLowerCase();
+    if (/non[-_ ]?bulbing|bunching|scallion/.test(s)) return 'bunching';
+    if (/bulb forms|single bulb|forms a bulb/.test(s)) return 'bulbing';
+  }
+  return null;
+}
+
+// Basil culinary role, from species (Ocimum). Defaults to culinary sweet basil (O. basilicum).
+export const BASIL_LABELS = { culinary: 'Culinary', thai: 'Thai', tulsi: 'Tulsi' };
+export function basilUse(cropSlug, species) {
+  if (cropSlug !== 'basil') return null;
+  const sp = String(species || '').toLowerCase();
+  if (!sp) return null;                        // no species -> can't classify (evidence-based, no default)
+  if (sp.includes('tenuiflorum') || sp.includes('sanctum')) return 'tulsi';
+  if (sp.includes('thyrsiflora')) return 'thai';
+  return 'culinary';
+}
+
+// Pure: cultivar {crop_type_slug, lifecycle, scoville_max, growth_habit, species, determinacy,
+// day_length_response} + cropTypesBySlug {slug:{display_name, default_lifecycle}} -> array of desired
+// derived tags [{facet, slug, label}]. Never throws on a drifted/absent crop_type_slug (skip-and-log at
+// the caller). Off-vocabulary lifecycle values are dropped (whitelist).
 export function computeDerivedTags(cultivar, cropTypesBySlug) {
   const out = [];
   if (!cultivar) return out;
@@ -34,6 +123,25 @@ export function computeDerivedTags(cultivar, cropTypesBySlug) {
   if (lifecycle && VALID_LIFECYCLE.includes(lifecycle)) {
     out.push({ facet: 'lifecycle', slug: lifecycle, label: humanizeLifecycle(lifecycle) });
   }
+  // ── Classification facets (V4-CLASSIFY-001) ──
+  if (cropSlug === 'pepper') {
+    const b = heatBand(cultivar.scoville_max);
+    if (b) out.push({ facet: 'heat', slug: b.slug, label: b.label });
+  }
+  if (cropSlug === 'tomato') {
+    // Prefer the promoted column; fall back to parsing prose so a bulk-inserted tomato with prose but
+    // an unset determinacy column is still faceted (closes the L-239 unfaceted-intake class).
+    const d = cultivar.determinacy || parseDeterminacy(cultivar.growth_habit);
+    if (d && DETERMINACY_LABELS[d]) out.push({ facet: 'determinacy', slug: d, label: DETERMINACY_LABELS[d] });
+  }
+  if (cropSlug === 'onion') {
+    const dl = cultivar.day_length_response || parseDayLength(cultivar.growth_habit);
+    if (dl && DAY_LENGTH_LABELS[dl]) out.push({ facet: 'day_length', slug: dl, label: DAY_LENGTH_LABELS[dl] });
+  }
+  const at = alliumType(cropSlug, cultivar.growth_habit);
+  if (at) out.push({ facet: 'allium_type', slug: at, label: ALLIUM_LABELS[at] });
+  const bu = basilUse(cropSlug, cultivar.species);
+  if (bu) out.push({ facet: 'basil_use', slug: bu, label: BASIL_LABELS[bu] });
   return out;
 }
 
@@ -122,8 +230,8 @@ export async function applyDerive(sql, cultivarId = null) {
   for (const c of cropTypes) cropTypesBySlug[c.slug] = c;
 
   const cultivars = cultivarId
-    ? await sql`SELECT id, crop_type_slug, lifecycle FROM public.plant_varieties WHERE id = ${cultivarId} AND deleted_at IS NULL`
-    : await sql`SELECT id, crop_type_slug, lifecycle FROM public.plant_varieties WHERE deleted_at IS NULL`;
+    ? await sql`SELECT id, crop_type_slug, lifecycle, scoville_max, growth_habit, species, determinacy, day_length_response FROM public.plant_varieties WHERE id = ${cultivarId} AND deleted_at IS NULL`
+    : await sql`SELECT id, crop_type_slug, lifecycle, scoville_max, growth_habit, species, determinacy, day_length_response FROM public.plant_varieties WHERE deleted_at IS NULL`;
 
   const totals = { tags_upserted: 0, links_added: 0, links_removed: 0, cultivars: 0, failures: [] };
   for (const cv of cultivars) {
