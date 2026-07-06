@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.26.0",
+    "date": "2026-07-06",
+    "highlights": [
+      "Filter your garden by pepper heat level, tomato determinacy, and more",
+      "Peppers now sort into 6 heat bands from Sweet to Superhot"
+    ]
+  },
+  {
     "version": "3.25.0",
     "date": "2026-07-04",
     "highlights": [
