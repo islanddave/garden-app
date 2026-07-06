@@ -99,6 +99,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // nightly plan (B6); a null station simply leaves Open-Meteo/NWS as the source.
   const stationRaw = fetchStation ? await fetchStation() : null;
   const station = deriveStation(stationRaw, { nowMs: Date.now() });
+  let boundSpaces = 0;
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.
   const wxBySpace = {}, hyBySpace = {}, coordsBySpace = {}, stationProvBySpace = {};
   for (const s of spaces) {
@@ -112,6 +113,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       const mh = mergeStationHydrology(hy, st); hy = mh.merged;
       const mw = mergeStationWeather(wx, st);   wx = mw.merged;
       prov = { ...mh.prov, ...mw.prov };
+      boundSpaces++;
     }
     wxBySpace[s.id] = wx;
     hyBySpace[s.id] = hy;
@@ -119,6 +121,12 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     coordsBySpace[s.id] = await coordsForSpace(s, { geocodeZip });               // DRG-WXROLL-001: for client live-refresh
   }
   // Group plantings by Space so each gets its own forecast; within a Space, engine splits per caretaker.
+  // DRG-WXSTATION-001 observability (V200 §3): one structured line per run — chosen source, recent value,
+  // station data-age + freshness/coverage, so a silent fallback is visible in CloudWatch.
+  console.log(JSON.stringify({ msg: 'station', present: !!station, boundSpaces,
+    mac: station && station.mac, fresh: station && station.fresh, dataAgeMin: station && station.dataAgeMin,
+    tempF: station && station.tempF, recentPrecipIn: station && station.recentPrecipIn,
+    coversLookback: station && station.coversLookback, uncertainty: station && station.uncertainty }));
   const owner = process.env.OWNER_FALLBACK_SUB || null;     // unassigned -> Space owner (Dave); NEVER leaks to Jen.
   const plans = [];
   const bySpace = {};
