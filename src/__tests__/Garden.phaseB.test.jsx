@@ -39,7 +39,7 @@ vi.mock('../lib/notificationPrefsClient.js', () => ({
   recordCoachmarkDismissed: (...a) => recordCoachmarkDismissedMock(...a),
   recordOptInDismissed: (...a) => recordOptInDismissedMock(...a),
   CRITTER_VISIT_VALUES: ['off', 'in_app_only', 'system'],
-  GARDEN_GROUP_BY_VALUES: ['none', 'type', 'lifecycle', 'location', 'group', 'freeform'],
+  GARDEN_GROUP_BY_VALUES: ['none', 'type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'location', 'group', 'freeform', 'status'],
   GARDEN_SORT_ORDER_VALUES: ['alpha', 'recency'],
   GARDEN_EXPANDED_MAX: 2000,
   patchNotificationPrefs: vi.fn(),

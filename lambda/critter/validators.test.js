@@ -91,7 +91,7 @@ describe('validatePrefsPatchBody', () => {
     expect(validatePrefsPatchBody({})?.status).toBe(400)
   })
   it('accepts each valid garden_group_by value', () => {
-    for (const v of ['none', 'type', 'lifecycle', 'location', 'group', 'freeform']) {
+    for (const v of ['none', 'type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'location', 'group', 'freeform', 'status']) {
       expect(validatePrefsPatchBody({ garden_group_by: v })).toBeNull()
     }
   })

@@ -16,7 +16,7 @@
 const CRITTER_BASE = (import.meta.env.VITE_API_CRITTERS ?? '').replace(/\/$/, '')
 
 export const CRITTER_VISIT_VALUES = ['off', 'in_app_only', 'system']
-export const GARDEN_GROUP_BY_VALUES = ['none', 'type', 'lifecycle', 'location', 'group', 'freeform', 'status']
+export const GARDEN_GROUP_BY_VALUES = ['none', 'type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'location', 'group', 'freeform', 'status']
 export const GARDEN_SORT_ORDER_VALUES = ['alpha', 'recency']
 export const GARDEN_EXPANDED_MAX = 2000
 
