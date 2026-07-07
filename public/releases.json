@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.31.0",
+    "date": "2026-07-07",
+    "highlights": [
+      "The same header is now on every screen \u2014 the search bar and photo banner up top everywhere, so you can search your garden from anywhere.",
+      "Your Favorites shortcut moved to the Garden tab (look for the heart next to Snap and Log many)."
+    ]
+  },
+  {
     "version": "3.30.0",
     "date": "2026-07-07",
     "highlights": [
