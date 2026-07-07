@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.29.0",
+    "date": "2026-07-07",
+    "highlights": [
+      "Log Many now uses the exact same event buttons as Log Event — one consistent selector across the app"
+    ]
+  },
+  {
     "version": "3.28.0",
     "date": "2026-07-07",
     "highlights": [
