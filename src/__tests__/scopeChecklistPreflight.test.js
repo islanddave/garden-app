@@ -1,7 +1,7 @@
 // Lane D / Phase D (slice 2) — pre-flight gate (plan §5 Phase D "strengthened gate").
 // Hard-aborts the build if the picker/checklist dependencies regress:
 //   (1) the canonical named exports the bulk-log pickers import still exist, and
-//   (2) LogMany's public season helpers survive the ScopeChecklist extraction, and
+//   (2) LogMany's public bulk-selector helpers survive the ScopeChecklist extraction, and
 //   (3) the HS-2 server-side plant_id filter the scope path depends on is still present
 //       (the exhaustive coverage lives in lambda/events/hs2-plant-filter.test.js; this is
 //       the slice's own cross-referencing tripwire so the dependency can't silently vanish).
@@ -15,9 +15,9 @@ import {
   buildSecondaryGroups,
 } from '../lib/eventTypes.js'
 import {
-  primaryValuesForSeason,
+  BULK_PRIMARY_VALUES,
+  bulkSubmittableValues,
   secondaryGroupsExcluding,
-  coldProtectionSeason,
 } from '../pages/LogMany.jsx'
 
 describe('slice-2 pre-flight — canonical eventTypes named exports', () => {
@@ -40,11 +40,11 @@ describe('slice-2 pre-flight — canonical eventTypes named exports', () => {
 })
 
 describe('slice-2 pre-flight — LogMany public helpers survive the extraction', () => {
-  it('exports primaryValuesForSeason / secondaryGroupsExcluding / coldProtectionSeason', () => {
-    expect(typeof primaryValuesForSeason).toBe('function')
+  it('exports BULK_PRIMARY_VALUES / bulkSubmittableValues / secondaryGroupsExcluding', () => {
+    expect(Array.isArray(BULK_PRIMARY_VALUES)).toBe(true)
+    expect(typeof bulkSubmittableValues).toBe('function')
     expect(typeof secondaryGroupsExcluding).toBe('function')
-    expect(typeof coldProtectionSeason).toBe('function')
-    expect(Array.isArray(primaryValuesForSeason(true))).toBe(true)
+    expect(Array.isArray(bulkSubmittableValues())).toBe(true)
   })
 })
 

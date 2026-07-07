@@ -64,15 +64,18 @@ describe('BATCH_EVENT_TYPES (derived)', () => {
     );
   });
 
-  it('excludes exactly the 8 expected types (3 needs-input + 4 HS-1 + 1 status-advance)', () => {
+  it('excludes exactly the 6 expected types (3 needs-input + 3 HS-1; flowering+fruit_set freed)', () => {
     expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
-      ['cutting_taken', 'divided', 'first_harvest', 'flowering', 'fruit_set', 'hand_pollinated', 'harvest', 'photo'],
+      ['cutting_taken', 'divided', 'first_harvest', 'hand_pollinated', 'harvest', 'photo'],
     );
   });
 
-  it('HS-1: divided, cutting_taken, hand_pollinated, fruit_set are NOT batch types', () => {
-    for (const t of ['divided', 'cutting_taken', 'hand_pollinated', 'fruit_set']) {
+  it('HS-1: divided, cutting_taken, hand_pollinated are NOT batch types (fruit_set+flowering freed V4-EVENTSEL-002)', () => {
+    for (const t of ['divided', 'cutting_taken', 'hand_pollinated']) {
       expect(BATCH_EVENT_TYPES.includes(t), `${t} should be excluded`).toBe(false);
+    }
+    for (const t of ['fruit_set', 'flowering']) {
+      expect(BATCH_EVENT_TYPES.includes(t), `${t} should now be batch-eligible`).toBe(true);
     }
   });
 
