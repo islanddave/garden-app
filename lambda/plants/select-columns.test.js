@@ -70,6 +70,20 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
     });
   }
 
+  // BUG-PLANTREAD-001 (2026-07-07): the container/location read-back columns were OMITTED
+  // from all 3 SELECTs, so the planting edit form + Today location grouping read back blank
+  // even though the write path persisted them (8 prod trough rows). Guard them the same way
+  // so a future edit can't silently drop write->read symmetry again (L-091/L-190 class).
+  const CONTAINER_LOCATION_READBACK_COLUMNS = ['container_type', 'container_size', 'location_id'];
+  for (const col of CONTAINER_LOCATION_READBACK_COLUMNS) {
+    it(`every SELECT block includes p.${col} (BUG-PLANTREAD-001)`, () => {
+      for (const [idx, block] of selectBlocks.entries()) {
+        const present = new RegExp(`\\bp\\.${col}\\b`).test(block);
+        expect(present, `SELECT block #${idx} missing p.${col}`).toBe(true);
+      }
+    });
+  }
+
   // Lambda 2.0.5 cleanup — VARIETY-REF S3 prep.
   // The 3 legacy text columns are removed from every SELECT clause in 2.0.5;
   // the subsequent VARIETY-REF S3 destructive DDL drops them from the table

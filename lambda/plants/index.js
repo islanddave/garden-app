@@ -166,6 +166,7 @@ export const handler = async (event) => {
                  p.source_type, p.source_ref, p.source_generation,
                  p.parent_plant_id, p.divergence_type, p.lineage_note,
                  p.succession_group_id, p.succession_order, p.assignee_user_id,
+                 p.container_type, p.container_size, p.location_id,
                  pp.display_name AS project_name,
                  CASE WHEN pv.id IS NOT NULL THEN
                    jsonb_build_object(
@@ -391,6 +392,7 @@ export const handler = async (event) => {
                    p.source_type, p.source_ref, p.source_generation,
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
                    p.succession_group_id, p.succession_order, p.assignee_user_id,
+                   p.container_type, p.container_size, p.location_id,
                    pp.display_name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(
@@ -429,6 +431,7 @@ export const handler = async (event) => {
                    p.source_type, p.source_ref, p.source_generation,
                    p.parent_plant_id, p.divergence_type, p.lineage_note,
                    p.succession_group_id, p.succession_order, p.assignee_user_id,
+                   p.container_type, p.container_size, p.location_id,
                    pp.display_name AS project_name,
                    CASE WHEN pv.id IS NOT NULL THEN
                      jsonb_build_object(
