@@ -472,12 +472,14 @@ export default function Garden() {
           ariaLabel="Plants or Photos"
         />
         {subtab === 'plants' && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             {facetOptions.length > 1 && (
               <GroupByControl options={facetOptions} value={effectiveGroupBy} onChange={onGroupByChange} />
             )}
             <Link to="/capture" data-testid="snap-entry-garden" style={btnGhost}>📸 Snap</Link>
             <Link to="/log/many" style={btnGhost}>⚡ Log many</Link>
+            {/* V4-APPBAR-003: Favorites rehomed here from the retired header heart (Dave: into the Garden tab). */}
+            <Link to="/favorites" aria-label="Favorites" style={btnGhost}>♥ Favorites</Link>
           </div>
         )}
       </div>

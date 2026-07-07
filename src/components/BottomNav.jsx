@@ -16,7 +16,7 @@ import Sheet from './forms/Sheet.jsx'
 // trap+restore, Escape, backdrop-dismiss — Sheet owns all of it, so the local Escape
 // effect is gone). More menu is grouped into labeled sections (Your garden / Rewards /
 // Help & account) instead of one flat 10-item scan. Field/Desk mode gets a mirror row
-// here (primary toggle stays in TopBar). Critters is distinguished by placement + a soft
+// here (TopBar retired V4-APPBAR-003; this is now the PRIMARY mode toggle). Critters is by placement + a soft
 // subtitle only — NO badge/count/alert (Reward UX V102, ambient). Glyphs are still emoji;
 // the emoji->Icon SVG pass is the deferred Slice 9 follow-up commit.
 const TABS = [
@@ -123,7 +123,7 @@ export default function BottomNav() {
         </div>
 
         {/* Field/Desk mode mirror — keeps the current mode visible + switchable here too
-            (primary toggle stays in the TopBar). Toggling does NOT close the sheet so the
+            (TopBar retired V4-APPBAR-003; this is the primary mode toggle now). Toggling does NOT close the sheet so the
             change is visible. Operational surface, not a reward surface. */}
         <button
           type="button"

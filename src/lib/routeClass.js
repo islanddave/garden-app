@@ -15,7 +15,7 @@ export const CAPTURE_ROUTES = ['/capture', '/field']
 // Optional title for the immersive capture bar (null/absent = back-only; the page keeps its own title).
 export const CAPTURE_TITLES = { '/capture': 'Snap' }
 
-// Public / logged-out routes -> minimal TopBar (handled as 'unauth' via the user check below).
+// Public / logged-out routes -> minimal unified header variant (handled as 'unauth' via the user check below).
 const ROUTE_CLASSES = ['root', 'capture', 'detail', 'unauth']
 export function isKnownClass(c) { return ROUTE_CLASSES.includes(c) }
 
