@@ -182,6 +182,29 @@ const A = {
     svg24: '<path d="M12 14.4V8.8"/><path d="M12 10.6C9.9 10.6 8.2 8.9 8.2 6.8c2.1 0 3.8 1.7 3.8 3.8z"/><path d="M12 9.6c0.9-1.7 2.9-2.7 4.8-2.5-0.3 1.9-1.9 3.4-3.8 3.6"/><path d="M3.2 15.5H20.8"/><path d="M5.4 18.3h2"/><path d="M10.4 18.3h3.2"/><path d="M16.6 18.3h2"/>',
     svg18: '<path d="M12 14V8.4"/><path d="M12 10.4C9.8 10.4 8 8.6 8 6.4c2.2 0 4 1.8 4 4z"/><path d="M12 9.4c0.9-1.8 3-2.8 5-2.6-0.3 2-2 3.5-4 3.7"/><path d="M3 15.4H21"/><path d="M6 18.2h3"/><path d="M13 18.2h4"/>',
   },
+  // ── V4-ICON-001 severity ladder (§9 monotonic progression: dot -> triangle -> triangle+alert).
+  //    Shape carries the order; the consumer (SeverityBadge) sets `color` per severity tone
+  //    (color reinforces, never sole — SC 1.4.1). severity.high (alert) is the top rung, above.
+  // severity.low = the base rung: one kit-centered filled dot. mono/solid.
+  'severity.low': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/>',
+    svg18: '<circle cx="12" cy="12" r="3.4" fill="currentColor" stroke="none"/>',
+  },
+  // severity.med = the middle rung: the enclosure appears (open triangle, no alert content).
+  //    Geometry is severity.high's triangle MINUS the bang+dot -> zero drift across the ladder.
+  'severity.med': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M12 3.8l8.7 14.9a1 1 0 0 1-.86 1.5H4.16a1 1 0 0 1-.86-1.5z"/>',
+    svg18: '<path d="M12 4l8.4 14.5a1 1 0 0 1-.86 1.5H4.46a1 1 0 0 1-.86-1.5z"/>',
+  },
+  // action.flag = the flag-issue affordance (one waving-pennant silhouette; §3 flag recommendation).
+  //    mono; recolored by the consumer when it represents a flagged severity.
+  'action.flag': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M7 3.6v16.8"/><path d="M7 4.8c2.9-1.7 5.9 1.7 8.8 0v6.2c-2.9 1.7-5.9-1.7-8.8 0z"/>',
+    svg18: '<path d="M7.2 3.9v16.2"/><path d="M7.2 5c2.6-1.5 5.3 1.5 7.9 0v5.6c-2.6 1.5-5.3-1.5-7.9 0z"/>',
+  },
 }
 
 export const ANCHOR_KEYS = Object.keys(A)

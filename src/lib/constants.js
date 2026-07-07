@@ -102,18 +102,18 @@ export const LOGGABLE_PROJECT_STATUSES = [...PROJECT_STATUSES, 'harvested']
 // To re-key a value: update the key here + update PROJECT_STATUSES + run DB migration.
 export const PROJECT_STATUS_MAP = {
   // ── New lifecycle values ──────────────────────────────────────────
-  planning:   { label: 'Planning',   emoji: '📋' },
-  preparing:  { label: 'Preparing',  emoji: '🛠️' },
-  seeding:    { label: 'Seeding',    emoji: '🌰' },
-  sprouting:  { label: 'Sprouting',  emoji: '🌱' },
-  growing:    { label: 'Growing',    emoji: '🌿' },
-  flowering:  { label: 'Flowering',  emoji: '🌸' },
-  fruiting:   { label: 'Fruiting',   emoji: '🍅' },
-  harvesting: { label: 'Harvesting', emoji: '🧺' },
+  planning:   { label: 'Planning' },
+  preparing:  { label: 'Preparing' },
+  seeding:    { label: 'Seeding' },
+  sprouting:  { label: 'Sprouting' },
+  growing:    { label: 'Growing' },
+  flowering:  { label: 'Flowering' },
+  fruiting:   { label: 'Fruiting' },
+  harvesting: { label: 'Harvesting' },
   // ── Legacy values (existing DB rows — display-only) ───────────────
-  active:     { label: 'Active',     emoji: '✅' },
-  harvested:  { label: 'Harvested',  emoji: '✓'  },
-  ended:      { label: 'Ended',      emoji: '◼'  },
+  active:     { label: 'Active' },
+  harvested:  { label: 'Harvested'  },
+  ended:      { label: 'Ended'  },
 }
 
 // Plant lifecycle statuses — plants.status. The DB DOES enforce a CHECK constraint
@@ -129,16 +129,16 @@ export const PLANT_STATUSES = ['seed', 'seedling', 'vegetative', 'flowering', 'f
 // Display mapping for plant statuses — { label, emoji }. Mirrors PROJECT_STATUS_MAP.
 // Colors live in status.js STATUS_COLORS (shared with project stages).
 export const PLANT_STATUS_MAP = {
-  seed:       { label: 'Seed',       emoji: '🌰' },
-  rooting:    { label: 'Rooting',    emoji: '🫚' },  // V3-STATUS-002: cuttings/propagation
-  seedling:   { label: 'Seedling',   emoji: '🌱' },
-  vegetative: { label: 'Vegetative', emoji: '🌿' },
-  flowering:  { label: 'Flowering',  emoji: '🌸' },
-  fruiting:   { label: 'Fruiting',   emoji: '🍅' },
-  harvested:  { label: 'Harvesting', emoji: '✅' },  // V3-STATUS-003: label-only rename (DB value stays 'harvested')
-  dormant:    { label: 'Dormant',    emoji: '💤' },
-  ended:      { label: 'Ended',      emoji: '⏹️' },
-  failed:     { label: 'Failed',     emoji: '✕' },
+  seed:       { label: 'Seed' },
+  rooting:    { label: 'Rooting' },  // V3-STATUS-002: cuttings/propagation
+  seedling:   { label: 'Seedling' },
+  vegetative: { label: 'Vegetative' },
+  flowering:  { label: 'Flowering' },
+  fruiting:   { label: 'Fruiting' },
+  harvested:  { label: 'Harvesting' },  // V3-STATUS-003: label-only rename (DB value stays 'harvested')
+  dormant:    { label: 'Dormant' },
+  ended:      { label: 'Ended' },
+  failed:     { label: 'Failed' },
 }
 
 // Humanize any status value for display. Prefers the plant map, then the project

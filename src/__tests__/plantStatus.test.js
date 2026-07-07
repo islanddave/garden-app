@@ -12,7 +12,6 @@ describe('§3.2 plant-status registry', () => {
     for (const s of PLANT_STATUSES) {
       expect(PLANT_STATUS_MAP[s]).toBeDefined()
       expect(PLANT_STATUS_MAP[s].label).toBeTruthy()
-      expect(PLANT_STATUS_MAP[s].emoji).toBeTruthy()
     }
   })
   it('statusLabel humanizes plant + project statuses and passes through unknown un-snaked', () => {

@@ -58,7 +58,7 @@ import {
   EVENT_TYPE_OPTIONS, EVENT_TYPE_LABELS,
   PROJECT_CATEGORY_OPTIONS, PROJECT_CATEGORY_LABELS,
 } from '../lib/dropdownRegistry.js'
-import { EVENT_TYPES, EVENT_TYPE_META } from '../lib/eventTypes.js'
+import { EVENT_TYPES } from '../lib/eventTypes.js'
 import { PROJECT_CATEGORIES } from '../lib/constants.js'
 
 describe('dropdownRegistry — EVENT_TYPE set (V3-CONFIG-001)', () => {
@@ -75,11 +75,11 @@ describe('dropdownRegistry — EVENT_TYPE set (V3-CONFIG-001)', () => {
     const vals = EVENT_TYPE_OPTIONS.map(o => o.value)
     expect(vals).toEqual([...vals].sort((a, b) => a.localeCompare(b)))
   })
-  it('label shape is emoji + de-snaked value (behavior-preserving, not the META prose label)', () => {
+  it('V4-ICON-001: label shape is the de-snaked value (emoji removed; glyph renders via Icon)', () => {
     const t = 'pest_treatment'
-    const expected = (EVENT_TYPE_META[t]?.emoji ?? '📝') + ' ' + t.replace(/_/g, ' ')
-    expect(EVENT_TYPE_LABELS[t]).toBe(expected)
+    expect(EVENT_TYPE_LABELS[t]).toBe(t.replace(/_/g, ' '))
     expect(EVENT_TYPE_LABELS[t]).toContain('pest treatment')
+    expect(EVENT_TYPE_LABELS[t]).not.toMatch(/\p{Extended_Pictographic}/u)
   })
 })
 

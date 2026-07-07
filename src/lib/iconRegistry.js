@@ -82,6 +82,9 @@ const ANCHOR_META = {
   'media.stop':     { accessibleName: 'Stop' },
   'care.containers': { accessibleName: 'Containers' },
   'care.inground':  { accessibleName: 'In-ground beds' },
+  'severity.low':   { accessibleName: 'Low severity' },
+  'severity.med':   { accessibleName: 'Medium severity' },
+  'action.flag':    { accessibleName: 'Flag an issue' },
 }
 
 export const GLYPHS = Object.fromEntries(

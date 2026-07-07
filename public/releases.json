@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.33.0",
+    "date": "2026-07-07",
+    "highlights": [
+      "Issue-severity badges now use clear custom icons — the level is shown by its shape, not just color, so it is easier to tell apart and reads correctly with screen readers.",
+      "Cleaner event and status dropdown menus."
+    ]
+  },
+  {
     "version": "3.32.0",
     "date": "2026-07-07",
     "highlights": [
@@ -11,7 +19,7 @@
     "version": "3.31.0",
     "date": "2026-07-07",
     "highlights": [
-      "The same header is now on every screen \u2014 the search bar and photo banner up top everywhere, so you can search your garden from anywhere.",
+      "The same header is now on every screen — the search bar and photo banner up top everywhere, so you can search your garden from anywhere.",
       "Your Favorites shortcut moved to the Garden tab (look for the heart next to Snap and Log many)."
     ]
   },

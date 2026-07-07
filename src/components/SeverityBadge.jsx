@@ -1,13 +1,17 @@
 import React from 'react'
 import { P } from '../lib/constants.js'
 import { T } from './forms/formStyles.js'
+import Icon from './Icon.jsx'
 
 // V4-FLAG-001 (2026-07-07): the per-planting flag UI is BACK; flagged severity variants (1/2/3)
 // reinstated alongside the system 'stale' badge. Keyed on int severity (event_log.severity).
+// V4-ICON-001: severity emoji -> the §9 monotonic glyph ladder (severity.low/med/high).
+// The badge span sets `color` per tone below, so each mono glyph inherits its severity hue
+// (shape carries the order; color reinforces; the label is the text channel — SC 1.4.1).
 const FLAG = {
-  1: { label: 'Keeping an eye on it', color: P.severityStaleInk, icon: '🟡' },
-  2: { label: 'Needs attention', color: P.terra, icon: '🟠' },
-  3: { label: 'Urgent', color: P.severityUrgent, icon: '🔴' },
+  1: { label: 'Keeping an eye on it', color: P.severityStaleInk, icon: 'severity.low' },
+  2: { label: 'Needs attention', color: P.terra, icon: 'severity.med' },
+  3: { label: 'Urgent', color: P.severityUrgent, icon: 'severity.high' },
 }
 const STALE = {
   label: 'Stale',
@@ -32,7 +36,7 @@ export default function SeverityBadge({ reason, severity, daysStale }) {
     return (
       <span role="status" title={`Flagged issue — ${f.label}`} data-testid="severity-badge"
         data-variant={`flagged-${severity}`} style={badgeStyle(f.color)}>
-        <span aria-hidden="true">{f.icon}</span>
+        <Icon name={f.icon} size={13} decorative />
         <span>{f.label}</span>
       </span>
     )

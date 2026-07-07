@@ -110,10 +110,10 @@ export const PLANT_CONTAINER_TYPE_LABELS = Object.fromEntries(
 // V3-CONFIG-001 ext: event-type vocab for plain <select> edit surfaces (EventDetail).
 // Sourced from the canonical EVENT_TYPES taxonomy + EVENT_TYPE_META emojis (single
 // source — labels are DERIVED, never hand-listed, so they cannot drift from EVENT_TYPES).
-// Label shape mirrors the legacy EventDetail rendering exactly: emoji + de-snaked value
-// (e.g. "🌰 sowing"), NOT the META prose label — this is a sourcing refactor, not a UX
-// change. Options are pre-sorted alpha by the raw value (matching the old in-place sort).
-const eventTypeLabel = (t) => (EVENT_TYPE_META[t]?.emoji ?? '📝') + ' ' + t.replace(/_/g, ' ')
+// Label shape = the de-snaked value (V4-ICON-001: emoji prefix removed — the EventDetail
+// read surface renders the glyph via <Icon name={`event.<type>`}>, and a native <option>
+// cannot hold an SVG). Options are pre-sorted alpha by the raw value (old in-place sort).
+const eventTypeLabel = (t) => t.replace(/_/g, ' ')
 
 export const EVENT_TYPE_OPTIONS = [...EVENT_TYPES]
   .sort((a, b) => a.localeCompare(b))

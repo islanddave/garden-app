@@ -31,6 +31,7 @@ describe('SeverityBadge — render variants', () => {
       const b = getByTestId('severity-badge')
       expect(b.getAttribute('data-variant')).toBe(`flagged-${severity}`)
       expect(b.textContent).toContain(labels[severity])
+      expect(b.querySelector('svg')).toBeTruthy() // V4-ICON-001: glyph, not emoji
       unmount()
     }
   })

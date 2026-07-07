@@ -8,7 +8,7 @@ import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'
-import { PLANT_STATUSES, PLANT_STATUS_MAP, statusLabel, P } from '../../lib/constants.js'
+import { PLANT_STATUSES, statusLabel, P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
 
 const btn = (extra = {}) => ({
@@ -85,7 +85,7 @@ export default function QuickActions({ planting, onLogged, onStatusChanged }) {
             appearance: 'menulist' }}>
           {!planting.status && <option value="">Set status…</option>}
           {PLANT_STATUSES.map(s => (
-            <option key={s} value={s}>{PLANT_STATUS_MAP[s]?.emoji ?? ''} {statusLabel(s)}</option>
+            <option key={s} value={s}>{statusLabel(s)}</option>
           ))}
         </select>
       </span>
