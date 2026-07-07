@@ -9,9 +9,9 @@
 // Composition note (plan §5 Phase D): this is the QUICK-PICKER half. The LogMany
 // scope/exclusion checklist is a SEPARATE component (ScopeChecklist) — different
 // render tree + state model; they share primitives, not a `mode=` switch.
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { P } from '../../lib/constants.js'
-import { buildSecondaryGroups } from '../../lib/eventTypes.js'
+import { EVENT_TYPES, buildSecondaryGroups } from '../../lib/eventTypes.js'
 import Icon from '../Icon.jsx'
 
 // Primary quick-picks (V4-EVENTSEL-002, Dave 2026-07-07: first-class set reordered to
@@ -67,17 +67,25 @@ function TypeBtn({ type, selected, onSelect }) {
   )
 }
 
-export default function EventTypePicker({ value, onChange }) {
+export default function EventTypePicker({ value, onChange, primaries = EVENT_TYPES_UI, available = EVENT_TYPES }) {
   const [showMore, setShowMore] = useState(false)
+  // Secondary "More" groups: everything in `available` not shown as a primary tile, grouped by
+  // EVENT_TYPE_META category. Defaults (primaries=EVENT_TYPES_UI, available=EVENT_TYPES) reproduce
+  // the module-const SECONDARY_GROUPS exactly, so EventNew (passes no props) is byte-identical.
+  // Log Many passes primaries=first-class-minus-photo + available=BATCH_EVENT_TYPES → one shared grid.
+  const secondaryGroups = useMemo(
+    () => buildSecondaryGroups(new Set(primaries.map(t => t.value)), available),
+    [primaries, available],
+  )
   return (
     <>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-        {EVENT_TYPES_UI.slice(0, 3).map(t => (
+        {primaries.slice(0, 3).map(t => (
           <TypeBtn key={t.value} type={t} selected={value} onSelect={onChange} />
         ))}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginTop: 10 }}>
-        {EVENT_TYPES_UI.slice(3).map(t => (
+        {primaries.slice(3).map(t => (
           <TypeBtn key={t.value} type={t} selected={value} onSelect={onChange} />
         ))}
       </div>
@@ -98,7 +106,7 @@ export default function EventTypePicker({ value, onChange }) {
 
       {showMore && (
         <div style={{ marginTop: 8 }}>
-          {SECONDARY_GROUPS.map(([category, types]) => (
+          {secondaryGroups.map(([category, types]) => (
             <div key={category} style={{ marginBottom: 14 }}>
               <div style={{
                 fontSize: '0.7rem', fontWeight: 700, color: P.light,

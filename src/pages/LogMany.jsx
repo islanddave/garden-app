@@ -4,7 +4,8 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { BATCH_EVENT_TYPES, EVENT_TYPE_META, buildSecondaryGroups, PRIMARY_EVENT_TYPES } from '../lib/eventTypes.js'
 import Icon from '../components/Icon.jsx'
-import { ScopeChecklist, SelectChip } from '../components/forms'
+import { ScopeChecklist } from '../components/forms'
+import EventTypePicker, { EVENT_TYPES_UI } from '../components/forms/EventTypePicker.jsx'
 
 // Bulk "Quick Log" (Unit A). Apply ONE event type to MANY plantings at once —
 // one event per planting — without per-item tapping. Scope: All active / By Project /
@@ -12,9 +13,9 @@ import { ScopeChecklist, SelectChip } from '../components/forms'
 // server-accurate preview. Durable undo via /api/events/batches. V100: ambient, no interrupt.
 //
 // Lane D / Phase D (slice 2): the scope selector + 500-cap exclusion checklist live in
-// the shared <ScopeChecklist> component (forms/). This page owns the event-type picker
-// (season-aware bulk primaries — distinct from EventNew's EventTypePicker grid), the
-// date, and the confirm/undo/result flow. The two pickers share the SelectChip grammar.
+// the shared <ScopeChecklist> component (forms/). This page owns the scope/date/confirm/undo
+// flow; the event-type selector is the SAME shared <EventTypePicker> tile grid Log Event uses
+// (V4-EVENTSEL-003) — one component, visually identical on both surfaces.
 
 // V4-EVENTSEL-002: the bulk selector is UNIFIED with Log One — it renders the SAME
 // first-class order (PRIMARY_EVENT_TYPES from the canonical eventTypes.js), not a separate
@@ -31,13 +32,10 @@ export const BULK_PRIMARY_VALUES = PRIMARY_EVENT_TYPES.filter(v => v !== 'photo'
 export function bulkSubmittableValues() {
   return BULK_PRIMARY_VALUES.filter(v => !HARVEST_ROUTE_TYPES.has(v))
 }
-function toChips(values) {
-  return values.map(v => ({
-    value: v,
-    label: EVENT_TYPE_META[v]?.label ?? v,
-    emoji: EVENT_TYPE_META[v]?.emoji ?? '📌',
-  }))
-}
+// Log Many's primary tiles = the shared first-class set minus photo (needs a file upload).
+// Sourced from EVENT_TYPES_UI (not EVENT_TYPE_META) so the tile labels + icons are byte-identical
+// to Log Event's grid. Stable module const → the picker's useMemo doesn't recompute per render.
+const LOGMANY_PRIMARIES = EVENT_TYPES_UI.filter(t => t.value !== 'photo')
 
 // Secondary event types — revealed via "More event types" expand. Every batch-eligible
 // type NOT in the ACTIVE primary quick-picks, grouped by EVENT_TYPE_META category. We
@@ -81,7 +79,6 @@ export default function LogMany() {
   const [loadErr, setLoadErr] = useState(null)
 
   const [eventType, setEventType] = useState('watering')
-  const [showMoreTypes, setShowMoreTypes] = useState(false)
   // V3-EVENT-008 (V002 §5): bulk back-dating. Frost / bring-in events are often logged
   // the morning after. Empty string = "now" (server defaults to today, noon-anchored).
   const [eventDate, setEventDate] = useState('')
@@ -92,26 +89,17 @@ export default function LogMany() {
   const [error, setError]   = useState(null)
   const idemRef = useRef(null)
 
-  // V4-EVENTSEL-002: unified first-class chips (shared order, minus photo). Harvest chips
-  // route to per-plant entry; the batch-submittable subset drives the "More" exclusion.
-  const primaries = toChips(BULK_PRIMARY_VALUES)
-  const submittable = bulkSubmittableValues()
-  const primaryValueSet = new Set(submittable)
-  const secondaryGroups = secondaryGroupsExcluding(submittable)
-  const allTypes = [...toChips(submittable), ...secondaryGroups.flatMap(([, types]) => types)]
-
-  // Harvest needs a per-plant quantity, so it's reachable in the unified selector but opens
-  // the single-event flow instead of a bulk apply (V4-EVENTSEL-002, Dave decision).
+  // V4-EVENTSEL-003: Log Many renders the SAME <EventTypePicker> tile grid as Log Event (below),
+  // so the two selectors are visually identical. harvest/first_harvest tiles route to per-plant
+  // entry (need a quantity); photo is hidden in bulk (absent from LOGMANY_PRIMARIES); everything
+  // else selects for the batch apply.
   function goPerPlant(type) {
     navigate(`/log?event_type=${encodeURIComponent(type)}`)
   }
-
-  // If the user reopens the page with a previously-selected secondary type saved in
-  // eventType, keep the More panel open so their selection stays visible.
-  useEffect(() => {
-    if (!primaryValueSet.has(eventType)) setShowMoreTypes(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventType])
+  function handlePick(v) {
+    if (HARVEST_ROUTE_TYPES.has(v)) goPerPlant(v)
+    else setEventType(v)
+  }
 
   // Load projects + locations; restore last scope (validated against live data); seed from ?project_id / ?location_id.
   useEffect(() => {
@@ -152,7 +140,11 @@ export default function LogMany() {
 
   const onSelectionChange = useCallback((sel) => setSelection(sel), [])
 
-  const evMeta = allTypes.find(t => t.value === eventType) || primaries[0]
+  const evMeta = {
+    value: eventType,
+    label: EVENT_TYPE_META[eventType]?.label ?? eventType,
+    emoji: EVENT_TYPE_META[eventType]?.emoji ?? '📌',
+  }
   const verbLabel = evMeta.label.toLowerCase()
   const committedCount = selection?.committedCount ?? 0
   const scopeLabel = scope.type === 'all' ? 'all active plantings'
@@ -224,58 +216,15 @@ export default function LogMany() {
       <Header />
 
       <Section>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {primaries.map(t => {
-            const routes = HARVEST_ROUTE_TYPES.has(t.value)
-            return (
-              <SelectChip
-                key={t.value}
-                active={!routes && eventType === t.value}
-                onClick={() => (routes ? goPerPlant(t.value) : setEventType(t.value))}
-              >
-                <Icon name={`event.${t.value}`} size={18} decorative style={{ verticalAlign: '-0.15em' }} /> {t.label}{routes ? ' →' : ''}
-              </SelectChip>
-            )
-          })}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setShowMoreTypes(s => !s)}
-          aria-expanded={showMoreTypes}
-          style={{
-            marginTop: 12, background: 'none', border: 'none',
-            cursor: 'pointer', color: P.green, fontSize: '0.82rem',
-            fontWeight: 600, padding: '4px 0',
-            display: 'flex', alignItems: 'center', gap: 5,
-          }}
-        >
-          <span aria-hidden="true">{showMoreTypes ? '▾' : '▸'}</span>
-          <span>More event types</span>
-        </button>
-
-        {showMoreTypes && (
-          <div style={{ marginTop: 8 }}>
-            {secondaryGroups.map(([category, types]) => (
-              <div key={category} style={{ marginBottom: 14 }}>
-                <div style={{
-                  fontSize: '0.7rem', fontWeight: 700, color: P.light,
-                  letterSpacing: '0.4px', textTransform: 'uppercase',
-                  marginBottom: 8,
-                }}>
-                  {category}
-                </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {types.map(t => (
-                    <SelectChip key={t.value} active={eventType === t.value} onClick={() => setEventType(t.value)}>
-                      <Icon name={`event.${t.value}`} size={18} decorative style={{ verticalAlign: '-0.15em' }} /> {t.label}
-                    </SelectChip>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* V4-EVENTSEL-003: the SAME tile-grid selector as Log Event (EventNew). primaries =
+            shared first-class set minus photo; available = BATCH_EVENT_TYPES scopes the "More"
+            panel to batch-eligible types; handlePick routes harvest to per-plant, else selects. */}
+        <EventTypePicker
+          primaries={LOGMANY_PRIMARIES}
+          available={BATCH_EVENT_TYPES}
+          value={eventType}
+          onChange={handlePick}
+        />
       </Section>
 
       <Section>
