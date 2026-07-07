@@ -57,6 +57,20 @@ describe('FavoriteToggle', () => {
     expect(screen.getByRole('button').textContent).toBe('♥')
   })
 
+  it('exposes toggle state via aria-pressed + a stable label + type=button (V4-A11Y-001)', () => {
+    favState.set = new Set(['plant:plant-2'])
+    render(<FavoriteToggle entityType="plant" entityId="plant-2" />)
+    const btn = screen.getByRole('button')
+    expect(btn.getAttribute('aria-pressed')).toBe('true')
+    expect(btn.getAttribute('aria-label')).toBe('Favorite')
+    expect(btn.getAttribute('type')).toBe('button')
+  })
+
+  it('aria-pressed reflects the not-favorited state (V4-A11Y-001)', () => {
+    render(<FavoriteToggle entityType="plant" entityId="plant-3" />)
+    expect(screen.getByRole('button').getAttribute('aria-pressed')).toBe('false')
+  })
+
   it('renders nothing when there is no signed-in user', () => {
     userRef.current = null
     const { container } = render(<FavoriteToggle entityType="project" entityId="proj-1" />)

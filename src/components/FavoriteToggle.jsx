@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { useFavorites } from '../context/FavoritesContext.jsx'
+import { P } from '../lib/constants.js'
 
 // V3-PERF-FAV-001 — favorite state now comes from FavoritesContext (one bulk
 // fetch app-wide) instead of a per-toggle GET on mount. Removes the /garden
@@ -38,8 +39,10 @@ export default function FavoriteToggle({ entityType, entityId, size = '1.2rem' }
 
   return (
     <button
+      type="button"
       onClick={toggle}
-      aria-label={isFav ? 'Remove from favorites' : 'Add to favorites'}
+      aria-label="Favorite"
+      aria-pressed={isFav}
       style={{
         background:  'none',
         border:      'none',
@@ -51,7 +54,7 @@ export default function FavoriteToggle({ entityType, entityId, size = '1.2rem' }
         transition:  'transform 150ms, opacity 150ms',
         display:     'inline-flex',
         alignItems:  'center',
-        color:       isFav ? '#c9a84c' : '#aaa',
+        color:       isFav ? P.gold : P.light,  // V4-A11Y-001: AA-legible on light surfaces (was #c9a84c/#aaa)
       }}
     >
       {isFav ? '♥' : '♡'}

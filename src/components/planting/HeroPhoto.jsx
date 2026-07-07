@@ -97,8 +97,10 @@ export default function HeroPhoto({ planting, src, alt, onOpenLightbox, onOpenDe
     background: 'linear-gradient(rgba(0,0,0,0.45), transparent)',
   }
   const bottomScrim = {
-    position: 'absolute', bottom: 0, left: 0, right: 0, height: 120, zIndex: 2, pointerEvents: 'none',
-    background: 'linear-gradient(transparent, rgba(0,0,0,0.55))',
+    // V4-A11Y-001 (SC 1.4.3): deepened + taller so the white <h1> name band sits over >=0.70 alpha,
+    // clearing 3:1 large-text over a worst-case bright photo (was h=120 / 0.55 -> 1.8-3.3:1).
+    position: 'absolute', bottom: 0, left: 0, right: 0, height: 180, zIndex: 2, pointerEvents: 'none',
+    background: 'linear-gradient(transparent, rgba(0,0,0,0.30) 32%, rgba(0,0,0,0.72) 74%, rgba(0,0,0,0.82))',
   }
 
   if (src) {

@@ -25,13 +25,13 @@ export const STATUS_COLORS = {
   fruiting:  ACTIVE_STAGE,
   harvesting:{ bg: P.warn,  text: P.statusInkGold, border: P.warnBorder },
   harvested: { bg: P.neutralFill,  text: P.mid,     border: P.border },
-  ended:     { bg: P.neutralFill,  text: P.light,   border: P.border },
+  ended:     { bg: P.neutralFill,  text: P.mid,     border: P.border },  // V4-A11Y-001: P.light #777 was 3.86:1 on #eee
   // ── Plant lifecycle statuses (V3-FORMSYS-001 §3.2 — were falling through to planning gold) ──
   seed:       ACTIVE_STAGE,
   seedling:   ACTIVE_STAGE,
   vegetative: ACTIVE_STAGE,
   dormant:    { bg: P.neutralFill,  text: P.mid,         border: P.border },
-  failed:     { bg: P.alert, text: P.alertBorder, border: P.alertBorder },
+  failed:     { bg: P.alert, text: P.severityUrgent, border: P.alertBorder },  // V4-A11Y-001: alertBorder #b7532a was 4.15:1 on #fde8e0
 }
 
 export function getStatusColors(status) {

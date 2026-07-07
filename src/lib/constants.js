@@ -36,6 +36,7 @@ export const P = {
   bannerInk:           '#7a2a10',  // formStyles bannerChrome text
   severityStaleBorder: '#d4b556',  // SeverityBadge stale border/text/icon
   severityUrgent:      '#9c2b1a',  // V4-FLAG-001 SeverityBadge sev-3 'Urgent' red (AA on cream)
+  severityStaleInk:    '#7a5e24',  // V4-A11Y-001: darker gold for stale/sev-1 badge text+border+icon (AA >=4.5 on cream+white; was #d4b556 @1.99:1 / #8a6e2a @4.44:1)
   preparingFill:       '#f0e9e0',  // status.js preparing stage bg
   badgeInfoBg:         '#e8f0fa',  // forms/Badge info tone bg
   // ── FACET token set (contract §4) — additive, unused until TAGSUB. AA-checked draft. ──

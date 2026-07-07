@@ -5,13 +5,13 @@ import { T } from './forms/formStyles.js'
 // V4-FLAG-001 (2026-07-07): the per-planting flag UI is BACK; flagged severity variants (1/2/3)
 // reinstated alongside the system 'stale' badge. Keyed on int severity (event_log.severity).
 const FLAG = {
-  1: { label: 'Keeping an eye on it', color: P.gold, icon: '🟡' },
+  1: { label: 'Keeping an eye on it', color: P.severityStaleInk, icon: '🟡' },
   2: { label: 'Needs attention', color: P.terra, icon: '🟠' },
   3: { label: 'Urgent', color: P.severityUrgent, icon: '🔴' },
 }
 const STALE = {
   label: 'Stale',
-  color: P.severityStaleBorder,
+  color: P.severityStaleInk,
   title: 'Stale: no observations in 21+ days',
   icon: (c) => (
     <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
