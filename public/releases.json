@@ -1,5 +1,15 @@
 [
   {
+    "version": "3.30.0",
+    "date": "2026-07-07",
+    "highlights": [
+      "Fresh new app icon and a welcome splash screen — a garden arbor brimming with the food we grow.",
+      "New “Flag an issue” option when logging an event, with an at-a-glance severity badge.",
+      "More ways to record where a plant came from — including Rescue and Plant swap, or type your own.",
+      "Log Many now matches Log Event exactly — same event buttons, same layout; “Weeded” moved to Environmental."
+    ]
+  },
+  {
     "version": "3.29.0",
     "date": "2026-07-07",
     "highlights": [
