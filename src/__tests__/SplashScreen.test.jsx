@@ -1,3 +1,4 @@
+import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import SplashScreen from '../components/SplashScreen.jsx'
