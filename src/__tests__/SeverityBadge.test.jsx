@@ -24,8 +24,19 @@ describe('SeverityBadge — render variants', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('FLAG-REMOVAL regression: reason="flagged" renders nothing at any severity', () => {
-    for (const severity of [1, 2, 3, null]) {
+  it('V4-FLAG-001: renders flagged severity variants 1/2/3 with distinct labels + data-variant', () => {
+    const labels = { 1: 'Keeping an eye on it', 2: 'Needs attention', 3: 'Urgent' }
+    for (const severity of [1, 2, 3]) {
+      const { getByTestId, unmount } = render(<SeverityBadge severity={severity} reason="flagged" />)
+      const b = getByTestId('severity-badge')
+      expect(b.getAttribute('data-variant')).toBe(`flagged-${severity}`)
+      expect(b.textContent).toContain(labels[severity])
+      unmount()
+    }
+  })
+
+  it('renders nothing for reason="flagged" with a null/out-of-range severity', () => {
+    for (const severity of [null, 0, 4]) {
       const { container, unmount } = render(<SeverityBadge severity={severity} reason="flagged" />)
       expect(container.firstChild).toBeNull()
       unmount()

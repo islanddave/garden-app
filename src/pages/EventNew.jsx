@@ -12,7 +12,7 @@ import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
 import { useToast } from '../context/ToastContext.jsx'
-import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
+import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS, SEVERITY_LEVELS, ISSUE_OPTIONS } from '../lib/dropdownRegistry.js'
 
 // V3-EVENT-008: EVENT_TYPE_META lives in the canonical src/lib/eventTypes.js
 // (single source of truth). Re-exported here so existing importers from
@@ -237,6 +237,12 @@ export default function EventNew() {
   }))
   const [harvestError, setHarvestError] = useState(null)
 
+  // V4-FLAG-001: flag-mode state (event_type='flag_issue'). Severity is REQUIRED; the issue is a
+  // static seeded label (Slice 1) or a free-typed/voiced 'Other' -> metadata.issue_label.
+  const [severity, setSeverity] = useState(null)
+  const [issueChoice, setIssueChoice] = useState('')
+  const [issueOther, setIssueOther] = useState('')
+
   // V1.2a-2 Wave 3: non-fatal notice (e.g. deep-link project not found).
   const [notice, setNotice] = useState(null)
 
@@ -260,6 +266,8 @@ export default function EventNew() {
     // re-seeded from localStorage so the user's last choice persists across types.
     setHarvest({ quantity: '', unit: readLastHarvestUnit(), quality_rating: null })
     setHarvestError(null)
+    // V4-FLAG-001: reset flag-mode fields when the event type changes.
+    setSeverity(null); setIssueChoice(''); setIssueOther('')
   }, [form.event_type])
 
   // V3-EVENTCONTSIZE-001: clear the captured container when the event type or target planting changes.
@@ -381,6 +389,7 @@ export default function EventNew() {
     setMetadataState({})
     setHarvest({ quantity: '', unit: readLastHarvestUnit(), quality_rating: null })
     setHarvestError(null)
+    setSeverity(null); setIssueChoice(''); setIssueOther('')
     setContainer({ type: '', size: '' })
     clearPhoto()
     setShowAddDetails(EVENTNEW_ADD_DETAILS_EXPANDED)
@@ -402,6 +411,13 @@ export default function EventNew() {
       setHarvestError(null)
     }
 
+    // V4-FLAG-001: flag-mode gates — a flag must target a specific planting (so DrG surfaces it)
+    // and must carry a severity (required by the events validator + drives DrG urgency).
+    if (form.event_type === 'flag_issue') {
+      if (!form.plant_id) { setError("Choose the plant you're flagging."); return }
+      if (!severity)      { setError('Pick how urgent it is.'); return }
+    }
+
     if (form.event_type === 'watering') ux.tap()  // submit tap (watering flow only)
     setSaving(true)
     setError(null)
@@ -409,8 +425,12 @@ export default function EventNew() {
     // Send date portion only — Lambda appends T12:00:00 internally
     const eventDateStr = form.event_date.split('T')[0]
 
-    // Build metadata — only include if there are populated keys
-    const metadata = Object.keys(metadataState).length > 0 ? metadataState : null
+    // Build metadata — merge the flag issue_label (V4-FLAG-001) with any Tier-2 metadata.
+    const isFlag = form.event_type === 'flag_issue'
+    const issueLabel = isFlag ? (issueChoice === '__other__' ? issueOther.trim() : issueChoice) : ''
+    const mergedMeta = { ...metadataState, ...(isFlag && issueLabel ? { issue_label: issueLabel } : {}) }
+    const metadata = Object.keys(mergedMeta).length > 0 ? mergedMeta : null
+    const flagPayload = isFlag ? { flagged_as_issue: true, severity } : {}
 
     // V1.2a-2 Wave 3: assemble type-specific payload fields.
     const isHarvest = form.event_type === 'harvest'
@@ -442,6 +462,7 @@ export default function EventNew() {
           has_photo:     !!photoFile,
           metadata,
           ...harvestPayload,
+          ...flagPayload,
         }),
       })
     } catch (err) {
@@ -558,10 +579,31 @@ export default function EventNew() {
 
           {/* ── Event type ── */}
           <Section label="What happened? *">
-            <EventTypePicker
-              value={form.event_type}
-              onChange={v => setForm(f => ({ ...f, event_type: v }))}
-            />          </Section>
+            {form.event_type === 'flag_issue' ? (
+              <FlagModeFields
+                severity={severity} onSeverity={setSeverity}
+                issueChoice={issueChoice} onIssueChoice={setIssueChoice}
+                issueOther={issueOther} onIssueOther={setIssueOther}
+                voice={voice}
+                onBack={() => setForm(f => ({ ...f, event_type: '' }))}
+              />
+            ) : (
+              <>
+                <EventTypePicker
+                  value={form.event_type}
+                  onChange={v => setForm(f => ({ ...f, event_type: v }))}
+                />
+                {/* V4-FLAG-001: dedicated entry into Flag mode (flag_issue is a free-text event
+                    type, not a canonical glyphed tile — avoids the icon-completeness harness). */}
+                <button type="button" onClick={() => setForm(f => ({ ...f, event_type: 'flag_issue' }))}
+                  style={{ marginTop: 12, background: 'none', border: `1px solid ${P.terra}`, borderRadius: 8,
+                    color: P.terra, fontWeight: 600, fontSize: '0.85rem', padding: '8px 14px', cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  🚩 Flag an issue
+                </button>
+              </>
+            )}
+          </Section>
 
           {/* ── Notes ── */}
           <Section label="Notes">
@@ -920,6 +962,62 @@ export default function EventNew() {
   )
 }
 
+
+// V4-FLAG-001: Flag mode body — severity (required, 3 buttons) + a static seeded issue dropdown
+// with an "Other" (type OR voice via the shared MicBtn). The chosen issue is stored as free-text
+// metadata.issue_label; severity is the DB smallint. Order per spec: severity -> issue.
+function FlagModeFields({ severity, onSeverity, issueChoice, onIssueChoice, issueOther, onIssueOther, voice, onBack }) {
+  const TONE = { gold: P.gold, terra: P.terra, red: '#9c2b1a' }
+  const EMOJI = { 1: '🟡', 2: '🟠', 3: '🔴' }
+  return (
+    <div>
+      <button type="button" onClick={onBack}
+        style={{ background: 'none', border: 'none', color: P.green, fontSize: '0.82rem', fontWeight: 600,
+          cursor: 'pointer', padding: '0 0 12px', display: 'flex', alignItems: 'center', gap: 5 }}>
+        ← Choose a different event
+      </button>
+      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: P.mid, letterSpacing: '0.3px',
+        textTransform: 'uppercase', marginBottom: 8 }}>How urgent? *</div>
+      <div role="radiogroup" aria-label="Severity" style={{ display: 'grid', gap: 8 }}>
+        {SEVERITY_LEVELS.map(sv => {
+          const active = severity === sv.value
+          const tone = TONE[sv.tone]
+          return (
+            <button key={sv.value} type="button" role="radio" aria-checked={active}
+              onClick={() => onSeverity(sv.value)}
+              style={{ textAlign: 'left', padding: '11px 14px', borderRadius: 10, cursor: 'pointer',
+                border: `2px solid ${active ? tone : P.border}`, backgroundColor: active ? tone : P.white,
+                color: active ? P.white : P.mid, fontWeight: 600, fontSize: '0.88rem', fontFamily: 'inherit' }}>
+              {EMOJI[sv.value]} {sv.label}
+            </button>
+          )
+        })}
+      </div>
+      <div style={{ marginTop: 16 }}>
+        <Field label="What's the issue?" htmlFor="flag-issue" optional>
+          <Select id="flag-issue" value={issueChoice} onChange={e => onIssueChoice(e.target.value)}>
+            <option value="">— Select an issue (optional) —</option>
+            {ISSUE_OPTIONS.map(g => (
+              <optgroup key={g.group} label={g.group}>
+                {g.options.map(o => <option key={o} value={o}>{o}</option>)}
+              </optgroup>
+            ))}
+            <option value="__other__">➕ Other…</option>
+          </Select>
+        </Field>
+        {issueChoice === '__other__' && (
+          <div style={{ position: 'relative', marginTop: 10 }}>
+            <Input value={issueOther} onChange={e => onIssueOther(e.target.value)}
+              aria-label="Describe the issue" placeholder="Describe the issue" style={{ paddingRight: 44 }} />
+            <MicBtn fieldKey="issueOther"
+              onResult={text => onIssueOther(issueOther ? issueOther + ' ' + text : text)}
+              voice={voice} top="14px" transform="none" />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function Section({ label, children }) {
   return (

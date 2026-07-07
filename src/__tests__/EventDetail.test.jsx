@@ -93,13 +93,14 @@ beforeEach(() => {
   wireApiFetch()
 })
 
-describe('EventDetail — flagging UI removed (FLAG-REMOVAL regression)', () => {
-  it('renders NO Resolve button and NO SeverityBadge for a flagged + unresolved event', async () => {
+describe('EventDetail — flag severity badge (V4-FLAG-001)', () => {
+  it('renders a SeverityBadge for a flagged event (severity 2 -> Needs attention)', async () => {
     renderEventDetail()
     await flushLoad()
     expect(screen.getByText(/Spider mites/)).toBeTruthy()
-    expect(screen.queryByText('Resolve')).toBeNull()
-    expect(screen.queryByTestId('severity-badge')).toBeNull()
+    const badge = screen.getByTestId('severity-badge')
+    expect(badge.getAttribute('data-variant')).toBe('flagged-2')
+    expect(badge.textContent).toContain('Needs attention')
   })
 
   it('still renders the Edit and Delete actions', async () => {
@@ -109,11 +110,10 @@ describe('EventDetail — flagging UI removed (FLAG-REMOVAL regression)', () => 
     expect(screen.getByText('Delete')).toBeTruthy()
   })
 
-  it('renders a plain (non-flagged) event identically — no flag affordances', async () => {
+  it('renders NO SeverityBadge for a plain (non-flagged) event', async () => {
     dataRef.event = { ...FLAGGED_UNRESOLVED, flagged_as_issue: false, severity: null }
     renderEventDetail()
     await flushLoad()
-    expect(screen.queryByText('Resolve')).toBeNull()
     expect(screen.queryByTestId('severity-badge')).toBeNull()
   })
 })

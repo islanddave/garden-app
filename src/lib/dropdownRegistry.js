@@ -132,3 +132,21 @@ export const PROJECT_CATEGORY_OPTIONS = PROJECT_CATEGORIES.map(c => ({ value: c.
 export const PROJECT_CATEGORY_LABELS = Object.fromEntries(
   PROJECT_CATEGORY_OPTIONS.map(o => [o.value, o.label])
 )
+
+
+// V4-FLAG-001 — flag-issue vocabulary (single source of truth; consumed by EventNew Flag mode).
+export const SEVERITY_LEVELS = [
+  { value: 1, label: 'Keeping an eye on it', tone: 'gold' },
+  { value: 2, label: 'Needs attention', tone: 'terra' },
+  { value: 3, label: 'Urgent', tone: 'red' },
+]
+
+// Static seeded issue list (Slice 1). Values ARE the stored label (metadata.issue_label, free text).
+export const ISSUE_OPTIONS = [
+  { group: 'Pests', options: ['Aphids', 'Spider mites', 'Whiteflies', 'Thrips', 'Fungus gnats', 'Caterpillars / loopers', 'Slugs / snails', 'Squash bugs', 'Cucumber beetles', 'Flea beetles', 'Tomato hornworm', 'Scale', 'Mealybugs'] },
+  { group: 'Disease', options: ['Powdery mildew', 'Downy mildew', 'Early blight', 'Late blight', 'Leaf spot', 'Gray mold (botrytis)', 'Rust', 'Damping off', 'Bacterial wilt', 'Mosaic virus'] },
+  { group: 'Disorders', options: ['Blossom-end rot', 'Cracking / splitting', 'Sunscald', 'Catfacing', 'Bolting', 'Edema'] },
+  { group: 'Deficiency', options: ['Nitrogen deficiency', 'Phosphorus deficiency', 'Potassium deficiency', 'Magnesium deficiency', 'Iron chlorosis', 'Calcium deficiency'] },
+  { group: 'Environmental & damage', options: ['Heat stress', 'Cold / frost damage', 'Wind damage', 'Drought stress', 'Overwatering', 'Transplant shock', 'Physical damage'] },
+  { group: 'Animal', options: ['Deer browsing', 'Rabbit damage', 'Rodent damage', 'Bird damage', 'Groundhog / woodchuck'] },
+]

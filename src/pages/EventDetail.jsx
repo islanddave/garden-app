@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
+import SeverityBadge from '../components/SeverityBadge.jsx'
 import { EVENT_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
@@ -138,6 +139,9 @@ export default function EventDetail() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span>{icon} {event.title || event.event_type.replace(/_/g, ' ')}</span>
+          {event.flagged_as_issue && (
+            <SeverityBadge reason="flagged" severity={event.severity} />
+          )}
         </h1>
         {!editing && (
           <div style={{ display: 'flex', gap: 8 }}>
