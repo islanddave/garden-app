@@ -11,8 +11,10 @@
 import { EVENT_TYPES, EVENT_TYPE_META } from './eventTypes.js'
 import { PROJECT_CATEGORIES } from './constants.js'
 
-// Mirrors the plants Lambda ALLOWED_SOURCE enum verbatim. The empty sentinel is the form
-// Select's "not specified" option; the host coerces '' -> null before sending.
+// V4-SOURCEFREE-001 (2026-07-07): single source of truth for planting source_type. The server
+// field is now FREE-TEXT (no Lambda allowlist) and the DB CHECK was dropped, so options can be
+// added here freely without a backend/DDL change. Empty sentinel = the form Select's "not
+// specified" option; the host coerces '' -> null before sending.
 export const PLANT_SOURCE_OPTIONS = [
   { value: '', label: '— Not specified —' },
   { value: 'seed_packet', label: 'Seed packet' },
@@ -23,6 +25,7 @@ export const PLANT_SOURCE_OPTIONS = [
   { value: 'saved_seed', label: 'Saved seed' },
   { value: 'cutting_taken', label: 'Cutting taken' },
   { value: 'rescued', label: 'Rescued' },
+  { value: 'plant_swap', label: 'Plant swap' },
   { value: 'unknown', label: 'Not sure' },
 ]
 

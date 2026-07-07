@@ -173,7 +173,7 @@ describe('V4-EVENTSEL-001 — taxonomy fix + explicit category order', () => {
 });
 
 describe('V4-EVENTSEL-001 — Dave-approved taxonomy taste-calls', () => {
-  it('weeded is Care', () => expect(EVENT_TYPE_META.weeded.category).toBe('Care'));
+  it('weeded is Environmental (moved off the lone Care More-panel row, Dave 2026-07-07)', () => expect(EVENT_TYPE_META.weeded.category).toBe('Environmental'));
   it('caged is Growth & Training', () => expect(EVENT_TYPE_META.caged.category).toBe('Growth & Training'));
   it('animal_damage is Environmental', () => expect(EVENT_TYPE_META.animal_damage.category).toBe('Environmental'));
 });

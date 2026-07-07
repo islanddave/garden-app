@@ -215,7 +215,7 @@ export default function LogMany() {
     <Shell>
       <Header />
 
-      <Section>
+      <Section label="What happened?">
         {/* V4-EVENTSEL-003: the SAME tile-grid selector as Log Event (EventNew). primaries =
             shared first-class set minus photo; available = BATCH_EVENT_TYPES scopes the "More"
             panel to batch-eligible types; handlePick routes harvest to per-plant, else selects. */}
@@ -227,7 +227,7 @@ export default function LogMany() {
         />
       </Section>
 
-      <Section>
+      <Section label="When?">
         {/* V3-EVENT-008 (V002 §5): back-dating for bulk frost / bring-in events logged the
             morning after. Defaults to today (empty = server "now"); future dates blocked. */}
         <input
@@ -270,18 +270,22 @@ export default function LogMany() {
 
 function Header() {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+    <div style={{ marginBottom: 24 }}>
       <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Log many</h1>
-      {/* V3-LOGBTN-001: themed ghost button, not a raw text link. */}
-      <Link to="/log" style={{ ...btnGhost, textDecoration: 'none', display: 'inline-block' }}>Log one →</Link>
+      {/* V4-EVENTSEL-004: cross-link matches Log Event's exactly — same ghost style, sitting
+          UNDERNEATH the title (Log Event's pattern), not right-floated. */}
+      <div style={{ marginTop: 8 }}>
+        <Link to="/log" style={crossLinkStyle}>Log one →</Link>
+      </div>
     </div>
   )
 }
 function Section({ label, children }) {
-  // V3-LOGMANY copy strip: label optional — page is buttons-only, no helper prompts.
+  // V4-EVENTSEL-004: card styling matches Log Event's Section (white bordered box + uppercase
+  // label) so the event selector looks IDENTICAL on both surfaces (neat box, "More" contained).
   return (
-    <div style={{ marginBottom: 16 }}>
-      {label && <p style={{ margin: '0 0 8px', fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{label}</p>}
+    <div style={{ marginBottom: 16, backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '16px 18px' }}>
+      {label && <label style={{ display: 'block', fontSize: '0.77rem', fontWeight: 700, color: P.mid, marginBottom: 10, letterSpacing: '0.4px', textTransform: 'uppercase' }}>{label}</label>}
       {children}
     </div>
   )
@@ -299,5 +303,7 @@ function ErrInline({ msg }) { return <p role="alert" style={{ color: P.terra, fo
 
 const btnPrimary = { backgroundColor: P.green, color: P.white, border: 'none', borderRadius: 8, padding: '11px 18px', fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
 const btnGhost = { backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 8, padding: '10px 16px', fontSize: '0.88rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }
+// V4-EVENTSEL-004: byte-identical to Log Event's cross-link button (EventNew.jsx) so the two match exactly.
+const crossLinkStyle = { display: 'inline-block', marginTop: 4, backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 8, padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }
 const linkBtn = { background: 'none', border: 'none', color: P.green, fontSize: '0.83rem', fontWeight: 600, cursor: 'pointer', padding: 0, fontFamily: 'inherit', textDecoration: 'underline' }
 const selectStyle = { width: '100%', minHeight: 44, padding: '8px 12px', borderRadius: 8, border: `1px solid ${P.border}`, fontSize: '0.9rem', fontFamily: 'inherit', backgroundColor: P.white, color: P.dark }

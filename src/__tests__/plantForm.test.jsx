@@ -84,11 +84,11 @@ describe('PlantForm (E1 unified)', () => {
     expect(screen.getByRole('button', { name: 'Remove' })).toBeDefined()
   })
 
-  it('exposes the source enum verbatim from the plants Lambda ALLOWED_SOURCE set', () => {
+  it('exposes the source options from dropdownRegistry PLANT_SOURCE_OPTIONS (source_type is free-text server-side)', () => {
     setup()
     const sel = document.getElementById('t-source')
     const values = Array.from(sel.querySelectorAll('option')).map(o => o.value)
-    expect(values).toEqual(['', 'seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'cutting_taken', 'rescued', 'unknown'])
+    expect(values).toEqual(['', 'seed_packet', 'nursery_transplant', 'division', 'volunteer', 'gift', 'saved_seed', 'cutting_taken', 'rescued', 'plant_swap', 'unknown'])
   })
 })
 

@@ -546,7 +546,7 @@ export default function EventNew() {
                 textDecoration: 'none',
               }}
             >
-              ⚡ Log Many →
+              Log many →
             </Link>
           </div>
         </div>

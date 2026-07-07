@@ -107,7 +107,7 @@ export const EVENT_TYPE_META = {
   pinched:         { label: 'Pinched',              emoji: '🤌', category: 'Growth & Training' },
   suckered:        { label: 'Suckered',             emoji: '🌿', category: 'Growth & Training' },
   deadheaded:      { label: 'Deadheaded',           emoji: '🌸', category: 'Growth & Training' },
-  weeded:          { label: 'Weeded',               emoji: '☘️', category: 'Care' },
+  weeded:          { label: 'Weeded',               emoji: '☘️', category: 'Environmental' },
   hand_pollinated: { label: 'Hand-pollinated',      emoji: '🐝', category: 'Growth & Training' },
   divided:         { label: 'Divided',              emoji: '↔️', category: 'Growth & Training' },
   cutting_taken:   { label: 'Cutting taken',        emoji: '🪚', category: 'Growth & Training' },
