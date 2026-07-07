@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.34.0",
+    "date": "2026-07-07",
+    "highlights": [
+      "The bottom navigation and More menu now use the app's own hand-drawn icons instead of system emoji — including a new orange butterfly for Critters — so everything looks consistent across phones and tablets.",
+      "The active tab is now announced to screen readers."
+    ]
+  },
+  {
     "version": "3.33.0",
     "date": "2026-07-07",
     "highlights": [

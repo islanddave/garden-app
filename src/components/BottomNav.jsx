@@ -9,6 +9,7 @@ import { useApiFetch } from '../lib/api.js'
 import BottomNavDot from './BottomNavDot.jsx'
 import { useMode } from '../lib/mode.js'
 import Sheet from './forms/Sheet.jsx'
+import Icon from './Icon.jsx'
 
 // BottomNav — V200 / V4-THEME-001 nav: Today·Garden·＋·DrG·More.
 // V200 Slice 9 (2026-07-01): the two hand-rolled slide-up dialogs (Create FAB sheet +
@@ -20,10 +21,10 @@ import Sheet from './forms/Sheet.jsx'
 // subtitle only — NO badge/count/alert (Reward UX V102, ambient). Glyphs are still emoji;
 // the emoji->Icon SVG pass is the deferred Slice 9 follow-up commit.
 const TABS = [
-  { to: '/today',    label: 'Today',  icon: '📅' },
-  { to: '/garden',   label: 'Garden', icon: '🪴' },
-  { to: '/log',      label: 'Create', icon: '+',  highlight: true },
-  { to: '/findings', label: 'DrG',    icon: '🩺' },
+  { to: '/today',    label: 'Today',  iconName: 'nav.today' },
+  { to: '/garden',   label: 'Garden', iconName: 'nav.garden' },
+  { to: '/log',      label: 'Create', iconName: 'nav.plus', highlight: true },
+  { to: '/findings', label: 'DrG',    iconName: 'nav.findings' },
 ]
 
 // +LOG FAB -> create action sheet. Slice 9: trimmed to 3 first-class quick-hit actions.
@@ -33,9 +34,9 @@ const TABS = [
 // first-class; inventory-add is reachable via More -> Inventory). Not a reward surface
 // (user-initiated create menu), so the sheet pattern is appropriate under Reward UX V102.
 const CREATE_ACTIONS = [
-  { to: '/log',          icon: '📝', label: 'Log an event',   sub: 'Watering, harvest, a note…' },
-  { to: '/log/many',     icon: '⚡', label: 'Log many',        sub: 'One event across many plants' },
-  { to: '/garden?add=1', icon: '🌱', label: 'Add a planting', sub: 'A plant growing in a project' },
+  { to: '/log',          iconName: 'event.other',      label: 'Log an event',   sub: 'Watering, harvest, a note…' },
+  { to: '/log/many',     iconName: 'action.logmany',   label: 'Log many',        sub: 'One event across many plants' },
+  { to: '/garden?add=1', iconName: 'lifecycle.sprout', label: 'Add a planting', sub: 'A plant growing in a project' },
 ]
 
 // Shared menu-row style. `border:'none'` first so buttons drop their default border, then
@@ -106,7 +107,7 @@ export default function BottomNav() {
             onClick={closeCreate}
             style={{ ...menuRowStyle, padding: '12px 24px' }}
           >
-            <span aria-hidden="true" style={{ fontSize: '1.5rem' }}>{action.icon}</span>
+            <Icon name={action.iconName} size={24} decorative style={{ color: P.green }} />
             <span style={{ display: 'flex', flexDirection: 'column' }}>
               <span style={{ fontSize: '1rem', fontWeight: 600 }}>{action.label}</span>
               <span style={{ fontSize: '0.78rem', color: P.light }}>{action.sub}</span>
@@ -132,7 +133,7 @@ export default function BottomNav() {
           style={{ ...menuRowStyle, justifyContent: 'space-between' }}
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>{isField ? '🌿' : '💻'}</span>
+            <Icon name={isField ? 'facet.type' : 'mode.desk'} size={22} decorative />
             View mode
           </span>
           <span style={{ fontSize: '0.85rem', fontWeight: 700, color: P.green }}>
@@ -142,13 +143,13 @@ export default function BottomNav() {
 
         <SectionLabel>Your garden</SectionLabel>
         <Link to="/dashboard" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏡</span>Dashboard
+          <Icon name="nav.dashboard" size={22} decorative />Dashboard
         </Link>
         <Link to="/photos" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📷</span>Photos
+          <Icon name="media.camera" size={22} decorative />Photos
         </Link>
         <Link to="/inventory" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📦</span>Inventory
+          <Icon name="nav.inventory" size={22} decorative />Inventory
         </Link>
         <Link to="/achievements" onClick={closeMore} style={menuRowStyle}>
           <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏆</span>Achievements
@@ -168,7 +169,7 @@ export default function BottomNav() {
           onClick={closeMore}
           style={{ ...menuRowStyle, alignItems: 'flex-start' }}
         >
-          <span aria-hidden="true" style={{ fontSize: '1.4rem', lineHeight: 1.2 }}>🦋</span>
+          <Icon name="nav.critters" size={22} decorative style={{ lineHeight: 1.2 }} />
           <span style={{ display: 'flex', flexDirection: 'column' }}>
             <span style={{ fontSize: '1rem', fontWeight: 500 }}>Critters</span>
             <span style={{ fontSize: '0.78rem', color: P.light }}>Who&apos;s been visiting</span>
@@ -177,23 +178,23 @@ export default function BottomNav() {
 
         <SectionLabel>Help &amp; account</SectionLabel>
         <Link to="/helper" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>💬</span>Garden Helper
+          <Icon name="nav.helper" size={22} decorative />Garden Helper
         </Link>
         <Link to="/settings" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>⚙</span>Settings
+          <Icon name="action.settings" size={22} decorative />Settings
         </Link>
         <Link to="/about" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>ℹ️</span>About
+          <Icon name="action.info" size={22} decorative />About
         </Link>
         <Link to="/releases" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📋</span>Release Notes<WhatsNewDot variant="inline" />
+          <Icon name="nav.notes" size={22} decorative />Release Notes<WhatsNewDot variant="inline" />
         </Link>
 
         {/* Sign Out — inline 2-step confirm (BottomNav-owned; Sheet stays a dumb container).
             A session-ending action must not be an impulsive mis-tap target. */}
         {!confirmSignOut ? (
           <button onClick={() => setConfirmSignOut(true)} style={menuRowStyle}>
-            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>↪</span>Sign out
+            <Icon name="nav.signout" size={22} decorative />Sign out
           </button>
         ) : (
           <div style={{
@@ -258,7 +259,7 @@ export default function BottomNav() {
                   width: 44, height: 44, backgroundColor: P.terra, borderRadius: '50%',
                   color: '#fff', fontSize: '1.3rem', fontWeight: 700,
                   boxShadow: '0 2px 8px rgba(183,83,42,0.35)',
-                }} aria-hidden="true">🎤</span>
+                }} aria-hidden="true"><Icon name="media.mic" size={22} decorative style={{ color: '#fff' }} /></span>
               </Link>
             )
             return (
@@ -271,13 +272,13 @@ export default function BottomNav() {
                 width: 44, height: 44, backgroundColor: P.green, borderRadius: '50%',
                 color: '#fff', fontSize: '1.5rem', fontWeight: 700,
                 boxShadow: '0 2px 8px rgba(45,106,79,0.35)',
-              }}>+</span>
+              }}><Icon name="nav.plus" size={24} decorative style={{ color: '#fff' }} /></span>
             </button>
           )}
           return (
-            <Link key={tab.to} to={tab.to}
+            <Link key={tab.to} to={tab.to} aria-current={active ? 'page' : undefined}
               style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44, position: 'relative' }}>
-              <span style={{ fontSize: '1.25rem', lineHeight: 1 }}>{tab.icon}</span>
+              <Icon name={tab.iconName} size={22} decorative />
               <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400 }}>{tab.label}</span>
             </Link>
           )
@@ -290,7 +291,7 @@ export default function BottomNav() {
             gap: 2, background: 'none', border: 'none', cursor: 'pointer',
             color: showMore ? P.green : P.light, padding: 0, minHeight: 44, position: 'relative',
           }}>
-          <span style={{ fontSize: '1.25rem', lineHeight: 1, letterSpacing: '-1px' }}>•••</span>
+          <Icon name="nav.more" size={22} decorative />
           <span style={{ fontSize: '0.62rem', fontWeight: showMore ? 700 : 400 }}>More</span>
           {/* Critter "new visitor" dot lives on More now that Critters is in the menu. */}
           <BottomNavDot getToken={getToken} />

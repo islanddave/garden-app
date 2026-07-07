@@ -205,6 +205,79 @@ const A = {
     svg24: '<path d="M7 3.6v16.8"/><path d="M7 4.8c2.9-1.7 5.9 1.7 8.8 0v6.2c-2.9 1.7-5.9-1.7-8.8 0z"/>',
     svg18: '<path d="M7.2 3.9v16.2"/><path d="M7.2 5c2.6-1.5 5.3 1.5 7.9 0v5.6c-2.6 1.5-5.3-1.5-7.9 0z"/>',
   },
+  // ── V4-ICON-001 Slice 5: BottomNav mono utility/nav glyphs (emoji-free). All mono/currentColor;
+  //    the consumer sets `color` (green/light on the white bar; #fff on the green FAB circle). ──
+  'nav.plus': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M12 5.5v13"/><path d="M5.5 12h13"/>',
+    svg18: '<path d="M12 5v14"/><path d="M5 12h14"/>',
+  },
+  'nav.more': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<circle cx="5.6" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="18.4" cy="12" r="1.7" fill="currentColor" stroke="none"/>',
+    svg18: '<circle cx="5.4" cy="12" r="1.8" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/><circle cx="18.6" cy="12" r="1.8" fill="currentColor" stroke="none"/>',
+  },
+  'nav.findings': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<circle cx="12" cy="12" r="8.3"/><path d="M12 7.8v8.4"/><path d="M7.8 12h8.4"/>',
+    svg18: '<circle cx="12" cy="12" r="8.6"/><path d="M12 7.6v8.8"/><path d="M7.6 12h8.8"/>',
+  },
+  'nav.dashboard': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M4.2 11.4 12 4.4l7.8 7"/><path d="M6.2 10v9.4a0.6 0.6 0 0 0 .6 .6h10.4a0.6 0.6 0 0 0 .6-.6V10"/>',
+    svg18: '<path d="M4 11.6 12 4.2l8 7.4"/><path d="M6 10v9.4a0.6 0.6 0 0 0 .6 .6h10.8a0.6 0.6 0 0 0 .6-.6V10"/>',
+  },
+  'nav.inventory': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M12 3.6 4.4 7.8v8.4L12 20.4l7.6-4.2V7.8z"/><path d="M4.4 7.8 12 12l7.6-4.2"/><path d="M12 12v8.4"/>',
+    svg18: '<path d="M12 3.4 4 7.8v8.4L12 20.6l8-4.4V7.8z"/><path d="M4 7.8 12 12.2l8-4.4"/><path d="M12 12.2v8.4"/>',
+  },
+  'nav.helper': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M5.5 6.5h13a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5H11l-4.2 3.2V16H5.5A1.5 1.5 0 0 1 4 14.5V8a1.5 1.5 0 0 1 1.5-1.5z"/>',
+    svg18: '<path d="M5 6.5h14a1.5 1.5 0 0 1 1.5 1.5v6.6a1.5 1.5 0 0 1-1.5 1.5h-8l-4.4 3.3V16H5A1.5 1.5 0 0 1 3.5 14.6V8A1.5 1.5 0 0 1 5 6.5z"/>',
+  },
+  'action.settings': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M4 8.4h9"/><path d="M16.5 8.4H20"/><circle cx="14.7" cy="8.4" r="1.9"/><path d="M4 15.6h3.5"/><path d="M11 15.6h9"/><circle cx="9.3" cy="15.6" r="1.9"/>',
+    svg18: '<path d="M3.5 8.4h9.5"/><path d="M16.7 8.4H20.5"/><circle cx="14.9" cy="8.4" r="2"/><path d="M3.5 15.6h3.5"/><path d="M11 15.6h9.5"/><circle cx="9.3" cy="15.6" r="2"/>',
+  },
+  'nav.notes': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M6.5 3.6h6.8l4.2 4.2v11.6a1 1 0 0 1-1 1H6.5a1 1 0 0 1-1-1V4.6a1 1 0 0 1 1-1z"/><path d="M13 3.6V8h4.4"/><path d="M8.4 12.4h7.2"/><path d="M8.4 15.6h7.2"/>',
+    svg18: '<path d="M6 3.4h7l4.4 4.4v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.4a1 1 0 0 1 1-1z"/><path d="M12.8 3.4V8h4.4"/><path d="M8 12.4h8"/><path d="M8 15.8h8"/>',
+  },
+  'nav.signout': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M13.5 5.5H6.8a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h6.7"/><path d="M10.5 12h9.5"/><path d="M16.8 8.8 20 12l-3.2 3.2"/>',
+    svg18: '<path d="M13 5.4H6.5a1 1 0 0 0-1 1v11.2a1 1 0 0 0 1 1H13"/><path d="M10 12h10.4"/><path d="M17 8.6 20.4 12l-3.4 3.4"/>',
+  },
+  'mode.desk': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M6.4 6.5h11.2a1 1 0 0 1 1 1v7.2H5.4V7.5a1 1 0 0 1 1-1z"/><path d="M3.6 17.6h16.8"/>',
+    svg18: '<path d="M6 6.4h12a1 1 0 0 1 1 1v7.4H5V7.4a1 1 0 0 1 1-1z"/><path d="M3.4 17.6h17.2"/>',
+  },
+  'media.mic': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M12 3.6a2.6 2.6 0 0 1 2.6 2.6v4.6a2.6 2.6 0 0 1-5.2 0V6.2A2.6 2.6 0 0 1 12 3.6z"/><path d="M6.8 11.2a5.2 5.2 0 0 0 10.4 0"/><path d="M12 16.4v3.4"/>',
+    svg18: '<path d="M12 3.4a2.7 2.7 0 0 1 2.7 2.7v4.6a2.7 2.7 0 0 1-5.4 0V6.1A2.7 2.7 0 0 1 12 3.4z"/><path d="M6.6 11a5.4 5.4 0 0 0 10.8 0"/><path d="M12 16.4v3.6"/>',
+  },
+  'action.logmany': {
+    class: 'mono', register: 'functional', variant: 'line',
+    svg24: '<path d="M12 3.8 4 8l8 4.2L20 8z"/><path d="M4 12l8 4.2L20 12"/><path d="M4 16l8 4.2L20 16"/>',
+    svg18: '<path d="M12 3.6 3.6 8l8.4 4.4L20.4 8z"/><path d="M3.6 12l8.4 4.4 8.4-4.4"/><path d="M3.6 16l8.4 4.4 8.4-4.4"/>',
+  },
+  // ── V4-ICONCOLOR-001 MARQUEE (§3.2 exemplar): nav.critters butterfly, Android-Noto orange.
+  //    "The color matters" — the north-star color-candidate. 4 wings + body + antennae,
+  //    symmetric about x=12. Two-tone wing (bright upper / deeper-burnt lower); deep-brown
+  //    body+antennae anchor the silhouette (>=3:1 §12.2). Color pass swaps fills, zero redraw.
+  'nav.critters': {
+    class: 'color-candidate', register: 'functional', variant: 'filled',
+    regionIntent: { wingUpper: 'upper wing pair — bright Noto orange (the glance color)', wingLower: 'lower wing pair — deeper burnt orange', body: 'head+thorax+abdomen — deep brown', antenna: 'two antennae — deep-brown stroke line' },
+    colorFills: { wingUpper: 'bflyWingUpper', wingLower: 'bflyWingLower', body: 'bflyBody', antenna: 'bflyAntenna' },
+    svg24: '<path data-region="wingUpper" d="M12 9C12.4 6 14.5 3.8 17.6 3.8C20 3.8 21.2 5.6 21 7.8C20.7 10.3 18 12.4 14.8 12.2C13.2 12.1 12 11 12 9.4Z" fill="currentColor" stroke="none"/><path data-region="wingUpper" d="M12 9C11.6 6 9.5 3.8 6.4 3.8C4 3.8 2.8 5.6 3 7.8C3.3 10.3 6 12.4 9.2 12.2C10.8 12.1 12 11 12 9.4Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.4C12.8 12.4 14.6 12.6 16.2 13C18.4 13.6 19.6 15.4 18.8 17.4C18 19.4 15.4 19.8 13.6 18.6C12.4 17.8 12 16 12 14Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.4C11.2 12.4 9.4 12.6 7.8 13C5.6 13.6 4.4 15.4 5.2 17.4C6 19.4 8.6 19.8 10.4 18.6C11.6 17.8 12 16 12 14Z" fill="currentColor" stroke="none"/><circle data-region="body" cx="12" cy="6.4" r="1.5" fill="currentColor" stroke="none"/><path data-region="body" d="M12 7.4C13.1 7.4 13.7 8.4 13.7 10L12.7 17C12.6 17.9 12.3 18.3 12 18.6C11.7 18.3 11.4 17.9 11.3 17L10.3 10C10.3 8.4 10.9 7.4 12 7.4Z" fill="currentColor" stroke="none"/><path data-region="antenna" d="M12 5.6C12.8 4 14 3.2 15.4 3" fill="none" stroke="currentColor"/><path data-region="antenna" d="M12 5.6C11.2 4 10 3.2 8.6 3" fill="none" stroke="currentColor"/>',
+    svg18: '<path data-region="wingUpper" d="M12 9.2C12.2 6 14.6 4 17.4 4.4C20 4.8 20.4 7.6 19 9.8C17.8 11.6 14.6 12 12 10.6Z" fill="currentColor" stroke="none"/><path data-region="wingUpper" d="M12 9.2C11.8 6 9.4 4 6.6 4.4C4 4.8 3.6 7.6 5 9.8C6.2 11.6 9.4 12 12 10.6Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.2C13 12 15 12.4 16.6 13.4C18.4 14.6 18.4 16.8 16.6 18C14.8 19 12.6 18 12 15.6Z" fill="currentColor" stroke="none"/><path data-region="wingLower" d="M12 11.2C11 12 9 12.4 7.4 13.4C5.6 14.6 5.6 16.8 7.4 18C9.2 19 11.4 18 12 15.6Z" fill="currentColor" stroke="none"/><circle data-region="body" cx="12" cy="6.6" r="1.4" fill="currentColor" stroke="none"/><path data-region="body" d="M12 7.6C13 7.6 13.5 8.5 13.5 10L12.6 16.8C12.5 17.6 12.3 18 12 18.3C11.7 18 11.5 17.6 11.4 16.8L10.5 10C10.5 8.5 11 7.6 12 7.6Z" fill="currentColor" stroke="none"/><path data-region="antenna" d="M12 5.8C12.8 4.4 13.8 3.8 15 3.6" fill="none" stroke="currentColor"/><path data-region="antenna" d="M12 5.8C11.2 4.4 10.2 3.8 9 3.6" fill="none" stroke="currentColor"/>',
+  },
 }
 
 export const ANCHOR_KEYS = Object.keys(A)

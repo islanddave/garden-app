@@ -68,4 +68,8 @@ export const ICON_COLORS = {
   lcBloomPetals: P.terra,     // #b7532a open petals — 4.51:1
   lcBloomCenter: P.gold,      // flower center
   lcFruit:       P.terra,     // ripe fruit body
+  bflyWingUpper: '#d97528',   // V4-ICON-001 nav.critters upper wing — bright Noto orange, ~3.05:1 on cream
+  bflyWingLower: P.terra,     // #b7532a lower wing — deeper burnt orange, ~4.65:1
+  bflyBody:      '#4a3520',   // head+thorax+abdomen — deep brown, ~10.9:1
+  bflyAntenna:   '#4a3520',   // antennae stroke — deep brown
 }

@@ -85,6 +85,19 @@ const ANCHOR_META = {
   'severity.low':   { accessibleName: 'Low severity' },
   'severity.med':   { accessibleName: 'Medium severity' },
   'action.flag':    { accessibleName: 'Flag an issue' },
+  'nav.plus':       { accessibleName: 'Create' },
+  'nav.more':       { accessibleName: 'More' },
+  'nav.findings':   { accessibleName: 'Doctor Gardener' },
+  'nav.dashboard':  { accessibleName: 'Dashboard' },
+  'nav.inventory':  { accessibleName: 'Inventory' },
+  'nav.helper':     { accessibleName: 'Garden Helper' },
+  'action.settings':{ accessibleName: 'Settings' },
+  'nav.notes':      { accessibleName: 'Release notes' },
+  'nav.signout':    { accessibleName: 'Sign out' },
+  'mode.desk':      { accessibleName: 'Desk mode' },
+  'media.mic':      { accessibleName: 'Voice capture' },
+  'action.logmany': { accessibleName: 'Log many' },
+  'nav.critters':   { accessibleName: 'Critters' },
 }
 
 export const GLYPHS = Object.fromEntries(
