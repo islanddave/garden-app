@@ -7,7 +7,7 @@ import { T } from './forms/formStyles.js'
 const FLAG = {
   1: { label: 'Keeping an eye on it', color: P.gold, icon: '🟡' },
   2: { label: 'Needs attention', color: P.terra, icon: '🟠' },
-  3: { label: 'Urgent', color: '#9c2b1a', icon: '🔴' },
+  3: { label: 'Urgent', color: P.severityUrgent, icon: '🔴' },
 }
 const STALE = {
   label: 'Stale',

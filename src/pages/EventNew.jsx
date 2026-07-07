@@ -967,7 +967,7 @@ export default function EventNew() {
 // with an "Other" (type OR voice via the shared MicBtn). The chosen issue is stored as free-text
 // metadata.issue_label; severity is the DB smallint. Order per spec: severity -> issue.
 function FlagModeFields({ severity, onSeverity, issueChoice, onIssueChoice, issueOther, onIssueOther, voice, onBack }) {
-  const TONE = { gold: P.gold, terra: P.terra, red: '#9c2b1a' }
+  const TONE = { gold: P.gold, terra: P.terra, red: P.severityUrgent }
   const EMOJI = { 1: '🟡', 2: '🟠', 3: '🔴' }
   return (
     <div>
