@@ -1,7 +1,7 @@
-// Phase 1 (V3-EVENT-004 + V3-EVENT-002): Brought Inside/Outside + Mulched event
-// types + primary quick-pick rebalance (promote hardening_off, demote observation).
-// Pure list/shape assertions on the exported vocabulary — no render needed.
-// Heavy deps are mocked only so EventNew.jsx loads as a module without a DOM tree.
+// V4-EVENTSEL-002 (2026-07-07): first-class quick-pick set reordered to Dave's exact
+// 7 and unified across Log One + Log Many. Pure list/shape assertions on the exported
+// vocabulary — no render needed. Heavy deps are mocked only so EventNew.jsx loads as a
+// module without a DOM tree.
 
 import { describe, it, expect, vi } from 'vitest'
 
@@ -22,17 +22,17 @@ import { EVENT_TYPES } from '../lib/constants.js'
 // i.e. the value leaked through unmapped. Human labels carry caps/spaces/glyphs.
 const isRaw = (s) => /^[a-z_]+$/.test(s)
 
-describe('V3-EVENTZONE-001 — first-class quick-pick set (braindump-exact, Dave 2026-06-18)', () => {
+describe('V4-EVENTSEL-002 — first-class quick-pick set (Dave 2026-07-07, unified w/ Log Many)', () => {
   const primary = EVENT_TYPES_UI.map((t) => t.value)
-  // Supersedes the V3-EVENT-004/005 rebalance: Dave chose the braindump set exactly.
-  const FIRST_CLASS = ['watering', 'transplant', 'fertilizing', 'mulched', 'suckered', 'fruit_set', 'harvest']
+  // Supersedes the V3-EVENTZONE-001 braindump set. Order is meaningful (left→right, top→bottom).
+  const FIRST_CLASS = ['watering', 'transplant', 'fertilizing', 'flowering', 'fruit_set', 'harvest', 'photo']
 
-  it('primary quick-picks are exactly the braindump first-class set, in order', () => {
+  it('primary quick-picks are exactly the first-class set, in order', () => {
     expect(primary).toEqual(FIRST_CLASS)
   })
 
-  it('demotes the former primaries (in/out, hardening, pruned, photo, potted-up) + observation to "More"', () => {
-    for (const v of ['brought_inside', 'brought_outside', 'hardening_off', 'pruning', 'photo', 'potting_up', 'observation']) {
+  it('demotes the former primaries (mulched, suckered) + in/out, hardening, pruned, potted-up, observation to "More"', () => {
+    for (const v of ['mulched', 'suckered', 'brought_inside', 'brought_outside', 'hardening_off', 'pruning', 'potting_up', 'observation']) {
       expect(primary, v).not.toContain(v)
     }
   })
@@ -95,4 +95,3 @@ describe('Phase 1 — EVENT_TYPES master soft-enum', () => {
     expect(EVENT_TYPES).toContain('mesh_netting')
   })
 })
-
