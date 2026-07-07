@@ -49,6 +49,7 @@ import About from './pages/About.jsx'
 import ReleaseNotes from './pages/ReleaseNotes.jsx'
 import Today from './pages/Today.jsx'
 import CaptureFlow from './pages/CaptureFlow.jsx'
+import SplashScreen from './components/SplashScreen.jsx'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -188,6 +189,8 @@ export default function App() {
   // it can later read user prefs if needed, outside Zone so the mode chip
   // remains stable as zones change. Session-persistent via sessionStorage.
   return (
+    <>
+      <SplashScreen />
     <AuthProvider>
       <ModeProvider>
         <ZoneProvider>
@@ -199,6 +202,7 @@ export default function App() {
         </ZoneProvider>
       </ModeProvider>
     </AuthProvider>
+    </>
   )
 }
 
