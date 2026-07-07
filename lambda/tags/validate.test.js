@@ -38,8 +38,8 @@ describe('validateTagCreate', () => {
   it('rejects bad visibility', () => {
     expect(validateTagCreate({ facet: 'group', label: 'x', visibility: 'public' })).toMatch(/visibility/);
   });
-  it('VALID_USER_FACETS is exactly group+freeform', () => {
-    expect(VALID_USER_FACETS).toEqual(['group', 'freeform']);
+  it('VALID_USER_FACETS is exactly group+freeform+issue (issue added V4-FLAG-001)', () => {
+    expect(VALID_USER_FACETS).toEqual(['group', 'freeform', 'issue']);
   });
 });
 

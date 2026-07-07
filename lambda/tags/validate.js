@@ -4,7 +4,7 @@
 export const VALID_VISIBILITY = ['shared', 'private'];
 // User-creatable facets ONLY. type/lifecycle are derived (system), location is a projected FK facet —
 // none are hand-typed (D-DERIVE-GUARD / model). The DB CHECK allows all five; the API is intentionally tighter.
-export const VALID_USER_FACETS = ['group', 'freeform'];
+export const VALID_USER_FACETS = ['group', 'freeform', 'issue'];
 export const VALID_ENTITY_TYPES = ['plant', 'cultivar', 'location', 'project'];
 
 // lowercase, trim, collapse any run of non-alphanumerics to a single hyphen, strip leading/trailing
