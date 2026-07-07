@@ -50,12 +50,19 @@ describe('validateBatchBody', () => {
       .forEach(t => ok(base({ event_type: t })));
   });
 
-  // HS-1 (V002 §4): propagation / single-plant events must NOT be batch-loggable.
-  // divided & cutting_taken spawn child plantings; hand_pollinated & fruit_set are
-  // per-plant. The server must reject them in a batch POST (data-integrity hard-stop).
+  // HS-1 (V002 §4): propagation / genuinely per-plant events must NOT be batch-loggable.
+  // divided & cutting_taken spawn child plantings; hand_pollinated is per-flower. The server
+  // must reject them in a batch POST (data-integrity hard-stop). fruit_set + flowering were
+  // freed in V4-EVENTSEL-002 (batch now fires their status advance) — asserted below.
   it('rejects HS-1 propagation/single-plant types in a batch POST', () => {
-    ['divided', 'cutting_taken', 'hand_pollinated', 'fruit_set'].forEach(t =>
+    ['divided', 'cutting_taken', 'hand_pollinated'].forEach(t =>
       bad(base({ event_type: t }), /must be one of/));
+  });
+
+  // V4-EVENTSEL-002: flowering + fruit_set are now batch-submittable (trigger-parity with
+  // the single path — the batch handler runs the same forward-only status advance).
+  it('accepts flowering + fruit_set (V4-EVENTSEL-002 trigger-parity)', () => {
+    ['flowering', 'fruit_set'].forEach(t => ok(base({ event_type: t })));
   });
 });
 
@@ -85,9 +92,9 @@ describe('BATCH_EVENT_TYPES drift guard (exact equality)', () => {
     BATCH_EVENT_TYPES.forEach(t => expect(master.has(t), t).toBe(true));
   });
 
-  it('excludes exactly the 8 expected types (3 needs-input + 4 HS-1 + 1 status-advance)', () => {
+  it('excludes exactly the 6 expected types (3 needs-input + 3 HS-1; flowering+fruit_set freed)', () => {
     expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
-      ['cutting_taken', 'divided', 'first_harvest', 'flowering', 'fruit_set', 'hand_pollinated', 'harvest', 'photo'],
+      ['cutting_taken', 'divided', 'first_harvest', 'hand_pollinated', 'harvest', 'photo'],
     );
   });
 });

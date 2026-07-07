@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import { BATCH_EVENT_TYPES, EVENT_TYPE_META, buildSecondaryGroups } from '../lib/eventTypes.js'
+import { BATCH_EVENT_TYPES, EVENT_TYPE_META, buildSecondaryGroups, PRIMARY_EVENT_TYPES } from '../lib/eventTypes.js'
 import Icon from '../components/Icon.jsx'
 import { ScopeChecklist, SelectChip } from '../components/forms'
 
@@ -16,26 +16,20 @@ import { ScopeChecklist, SelectChip } from '../components/forms'
 // (season-aware bulk primaries — distinct from EventNew's EventTypePicker grid), the
 // date, and the confirm/undo/result flow. The two pickers share the SelectChip grammar.
 
-// V3-EVENT-008: vocabulary derives from the canonical src/lib/eventTypes.js. The 4 primary
-// quick-picks stay as a page-level UX choice (most common bulk ops above the fold);
-// everything else batch-eligible is grouped under "More event types" via buildSecondaryGroups().
+// V4-EVENTSEL-002: the bulk selector is UNIFIED with Log One — it renders the SAME
+// first-class order (PRIMARY_EVENT_TYPES from the canonical eventTypes.js), not a separate
+// season-aware set. In bulk: `photo` is hidden (needs a file upload) and harvest/first_harvest
+// are shown as chips but ROUTE to per-plant entry (they need a quantity); the remaining five
+// are batch-submittable and fire the same server triggers (incl. flowering/fruit_set status
+// advance) as the single-event path. Everything else batch-eligible is under "More event types".
+const HARVEST_ROUTE_TYPES = new Set(['harvest', 'first_harvest'])
 
-// Primary quick-picks — the 4 most common bulk operations stay above the fold.
-// V3-EVENT-008 (V002 §5): SEASON-AWARE / frequency-weighted. In cold-protection season
-// (Conway MA frost risk ~Oct–Apr) the most frequent bulk action is moving plantings in/out,
-// so brought_inside + brought_outside replace the two lowest-frequency warm-season picks
-// (observation, pruning). Year-round staples watering + fertilizing always stay. UX
-// weighting only — NOT a work gate (no date gates garden work; see CLAUDE.md).
-const WARM_SEASON_PRIMARIES = ['watering', 'fertilizing', 'observation', 'pruning']
-const COLD_SEASON_PRIMARIES = ['watering', 'fertilizing', 'brought_inside', 'brought_outside']
+// The chips shown at the top of the bulk picker: the shared first-class set minus photo.
+export const BULK_PRIMARY_VALUES = PRIMARY_EVENT_TYPES.filter(v => v !== 'photo')
 
-// Cold-protection months (0-indexed): Jan,Feb,Mar,Apr (0-3) + Oct,Nov,Dec (9-11).
-// Injectable `month` keeps this pure + testable.
-export function coldProtectionSeason(month = new Date().getMonth()) {
-  return month <= 3 || month >= 9
-}
-export function primaryValuesForSeason(cold = coldProtectionSeason()) {
-  return cold ? COLD_SEASON_PRIMARIES : WARM_SEASON_PRIMARIES
+// Of the shown chips, the ones actually submitted to /api/events/batch (harvest routes out).
+export function bulkSubmittableValues() {
+  return BULK_PRIMARY_VALUES.filter(v => !HARVEST_ROUTE_TYPES.has(v))
 }
 function toChips(values) {
   return values.map(v => ({
@@ -98,12 +92,19 @@ export default function LogMany() {
   const [error, setError]   = useState(null)
   const idemRef = useRef(null)
 
-  // V3-EVENT-008: season-aware primaries + derived secondary groups (per-render — cheap,
-  // keeps the seasonal selection live without remount). primaries are the quick-pick chips.
-  const primaries = toChips(primaryValuesForSeason())
-  const primaryValueSet = new Set(primaries.map(t => t.value))
-  const secondaryGroups = secondaryGroupsExcluding(primaries.map(t => t.value))
-  const allTypes = [...primaries, ...secondaryGroups.flatMap(([, types]) => types)]
+  // V4-EVENTSEL-002: unified first-class chips (shared order, minus photo). Harvest chips
+  // route to per-plant entry; the batch-submittable subset drives the "More" exclusion.
+  const primaries = toChips(BULK_PRIMARY_VALUES)
+  const submittable = bulkSubmittableValues()
+  const primaryValueSet = new Set(submittable)
+  const secondaryGroups = secondaryGroupsExcluding(submittable)
+  const allTypes = [...toChips(submittable), ...secondaryGroups.flatMap(([, types]) => types)]
+
+  // Harvest needs a per-plant quantity, so it's reachable in the unified selector but opens
+  // the single-event flow instead of a bulk apply (V4-EVENTSEL-002, Dave decision).
+  function goPerPlant(type) {
+    navigate(`/log?event_type=${encodeURIComponent(type)}`)
+  }
 
   // If the user reopens the page with a previously-selected secondary type saved in
   // eventType, keep the More panel open so their selection stays visible.
@@ -224,11 +225,18 @@ export default function LogMany() {
 
       <Section>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {primaries.map(t => (
-            <SelectChip key={t.value} active={eventType === t.value} onClick={() => setEventType(t.value)}>
-              <Icon name={`event.${t.value}`} size={18} decorative style={{ verticalAlign: '-0.15em' }} /> {t.label}
-            </SelectChip>
-          ))}
+          {primaries.map(t => {
+            const routes = HARVEST_ROUTE_TYPES.has(t.value)
+            return (
+              <SelectChip
+                key={t.value}
+                active={!routes && eventType === t.value}
+                onClick={() => (routes ? goPerPlant(t.value) : setEventType(t.value))}
+              >
+                <Icon name={`event.${t.value}`} size={18} decorative style={{ verticalAlign: '-0.15em' }} /> {t.label}{routes ? ' →' : ''}
+              </SelectChip>
+            )
+          })}
         </div>
 
         <button

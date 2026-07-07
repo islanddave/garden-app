@@ -135,27 +135,44 @@ export const EVENT_TYPE_META = {
 // ── Required META fields (named for the completeness test) ──────────
 export const REQUIRED_META_FIELDS = ['label', 'emoji', 'category']
 
+// ── Unified first-class quick-pick order (V4-EVENTSEL-002, Dave 2026-07-07) ──
+// The single ordered set of "first-class" event types shown at the top of BOTH the Log One
+// picker (EventTypePicker's EVENT_TYPES_UI carries the same values with richer labels) and
+// the Log Many bulk picker — so the two selectors are homogenized. Order is meaningful
+// (left→right, top→bottom). In BULK: `photo` is hidden (needs a file upload) and `harvest`
+// is shown but routes to per-plant entry (needs a quantity); the other five are
+// batch-submittable and fire the same server triggers as the single path.
+export const PRIMARY_EVENT_TYPES = [
+  'watering',
+  'transplant',
+  'fertilizing',
+  'flowering',
+  'fruit_set',
+  'harvest',
+  'photo',
+]
+
 // ── Batch-logging exclusions (THE one exclusion list) ───────────────
-// Types that must NOT be bulk-loggable via /api/events/batch. Two reasons:
+// Types that must NOT be bulk-loggable via /api/events/batch.
 //
 //   needs-extra-input (no bulk semantics):
-//     harvest, first_harvest — require quantity+unit (dual-write to harvest_log)
-//     photo                  — requires a file upload
+//     harvest, first_harvest — require quantity+unit (dual-write to harvest_log);
+//                              reachable in the unified selector but ROUTED to per-plant
+//                              entry, never batch-submitted (V4-EVENTSEL-002).
+//     photo                  — requires a file upload.
 //
 //   HS-1 data-integrity (V002 §4 — propagation / single-plant events):
 //     divided, cutting_taken — SPAWN child plantings; bulk-logging across many
 //                              plantings would orphan lineage or partial-write
 //                              mid-batch with no stated transaction.
-//     hand_pollinated, fruit_set — single-plant horticultural events; bulk-applying
-//                              them across a scope is semantically wrong (you
-//                              pollinate / observe fruit-set per plant, not en masse).
+//     hand_pollinated        — single-plant horticultural event; you pollinate a
+//                              specific flower, not a whole scope.
 //
-// These are treated single-event-only (like harvest/first_harvest/photo).
-//
-//   status-advance (single-event only, mirrors fruit_set):
-//     flowering — logging it advances the planting to 'flowering' (forward-only).
-//                 The status flip lives ONLY on the single-event path, so keeping it
-//                 out of batch guarantees the flip always fires. (V3-FLOWERING-001)
+// V4-EVENTSEL-002 (2026-07-07): flowering + fruit_set are NO LONGER excluded. The batch path
+// now fires the SAME forward-only status advance the single path does (the two UPDATE
+// statements in the index.js batch transaction, guarded by FLOWERING/FRUITING_SOURCE_STATUSES
+// — idempotent: plantings already at/past the target status are skipped). So bulk logging is
+// trigger-parity with single logging for these two.
 export const BATCH_EXCLUDED_TYPES = [
   'harvest',
   'first_harvest',
@@ -163,8 +180,6 @@ export const BATCH_EXCLUDED_TYPES = [
   'divided',
   'cutting_taken',
   'hand_pollinated',
-  'fruit_set',
-  'flowering',
 ]
 
 // ── Derived batch allowlist (NEVER hand-listed) ─────────────────────

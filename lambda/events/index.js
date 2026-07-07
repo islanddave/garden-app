@@ -269,6 +269,34 @@ export const handler = async (event) => {
             END,
             updated_at = NOW()
         `,
+        // V4-EVENTSEL-002 — batch trigger-parity: flowering + fruit_set advance planting
+        // status exactly like the single-event path (the two UPDATEs in the single tx below),
+        // forward-only and IDEMPOTENT via the *_SOURCE_STATUSES guard (a planting already at or
+        // past the target status is simply not matched). Scoped to the already-resolved
+        // owner-scoped plantIds + explicit household ownership (garden_node has no RLS, L-087).
+        // No-op for every other event_type via the ${eventType} gate.
+        sql`
+          UPDATE public.garden_node p
+             SET status = 'fruiting', updated_at = NOW()
+            FROM public.container pp
+           WHERE ${eventType}::text = 'fruit_set'
+             AND p.id = ANY(${plantIds})
+             AND p.container_id = pp.id
+             AND pp.created_by = ANY(${householdIds})
+             AND p.deleted_at IS NULL
+             AND p.status = ANY(${FRUITING_SOURCE_STATUSES})
+        `,
+        sql`
+          UPDATE public.garden_node p
+             SET status = 'flowering', updated_at = NOW()
+            FROM public.container pp
+           WHERE ${eventType}::text = 'flowering'
+             AND p.id = ANY(${plantIds})
+             AND p.container_id = pp.id
+             AND pp.created_by = ANY(${householdIds})
+             AND p.deleted_at IS NULL
+             AND p.status = ANY(${FLOWERING_SOURCE_STATUSES})
+        `,
       ]);
       // MVP-Critter server-side hook (Phase B++ refactor 2026-05-30) — fetch inserted events
       // with plant_id + created_at, then call awardCrittersForBatch which awards critters

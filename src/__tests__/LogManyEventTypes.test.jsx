@@ -1,74 +1,63 @@
-// V3-EVENT-008 — LogMany surfaces every batch-valid event type and NONE of the
-// excluded ones. The on-disk LogMany uses season-aware primaries + a derived "More"
-// panel, exposing pure helpers (primaryValuesForSeason / secondaryGroupsExcluding).
-// We assert coverage against the canonical BATCH_EVENT_TYPES via those helpers in BOTH
-// seasons (warm + cold) — every batch type is reachable as primary-or-secondary, and no
-// excluded type ever appears. This is deterministic and avoids rendering the heavy
-// component (and its large failure-time DOM serialization).
+// V4-EVENTSEL-002 — LogMany's event selector is now UNIFIED with Log One (shared
+// PRIMARY_EVENT_TYPES order). This asserts (a) the unified chip set, (b) that photo is
+// hidden and harvest is shown-but-not-batch-submittable (routes to per-plant entry), and
+// (c) the batch coverage invariant: the set actually SUBMITTABLE to /api/events/batch
+// (submittable primaries + every "More" secondary value) equals BATCH_EVENT_TYPES exactly,
+// with no excluded type ever submittable. Deterministic pure-helper assertions — no render.
 import { describe, it, expect } from 'vitest';
 import {
   BATCH_EVENT_TYPES,
   BATCH_EXCLUDED_TYPES,
+  PRIMARY_EVENT_TYPES,
 } from '../lib/eventTypes.js';
 import {
-  primaryValuesForSeason,
+  BULK_PRIMARY_VALUES,
+  bulkSubmittableValues,
   secondaryGroupsExcluding,
-  coldProtectionSeason,
 } from '../pages/LogMany.jsx';
 
-// The full set of values reachable as a chip in a given season = the season's primaries
-// plus every value emitted into the "More" secondary groups.
-function reachableValues(cold) {
-  const primaries = primaryValuesForSeason(cold);
+// The full set of types SUBMITTABLE to the batch endpoint from LogMany = the batch-
+// submittable primaries plus every value emitted into the "More" secondary groups.
+function submittableReachable() {
+  const primaries = bulkSubmittableValues();
   const secondary = secondaryGroupsExcluding(primaries).flatMap(([, types]) => types.map((t) => t.value));
   return new Set([...primaries, ...secondary]);
 }
 
-describe('LogMany — batch event-type coverage (warm season)', () => {
-  const reachable = reachableValues(false);
+describe('LogMany — unified first-class selector (V4-EVENTSEL-002)', () => {
+  it('bulk primaries are the shared first-class set minus photo, in order', () => {
+    expect(BULK_PRIMARY_VALUES).toEqual(PRIMARY_EVENT_TYPES.filter((v) => v !== 'photo'));
+  });
 
-  it('every BATCH_EVENT_TYPES value is reachable (primary or "More")', () => {
+  it('hides photo entirely (needs a file upload)', () => {
+    expect(BULK_PRIMARY_VALUES).not.toContain('photo');
+  });
+
+  it('shows harvest as a chip but NOT batch-submittable (routes to per-plant entry)', () => {
+    expect(BULK_PRIMARY_VALUES).toContain('harvest');
+    expect(bulkSubmittableValues()).not.toContain('harvest');
+  });
+
+  it('flowering + fruit_set ARE batch-submittable (new trigger-parity)', () => {
+    expect(bulkSubmittableValues()).toContain('flowering');
+    expect(bulkSubmittableValues()).toContain('fruit_set');
+  });
+});
+
+describe('LogMany — batch coverage invariant (submittable set === BATCH_EVENT_TYPES)', () => {
+  const reachable = submittableReachable();
+
+  it('every BATCH_EVENT_TYPES value is submittable (primary or "More")', () => {
     const missing = BATCH_EVENT_TYPES.filter((t) => !reachable.has(t));
     expect(missing, `unreachable batch types: ${missing.join(', ')}`).toEqual([]);
   });
 
-  it('no excluded type is reachable (harvest/first_harvest/photo + 4 HS-1)', () => {
+  it('no excluded type is submittable (harvest/first_harvest/photo + HS-1)', () => {
     const leaked = BATCH_EXCLUDED_TYPES.filter((t) => reachable.has(t));
     expect(leaked, `excluded types leaked: ${leaked.join(', ')}`).toEqual([]);
   });
 
-  it('reachable set equals BATCH_EVENT_TYPES exactly (no extras)', () => {
+  it('submittable set equals BATCH_EVENT_TYPES exactly (no extras)', () => {
     expect([...reachable].sort()).toEqual([...BATCH_EVENT_TYPES].sort());
-  });
-});
-
-describe('LogMany — batch event-type coverage (cold-protection season)', () => {
-  const reachable = reachableValues(true);
-
-  it('promotes brought_inside + brought_outside to primary in cold season', () => {
-    const primaries = primaryValuesForSeason(true);
-    expect(primaries).toContain('brought_inside');
-    expect(primaries).toContain('brought_outside');
-  });
-
-  it('every BATCH_EVENT_TYPES value is still reachable (demoted picks fall into "More")', () => {
-    const missing = BATCH_EVENT_TYPES.filter((t) => !reachable.has(t));
-    expect(missing, `unreachable batch types: ${missing.join(', ')}`).toEqual([]);
-  });
-
-  it('no excluded type is reachable', () => {
-    const leaked = BATCH_EXCLUDED_TYPES.filter((t) => reachable.has(t));
-    expect(leaked, `excluded types leaked: ${leaked.join(', ')}`).toEqual([]);
-  });
-
-  it('reachable set equals BATCH_EVENT_TYPES exactly (no extras)', () => {
-    expect([...reachable].sort()).toEqual([...BATCH_EVENT_TYPES].sort());
-  });
-});
-
-describe('LogMany — coldProtectionSeason boundary (Conway MA frost window)', () => {
-  it('treats Oct–Apr as cold (frost risk) and May–Sep as warm', () => {
-    for (const m of [0, 1, 2, 3, 9, 10, 11]) expect(coldProtectionSeason(m), `month ${m}`).toBe(true);
-    for (const m of [4, 5, 6, 7, 8]) expect(coldProtectionSeason(m), `month ${m}`).toBe(false);
   });
 });
