@@ -14,18 +14,19 @@ import { P } from '../../lib/constants.js'
 import { buildSecondaryGroups } from '../../lib/eventTypes.js'
 import Icon from '../Icon.jsx'
 
-// Primary quick-picks (V3-EVENTZONE-001, Dave 2026-06-18: braindump-exact first-class set —
-// Watered / Transplanted / Fertilized / Mulched / Suckered / Fruit Set / Harvested. The prior
-// V3-EVENT-004/005 picks — in/out, hardening_off, pruned, photo, potted-up — drop to "More").
-// slice(0,3) → 3-col grid; slice(3) → 2-col grid. Emojis are unique across the primary set.
+// Primary quick-picks (V4-EVENTSEL-002, Dave 2026-07-07: first-class set reordered to
+// Watered / Transplanted / Fertilized / Flowering / Fruit Set / Harvested / Photo — and
+// unified with the Log Many selector. Supersedes the V3-EVENTZONE-001 braindump set:
+// mulched + suckered drop to "More"; flowering + photo promoted). slice(0,3) → 3-col grid;
+// slice(3) → 2-col grid. Emojis are unique across the primary set (glyphs render via Icon).
 export const EVENT_TYPES_UI = [
   { value: 'watering',    label: 'Watered',                 emoji: '💧' },
   { value: 'transplant',  label: 'Transplanted\n/ Planted', emoji: '🌱' },
   { value: 'fertilizing', label: 'Fertilized\n/ Fed',       emoji: '🌿' },
-  { value: 'mulched',     label: 'Mulched',                 emoji: '🍂' },
-  { value: 'suckered',    label: 'Suckered',                emoji: '✂️' },
+  { value: 'flowering',   label: 'Flowering',               emoji: '🌸' },
   { value: 'fruit_set',   label: 'Fruit Set',               emoji: '🍅' },
   { value: 'harvest',     label: 'Harvested',               emoji: '🧺' },
+  { value: 'photo',       label: 'Photo',                   emoji: '📷' },
 ]
 
 const PRIMARY_VALUES = new Set(EVENT_TYPES_UI.map(t => t.value))
@@ -127,4 +128,3 @@ export default function EventTypePicker({ value, onChange }) {
     </>
   )
 }
-
