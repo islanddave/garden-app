@@ -83,14 +83,19 @@ describe('POST /api/plants — validation + create', () => {
     expect(body.error).toMatch(/loss_cause must be one of/i)
   })
 
-  it('invalid source_type enum → 400', async () => {
+  it('accepts a free-text source_type on create (V4-SOURCEFREE-001 — replaces the create-path allowlist that 400d rescue)', async () => {
+    // source_type is now free-text (no lambda allowlist; DB CHECK dropped at promote). 'rescued'
+    // is the case Dave hit: the create path used to omit it from ALLOWED_SOURCE and 400. Uses a
+    // value the current CHECK already permits so this passes pre-migration too.
     setTestUserId(USER)
     const { status, body } = await callHandler(handler, {
       method: 'POST', path: '/api/plants',
-      body: { name: 'bad-source', project_id: projectId, source_type: 'magic_bean' },
+      body: { name: 'rescue-' + RUN, project_id: projectId, source_type: 'rescued' },
     })
-    expect(status).toBe(400)
-    expect(body.error).toMatch(/source_type must be one of/i)
+    expect(status).toBe(201)
+    expect(body.source_type).toBe('rescued')
+    const rows = await directSql`SELECT source_type FROM plants WHERE id = ${body.id}`
+    expect(rows[0].source_type).toBe('rescued')
   })
 
   it('invalid divergence_type enum → 400', async () => {
