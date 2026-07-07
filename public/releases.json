@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.32.0",
+    "date": "2026-07-07",
+    "highlights": [
+      "Easier-to-read status and severity labels, with stronger contrast so badges and text over photos are clearer.",
+      "The Favorite heart now announces its on/off state properly for screen readers."
+    ]
+  },
+  {
     "version": "3.31.0",
     "date": "2026-07-07",
     "highlights": [
