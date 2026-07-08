@@ -1,5 +1,15 @@
 [
   {
+    "version": "3.36.0",
+    "date": "2026-07-08",
+    "highlights": [
+      "In the Garden, you can now tap anywhere on a plant’s card to open it — the whole card is a link, not just the photo.",
+      "When you group the Garden by Heat, Determinacy, or Day Length, the groups now line up in a natural order (Sweet → Mild → … → Superhot) instead of alphabetically.",
+      "Doctor Gardener’s health cards now show a small caretaker dot when more than one person tends the garden, matching the Garden view.",
+      "The Today screen no longer shows the “feeding is on hold” explainer on days when there’s nothing to feed."
+    ]
+  },
+  {
     "version": "3.35.0",
     "date": "2026-07-08",
     "highlights": [
