@@ -7,7 +7,7 @@ import GardenVisitors from '../components/findings/GardenVisitors.jsx'
 import { P } from '../lib/constants.js'
 import { useMembers } from '../hooks/useMembers.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
-import { buildProjectsById, effectiveAssignee, lensOptions } from '../lib/caretakers.js'
+import { buildProjectsById, effectiveAssignee, lensOptions, buildCaretakerMap } from '../lib/caretakers.js'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 
 // Doctor Gardener — the DrG nav tab (/findings). Slice 8 (V4-THEME-001) "real but sparse":
@@ -31,9 +31,14 @@ export default function Findings() {
   const onLens = useCallback((v) => { setLens(v); try { localStorage.setItem('garden.drgLens', v) } catch { /* ignore */ } }, [])
   const careLensOptions = useMemo(() => lensOptions(members, profile?.id), [members, profile])
   const effectiveLens = careLensOptions.some(o => o.value === lens) ? lens : 'all'
+  // V4-ASSIGNLENS-002 — same caretaker map the Garden tiles use, for the per-card badge.
+  const caretakerMap = useMemo(() => buildCaretakerMap(members, profile?.id), [members, profile])
   const [assigneeByPlant, setAssigneeByPlant] = useState(null)
   useEffect(() => {
-    if (effectiveLens === 'all' || assigneeByPlant) return
+    // Load the plant->caretaker map whenever there is >1 caretaker — it now feeds BOTH the lens
+    // filter (any non-'all' lens) AND the per-card badges (shown on the 'all'/Everyone view). A
+    // single-caretaker household never loads it: no lens narrowing exists and badges add no signal.
+    if (caretakerMap.size <= 1 || assigneeByPlant) return
     let on = true
     Promise.all([fetch('/api/plants').catch(() => null), fetch('/api/projects').catch(() => null)])
       .then(([pl, pj]) => {
@@ -45,7 +50,7 @@ export default function Findings() {
         setAssigneeByPlant(m)
       })
     return () => { on = false }
-  }, [effectiveLens, assigneeByPlant, fetch])
+  }, [caretakerMap, assigneeByPlant, fetch])
   // Fall back to unfiltered until the map loads (no empty flash); then filter by caretaker.
   const lensFilter = useCallback((list) => {
     if (effectiveLens === 'all' || !assigneeByPlant) return list
@@ -62,6 +67,23 @@ export default function Findings() {
   }, [all])
   const activeShown = useMemo(() => lensFilter(active), [active, lensFilter])
   const resolvedShown = useMemo(() => lensFilter(resolved), [resolved, lensFilter])
+
+  // V4-ASSIGNLENS-002 — per-card caretaker badges (mirrors Garden's showBadges gate). Only when a
+  // multi-caretaker household is viewing a set that actually SPANS >1 caretaker do badges add signal;
+  // a single-caretaker set suppresses them as noise. Mixed-ness is computed over the union of what we
+  // render badges on (active + resolved), so both FindingsList instances agree.
+  const showBadges = useMemo(() => {
+    if (caretakerMap.size <= 1 || !assigneeByPlant) return false
+    const seen = new Set()
+    for (const fd of [...activeShown, ...resolvedShown]) {
+      seen.add(assigneeByPlant.get(fd.plant_id) ?? null)
+      if (seen.size > 1) return true
+    }
+    return false
+  }, [caretakerMap, assigneeByPlant, activeShown, resolvedShown])
+  const caretakerFor = useCallback((fd) => (
+    showBadges ? (caretakerMap.get(assigneeByPlant?.get(fd.plant_id) ?? null) || null) : null
+  ), [showBadges, caretakerMap, assigneeByPlant])
 
   const handleResolve = useCallback(async (eventId) => {
     if (!eventId) return
@@ -92,7 +114,7 @@ export default function Findings() {
         </h2>
         {loading && <div style={{ padding: 20, color: P.light, textAlign: 'center' }}>Loading&hellip;</div>}
         {error && <div style={{ padding: 20, color: P.terra, textAlign: 'center' }}>{error}</div>}
-        {!loading && !error && <FindingsList findings={activeShown} onResolve={handleResolve} />}
+        {!loading && !error && <FindingsList findings={activeShown} onResolve={handleResolve} caretakerFor={caretakerFor} />}
 
         {!loading && !error && resolvedShown.length > 0 && (
           <details style={{ marginTop: 16 }}>
@@ -103,7 +125,7 @@ export default function Findings() {
               Recently resolved ({resolvedShown.length})
             </summary>
             <div style={{ marginTop: 10 }}>
-              <FindingsList findings={resolvedShown} />
+              <FindingsList findings={resolvedShown} caretakerFor={caretakerFor} />
             </div>
           </details>
         )}

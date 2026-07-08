@@ -61,6 +61,20 @@ export default function PlantingTile({
         animation: pl.id === flashId ? 'garden-newrow-highlight 1200ms ease' : undefined,
       }}
     >
+      {/* V4-TAPCARD-001 -- whole-card tap target. A stretched Link covers the entire card at a
+          low zIndex; it is a SIBLING of the controls (not an ancestor), so a tap navigates only
+          where it lands on the link surface. Every interactive control is raised ABOVE it
+          (Favorite z6, critters z5, PhotoUpload z2) so occlusion -- not stopPropagation -- keeps
+          them operable. Sole carrier of the "Open {name}" accessible name (the photo box below was
+          retagged from a Link to a plain div). Non-interactive body spans (name/variety/status/
+          caretaker) stay under the overlay so tapping them opens the planting. */}
+      <Link
+        to={`/projects/${pl.project_id}/plantings/${pl.id}`}
+        aria-label={`Open ${pl.name}`}
+        data-testid="planting-tile-link"
+        style={{ position: 'absolute', inset: 0, zIndex: 1, borderRadius: T.radiusCard, textDecoration: 'none' }}
+      />
+
       {/* MVP-Critter sprites -- same contract as PlantingRow. Peek above the tile's top-left,
           clear of the favorite corner (top-right) and the body below the photo. zIndex 5 so they
           sit above the card chrome but never block the photo link tap target. */}
@@ -72,12 +86,10 @@ export default function PlantingTile({
         </div>
       )}
 
-      {/* PHOTO (4:3) -> OPENS detail. aspect-ratio reserves the box (no CLS). accessible name
-          "Open {name}". RES-4: single origin URL, loading=lazy + decoding=async, no derivative
-          pipeline assumed. */}
-      <Link
-        to={`/projects/${pl.project_id}/plantings/${pl.id}`}
-        aria-label={`Open ${pl.name}`}
+      {/* PHOTO (4:3) box. V4-TAPCARD-001: retagged from <Link> to a plain <div> -- the stretched
+          card overlay above now owns navigation + the "Open {name}" name. aspect-ratio reserves
+          the box (no CLS). RES-4: single origin URL, loading=lazy + decoding=async. */}
+      <div
         style={{
           position: 'relative',
           display: 'block',
@@ -87,7 +99,6 @@ export default function PlantingTile({
           borderTopRightRadius: T.radiusCard,
           overflow: 'hidden',
           backgroundColor: P.greenPale,
-          textDecoration: 'none',
         }}
       >
         {hasPhoto ? (
@@ -124,7 +135,7 @@ export default function PlantingTile({
             {photoCount}
           </span>
         )}
-      </Link>
+      </div>
 
       {/* Favorite -- bare toggle in the TOP-RIGHT corner, on a soft cream scrim so the star reads
           on any photo. Outside the Link; FavoriteToggle stops propagation internally. */}
@@ -162,6 +173,9 @@ export default function PlantingTile({
             {pl.status ? <PlantStatusBadge status={pl.status} /> : <span />}
             {caretaker && <CaretakerBadge caretaker={caretaker} size={18} />}
           </div>
+          {/* V4-TAPCARD-001: raise the inline uploader above the stretched card overlay (z1) so its
+              camera/library buttons stay tappable -- occlusion, not stopPropagation, is what keeps it live. */}
+          <span style={{ position: 'relative', zIndex: 2 }}>
           <PhotoUpload
             keyPrefix="plants"
             parentId={pl.id}
@@ -181,6 +195,7 @@ export default function PlantingTile({
               cursor: 'pointer', fontSize: '0.9rem', userSelect: 'none',
             }}
           />
+          </span>
         </div>
       </div>
     </div>

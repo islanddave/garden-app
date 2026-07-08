@@ -3,7 +3,7 @@ import { sortFindings } from '../../lib/findingsSort.js'
 import FindingCard from './FindingCard.jsx'
 import { P } from '../../lib/constants.js'
 
-export default function FindingsList({ findings, onResolve }) {
+export default function FindingsList({ findings, onResolve, caretakerFor = () => null }) {
   const sorted = sortFindings(findings)
   if (sorted.length === 0) {
     return (
@@ -19,7 +19,7 @@ export default function FindingsList({ findings, onResolve }) {
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {sorted.map(f => <FindingCard key={f.finding_id} finding={f} onResolve={onResolve} />)}
+      {sorted.map(f => <FindingCard key={f.finding_id} finding={f} onResolve={onResolve} caretaker={caretakerFor(f)} />)}
     </div>
   )
 }

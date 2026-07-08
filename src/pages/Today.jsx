@@ -77,7 +77,14 @@ export default function Today() {
             <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={data?.generated_at} planDate={data?.plan_date} liveHydrology={liveHydrology} refreshedAt={refreshedAt} />
           )}
 
-          {plan.substrate?.msg && (
+          {/* V4-TODAYHOLD-001 — Today is an ACTION surface: show the substrate/feeding note only
+              when it is actionable. `substrate.on_hold` is true exactly when there are zero feed
+              recommendations (the long "Feeding on HOLD — fresh MG mix is feeding all N plantings…"
+              explainer that otherwise reappears every single day with nothing to do). Suppress that
+              empty-state noise; keep the actionable "N planting(s) past the feed window" reminder
+              (on_hold=false). The DrG "Today's reasoning" panel still surfaces the full note as a
+              WHY — that surface explains, this one asks for action. */}
+          {plan.substrate?.msg && !plan.substrate?.on_hold && (
             <div style={{
               fontSize: '0.82rem', color: P.mid, lineHeight: 1.45,
               background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: '10px 12px',

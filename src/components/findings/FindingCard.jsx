@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { P } from '../../lib/constants.js'
 import UrgencyIcon from './UrgencyIcon.jsx'
 import ConfidenceBasis from './ConfidenceBasis.jsx'
+import CaretakerBadge from '../CaretakerBadge.jsx'
 
 // No mascot, no character, no placeholder art (care-engine-spec C7 anti-anchor). The card leads
 // with the engine's plain statement; ask-mode reads as a question, assert-mode as a heads-up.
@@ -25,7 +26,7 @@ function sourceEventId(findingId) {
     : null
 }
 
-export default function FindingCard({ finding, onResolve }) {
+export default function FindingCard({ finding, onResolve, caretaker = null }) {
   const f = finding ?? {}
   const [busy, setBusy] = useState(false)
   const trend = TREND[f.trend] ?? TREND.steady
@@ -63,6 +64,10 @@ export default function FindingCard({ finding, onResolve }) {
           {MODE_LABEL[f.assertion_mode] ?? 'Note'}
         </span>
         <span style={{ flex: 1 }} />
+        {/* V4-ASSIGNLENS-002 — per-card caretaker badge, mirroring the Garden tiles. Only present
+            when the parent surface resolves a caretaker (multi-caretaker household + mixed set);
+            null otherwise, so single-caretaker/unassigned/badges-off cards draw nothing. */}
+        {caretaker && <CaretakerBadge caretaker={caretaker} size={16} />}
         <UrgencyIcon level={f.urgency_level} />
       </div>
 
