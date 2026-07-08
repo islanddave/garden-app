@@ -145,11 +145,39 @@ export function tagsForPlanting(tagMap, plantingId) {
   return [...(e.direct || []), ...(e.projected || [])]
 }
 
+// V4-HEATSORT-001 / V4-DETSORT-001 / V4-DAYLEN-001 — canonical group ORDER for the classification
+// facets (V4-CLASSIFY-001). Alphabetical is nonsensical for these (Heat -> Hot, Medium, Mild, Sweet);
+// each has a real semantic order. A facet listed here sorts its groups by slug index; any facet NOT
+// listed (type, lifecycle tags, location, group, freeform) keeps the alpha default. Unknown/future
+// slugs sort AFTER all known values (alpha among themselves); the no-value "Unsorted" group stays
+// dead last (appended below). Slugs mirror lambda/tags/crop-derive.js (HEAT_BANDS + *_LABELS); the
+// determinacy + day_length orders are horticulturally-locked (compact->sprawling; photoperiod
+// continuum south->north with day-neutral off-axis last).
+export const FACET_VALUE_ORDER = {
+  heat: ['sweet', 'mild', 'medium', 'hot', 'very_hot', 'superhot'],
+  determinacy: ['dwarf', 'determinate', 'semi_determinate', 'indeterminate'],
+  day_length: ['short_day', 'intermediate', 'long_day', 'day_neutral'],
+  allium_type: ['bulbing', 'bunching'],
+  basil_use: ['culinary', 'thai', 'tulsi'],
+}
+
+// Comparator for facet-value groups: canonical slug order first (when the facet has one), label
+// alpha as the tiebreak / for unlisted facets. Unknown slugs -> index 999 (after all known).
+function compareFacetGroups(facet) {
+  const order = FACET_VALUE_ORDER[facet]
+  const idx = order ? (slug) => { const i = order.indexOf(slug); return i === -1 ? 999 : i } : null
+  return (a, b) => {
+    if (idx) { const d = idx(a.slug) - idx(b.slug); if (d !== 0) return d }
+    return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
+  }
+}
+
 // Group plantings by the active facet's tag values. tagMap = { [plantingId]: { direct:Tag[],
 // projected:Tag[] } } from GET /api/entity-tags?entity_type=plant. A planting appears under EVERY
 // tag value it carries in `facet` (multi-membership); plantings with no tag in that facet fall into
-// a trailing "Unsorted" group. Groups sort alpha by label; Unsorted is always last. Returns null
-// when `facet` is falsy — the caller then renders the legacy by-project tree (golden path).
+// a trailing "Unsorted" group. Groups sort by the facet's canonical order (FACET_VALUE_ORDER) when
+// it has one, else alpha by label; Unsorted is always last. Returns null when `facet` is falsy — the
+// caller then renders the legacy by-project tree (golden path).
 export function buildTagGroupedList(plantings, tagMap, facet, order = SORT_ALPHA) {
   if (!facet) return null
   const live = (plantings || []).filter(p => p && !p.archived_at)
@@ -166,7 +194,7 @@ export function buildTagGroupedList(plantings, tagMap, facet, order = SORT_ALPHA
     })
   })
   const out = [...groups.values()]
-    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+    .sort(compareFacetGroups(facet))
     .map(g => ({ ...g, plantings: applyNameSort(g.plantings, order), count: g.plantings.length }))
   if (unsorted.length) {
     out.push({ slug: UNSORTED_SLUG, label: 'Unsorted', facet, isUnsorted: true,

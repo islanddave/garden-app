@@ -52,6 +52,53 @@ describe('buildTagGroupedList', () => {
   })
 })
 
+// V4-HEATSORT-001 / V4-DETSORT-001 / V4-DAYLEN-001 — classification facets sort by canonical order.
+describe('buildTagGroupedList — canonical facet ordering', () => {
+  // helper: one planting per facet value, added in a deliberately-scrambled order
+  const build = (facet, vals) => {
+    const m = {}, pl = []
+    vals.forEach(([slug, label], i) => {
+      const id = `p${i}`
+      m[id] = { direct: [tag(facet, slug, label)], projected: [] }
+      pl.push(P(id, `Plant ${i}`))
+    })
+    return buildTagGroupedList(pl, m, facet).map(g => g.slug)
+  }
+
+  it('heat: SHU-ascending, not alphabetical', () => {
+    // scrambled input -> canonical sweet..superhot
+    expect(build('heat', [['hot', 'Hot'], ['sweet', 'Sweet'], ['superhot', 'Superhot'], ['mild', 'Mild'], ['very_hot', 'Very Hot'], ['medium', 'Medium']]))
+      .toEqual(['sweet', 'mild', 'medium', 'hot', 'very_hot', 'superhot'])
+  })
+
+  it('determinacy: compact -> sprawling', () => {
+    expect(build('determinacy', [['indeterminate', 'Indeterminate'], ['dwarf', 'Dwarf'], ['semi_determinate', 'Semi-Determinate'], ['determinate', 'Determinate']]))
+      .toEqual(['dwarf', 'determinate', 'semi_determinate', 'indeterminate'])
+  })
+
+  it('day_length: photoperiod continuum, day-neutral off-axis last', () => {
+    expect(build('day_length', [['long_day', 'Long-Day'], ['day_neutral', 'Day-Neutral'], ['short_day', 'Short-Day'], ['intermediate', 'Intermediate']]))
+      .toEqual(['short_day', 'intermediate', 'long_day', 'day_neutral'])
+  })
+
+  it('unknown/future slug in an ordered facet sorts AFTER known values (alpha among unknowns), Unsorted still last', () => {
+    const m = {
+      a: { direct: [tag('heat', 'medium', 'Medium')], projected: [] },
+      b: { direct: [tag('heat', 'zzz_future', 'Zzz')], projected: [] },
+      c: { direct: [tag('heat', 'aaa_future', 'Aaa')], projected: [] },
+      d: { direct: [tag('heat', 'sweet', 'Sweet')], projected: [] },
+      // e untagged -> Unsorted
+    }
+    const out = buildTagGroupedList([P('a'), P('b'), P('c'), P('d'), P('e')], m, 'heat')
+    expect(out.map(g => g.slug)).toEqual(['sweet', 'medium', 'aaa_future', 'zzz_future', UNSORTED_SLUG])
+  })
+
+  it('facets without a canonical order (e.g. type) keep the alpha default', () => {
+    expect(build('type', [['pepper', 'Pepper'], ['basil', 'Basil'], ['tomato', 'Tomato']]))
+      .toEqual(['basil', 'pepper', 'tomato'])
+  })
+})
+
 describe('tagsForPlanting', () => {
   it('flattens direct + projected; empty for unknown id', () => {
     expect(tagsForPlanting(map, 'p1').map(t => `${t.facet}:${t.slug}`)).toEqual(['group:herbs', 'type:basil', 'lifecycle:annual'])
