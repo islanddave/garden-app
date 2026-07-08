@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.35.0",
+    "date": "2026-07-08",
+    "highlights": [
+      "Photos you take in the app can now be saved to your device, and you can share an event or planting straight from its page.",
+      "The back button keeps your place now \u2014 no more jumping back to the top of the Garden.",
+      "A plant\u2019s watering badge on its own page now matches the Today screen, so a plant the rain already watered won\u2019t show a false \u201cneeds water.\u201d"
+    ]
+  },
+  {
     "version": "3.34.0",
     "date": "2026-07-07",
     "highlights": [
