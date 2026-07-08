@@ -12,6 +12,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
+import { reconcileNextWaterAt } from './waterVerdict.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -194,6 +195,42 @@ export const handler = async (event) => {
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         const row = rows[0];
+
+        // DRG-WXWATER-002: reconcile the care-band schedule to the AUTHORITATIVE daily-plan verdict
+        // (same source Today/alert bar read), so a rain-satisfied / dormant planting stops lighting a
+        // false "Overdue" band. Caretaker-agnostic: search ALL household plans for today by plant_id
+        // (plan is per-caretaker; by-id GET is household-scoped). Trust guard + legacy fallback mirror
+        // dashboard/handlers.js queryWaterDueFromPlan exactly. Separate query -> the guarded by-id
+        // SELECT (select-columns.test.js exactly-3 invariant) is untouched.
+        const verdictRows = await sql`
+          WITH params AS (SELECT (now() AT TIME ZONE 'America/New_York')::date AS et_today)
+          SELECT
+            (SELECT json_agg(json_build_object(
+                'sv', (dp.items->>'schema_version')::int,
+                'water_due', CASE WHEN jsonb_typeof(dp.items->'water_due') = 'array'
+                                  THEN dp.items->'water_due' ELSE '[]'::jsonb END))
+             FROM daily_plan dp, params
+             WHERE dp.user_id = ANY(${householdIds}) AND dp.plan_date = params.et_today) AS plan_rows,
+            EXISTS(SELECT 1 FROM event_log ev, params
+                   WHERE ev.plant_id::text = ${plantId}
+                     AND ev.deleted_at IS NULL
+                     AND ev.event_type IN ('watering','rain')
+                     AND (ev.event_date AT TIME ZONE 'America/New_York')::date = params.et_today) AS satisfied_today
+        `;
+        const verdict = reconcileNextWaterAt({
+          nextWaterAt: row.next_water_at,
+          planRows: verdictRows[0]?.plan_rows ?? null,
+          satisfiedToday: verdictRows[0]?.satisfied_today === true,
+          plantId,
+        });
+        if (verdict.water_due_source !== 'plan') {
+          // Observable divergence (mirrors the bar's loud log): the detail band fell back to the naive
+          // entity_memory schedule because no trusted daily_plan row exists for today.
+          console.warn('[water_verdict] plants by-id fell back to naive schedule', { plantId, source: verdict.water_due_source });
+        }
+        row.next_water_at = verdict.next_water_at;
+        row.water_due_source = verdict.water_due_source;
+
         const featured_photo_view_url = await resolvePhotoViewUrl(row.featured_photo_storage_path, { presign: getFeaturedPhotoViewUrl, sm });
         const { featured_photo_storage_path: _ignore, ...rest } = row;
         return resp(200, { ...rest, featured_photo_view_url });
