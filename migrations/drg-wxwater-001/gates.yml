@@ -1,0 +1,73 @@
+# gates.yml
+# DRG-WXWATER-001 coarse-v1 — additive rain_exposed state + garden_node view widen.
+#
+# Pre:  the new columns do not exist yet.
+# Sweep: no rain_exposed_source value out of the enum (all rows default 'derived' or NULL). Runner re-runs the
+#        sweep between 0a and 0c per its codified pattern.
+# Post: columns present on base plants AND on the garden_node view (I4), source CHECK validated, schema_version
+#       recorded.
+
+pre:
+  - name: pre_rain_exposed_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants' AND column_name='rain_exposed'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_plants_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  - name: sweep_rain_exposed_source_valid
+    sql: |
+      SELECT id FROM public.plants
+       WHERE rain_exposed_source IS NOT NULL
+         AND rain_exposed_source NOT IN ('derived','user','system')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_rain_exposed_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants' AND column_name='rain_exposed'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_rain_exposed_source_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants' AND column_name='rain_exposed_source'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_rain_exposed_set_at_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants' AND column_name='rain_exposed_set_at'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_view_exposes_rain_exposed
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='garden_node' AND column_name='rain_exposed'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_source_constraint_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint WHERE conname='chk_plants_rain_exposed_source'
+    expect: scalar_eq
+    value: true
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.12.0-wxwater-001'
+    expect: rowcount_eq
+    value: 1

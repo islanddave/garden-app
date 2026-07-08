@@ -128,11 +128,15 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     tempF: station && station.tempF, recentPrecipIn: station && station.recentPrecipIn,
     coversLookback: station && station.coversLookback, uncertainty: station && station.uncertainty }));
   const owner = process.env.OWNER_FALLBACK_SUB || null;     // unassigned -> Space owner (Dave); NEVER leaks to Jen.
+  // DRG-WXWATER-001 coarse-v1: SINGLE flag read-site (spec I2 — plan is computed once nightly, all readers consume
+  // the stored plan, so one flag here is inherently consistent). Default OFF; the 3-substrate-tier rain model is
+  // inert (byte-identical plan) until CARE_RAIN_CREDIT_ENABLED=true is set after shadow-soak.
+  const rainCreditEnabled = process.env.CARE_RAIN_CREDIT_ENABLED === 'true';
   const plans = [];
   const bySpace = {};
   for (const p of plantings) (bySpace[p.workspace_id] ||= []).push(p);
   for (const [spaceId, rows] of Object.entries(bySpace)) {
-    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], ownerFallback: owner });
+    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled });
     for (const [user_id, userPlan] of Object.entries(plan.users)) {
       plans.push({ space_id: spaceId, user_id, plan: userPlan, weather: plan.weather });
       if (!dryRun) {

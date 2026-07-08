@@ -26,3 +26,9 @@ export const SYSTEM_NOTIFICATIONS_ENABLED = false
 // preserved. When this flag is FALSE the section starts COLLAPSED (the common path);
 // flip TRUE to have it render EXPANDED by default. Either way the fields are reachable.
 export const EVENTNEW_ADD_DETAILS_EXPANDED = false
+
+// DRG-WXWATER-001 coarse-v1 (Dave 2026-07-08): mirrors the server CARE_RAIN_CREDIT_ENABLED env flag for any UI
+// that surfaces the "watering skipped — recent rain" substrate-tier trace. Default OFF; flip TRUE in lockstep
+// with the server env var AFTER shadow-soak. These are SEPARATE mechanisms — the CJS daily-plan Lambda cannot
+// import this ESM module, so the server reads process.env.CARE_RAIN_CREDIT_ENABLED and this is the client copy.
+export const CARE_RAIN_CREDIT_ENABLED = false

@@ -116,6 +116,59 @@ function rainCreditDays(cls, wi, hy){
   return { credit_days: Math.min(RAIN_HOLD_DAYS, wi), wp: Math.round(wp*100)/100, eff: Math.round(eff*100)/100 };  // cap at one cycle
 }
 
+// ── DRG-WXWATER-001 coarse-v1 — 3-substrate-tier rain model (flag-gated: CARE_RAIN_CREDIT_ENABLED, default OFF) ──
+// Extends the single-outdoor DRG-WATERCREDIT-001 profile (RAIN_IA.outdoor 0.25 / RAIN_HOLD_DAYS 1) into three
+// substrate tiers keyed on container_type: bigger reservoir => rain persists longer (higher hold) and clears a
+// lower initial-abstraction; small fast-drying vessels => aggressive discount (short hold — a qualifying rain
+// doesn't LAST in a fabric bag). NEW SYMBOLS ONLY: RAIN_IA / RAIN_HOLD_DAYS are left untouched so the flag-OFF
+// path (and watercredit.test.js's RAIN_IA.in_ground===undefined assertion) stays byte-identical. Constants are the
+// agronomy coarse-v1 values (W. MA cool-humid, clay-ish native soil); the flagged uncertain ones are soak-tunable
+// (spec §6/§8 — err toward watering: raise IA, shorten hold, tighten ceiling; in_ground IA is the #1 tune target).
+const RAIN_TIER_IA   = { in_ground: 0.20, intermediate: 0.25, small_fast: 0.35 }; // inches (initial abstraction per tier)
+const RAIN_TIER_HOLD = { in_ground: 3,    intermediate: 2,    small_fast: 1    }; // max credit days per tier; never raise small_fast
+// Vessel -> tier. NULL/unknown/'other' fails safe to small_fast (least credit -> water it). Covers the full DB
+// container_type CHECK vocab (14 values, verified prod 2026-07-08) + the generic 'pot' used in fixtures. Rigid pots
+// (plastic/terracotta/ceramic/'pot') are small_fast: generic unknown-size pots dry fast; large rigid pots re-tag to trough.
+const RAIN_VESSEL_TIER = {
+  in_ground: 'in_ground',
+  raised_bed: 'intermediate', trough: 'intermediate', whiskey_barrel: 'intermediate', window_box: 'intermediate',
+  hanging_basket: 'small_fast', fabric_bag: 'small_fast', tray_cell: 'small_fast', soil_block: 'small_fast',
+  solo_cup: 'small_fast', plastic_pot: 'small_fast', terracotta: 'small_fast', ceramic: 'small_fast',
+  pot: 'small_fast', other: 'small_fast',
+};
+function rainTierFor(container_type){ return RAIN_VESSEL_TIER[(container_type||'').toLowerCase()] || 'small_fast'; }
+// Max-days ceiling: clamps the watering interval before the due-check so a rain-credited planting still re-surfaces
+// for a moisture check (anti suppression-inversion). tier x stage; +1 for drought-tolerant Mediterranean herbs,
+// -1 for steady-moisture leafy/Solanaceae at flowering/fruiting (bolt / split / blossom-end-rot on swings), floor 1.
+const RAIN_MAX_DAYS = {
+  small_fast:   { seedling: 1, vegetative: 2, flowering: 2, fruiting: 1, mature: 2 },
+  intermediate: { seedling: 2, vegetative: 3, flowering: 3, fruiting: 2, mature: 4 },
+  in_ground:    { seedling: 2, vegetative: 4, flowering: 3, fruiting: 3, mature: 5 },
+};
+function rainStageFor(status){ const s=(status||'').toLowerCase();
+  if(s==='seedling'||s==='germinated'||s==='sown') return 'seedling';
+  if(s==='vegetative') return 'vegetative';
+  if(s==='flowering') return 'flowering';
+  if(s==='fruiting'||s==='fruit_set') return 'fruiting';
+  return 'mature'; }   // active/harvested/mature/unknown -> mature (loosest column, still capped)
+function rainMaxDays(tier, status, crop){
+  const stage=rainStageFor(status);
+  const base=(RAIN_MAX_DAYS[tier]||RAIN_MAX_DAYS.small_fast)[stage];
+  if(base==null) return null;
+  const c=(crop||'').toLowerCase();
+  let mod=0;
+  if(isMedHerb(c)) mod=1;                                                                 // deep taproot, wilt-tolerant
+  else if((isLeafy(c)||PEPPER_TOMATO.test(c)) && (stage==='flowering'||stage==='fruiting')) mod=-1; // steady-moisture crops
+  return Math.max(1, base+mod); }
+// Tiered rain credit — mirrors rainCreditDays but with per-tier IA + hold. Returns {credit_days,wp,eff,tier} or null.
+function rainCreditDaysTiered(tier, wi, hy){
+  const ia = RAIN_TIER_IA[tier] ?? RAIN_TIER_IA.small_fast;
+  const hold = RAIN_TIER_HOLD[tier] ?? RAIN_TIER_HOLD.small_fast;
+  const wp = windowPrecip(hy); if(wp==null) return null;
+  const eff = wp - ia;
+  if(eff<=0) return null;
+  return { credit_days: Math.min(hold, wi), wp: Math.round(wp*100)/100, eff: Math.round(eff*100)/100, tier }; }
+
 // Returns a fertilize recommendation object IF one is warranted now, else null. Substrate-aware.
 function fertilizeRec(p, c, fm, today){
   const wk=weeksSince(today, p.substrate_start);
@@ -152,7 +205,7 @@ function coldFor(p, cad, low){
   return null;
 }
 
-function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
+function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false){
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[];
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
@@ -172,11 +225,20 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
           ?? c.water_interval_days_container
           ?? cad.default.water_interval_days_container;
     if(hot && c.drought_tolerance==='low' && wi>1) wi=wi-1;
+    // DRG-WXWATER-001 coarse-v1 (flag-ON only): clamp the interval to the substrate x stage ceiling so a
+    // rain-credited planting still re-surfaces for a moisture check. Flag-OFF leaves wi exactly as computed above.
+    const _rainTier = rainCreditEnabled ? rainTierFor(p.container_type) : null;
+    if(rainCreditEnabled){ const _cap=rainMaxDays(_rainTier, p.status, c.crop); if(_cap!=null && wi>_cap) wi=_cap; }
     const dW=daysBetween(today,p.last_water);
     // DRG-WATERCREDIT-001 Path B-plus: credit qualifying window rain against the cadence (per class), with a
     // fresh-transplant carve-out. A credited planting drops OUT of water_due (so counts.water_due is correct —
     // fixes the legacy defer-count bug) and lands on rain_skipped with a one-line reason string.
     const rcls=rainClass(p);
+    // DRG-WXWATER-001 coarse-v1 (flag-ON only): exposure eligibility. Flag-OFF uses the location-derived class
+    // (rcls==='outdoor'); flag-ON derives exposed = !covered when rain_exposed is unset, honoring a stored
+    // rain_exposed boolean as an explicit override. _creditClass/_iaShown collapse to the flag-OFF values when OFF.
+    const _exposed = rainCreditEnabled ? (p.rain_exposed==null ? !p.covered : !!p.rain_exposed) : null;
+    const _creditClass = rainCreditEnabled ? _exposed : (rcls==='outdoor');
     // DRG-WATERCREDIT-002 fix: key the fresh-transplant carve-out on a REAL transplant/potting event
     // (p.transplant_at), NOT substrate_start. substrate_start falls back to created_at (DB row-creation
     // date), so plantings entered into the app recently but established in the ground/pots long ago were
@@ -186,7 +248,10 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
     // DRG-WATERCREDIT-004: outdoor fabric bags dry fast in heat -> withhold rain credit on hot days so they
     // still surface for watering. Outdoor-scoped (covered bags are never credited anyway, so no misleading note).
     const bagHeatGate=hotForBag && rcls==='outdoor' && ((p.container_type||'').toLowerCase()==='fabric_bag');
-    const rc=(freshTransplant||bagHeatGate)?null:rainCreditDays(rcls,wi,hydrology);
+    const rc=(freshTransplant||bagHeatGate) ? null
+      : (rainCreditEnabled
+          ? (_exposed ? rainCreditDaysTiered(_rainTier, wi, hydrology) : null)
+          : rainCreditDays(rcls, wi, hydrology));
     const effDays=(dW!=null&&rc)?dW-rc.credit_days:dW;
     if(dW!=null && dW>=wi && rc && effDays<wi){
       rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
@@ -194,12 +259,14 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology){
         reason:`Skip — ${rc.wp}" rain over the last few days counts as watering`});
     } else if(dW!=null && dW>=wi){
       const wp=windowPrecip(hydrology);
+      // flag-OFF: _iaShown===RAIN_IA.outdoor and _creditClass===(rcls==='outdoor') -> note is byte-identical.
+      const _iaShown = rainCreditEnabled ? (RAIN_TIER_IA[_rainTier] ?? RAIN_TIER_IA.small_fast) : RAIN_IA.outdoor;
       const rain_note=freshTransplant
         ? 'Water — fresh transplant (no rain credit; small root ball dries fast)'
         : bagHeatGate
         ? `Water — fabric bag dries fast at ${high}°F (rain credit withheld on hot days)`
-        : (rcls==='outdoor' && rc==null && wp!=null && wp>0
-            ? `Water — ${Math.round(wp*100)/100}" rain under the ${RAIN_IA.outdoor}" soak-in threshold`
+        : (_creditClass && rc==null && wp!=null && wp>0
+            ? `Water — ${Math.round(wp*100)/100}" rain under the ${_iaShown}" soak-in threshold`
             : (rc ? `Water — ${rc.wp}" rain didn't cover the gap (last watered ${dW}d ago)` : null));
       water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:dW,interval:wi,overdue_by:dW-wi,method:c.water_method,moisture:c.soil_moisture_target,never:false,rain_note});
     }
@@ -271,17 +338,18 @@ function hydrologyStatus(hy){
   return {ok:true, uncertainty: reason ? {flag:true, reason} : {flag:false}};
 }
 
-function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback}){
+function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false}){
   const byUser=new Map();
   for(const p of plantings){ const c=resolveCadence(p,cadence); const u=ownerFor(p,c,ownerFallback)||'__UNASSIGNED__'; if(!byUser.has(u))byUser.set(u,[]); byUser.get(u).push(p); }
   const hy=hydrology||null; const callout=computeCallout(weather,hy); const hs=hydrologyStatus(hy);
   const rainComing = !!(hy && hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null||hy.tomorrow_pop>=50));
   const users={};
-  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy);
+  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled);
     users[u]=up; }
   return {date:today,
     weather: weather? {tonightLow:weather.tonightLow, highToday:weather.highToday, code:weather.code, short:weather.short, unit:weather.unit||'F', callout} : null,
     hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop, rain_coming:rainComing, status:hs} : {status:hs},
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, PLAN_SCHEMA_VERSION, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall};
+module.exports={generatePlan, PLAN_SCHEMA_VERSION, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall,
+  RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered};
