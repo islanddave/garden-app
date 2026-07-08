@@ -181,12 +181,19 @@ export function queryFavoriteCount(sql, userId) {
 export function queryActiveProjects(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
+  // DRG-WXWATER-002b: this tile feeds project COUNT + harvest-status gate + zero-state ONLY — it renders
+  // NO water/care verdict (the dashboard's only water cue is the water_due tile, already reconciled to the
+  // daily-plan verdict via queryWaterDueFromPlan / DRG-WATERRECON-001). The naive entity_memory water fields
+  // (next_water_at / location_type / watering_interval_days) that used to be selected here were dead weight
+  // AND a latent divergence trap — a future surface wiring the raw next_water_at would reintroduce exactly the
+  // rain-blind "false Overdue" class WXWATER-002 closes. Dropped. If a per-project water cue is ever wanted,
+  // source it from the plan verdict (queryWaterDueFromPlan), never from raw entity_memory. Guarded by
+  // index.test.js "queryActiveProjects carries no naive water verdict". Activity last_* timestamps stay.
   return sql`
       SELECT
         pp.id, pp.display_name AS name, pp.status, pp.variety, pp.start_date,
         em.last_watered_at, em.last_observed_at, em.last_fertilized_at,
-        em.last_pruned_at, em.last_harvested_at, em.last_event_at,
-        em.next_water_at, em.location_type, em.watering_interval_days
+        em.last_pruned_at, em.last_harvested_at, em.last_event_at
       FROM public.container pp
       LEFT JOIN entity_memory em ON em.project_id = pp.id
       WHERE pp.created_by = ANY(${householdIds})

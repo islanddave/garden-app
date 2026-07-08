@@ -677,6 +677,24 @@ describe('DRG-WATERRECON-001 — queryWaterDueFromPlan (alert bar reads the DrG 
   });
 });
 
+// DRG-WXWATER-002b — the active_projects tile must carry NO naive water verdict. It feeds count/harvest-gate/
+// zero-state only; the dashboard's water cue is the water_due tile (queryWaterDueFromPlan, plan-reconciled).
+// A raw entity_memory next_water_at re-added here would reintroduce the rain-blind "false Overdue" class.
+describe('DRG-WXWATER-002b — queryActiveProjects carries no naive water verdict', () => {
+  it('selects activity last_* timestamps but NOT next_water_at / watering_interval_days', () => {
+    queryActiveProjects(makeSql(), 'user_alpha');
+    const q = findSql(s => s.includes('last_pruned_at') && s.includes('ORDER BY pp.created_at DESC'));
+    expect(q, 'queryActiveProjects SQL not captured').toBeDefined();
+    // naive water verdict fields are GONE (the divergence trap)
+    expect(q.resolved).not.toMatch(/next_water_at/);
+    expect(q.resolved).not.toMatch(/watering_interval_days/);
+    // activity timestamps + household scope preserved (behavior unchanged for real consumers)
+    expect(q.resolved).toMatch(/last_watered_at/);
+    expect(q.resolved).toMatch(/last_event_at/);
+    expect(q.resolved).toMatch(/pp\.created_by = ANY/);
+  });
+});
+
 
 // DRG-WATERRECON-001 drift guard: the alert bar (queryWaterDueFromPlan `fresh` CTE) and the Today page
 // (daily-plan-read annotateDone) are two independent reimplementations of the SAME "satisfied today" filter.
