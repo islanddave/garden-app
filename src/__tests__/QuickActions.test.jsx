@@ -4,6 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
+const { navigateSpy, setPendingSpy } = vi.hoisted(() => ({ navigateSpy: vi.fn(), setPendingSpy: vi.fn() }))
+vi.mock('react-router-dom', async (orig) => { const actual = await orig(); return { ...actual, useNavigate: () => navigateSpy } })
+vi.mock('../lib/pendingCapture.js', () => ({ setPendingCapture: setPendingSpy, takePendingCapture: vi.fn() }))
+
 const { apiFetchSpy } = vi.hoisted(() => ({ apiFetchSpy: vi.fn() }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy, getToken: vi.fn() }) }))
 
@@ -56,9 +60,14 @@ describe('QuickActions', () => {
     expect(apiFetchSpy).not.toHaveBeenCalled()
   })
 
-  it('Photo deep-links to the log flow for this planting', () => {
-    renderQA()
-    const link = screen.getByRole('link', { name: /Add a photo/i })
-    expect(link.getAttribute('href')).toBe('/log?project=proj1&plant=pl1')
+  it('Photo opens a picker; on pick it parks the file and jumps into the photo log flow (V4-PHOTOQUICK-001)', () => {
+    navigateSpy.mockReset(); setPendingSpy.mockReset()
+    const { container } = renderQA()
+    fireEvent.click(screen.getByRole('button', { name: /Add a photo/i }))
+    const input = container.querySelector('input[type="file"]')
+    const file = new File(['x'], 'p.jpg', { type: 'image/jpeg' })
+    fireEvent.change(input, { target: { files: [file] } })
+    expect(setPendingSpy).toHaveBeenCalledWith(file)
+    expect(navigateSpy).toHaveBeenCalledWith('/log?project=proj1&plant=pl1&event_type=photo&fromquick=1')
   })
 })

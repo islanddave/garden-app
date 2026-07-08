@@ -4,8 +4,9 @@
 //   Status = PUT  /api/plants/:id {status}  (COALESCE-partial, emits status_change audit event)
 //   Photo  = deep-link to the existing log/capture flow.
 // Operational confirmations via useOptionalToast (reward-UX operational carve-out only).
-import React, { useState } from 'react'
-import { Link } from 'react-router-dom'
+import React, { useState, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { setPendingCapture } from '../../lib/pendingCapture.js'
 import { useApiFetch } from '../../lib/api.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'
 import { PLANT_STATUSES, statusLabel, P } from '../../lib/constants.js'
@@ -23,6 +24,8 @@ export default function QuickActions({ planting, onLogged, onStatusChanged }) {
   const toast = useOptionalToast()
   const [watering, setWatering] = useState(false)
   const [savingStatus, setSavingStatus] = useState(false)
+  const navigate = useNavigate()
+  const photoInputRef = useRef(null)
 
   if (!planting) return null
   const projectId = planting.project_id
@@ -63,6 +66,21 @@ export default function QuickActions({ planting, onLogged, onStatusChanged }) {
     }
   }
 
+  // V4-PHOTOQUICK-001: open the picker synchronously in THIS tap (a trusted gesture — iOS
+  // suppresses a picker opened after navigation), then park the File and jump into the log form
+  // pre-seeded to a photo event. No 'capture' attr so iOS offers Take Photo OR Choose.
+  function openPhotoPicker() {
+    const el = photoInputRef.current
+    if (el) el.click()
+  }
+  function onPhotoPicked(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setPendingCapture(file)
+    navigate(`/log?project=${projectId}&plant=${plantId}&event_type=photo&fromquick=1`)
+  }
+
   return (
     <div style={{ display: 'flex', gap: 8, margin: '0 0 20px' }}>
       <button type="button" onClick={handleWater} disabled={watering}
@@ -71,11 +89,13 @@ export default function QuickActions({ planting, onLogged, onStatusChanged }) {
         {watering ? 'Logging…' : 'Water'}
       </button>
 
-      <Link to={`/log?project=${projectId}&plant=${plantId}`}
+      <button type="button" onClick={openPhotoPicker}
         aria-label="Add a photo for this planting" style={btn()}>
         <Icon name="media.camera" size={18} decorative style={{ color: P.green }} />
         Photo
-      </Link>
+      </button>
+      <input ref={photoInputRef} type="file" accept="image/*" onChange={onPhotoPicked}
+        style={{ display: 'none' }} />
 
       <span style={{ ...btn({ cursor: 'default', padding: 0, overflow: 'hidden' }) }}>
         <select value={planting.status || ''} onChange={handleStatus} disabled={savingStatus}

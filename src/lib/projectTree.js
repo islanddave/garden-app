@@ -196,6 +196,30 @@ export function saveExpanded(set) {
   } catch (_e) { /* non-fatal: disclosure persistence is best-effort */ }
 }
 
+// V4-NAVSTATE-001: the FACETED/grouped Garden view (groupBy !== 'none') tracked its expanded
+// sections in component-local state, so a drill-in + back remount reset every section to collapsed
+// (the "back button collapses the tree" bug). Persist it per-browser, mirroring loadExpanded/
+// saveExpanded. Keyed separately (groups are tag-facet slugs, not project ids). Default = empty
+// Set (collapsed-first — same ADHD-overwhelm posture as the by-project tree).
+const GROUPS_LS_KEY = 'garden.groupsExpanded.v1'
+
+export function loadGroupsExpanded() {
+  try {
+    const raw = (typeof localStorage !== 'undefined') ? localStorage.getItem(GROUPS_LS_KEY) : null
+    if (!raw) return new Set()
+    const arr = JSON.parse(raw)
+    return new Set(Array.isArray(arr) ? arr : [])
+  } catch (_e) {
+    return new Set()
+  }
+}
+
+export function saveGroupsExpanded(set) {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(GROUPS_LS_KEY, JSON.stringify([...set]))
+  } catch (_e) { /* non-fatal: disclosure persistence is best-effort */ }
+}
+
 // ── V3-ORDER-001 persisted sort-order toggle ────────────────────────────────────────────────
 // TRACKED EXPEDIENT (V002 §5 + Cross-Device State Principle): persistence lives in localStorage,
 // so the chosen sort order is per-device, NOT cross-device. The cross-device-preferred home is a

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { takePendingCapture } from '../lib/pendingCapture.js'
+import { saveFileToDevice } from '../lib/saveFileToDevice.js'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -195,6 +197,7 @@ export default function EventNew() {
   const preselectedProjectId = searchParams.get('project') || ''
   const preselectedEventType = searchParams.get('event_type') || ''
   const preselectedPlantId = searchParams.get('plant') || ''
+  const fromQuick = searchParams.get('fromquick')
   const { fetch: apiFetch, getToken } = useApiFetch()
   // M1 telemetry (Inc 0) — log_watering flow. Only counts when the event is a watering.
   // Fire-and-forget; never affects the save flow.
@@ -276,6 +279,13 @@ export default function EventNew() {
   // M1 telemetry: reset the flow on mount; mark start-capture the first time the
   // event type is set to watering (the "started a watering log" signal).
   useEffect(() => { ux.reset() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  // V4-PHOTOQUICK-001: claim the File parked by a trusted tap on the planting page (a File can't
+  // ride a URL, and an iOS picker opened post-navigation is suppressed). Runs once on mount.
+  useEffect(() => {
+    if (!fromQuick) return
+    const f = takePendingCapture()
+    if (f) { setPhotoFile(f); setPhotoPreview(URL.createObjectURL(f)) }
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (form.event_type === 'watering') { ux.tap(); ux.step(1, 'start_capture') }
   }, [form.event_type])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -864,6 +874,17 @@ export default function EventNew() {
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
                 >✕</button>
+                <button
+                  type="button"
+                  onClick={() => saveFileToDevice(photoFile)}
+                  aria-label="Save photo to device"
+                  style={{
+                    position: 'absolute', bottom: 8, right: 8,
+                    background: 'rgba(0,0,0,0.55)', color: P.white,
+                    border: 'none', borderRadius: 8, padding: '5px 10px',
+                    cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600,
+                  }}
+                >Save to device</button>
               </div>
             ) : (
               <div>

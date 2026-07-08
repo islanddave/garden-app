@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { loadGroupsExpanded, saveGroupsExpanded } from '../lib/projectTree.js'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -39,6 +40,9 @@ import { buildProjectsById, effectiveAssignee, buildCaretakerMap, lensOptions, h
 // server pref this slice) so switching tabs and back doesn't reset the choice; each sub-tab
 // owns its own grouping state, so per-sub-tab grouping is preserved automatically.
 let lastSubtab = 'plants'
+// V4-NAVSTATE-001: last Garden scroll offset, preserved across drill-in + back (module-scoped so it
+// survives the tab's unmount/remount).
+let lastGardenScrollY = 0
 
 export default function Garden() {
   const { fetch, getToken } = useApiFetch()
@@ -52,6 +56,24 @@ export default function Garden() {
   const [plants,   setPlants]   = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
+  // V4-NAVSTATE-001: keep Garden's scroll position across a drill-in + back. Save continuously,
+  // restore once after content has loaded (height stable). Guarded so it is inert on first visit
+  // and in tests (lastGardenScrollY stays 0 until a real scroll happens).
+  useEffect(() => {
+    const onScroll = () => { lastGardenScrollY = window.scrollY }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+  // Restore once content has loaded (height stable). Inert on first visit / in tests (offset 0).
+  const scrollRestoredRef = useRef(false)
+  useEffect(() => {
+    if (loading || scrollRestoredRef.current) return
+    scrollRestoredRef.current = true
+    if (lastGardenScrollY > 0) {
+      const y = lastGardenScrollY
+      requestAnimationFrame(() => { try { window.scrollTo(0, y) } catch { /* jsdom noop */ } })
+    }
+  }, [loading])
   const [expanded, setExpanded] = useState(() => loadExpanded())
   // V4 cross-device disclosure: localStorage paints instantly; server pref is source of truth,
   // hydrated once below. persistExpanded wraps the local save + fire-and-forget server push; an
@@ -661,15 +683,15 @@ function Shell({ children }) {
 function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId, caretakerFor = () => null }) {
   // Sections COLLAPSED by default (Dave 2026-06-26): track the EXPANDED set instead of collapsed,
   // so an empty set = everything collapsed. Toggling a header adds/removes it from expandedGroups.
-  const [expandedGroups, setExpandedGroups] = useState(() => new Set())
+  const [expandedGroups, setExpandedGroups] = useState(() => loadGroupsExpanded())
   const toggle = useCallback((slug) => setExpandedGroups(prev => {
-    const next = new Set(prev); next.has(slug) ? next.delete(slug) : next.add(slug); return next
+    const next = new Set(prev); next.has(slug) ? next.delete(slug) : next.add(slug); saveGroupsExpanded(next); return next
   }), [])
   const groups = buildTagGroupedList(plants, tagMap, facet) || []
   if (groups.length === 0) return <EmptyState />
   // Expand-all / Collapse-all — complements collapse-by-default so the whole view is one tap away.
   const allExpanded = groups.length > 0 && groups.every(g => expandedGroups.has(g.slug))
-  const toggleAll = () => setExpandedGroups(allExpanded ? new Set() : new Set(groups.map(g => g.slug)))
+  const toggleAll = () => setExpandedGroups(() => { const next = allExpanded ? new Set() : new Set(groups.map(g => g.slug)); saveGroupsExpanded(next); return next })
   return (
     <div role="tree" aria-label="Garden grouped by tag" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>

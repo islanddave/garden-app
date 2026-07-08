@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { shareEntity } from '../lib/shareEntity.js'
 import Icon from '../components/Icon.jsx'
 import SeverityBadge from '../components/SeverityBadge.jsx'
 import { EVENT_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
@@ -145,6 +146,7 @@ export default function EventDetail() {
         </h1>
         {!editing && (
           <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => shareEntity({ title: event.title || event.event_type.replace(/_/g, ' '), url: window.location.href })} aria-label="Share this event" style={outlineBtn}>Share</button>
             <button onClick={startEdit} style={outlineBtn}>Edit</button>
             <button onClick={handleDelete} disabled={deleting} style={{ ...outlineBtn, color: P.terra, borderColor: P.terra }}>
               {deleting ? '…' : 'Delete'}
