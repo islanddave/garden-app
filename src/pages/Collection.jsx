@@ -10,6 +10,7 @@ import CritterFactsPopover from '../components/CritterFactsPopover.jsx'
 import CritterOfDay from '../components/CritterOfDay.jsx'
 import { animatedArtUrl } from '../lib/critterArt.js'
 import TallyDisplay from '../components/TallyDisplay.jsx'
+import { sortCritters, CRITTER_SORT_MODES, CRITTER_SORT_LABELS } from '../lib/critterSort.js'
 
 // Critter Collection.
 // Resting states (static, no motion):
@@ -300,6 +301,8 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
 export default function Collection() {
   const { collected, loading, error } = useCritterCollection()
   const { getToken } = useApiFetch()
+  // V4-CRITTERSORT-001 — display sort (dex / A–Z / recently-seen). Frontend-only reorder.
+  const [sortMode, setSortMode] = useState('dex')
 
   // V4-BLOOM-001: bloomSeen is now cross-device. localStorage stays the instant cache (the ref is
   // seeded from it synchronously for first paint); on mount we UNION the server set in, write the
@@ -341,6 +344,13 @@ export default function Collection() {
   }
   const groups = GROUP_ORDER.filter(g => byGroup[g]?.length)
   const discovered = roster.filter(c => collected.has(c.id)).length
+
+  // V4-CRITTERSORT-001 — bind each critter's dex code to its CANONICAL (pre-sort) position within
+  // its group, so a display re-sort renumbers nothing. Rendered code = codeById[c.id].
+  const codeById = {}
+  for (const g of GROUP_ORDER) {
+    (byGroup[g] || []).forEach((c, idx) => { codeById[c.id] = dexCode(g, idx) })
+  }
 
   const headerLine = loading
     ? 'Loading…'
@@ -396,6 +406,26 @@ export default function Collection() {
       {!loading && <CritterOfDay collected={collected} />}
       {!loading && <TallyDisplay />}
 
+      {/* V4-CRITTERSORT-001 — display sort control. Reorders within each group; dex codes stay put. */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, margin: '4px 0 10px' }}>
+        <label htmlFor="critter-sort" style={{ fontSize: '0.8rem', fontWeight: 600, color: P.mid }}>Sort</label>
+        <select
+          id="critter-sort"
+          value={sortMode}
+          onChange={e => setSortMode(e.target.value)}
+          aria-label="Sort critters"
+          style={{
+            font: 'inherit', fontSize: '0.82rem', fontWeight: 600, color: P.dark,
+            background: P.white, border: `0.5px solid ${P.border}`, borderRadius: 9,
+            padding: '7px 10px', cursor: 'pointer',
+          }}
+        >
+          {CRITTER_SORT_MODES.map(m => (
+            <option key={m} value={m}>{CRITTER_SORT_LABELS[m]}</option>
+          ))}
+        </select>
+      </div>
+
       {/* Sticky jump-nav */}
       <nav aria-label="Jump to section" style={{
         position: 'sticky', top: 0, zIndex: 2,
@@ -444,7 +474,7 @@ export default function Collection() {
       </nav>
 
       {groups.map(group => {
-        const entries = byGroup[group]
+        const entries = sortCritters(byGroup[group], sortMode, collected)
         return (
           <section
             key={group}
@@ -470,10 +500,10 @@ export default function Collection() {
             </div>
 
             <ul role="list" className="cc-grid">
-              {entries.map((c, idx) => {
+              {entries.map((c) => {
                 const entry = collected.get(c.id)
                 const got = !!entry
-                const code = dexCode(group, idx)
+                const code = codeById[c.id]
                 return (
                   <CritterCard
                     key={c.id}

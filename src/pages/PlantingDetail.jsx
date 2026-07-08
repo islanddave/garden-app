@@ -331,6 +331,7 @@ export default function PlantingDetail() {
         alt={`${name} photo`}
         onOpenLightbox={(i) => setLightboxIndex(i ?? 0)}
         onOpenDetails={() => { setTab('basics'); setDetailsOpen(true) }}
+        onStatusChanged={(status) => setPlanting(prev => ({ ...prev, status }))}
       />
 
       {/* Secondary affordances row — Favorite + caretaker + Edit + (archived) Unarchive. The
@@ -375,7 +376,8 @@ export default function PlantingDetail() {
       {/* Slice 5a — live care band: renders only when this planting needs water (calm → null). */}
       <CareStatus nextWaterAt={pl.next_water_at} locationType={pl.location_type} />
 
-      {/* V4-PLANTINGUI-001 — primary quick-actions: water / photo / status. */}
+      {/* V4-PLANTINGUI-001 — primary quick-actions: water / photo. (V4-STATUSTAP-001: status
+          moved to the hero StatusPicker.) */}
       <QuickActions
         planting={pl}
         onLogged={() => {
@@ -385,7 +387,6 @@ export default function PlantingDetail() {
           // record restores the engine-computed schedule. Preserves all other fields.
           setPlanting(prev => (prev ? { ...prev, next_water_at: null } : prev))
         }}
-        onStatusChanged={(status) => setPlanting(prev => ({ ...prev, status }))}
       />
 
       {/* V4-PLANTINGUI-001 — per-crop slot: maturity/harvest + cultivar attrs + projected facets. */}

@@ -13,8 +13,8 @@ import { Link, useNavigate } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
 import FavoriteToggle from '../FavoriteToggle.jsx'
-import PlantStatusBadge from '../PlantStatusBadge.jsx'
-import { selectKeyFact, cropFamilyGlyph } from '../../lib/keyFact.js'
+import StatusPicker from './StatusPicker.jsx'
+import { selectKeyFact, selectCropType, cropFamilyGlyph } from '../../lib/keyFact.js'
 
 const TOP_PAD = 'calc(8px + env(safe-area-inset-top, 0px))'
 
@@ -54,7 +54,7 @@ function FloatingControls({ name, shareUrl, plantId }) {
   )
 }
 
-function BottomOverlay({ name, planting, keyFact, onOpenDetails }) {
+function BottomOverlay({ name, planting, keyFact, cropType, onOpenDetails, onStatusChanged }) {
   return (
     <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 3,
       padding: '0 14px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -63,7 +63,15 @@ function BottomOverlay({ name, planting, keyFact, onOpenDetails }) {
         {name}
       </h1>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-        {planting.status && <PlantStatusBadge status={planting.status} size="lg" />}
+        {/* V4-STATUSTAP-001 — the status face is now the single tappable status control. */}
+        <StatusPicker planting={planting} onStatusChanged={onStatusChanged} />
+        {/* V4-ABOVEFOLD-001 — crop TYPE above the fold (complements the key-fact pill). */}
+        {cropType && (
+          <span style={{ backgroundColor: 'rgba(255,255,255,0.92)', color: P.green, fontSize: '0.78rem',
+            fontWeight: 700, padding: '4px 10px', borderRadius: 12, whiteSpace: 'nowrap' }}>
+            {cropType}
+          </span>
+        )}
         {keyFact && (
           <span style={{ backgroundColor: P.warn, color: P.statusInkGold, fontSize: '0.78rem',
             fontWeight: 700, padding: '4px 10px', borderRadius: 12, whiteSpace: 'nowrap' }}>
@@ -82,10 +90,11 @@ function BottomOverlay({ name, planting, keyFact, onOpenDetails }) {
   )
 }
 
-export default function HeroPhoto({ planting, src, alt, onOpenLightbox, onOpenDetails }) {
+export default function HeroPhoto({ planting, src, alt, onOpenLightbox, onOpenDetails, onStatusChanged }) {
   const pl = planting || {}
   const name = pl.name || 'Planting'
   const keyFact = selectKeyFact(pl)
+  const cropType = selectCropType(pl)
   const shareUrl = typeof window !== 'undefined' ? window.location.href : ''
 
   const container = {
@@ -116,7 +125,7 @@ export default function HeroPhoto({ planting, src, alt, onOpenLightbox, onOpenDe
         <div style={topScrim} />
         <div style={bottomScrim} />
         <FloatingControls name={name} shareUrl={shareUrl} plantId={pl.id} />
-        <BottomOverlay name={name} planting={pl} keyFact={keyFact} onOpenDetails={onOpenDetails} />
+        <BottomOverlay name={name} planting={pl} keyFact={keyFact} cropType={cropType} onOpenDetails={onOpenDetails} onStatusChanged={onStatusChanged} />
       </div>
     )
   }
@@ -140,7 +149,7 @@ export default function HeroPhoto({ planting, src, alt, onOpenLightbox, onOpenDe
       <div style={topScrim} />
       <div style={bottomScrim} />
       <FloatingControls name={name} shareUrl={shareUrl} plantId={pl.id} />
-      <BottomOverlay name={name} planting={pl} keyFact={keyFact} onOpenDetails={onOpenDetails} />
+      <BottomOverlay name={name} planting={pl} keyFact={keyFact} cropType={cropType} onOpenDetails={onOpenDetails} onStatusChanged={onStatusChanged} />
     </div>
   )
 }

@@ -155,4 +155,14 @@ describe('Collection — V007 candy-pastel float-free redesign', () => {
       expect(strip.textContent).not.toMatch(/^Seen/)
     }
   })
+
+  // V4-CRITTERSORT-001
+  it('renders the sort control (Dex / A–Z / Recently seen), defaulting to Dex order', () => {
+    setState({ collected: new Map() })
+    render(<Collection />)
+    const sel = screen.getByRole('combobox', { name: /sort critters/i })
+    expect(sel.value).toBe('dex')
+    const optionLabels = Array.from(sel.options).map(o => o.textContent)
+    expect(optionLabels).toEqual(['Dex order', 'A – Z', 'Recently seen'])
+  })
 })

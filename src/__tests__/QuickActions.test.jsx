@@ -1,7 +1,9 @@
-// V4-PLANTINGUI-001 — QuickActions: water (POST watering), status (PUT status), photo (deep-link).
+// V4-PLANTINGUI-001 — QuickActions: water (POST watering) + photo (deep-link).
+// V4-STATUSTAP-001: status moved to the hero StatusPicker (see StatusPicker.test.jsx); the
+// former inline status <select> and its tests were removed from here.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const { navigateSpy, setPendingSpy } = vi.hoisted(() => ({ navigateSpy: vi.fn(), setPendingSpy: vi.fn() }))
@@ -39,25 +41,9 @@ describe('QuickActions', () => {
     await waitFor(() => expect(onLogged).toHaveBeenCalled())
   })
 
-  it('Status change PUTs /api/plants/:id {status} and calls onStatusChanged', async () => {
-    apiFetchSpy.mockResolvedValue({ status: 'flowering' })
-    const onStatusChanged = vi.fn()
-    renderQA({ onStatusChanged })
-    const select = screen.getByRole('combobox', { name: /Change status/i })
-    await act(async () => { fireEvent.change(select, { target: { value: 'flowering' } }) })
-    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalled())
-    const [path, opts] = apiFetchSpy.mock.calls[0]
-    expect(path).toBe('/api/plants/pl1')
-    expect(opts.method).toBe('PUT')
-    expect(JSON.parse(opts.body)).toEqual({ status: 'flowering' })
-    await waitFor(() => expect(onStatusChanged).toHaveBeenCalledWith('flowering'))
-  })
-
-  it('does not PUT when status is unchanged', async () => {
+  it('no longer renders a status control (moved to the hero StatusPicker)', () => {
     renderQA()
-    const select = screen.getByRole('combobox', { name: /Change status/i })
-    await act(async () => { fireEvent.change(select, { target: { value: 'seedling' } }) })
-    expect(apiFetchSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('combobox', { name: /status/i })).toBeNull()
   })
 
   it('Photo opens a picker; on pick it parks the file and jumps into the photo log flow (V4-PHOTOQUICK-001)', () => {

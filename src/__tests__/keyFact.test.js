@@ -1,6 +1,6 @@
 // keyFact + formatBotanical unit tests (V200 Slice 5b). Pure helpers — no DOM, no jest-dom.
 import { describe, it, expect } from 'vitest'
-import { selectKeyFact, formatBotanical, cropFamilyGlyph } from '../lib/keyFact.js'
+import { selectKeyFact, selectCropType, formatBotanical, cropFamilyGlyph } from '../lib/keyFact.js'
 
 describe('selectKeyFact — priority cascade', () => {
   it('(1) pepper with an SHU value -> "{N} SHU" (formatted with separators)', () => {
@@ -100,5 +100,34 @@ describe('cropFamilyGlyph — no-photo fallback glyph by family', () => {
   it('everything else -> lifecycle.sprout', () => {
     expect(cropFamilyGlyph({ name: 'Basil' })).toBe('lifecycle.sprout')
     expect(cropFamilyGlyph({})).toBe('lifecycle.sprout')
+  })
+})
+
+describe('selectCropType — V4-ABOVEFOLD-001 crop-type chip', () => {
+  it('prefers an explicit structured crop field, title-cased', () => {
+    expect(selectCropType({ variety_ref: { type: 'pepper' } })).toBe('Pepper')
+    expect(selectCropType({ variety_ref: { group: 'leafy green' } })).toBe('Leafy green')
+    expect(selectCropType({ variety_ref: { crop_family: 'brassica' } })).toBe('Brassica')
+  })
+
+  it('normalizes underscores/hyphens in the structured value', () => {
+    expect(selectCropType({ variety_ref: { type: 'root_vegetable' } })).toBe('Root vegetable')
+  })
+
+  it('falls back to pepper/tomato family detection by name', () => {
+    expect(selectCropType({ name: 'Habanero Orange', variety_ref: {} })).toBe('Pepper')
+    expect(selectCropType({ name: 'Sungold Tomato', variety_ref: {} })).toBe('Tomato')
+  })
+
+  it('returns null when no crop signal exists', () => {
+    expect(selectCropType({ name: 'Mystery', variety_ref: {} })).toBeNull()
+    expect(selectCropType({})).toBeNull()
+    expect(selectCropType(null)).toBeNull()
+  })
+
+  it('clamps an over-long type to keep the pill compact', () => {
+    const out = selectCropType({ variety_ref: { type: 'a'.repeat(40) } })
+    expect(out.length).toBeLessThanOrEqual(22)
+    expect(out.endsWith('…')).toBe(true)
   })
 })

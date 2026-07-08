@@ -44,6 +44,25 @@ export function cropFamilyGlyph(planting) {
   return 'lifecycle.sprout'
 }
 
+// V4-ABOVEFOLD-001 — a short crop-TYPE label for the hero (surfaced above the fold, distinct
+// from the key-fact pill which carries a per-crop attribute like SHU/DTM). Pure + fetch-free:
+// prefers an explicit structured crop field on the cultivar, then falls back to the pepper/tomato
+// family detectors, then null (the chip is simply omitted). Title-cased for display; long values
+// are clamped so the pill stays compact.
+export function selectCropType(planting) {
+  const v = planting?.variety_ref || {}
+  const explicit = [v.type, v.group, v.category, v.crop, v.crop_family]
+    .find(s => typeof s === 'string' && s.trim())
+  if (explicit) {
+    const t = explicit.trim().replace(/[_-]+/g, ' ')
+    const titled = t.charAt(0).toUpperCase() + t.slice(1)
+    return titled.length > 22 ? titled.slice(0, 21).trimEnd() + '…' : titled
+  }
+  if (isPepper(planting)) return 'Pepper'
+  if (isTomato(planting)) return 'Tomato'
+  return null
+}
+
 // Read a field that may live on the variety, on planting.metadata, or on an attr_override.
 function attr(planting, key) {
   const v = planting?.variety_ref || {}

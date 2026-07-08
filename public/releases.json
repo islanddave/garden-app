@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.37.0",
+    "date": "2026-07-08",
+    "highlights": [
+      "On a plant’s page you can now change its status right on the photo — just tap the status label. The extra status control below the buttons is gone, so there’s one clear place to do it.",
+      "A plant’s type (Pepper, Tomato, and so on) now shows on its photo, up top, so you can tell what a plant is at a glance.",
+      "The Critter collection has a new Sort control — view your critters in dex order, A–Z, or by most recently seen."
+    ]
+  },
+  {
     "version": "3.36.0",
     "date": "2026-07-08",
     "highlights": [

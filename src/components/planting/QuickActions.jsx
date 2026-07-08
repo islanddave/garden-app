@@ -1,15 +1,16 @@
-// V4-PLANTINGUI-001 — up to 3 quick-actions: Water (one-tap log), Photo (deep-link), Status
-// (inline picker). Frontend-only against existing endpoints:
+// V4-PLANTINGUI-001 — quick-actions: Water (one-tap log) + Photo (deep-link). Frontend-only
+// against existing endpoints:
 //   Water  = POST /api/events {project_id, plant_id, event_type:'watering'}
-//   Status = PUT  /api/plants/:id {status}  (COALESCE-partial, emits status_change audit event)
 //   Photo  = deep-link to the existing log/capture flow.
+// V4-STATUSTAP-001: the status control moved to the hero (StatusPicker) — the redundant inline
+// status <select> that lived here was removed so status has a single home.
 // Operational confirmations via useOptionalToast (reward-UX operational carve-out only).
 import React, { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { setPendingCapture } from '../../lib/pendingCapture.js'
 import { useApiFetch } from '../../lib/api.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'
-import { PLANT_STATUSES, statusLabel, P } from '../../lib/constants.js'
+import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
 
 const btn = (extra = {}) => ({
@@ -19,11 +20,10 @@ const btn = (extra = {}) => ({
   backgroundColor: P.white, color: P.green, whiteSpace: 'nowrap', flex: 1, minWidth: 0, ...extra,
 })
 
-export default function QuickActions({ planting, onLogged, onStatusChanged }) {
+export default function QuickActions({ planting, onLogged }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
   const [watering, setWatering] = useState(false)
-  const [savingStatus, setSavingStatus] = useState(false)
   const navigate = useNavigate()
   const photoInputRef = useRef(null)
 
@@ -45,24 +45,6 @@ export default function QuickActions({ planting, onLogged, onStatusChanged }) {
       toast.show({ message: "Couldn't log watering", tone: 'error' })
     } finally {
       setWatering(false)
-    }
-  }
-
-  async function handleStatus(e) {
-    const next = e.target.value
-    if (!next || next === planting.status || savingStatus) return
-    setSavingStatus(true)
-    try {
-      const updated = await fetch('/api/plants/' + plantId, {
-        method: 'PUT',
-        body: JSON.stringify({ status: next }),
-      })
-      toast.show({ message: `Status → ${statusLabel(next)}`, tone: 'success' })
-      if (onStatusChanged) onStatusChanged(updated?.status ?? next)
-    } catch (err) {
-      toast.show({ message: "Couldn't change status", tone: 'error' })
-    } finally {
-      setSavingStatus(false)
     }
   }
 
@@ -96,19 +78,6 @@ export default function QuickActions({ planting, onLogged, onStatusChanged }) {
       </button>
       <input ref={photoInputRef} type="file" accept="image/*" onChange={onPhotoPicked}
         style={{ display: 'none' }} />
-
-      <span style={{ ...btn({ cursor: 'default', padding: 0, overflow: 'hidden' }) }}>
-        <select value={planting.status || ''} onChange={handleStatus} disabled={savingStatus}
-          aria-label="Change status"
-          style={{ border: 'none', background: 'transparent', color: P.green, fontWeight: 600,
-            fontSize: '0.85rem', padding: '10px 12px', width: '100%', cursor: 'pointer',
-            appearance: 'menulist' }}>
-          {!planting.status && <option value="">Set status…</option>}
-          {PLANT_STATUSES.map(s => (
-            <option key={s} value={s}>{statusLabel(s)}</option>
-          ))}
-        </select>
-      </span>
     </div>
   )
 }
