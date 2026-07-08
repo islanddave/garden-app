@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.38.0",
+    "date": "2026-07-08",
+    "highlights": [
+      "The Critter collection’s Sort control has a new “By type” option — it groups your critters by kind (birds, mammals, insects, amphibians, reptiles, and so on) so you can browse a family at a time."
+    ]
+  },
+  {
     "version": "3.37.0",
     "date": "2026-07-08",
     "highlights": [
@@ -23,8 +30,8 @@
     "date": "2026-07-08",
     "highlights": [
       "Photos you take in the app can now be saved to your device, and you can share an event or planting straight from its page.",
-      "The back button keeps your place now \u2014 no more jumping back to the top of the Garden.",
-      "A plant\u2019s watering badge on its own page now matches the Today screen, so a plant the rain already watered won\u2019t show a false \u201cneeds water.\u201d"
+      "The back button keeps your place now — no more jumping back to the top of the Garden.",
+      "A plant’s watering badge on its own page now matches the Today screen, so a plant the rain already watered won’t show a false “needs water.”"
     ]
   },
   {

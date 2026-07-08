@@ -1,6 +1,6 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import roster from '../data/critters-roster.json'
 
 vi.mock('../hooks/useCritterCollection.js', () => ({
@@ -157,12 +157,28 @@ describe('Collection — V007 candy-pastel float-free redesign', () => {
   })
 
   // V4-CRITTERSORT-001
-  it('renders the sort control (Dex / A–Z / Recently seen), defaulting to Dex order', () => {
+  it('renders the sort control (Dex / A–Z / Recently seen / By type), defaulting to Dex order', () => {
     setState({ collected: new Map() })
     render(<Collection />)
     const sel = screen.getByRole('combobox', { name: /sort critters/i })
     expect(sel.value).toBe('dex')
     const optionLabels = Array.from(sel.options).map(o => o.textContent)
-    expect(optionLabels).toEqual(['Dex order', 'A – Z', 'Recently seen'])
+    expect(optionLabels).toEqual(['Dex order', 'A – Z', 'Recently seen', 'By type'])
+  })
+
+  // V4-CRITTERSORT-001 by-type: switching to "By type" reorders within each group without
+  // dropping/duplicating cards and without crashing (graceful even if a critter lacked a type).
+  it('switching sort to "By type" keeps every card and all three sections', () => {
+    setState({ collected: new Map() })
+    render(<Collection />)
+    const sel = screen.getByRole('combobox', { name: /sort critters/i })
+    fireEvent.change(sel, { target: { value: 'type' } })
+    expect(sel.value).toBe('type')
+    // No card lost or duplicated by the reorder.
+    expect(screen.queryAllByTestId(/^sighting-caption-/).length).toBe(roster.length)
+    // The three group section headings survive.
+    expect(screen.getByRole('heading', { name: /Around the garden/i })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: /Legacy/i })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: /Curiosities/i })).toBeTruthy()
   })
 })
