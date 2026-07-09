@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.40.0",
+    "date": "2026-07-09",
+    "highlights": [
+      "Photos you’ve attached to a plant now always appear in that plant’s own photo gallery — even when the photo was filed under a different group. Previously a handful of attached photos were hidden from the plant’s page."
+    ]
+  },
+  {
     "version": "3.39.0",
     "date": "2026-07-09",
     "highlights": [
