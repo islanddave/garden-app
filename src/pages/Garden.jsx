@@ -451,8 +451,15 @@ export default function Garden() {
   const caretakerMap = useMemo(() => buildCaretakerMap(members, profile?.id), [members, profile])
   const careLensOptions = useMemo(() => lensOptions(members, profile?.id), [members, profile])
   const effectiveLens = careLensOptions.some(o => o.value === careLens) ? careLens : 'all'
+  // V4-ASSIGNLENS-002: a person lens shows plantings assigned to that person AND UNassigned
+  // (unclaimed) plantings. Rationale (Dave 2026-07-09): "Mine" reading as "only rows explicitly
+  // stamped with my id" silently swallowed every nobody's-yet planting (e.g. all nasturtiums) from
+  // the by-type view. Unassigned = the household's shared backlog, so it belongs under any caretaker.
   const visiblePlants = useMemo(() => (
-    effectiveLens === 'all' ? plants : plants.filter(pl => effectiveAssignee(pl, projectsById) === effectiveLens)
+    effectiveLens === 'all' ? plants : plants.filter(pl => {
+      const a = effectiveAssignee(pl, projectsById)
+      return a === effectiveLens || a === null
+    })
   ), [plants, effectiveLens, projectsById])
   const showBadges = useMemo(() => (
     effectiveLens === 'all' && caretakerMap.size > 1 && hasMixedCaretakers(visiblePlants, projectsById)
@@ -466,6 +473,11 @@ export default function Garden() {
 
   const effectiveGroupBy = facetOptions.some(o => o.value === groupBy) ? groupBy : 'none'
   const tree = buildGardenTree(projects, visiblePlants, SORT_ALPHA)
+  // V4-ASSIGNLENS-002 active-filter cue: when a caretaker lens is on, the by-project AND by-type
+  // views are narrowed. Surface that explicitly (label + how many rows are hidden) with a one-tap
+  // escape to Everyone, so a sticky localStorage lens can't silently hide plantings.
+  const lensLabel = careLensOptions.find(o => o.value === effectiveLens)?.label || 'Mine'
+  const lensHiddenCount = Math.max(0, plants.length - visiblePlants.length)
 
   return (
     <Shell>
@@ -508,8 +520,23 @@ export default function Garden() {
       </div>
 
       {subtab === 'plants' && careLensOptions.length > 2 && (
-        <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, marginBottom: 16 }}>
           <SegmentedControl options={careLensOptions} value={effectiveLens} onChange={onCareLensChange} ariaLabel="Show plantings by caretaker" />
+          {effectiveLens !== 'all' && (
+            <div role="status" aria-live="polite" data-testid="lens-cue" style={{
+              display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.78rem', color: P.mid,
+              backgroundColor: P.greenPale, border: `1px solid ${P.border}`, borderRadius: 6, padding: '4px 10px',
+            }}>
+              <span>
+                Showing <strong>{lensLabel}</strong>
+                {lensHiddenCount > 0 ? ` · ${lensHiddenCount} planting${lensHiddenCount === 1 ? '' : 's'} hidden` : ''}
+              </span>
+              <button type="button" onClick={() => onCareLensChange('all')} style={{
+                background: 'none', border: 'none', color: P.green, fontWeight: 700, cursor: 'pointer',
+                fontSize: '0.78rem', padding: 0, textDecoration: 'underline',
+              }}>Show all</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -589,6 +616,8 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
   const hasKids = nodeHasChildren(node)
   const isOpen  = hasKids && expanded.has(p.id)
   const indent = depth * 20
+  // V4-CAPTURE-002: the "No project" bucket is a synthetic node — no detail page, favorite, or status.
+  const synthetic = p.__synthetic === true
 
   const summary = hasKids
     ? `${children.length ? children.length + (children.length === 1 ? ' project' : ' projects') : ''}${children.length && plantings.length ? ' · ' : ''}${plantings.length ? plantings.length + (plantings.length === 1 ? ' planting' : ' plantings') : ''}`
@@ -611,12 +640,16 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
         borderLeft: depth > 0 ? `3px solid ${P.greenLight}` : `1px solid ${P.border}`,
         borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10,
       }}>
-        {/* PHOTO / icon — OPENS detail (Variant A: picture = go in) */}
-        <Link to={`/projects/${p.id}`} aria-label={`Open ${p.name}`} style={thumbWrap}>
-          {p.featured_photo_view_url
-            ? <img src={p.featured_photo_view_url} alt="" style={thumbImg} />
-            : <span aria-hidden="true" style={{ fontSize: '1.25rem' }}>🌿</span>}
-        </Link>
+        {/* PHOTO / icon — OPENS detail (Variant A: picture = go in). Synthetic bucket = inert icon. */}
+        {synthetic ? (
+          <span aria-hidden="true" style={thumbWrap}><span style={{ fontSize: '1.25rem' }}>📥</span></span>
+        ) : (
+          <Link to={`/projects/${p.id}`} aria-label={`Open ${p.name}`} style={thumbWrap}>
+            {p.featured_photo_view_url
+              ? <img src={p.featured_photo_view_url} alt="" style={thumbImg} />
+              : <span aria-hidden="true" style={{ fontSize: '1.25rem' }}>🌿</span>}
+          </Link>
+        )}
 
         {/* BODY — PEEK (toggle) when it has children; OPEN when it's a leaf */}
         {hasKids ? (
@@ -630,9 +663,9 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
           </Link>
         )}
 
-        <FavoriteToggle entityType="project" entityId={p.id} />
+        {!synthetic && <FavoriteToggle entityType="project" entityId={p.id} />}
 
-        <ProjectStatusBadge status={p.status} />
+        {!synthetic && <ProjectStatusBadge status={p.status} />}
 
         {hasKids ? (
           <button type="button" onClick={() => onToggle(p.id)} aria-hidden="true" tabIndex={-1}

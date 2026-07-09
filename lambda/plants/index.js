@@ -480,10 +480,11 @@ export const handler = async (event) => {
                      )
                    ELSE NULL END AS variety_ref
             FROM public.garden_node p
-            JOIN public.container pp ON pp.id = p.container_id
+            LEFT JOIN public.container pp ON pp.id = p.container_id
             LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
             LEFT JOIN photos fp ON fp.id = p.featured_photo_id
-            WHERE pp.created_by = ANY(${householdIds})
+            WHERE (pp.created_by = ANY(${householdIds})
+                   OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})))
               AND p.deleted_at IS NULL
               AND p.archived_at IS NULL
             ORDER BY p.created_at DESC

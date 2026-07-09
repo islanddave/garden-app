@@ -38,6 +38,10 @@ export function byRecency(a, b) {
 export const SORT_RECENCY = 'recency'
 export const SORT_ALPHA = 'alpha'
 
+// V4-CAPTURE-002: synthetic node id for the "No project" bucket that collects project-less plantings
+// (container_id NULL). Not a real project — TreeNode renders it inert (no detail link / favorite / badge).
+export const NO_PROJECT_ID = '__noproject__'
+
 // Return a NEW array sorted by name when order==='alpha'; otherwise return the input untouched
 // (preserves server/recency order without copying). Null-safe.
 export function applyNameSort(arr, order) {
@@ -115,7 +119,8 @@ export function buildGardenTree(projects, plants, order = SORT_ALPHA) {
     }
   })
 
-  const plantingsBy = groupPlantingsByProjectId((plants || []).filter(pl => pl && !pl.archived_at))
+  const livePlants = (plants || []).filter(pl => pl && !pl.archived_at)
+  const plantingsBy = groupPlantingsByProjectId(livePlants)
   // V3-ORDER-001: when order==='alpha', sort sub-projects (every depth) AND each project's
   // plantings; default 'recency' leaves both in server order (no copy, original behavior).
   function build(p, depth) {
@@ -126,7 +131,21 @@ export function buildGardenTree(projects, plants, order = SORT_ALPHA) {
       plantings: applyNameSort(plantingsBy[p.id] || [], order),
     }
   }
-  return applyNameSort(roots, order).map(r => build(r, 0))
+  const nodes = applyNameSort(roots, order).map(r => build(r, 0))
+  // V4-CAPTURE-002: project-less plantings (container_id NULL — photo-first capture, "V4 tagging will
+  // re-home later") were invisible in the by-project tree because they hang under no project node.
+  // Collect them (null project_id OR a project_id with no live project) into a synthetic "No project"
+  // bucket appended after the real roots so they surface and can be opened/re-homed.
+  const orphans = livePlants.filter(pl => pl.project_id == null || !byId[pl.project_id])
+  if (orphans.length) {
+    nodes.push({
+      project: { id: NO_PROJECT_ID, name: 'No project', status: null, parent_project_id: null, __synthetic: true },
+      depth: 0,
+      children: [],
+      plantings: applyNameSort(orphans, order),
+    })
+  }
+  return nodes
 }
 
 // True if a node has anything to reveal when expanded (sub-projects or plantings).

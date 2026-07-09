@@ -3,6 +3,7 @@ import {
   buildDisplayList, groupPlantingsByProjectId, buildGardenTree, nodeHasChildren,
   loadExpanded, saveExpanded,
   byName, applyNameSort, loadSortOrder, saveSortOrder, SORT_RECENCY, SORT_ALPHA, buildTagGroupedList,
+  NO_PROJECT_ID,
 } from '../lib/projectTree.js'
 
 const PROJECTS = [
@@ -52,9 +53,9 @@ describe('groupPlantingsByProjectId', () => {
 
 describe('buildGardenTree', () => {
   it('nests sub-projects and plantings under their project (default = alpha)', () => {
-    // Default alphabetical: roots Beds(c), Lost(orphan), Tomatoes(a).
+    // Default alphabetical: roots Beds(c), Lost(orphan), Tomatoes(a), then the No-project bucket.
     const tree = buildGardenTree(PROJECTS, PLANTS)
-    expect(tree.map(n => n.project.id)).toEqual(['c', 'orphan', 'a'])
+    expect(tree.map(n => n.project.id)).toEqual(['c', 'orphan', 'a', NO_PROJECT_ID])
     const a = tree.find(n => n.project.id === 'a')
     expect(a.children.map(c => c.project.id)).toEqual(['b'])
     expect(a.plantings.map(p => p.id)).toEqual(['p2'])
@@ -64,7 +65,28 @@ describe('buildGardenTree', () => {
   })
   it('preserves server order for roots when recency is passed explicitly', () => {
     const tree = buildGardenTree(PROJECTS, PLANTS, SORT_RECENCY)
-    expect(tree.map(n => n.project.id)).toEqual(['a', 'c', 'orphan'])
+    // Real roots keep server order; the No-project bucket is always appended last.
+    expect(tree.map(n => n.project.id)).toEqual(['a', 'c', 'orphan', NO_PROJECT_ID])
+  })
+  // V4-CAPTURE-002: project-less plantings (container_id NULL) surface in a synthetic "No project" bucket.
+  it('collects project-less plantings into a synthetic "No project" bucket appended last', () => {
+    const tree = buildGardenTree(PROJECTS, PLANTS)
+    const bucket = tree[tree.length - 1]
+    expect(bucket.project.id).toBe(NO_PROJECT_ID)
+    expect(bucket.project.__synthetic).toBe(true)
+    expect(bucket.project.name).toBe('No project')
+    expect(bucket.children).toEqual([])
+    expect(bucket.plantings.map(p => p.id)).toEqual(['p3'])   // the null-project planting
+    expect(nodeHasChildren(bucket)).toBe(true)                 // expandable so its plantings are reachable
+  })
+  it('adds NO bucket when every planting has a live project', () => {
+    const tree = buildGardenTree(PROJECTS, [{ id: 'p2', name: 'Roma', project_id: 'a' }])
+    expect(tree.find(n => n.project.id === NO_PROJECT_ID)).toBeUndefined()
+  })
+  it('routes plantings whose project_id points at a missing project into the bucket too', () => {
+    const tree = buildGardenTree(PROJECTS, [{ id: 'px', name: 'Ghost', project_id: 'does-not-exist' }])
+    const bucket = tree.find(n => n.project.id === NO_PROJECT_ID)
+    expect(bucket.plantings.map(p => p.id)).toEqual(['px'])
   })
 })
 
