@@ -31,6 +31,17 @@ on:
         description: 'Version tag for the post-promote snapshot (unique; ^v\d+(\.\d+){0,2}$, e.g. v2.5.2)'
         required: true
         type: string
+  # OPS-SHIPTRIGGER-001 (2026-07-09): git-channel promote trigger so a Cowork/remote session
+  # can ship WITHOUT api.github.com (which the session egress proxy 403-gates for repos it isn't
+  # bound to). Push an annotated/lightweight tag `promote-vX.Y.Z` pointing AT the exact dev SHA to
+  # promote: the tagged commit becomes dev_sha (== github.sha, so the coupled deploy checks out the
+  # promoted code by construction), and the tag name minus `promote-` becomes snap_version. The
+  # `resolve` job normalises both trigger paths into a single (dev_sha, snap_version) pair that every
+  # downstream job consumes — the workflow_dispatch path is behaviourally unchanged. The
+  # environment:production gate and the garden-bot capability-gate FF still apply identically.
+  push:
+    tags:
+      - 'promote-v*'
 
 permissions:
   contents: write
@@ -38,8 +49,58 @@ permissions:
   actions: write
   checks: read
 
+# OPS-SHIPTRIGGER-001: serialize promotes now that two triggers exist (a promote-v* tag push
+# AND a manual workflow_dispatch could otherwise both fast-forward main concurrently). Queue,
+# never cancel — a promote mid-FF/snap must run to completion, so cancel-in-progress is false.
+concurrency:
+  group: promote-gate
+  cancel-in-progress: false
+
 jobs:
+  # OPS-SHIPTRIGGER-001: normalise (dev_sha, snap_version) from EITHER trigger so every downstream
+  # job is trigger-agnostic. workflow_dispatch -> the two inputs verbatim. push (promote-v* tag) ->
+  # dev_sha = github.sha (the commit the tag points to), snap_version = tag name minus the promote- prefix.
+  # Fail-closed: dev_sha must be a 40-hex commit SHA and snap_version must match the snap regex.
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      dev_sha: ${{ steps.r.outputs.dev_sha }}
+      snap_version: ${{ steps.r.outputs.snap_version }}
+    steps:
+      - name: Resolve promote inputs (dispatch OR promote-v* tag)
+        id: r
+        env:
+          EVENT: ${{ github.event_name }}
+          IN_DEV_SHA: ${{ github.event.inputs.dev_sha }}
+          IN_SNAP: ${{ github.event.inputs.snap_version }}
+          GH_SHA: ${{ github.sha }}
+          GH_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            DEV_SHA="$IN_DEV_SHA"
+            SNAP="$IN_SNAP"
+          else
+            DEV_SHA="$GH_SHA"
+            case "$GH_REF_NAME" in
+              promote-*) SNAP="${GH_REF_NAME#promote-}" ;;
+              *) echo "::error::unexpected trigger ref '$GH_REF_NAME' (expected promote-v*)"; exit 1 ;;
+            esac
+          fi
+          if ! printf '%s' "$DEV_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::dev_sha not a 40-hex commit SHA: '$DEV_SHA'"; exit 1
+          fi
+          if ! printf '%s' "$SNAP" | grep -Eq '^v[0-9]+(\.[0-9]+){0,2}$'; then
+            echo "::error::snap_version '$SNAP' fails ^v[0-9]+(\.[0-9]+){0,2}\$"; exit 1
+          fi
+          {
+            echo "dev_sha=$DEV_SHA"
+            echo "snap_version=$SNAP"
+          } >> "$GITHUB_OUTPUT"
+          echo "resolved: event=$EVENT dev_sha=$DEV_SHA snap_version=$SNAP"
+
   promote:
+    needs: resolve
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 30
@@ -55,7 +116,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           REPO: ${{ github.repository }}
-          DEV_SHA: ${{ inputs.dev_sha }}
+          DEV_SHA: ${{ needs.resolve.outputs.dev_sha }}
         run: |
           set -euo pipefail
           api() { curl -sS -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
@@ -74,7 +135,7 @@ jobs:
           BOT_TOKEN: ${{ steps.bot.outputs.token }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          DEV_SHA: ${{ inputs.dev_sha }}
+          DEV_SHA: ${{ needs.resolve.outputs.dev_sha }}
         run: |
           set -euo pipefail
           apiq() { curl -sS -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
@@ -116,7 +177,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           REPO: ${{ github.repository }}
-          DEV_SHA: ${{ inputs.dev_sha }}
+          DEV_SHA: ${{ needs.resolve.outputs.dev_sha }}
         run: |
           set -euo pipefail
           CODE=$(curl -sS -o /tmp/ff.json -w "%{http_code}" -X PATCH -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" -d "{\"sha\":\"$DEV_SHA\",\"force\":false}" "https://api.github.com/repos/$REPO/git/refs/heads/main")
@@ -144,7 +205,7 @@ jobs:
       - name: Checkout dev (scripts/snap.py)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ inputs.dev_sha }}
+          ref: ${{ needs.resolve.outputs.dev_sha }}
 
       - name: Install python deps
         run: pip install boto3 requests --quiet
@@ -153,8 +214,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          MAIN_SHA: ${{ inputs.dev_sha }}
-          SNAP_VERSION: ${{ inputs.snap_version }}
+          MAIN_SHA: ${{ needs.resolve.outputs.dev_sha }}
+          SNAP_VERSION: ${{ needs.resolve.outputs.snap_version }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
           NEON_PROD_BRANCH_ID: br-delicate-sea-amum92c2
@@ -163,16 +224,16 @@ jobs:
           PHOTOS_BUCKET: ${{ vars.PHOTOS_BUCKET }}
           SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
           CF_DIST: E3FAJTXAORQYDT
-          APP_VERSION: ${{ inputs.snap_version }}
+          APP_VERSION: ${{ needs.resolve.outputs.snap_version }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/snap.py
 
   deploy:
-    needs: promote
+    needs: [resolve, promote]
     uses: ./.github/workflows/deploy.yml
     with:
-      ref: ${{ inputs.dev_sha }}
+      ref: ${{ needs.resolve.outputs.dev_sha }}
     secrets: inherit
 
   # OPS-VERIFY-001 (advisory REPORT-ONLY, per L-147/L-161/L-141) — runs AFTER deploy and
@@ -186,7 +247,7 @@ jobs:
   # carrying promote. The authoritative Lambda-freshness check is the on-demand
   # verify-deploy workflow re-run on this SHA AFTER the deploy-lambda gate is approved.
   verify:
-    needs: deploy
+    needs: [resolve, deploy]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     permissions:
@@ -195,11 +256,11 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ inputs.dev_sha }}
+          ref: ${{ needs.resolve.outputs.dev_sha }}
       - name: Verify deploy success (advisory report-only — never gates)
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ inputs.dev_sha }}
+          SHA: ${{ needs.resolve.outputs.dev_sha }}
         run: |
           set +e
           python3 scripts/verify-deploy.py --sha "$SHA" | tee /tmp/verify.out
