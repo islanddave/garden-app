@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.41.0",
+    "date": "2026-07-09",
+    "highlights": [
+      "The Garden’s “by type” view no longer hides plantings. When you filter to a caretaker (e.g. “Mine”), plantings that aren’t assigned to anyone now stay visible instead of disappearing, and a small banner shows the filter is on with a one-tap “Show all”.",
+      "Plantings that aren’t in a project yet now appear too — grouped under their type, and gathered in a new “No project” section in the by-project view — instead of being invisible in the Garden."
+    ]
+  },
+  {
     "version": "3.40.0",
     "date": "2026-07-09",
     "highlights": [
