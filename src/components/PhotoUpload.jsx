@@ -23,7 +23,9 @@
 //   capture       : default 'environment' (single mode only; '' or null disables camera invocation)
 //   errorMode     : 'surface' | 'swallow' — passed to useUploadPhoto
 //   mode          : 'single' (default) | 'both'
-//   buttonLabel   : single-mode trigger text (default 'Add Photo')
+//   buttonLabel   : single-mode trigger content (default 'Add Photo'); may be a node (e.g. an Icon)
+//   ariaLabel     : single-mode accessible name on the visible <label> control — REQUIRED when
+//                   buttonLabel is icon-only/decorative (else the control has no accessible name). No-op in both mode.
 //   takeLabel     : both-mode camera trigger text (default '📷 Take photo')
 //   chooseLabel   : both-mode library trigger text (default '🖼️ Choose photo')
 //   showPreview   : default true
@@ -78,6 +80,7 @@ export function PhotoUpload({
   errorMode     = 'surface',
   mode          = 'single',
   buttonLabel   = 'Add Photo',
+  ariaLabel     = null,
   takeLabel     = '📷 Take photo',
   chooseLabel   = '🖼️ Choose photo',
   showPreview   = true,
@@ -169,7 +172,7 @@ export function PhotoUpload({
           />
         </>
       ) : (
-        <label htmlFor={resolvedId} style={labelStyle}>
+        <label htmlFor={resolvedId} style={labelStyle} aria-label={ariaLabel || undefined}>
           {isUploading ? 'Uploading…' : buttonLabel}
           <input
             ref={inputRef}

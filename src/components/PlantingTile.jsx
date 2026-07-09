@@ -10,6 +10,7 @@ import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import { T } from './forms/formStyles.js'
 import { formatQty } from '../lib/format.js'
+import Icon from './Icon.jsx'
 import FavoriteToggle from './FavoriteToggle.jsx'
 import PlantStatusBadge from './PlantStatusBadge.jsx'
 import CritterSprite from './CritterSprite.jsx'
@@ -175,17 +176,22 @@ export default function PlantingTile({
             {pl.status ? <PlantStatusBadge status={pl.status} /> : <span />}
             {caretaker && <CaretakerBadge caretaker={caretaker} size={18} />}
           </div>
-          {/* V4-TAPCARD-001: raise the inline uploader above the stretched card overlay (z1) so its
-              camera/library buttons stay tappable -- occlusion, not stopPropagation, is what keeps it live. */}
+          {/* V4-DESIGNSYS-001 (bite 3): ONE "Add photo" control (media.camera Icon) replaces the former
+              dual take/choose emoji buttons — declutters the footer's competing-salience cluster and finishes
+              the Garden emoji->Icon language. mode="single" + capture="" opens the native chooser (camera
+              OR library on iOS; library-first on Android 13+), and PRESERVES the stable plant-list-photo-<id>
+              input-id contract that automated bulk-attach sessions drive. ariaLabel names the icon-only
+              control. V4-TAPCARD-001: raised above the stretched card overlay (z1) so it stays tappable. */}
           <span style={{ position: 'relative', zIndex: 2 }}>
           <PhotoUpload
             keyPrefix="plants"
             parentId={pl.id}
             linkage={{ plant_id: pl.id, project_id: pl.project_id }}
             errorMode="surface"
-            mode="both"
-            takeLabel="📷"
-            chooseLabel="🖼️"
+            mode="single"
+            capture=""
+            buttonLabel={<Icon name="media.camera" size={17} decorative style={{ color: P.mid }} />}
+            ariaLabel="Add photo"
             showPreview={false}
             inputId={`plant-list-photo-${pl.id}`}
             onUploadComplete={onPhotoUploaded}

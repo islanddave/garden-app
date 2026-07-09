@@ -67,9 +67,16 @@ describe('Garden — per-planting photo uploader (V3-IA restore)', () => {
       expect(input.getAttribute('type')).toBe('file')
       expect(input.getAttribute('accept')).toBe('image/*')
     }
-    // Take + choose triggers render per row.
-    expect(screen.getAllByTestId('photo-upload-take')).toHaveLength(PLANTS.length)
-    expect(screen.getAllByTestId('photo-upload-choose')).toHaveLength(PLANTS.length)
+    // V4-DESIGNSYS-001 (bite 3): the former dual 📷 take / 🖼️ choose emoji buttons are consolidated
+    // into ONE "Add photo" control per row. The old take/choose testids are gone…
+    expect(screen.queryByTestId('photo-upload-take')).toBeNull()
+    expect(screen.queryByTestId('photo-upload-choose')).toBeNull()
+    // …replaced by a single accessible "Add photo" control per row, and the input carries NO
+    // capture attribute (native chooser offers camera OR library, not a forced camera).
+    expect(screen.getAllByLabelText('Add photo')).toHaveLength(PLANTS.length)
+    for (const pl of PLANTS) {
+      expect(document.getElementById(`plant-list-photo-${pl.id}`).hasAttribute('capture')).toBe(false)
+    }
   })
 
   it('uploader controls sit OUTSIDE the planting nav link (no accidental navigation)', async () => {
