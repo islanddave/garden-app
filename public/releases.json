@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.42.0",
+    "date": "2026-07-09",
+    "highlights": [
+      "The Garden tab now uses clean, consistent icons throughout — the Snap, Log many, and Favorites buttons, the location and project markers, and the empty-garden art all match the rest of the app instead of a mix of emoji.",
+      "Each planting card now has one tidy “Add photo” button (a camera icon) instead of two. Tap it and your phone lets you take a new photo or pick one from your library — the same choice as before, less clutter."
+    ]
+  },
+  {
     "version": "3.41.0",
     "date": "2026-07-09",
     "highlights": [
