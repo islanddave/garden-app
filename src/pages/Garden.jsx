@@ -18,6 +18,7 @@ import GroupByControl from '../components/forms/GroupByControl.jsx'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
 import TileGrid from '../components/forms/TileGrid.jsx'
 import PlantingTile from '../components/PlantingTile.jsx'
+import { setPlantingSequence } from '../lib/plantingSequence.js'
 import { useEntityTagsBulk } from '../hooks/useTags.js'
 import PlantingEditor from '../components/PlantingEditor.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
@@ -654,7 +655,11 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
                   onSpriteIntersect={onSpriteIntersect}
                   onPhotoUploaded={onPhotoUploaded}
                   flashId={flashId}
-                  caretaker={caretakerFor(pl)} />
+                  caretaker={caretakerFor(pl)}
+                  onOpen={() => setPlantingSequence({
+                    items: plantings.map(x => ({ projectId: x.project_id, plantingId: x.id, name: x.name })),
+                    ctxLabel: p.name,
+                  })} />
               )} />
           )}
           {children.map(c => <TreeNode key={c.project.id} node={c} expanded={expanded} onToggle={onToggle} level={level + 1}
@@ -715,7 +720,11 @@ function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongP
                       critters={crittersByPlantId?.get(pl.id) ?? []}
                       onSpriteLongPress={onSpriteLongPress} onSpriteIntersect={onSpriteIntersect}
                       onPhotoUploaded={onPhotoUploaded} flashId={flashId}
-                      caretaker={caretakerFor(pl)} />
+                      caretaker={caretakerFor(pl)}
+                      onOpen={() => setPlantingSequence({
+                        items: g.plantings.map(x => ({ projectId: x.project_id, plantingId: x.id, name: x.name })),
+                        ctxLabel: g.label,
+                      })} />
                   )} />
               </div>
             )}

@@ -203,8 +203,11 @@ function GrowthCompare({ list, onOpen, indexBase, reduceMotion }) {
         </div>
       )}
 
-      {/* Milestone thumbnails — open the Lightbox at the photo's gallery index. */}
-      <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
+      {/* Milestone thumbnails — open the Lightbox at the photo's gallery index. data-hscroll marks
+          this as a horizontal scroller so the PlantingDetail swipe-pager cedes horizontal drags
+          here (it checks e.target.closest('[data-hscroll]')); overscroll-behavior-x contains the
+          rubber-band so a boundary drag doesn't trigger browser history nav. */}
+      <div data-hscroll style={{ display: 'flex', gap: 8, overflowX: 'auto', overscrollBehaviorX: 'contain', paddingBottom: 4 }}>
         {list.map((p, i) => (
           <button key={p.id || i} type="button"
             onClick={() => typeof onOpen === 'function' && onOpen(indexBase + i)}

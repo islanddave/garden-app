@@ -17,15 +17,15 @@
 // A11y: status is multi-channel (icon + label + color via PlantStatusBadge, never color alone);
 // sticky section headers give a jump anchor for the flat single-column layout; scroll-to-top on
 // mount (BrowserRouter doesn't reset scroll on push); breadcrumb is arbitrary-depth.
-import React, { useState, useEffect, useRef } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
+import { resolvePager, resolveSwipe } from '../lib/plantingSequence.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
 import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
-import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import Lightbox from '../components/Lightbox.jsx'
 import { useOptionalToast } from '../context/ToastContext.jsx'
 import Sheet from '../components/forms/Sheet.jsx'
@@ -56,6 +56,13 @@ export default function PlantingDetail() {
   const toast = useOptionalToast()
   const [savingFeatured, setSavingFeatured] = useState(null)  // V4-PHOTOFEATURE-001: photo id in flight
   const ux = useUxFlow(FLOWS.OPEN_PLANTING)
+  const navigate = useNavigate()
+  // PLANTING-PAGER refs: commit-lock (ignore paging until the target settles), a deferred
+  // focus-move to the pager after a paged planting loads, the pager DOM node, and swipe start.
+  const navLockRef = useRef(false)
+  const pendingFocusRef = useRef(false)
+  const pagerRef = useRef(null)
+  const swipeRef = useRef(null)
 
   const [planting, setPlanting] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -80,9 +87,30 @@ export default function PlantingDetail() {
   const [photos, setPhotos] = useState([])
   const [photosLoading, setPhotosLoading] = useState(true)
 
-  // Scroll-to-top on mount — BrowserRouter doesn't reset scroll on push, so without this the
-  // page opens mid-scroll when tapped from far down a list.
-  useEffect(() => { window.scrollTo(0, 0) }, [])
+  // Scroll-to-top on open AND on every paging change. PlantingDetail does NOT remount when only
+  // the :plantingId param changes (same <Route element>), so this MUST key on plantingId — a
+  // mount-only effect would leave a paged planting scrolled to the previous offset.
+  useEffect(() => { window.scrollTo(0, 0) }, [plantingId])
+
+  // PLANTING-PAGER navigation — history REPLACE so Back returns to the originating Garden list
+  // instead of replaying every paged step. Commit-locked (navLockRef) until the target loads.
+  const go = useCallback((href) => {
+    if (!href || navLockRef.current) return
+    navLockRef.current = true
+    pendingFocusRef.current = true
+    navigate(href, { replace: true })
+  }, [navigate])
+
+  // Release the commit-lock + move focus to the pager once a paged-to planting has loaded. Keyed
+  // on `loading` (the fetch effect flips it) so the lock spans the whole load, not just the nav.
+  useEffect(() => {
+    if (loading) return
+    navLockRef.current = false
+    if (pendingFocusRef.current) {
+      pendingFocusRef.current = false
+      try { pagerRef.current?.focus() } catch { /* jsdom / detached node */ }
+    }
+  }, [loading, plantingId])
 
   // Load the planting record. 404 (or ownership mismatch) → friendly not-found, not a thrown error.
   useEffect(() => {
@@ -166,6 +194,33 @@ export default function PlantingDetail() {
       .catch(() => { if (!cancelled) { setPhotos([]); setPhotosLoading(false) } })
     return () => { cancelled = true }
   }, [planting, events, fetch])
+
+  // ── Planting pager (group-bounded prev/next) ───────────────────────────────────────────────
+  // Sequence is captured on tap in Garden and read here from a module singleton. null when there
+  // is no in-session sequence, <2 items, or this planting isn't in it → no pager, gestures/keys
+  // inert. resolvePager only needs plantingId, so it's safe above the load/404 guards.
+  const pager = resolvePager(plantingId)
+  const prevHref = pager?.prevHref
+  const nextHref = pager?.nextHref
+  const pagerActive = !!pager && lightboxIndex == null && !detailsOpen && !notFound && !error
+
+  // Keyboard fallback: ArrowLeft/ArrowRight page prev/next. Suppressed while a modal (Lightbox /
+  // Details sheet) is open, or focus is in an editable / radiogroup control, so it never hijacks
+  // the Lightbox's own arrow keys (Lightbox binds document keydown) or the Details tab radiogroup.
+  useEffect(() => {
+    if (!pagerActive) return
+    function onKey(e) {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      const t = e.target
+      const tag = t?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t?.isContentEditable) return
+      if (t?.closest?.('[role="radiogroup"]')) return
+      e.preventDefault()
+      go(e.key === 'ArrowLeft' ? prevHref : nextHref)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [pagerActive, prevHref, nextHref, go])
 
   // ── State 1: loading ──────────────────────────────────────────────────────────────────────
   if (loading) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div></Shell>
@@ -314,8 +369,51 @@ export default function PlantingDetail() {
   const activeRows = tab === 'basics' ? basicsRows : tab === 'care' ? careRows : moreRows
   const tabLabel = tab === 'basics' ? 'Basics' : tab === 'care' ? 'Care' : 'More'
 
+  // PLANTING-PAGER swipe (Pointer Events only — iOS Safari ≥13 / Chrome Android both support them;
+  // gated to pointerType 'touch' so a desktop mouse-drag never pages). touch-action:pan-y on the
+  // wrapper hands vertical scroll to the compositor and keeps horizontal pointermove flowing.
+  function onPointerDown(e) {
+    if (e.pointerType !== 'touch' || !pagerActive) { swipeRef.current = null; return }
+    if (e.target?.closest?.('[data-hscroll]')) { swipeRef.current = null; return } // let hscrollers own it
+    swipeRef.current = { x: e.clientX, y: e.clientY, startX: e.clientX }
+  }
+  function onPointerUp(e) {
+    const s = swipeRef.current
+    swipeRef.current = null
+    if (!s || e.pointerType !== 'touch' || !pagerActive) return
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 0
+    const dir = resolveSwipe(e.clientX - s.x, e.clientY - s.y, s.startX, vw)
+    if (dir === 'next') go(nextHref)
+    else if (dir === 'prev') go(prevHref)
+  }
+  function onPointerCancel() { swipeRef.current = null }
+
   return (
     <Shell>
+      <div
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        style={{ touchAction: 'pan-y', overscrollBehaviorX: 'contain' }}
+      >
+      {/* SR-only live announcement of the current planting + position — SPA route changes are
+          otherwise silent to screen readers. */}
+      <div role="status" aria-live="polite" style={srOnly}>
+        {pager ? `${name}, ${pager.index + 1} of ${pager.total}` : ''}
+      </div>
+      {/* PLANTING-PAGER — group-bounded prev/next. Swipe is primary (wrapper above); these
+          always-visible buttons + the N/M · group label are the discoverable fallback and the
+          keyboard/desktop path. Rendered only when a Garden group sequence was captured on tap. */}
+      {pager && (
+        <nav aria-label="Planting pager" style={pagerBar}>
+          <button type="button" onClick={() => go(prevHref)} aria-label="Previous planting" style={pagerBtn}>‹</button>
+          <div ref={pagerRef} tabIndex={-1} style={pagerLabel}>
+            <span style={{ fontWeight: 700 }}>{pager.index + 1} / {pager.total}</span>
+            {pager.ctxLabel && <span style={{ color: P.light, marginLeft: 8 }}>{pager.ctxLabel}</span>}
+          </div>
+          <button type="button" onClick={() => go(nextHref)} aria-label="Next planting" style={pagerBtn}>›</button>
+        </nav>
+      )}
       <Breadcrumb
         path={[
           { label: 'Home', href: '/dashboard' },
@@ -334,10 +432,11 @@ export default function PlantingDetail() {
         onStatusChanged={(status) => setPlanting(prev => ({ ...prev, status }))}
       />
 
-      {/* Secondary affordances row — Favorite + caretaker + Edit + (archived) Unarchive. The
-          primary name/status now live ON the hero; this row carries the per-planting controls. */}
+      {/* Secondary affordances row — Edit + (archived) Unarchive. Primary name/status live ON the
+          hero; the Favorite is the single hero heart now (dup removed), and the caretaker control
+          moved below the Event log. Row margin tightened since it usually carries only Edit. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10,
-        flexWrap: 'wrap', margin: '14px 0 16px' }}>
+        flexWrap: 'wrap', margin: '10px 0 14px' }}>
         {pl.archived_at && (
           <span style={{ backgroundColor: P.greenPale, color: P.green, border: `1px solid ${P.greenLight}`, fontSize: '0.75rem', padding: '3px 10px', borderRadius: 12, fontWeight: 600, marginRight: 'auto' }}>
             Archived
@@ -352,10 +451,6 @@ export default function PlantingDetail() {
             {unarchiving ? 'Working…' : 'Unarchive'}
           </button>
         )}
-        {/* V3-FAV-001: favorite this planting. Ambient star, Reward-UX compliant. */}
-        <FavoriteToggle entityType="plant" entityId={pl.id} size="1.4rem" />
-        {/* PLANT-ASSIGN-001: per-planting caretaker override; blank = inherit the project's caretaker */}
-        <AssigneePicker entityType="plant" entityId={pl.id} value={pl.assignee_user_id ?? null} onChanged={(v) => setPlanting(prev => ({ ...prev, assignee_user_id: v }))} inheritLabel={pl.project_name ? `Inherits project: ${pl.project_name}` : 'Inherits the project caretaker'} />
         {/* V3-EDIT-001: edit affordance — deep-links to the Garden PlantingEditor for this planting. */}
         <Link
           to={`/garden?edit=${plantingId}`}
@@ -518,6 +613,14 @@ export default function PlantingDetail() {
         )}
       </div>
 
+      {/* PLANT-ASSIGN-001: per-planting caretaker override, relocated below the Event log (Dave:
+          rarely-changed control doesn't need top billing — "set it right there"). Sticky
+          SectionHeader gives the flat layout a jump-anchor so it stays discoverable below a long log. */}
+      <SectionHeader>Caretaker</SectionHeader>
+      <div style={cardStyle}>
+        <AssigneePicker entityType="plant" entityId={pl.id} value={pl.assignee_user_id ?? null} onChanged={(v) => setPlanting(prev => ({ ...prev, assignee_user_id: v }))} inheritLabel={pl.project_name ? `Inherits project: ${pl.project_name}` : 'Inherits the project caretaker'} />
+      </div>
+
       {/* ── V200 Slice 5b — tabbed Details fly-up (Basics / Care / More). The Sheet owns the
           dialog contract (role=dialog/aria-modal/focus-trap+restore/Esc). ──────────────────── */}
       <Sheet open={detailsOpen} title="Details" onClose={() => setDetailsOpen(false)}>
@@ -561,6 +664,7 @@ export default function PlantingDetail() {
         onIndexChange={setLightboxIndex}
         onClose={() => setLightboxIndex(null)}
       />
+      </div>
     </Shell>
   )
 }
@@ -617,3 +721,14 @@ function Shell({ children }) {
 
 const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 24 }
 const btnLink = { backgroundColor: P.green, color: P.white, textDecoration: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600, display: 'inline-block' }
+const pagerBar = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, margin: '0 0 12px' }
+const pagerBtn = {
+  width: 44, height: 44, minWidth: 44, borderRadius: 8, border: `1px solid ${P.greenLight}`,
+  background: P.white, color: P.green, fontSize: '1.4rem', lineHeight: 1, cursor: 'pointer',
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+}
+const pagerLabel = { flex: 1, textAlign: 'center', fontSize: '0.85rem', color: P.dark, outline: 'none' }
+const srOnly = {
+  position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden',
+  clip: 'rect(0, 0, 0, 0)', whiteSpace: 'nowrap', border: 0,
+}

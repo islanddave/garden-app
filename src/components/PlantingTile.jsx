@@ -39,6 +39,7 @@ export default function PlantingTile({
   onPhotoUploaded = null,
   flashId = null,
   caretaker = null,
+  onOpen = null,
 }) {
   const variety = pl.variety_ref?.name
   const hasPhoto = Boolean(pl.featured_photo_view_url)
@@ -72,6 +73,7 @@ export default function PlantingTile({
         to={`/projects/${pl.project_id}/plantings/${pl.id}`}
         aria-label={`Open ${pl.name}`}
         data-testid="planting-tile-link"
+        onClick={onOpen || undefined}
         style={{ position: 'absolute', inset: 0, zIndex: 1, borderRadius: T.radiusCard, textDecoration: 'none' }}
       />
 
