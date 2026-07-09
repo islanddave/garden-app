@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
+import Icon from '../components/Icon.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import LoveMehPopover from '../components/LoveMehPopover.jsx'
 import { fetchActiveCritters, markCrittersViewed, patchSpeciesPrefs } from '../lib/critterClient.js'
@@ -511,10 +512,16 @@ export default function Garden() {
             {facetOptions.length > 1 && (
               <GroupByControl options={facetOptions} value={effectiveGroupBy} onChange={onGroupByChange} />
             )}
-            <Link to="/capture" data-testid="snap-entry-garden" style={btnGhost}>📸 Snap</Link>
-            <Link to="/log/many" style={btnGhost}>⚡ Log many</Link>
+            <Link to="/capture" data-testid="snap-entry-garden" style={btnGhostIcon}>
+              <Icon name="media.camera" size={16} decorative style={{ color: P.green }} />Snap
+            </Link>
+            <Link to="/log/many" style={btnGhostIcon}>
+              <Icon name="action.logmany" size={16} decorative style={{ color: P.green }} />Log many
+            </Link>
             {/* V4-APPBAR-003: Favorites rehomed here from the retired header heart (Dave: into the Garden tab). */}
-            <Link to="/favorites" aria-label="Favorites" style={btnGhost}>♥ Favorites</Link>
+            <Link to="/favorites" aria-label="Favorites" style={btnGhostIcon}>
+              <Icon name="action.heart" size={16} decorative style={{ color: P.green }} />Favorites
+            </Link>
           </div>
         )}
       </div>
@@ -629,7 +636,11 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
         <span style={{ fontWeight: 700, color: P.green, fontSize: '0.95rem' }}>{p.name}</span>
       </div>
       {summary && <div style={{ fontSize: '0.75rem', color: P.light, marginTop: 2 }}>{summary}</div>}
-      {p.location_path && <div style={{ fontSize: '0.78rem', color: P.mid, marginTop: 2 }}>📍 {p.location_path}</div>}
+      {p.location_path && (
+        <div style={{ fontSize: '0.78rem', color: P.mid, marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Icon name="facet.location" size={13} decorative style={{ color: P.mid, flexShrink: 0 }} />{p.location_path}
+        </div>
+      )}
     </div>
   )
 
@@ -642,12 +653,12 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
       }}>
         {/* PHOTO / icon — OPENS detail (Variant A: picture = go in). Synthetic bucket = inert icon. */}
         {synthetic ? (
-          <span aria-hidden="true" style={thumbWrap}><span style={{ fontSize: '1.25rem' }}>📥</span></span>
+          <span aria-hidden="true" style={thumbWrap}><Icon name="nav.inventory" size={22} decorative style={{ color: P.green }} /></span>
         ) : (
           <Link to={`/projects/${p.id}`} aria-label={`Open ${p.name}`} style={thumbWrap}>
             {p.featured_photo_view_url
               ? <img src={p.featured_photo_view_url} alt="" style={thumbImg} />
-              : <span aria-hidden="true" style={{ fontSize: '1.25rem' }}>🌿</span>}
+              : <Icon name="nav.garden" size={24} decorative style={{ color: P.green }} />}
           </Link>
         )}
 
@@ -774,7 +785,9 @@ function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center'
 function EmptyState() {
   return (
     <div style={{ textAlign: 'center', padding: '48px 24px', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8 }}>
-      <div style={{ fontSize: '3rem', marginBottom: 12 }}>🌿</div>
+      <div style={{ marginBottom: 12, color: P.greenLight, display: 'flex', justifyContent: 'center' }}>
+        <Icon name="nav.garden" size={48} decorative />
+      </div>
       <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>Your garden is empty</p>
       <p style={{ margin: '0 0 24px', color: P.light, fontSize: '0.875rem' }}>
         Start a project, then add plantings to it. Everything you grow lives here.
@@ -800,3 +813,5 @@ const chevronBtn = {
 }
 const btnLink = { backgroundColor: P.green, color: P.white, textDecoration: 'none', borderRadius: 6, padding: '9px 14px', fontSize: '0.85rem', fontWeight: 600 }
 const btnGhost = { backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`, textDecoration: 'none', borderRadius: 6, padding: '8px 13px', fontSize: '0.85rem', fontWeight: 600 }
+// V4-ICON-001 Garden slice: btnGhost + inline-flex so a leading Icon aligns with the label.
+const btnGhostIcon = { ...btnGhost, display: 'inline-flex', alignItems: 'center', gap: 6 }
