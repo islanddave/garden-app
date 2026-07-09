@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.39.0",
+    "date": "2026-07-09",
+    "highlights": [
+      "On a plant’s page you can now move to the next or previous plant in the same list you opened it from — swipe left or right on your phone, or use the ‹ › arrows — with a “3 of 12” marker so you always know where you are. Back still returns you to the list you came from.",
+      "There’s now just one favorite heart on a plant’s page (a duplicate heart was removed).",
+      "The caretaker picker has moved into its own “Caretaker” section below the plant’s event log, where it’s easier to find."
+    ]
+  },
+  {
     "version": "3.38.0",
     "date": "2026-07-08",
     "highlights": [
