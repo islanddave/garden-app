@@ -131,10 +131,39 @@ export const handler = async (event) => {
     // GET /api/photos — list user's photos with optional filters
     if (rawPath === '/api/photos' && method === 'GET') {
       const projectId = event.queryStringParameters?.project_id ?? null;
+      // V4-PHOTOGALLERY-001: attachment-scoped gallery. ?attachedTo=<plantingId> returns every photo
+      // ATTACHED to that planting by ANY source — directly via photos.plant_id, OR through one of its
+      // events (photos.event_id -> event_log.plant_id). This is the canonical gallery membership rule
+      // (Dave 2026-07-09): project_id/location_id are NOT attachment sources, so the union is scoped to
+      // the PLANTING, not its container — a plant_id-attached photo living in a parent/sibling container
+      // still appears (fixes the project-scoped ?project_id fetch that hid such photos). Distinct from
+      // ?project_id (container gallery) — this does NOT overload it.
+      const attachedTo = event.queryStringParameters?.attachedTo ?? null;
       const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '120', 10), 200);
 
-      const rows = projectId
-        ? await sql`
+      let rows;
+      if (attachedTo) {
+        rows = await sql`
+            SELECT
+              p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
+              p.storage_path, p.caption, p.is_public, p.created_at,
+              pp.display_name AS project_name
+            FROM photos p
+            LEFT JOIN public.container pp ON pp.id = p.project_id
+            WHERE p.created_by = ANY(${householdIds})
+              AND p.deleted_at IS NULL
+              AND (
+                p.plant_id = ${attachedTo}
+                OR p.event_id IN (
+                  SELECT e.id FROM public.event_log e
+                  WHERE e.plant_id = ${attachedTo} AND e.deleted_at IS NULL
+                )
+              )
+            ORDER BY p.created_at DESC
+            LIMIT ${limit}
+          `;
+      } else if (projectId) {
+        rows = await sql`
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
               p.storage_path, p.caption, p.is_public, p.created_at,
@@ -145,8 +174,9 @@ export const handler = async (event) => {
               AND p.project_id = ${projectId}
             ORDER BY p.created_at DESC
             LIMIT ${limit}
-          `
-        : await sql`
+          `;
+      } else {
+        rows = await sql`
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
               p.storage_path, p.caption, p.is_public, p.created_at,
@@ -157,6 +187,7 @@ export const handler = async (event) => {
             ORDER BY p.created_at DESC
             LIMIT ${limit}
           `;
+      }
 
       // Attach pre-signed view URLs to each photo record
       const withUrls = await Promise.all(

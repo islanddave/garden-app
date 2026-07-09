@@ -173,19 +173,22 @@ export default function PlantingDetail() {
     return () => { cancelled = true }
   }, [planting, fetch, refreshKey])
 
-  // Planting photos (V1 display-only). Once the planting is owned, read the project's photos and
-  // keep those linked to THIS planting (directly via plant_id, or through one of its events).
+  // Planting photos (V1 display-only). V4-PHOTOGALLERY-001: the gallery shows every photo ATTACHED to
+  // this planting — directly via plant_id, OR through one of its events — no matter which container the
+  // photo lives in. The photos Lambda's ?attachedTo=<plantingId> resolves that union server-side (one
+  // canonical predicate), so a plant_id-attached photo in a parent/sibling container now appears; the
+  // old ?project_id fetch only saw photos in the planting's OWN container and hid the rest. Exclusion of
+  // other plantings' photos is now the server's job (WHERE-scoped), so the client just de-dups + sorts.
+  // `events` stays in deps as a freshness trigger: logging a new event-photo re-fetches the attached set.
   useEffect(() => {
     if (!planting) return
     let cancelled = false
     setPhotosLoading(true)
-    Promise.resolve(fetch(`/api/photos?project_id=${planting.project_id}`))
+    Promise.resolve(fetch(`/api/photos?attachedTo=${planting.id}`))
       .then(data => {
         if (cancelled) return
-        const evIds = new Set((events || []).map(e => e.id))
         const seen = new Set()
         const mine = (data ?? [])
-          .filter(p => p.plant_id === planting.id || (p.event_id && evIds.has(p.event_id)))
           .filter(p => (seen.has(p.id) ? false : seen.add(p.id)))
         mine.sort((a, b) => String(b.created_at || b.taken_at || '').localeCompare(String(a.created_at || a.taken_at || '')))
         setPhotos(mine)

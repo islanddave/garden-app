@@ -197,29 +197,35 @@ describe('PlantingDetail — V3-EDIT-001 edit affordance', () => {
 })
 
 describe('PlantingDetail — V3-PHOTOMULTI-001 photos widget (V1 display-only)', () => {
-  it('shows a Photos section with photos linked by plant_id or event_id, excluding others', async () => {
-    const PHOTOS = [
+  // V4-PHOTOGALLERY-001: the gallery is fed by the attachment-scoped ?attachedTo=<plantingId> fetch.
+  // Exclusion of other plantings' photos is now the SERVER's job (WHERE plant_id = P OR event-of-P),
+  // so the server returns exactly ph1 (plant_id) + ph2 (event); the client only de-dups + sorts.
+  it('feeds the Photos section from the ?attachedTo fetch (server-scoped union), not the project fetch', async () => {
+    // Server returns only the attached union — ph3 (other planting) is excluded server-side, so it is
+    // never in the response the client sees.
+    const ATTACHED = [
       { id: 'ph1', plant_id: 'pl1', event_id: null, view_url: 'https://img/ph1.jpg', caption: 'Seedling' },
       { id: 'ph2', plant_id: null, event_id: 'e2', view_url: 'https://img/ph2.jpg', caption: null },
-      { id: 'ph3', plant_id: 'other', event_id: null, view_url: 'https://img/ph3.jpg', caption: 'Not mine' },
     ]
     apiFetchSpy.mockImplementation((path) => {
       if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING)
       if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
-      if (path.startsWith('/api/photos')) return Promise.resolve(PHOTOS)
+      if (path.startsWith('/api/photos')) return Promise.resolve(ATTACHED)
       return Promise.resolve(null)
     })
     renderAt()
     await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
     expect(await screen.findByRole('heading', { name: /Photos/ })).toBeTruthy()
-    // ph1 (plant_id) renders its caption; ph2 (event e2, no caption) once events load -> by alt;
-    // ph3 (other planting) excluded. AWAIT both before counting (photos effect re-runs on events).
+    // Contract: the photo fetch is planting-attachment-scoped, NOT container(project)-scoped — this is
+    // the fix (a plant_id-attached photo in a different container must not be dropped by a project fetch).
+    expect(apiFetchSpy).toHaveBeenCalledWith('/api/photos?attachedTo=pl1')
+    expect(apiFetchSpy).not.toHaveBeenCalledWith('/api/photos?project_id=proj1')
+    // ph1 (plant_id) renders its caption; ph2 (event e2, no caption) once events load -> by alt.
     expect((await screen.findAllByText('Seedling')).length).toBeGreaterThan(0)
     // V200 Slice 5b: the GrowthStrip compare/thumbs render the same photos as the Photos grid,
     // so each photo's alt can appear more than once — assert presence, not a single match.
     expect((await screen.findAllByAltText('Seedling')).length).toBeGreaterThan(0)
     expect((await screen.findAllByAltText('Megatron Jalapeno photo')).length).toBeGreaterThan(0)
-    expect(screen.queryByText('Not mine')).toBeNull()
   })
 
   it('V4-PHOTOFEATURE-001: shows Set as featured on a photo and PUTs featured_photo_id', async () => {
