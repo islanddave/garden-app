@@ -6,6 +6,13 @@
 export const VALID_SUN = ['full_sun', 'part_sun', 'part_shade', 'full_shade'];
 // PLANTTYPE: mirrors the chk_plant_varieties_lifecycle CHECK + crop_types.default_lifecycle CHECK.
 export const VALID_LIFECYCLE = ['annual', 'tender_perennial', 'perennial', 'biennial'];
+// CLASSIFY (v4-classify): mirror the live plant_varieties CHECK constraints.
+export const VALID_DETERMINACY = ['determinate', 'semi_determinate', 'indeterminate', 'dwarf'];
+export const VALID_DAY_LENGTH = ['long_day', 'short_day', 'day_neutral', 'intermediate'];
+export const VALID_GROWN_AS = ['annual', 'tender_perennial', 'perennial', 'biennial'];
+// SEEDINV (V4-SEEDINV-001): mirror the sow-profile CHECKs in migrations/v4-seedinv-001/0a.
+export const VALID_START_METHOD = ['start_indoors', 'direct_sow', 'both', 'indoors_only'];
+export const VALID_SOW_SEASON = ['cool', 'warm', 'cool_warm'];
 
 export function validateBody(body, { requireName = true } = {}) {
   if (!body || typeof body !== 'object') return 'body required';
@@ -48,6 +55,48 @@ export function validateBody(body, { requireName = true } = {}) {
   }
   if (body.produces_scape != null && typeof body.produces_scape !== 'boolean') {
     return 'produces_scape must be a boolean or null';
+  }
+  // CLASSIFY + SEEDINV enum fields (all optional) — mirror the DB CHECK constraints so a
+  // bad value 400s here instead of surfacing as a 23514 constraint-violation string.
+  for (const [k, valid] of [
+    ['determinacy', VALID_DETERMINACY],
+    ['day_length_response', VALID_DAY_LENGTH],
+    ['grown_as', VALID_GROWN_AS],
+    ['start_method', VALID_START_METHOD],
+    ['sow_season', VALID_SOW_SEASON],
+  ]) {
+    if (body[k] != null && !valid.includes(body[k])) {
+      return `${k} must be one of: ${valid.join(', ')}`;
+    }
+  }
+  // SEEDINV integer fields (weeks + germination days), scoville-style checks.
+  for (const k of ['start_indoor_weeks_min', 'start_indoor_weeks_max', 'days_to_germ_min', 'days_to_germ_max']) {
+    if (body[k] != null) {
+      const n = Number(body[k]);
+      if (!Number.isInteger(n) || n < 0) return `${k} must be a non-negative integer or null`;
+    }
+  }
+  for (const [minK, maxK] of [
+    ['start_indoor_weeks_min', 'start_indoor_weeks_max'],
+    ['days_to_germ_min', 'days_to_germ_max'],
+  ]) {
+    if (body[minK] != null && body[maxK] != null && Number(body[minK]) > Number(body[maxK])) {
+      return `${minK} must be <= ${maxK}`;
+    }
+  }
+  // SEEDINV numeric (inches) fields — non-negative numbers.
+  for (const k of ['sow_depth_in', 'seed_spacing_in', 'row_spacing_in']) {
+    if (body[k] != null) {
+      const n = Number(body[k]);
+      if (Number.isNaN(n) || n < 0) return `${k} must be a non-negative number or null`;
+    }
+  }
+  // SEEDINV free-text fields — length caps.
+  for (const [k, cap] of [['direct_sow_timing', 2000], ['sow_notes', 4000]]) {
+    if (body[k] != null) {
+      if (typeof body[k] !== 'string') return `${k} must be a string or null`;
+      if (body[k].length > cap) return `${k} must be <= ${cap} characters`;
+    }
   }
   return null;
 }
