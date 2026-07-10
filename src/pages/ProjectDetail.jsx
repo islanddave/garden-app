@@ -752,9 +752,10 @@ export default function ProjectDetail() {
                     parentId={plant.id}
                     linkage={{ plant_id: plant.id, project_id: id }}
                     errorMode="surface"
-                    mode="both"
-                    takeLabel="📷"
-                    chooseLabel="🖼️"
+                    mode="single"
+                    capture=""
+                    buttonLabel={<Icon name="media.camera" decorative size={20} />}
+                    ariaLabel="Add photo"
                     showPreview={false}
                     inputId={`plant-photo-${plant.id}`}
                     buttonStyle={{
@@ -788,7 +789,9 @@ export default function ProjectDetail() {
             parentId={id}
             linkage={{ project_id: id }}
             errorMode="surface"
-            mode="both"
+            mode="single"
+            capture=""
+            buttonLabel={<><Icon name="media.camera" decorative size={18} style={{ marginRight: 8, verticalAlign: 'text-bottom' }} />Add photo</>}
             inputId={`project-photo-${id}`}
           />
         </div>
@@ -907,7 +910,7 @@ export default function ProjectDetail() {
                     padding: '14px 12px', border: `2px dashed ${P.border}`, borderRadius: 8,
                     cursor: 'pointer', backgroundColor: P.cream, color: P.mid, fontSize: '0.85rem',
                   }}>
-                  <span style={{ fontSize: '1.2rem' }}>📷</span>
+                  <Icon name="media.camera" decorative size={20} />
                   <span>Tap to take or choose a photo</span>
                   <input
                     type="file"
