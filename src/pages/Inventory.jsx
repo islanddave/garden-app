@@ -11,7 +11,7 @@ import { INVENTORY_TYPES, INVENTORY_STATUS_OPTIONS, INVENTORY_CATEGORY_OPTIONS, 
 // The alphabetized option list still guarantees every category is selectable even when empty.
 const CATEGORY_OPTIONS = INVENTORY_CATEGORY_OPTIONS
 
-// ── Main page ────────────────────────────────────────────────────────────────────
+// ── Main page ─────────────────────────────────────────────────────────────────
 export default function Inventory() {
   const { items, loading, error, toast, dismissToast, adjustQuantity } = useInventory()
 
@@ -239,7 +239,7 @@ export default function Inventory() {
   )
 }
 
-// ── Inventory row ─────────────────────────────────────────────────────────────────
+// ── Inventory row ─────────────────────────────────────────────────────────────
 function InventoryRow({ item, onAdjust }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -417,7 +417,7 @@ function InventoryRow({ item, onAdjust }) {
   )
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────────
+// ── Sub-components ────────────────────────────────────────────────────────────
 function FilterSelect({ label, value, onChange, children }) {
   return (
     <select
@@ -485,7 +485,7 @@ function ErrMsg({ msg }) {
   return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div>
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 const addBtnStyle = {
   display: 'inline-flex', alignItems: 'center',
   backgroundColor: P.terra, color: P.white,
