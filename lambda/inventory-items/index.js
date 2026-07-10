@@ -5,6 +5,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
+import { validateExtractRequest, buildAnthropicRequest, parseExtractResponse } from './extract.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -116,9 +117,67 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/inventory-items';
 
-  const idMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)$/);
-
   try {
+    // SEEDINV: literal sub-routes, checked BEFORE /api/inventory-items/:id so
+    // 'sow-candidates' is not mis-parsed as an item id (mirrors the
+    // lambda/varieties/index.js crop-types precedent).
+    if (rawPath === '/api/inventory-items/sow-candidates') {
+      if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
+      // Raw v_sow_candidates rows only — all date math happens client-side (sowEngine).
+      const rows = await sql`
+        SELECT * FROM v_sow_candidates
+        WHERE created_by = ANY(${householdIds})
+      `;
+      return resp(200, { items: rows });
+    }
+
+    // SEEDINV: seed-packet extractor. Also checked BEFORE /api/inventory-items/:id so
+    // 'extract-seeds' is not mis-parsed as an item id (crop-types precedent).
+    if (rawPath === '/api/inventory-items/extract-seeds') {
+      if (method !== 'POST') return resp(405, { error: 'Method not allowed' });
+      const body = JSON.parse(event.body ?? '{}');
+      const v = validateExtractRequest(body);
+      if (!v.ok) return resp(v.status, { error: v.error });
+      // ~4.5MB binary image => ~6M base64 chars; anything bigger risks the Lambda
+      // payload/memory ceiling — reject before touching the upstream API.
+      if (body.mode === 'image' && body.image_base64.length > 6_000_000) {
+        return resp(413, { error: 'image_too_large' });
+      }
+      let apiKey = secrets.ANTHROPIC_API_KEY;
+      if (!apiKey) {
+        // Key may have been added to the secret bundle after this container warmed —
+        // re-fetch ONCE bypassing the module cache before declaring not-configured.
+        _secrets = null;
+        const fresh = await getSecrets();
+        apiKey = fresh.ANTHROPIC_API_KEY;
+      }
+      if (!apiKey) return resp(501, { error: 'extractor_not_configured' });
+
+      const upstream = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(buildAnthropicRequest(body)),
+      });
+      if (!upstream.ok) {
+        console.error('extract-seeds upstream error', upstream.status);
+        return resp(502, { error: 'extractor_upstream', status: upstream.status });
+      }
+      const data = await upstream.json();
+      const modelText = (data.content ?? [])
+        .filter((b) => b?.type === 'text')
+        .map((b) => b.text)
+        .join('\n');
+      const parsed = parseExtractResponse(modelText);
+      if (!parsed.ok) return resp(422, { error: parsed.error });
+      return resp(200, { packets: parsed.packets });
+    }
+
+    const idMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)$/);
+
     if (idMatch) {
       const itemId = idMatch[1];
 
