@@ -22,6 +22,13 @@
 //   the base plant_varieties table gained in 0a). All optional/nullable — a body that omits them
 //   is a no-op on PUT (COALESCE) and inserts NULL on POST. Bad crop_type_slug → FK 23503 → 400.
 //
+// SEEDINV (V4-SEEDINV-001): 14 more optional columns flow through public.cultivar —
+//   3 classify (determinacy, day_length_response, grown_as) + 11 sow profile
+//   (start_method, start_indoor_weeks_min/max, direct_sow_timing, sow_depth_in,
+//   seed_spacing_in, row_spacing_in, days_to_germ_min/max, sow_season, sow_notes).
+//   Same contract as PLANTTYPE: omitted = COALESCE no-op on PUT, NULL on POST.
+//   Guarded by select-columns.test.js (static-source, plants-pattern).
+//
 // CORS: handler owns CORS — Lambda URL CORS config must be empty (handler sets headers).
 
 import { neon } from '@neondatabase/serverless';
@@ -122,7 +129,11 @@ export const handler = async (event) => {
                  common_diseases, expected_yield_notes,
                  photo_id, source_url,
                  crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape,
-                 created_by, created_at, updated_at
+                 created_by, created_at, updated_at,
+                 determinacy, day_length_response, grown_as,
+                 start_method, start_indoor_weeks_min, start_indoor_weeks_max,
+                 direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in,
+                 days_to_germ_min, days_to_germ_max, sow_season, sow_notes
           FROM public.cultivar
           WHERE id = ${varietyId}
             AND deleted_at IS NULL
@@ -164,11 +175,25 @@ export const handler = async (event) => {
               scoville_min         = COALESCE(${body.scoville_min ?? null}, scoville_min),
               scoville_max         = COALESCE(${body.scoville_max ?? null}, scoville_max),
               growth_habit         = COALESCE(${body.growth_habit ?? null}, growth_habit),
-              produces_scape       = COALESCE(${body.produces_scape ?? null}, produces_scape)
+              produces_scape       = COALESCE(${body.produces_scape ?? null}, produces_scape),
+              determinacy          = COALESCE(${body.determinacy ?? null}, determinacy),
+              day_length_response  = COALESCE(${body.day_length_response ?? null}, day_length_response),
+              grown_as             = COALESCE(${body.grown_as ?? null}, grown_as),
+              start_method         = COALESCE(${body.start_method ?? null}, start_method),
+              start_indoor_weeks_min = COALESCE(${body.start_indoor_weeks_min ?? null}, start_indoor_weeks_min),
+              start_indoor_weeks_max = COALESCE(${body.start_indoor_weeks_max ?? null}, start_indoor_weeks_max),
+              direct_sow_timing    = COALESCE(${body.direct_sow_timing ?? null}, direct_sow_timing),
+              sow_depth_in         = COALESCE(${body.sow_depth_in ?? null}, sow_depth_in),
+              seed_spacing_in      = COALESCE(${body.seed_spacing_in ?? null}, seed_spacing_in),
+              row_spacing_in       = COALESCE(${body.row_spacing_in ?? null}, row_spacing_in),
+              days_to_germ_min     = COALESCE(${body.days_to_germ_min ?? null}, days_to_germ_min),
+              days_to_germ_max     = COALESCE(${body.days_to_germ_max ?? null}, days_to_germ_max),
+              sow_season           = COALESCE(${body.sow_season ?? null}, sow_season),
+              sow_notes            = COALESCE(${body.sow_notes ?? null}, sow_notes)
             WHERE id = ${varietyId}
               AND created_by = ${userId}
               AND deleted_at IS NULL
-            RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version
+            RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes
           `,
         ]);
         if (!updateRows.length) return resp(404, { error: 'Not found or not owner' });
@@ -208,7 +233,11 @@ export const handler = async (event) => {
                    common_diseases, expected_yield_notes,
                    photo_id, source_url,
                    crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape,
-                   created_by, created_at, updated_at
+                   created_by, created_at, updated_at,
+                   determinacy, day_length_response, grown_as,
+                   start_method, start_indoor_weeks_min, start_indoor_weeks_max,
+                   direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in,
+                   days_to_germ_min, days_to_germ_max, sow_season, sow_notes
             FROM public.cultivar
             WHERE deleted_at IS NULL
               AND LOWER(display_name) LIKE ${'%' + q.toLowerCase() + '%'}
@@ -222,7 +251,11 @@ export const handler = async (event) => {
                    common_diseases, expected_yield_notes,
                    photo_id, source_url,
                    crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape,
-                   created_by, created_at, updated_at
+                   created_by, created_at, updated_at,
+                   determinacy, day_length_response, grown_as,
+                   start_method, start_indoor_weeks_min, start_indoor_weeks_max,
+                   direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in,
+                   days_to_germ_min, days_to_germ_max, sow_season, sow_notes
             FROM public.cultivar
             WHERE deleted_at IS NULL
             ORDER BY display_name ASC
@@ -251,7 +284,11 @@ export const handler = async (event) => {
                  photo_id, source_url,
                  crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape,
                  created_by, created_at, updated_at,
-                 source_proj_rescope_project_id
+                 source_proj_rescope_project_id,
+                 determinacy, day_length_response, grown_as,
+                 start_method, start_indoor_weeks_min, start_indoor_weeks_max,
+                 direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in,
+                 days_to_germ_min, days_to_germ_max, sow_season, sow_notes
           FROM public.cultivar
           WHERE source_proj_rescope_project_id = ${sourceProjId}
             AND deleted_at IS NULL
@@ -293,7 +330,11 @@ export const handler = async (event) => {
             common_diseases, expected_yield_notes,
             photo_id, source_url, created_by,
             crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape,
-            source_proj_rescope_project_id
+            source_proj_rescope_project_id,
+            determinacy, day_length_response, grown_as,
+            start_method, start_indoor_weeks_min, start_indoor_weeks_max,
+            direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in,
+            days_to_germ_min, days_to_germ_max, sow_season, sow_notes
           ) VALUES (
             ${body.name.trim()},
             ${body.species ?? null},
@@ -314,8 +355,22 @@ export const handler = async (event) => {
             ${body.scoville_max ?? null},
             ${body.growth_habit ?? null},
             ${body.produces_scape ?? null},
-            ${sourceProjId}
-          ) RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version
+            ${sourceProjId},
+            ${body.determinacy ?? null},
+            ${body.day_length_response ?? null},
+            ${body.grown_as ?? null},
+            ${body.start_method ?? null},
+            ${body.start_indoor_weeks_min ?? null},
+            ${body.start_indoor_weeks_max ?? null},
+            ${body.direct_sow_timing ?? null},
+            ${body.sow_depth_in ?? null},
+            ${body.seed_spacing_in ?? null},
+            ${body.row_spacing_in ?? null},
+            ${body.days_to_germ_min ?? null},
+            ${body.days_to_germ_max ?? null},
+            ${body.sow_season ?? null},
+            ${body.sow_notes ?? null}
+          ) RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes
         `,
       ]);
       // V4-TAGSUB-001: post-commit, fail-open derive of type:/lifecycle: tags. Never 500s a variety write.
