@@ -328,7 +328,7 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   )
 }
 
-// ── Styles ──────────────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 const sectionHeading = {
   margin: '0 0 10px',
   fontSize: '0.85rem',
