@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import Icon from '../components/Icon.jsx'
 import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
 import { formatQty, formatMoney, formatDate } from '../lib/format.js'
@@ -10,7 +11,7 @@ import { INVENTORY_TYPES, INVENTORY_STATUS_OPTIONS, INVENTORY_CATEGORY_OPTIONS, 
 // The alphabetized option list still guarantees every category is selectable even when empty.
 const CATEGORY_OPTIONS = INVENTORY_CATEGORY_OPTIONS
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Main page ────────────────────────────────────────────────────────────────────
 export default function Inventory() {
   const { items, loading, error, toast, dismissToast, adjustQuantity } = useInventory()
 
@@ -67,9 +68,20 @@ export default function Inventory() {
           <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
             Inventory
           </h1>
-          <Link to="/inventory/add" style={addBtnStyle}>
-            + Add item
-          </Link>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {/* V4-SEEDINV-001 / DRG-SOWNOW-001 entry points — compact header actions. */}
+            <Link to="/inventory/add-seeds" style={headerActionStyle}>
+              <Icon name="status.seed" size={16} decorative style={{ marginRight: 6, flexShrink: 0 }} />
+              Add seeds
+            </Link>
+            <Link to="/sow" style={headerActionStyle}>
+              <Icon name="event.sowing" size={16} decorative style={{ marginRight: 6, flexShrink: 0 }} />
+              Sow now
+            </Link>
+            <Link to="/inventory/add" style={addBtnStyle}>
+              + Add item
+            </Link>
+          </div>
         </div>
 
         {/* ── Filters ── */}
@@ -227,7 +239,7 @@ export default function Inventory() {
   )
 }
 
-// ── Inventory row ─────────────────────────────────────────────────────────────
+// ── Inventory row ─────────────────────────────────────────────────────────────────
 function InventoryRow({ item, onAdjust }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -405,7 +417,7 @@ function InventoryRow({ item, onAdjust }) {
   )
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+// ── Sub-components ────────────────────────────────────────────────────────────────
 function FilterSelect({ label, value, onChange, children }) {
   return (
     <select
@@ -473,13 +485,22 @@ function ErrMsg({ msg }) {
   return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div>
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────────
 const addBtnStyle = {
   display: 'inline-flex', alignItems: 'center',
   backgroundColor: P.terra, color: P.white,
   textDecoration: 'none', borderRadius: 8,
   padding: '10px 20px', fontSize: '0.9rem', fontWeight: 700,
   minHeight: 44,
+}
+
+// Compact header-action variant of addBtnStyle (same chrome, smaller footprint)
+// for the V4-SEEDINV-001 "Add seeds" + DRG-SOWNOW-001 "Sow now" entries.
+const headerActionStyle = {
+  ...addBtnStyle,
+  padding: '8px 12px',
+  fontSize: '0.82rem',
+  minHeight: 36,
 }
 
 const qtyBtn = {
