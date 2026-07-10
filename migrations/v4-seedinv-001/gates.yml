@@ -1,0 +1,151 @@
+# gates.yml
+# V4-SEEDINV-001 — plant_varieties sow profile + cultivar/v_sow_candidates views + seed loader.
+#
+# PROMOTE-TIME SEQUENCING (ORDERED — do not reorder, do not skip):
+#   1. STAGING: run pre gates -> apply 0a-additive-ddl.sql -> sweep gates -> 0c-validate.sql -> post gates.
+#      (0a re-adds the v4-classify columns guarded, so staging drift self-heals here.)
+#   2. deploy-staging + full regression pass on staging (build-and-test remains the required promote gate).
+#   3. PROD: run pre gates -> apply 0a -> sweep gates -> 0b-load-seeds.mjs (DRY-RUN first, review the decision
+#      table; then --apply ONLY after Dave confirms the DATABASE_URL target) -> sweep gates again ->
+#      0c-validate.sql -> post gates.
+#   4. Promote (version bump set at ship per L-171).
+#
+# Pre:  the sow columns do not exist yet; the base tables are present.
+# Sweep: no row violates any of the four new CHECKs (all added NOT VALID in 0a). Runner re-runs the sweep
+#        between 0a/0b and 0c per its codified pattern — 0c's VALIDATE scan must be clean.
+# Post: sow columns present on base plant_varieties AND exposed through public.cultivar (classify columns too),
+#       all four new CHECKs convalidated, v_sow_candidates exists, schema_version recorded.
+
+pre:
+  - name: pre_start_method_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties' AND column_name='start_method'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_plant_varieties_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plant_varieties'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_inventory_items_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='inventory_items'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  - name: sweep_start_method_valid
+    sql: |
+      SELECT id FROM public.plant_varieties
+       WHERE start_method IS NOT NULL
+         AND start_method NOT IN ('start_indoors','direct_sow','both','indoors_only')
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_sow_weeks_ordered
+    sql: |
+      SELECT id FROM public.plant_varieties
+       WHERE start_indoor_weeks_min IS NOT NULL
+         AND start_indoor_weeks_max IS NOT NULL
+         AND start_indoor_weeks_min > start_indoor_weeks_max
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_germ_days_ordered
+    sql: |
+      SELECT id FROM public.plant_varieties
+       WHERE days_to_germ_min IS NOT NULL
+         AND days_to_germ_max IS NOT NULL
+         AND days_to_germ_min > days_to_germ_max
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_sow_season_valid
+    sql: |
+      SELECT id FROM public.plant_varieties
+       WHERE sow_season IS NOT NULL
+         AND sow_season NOT IN ('cool','warm','cool_warm')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_start_method_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties' AND column_name='start_method'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_sow_notes_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties' AND column_name='sow_notes'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_cultivar_exposes_sow_columns
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar'
+         AND column_name IN ('start_method','start_indoor_weeks_min','start_indoor_weeks_max',
+                             'direct_sow_timing','sow_depth_in','seed_spacing_in','row_spacing_in',
+                             'days_to_germ_min','days_to_germ_max','sow_season','sow_notes')
+    expect: rowcount_eq
+    value: 11
+
+  - name: post_cultivar_exposes_classify_columns
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar'
+         AND column_name IN ('determinacy','day_length_response','grown_as')
+    expect: rowcount_eq
+    value: 3
+
+  - name: post_v_sow_candidates_exists
+    sql: |
+      SELECT 1 FROM information_schema.views
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_seed_index_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='inventory_items' AND indexname='idx_inventory_items_seeds'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_start_method_constraint_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint WHERE conname='chk_plant_varieties_start_method'
+    expect: scalar_eq
+    value: true
+
+  - name: post_sow_weeks_constraint_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint WHERE conname='chk_plant_varieties_sow_weeks'
+    expect: scalar_eq
+    value: true
+
+  - name: post_germ_days_constraint_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint WHERE conname='chk_plant_varieties_germ_days'
+    expect: scalar_eq
+    value: true
+
+  - name: post_sow_season_constraint_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint WHERE conname='chk_plant_varieties_sow_season'
+    expect: scalar_eq
+    value: true
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.13.0-seedinv-001'
+    expect: rowcount_eq
+    value: 1
