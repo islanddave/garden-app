@@ -49,6 +49,8 @@ import About from './pages/About.jsx'
 import ReleaseNotes from './pages/ReleaseNotes.jsx'
 import Today from './pages/Today.jsx'
 import CaptureFlow from './pages/CaptureFlow.jsx'
+import AddSeeds from './pages/AddSeeds.jsx'
+import SowNow from './pages/SowNow.jsx'
 import SplashScreen from './components/SplashScreen.jsx'
 
 function AppFallback({ error, retry } = {}) {
@@ -120,7 +122,13 @@ function AppRoutes() {
               <Route path="/inactive"      element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><InactiveProjects /></ErrorBoundary></Protected>} />
               <Route path="/inventory"     element={<Protected><Inventory /></Protected>} />
               <Route path="/inventory/add" element={<Protected><InventoryAdd /></Protected>} />
+              {/* V4-SEEDINV-001: bulk seed intake (photo / paste / one item). Literal route
+                  declared BEFORE /inventory/:id. Route-level ErrorBoundary (fresh fetch
+                  surface) mirrors /today, /inactive. */}
+              <Route path="/inventory/add-seeds" element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><AddSeeds /></ErrorBoundary></Protected>} />
               <Route path="/inventory/:id" element={<Protected><InventoryDetail /></Protected>} />
+              {/* DRG-SOWNOW-001: what-can-I-sow-now buckets over v_sow_candidates. */}
+              <Route path="/sow"           element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SowNow /></ErrorBoundary></Protected>} />
               <Route path="/log"           element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><EventNew /></ErrorBoundary></Protected>} />
               <Route path="/log/many"      element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><LogMany /></ErrorBoundary></Protected>} />
               <Route path="/photos"        element={<Protected><PhotoLibrary /></Protected>} />
