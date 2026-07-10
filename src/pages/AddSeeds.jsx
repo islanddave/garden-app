@@ -462,7 +462,7 @@ export default function AddSeeds() {
   )
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 const card = {
   backgroundColor: P.white,
   border: `1px solid ${P.border}`,
