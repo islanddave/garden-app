@@ -158,6 +158,29 @@ jobs:
             echo "PHOTO_CDN_* set on $FN"
           fi
 
+      - name: Ensure inventory-items config
+        # V4-SEEDINV-001: POST /api/inventory-items/extract-seeds proxies the Anthropic
+        # Messages API (image OCR runs >30s; base64 image bodies need memory headroom),
+        # so this one function needs timeout=120s / memory=512MB instead of the
+        # create-function defaults (30s/256MB). Idempotent: only updates when values differ.
+        if: matrix.function == 'inventory-items'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
+        run: |
+          FN="garden-inventory-items"
+          T=$(aws lambda get-function-configuration --function-name "$FN" --query 'Timeout' --output text 2>/dev/null || echo "None")
+          M=$(aws lambda get-function-configuration --function-name "$FN" --query 'MemorySize' --output text 2>/dev/null || echo "None")
+          if [[ "$T" == "120" && "$M" == "512" ]]; then
+            echo "timeout/memory already correct on $FN (timeout=$T memory=$M)"
+          else
+            echo "Setting timeout=120 memory-size=512 on $FN (was: timeout=$T memory=$M)"
+            aws lambda update-function-configuration \
+              --function-name "$FN" \
+              --timeout 120 \
+              --memory-size 512 >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "timeout=120 memory=512 set on $FN"
+          fi
+
       - name: Ensure ADMIN_CLERK_SUBS env for ux-events
         if: matrix.function == 'ux-events'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
