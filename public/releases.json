@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.43.0",
+    "date": "2026-07-10",
+    "highlights": [
+      "Your seed packets are now in the app! All 104 packets — the Botanical Interests order plus the packets from your photos — live in Inventory under Seeds, each linked to its variety with sowing details (start method, timing, depth, spacing, germination days).",
+      "New “Sow now” page (Inventory → Sow now): every packet you own, sorted into what to start indoors now, what to direct-sow now, windows about to close, and what to hold for later — tuned to the valley’s May 20 / late-Sept frost dates. One tap on “Sow” creates the planting, linked back to the packet it came from.",
+      "New “Add seeds” flow (Inventory → Add seeds): snap a photo of packets or paste a vendor order confirmation, review the extracted packets with automatic variety matching, and add them all at once. (The photo/paste extractor needs a one-time key setup — until then it politely says so, and single-item add still works.)"
+    ]
+  },
+  {
     "version": "3.42.0",
     "date": "2026-07-09",
     "highlights": [
