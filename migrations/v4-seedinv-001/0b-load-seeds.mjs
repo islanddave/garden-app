@@ -31,6 +31,9 @@
 import { readFileSync } from 'node:fs';
 import { neon } from '@neondatabase/serverless';
 import { packetToVarietyCols, packetToInventoryPayload, parseRange } from '../../src/lib/parseSowProfile.js';
+// L-239 guard: reuse the app's own derive engine so seed-loaded varieties get their facet tags
+// (the CREATE branch below inserts plant_varieties directly, bypassing the /api/varieties applyDerive site).
+import { applyDerive } from '../../lambda/varieties/crop-derive.js';
 
 const CREATED_BY = 'user_3D2gM0hIl03gjW3JM2DjtPzm0jI'; // Dave's clerk sub (spec ground truth)
 const DATASET_URL = new URL('./seed-load-dataset-V1.json', import.meta.url);
@@ -263,6 +266,23 @@ for (const [i, e] of plan.entries()) {
   } catch (err) {
     failures.push({ packet: i + 1, name: p?.name ?? e.packet.name, error: err?.message ?? String(err) });
     console.error(`FAILED packet ${i + 1} (${p?.name ?? e.packet.name}): ${err?.message ?? err}`);
+  }
+}
+
+// V4-SEEDINV-001 / L-239 facet-tag guard: the CREATE branch above inserts plant_varieties directly,
+// bypassing the /api/varieties post-commit applyDerive call site (lambda/varieties/index.js). Without
+// this, seed-loaded varieties carry NO derived type:/lifecycle:/... tags and vanish from the Garden
+// by-type (faceted) view (root cause of the 2026-07-10 Black Krim bug). Run the idempotent full-fleet
+// drift-heal after the load so every variety (created or matched) gets its facet tags. Best-effort;
+// never fails the load. Backfill-safe: applyDerive is revive-or-insert against the soft-delete unique.
+if (apply) {
+  try {
+    const d = await applyDerive(sql, null);
+    console.log(`derive reconcile: cultivars=${d.cultivars} tags_upserted=${d.tags_upserted} `
+      + `links_added=${d.links_added} links_removed=${d.links_removed} failures=${d.failures.length}`);
+    if (d.failures.length) console.error('derive reconcile failures:', JSON.stringify(d.failures, null, 2));
+  } catch (err) {
+    console.error(`derive reconcile FAILED (non-fatal, tags may be missing): ${err?.message ?? err}`);
   }
 }
 
