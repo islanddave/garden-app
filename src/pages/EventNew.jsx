@@ -35,6 +35,17 @@ function readLastHarvestUnit() {
   return DEFAULT_HARVEST_UNIT
 }
 
+// V4-STICKY-001: remember the last chosen project across sessions, mirroring
+// LogMany's quicklog.lastScope pattern (module-const key + guarded localStorage,
+// validated against live projects on load). Stored as a bare project id string.
+const LAST_PROJECT_KEY = 'logone.lastProject'
+
+function readLastProjectId() {
+  try {
+    return localStorage.getItem(LAST_PROJECT_KEY) || ''
+  } catch { return '' }
+}
+
 // V1.2a-2 Wave 3: never render a raw server error string to the user. Map known
 // server error patterns to canned, friendly copy; fall back to a safe generic.
 function friendlyError(err) {
@@ -211,9 +222,15 @@ export default function EventNew() {
   // (catch {} block that swallowed errors silently).
   const photoUploader = useUploadPhoto({ errorMode: 'swallow' })
 
+  // V4-STICKY-001: cold-mount default for the project — a deep-linked ?project=
+  // still wins; otherwise fall back to the last chosen project (validated against
+  // live data in the load effect below). Read once (lazy init) so an in-session
+  // save that rewrites localStorage never re-seeds this mount.
+  const [rememberedProjectId] = useState(readLastProjectId)
+
   const [form, setForm] = useState({
     event_type:    preselectedEventType,
-    project_id:    preselectedProjectId,
+    project_id:    preselectedProjectId || rememberedProjectId,
     location_id:   '',
     event_date:    toDatetimeLocal(new Date()),
     notes:         '',
@@ -320,9 +337,13 @@ export default function EventNew() {
       if (preselectedProjectId && !loggable.some(p => p.id === preselectedProjectId)) {
         setForm(f => (f.project_id === preselectedProjectId ? { ...f, project_id: '' } : f))
         setNotice('Project not found — pick one.')
+      } else if (!preselectedProjectId && rememberedProjectId && !loggable.some(p => p.id === rememberedProjectId)) {
+        // V4-STICKY-001: a remembered project that no longer exists (archived / status
+        // changed) must not stick — silently fall back to the current default (no notice).
+        setForm(f => (f.project_id === rememberedProjectId ? { ...f, project_id: '' } : f))
       }
     }).catch(() => {})
-  }, [apiFetch, preselectedProjectId])
+  }, [apiFetch, preselectedProjectId, rememberedProjectId])
 
   function handleMetadataChange(key, value) {
     setMetadataState(prev => {
@@ -484,6 +505,11 @@ export default function EventNew() {
     // V1.2a-2 Wave 3: remember the chosen harvest unit for next time.
     if (isHarvest) {
       try { localStorage.setItem('lastHarvestUnit', harvest.unit) } catch { /* noop */ }
+    }
+
+    // V4-STICKY-001: remember the chosen project so the next cold session pre-fills it.
+    if (form.project_id) {
+      try { localStorage.setItem(LAST_PROJECT_KEY, form.project_id) } catch { /* noop */ }
     }
 
     // V3-EVENTCONTSIZE-001: if a potting_up/transplant event captured a new container, persist it to the
