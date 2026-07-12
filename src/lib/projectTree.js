@@ -154,7 +154,7 @@ export function nodeHasChildren(node) {
 }
 
 // ─── V4-GARDENIA-001: faceted group-by (ADDITIVE; buildGardenTree/buildDisplayList are
-//     untouched and remain golden-gated to parity hash 8a3d78f098e55ff2) ──────────────────────
+//     untouched and remain golden-gated to parity hash 8a3d78f098e55ff2) ──────────────────
 export const UNSORTED_SLUG = '__unsorted__'
 
 // Flatten a planting's bulk entity-tags entry { direct, projected } into one tag list.
@@ -178,6 +178,11 @@ export const FACET_VALUE_ORDER = {
   day_length: ['short_day', 'intermediate', 'long_day', 'day_neutral'],
   allium_type: ['bulbing', 'bunching'],
   basil_use: ['culinary', 'thai', 'tulsi'],
+  // V4-BEANFACET-001. bean_habit compact->sprawling (mirrors determinacy); bean_use young->mature
+  // harvest stage with dual last; bean_type Phaseolus group, then Vigna, then Vicia/Glycine.
+  bean_type: ['common', 'runner', 'lima', 'yardlong', 'cowpea', 'fava', 'soybean'],
+  bean_habit: ['bush', 'half_runner', 'pole'],
+  bean_use: ['snap', 'shell', 'dry', 'dual_purpose'],
 }
 
 // Comparator for facet-value groups: canonical slug order first (when the facet has one), label
@@ -267,7 +272,7 @@ export function saveGroupsExpanded(set) {
   } catch (_e) { /* non-fatal: disclosure persistence is best-effort */ }
 }
 
-// ── V3-ORDER-001 persisted sort-order toggle ────────────────────────────────────────────────
+// ── V3-ORDER-001 persisted sort-order toggle ───────────────────────────────────
 // TRACKED EXPEDIENT (V002 §5 + Cross-Device State Principle): persistence lives in localStorage,
 // so the chosen sort order is per-device, NOT cross-device. The cross-device-preferred home is a
 // per-user server preference; deferring that here keeps Lane C frontend-only. FOLLOW-UP (V4):
