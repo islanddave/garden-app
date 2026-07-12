@@ -16,7 +16,7 @@
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 const { fetchSpy, capturedPhotoProps, uploadSpy } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
@@ -85,6 +85,7 @@ vi.mock('../hooks/useInventory.js', () => ({
 import LocationDetail from '../pages/LocationDetail.jsx'
 import EventDetail from '../pages/EventDetail.jsx'
 import ProjectDetail from '../pages/ProjectDetail.jsx'
+import Lightbox from '../components/Lightbox.jsx'
 
 beforeEach(() => {
   fetchSpy.mockReset()
@@ -120,6 +121,44 @@ describe('EventDetail — photo upload section', () => {
     const linkage = JSON.parse(node.dataset.linkage)
     expect(linkage.event_id).toBe('ev-1')
     expect(linkage.project_id).toBe('proj-1')
+  })
+})
+
+// One-tap "Set as featured" star INSIDE the Lightbox — saves the close→scroll→grid-tap
+// round-trip (2 taps → 1). Reuses PlantingDetail's existing setFeatured handler; the star is
+// hidden when no handler is wired (prop optional) so the Lightbox stays usable elsewhere.
+describe('Lightbox — set-as-featured star', () => {
+  const IMAGES = [
+    { src: 'a.jpg', view_url: 'a.jpg', id: 'ph-1', alt: 'Alpha', caption: 'First' },
+    { src: 'b.jpg', view_url: 'b.jpg', id: 'ph-2', alt: 'Bravo', caption: 'Second' },
+  ]
+
+  it('hides the star when no onSetFeatured handler is provided (prop optional)', () => {
+    render(<Lightbox open images={IMAGES} index={0} onClose={() => {}} />)
+    expect(screen.queryByTestId('lightbox-set-featured')).toBe(null)
+  })
+
+  it('renders the star and one click calls onSetFeatured with the current photo', () => {
+    const onSetFeatured = vi.fn()
+    render(
+      <Lightbox open images={IMAGES} index={1} onSetFeatured={onSetFeatured} featuredId="ph-1" onClose={() => {}} />
+    )
+    const star = screen.getByTestId('lightbox-set-featured')
+    // Viewing photo #2, which is NOT the featured one → inactive affordance.
+    expect(star.getAttribute('aria-pressed')).toBe('false')
+    expect(star.getAttribute('aria-label')).toBe('Set as featured')
+    fireEvent.click(star)
+    expect(onSetFeatured).toHaveBeenCalledTimes(1)
+    expect(onSetFeatured.mock.calls[0][0].id).toBe('ph-2')
+  })
+
+  it('shows the star as active (pressed) when the current photo is already featured', () => {
+    render(
+      <Lightbox open images={IMAGES} index={0} onSetFeatured={vi.fn()} featuredId="ph-1" onClose={() => {}} />
+    )
+    const star = screen.getByTestId('lightbox-set-featured')
+    expect(star.getAttribute('aria-pressed')).toBe('true')
+    expect(star.getAttribute('aria-label')).toBe('Featured photo')
   })
 })
 
