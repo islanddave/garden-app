@@ -104,8 +104,8 @@ export default function Garden() {
       const e = tagMap[id]
       for (const t of [...(e.direct || []), ...(e.projected || [])]) present.add(t.facet)
     }
-    const ORDER = ['type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'location', 'group', 'freeform']
-    const LABELS = { type: 'Type', lifecycle: 'Lifespan', heat: 'Heat', determinacy: 'Determinacy', day_length: 'Day Length', allium_type: 'Allium', basil_use: 'Basil', location: 'Location', group: 'Group', freeform: 'Tags' }
+    const ORDER = ['type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform']
+    const LABELS = { type: 'Type', lifecycle: 'Lifespan', heat: 'Heat', determinacy: 'Determinacy', day_length: 'Day Length', allium_type: 'Allium', basil_use: 'Basil', bean_type: 'Bean Type', bean_habit: 'Bean Habit', bean_use: 'Bean Use', location: 'Location', group: 'Group', freeform: 'Tags' }
     const opts = [{ value: 'none', label: 'Projects' }]
     for (const fct of ORDER) if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
     // 'status' groups by the planting's LIFECYCLE stage (seed->...->ended). Always available
