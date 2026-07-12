@@ -313,11 +313,11 @@ export default function PlantingDetail() {
 
   // ── Gallery: one shared image list for the hero + Photos grid + GrowthStrip. The featured
   // hero photo is index 0 (unshifted if not already represented in the photo set). ──────────
-  const galleryFromPhotos = photos.map(p => ({ src: p.view_url, alt: p.caption || name, caption: p.caption }))
+  const galleryFromPhotos = photos.map(p => ({ src: p.view_url, view_url: p.view_url, id: p.id, alt: p.caption || name, caption: p.caption }))
   const featuredUrl = pl.featured_photo_view_url
   const featuredInSet = featuredUrl && photos.some(p => p.view_url === featuredUrl)
   const galleryImages = featuredUrl && !featuredInSet
-    ? [{ src: featuredUrl, alt: `${name} photo`, caption: null }, ...galleryFromPhotos]
+    ? [{ src: featuredUrl, view_url: featuredUrl, id: pl.featured_photo_id, alt: `${name} photo`, caption: null }, ...galleryFromPhotos]
     : galleryFromPhotos
   // Map a `photos[]` entry to its index inside galleryImages (offset by the unshifted hero).
   const photoIndexOffset = (featuredUrl && !featuredInSet) ? 1 : 0
@@ -666,6 +666,8 @@ export default function PlantingDetail() {
         index={lightboxIndex ?? 0}
         onIndexChange={setLightboxIndex}
         onClose={() => setLightboxIndex(null)}
+        onSetFeatured={setFeatured}
+        featuredId={pl.featured_photo_id}
       />
       </div>
     </Shell>
