@@ -113,6 +113,8 @@ export default function Lightbox({
   index = 0,
   onIndexChange,
   onClose,
+  onSetFeatured,
+  featuredId,
 }) {
   const list = Array.isArray(images) ? images : []
   const len = list.length
@@ -304,6 +306,8 @@ export default function Lightbox({
   const atStart = curIndex <= 0
   const atEnd = curIndex >= len - 1
   const zoomed = scale > 1
+  const canSetFeatured = typeof onSetFeatured === 'function' && current.id != null
+  const isFeatured = canSetFeatured && featuredId != null && current.id === featuredId
 
   // Progressive backdrop fade as the user drags the photo down to dismiss.
   const dismissProgress = drag.closing ? Math.min(1, drag.y / 260) : 0
@@ -369,16 +373,30 @@ export default function Lightbox({
             {Math.round(scale * 100)}%
           </span>
         </div>
-        <button
-          ref={closeBtnRef}
-          type="button"
-          onClick={close}
-          aria-label="Close photo viewer"
-          data-testid="lightbox-close"
-          style={CONTROL_BTN}
-        >
-          {'×'}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {canSetFeatured && (
+            <button
+              type="button"
+              onClick={() => onSetFeatured(current)}
+              aria-label={isFeatured ? 'Featured photo' : 'Set as featured'}
+              aria-pressed={isFeatured}
+              data-testid="lightbox-set-featured"
+              style={{ ...CONTROL_BTN, color: isFeatured ? '#ffd54a' : '#fff' }}
+            >
+              {isFeatured ? '★' : '☆'}
+            </button>
+          )}
+          <button
+            ref={closeBtnRef}
+            type="button"
+            onClick={close}
+            aria-label="Close photo viewer"
+            data-testid="lightbox-close"
+            style={CONTROL_BTN}
+          >
+            {'×'}
+          </button>
+        </div>
       </div>
 
       {/* When zoomed, expose keyboard/button panning (SC 2.1.1 + 2.5.7). */}
