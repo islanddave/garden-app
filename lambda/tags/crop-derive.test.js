@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeDerivedTags, humanizeLifecycle, VALID_LIFECYCLE, heatBand, parseDeterminacy, parseDayLength, alliumType, basilUse } from './crop-derive.js';
+import { computeDerivedTags, humanizeLifecycle, VALID_LIFECYCLE, heatBand, parseDeterminacy, parseDayLength, alliumType, basilUse, beanType, beanHabit, beanUse } from './crop-derive.js';
 
 const CROP_TYPES = {
   pepper: { slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'tender_perennial' },
@@ -55,7 +55,7 @@ describe('computeDerivedTags', () => {
   });
 });
 
-// ── V4-CLASSIFY-001 classification facets ────────────────────────────────────────────────────────
+// ── V4-CLASSIFY-001 classification facets ───────────────────────────────────────────────────────
 describe('heatBand (pepper heat by scoville_max ceiling)', () => {
   it('bands by the MAX ceiling; boundaries fall in real-collection gaps', () => {
     expect(heatBand(0).slug).toBe('sweet');
@@ -160,6 +160,90 @@ describe('computeDerivedTags with classification facets', () => {
     const out = computeDerivedTags({ crop_type_slug: 'pepper', lifecycle: 'annual' }, CROP_TYPES);
     expect(out).toEqual([
       { facet: 'type', slug: 'pepper', label: 'Pepper' },
+      { facet: 'lifecycle', slug: 'annual', label: 'Annual' },
+    ]);
+  });
+});
+
+// ── V4-BEANFACET-001 bean facets ──────────────────────────────────────────────────────────
+describe('beanType (species group; structured genus/species first, name/prose fallback)', () => {
+  it('maps binomial + bare epithet (bean-gated so epithet alone is safe)', () => {
+    expect(beanType('bean', 'Phaseolus', 'vulgaris')).toBe('common');
+    expect(beanType('bean', 'Phaseolus', 'coccineus')).toBe('runner');
+    expect(beanType('bean', '', 'lunatus')).toBe('lima');
+    expect(beanType('bean', 'Vicia', 'faba')).toBe('fava');
+    expect(beanType('bean', 'Glycine', 'max')).toBe('soybean');
+  });
+  it('Vigna unguiculata disambiguates yardlong vs cowpea by name', () => {
+    expect(beanType('bean', 'Vigna', 'unguiculata', 'Red Noodle Yardlong')).toBe('yardlong');
+    expect(beanType('bean', 'Vigna', 'unguiculata', 'California Blackeye')).toBe('cowpea');
+    expect(beanType('bean', 'Vigna', 'unguiculata')).toBe('cowpea'); // bare -> cowpea (type species)
+  });
+  it('name/prose fallback only when species is absent + unambiguous', () => {
+    expect(beanType('bean', null, null, 'Windsor Broad Bean')).toBe('fava');
+    expect(beanType('bean', null, null, 'Big Mama', 'productive pole bean')).toBeNull(); // no species signal
+  });
+  it('never defaults to common on absent species; non-bean -> null', () => {
+    expect(beanType('bean', null, null, 'Mystery Bean')).toBeNull();
+    expect(beanType('tomato', 'Solanum', 'lycopersicum', 'Big Boy')).toBeNull();
+  });
+});
+
+describe('beanHabit (bush | half_runner | pole; runner-name collision guard)', () => {
+  it('reads explicit habit from name or prose', () => {
+    expect(beanHabit('bean', 'Provider', 'bush, 50 days, green snap')).toBe('bush');
+    expect(beanHabit('bean', 'Kentucky Wonder', 'pole, climbing 6-8 ft')).toBe('pole');
+    expect(beanHabit('bean', 'Blue Lake Bush', null)).toBe('bush');           // name signal
+    expect(beanHabit('bean', 'Mountain Half-Runner', null)).toBe('half_runner');
+  });
+  it('KEYSTONE: name-word "runner" is species, NOT habit — only prose runner / climb sets pole', () => {
+    expect(beanHabit('bean', 'Scarlet Runner', null)).toBeNull();             // name-only runner -> no habit
+    expect(beanHabit('bean', 'Scarlet Runner', 'vigorous climber, 8-10 ft')).toBe('pole'); // prose climb
+    expect(beanHabit('bean', 'Painted Lady', 'runner-type climbing habit')).toBe('pole');  // prose runner
+  });
+  it('bush "self-supporting/no support" wins over any later cue; null when silent', () => {
+    expect(beanHabit('bean', 'Windsor', 'erect 3-4 ft, self-supporting')).toBe('bush');
+    expect(beanHabit('bean', 'Generic Bean', 'productive and tasty')).toBeNull();
+  });
+});
+
+describe('beanUse (snap | shell | dry | dual_purpose; two families -> dual)', () => {
+  it('single family -> that use', () => {
+    expect(beanUse('bean', 'common', 'Provider', 'green snap bean')).toBe('snap');
+    expect(beanUse('bean', 'fava', 'Windsor', 'broad shelling bean')).toBe('shell');
+    expect(beanUse('bean', 'common', 'Black Turtle', 'dry soup bean')).toBe('dry');
+  });
+  it('two distinct families stated -> dual_purpose', () => {
+    expect(beanUse('bean', 'common', 'Vermont Cranberry', 'bush horticultural bean, shell or dry')).toBe('dual_purpose');
+    expect(beanUse('bean', 'runner', 'Scarlet Runner', 'young pods or dried beans')).toBe('dual_purpose');
+  });
+  it('type-priors apply only when text is silent; never override stated use', () => {
+    expect(beanUse('bean', 'soybean', 'Midori Giant', null)).toBe('shell');   // edamame prior
+    expect(beanUse('bean', 'lima', 'Fordhook', null)).toBe('shell');
+    expect(beanUse('bean', 'cowpea', 'Pinkeye Purple Hull', null)).toBe('dry');
+    expect(beanUse('bean', 'common', 'Silent Bean', null)).toBeNull();        // no signal, no prior
+  });
+});
+
+describe('computeDerivedTags — bean end-to-end', () => {
+  const BEANS = { bean: { slug: 'bean', display_name: 'Bean', default_lifecycle: 'annual' } };
+  it('Provider bush snap common bean -> type+lifecycle+3 bean facets', () => {
+    const out = computeDerivedTags({ crop_type_slug: 'bean', genus: 'Phaseolus', species: 'vulgaris', name: 'Provider', growth_habit: 'bush, 50 days, reliable green snap bean' }, BEANS);
+    expect(out).toContainEqual({ facet: 'type', slug: 'bean', label: 'Bean' });
+    expect(out).toContainEqual({ facet: 'bean_type', slug: 'common', label: 'Common bean' });
+    expect(out).toContainEqual({ facet: 'bean_habit', slug: 'bush', label: 'Bush' });
+    expect(out).toContainEqual({ facet: 'bean_use', slug: 'snap', label: 'Snap / green' });
+  });
+  it('Scarlet Runner: habit from prose (not name), dual use', () => {
+    const out = computeDerivedTags({ crop_type_slug: 'bean', genus: 'Phaseolus', species: 'coccineus', name: 'Scarlet Runner', growth_habit: 'vigorous climber, 8-10 ft; young pods or dried beans' }, BEANS);
+    expect(out).toContainEqual({ facet: 'bean_type', slug: 'runner', label: 'Runner bean' });
+    expect(out).toContainEqual({ facet: 'bean_habit', slug: 'pole', label: 'Pole' });
+    expect(out).toContainEqual({ facet: 'bean_use', slug: 'dual_purpose', label: 'Dual-purpose' });
+  });
+  it('a bare bean (crop only, no attributes) emits ONLY type+lifecycle', () => {
+    const out = computeDerivedTags({ crop_type_slug: 'bean' }, BEANS);
+    expect(out).toEqual([
+      { facet: 'type', slug: 'bean', label: 'Bean' },
       { facet: 'lifecycle', slug: 'annual', label: 'Annual' },
     ]);
   });
