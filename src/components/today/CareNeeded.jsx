@@ -270,8 +270,8 @@ export default function CareNeeded({ plan }) {
     setBulkProgress(null)
   }, [candidatesFor])
 
-  const runBulk = useCallback(async () => {
-    const targets = candidatesFor(bulkType).filter(r => bulkChecked.has(r.key))
+  const runBulk = useCallback(async (etype, keys) => {
+    const targets = candidatesFor(etype).filter(r => keys.has(r.key))
     if (!targets.length) { setBulkType(null); return }
     setBulkProgress({ done: 0, total: targets.length })
     const createdIds = []
@@ -298,7 +298,7 @@ export default function CareNeeded({ plan }) {
         setLogged(prev => { const n = new Set(prev); doneKeys.forEach(k => n.delete(k)); return n })
       },
     })
-  }, [fetch, toast, bulkType, bulkChecked, candidatesFor, announce])
+  }, [fetch, toast, candidatesFor, announce])
 
   const isExpanded = (g) => (g.key in overrides) ? overrides[g.key] : (expandAll || g.key === autoExpandKey)
 
@@ -326,10 +326,19 @@ export default function CareNeeded({ plan }) {
               {presentTypes.map(et => {
                 const n = candidatesFor(et).length
                 return (
-                  <button key={et} type="button" onClick={() => openBulk(et)}
-                    style={{ minHeight: 36, border: '1px solid ' + P.greenLight, background: P.greenPale, color: P.green, borderRadius: 999, padding: '6px 12px', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>
-                    Log all {bulkLabel(et)} ({n})
-                  </button>
+                  <span key={et} style={{ display: 'inline-flex', alignItems: 'stretch', border: '1px solid ' + P.greenLight, background: P.greenPale, borderRadius: 999, overflow: 'hidden' }}>
+                    <button type="button" disabled={!!bulkProgress}
+                      onClick={() => runBulk(et, new Set(candidatesFor(et).map(r => r.key)))}
+                      aria-label={'Log all ' + bulkLabel(et) + ' (' + n + ')'}
+                      style={{ minHeight: 36, border: 'none', background: 'none', color: P.green, padding: '6px 12px', fontSize: '0.8rem', fontWeight: 700, cursor: bulkProgress ? 'default' : 'pointer' }}>
+                      Log all {bulkLabel(et)} ({n})
+                    </button>
+                    <button type="button" disabled={!!bulkProgress} onClick={() => openBulk(et)}
+                      aria-label={'Choose which ' + bulkLabel(et) + ' to log'}
+                      style={{ minHeight: 36, width: 34, border: 'none', borderLeft: '1px solid ' + P.greenLight, background: 'none', color: P.green, fontSize: '0.8rem', fontWeight: 700, cursor: bulkProgress ? 'default' : 'pointer' }}>
+                      ⋯
+                    </button>
+                  </span>
                 )
               })}
             </div>
@@ -365,7 +374,7 @@ export default function CareNeeded({ plan }) {
                 )
               })}
             </div>
-            <button type="button" onClick={runBulk} disabled={!!bulkProgress || bulkChecked.size === 0}
+            <button type="button" onClick={() => runBulk(bulkType, bulkChecked)} disabled={!!bulkProgress || bulkChecked.size === 0}
               style={{ marginTop: 12, width: '100%', minHeight: 46, border: 'none', borderRadius: 12, background: bulkChecked.size ? P.green : P.greenPale, color: bulkChecked.size ? P.white : P.green, fontWeight: 700, fontSize: '0.9rem', cursor: bulkChecked.size ? 'pointer' : 'default' }}>
               {bulkProgress ? 'Logging ' + bulkProgress.done + ' of ' + bulkProgress.total + '…' : 'Log all (' + bulkChecked.size + ')'}
             </button>
