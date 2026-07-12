@@ -47,6 +47,7 @@ export function secondaryGroupsExcluding(primaryValues) {
 }
 
 const SCOPE_KEY = 'quicklog.lastScope'
+const EVENT_TYPE_KEY = 'quicklog.lastEventType'
 
 // V3-LOGMANY-001: GET /api/locations returns {locations,...} (object), not a bare array.
 // Unwrap to the array LogMany/ScopeChecklist expect; tolerate either shape.
@@ -78,7 +79,13 @@ export default function LogMany() {
   const [ready, setReady]   = useState(false)
   const [loadErr, setLoadErr] = useState(null)
 
-  const [eventType, setEventType] = useState('watering')
+  const [eventType, setEventType] = useState(() => {
+    try {
+      const saved = localStorage.getItem(EVENT_TYPE_KEY)
+      if (saved && BATCH_EVENT_TYPES.includes(saved)) return saved
+    } catch (e) {}
+    return 'watering'
+  })
   // V3-EVENT-008 (V002 §5): bulk back-dating. Frost / bring-in events are often logged
   // the morning after. Empty string = "now" (server defaults to today, noon-anchored).
   const [eventDate, setEventDate] = useState('')
@@ -162,6 +169,7 @@ export default function LogMany() {
         ...(eventDate ? { event_date: eventDate } : {}),
       }) })
       try { localStorage.setItem(SCOPE_KEY, JSON.stringify(scope)) } catch (e) {}
+      try { localStorage.setItem(EVENT_TYPE_KEY, eventType) } catch (e) {}
       // MVP-Critter — critters are awarded SERVER-SIDE by the events Lambda batch handler
       // (Phase B++ refactor 2026-05-30). V3-CRITTER-002: wake CritterArrivalController so the
       // Stage-1 flash fires on this page without a route change. The controller's effect dep
