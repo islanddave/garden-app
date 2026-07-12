@@ -92,3 +92,89 @@ describe('DRG-WXPROB-001: rain callout shows a probability-weighted amount', () 
     expect(c.text).toBe('0.5" rain tomorrow — water containers today, let in-ground beds wait');
   });
 });
+
+// CareEngine C2 cadence-floor: every one of the 15 census targets that previously fell through to
+// cad.default must now resolve via a real by_variety or by_genus_fallback entry. This test FAILS if the
+// cadence-data-v2.json additions are reverted (the targets would resolve _via 'default' again).
+describe('CareEngine C2: all 15 census targets resolve off cad.default', () => {
+  // (variety, name, genus, container) exactly per the design's coverage_check / human_table.
+  const TARGETS = [
+    { label: 'Alaska Mix (trough, genus null)',        p: { name: 'Alaska Mix', variety: 'Alaska Mix', genus: null, container_type: 'trough' },        expect_via: 'variety:Alaska Mix' },
+    { label: 'Alaska Mix (genus Tropaeolum)',          p: { name: 'Alaska Mix', variety: 'Alaska Mix', genus: 'Tropaeolum', container_type: null },    expect_via: 'variety:Alaska Mix' },
+    { label: 'Jewel Mix Nasturtium (Tropaeolum pot)',  p: { name: 'Jewel Mix Nasturtium', variety: 'Jewel Mix', genus: 'Tropaeolum', container_type: 'plastic_pot' }, expect_via: 'genus:Tropaeolum' },
+    { label: 'Beefsteak (genus null)',                 p: { name: 'Beefsteak', variety: 'Beefsteak', genus: null, container_type: null },               expect_via: 'variety:Beefsteak' },
+    { label: 'Valencia (fabric_bag)',                  p: { name: 'Valencia', variety: 'Valencia', genus: null, container_type: 'fabric_bag' },         expect_via: 'variety:Valencia' },
+    { label: 'Black Krim (fabric_bag)',                p: { name: 'Black Krim', variety: 'Black Krim', genus: null, container_type: 'fabric_bag' },     expect_via: 'variety:Black Krim' },
+    { label: 'Santa Fe Grande (genus null)',           p: { name: 'Santa Fe Grande', variety: 'Santa Fe Grande', genus: null, container_type: null },   expect_via: 'variety:Santa Fe Grande' },
+    { label: 'Pachyphytum (plastic_pot)',              p: { name: 'Pachyphytum', variety: 'Pachyphytum', genus: null, container_type: 'plastic_pot' },  expect_via: 'variety:Pachyphytum' },
+    { label: 'Graptosedum (plastic_pot)',              p: { name: 'Graptosedum', variety: 'Graptosedum', genus: null, container_type: 'plastic_pot' },  expect_via: 'variety:Graptosedum' },
+    { label: 'Jade Plant (Crassula ovata/Crassula)',   p: { name: 'Jade Plant', variety: 'Crassula ovata', genus: 'Crassula', container_type: null },   expect_via: 'genus:Crassula' },
+    { label: 'Spider Plant (variety null, name)',      p: { name: 'Spider Plant', variety: null, genus: null, container_type: 'plastic_pot' },          expect_via: 'variety:Spider Plant' },
+    { label: 'Chrysanthemum (genus fallback)',         p: { name: 'Chrysanthemum', variety: null, genus: 'Chrysanthemum', container_type: 'plastic_pot' }, expect_via: 'genus:Chrysanthemum' },
+    { label: 'Pineapple Sage (genus Salvia)',          p: { name: 'Pineapple Sage', variety: null, genus: 'Salvia', container_type: 'plastic_pot' },    expect_via: 'genus:Salvia' },
+    { label: 'Hosta (in_ground)',                      p: { name: 'Hosta', variety: null, genus: 'Hosta', container_type: 'in_ground' },                expect_via: 'genus:Hosta' },
+    { label: 'Lemon Thyme (variety null, name key)',   p: { name: 'Lemon Thyme', variety: null, genus: null, container_type: 'ceramic' },               expect_via: 'variety:Lemon Thyme' },
+  ];
+
+  it('exercises exactly 15 census targets', () => {
+    expect(TARGETS.length).toBe(15);
+  });
+
+  it.each(TARGETS)('$label resolves off default via $expect_via', ({ p, expect_via }) => {
+    const c = resolveCadence({ ...p, db_cadence: null }, cad);
+    expect(c._via).not.toBe('default');
+    expect(c._via).toBe(expect_via);
+  });
+
+  it('spot-check: succulents get a soak-and-dry container interval (>= 10 days)', () => {
+    // Pachyphytum (by_variety) and Jade (by_genus_fallback Crassula) — the exact over-watering failure the
+    // 3-day default caused. Both must be at least 10 days in a container.
+    const pachy = resolveCadence({ name: 'Pachyphytum', variety: 'Pachyphytum', genus: null, db_cadence: null }, cad);
+    const jade = resolveCadence({ name: 'Jade Plant', variety: 'Crassula ovata', genus: 'Crassula', db_cadence: null }, cad);
+    expect(pachy.water_interval_days_container).toBeGreaterThanOrEqual(10);
+    expect(jade.water_interval_days_container).toBeGreaterThanOrEqual(10);
+    // succulent inground is null (never in-ground here)
+    expect(pachy.water_interval_days_inground).toBeNull();
+  });
+
+  it('spot-check: tomato targets match the Solanum/tomato container baseline (1 / 3)', () => {
+    for (const name of ['Beefsteak', 'Valencia', 'Black Krim']) {
+      const c = resolveCadence({ name, variety: name, genus: null, db_cadence: null }, cad);
+      expect(c.water_interval_days_container).toBe(1); // matches by_genus_fallback Solanum container:1
+      expect(c.water_interval_days_inground).toBe(3);
+      expect(/tomato/i.test(c.crop)).toBe(true);
+    }
+    // and the Solanum genus baseline the design anchors to is container:1
+    expect(cad.by_genus_fallback.Solanum.water_interval_days_container).toBe(1);
+  });
+
+  it('spot-check: pepper target anchors to Capsicum baseline (container 2 / inground 4)', () => {
+    const c = resolveCadence({ name: 'Santa Fe Grande', variety: 'Santa Fe Grande', genus: null, db_cadence: null }, cad);
+    expect(c.water_interval_days_container).toBe(2);
+    expect(c.water_interval_days_inground).toBe(4);
+  });
+
+  it('routes end-to-end through generatePlan: not one target lands on cad.default', () => {
+    // Build plantings for all 15 and assert none resolve to the blanket default inside a real plan run.
+    const plantings = TARGETS.map((t, i) => ({
+      id: 'c2-' + i, project: 'Census', project_id: 'pc', status: 'vegetative',
+      substrate_start: '2026-05-01', last_water: '2026-01-01', last_fert: null, db_cadence: null,
+      ...t.p,
+    }));
+    const plan = generatePlan({
+      plantings, cadence: cad, fertModel: fm, today: '2026-07-12',
+      weather: { tonightLow: 62, highToday: 80, unit: 'F' }, ownerFallback: 'dave',
+    });
+    const rows = Object.values(plan.users).flatMap(u => [...u.tasks.water_due, ...u.tasks.no_history]);
+    // every target appears with a resolved crop that is NOT the unknown/default marker
+    for (const t of TARGETS) {
+      const row = rows.find(r => r.id.startsWith('c2-') && r.name === t.p.name);
+      expect(row).toBeTruthy();
+      expect(row.crop).not.toBe('unknown');
+    }
+    // and directly confirm _via for each via resolveCadence (the load-bearing assertion)
+    for (const t of TARGETS) {
+      expect(resolveCadence({ ...t.p, db_cadence: null }, cad)._via).not.toBe('default');
+    }
+  });
+});
