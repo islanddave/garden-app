@@ -82,13 +82,27 @@ describe('CareNeeded — Slice 7', () => {
     expect(screen.getByText(/All caught up/i)).toBeTruthy()
   })
 
-  it('bulk chip opens a scoped fly-up and fans out one POST per checked row', async () => {
+  it('primary bulk chip tap fans out one POST per row directly — no confirm sheet — with aggregate undo', async () => {
     render(<CareNeeded plan={plan()} />)
-    fireEvent.click(screen.getByRole('button', { name: /Log all watering \(2\)/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^Log all watering \(2\)$/i }))
+    // Fires immediately: no dialog is opened by the primary tap.
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await waitFor(() => expect(fetchMock.mock.calls.filter(c => c[0] === '/api/events').length).toBe(2))
+    await waitFor(() => expect(screen.queryByText('Bhut Jolokia')).toBeNull())
+    await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalled())
+  })
+
+  it('secondary "choose" control still opens the scoped sheet and logs only the checked subset', async () => {
+    render(<CareNeeded plan={plan()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Choose which watering to log/i }))
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /^Log all \(2\)/i }))
-    await waitFor(() => expect(fetchMock.mock.calls.filter(c => c[0] === '/api/events').length).toBe(2))
+    // Deselect one of the two pre-checked rows, then log the subset.
+    const checkboxes = screen.getAllByRole('checkbox')
+    expect(checkboxes.length).toBe(2)
+    fireEvent.click(checkboxes[0])
+    fireEvent.click(screen.getByRole('button', { name: /^Log all \(1\)/i }))
+    await waitFor(() => expect(fetchMock.mock.calls.filter(c => c[0] === '/api/events').length).toBe(1))
     await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalled())
   })
 })
