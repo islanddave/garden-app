@@ -792,7 +792,7 @@
    "water_volume_note": "Deep every 4-6 days; dry between; gritty mix",
    "soil_moisture_target": "dry to barely moist between",
    "drought_tolerance": "high",
-   "heat_response": "tolerates heat; may go semi-dormant \u2014 do not increase water",
+   "heat_response": "tolerates heat; may go semi-dormant — do not increase water",
    "cold": {
     "tender": false,
     "protect_below_F": 10
@@ -960,7 +960,7 @@
    "water_interval_days_inground": null,
    "water_method": "even_moist_top2in",
    "water_volume_note": "When top 0.5-1in dry; small frequent; >60% humidity",
-   "soil_moisture_target": "consistently evenly moist \u2014 never dry, never soggy",
+   "soil_moisture_target": "consistently evenly moist — never dry, never soggy",
    "drought_tolerance": "low",
    "heat_response": "tropical; sensitive to dry air/AC",
    "cold": {
@@ -1198,7 +1198,7 @@
    "water_interval_days_inground": 3,
    "water_method": "drench_to_drainage",
    "water_volume_note": "7-10 gal; deep each time; BER from inconsistency",
-   "soil_moisture_target": "evenly moist \u2014 never dry out",
+   "soil_moisture_target": "evenly moist — never dry out",
    "drought_tolerance": "low",
    "heat_response": "bred for cool nights; most heat-vulnerable pepper here; afternoon shade",
    "cold": {
@@ -1496,7 +1496,7 @@
    },
    "fertilize_interval_days": 14,
    "confidence": "medium",
-   "notes": "AMBIGUOUS: most likely Sugar Rush Peach pepper; if peach tree, differs entirely \u2014 clarify"
+   "notes": "AMBIGUOUS: most likely Sugar Rush Peach pepper; if peach tree, differs entirely — clarify"
   },
   "Peppermint": {
    "crop": "herb (mint)",
@@ -1530,7 +1530,7 @@
    },
    "fertilize_interval_days": 14,
    "confidence": "medium",
-   "notes": "AMBIGUOUS: likely Pineapple tomato; if Pineapple sage, drought-tolerant 7-10d \u2014 clarify"
+   "notes": "AMBIGUOUS: likely Pineapple tomato; if Pineapple sage, drought-tolerant 7-10d — clarify"
   },
   "Pineapple Tomato": {
    "crop": "tomato",
@@ -2125,7 +2125,7 @@
    },
    "fertilize_interval_days": 14,
    "confidence": "high",
-   "notes": "Indeterminate cherry; very crack-prone \u2014 keep watering steady"
+   "notes": "Indeterminate cherry; very crack-prone — keep watering steady"
   },
   "Sweet Bell (generic)": {
    "crop": "pepper (sweet bell)",
@@ -2499,7 +2499,7 @@
    },
    "fertilize_interval_days": 30,
    "confidence": "high",
-   "notes": "Houseplant; overwatering primary killer \u2014 err dry"
+   "notes": "Houseplant; overwatering primary killer — err dry"
   },
   "Echeveria": {
    "crop": "succulent",
@@ -2567,7 +2567,7 @@
    },
    "fertilize_interval_days": 180,
    "confidence": "high",
-   "notes": "DO NOT WATER NOW \u2014 summer dormancy; resume Sept; watering now = rot/death",
+   "notes": "DO NOT WATER NOW — summer dormancy; resume Sept; watering now = rot/death",
    "dormant_skip": true
   },
   "Oregon Spring": {
@@ -2677,7 +2677,7 @@
    "water_interval_days_container": null,
    "water_interval_days_inground": null,
    "water_method": null,
-   "water_volume_note": "Placeholder \u2014 no real plant",
+   "water_volume_note": "Placeholder — no real plant",
    "soil_moisture_target": null,
    "drought_tolerance": "low",
    "heat_response": null,
@@ -2687,7 +2687,7 @@
    },
    "fertilize_interval_days": null,
    "confidence": "low",
-   "notes": "Placeholder/test entry \u2014 exclude from plans",
+   "notes": "Placeholder/test entry — exclude from plans",
    "exclude": true
   },
   "Thai Dragon": {
@@ -2713,7 +2713,7 @@
    "water_interval_days_inground": 2,
    "water_method": "even_moist_top2in",
    "water_volume_note": "Consistently and evenly moist always; never fully dry",
-   "soil_moisture_target": "consistently moist to slightly wet \u2014 never dry-down",
+   "soil_moisture_target": "consistently moist to slightly wet — never dry-down",
    "drought_tolerance": "low",
    "heat_response": "loves heat but needs abundant moisture; pot-bound stops producing",
    "cold": {
@@ -2740,6 +2740,159 @@
    "fertilize_interval_days": 14,
    "confidence": "high",
    "notes": "More drought-tolerant than most annuals; err toward underwatering"
+  },
+  "Alaska Mix": {
+   "crop": "annual flower (nasturtium, Tropaeolum)",
+   "water_interval_days_container": 3,
+   "water_interval_days_inground": 5,
+   "water_method": "deep_soak",
+   "water_volume_note": "Water until drainage when top inch dry; ~1 in/week; lean soil, do not over-feed",
+   "soil_moisture_target": "allow top 1in to dry between; slight dry-down preferred",
+   "drought_tolerance": "medium",
+   "heat_response": "moderately drought-tolerant once established; check containers daily in extreme heat",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 32
+   },
+   "fertilize_interval_days": 45,
+   "confidence": "high",
+   "notes": "Variegated bush nasturtium; moderate water on lean soil — excess N/overwatering yields foliage not flowers; frost-tender annual. Covers both census Alaska Mix rows (variety match wins before genus)."
+  },
+  "Beefsteak": {
+   "crop": "tomato (beefsteak)",
+   "water_interval_days_container": 1,
+   "water_interval_days_inground": 3,
+   "water_method": "deep_soak",
+   "water_volume_note": "Drench until runoff; 10+ gal bags heavy daily in heat; mulch surface",
+   "soil_moisture_target": "evenly moist, never soggy",
+   "drought_tolerance": "low",
+   "heat_response": ">88F twice-daily in bags; prevents BER and radial cracking",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 50
+   },
+   "fertilize_interval_days": 14,
+   "confidence": "high",
+   "notes": "Generic large-fruited beefsteak indeterminate; follows the Solanum/tomato container baseline (container 1). Genus SHOULD be Solanum (already resolves) — backfill in prod; this by_variety is the immediate patch."
+  },
+  "Valencia": {
+   "crop": "tomato",
+   "water_interval_days_container": 1,
+   "water_interval_days_inground": 3,
+   "water_method": "deep_soak",
+   "water_volume_note": "Drench until drainage; fabric bag dries top-to-bottom fast — 1-2 gal am+pm in 85F+",
+   "soil_moisture_target": "evenly moist, never soggy",
+   "drought_tolerance": "low",
+   "heat_response": ">85F fabric bags dry fast; check twice daily; blossom drop >95F",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 50
+   },
+   "fertilize_interval_days": 14,
+   "confidence": "high",
+   "notes": "Orange globe indeterminate heirloom; large-fruited tomato baseline. In a fabric bag the engine's bag-heat-gate withholds rain credit >85F. Genus SHOULD be Solanum — backfill in prod."
+  },
+  "Black Krim": {
+   "crop": "tomato (heirloom beefsteak)",
+   "water_interval_days_container": 1,
+   "water_interval_days_inground": 3,
+   "water_method": "deep_soak",
+   "water_volume_note": "Deep until drainage; consistent volume — irregular wet/dry cracks the fruit",
+   "soil_moisture_target": "evenly moist; uneven moisture causes cracking",
+   "drought_tolerance": "low",
+   "heat_response": ">88F daily/twice-daily in bag; cracking risk if dried then drenched",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 50
+   },
+   "fertilize_interval_days": 14,
+   "confidence": "high",
+   "notes": "Russian beefsteak heirloom; crack-prone, so steady moisture matters. Fabric bag. Genus SHOULD be Solanum — backfill in prod."
+  },
+  "Santa Fe Grande": {
+   "crop": "hot pepper",
+   "water_interval_days_container": 2,
+   "water_interval_days_inground": 4,
+   "water_method": "deep_soak",
+   "water_volume_note": "Deep soak every ~2 days; let top inch dry; water at base, avoid overhead",
+   "soil_moisture_target": "evenly moist top 2in, not soggy",
+   "drought_tolerance": "medium",
+   "heat_response": ">88F may need daily in containers; blossom drop at extremes, recovers",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 50
+   },
+   "fertilize_interval_days": 21,
+   "confidence": "high",
+   "notes": "Medium-hot yellow wax pepper (C. annuum, ~5k SHU); follows the Capsicum container baseline (Anaheim/Ancho). Genus SHOULD be Capsicum — backfill in prod."
+  },
+  "Pachyphytum": {
+   "crop": "succulent (Pachyphytum, moonstones)",
+   "water_interval_days_container": 14,
+   "water_interval_days_inground": null,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "Soak until drainage then leave bone-dry ~2 weeks; bottom-water to protect farina",
+   "soil_moisture_target": "completely dry between waterings; never sit wet",
+   "drought_tolerance": "high",
+   "heat_response": "tolerates heat; growth slows in low winter light — stretch interval further",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 40
+   },
+   "fertilize_interval_days": 30,
+   "confidence": "high",
+   "notes": "Soft succulent with plump water-storing leaves; soak-and-dry is non-negotiable. Overwatering (the current 3-day default) causes root/stem rot. Indoor year-round; conservative interval — under-water beats rot."
+  },
+  "Graptosedum": {
+   "crop": "succulent (Graptosedum)",
+   "water_interval_days_container": 14,
+   "water_interval_days_inground": null,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "Soak until drainage, then dry completely; every ~2 weeks in active growth",
+   "soil_moisture_target": "completely dry between waterings",
+   "drought_tolerance": "high",
+   "heat_response": "heat/sun tolerant, stress color normal; overwatering primary failure",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 40
+   },
+   "fertilize_interval_days": 30,
+   "confidence": "high",
+   "notes": "Graptopetalum x Sedum hybrid rosette; identical soak-and-dry regime to Echeveria. Err dry. Indoor year-round."
+  },
+  "Spider Plant": {
+   "crop": "houseplant (spider plant, Chlorophytum)",
+   "water_interval_days_container": 7,
+   "water_interval_days_inground": null,
+   "water_method": "drench_to_drainage",
+   "water_volume_note": "Thorough until drainage when top 1-2in dry; ~weekly in summer growth",
+   "soil_moisture_target": "top 1-2in dry between; tuberous roots buffer drought",
+   "drought_tolerance": "medium",
+   "heat_response": "stable indoor 65-85F; slightly more water in active summer growth",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 50
+   },
+   "fertilize_interval_days": 30,
+   "confidence": "high",
+   "notes": "Fleshy tuberous roots store water, so it forgives a missed watering; let it dry down between. Leaf-tip burn comes from fluoride/salts — flush occasionally. Indoor; moderate-infrequent. Genus should be Chlorophytum (see data-quality)."
+  },
+  "Lemon Thyme": {
+   "crop": "herb (lemon thyme, Thymus)",
+   "water_interval_days_container": 6,
+   "water_interval_days_inground": 10,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "Deep every ~5-7 days, dry completely between; ~1 in/week max; sharp drainage",
+   "soil_moisture_target": "dry to barely moist between; top 2-3in dry before water",
+   "drought_tolerance": "high",
+   "heat_response": "thrives hot/dry; heat intensifies oils; do not increase water in heat",
+   "cold": {
+    "tender": false,
+    "protect_below_F": 10
+   },
+   "fertilize_interval_days": 45,
+   "confidence": "high",
+   "notes": "Mediterranean subshrub (Thymus x citriodorus); drought-tolerant, needs sharp drainage — overwatering is the primary kill. Hardy in 5b. Keyed on name because variety is null. Crop label keeps 'thyme' so the engine treats it as a Mediterranean herb (skips force-feeding)."
   }
  },
  "by_genus_fallback": {
@@ -2882,6 +3035,91 @@
   "Cucurbita": {
    "water_interval_days_container": 1,
    "fertilize_interval_days": 14
+  },
+  "Tropaeolum": {
+   "crop": "nasturtium (Tropaeolum)",
+   "water_interval_days_container": 3,
+   "water_interval_days_inground": 5,
+   "water_method": "deep_soak",
+   "water_volume_note": "Water until drainage when top inch dry; ~1 in/week; keep soil lean",
+   "soil_moisture_target": "allow top 1in to dry between; slight dry-down preferred",
+   "drought_tolerance": "medium",
+   "heat_response": "moderately drought-tolerant established; daily container checks in extreme heat",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 32
+   },
+   "fertilize_interval_days": 45,
+   "confidence": "high",
+   "notes": "Annual; moderate water, low feed (excess nitrogen suppresses bloom). Durable fallback for any nasturtium cultivar not keyed by variety (e.g. Jewel Mix)."
+  },
+  "Crassula": {
+   "crop": "succulent (jade, Crassula)",
+   "water_interval_days_container": 16,
+   "water_interval_days_inground": null,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "Soak until drainage, then dry completely; ~every 2-3 weeks, less in low light",
+   "soil_moisture_target": "completely dry between waterings; thick leaves store water",
+   "drought_tolerance": "high",
+   "heat_response": "heat/sun tolerant; growth slows in low light — extend interval",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 40
+   },
+   "fertilize_interval_days": 30,
+   "confidence": "high",
+   "notes": "Jade (Crassula ovata) and kin; very drought-tolerant thick-leaved succulent. Overwatering rots the stem base. Indoor year-round. Genus fallback covers Jade Plant (variety 'Crassula ovata'/name 'Jade Plant' not keyed by variety)."
+  },
+  "Chrysanthemum": {
+   "crop": "flowering perennial (Chrysanthemum)",
+   "water_interval_days_container": 3,
+   "water_interval_days_inground": 5,
+   "water_method": "deep_soak",
+   "water_volume_note": "Deep water every ~3 days or when top inch dry; well-drained; drip preferred",
+   "soil_moisture_target": "evenly moist, top inch dry between; do not let wilt at bud",
+   "drought_tolerance": "medium",
+   "heat_response": ">90F check daily in pots; steady moisture during bud/bloom",
+   "cold": {
+    "tender": false,
+    "protect_below_F": 28
+   },
+   "fertilize_interval_days": 28,
+   "confidence": "high",
+   "notes": "Garden mum; moderate steady water, especially at bud/bloom; hates waterlogging. Garden types are hardy-ish with mulch; florist mums are tenderer (protect_below_F conservative). Durable fallback for any Chrysanthemum cultivar."
+  },
+  "Salvia": {
+   "crop": "Salvia (pineapple, S. elegans)",
+   "water_interval_days_container": 3,
+   "water_interval_days_inground": 4,
+   "water_method": "even_moist_top2in",
+   "water_volume_note": "Water when top inch dry; richer, moister soil than culinary sage; ~1-1.5 in/week",
+   "soil_moisture_target": "evenly moist, top inch dry between",
+   "drought_tolerance": "medium",
+   "heat_response": "loves heat with adequate water; afternoon scorch prevented by steady moisture",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 32
+   },
+   "fertilize_interval_days": 30,
+   "confidence": "high",
+   "notes": "Tender salvia (pineapple sage, S. elegans): unlike Mediterranean culinary sage it wants consistent moisture and moderate feeding, and is frost-tender (bring in before freeze). Crop label deliberately avoids the substring 'sage' so the engine's isMedHerb() does NOT suppress feeding or add a drought rain-hold. Culinary Salvia officinalis and rosemary keep their own by_variety entries, so this fallback only catches ornamental/tender salvias."
+  },
+  "Hosta": {
+   "crop": "shade perennial (Hosta)",
+   "water_interval_days_container": 3,
+   "water_interval_days_inground": 4,
+   "water_method": "deep_soak",
+   "water_volume_note": "~1 in/week deep water, more in heat; morning; avoid wetting foliage (slug/leaf issues)",
+   "soil_moisture_target": "consistently moist, not waterlogged",
+   "drought_tolerance": "low",
+   "heat_response": "leaf scorch/wilt in sustained 90F+ afternoon sun; water sooner in heat",
+   "cold": {
+    "tender": false,
+    "protect_below_F": null
+   },
+   "fertilize_interval_days": 45,
+   "confidence": "high",
+   "notes": "Shade perennial; likes regular, even moisture. Fully hardy in 5b (dies back and returns) — no cold protection needed, so cold.tender is false. His planting is in-ground, so the engine uses the inground interval (4)."
   }
  },
  "default": {
