@@ -1,5 +1,15 @@
 [
   {
+    "version": "3.44.0",
+    "date": "2026-07-12",
+    "highlights": [
+      "Logging is faster. On the Today tab, “Log all watering” and “Log all care” now log in a single tap (with undo) instead of a tap-then-confirm. You can still pick a subset with the “⋯” control.",
+      "The log forms remember your last choices — Log One keeps your last project, and Log Many keeps your last event type — so a repeat entry is a couple of taps instead of re-selecting every time.",
+      "Set a photo as a planting’s featured image in one tap, right from the photo viewer.",
+      "Smarter watering guidance for 15 plants that were stuck on a generic 3-day schedule: succulents, jade, and houseplants stretched to 1–2 weeks (no more over-watering), and tomatoes, peppers, nasturtiums, mums, hosta, sages and thyme put on sensible cadences."
+    ]
+  },
+  {
     "version": "3.43.0",
     "date": "2026-07-10",
     "highlights": [
