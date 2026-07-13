@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.45.0",
+    "date": "2026-07-13",
+    "highlights": [
+      "Battery: the app no longer checks for new critter rewards while it's running in the background, so it wakes your phone's radio less when you're not actively using it."
+    ]
+  },
+  {
     "version": "3.44.0",
     "date": "2026-07-12",
     "highlights": [
