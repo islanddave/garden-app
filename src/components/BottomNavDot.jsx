@@ -59,8 +59,14 @@ export default function BottomNavDot({
 
   // Refresh on a slow interval as well (quiet-hours expiry doesn't fire visibilitychange).
   // 60s is well below the typical quiet-hours window and far above any user-tap cadence.
+  // Battery (DRG-BATTERY-001): gate the interval's network call on document visibility so a
+  // hidden/backgrounded PWA stops waking the radio every 60s. The mount + visibilitychange
+  // handlers already refresh on return-to-foreground, so a hidden tick misses nothing and the
+  // reward dot is not delayed on resume.
   useEffect(() => {
-    const t = setInterval(refresh, 60_000)
+    const t = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') refresh()
+    }, 60_000)
     return () => clearInterval(t)
   }, [refresh])
 

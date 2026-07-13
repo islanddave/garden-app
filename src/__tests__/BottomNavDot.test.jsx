@@ -64,4 +64,27 @@ describe('BottomNavDot', () => {
     })
     expect(fetch).not.toHaveBeenCalled()
   })
+
+  // DRG-BATTERY-001 — the 60s interval must NOT hit the network while the document is hidden
+  // (backgrounded PWA), but must still fire when visible. Mount + visibilitychange refreshes are
+  // intentionally ungated, so this only asserts the interval branch.
+  it('interval skips the fetch while document is hidden, fires when visible (battery gate)', async () => {
+    let visState = 'hidden'
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visState })
+    vi.useFakeTimers()
+    try {
+      const fetch = vi.fn().mockResolvedValue([])
+      render(<BottomNavDot getToken={() => Promise.resolve('tok')} testFetchActiveCritters={fetch} />)
+      await vi.advanceTimersByTimeAsync(0) // flush the ungated mount refresh
+      const afterMount = fetch.mock.calls.length
+      await vi.advanceTimersByTimeAsync(60_000) // interval tick while hidden -> gated
+      expect(fetch).toHaveBeenCalledTimes(afterMount)
+      visState = 'visible'
+      await vi.advanceTimersByTimeAsync(60_000) // interval tick while visible -> fires
+      expect(fetch.mock.calls.length).toBeGreaterThan(afterMount)
+    } finally {
+      vi.useRealTimers()
+      delete document.visibilityState
+    }
+  })
 })
