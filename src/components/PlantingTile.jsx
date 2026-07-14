@@ -82,7 +82,7 @@ export default function PlantingTile({
           clear of the favorite corner (top-right) and the body below the photo. zIndex 5 so they
           sit above the card chrome but never block the photo link tap target. */}
       {critters.length > 0 && (
-        <div style={{ position: 'absolute', top: -10, left: 8, display: 'flex', gap: 2, zIndex: 5, pointerEvents: 'auto' }}>
+        <div style={{ position: 'absolute', top: 4, left: 8, right: 8, display: 'flex', flexWrap: 'wrap', gap: 2, zIndex: 5, pointerEvents: 'auto' }}>
           {critters.map(c => (
             <CritterSprite key={c.id} critter={c} onLongPress={onSpriteLongPress} onIntersect={onSpriteIntersect} spriteSize={22} />
           ))}

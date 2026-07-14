@@ -189,7 +189,12 @@ export const handler = async (event) => {
           AND CASE ${scopeType}
                 WHEN 'all'     THEN true
                 WHEN 'project' THEN pp.id = ${projectId}
-                WHEN 'space'   THEN pp.location_id IN (
+                WHEN 'space'   THEN COALESCE(p.location_id, pp.location_id) IN (
+                  -- BUG-SPACEFILTER-001: match on the PLANTING's own location first, project as
+                  -- fallback (planting-level location wins — same rule the Today tab uses). A
+                  -- planting reassigned to a sub-space (e.g. Drive > Trough) while its project
+                  -- sits elsewhere (e.g. Pasture > Bag Area) was previously invisible to the
+                  -- By-Space bulk filter, which only saw pp.location_id (the project's location).
                   -- V4-LOGMANYLOC-001: hierarchical cascade — a selected space matches its own
                   -- plantings PLUS every descendant location (recursive parent_id walk). A leaf
                   -- location with no children resolves to just itself (byte-identical to the old
