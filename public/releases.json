@@ -1,5 +1,16 @@
 [
   {
+    "version": "3.46.0",
+    "date": "2026-07-14",
+    "highlights": [
+      "Treatment logging: when you log a Pest treatment or a Doctored/Treated event, a new “Treatment details” section now appears right under the event type — type any pest or disease (with suggestions, no more being stuck on a fixed list), pick the product you used from your inventory (or type your own), and note the amount.",
+      "Fertilizer and amendment are now separate kinds in Inventory, so feeding and soil amendments don’t get lumped together.",
+      "Doctor Gardener findings now have a “Treated…” link that opens the treatment form already filled in for that plant and marks the finding resolved when you save.",
+      "By-space bulk logging now follows a planting’s own location — a planting you’ve moved to a sub-spot (like a Trough) is included when you log by that space, instead of only matching its project’s location.",
+      "Fixed earned-critter badges spilling off a plant card onto the group heading."
+    ]
+  },
+  {
     "version": "3.45.0",
     "date": "2026-07-13",
     "highlights": [
