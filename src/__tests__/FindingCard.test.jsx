@@ -52,4 +52,19 @@ describe('FindingCard', () => {
     render(<FindingCard finding={{ ...base, decay_state: 'fresh' }} />)
     expect(screen.queryByText('Mark resolved')).toBeNull()
   })
+
+  it('offers a Treated… deep-link carrying the source event + plant/project (V4-TREATLOG-001)', () => {
+    render(<FindingCard finding={{ ...base, finding_id: 'issue:evt9', plant_id: 'pl9', project_id: 'pr9' }} onResolve={() => {}} />)
+    const link = screen.getByText('Treated…')
+    const href = link.getAttribute('href')
+    expect(href).toContain('event_type=doctored')
+    expect(href).toContain('resolve=evt9')
+    expect(href).toContain('plant=pl9')
+    expect(href).toContain('project=pr9')
+  })
+
+  it('hides Treated… for an already-resolved finding', () => {
+    render(<FindingCard finding={{ ...base, decay_state: 'resolved' }} onResolve={() => {}} />)
+    expect(screen.queryByText('Treated…')).toBeNull()
+  })
 })

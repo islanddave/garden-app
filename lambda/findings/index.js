@@ -70,6 +70,7 @@ export const handler = async (event) => {
       SELECT
         e.id               AS event_id,
         e.plant_id         AS plant_id,
+        e.project_id       AS project_id,
         ent.id             AS entity_id,
         p.display_name     AS plant_name,
         pp.display_name    AS project_name,

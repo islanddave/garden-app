@@ -46,7 +46,7 @@ function resp(statusCode, body) {
 }
 
 const VALID_TYPES = ['consumable', 'durable'];
-const VALID_CATEGORIES = ['seeds','growing_media','lighting','shelving','tools','pest_control','containers','climate_control','nutrients_and_amendments','other'];
+const VALID_CATEGORIES = ['seeds','growing_media','lighting','shelving','tools','pest_control','containers','climate_control','nutrients_and_amendments','fertilizer','amendment','other'];
 const VALID_UNITS = ['each','packet','oz','fl oz','lb','gal','qt','bag','roll','sheet','other'];
 const VALID_CONDITIONS = ['excellent','good','fair','poor'];
 const VALID_STATUSES = ['active','depleted','retired','missing'];
@@ -282,14 +282,27 @@ export const handler = async (event) => {
     }
 
     if (method === 'GET') {
-      const rows = await sql`
-        SELECT i.*, pv.display_name AS variety_name
-        FROM inventory_items i
-        LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
-        WHERE i.created_by = ANY(${householdIds})
-          AND i.deleted_at IS NULL
-        ORDER BY i.created_at DESC
-      `;
+      // V4-TREATLOG-001: optional ?category=a,b,c filter (comma-list). Absent → all items.
+      const catParam = event.queryStringParameters?.category;
+      const cats = catParam ? catParam.split(',').map(c => c.trim()).filter(Boolean) : null;
+      const rows = cats && cats.length
+        ? await sql`
+            SELECT i.*, pv.display_name AS variety_name
+            FROM inventory_items i
+            LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
+            WHERE i.created_by = ANY(${householdIds})
+              AND i.deleted_at IS NULL
+              AND i.category = ANY(${cats})
+            ORDER BY i.created_at DESC
+          `
+        : await sql`
+            SELECT i.*, pv.display_name AS variety_name
+            FROM inventory_items i
+            LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
+            WHERE i.created_by = ANY(${householdIds})
+              AND i.deleted_at IS NULL
+            ORDER BY i.created_at DESC
+          `;
       return resp(200, rows);
     }
 

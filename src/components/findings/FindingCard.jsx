@@ -36,6 +36,16 @@ export default function FindingCard({ finding, onResolve, caretaker = null }) {
   // timeline. Reuses PATCH /api/events/:id {resolved:true}. Hidden once resolved and when no handler.
   const eventId = sourceEventId(f.finding_id)
   const canResolve = typeof onResolve === 'function' && !!eventId && f.decay_state !== 'resolved'
+  // V4-TREATLOG-001: "Treated…" opens the treatment form (event_type=doctored) prefilled to this
+  // planting/project, and resolves this finding once the treatment logs (EventNew reads ?resolve=).
+  const canTreat = !!eventId && f.decay_state !== 'resolved'
+  const treatHref = (() => {
+    if (!canTreat) return null
+    const q = new URLSearchParams({ event_type: 'doctored', resolve: eventId })
+    if (f.plant_id) q.set('plant', f.plant_id)
+    if (f.project_id) q.set('project', f.project_id)
+    return `/log?${q.toString()}`
+  })()
 
   const handleResolve = async () => {
     if (busy) return
@@ -82,6 +92,17 @@ export default function FindingCard({ finding, onResolve, caretaker = null }) {
         <span aria-hidden="true">·</span>
         <span>{DECAY_LABEL[f.decay_state] ?? f.decay_state}</span>
         <span style={{ flex: 1 }} />
+        {canTreat && (
+          <a
+            href={treatHref}
+            style={{
+              padding: 0, marginRight: 12, textDecoration: 'none',
+              fontSize: '0.7rem', fontWeight: 600, color: P.green,
+            }}
+          >
+            Treated…
+          </a>
+        )}
         {canResolve && (
           <button
             type="button"

@@ -729,6 +729,14 @@ export const handler = async (event) => {
       // B8 — normalize flagged_as_issue ONCE; use throughout SQL bindings.
       const flagged = body.flagged_as_issue === true;
       const severity = flagged ? body.severity : null;
+      // V4-TREATLOG-001: structured treatment capture (pest_treatment / doctored). All nullable;
+      // only recorded for those two types so a stray field on other events is ignored.
+      const isTreatment = eventType === 'pest_treatment' || eventType === 'doctored';
+      const treatmentProductId   = isTreatment ? (body.treatment_product_id ?? null) : null;
+      const treatmentProductText = isTreatment ? (body.treatment_product_text ?? null) : null;
+      const treatmentCategory    = isTreatment ? (body.treatment_category ?? null) : null;
+      const treatmentAmount      = isTreatment ? (body.treatment_amount ?? null) : null;
+      const pestTarget           = isTreatment ? (body.pest_target ?? null) : null;
       const isHarvest = eventType === 'harvest';
       const harvestQty = isHarvest ? body.harvest.quantity : null;
       const harvestUnit = isHarvest ? body.harvest.unit : null;
@@ -759,7 +767,8 @@ export const handler = async (event) => {
               (project_id, location_id, plant_id, event_type, event_date,
                notes, private_notes, quantity, quantity_numeric, is_public,
                logged_by, created_by, metadata,
-               flagged_as_issue, severity)
+               flagged_as_issue, severity,
+               treatment_product_id, treatment_product_text, treatment_category, treatment_amount, pest_target)
             VALUES (
               ${projectId},
               ${body.location_id ?? null},
@@ -775,13 +784,19 @@ export const handler = async (event) => {
               ${userId},
               ${metadata},
               ${flagged},
-              ${severity}
+              ${severity},
+              ${treatmentProductId},
+              ${treatmentProductText},
+              ${treatmentCategory},
+              ${treatmentAmount},
+              ${pestTarget}
             )
             RETURNING
               id, project_id, location_id, plant_id, event_type, event_date,
               notes, private_notes, quantity, quantity_numeric, is_public,
               logged_by, created_by, metadata,
               flagged_as_issue, severity, resolved_at, resolved_by,
+              treatment_product_id, treatment_product_text, treatment_category, treatment_amount, pest_target,
               created_at, updated_at
           ),
           new_harvest AS (

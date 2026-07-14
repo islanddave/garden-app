@@ -15,8 +15,12 @@ describe('inventory enum drift guard (client lists == verified live CHECK sets)'
   it('type values match the live CHECK', () => {
     expect(sorted(INVENTORY_TYPES.map(t => t.value))).toEqual(sorted(INVENTORY_CHECK_SETS.type))
   })
-  it('category values match the live CHECK', () => {
-    expect(sorted(INVENTORY_CATEGORIES.map(c => c.v))).toEqual(sorted(INVENTORY_CHECK_SETS.category))
+  it('category values match the live CHECK (picker excludes deprecated superset values)', () => {
+    // V4-TREATLOG-001: the live CHECK is a SUPERSET that still allows the deprecated
+    // 'nutrients_and_amendments' (back-compat during the split); the picker no longer offers it.
+    const DEPRECATED = ['nutrients_and_amendments']
+    expect(sorted(INVENTORY_CATEGORIES.map(c => c.v)))
+      .toEqual(sorted(INVENTORY_CHECK_SETS.category.filter(c => !DEPRECATED.includes(c))))
   })
   it('units / conditions / statuses match the live CHECK', () => {
     expect(sorted(INVENTORY_UNITS)).toEqual(sorted(INVENTORY_CHECK_SETS.unit))
@@ -29,7 +33,7 @@ describe('inventory enum drift guard (client lists == verified live CHECK sets)'
   })
   it('no dead legacy values leaked back in', () => {
     const cats = INVENTORY_CATEGORIES.map(c => c.v)
-    for (const dead of ['equipment', 'fertilizer', 'hand_tools', 'misc', 'soil_amendment'])
+    for (const dead of ['equipment', 'hand_tools', 'misc', 'soil_amendment', 'nutrients_and_amendments'])
       expect([...cats, ...INVENTORY_TYPES.map(t=>t.value)]).not.toContain(dead)
   })
 })

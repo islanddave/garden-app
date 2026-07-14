@@ -13,6 +13,7 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
+import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS, SEVERITY_LEVELS, ISSUE_OPTIONS } from '../lib/dropdownRegistry.js'
 
@@ -208,6 +209,8 @@ export default function EventNew() {
   const preselectedProjectId = searchParams.get('project') || ''
   const preselectedEventType = searchParams.get('event_type') || ''
   const preselectedPlantId = searchParams.get('plant') || ''
+  // V4-TREATLOG-001: DrG "Treated…" deep-link — resolve this source finding after the treatment logs.
+  const resolveEventId = searchParams.get('resolve') || ''
   const fromQuick = searchParams.get('fromquick')
   const { fetch: apiFetch, getToken } = useApiFetch()
   // M1 telemetry (Inc 0) — log_watering flow. Only counts when the event is a watering.
@@ -243,6 +246,9 @@ export default function EventNew() {
   // Tier 2 metadata state — { [field.key]: value } — only populated keys submitted
   const { show: showToast, showUndo } = useToast()
   const [metadataState, setMetadataState] = useState({})
+  // V4-TREATLOG-001: dedicated treatment capture (pest_treatment / doctored).
+  const [treatment, setTreatment] = useState({ pest_target: '', product_id: '', product_text: '', category: '', amount: '' })
+  const [inventory, setInventory] = useState([])
 
   // V3-EVENTCONTSIZE-001: optional new-container capture, shown for potting_up/transplant on a specific
   // planting. On submit it also PUTs the planting's container_type/container_size via the live /api/plants
@@ -288,7 +294,19 @@ export default function EventNew() {
     setHarvestError(null)
     // V4-FLAG-001: reset flag-mode fields when the event type changes.
     setSeverity(null); setIssueChoice(''); setIssueOther('')
+    // V4-TREATLOG-001: reset treatment capture on type change.
+    setTreatment({ pest_target: '', product_id: '', product_text: '', category: '', amount: '' })
   }, [form.event_type])
+
+  // V4-TREATLOG-001: lazy-load treatment-relevant inventory the first time a treatment event is
+  // selected (product picker source). Fetched once, filtered client-side by chosen kind.
+  useEffect(() => {
+    const isTreat = form.event_type === 'pest_treatment' || form.event_type === 'doctored'
+    if (!isTreat || inventory.length) return
+    apiFetch('/api/inventory-items?category=pest_control,fertilizer,amendment,other')
+      .then(rows => setInventory(Array.isArray(rows) ? rows : (rows?.items ?? [])))
+      .catch(() => {})
+  }, [apiFetch, form.event_type, inventory.length])
 
   // V3-EVENTCONTSIZE-001: clear the captured container when the event type or target planting changes.
   useEffect(() => { setContainer({ type: '', size: '' }) }, [form.event_type, form.plant_id])
@@ -474,6 +492,18 @@ export default function EventNew() {
           },
         }
       : {}
+
+    // V4-TREATLOG-001: structured treatment fields (only for pest_treatment / doctored).
+    const isTreatment = form.event_type === 'pest_treatment' || form.event_type === 'doctored'
+    const treatmentPayload = isTreatment
+      ? {
+          treatment_product_id:   treatment.product_id || null,
+          treatment_product_text: treatment.product_text.trim() || null,
+          treatment_category:     treatment.category || null,
+          treatment_amount:       treatment.amount.trim() || null,
+          pest_target:            treatment.pest_target.trim() || null,
+        }
+      : {}
     // 1 — POST event, get back { eventId, stats }
     let result
     try {
@@ -494,6 +524,7 @@ export default function EventNew() {
           metadata,
           ...harvestPayload,
           ...flagPayload,
+          ...treatmentPayload,
         }),
       })
     } catch (err) {
@@ -510,6 +541,13 @@ export default function EventNew() {
     // V4-STICKY-001: remember the chosen project so the next cold session pre-fills it.
     if (form.project_id) {
       try { localStorage.setItem(LAST_PROJECT_KEY, form.project_id) } catch { /* noop */ }
+    }
+
+    // V4-TREATLOG-001: DrG "Treated…" deep-link — mark the source finding resolved now that the
+    // treatment is logged. Non-fatal: the treatment event is already saved.
+    if (resolveEventId) {
+      try { await apiFetch(`/api/events/${resolveEventId}`, { method: 'PATCH', body: JSON.stringify({ resolved: true }) }) }
+      catch { /* resolve can be retried from DrG */ }
     }
 
     // V3-EVENTCONTSIZE-001: if a potting_up/transplant event captured a new container, persist it to the
@@ -640,6 +678,11 @@ export default function EventNew() {
               </>
             )}
           </Section>
+
+          {/* ── V4-TREATLOG-001: Treatment details — directly below Event Type for pest/treatment events ── */}
+          {(form.event_type === 'pest_treatment' || form.event_type === 'doctored') && (
+            <TreatmentDetails value={treatment} onChange={setTreatment} inventory={inventory} eventType={form.event_type} />
+          )}
 
           {/* ── Notes ── */}
           <Section label="Notes">

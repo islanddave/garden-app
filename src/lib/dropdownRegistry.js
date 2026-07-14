@@ -69,10 +69,8 @@ export const EVENT_METADATA_FIELDS = {
     { key: 'weight_g', label: 'Weight (g)', type: 'number' },
     { key: 'count',    label: 'Count',      type: 'number' },
   ],
-  pest_treatment: [
-    { key: 'pest',      label: 'Pest / disease', type: 'text' },
-    { key: 'treatment', label: 'Treatment used', type: 'text' },
-  ],
+  // V4-TREATLOG-001: pest_treatment + doctored are handled by the dedicated <TreatmentDetails>
+  // section (rendered directly below Event Type), NOT by this collapsible More-details panel.
 }
 
 // V1.2a-2 Wave 3: harvest panel — anchored quality scale (NOT a star widget).
@@ -143,10 +141,33 @@ export const SEVERITY_LEVELS = [
 
 // Static seeded issue list (Slice 1). Values ARE the stored label (metadata.issue_label, free text).
 export const ISSUE_OPTIONS = [
-  { group: 'Pests', options: ['Aphids', 'Spider mites', 'Whiteflies', 'Thrips', 'Fungus gnats', 'Caterpillars / loopers', 'Slugs / snails', 'Squash bugs', 'Cucumber beetles', 'Flea beetles', 'Tomato hornworm', 'Scale', 'Mealybugs'] },
+  { group: 'Pests', options: ['Aphids', 'Spider mites', 'Whiteflies', 'Thrips', 'Fungus gnats', 'Japanese beetle', 'Asiatic garden beetle', 'Colorado potato beetle', 'Cabbage moth / looper', 'Cabbage worm', 'Caterpillars / loopers', 'Cutworms', 'Squash vine borer', 'Squash bugs', 'Cucumber beetles', 'Flea beetles', 'Tomato hornworm', 'Earwigs', 'Leaf miners', 'Stink bugs', 'Slugs / snails', 'Scale', 'Mealybugs'] },
   { group: 'Disease', options: ['Powdery mildew', 'Downy mildew', 'Early blight', 'Late blight', 'Leaf spot', 'Gray mold (botrytis)', 'Rust', 'Damping off', 'Bacterial wilt', 'Mosaic virus'] },
   { group: 'Disorders', options: ['Blossom-end rot', 'Cracking / splitting', 'Sunscald', 'Catfacing', 'Bolting', 'Edema'] },
   { group: 'Deficiency', options: ['Nitrogen deficiency', 'Phosphorus deficiency', 'Potassium deficiency', 'Magnesium deficiency', 'Iron chlorosis', 'Calcium deficiency'] },
   { group: 'Environmental & damage', options: ['Heat stress', 'Cold / frost damage', 'Wind damage', 'Drought stress', 'Overwatering', 'Transplant shock', 'Physical damage'] },
   { group: 'Animal', options: ['Deer browsing', 'Rabbit damage', 'Rodent damage', 'Bird damage', 'Groundhog / woodchuck'] },
 ]
+
+// V4-TREATLOG-001 — treatment logging vocabulary.
+// Free-type-with-suggestions target list for the pest/disease field (datalist). Derived from
+// ISSUE_OPTIONS so the pest set never drifts; the field itself accepts ANY typed value.
+export const PEST_TARGET_SUGGESTIONS = ISSUE_OPTIONS
+  .filter(g => ['Pests', 'Disease', 'Animal'].includes(g.group))
+  .flatMap(g => g.options)
+
+// What KIND of thing was applied. Amendments are modeled as DISTINCT from fertilizer (Dave 2026-07-14).
+export const TREATMENT_CATEGORY_OPTIONS = [
+  { value: 'pest_control', label: 'Pest / disease' },
+  { value: 'fertilizer',   label: 'Fertilizer' },
+  { value: 'amendment',    label: 'Amendment' },
+  { value: 'other',        label: 'Other' },
+]
+// The inventory categories fetched for the product picker, per treatment category. pest_control →
+// pest_control items; fertilizer/amendment → their own category; other → everything nutrient-ish.
+export const TREATMENT_CATEGORY_TO_INVENTORY = {
+  pest_control: ['pest_control'],
+  fertilizer:   ['fertilizer'],
+  amendment:    ['amendment'],
+  other:        ['pest_control', 'fertilizer', 'amendment', 'other'],
+}

@@ -78,6 +78,12 @@ export function validatePostBody(body) {
     return { status: 400, error: 'harvest fields only valid on event_type=harvest' };
   }
 
+  // V4-TREATLOG-001: treatment_category, when present, must be a known kind.
+  if (body.treatment_category != null
+    && !['fertilizer', 'amendment', 'pest_control', 'other'].includes(body.treatment_category)) {
+    return { status: 400, error: 'treatment_category must be fertilizer, amendment, pest_control, or other' };
+  }
+
   return null;
 }
 

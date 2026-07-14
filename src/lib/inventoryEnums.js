@@ -34,7 +34,8 @@ export const INVENTORY_TYPES = [
 export const INVENTORY_CATEGORIES = [
   { v: 'seeds',                   label: 'Seeds',                types: ['consumable'] },
   { v: 'growing_media',           label: 'Growing media',        types: ['consumable'] },
-  { v: 'nutrients_and_amendments',label: 'Nutrients & amendments',types: ['consumable'] },
+  { v: 'fertilizer',              label: 'Fertilizer',           types: ['consumable'] },
+  { v: 'amendment',               label: 'Amendment',            types: ['consumable'] },
   { v: 'pest_control',            label: 'Pest control',         types: ['consumable'] },
   { v: 'containers',              label: 'Containers',           types: ['consumable', 'durable'] },
   { v: 'lighting',                label: 'Lighting',             types: ['durable'] },
@@ -53,7 +54,7 @@ export const INVENTORY_STATUSES = ['active', 'depleted', 'retired', 'missing']
 // Verified-live CHECK value-sets (prod Neon, 2026-06-04). Drift-guard source of truth.
 export const INVENTORY_CHECK_SETS = {
   type:      ['consumable', 'durable'],
-  category:  ['seeds', 'growing_media', 'lighting', 'shelving', 'tools', 'pest_control', 'containers', 'climate_control', 'nutrients_and_amendments', 'other'],
+  category:  ['seeds', 'growing_media', 'lighting', 'shelving', 'tools', 'pest_control', 'containers', 'climate_control', 'nutrients_and_amendments', 'fertilizer', 'amendment', 'other'],
   condition: ['excellent', 'good', 'fair', 'poor'],
   status:    ['active', 'depleted', 'retired', 'missing'],
   unit:      ['each', 'packet', 'oz', 'fl oz', 'lb', 'gal', 'qt', 'bag', 'roll', 'sheet', 'other'],

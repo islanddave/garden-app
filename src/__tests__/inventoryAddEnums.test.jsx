@@ -38,7 +38,7 @@ describe('InventoryAdd — category EnumSelect (type-gated, filtered)', () => {
     for (const c of ['Lighting', 'Shelving', 'Tools', 'Climate control', 'Containers', 'Other'])
       expect(opts, `durable should offer ${c}`).toContain(c)
     // consumable-only must NOT leak in
-    for (const c of ['Seeds', 'Growing media', 'Nutrients & amendments', 'Pest control'])
+    for (const c of ['Seeds', 'Growing media', 'Fertilizer', 'Amendment', 'Pest control'])
       expect(opts, `durable must not offer ${c}`).not.toContain(c)
   })
 
@@ -46,7 +46,7 @@ describe('InventoryAdd — category EnumSelect (type-gated, filtered)', () => {
     renderPage()
     fireEvent.click(screen.getByText('Consumable'))
     const opts = optionTexts(categorySelect())
-    for (const c of ['Seeds', 'Growing media', 'Nutrients & amendments', 'Pest control', 'Containers', 'Other'])
+    for (const c of ['Seeds', 'Growing media', 'Fertilizer', 'Amendment', 'Pest control', 'Containers', 'Other'])
       expect(opts, `consumable should offer ${c}`).toContain(c)
     for (const c of ['Lighting', 'Shelving', 'Climate control'])
       expect(opts, `consumable must not offer ${c}`).not.toContain(c)
