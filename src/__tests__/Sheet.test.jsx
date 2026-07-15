@@ -40,4 +40,36 @@ describe('Sheet (V4-THEME-001)', () => {
     // panel must paint above its own backdrop
     expect(Number(dlg.style.zIndex)).toBeGreaterThan(Number(backdrop.style.zIndex))
   })
+
+  it('BUG-SOWFOCUS-001: a parent re-render with a fresh inline onClose does NOT steal focus back to the first field', () => {
+    const { rerender } = render(
+      <Sheet open title="Sow" onClose={() => {}}>
+        <input aria-label="name" />
+        <input aria-label="qty" />
+      </Sheet>
+    )
+    // Effect focuses the first field on open; user then moves to the qty field.
+    const qty = screen.getByLabelText('qty')
+    qty.focus()
+    expect(document.activeElement).toBe(qty)
+    // Simulate a keystroke-driven parent re-render: identical children, but a NEW inline onClose
+    // closure (the exact pattern SowNow uses). Pre-fix this re-ran the focus effect and yanked
+    // focus to the first field; post-fix (deps=[open]) focus must stay put.
+    rerender(
+      <Sheet open title="Sow" onClose={() => {}}>
+        <input aria-label="name" />
+        <input aria-label="qty" />
+      </Sheet>
+    )
+    expect(document.activeElement).toBe(qty)
+  })
+
+  it('Escape calls the LATEST onClose after a re-render (ref stays current)', () => {
+    const first = vi.fn(); const second = vi.fn()
+    const { rerender } = render(<Sheet open title="T" onClose={first}><button>a</button></Sheet>)
+    rerender(<Sheet open title="T" onClose={second}><button>a</button></Sheet>)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledTimes(1)
+  })
 })

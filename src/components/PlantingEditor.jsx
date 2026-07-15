@@ -43,6 +43,7 @@ export default function PlantingEditor({
   fetch,
   sourceInventoryItemId = null,  // add-mode packet deep-link
   varietyId = null,              // add-mode variety deep-link
+  addDefaults = null,            // add-mode: field seeds merged over EMPTY_FORM (e.g. { status:'seed', sown_at, source_type:'seed_packet' } from the Sow flow); null = none
   onCreated,
   onUpdated,
   onDeleted,
@@ -52,7 +53,7 @@ export default function PlantingEditor({
   const isEdit = mode === 'edit'
   const [form, setForm] = useState(() => isEdit && plant
     ? formFromPlant(plant)
-    : { ...EMPTY_FORM, project_id: projects[0]?.id ?? '' })
+    : { ...EMPTY_FORM, project_id: projects[0]?.id ?? '', ...(addDefaults ?? {}) })
   const [saving,   setSaving]   = useState(false)
   const [err,      setErr]      = useState(null)
   const [deleting, setDeleting] = useState(false)

@@ -12,6 +12,12 @@ import { P } from '../../lib/constants.js'
 export default function Sheet({ open, onClose, title, ariaLabel, children }) {
   const panelRef = useRef(null)
   const restoreRef = useRef(null)
+  // Latest-onClose ref: keeps the Escape handler current WITHOUT making onClose a dep of the
+  // focus effect. Callers pass inline onClose closures (recreated every render); if that identity
+  // drove the focus effect, every parent re-render (e.g. a keystroke updating form state) would
+  // re-run it and yank focus back to the first field. Focus-on-open must fire ONLY on open change.
+  const onCloseRef = useRef(onClose)
+  useEffect(() => { onCloseRef.current = onClose }, [onClose])
 
   useEffect(() => {
     if (!open) return
@@ -24,7 +30,7 @@ export default function Sheet({ open, onClose, title, ariaLabel, children }) {
     ;(focusable || panel)?.focus()
 
     function onKey(e) {
-      if (e.key === 'Escape') { e.preventDefault(); onClose?.(); return }
+      if (e.key === 'Escape') { e.preventDefault(); onCloseRef.current?.(); return }
       if (e.key !== 'Tab' || !panel) return
       const items = panel.querySelectorAll(
         'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
@@ -40,7 +46,9 @@ export default function Sheet({ open, onClose, title, ariaLabel, children }) {
       const el = restoreRef.current
       if (el && typeof el.focus === 'function') el.focus()
     }
-  }, [open, onClose])
+    // Deps = [open] ONLY (onClose read via ref): fire focus-into-panel on open transitions, never
+    // on incidental parent re-renders — the fix for the "keystroke steals focus back to Name" bug.
+  }, [open])
 
   if (!open) return null
 

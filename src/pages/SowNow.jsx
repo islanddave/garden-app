@@ -12,7 +12,8 @@ import { bucketize } from '../lib/sowEngine.js'
 import { P } from '../lib/tokens.js'
 import { formatDate } from '../lib/format.js'
 import { useToast } from '../context/ToastContext.jsx'
-import { Sheet, Field, Input, Button } from '../components/forms'
+import { Sheet } from '../components/forms'
+import PlantingEditor from '../components/PlantingEditor.jsx'
 
 // Section order is FIXED per the panel deltas spec.
 const BUCKET_META = [
@@ -68,12 +69,12 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   const [error, setError] = useState(null)
   const [sownIds, setSownIds] = useState(() => new Set())
   const [tooLateOpen, setTooLateOpen] = useState(false)
+  const [projects, setProjects] = useState([])
 
-  // Sheet mini-form state — null when closed, else the bucket entry being sown.
+  // Sheet target — null when closed, else the bucket entry being sown. The sheet hosts the
+  // canonical PlantingEditor (add-from-packet), so a sown planting gets a real place + full
+  // details and can never land orphaned (BUG-ORPHANNAV-001, the old mini-form's project_id:null).
   const [sowTarget, setSowTarget] = useState(null)
-  const [form, setForm] = useState({ name: '', quantity: '1', sown_at: todayISO })
-  const [saving, setSaving] = useState(false)
-  const [formError, setFormError] = useState(null)
 
   useEffect(() => {
     let alive = true
@@ -92,55 +93,23 @@ export default function SowNow({ todayISO = localTodayISO() }) {
     return () => { alive = false }
   }, [fetch])
 
+  // Projects for the embedded PlantingEditor's place picker.
+  useEffect(() => {
+    let alive = true
+    fetch('/api/projects')
+      .then((data) => { if (alive) setProjects(Array.isArray(data) ? data : []) })
+      .catch(() => { if (alive) setProjects([]) })
+    return () => { alive = false }
+  }, [fetch])
+
   const buckets = useMemo(
     () => (candidates ? bucketize(candidates, todayISO) : null),
     [candidates, todayISO]
   )
 
   const openSowSheet = useCallback((entry) => {
-    const c = entry.candidate
-    setForm({
-      name: c.variety_name || c.item_name || '',
-      quantity: '1',
-      sown_at: todayISO,
-    })
-    setFormError(null)
     setSowTarget(entry)
-  }, [todayISO])
-
-  async function handleSow(e) {
-    e.preventDefault()
-    if (!sowTarget || saving) return
-    const c = sowTarget.candidate
-    const qty = parseInt(form.quantity, 10)
-    setSaving(true)
-    setFormError(null)
-    try {
-      await fetch('/api/plants', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: form.name.trim() || (c.variety_name || c.item_name),
-          project_id: null,
-          quantity: Number.isFinite(qty) && qty > 0 ? qty : 1,
-          status: 'seed',
-          sown_at: form.sown_at || todayISO,
-          sown_at_approx: false,
-          variety: c.variety_name ?? null,
-          variety_id: c.variety_id ?? null,
-          source_inventory_item_id: c.inventory_item_id,
-          source_type: 'seed_packet',
-          notes: null,
-        }),
-      })
-      setSownIds((prev) => new Set(prev).add(c.inventory_item_id))
-      setSowTarget(null)
-      show({ message: 'Planted!' })
-    } catch (err) {
-      setFormError(err?.message ?? 'Failed to record the sowing — please try again.')
-    } finally {
-      setSaving(false)
-    }
-  }
+  }, [])
 
   function renderCard(entry, bucketKey) {
     const c = entry.candidate
@@ -273,55 +242,30 @@ export default function SowNow({ todayISO = localTodayISO() }) {
         )}
       </div>
 
-      {/* Sow mini-form Sheet */}
+      {/* Sow sheet — hosts the canonical PlantingEditor (add-from-packet): required place
+          picker + location + full details, pre-seeded seed/today/seed_packet. Orphan-safe. */}
       <Sheet
         open={!!sowTarget}
-        onClose={() => { if (!saving) setSowTarget(null) }}
+        onClose={() => setSowTarget(null)}
         title={sowTarget ? `Sow ${sowTarget.candidate.variety_name || sowTarget.candidate.item_name}` : undefined}
       >
         {sowTarget && (
-          <form onSubmit={handleSow} noValidate style={{ padding: '4px 24px 8px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {formError && (
-              <div role="alert" style={errorBanner}>{formError}</div>
-            )}
-            <Field label="Name">
-              <Input
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </Field>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <Field label="Quantity">
-                <Input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={form.quantity}
-                  onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
-                />
-              </Field>
-              <Field label="Sown on">
-                <Input
-                  type="date"
-                  value={form.sown_at}
-                  onChange={(e) => setForm((f) => ({ ...f, sown_at: e.target.value }))}
-                />
-              </Field>
-            </div>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', paddingBottom: 8 }}>
-              <Button type="submit" variant="primary" loading={saving} loadingLabel="Sowing&hellip;">
-                Sow
-              </Button>
-              <button
-                type="button"
-                onClick={() => setSowTarget(null)}
-                disabled={saving}
-                style={ghostBtn}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
+          <div style={{ padding: '0 16px 4px' }}>
+            <PlantingEditor
+              mode="add"
+              fetch={fetch}
+              projects={projects.filter((p) => !p.archived_at)}
+              sourceInventoryItemId={sowTarget.candidate.inventory_item_id}
+              varietyId={sowTarget.candidate.variety_id}
+              addDefaults={{ status: 'seed', sown_at: todayISO, source_type: 'seed_packet' }}
+              onCreated={() => {
+                setSownIds((prev) => new Set(prev).add(sowTarget.candidate.inventory_item_id))
+                show({ message: 'Planted!' })
+                setSowTarget(null)
+              }}
+              onClose={() => setSowTarget(null)}
+            />
+          </div>
         )}
       </Sheet>
     </div>
@@ -438,16 +382,6 @@ const sownChip = {
   borderRadius: 999,
   padding: '6px 14px',
   flexShrink: 0,
-}
-
-const ghostBtn = {
-  background: 'none',
-  border: 'none',
-  color: P.mid,
-  cursor: 'pointer',
-  fontSize: '0.88rem',
-  padding: '10px 12px',
-  minHeight: 44,
 }
 
 const errorBanner = {

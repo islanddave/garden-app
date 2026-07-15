@@ -4,8 +4,9 @@
  *
  * Uses the REAL sowEngine (integration value) with a fixed today=2026-07-10:
  * fixture v_sow_candidates rows cover window_closing / direct_sow_now /
- * needs_profile / too_late. Asserts bucket headers render and the Sow Sheet
- * POSTs /api/plants with the EXACT wire body shape.
+ * needs_profile / too_late. Asserts bucket headers render and that the Sow sheet
+ * embeds the canonical PlantingEditor, POSTing /api/plants with a REAL project_id
+ * (orphan-safe — replaces the old project_id:null mini-form; BUG-ORPHANNAV-001).
  *
  * House conventions: vi.mock react-router-dom stubs + vi.mock ../lib/api.js
  * hoisted fetchSpy routed by URL + ToastProvider wrap + act/findByText.
@@ -88,14 +89,22 @@ const BIQUINHO = {
 }
 const FIXTURES = [CUCUMBER, LETTUCE, MYSTERY, BIQUINHO]
 
-function routeFetch({ candidates = FIXTURES, plantResponse = { id: 'plant-1' } } = {}) {
+function routeFetch({ candidates = FIXTURES, projects = [{ id: 'proj-peppers', name: 'Peppers' }], plantResponse = { id: 'plant-1' } } = {}) {
   fetchSpy.mockImplementation((url, opts = {}) => {
-    if (url === '/api/inventory-items/sow-candidates') {
-      return Promise.resolve({ items: candidates })
+    if (url === '/api/inventory-items/sow-candidates') return Promise.resolve({ items: candidates })
+    if (url === '/api/projects') return Promise.resolve(projects)
+    if (url === '/api/locations/with-path') return Promise.resolve([])
+    if (url.startsWith('/api/inventory-items/')) {
+      const id = url.split('/').pop()
+      const c = candidates.find((x) => x.inventory_item_id === id)
+      return Promise.resolve({ id, name: c?.item_name ?? 'Packet' })
     }
-    if (url === '/api/plants' && opts.method === 'POST') {
-      return Promise.resolve(plantResponse)
+    if (url.startsWith('/api/varieties/')) {
+      const id = url.split('/').pop()
+      const c = candidates.find((x) => x.variety_id === id)
+      return Promise.resolve({ id, name: c?.variety_name ?? 'Variety' })
     }
+    if (url === '/api/plants' && opts.method === 'POST') return Promise.resolve(plantResponse)
     return Promise.resolve({})
   })
 }
@@ -175,64 +184,57 @@ describe('SowNow — bucket sections (real sowEngine, today=2026-07-10)', () => 
   })
 })
 
-describe('SowNow — Sow Sheet POST wire shape', () => {
-  it('POSTs /api/plants with the exact body and marks the card sown', async () => {
+describe('SowNow — Sow sheet embeds the canonical PlantingEditor (orphan-safe)', () => {
+  it('opens the pre-seeded editor and POSTs /api/plants with a REAL project_id (never null)', async () => {
     routeFetch()
     await renderSowNow()
 
-    fireEvent.click(await screen.findByLabelText('Sow Spacemaster 80'))
+    await act(async () => {
+      fireEvent.click(await screen.findByLabelText('Sow Spacemaster 80'))
+    })
 
     const sheet = screen.getByRole('dialog')
-    // Mini-form defaults: name = variety_name, quantity 1, sown date today.
-    expect(within(sheet).getByDisplayValue('Spacemaster 80')).toBeDefined()
-    expect(within(sheet).getByDisplayValue('1')).toBeDefined()
-    expect(within(sheet).getByDisplayValue(TODAY)).toBeDefined()
+    // The embedded editor exposes the REQUIRED project picker — the orphan fix.
+    expect(within(sheet).getByLabelText(/Project/i)).toBeDefined()
 
     await act(async () => {
-      fireEvent.click(within(sheet).getByRole('button', { name: 'Sow' }))
+      fireEvent.click(within(sheet).getByRole('button', { name: /Add planting/i }))
     })
 
-    const call = fetchSpy.mock.calls.find(([url]) => url === '/api/plants')
+    const call = fetchSpy.mock.calls.find(([url, o]) => url === '/api/plants' && o?.method === 'POST')
     expect(call).toBeDefined()
-    expect(call[1].method).toBe('POST')
-    expect(JSON.parse(call[1].body)).toEqual({
-      name: 'Spacemaster 80',
-      project_id: null,
-      quantity: 1,
-      status: 'seed',
-      sown_at: '2026-07-10',
-      sown_at_approx: false,
-      variety: 'Spacemaster 80',
-      variety_id: 'var-cuke',
-      source_inventory_item_id: 'inv-cuke',
-      source_type: 'seed_packet',
-      notes: null,
-    })
+    const body = JSON.parse(call[1].body)
+    expect(body.project_id).toBe('proj-peppers')   // default first project — NOT null (no orphan)
+    expect(body.status).toBe('seed')
+    expect(body.sown_at).toBe(TODAY)
+    expect(body.source_type).toBe('seed_packet')
+    expect(body.source_inventory_item_id).toBe('inv-cuke')
+    expect(body.variety_id).toBe('var-cuke')
 
-    // Card flips to the Sown text state (no emoji) and the toast fires.
+    // Card flips to the Sown state and the toast fires.
     expect(await screen.findByText(/Sown/)).toBeDefined()
     expect(screen.queryByLabelText('Sow Spacemaster 80')).toBeNull()
     expect(screen.getByText('Planted!')).toBeDefined()
   })
 
-  it('respects edited quantity and sown date in the POST body', async () => {
-    routeFetch()
+  it('lets you pick a different place; the chosen project_id is sent', async () => {
+    routeFetch({ projects: [{ id: 'proj-peppers', name: 'Peppers' }, { id: 'proj-herbs', name: 'Herbs' }] })
     await renderSowNow()
 
-    fireEvent.click(await screen.findByLabelText('Sow Black Seeded Simpson'))
+    await act(async () => {
+      fireEvent.click(await screen.findByLabelText('Sow Black Seeded Simpson'))
+    })
     const sheet = screen.getByRole('dialog')
-    fireEvent.change(within(sheet).getByDisplayValue('1'), { target: { value: '6' } })
-    fireEvent.change(within(sheet).getByDisplayValue(TODAY), { target: { value: '2026-07-08' } })
+    fireEvent.change(within(sheet).getByLabelText(/Project/i), { target: { value: 'proj-herbs' } })
 
     await act(async () => {
-      fireEvent.click(within(sheet).getByRole('button', { name: 'Sow' }))
+      fireEvent.click(within(sheet).getByRole('button', { name: /Add planting/i }))
     })
 
-    const call = fetchSpy.mock.calls.find(([url]) => url === '/api/plants')
+    const call = fetchSpy.mock.calls.find(([url, o]) => url === '/api/plants' && o?.method === 'POST')
     const body = JSON.parse(call[1].body)
-    expect(body.quantity).toBe(6)
-    expect(body.sown_at).toBe('2026-07-08')
+    expect(body.project_id).toBe('proj-herbs')
     expect(body.source_inventory_item_id).toBe('inv-lettuce')
-    expect(body.variety_id).toBe('var-lettuce')
+    expect(body.status).toBe('seed')
   })
 })
