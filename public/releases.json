@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.48.0",
+    "date": "2026-07-15",
+    "highlights": [
+      "Sowing from a seed packet now carries the packet's source onto the new planting — the seed vendor fills the Source field, and where/when you got it (the haul + purchase date) is noted automatically."
+    ]
+  },
+  {
     "version": "3.47.0",
     "date": "2026-07-15",
     "highlights": [
