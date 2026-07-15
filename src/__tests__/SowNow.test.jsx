@@ -97,7 +97,7 @@ function routeFetch({ candidates = FIXTURES, projects = [{ id: 'proj-peppers', n
     if (url.startsWith('/api/inventory-items/')) {
       const id = url.split('/').pop()
       const c = candidates.find((x) => x.inventory_item_id === id)
-      return Promise.resolve({ id, name: c?.item_name ?? 'Packet' })
+      return Promise.resolve({ id, name: c?.item_name ?? 'Packet', source: c?.source ?? null, purchase_date: c?.purchase_date ?? null, brand: null, metadata: { vendor: 'Botanical Interests' } })
     }
     if (url.startsWith('/api/varieties/')) {
       const id = url.split('/').pop()
@@ -210,6 +210,8 @@ describe('SowNow — Sow sheet embeds the canonical PlantingEditor (orphan-safe)
     expect(body.source_type).toBe('seed_packet')
     expect(body.source_inventory_item_id).toBe('inv-cuke')
     expect(body.variety_id).toBe('var-cuke')
+    expect(body.source_ref).toBe('Botanical Interests')             // vendor pulled from the packet
+    expect(body.notes).toMatch(/Seed source: Botanical Interests/)  // haul detail pulled to notes
 
     // Card flips to the Sown state and the toast fires.
     expect(await screen.findByText(/Sown/)).toBeDefined()

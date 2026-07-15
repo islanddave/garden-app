@@ -77,7 +77,20 @@ export default function PlantingEditor({
         .then(item => {
           if (!mounted || !item) return
           setSourcePacket(item)
-          setForm(f => ({ ...f, name: f.name || item.name || '' }))
+          // V4-SOWSOURCE-001: carry the packet's provenance onto the planting. Clean vendor/brand
+          // -> source_ref; acquisition/haul (source, minus internal-note cruft after ';') + purchase
+          // date -> a notes line. Fills EMPTY fields ONLY — never overwrites what the user typed.
+          // Full detail always stays linked via source_inventory_item_id regardless.
+          const vendor = item.metadata?.vendor || item.brand || ''
+          const haul = String(item.source || '').split(';')[0].trim()
+          const pdate = item.purchase_date ? String(item.purchase_date).slice(0, 10) : ''
+          const haulLine = haul ? `Seed source: ${haul}${pdate ? ` (purchased ${pdate})` : ''}` : ''
+          setForm(f => ({
+            ...f,
+            name: f.name || item.name || '',
+            source_ref: f.source_ref || vendor || haul || '',
+            notes: f.notes || haulLine || '',
+          }))
         })
         .catch(() => {})
     }
