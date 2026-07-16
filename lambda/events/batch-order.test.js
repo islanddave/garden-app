@@ -1,10 +1,12 @@
 // BUG-BATCHORDER-001: the batch scope SELECT must ORDER BY before its LIMIT 501.
 //
-// Without an ORDER BY, row order is whatever the planner returns — so the `LIMIT 501` +
-// `.slice(0, 500)` pair was nondeterministic at the cap: WHICH plantings got cut was arbitrary and
-// could differ between the dry-run preview the user reviews and the write that follows. Dave filed
-// this as a cosmetic "the list isn't in a sensible order" nit; it is actually a silent-wrong-data
-// path. The client-side sort in ScopeChecklist is presentation only and does NOT fix it.
+// Without an ORDER BY, row order is whatever the planner returns — the review list came back in
+// arbitrary order, and the `LIMIT 501` + `.slice(0, 500)` pair was nondeterministic across calls.
+// SCOPE OF THE BUG (do not overstate it — an earlier version of this header did): the
+// `if (capped) return resp(400)` guard at index.js:228 fires BEFORE any write, so a >500 scope can
+// never write the "wrong" plantings and dry-run/write cannot diverge. This is a preview-determinism
+// and review-order fix — cosmetic, as Dave originally filed it. The client-side sort in
+// ScopeChecklist is presentation only and does not substitute for ordering the cap.
 //
 // Static-source (L-072), DB-free — mirrors hs2-plant-filter.test.js, the house pattern for
 // asserting SQL shape in a Lambda with no DB harness. Ordering relative to LIMIT is the whole

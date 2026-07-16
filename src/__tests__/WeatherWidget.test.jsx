@@ -46,11 +46,17 @@ describe('WeatherWidget — V4-WATERWHY-002 the why-expander is gone', () => {
     expect(container.querySelector('[aria-controls]')).toBeNull()
   })
 
-  it('each lane announces its own recommendation (the rail is no longer masked by a Why? label)', () => {
+  it('each lane announces its own recommendation THROUGH THE A11Y TREE', () => {
     // beds: a reliable soak is coming -> hold. containers: base 2 cans, no rain has landed -> water.
+    //
+    // getByRole, NOT getByLabelText. getByLabelText matches the aria-label ATTRIBUTE and passes even
+    // when the name never reaches the accessibility tree — it passed against the first cut of this
+    // change, where the lanes were bare aria-labelled divs (role=generic, unnameable) and were in
+    // fact TOTALLY SILENT to screen readers. The role query is the only assertion that can tell the
+    // difference, so it is the contract: it fails if role="img" is ever dropped.
     render(<WeatherWidget weather={weather} hydrology={hydro} />)
-    expect(screen.getByLabelText(/In-ground beds: hold, no water needed today/i)).toBeTruthy()
-    expect(screen.getByLabelText(/Containers: water — 2 of 3 cans/i)).toBeTruthy()
+    expect(screen.getByRole('img', { name: /In-ground beds: hold, no water needed today/i })).toBeTruthy()
+    expect(screen.getByRole('img', { name: /Containers: water — 2 of 3 cans/i })).toBeTruthy()
   })
 })
 
@@ -167,12 +173,20 @@ describe('WeatherWidget — V200 Slice 6 derived no-wrap headline', () => {
   // The headline is derived from the two lane verdicts (pillState of computeWateringScale). It carries the
   // FULL untruncated sentence in the a11y tree via aria-label; the visible text is aria-hidden so screen
   // readers never double-announce. The lanes + rain note restate the guidance (WCAG 1.4.10).
+  // V4-WATERWHY-002: the headline used to be `<div aria-label={sentence}>` and this helper found it
+  // by scanning [aria-label]. That pattern was BROKEN — aria-label on a role-less div is ignored, so
+  // the headline had been silent to AT since V200 Slice 6, and this helper's attribute-scan could
+  // not tell. The sentence now ships as real visually-hidden TEXT, so the helper reads text, and
+  // "is it in the a11y tree" is answered by an aria-hidden ancestor check rather than by trusting an
+  // attribute. Returns the AT-readable node carrying the headline sentence.
   const headlineEl = (container) => {
-    // the aria-label wrapper is the only element carrying a full-sentence aria-label among the headline group
-    const nodes = container.querySelectorAll('[aria-label]')
+    const nodes = container.querySelectorAll('span, div')
     for (const n of nodes) {
-      const a = n.getAttribute('aria-label')
-      if (a && /containers|beds|All set|Water both/i.test(a) && !/recommendation|watering explanation/i.test(a)) return n
+      const t = (n.textContent || '').trim()
+      if (!/^(Water both|Water containers|Water the beds|All set)/i.test(t)) continue
+      if (n.children.length) continue                       // innermost node only
+      if (n.closest('[aria-hidden="true"]')) continue       // the truncated visual copy — not AT-readable
+      return n
     }
     return null
   }
@@ -182,7 +196,7 @@ describe('WeatherWidget — V200 Slice 6 derived no-wrap headline', () => {
     const { container } = render(<WeatherWidget weather={w} hydrology={h} />)
     const el = headlineEl(container)
     expect(el).toBeTruthy()
-    expect(el.getAttribute('aria-label')).toBe('Water both — containers and beds today.')
+    expect(el.textContent).toBe('Water both — containers and beds today.')
   })
 
   it('reads "Water containers, skip the beds" when only containers water (rain coming for beds)', () => {
@@ -190,7 +204,7 @@ describe('WeatherWidget — V200 Slice 6 derived no-wrap headline', () => {
     const { container } = render(<WeatherWidget weather={w} hydrology={h} />)
     const el = headlineEl(container)
     expect(el).toBeTruthy()
-    expect(el.getAttribute('aria-label')).toBe('Water containers, skip the beds today.')
+    expect(el.textContent).toBe('Water containers, skip the beds today.')
   })
 
   it('reads "All set" when both lanes hold (already soaked)', () => {
@@ -198,23 +212,34 @@ describe('WeatherWidget — V200 Slice 6 derived no-wrap headline', () => {
     const { container } = render(<WeatherWidget weather={w} hydrology={h} />)
     const el = headlineEl(container)
     expect(el).toBeTruthy()
-    expect(el.getAttribute('aria-label')).toBe('All set — no watering needed today.')
+    expect(el.textContent).toBe('All set — no watering needed today.')
   })
 
-  it('hides the visible headline text from the a11y tree (aria-hidden) so it does not double-announce', () => {
+  it('hides the VISIBLE headline copy from the a11y tree so it does not double-announce', () => {
+    // Same intent as before the V4-WATERWHY-002 restructure: the sentence must reach AT exactly
+    // once. It now appears in TWO nodes — a visually-hidden span (AT-readable) and the truncated
+    // visible div (aria-hidden). Assert both exist and that exactly one is readable.
     const h = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, rain_coming: false }
     const { container } = render(<WeatherWidget weather={w} hydrology={h} />)
-    const el = headlineEl(container)
-    const visible = el.querySelector('[aria-hidden="true"]')
-    expect(visible).toBeTruthy()
-    expect(visible.textContent).toBe('Water both — containers and beds today.')
+    const SENTENCE = 'Water both — containers and beds today.'
+    const all = [...container.querySelectorAll('span, div')]
+      .filter(n => !n.children.length && (n.textContent || '').trim() === SENTENCE)
+    expect(all.length).toBe(2)
+    const hidden = all.filter(n => n.closest('[aria-hidden="true"]'))
+    const readable = all.filter(n => !n.closest('[aria-hidden="true"]'))
+    expect(hidden.length).toBe(1)    // the truncated visual copy
+    expect(readable.length).toBe(1)  // the visually-hidden AT copy — announced once, not twice
   })
 
-  it('headlineFor survives the V4-WATERWHY-002 cut — it is the WCAG restatement surface', () => {
-    // The lanes are now aria-hidden decoration + a per-lane label; the headline stays the sentence
-    // that carries the guidance. Removing it would be the actual a11y regression.
+  it('headlineFor survives the V4-WATERWHY-002 cut AND is actually readable by AT', () => {
+    // The headline is the load-bearing restatement surface now that the Why panel is gone. Asserted
+    // via getByText (real text in the DOM), NOT getByLabelText — the old aria-label-on-a-div was
+    // silent, and getByLabelText could not detect that. Two nodes carry the sentence: the
+    // visually-hidden span (AT) and the aria-hidden truncated div (sighted), so scope to the former.
     const h = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
     render(<WeatherWidget weather={w} hydrology={h} />)
-    expect(screen.getByLabelText('Water containers, skip the beds today.')).toBeTruthy()
+    const nodes = screen.getAllByText('Water containers, skip the beds today.')
+    const readable = nodes.filter(n => !n.closest('[aria-hidden="true"]'))
+    expect(readable.length).toBe(1)
   })
 })

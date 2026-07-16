@@ -212,10 +212,13 @@ export const handler = async (event) => {
               END
           AND NOT (p.id = ANY(${excludeIds}))
         -- BUG-BATCHORDER-001: the scope SELECT had NO ORDER BY, so row order was whatever the
-        -- planner handed back. That made the LIMIT 501 + slice(0,500) below nondeterministic:
-        -- at >500 matches WHICH plantings got cut was arbitrary and could differ between the
-        -- dry-run preview and the write. Ordering here is what makes the cap stable; the client
-        -- sort in ScopeChecklist is presentation only and does NOT fix this.
+        -- planner handed back — the review list came back in arbitrary order, and the LIMIT 501 +
+        -- slice(0,500) below was nondeterministic across calls. Scope is PREVIEW determinism +
+        -- a sensible review order: the "if (capped) return resp(400)" guard at :228 fires before
+        -- any write, so a >500 scope can never log the "wrong" plantings — dry-run and write cannot
+        -- diverge. p.id is the tiebreaker: display_name is NOT unique (two "Sun Gold" plantings),
+        -- and ties would leave the cap nondeterministic in miniature. The client sort in
+        -- ScopeChecklist is presentation only and does not substitute for this.
         ORDER BY p.display_name, p.id
         LIMIT 501
       `;

@@ -202,10 +202,17 @@ export default function WeatherWidget({
   const headline = headlineFor(containersDo, bedsDo)
 
   // A full-width stacked lane: [leading target icon] [label flex:1 min-width:0] [3-can rail OR pause shape].
-  // V4-WATERWHY-002: non-interactive (was a <button> only to toggle the removed Why panel). The
-  // aria-label states the recommendation the rail encodes visually, so the intensity reaches screen
-  // readers — the old button's "Why this…" label overrode its children and hid it. minHeight 44 is
-  // kept: it's the lane's visual rhythm, not a tap target.
+  // V4-WATERWHY-002: non-interactive (was a <button> only to toggle the removed Why panel).
+  //
+  // role="img" is REQUIRED here, not decoration. A bare <div aria-label> is prohibited ARIA: a
+  // role-less div maps to role=generic, generic cannot be named, and the label is IGNORED — with the
+  // children aria-hidden that renders the whole lane silent. (Shipped exactly that to dev in 2851779
+  // and caught it in the pre-promote regression pass; an a11y-tree dump showed ZERO roles and the
+  // words "Containers"/"In-ground beds" absent entirely.) role="img" supports naming and announces
+  // the lane as one atomic unit, which is what it is: icon + rail are a single graphic.
+  // BEWARE: getByLabelText matches the ATTRIBUTE and passes even when the name never reaches the
+  // a11y tree — assert these lanes with getByRole('img', { name }), which is the real contract.
+  // minHeight 44 is kept: it's the lane's visual rhythm, not a tap target.
   const Lane = ({ level, Target, label }) => {
     const isDo = pillState(level) === 'do'
     const c = isDo
@@ -214,6 +221,7 @@ export default function WeatherWidget({
     const cans = Math.round(level)
     return (
       <div
+        role="img"
         aria-label={isDo ? `${label}: water — ${cans} of 3 cans` : `${label}: hold, no water needed today`}
         style={{
           width: '100%', boxSizing: 'border-box', minHeight: 44,
@@ -253,9 +261,20 @@ export default function WeatherWidget({
         </div>
       </div>
 
-      {/* NET-NEW no-wrap derived headline. Full sentence in the a11y tree (aria-label); visible text is
-          truncated + aria-hidden so it never double-announces. Lanes + rain note restate it (WCAG 1.4.10). */}
-      <div aria-label={headline} style={{ marginTop: tokens.space.sm }}>
+      {/* NET-NEW no-wrap derived headline. The visible line is ellipsis-truncated, so it is NOT a
+          faithful alternative — the full sentence ships as visually-hidden TEXT and the truncated
+          copy is aria-hidden, so it never double-announces.
+          Was `<div aria-label={headline}>` wrapping an aria-hidden child, whose comment claimed the
+          sentence was "in the a11y tree (aria-label)". It was not: aria-label on a role-less div is
+          ignored (role=generic can't be named), so this headline had been SILENT since V200 Slice 6.
+          Pre-existing, not from V4-WATERWHY-002 — but that cut removed the Why panel that used to
+          carry the guidance, making this the load-bearing restatement surface (WCAG 1.4.10). It has
+          to actually work now. Real text in the DOM beats ARIA naming for a sentence. */}
+      <div style={{ marginTop: tokens.space.sm }}>
+        <span style={{
+          position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
+          overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0,
+        }}>{headline}</span>
         <div aria-hidden="true" style={{
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%',
           fontWeight: 700, fontSize: tokens.type.sm, color: PAL.tempHi,
