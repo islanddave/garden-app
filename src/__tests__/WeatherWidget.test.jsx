@@ -28,21 +28,29 @@ describe('WeatherWidget — honest snapshot presentation', () => {
   })
 })
 
-describe('WeatherWidget — V3-WATERWHY-001 tap-to-explain', () => {
-  it('reveals an inline why-panel when a watering pill is tapped, and toggles off on re-tap', () => {
-    // clean 'rain coming tomorrow, none today' so the beds reason hits the rainComing branch
-    const hydro = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
+describe('WeatherWidget — V4-WATERWHY-002 the why-expander is gone', () => {
+  // Explicit supersede of V3-WATERWHY-001. These assert the ABSENCE of the old surface, so a
+  // re-introduction is caught rather than silently landing.
+  const hydro = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
+
+  it('renders no watering-explanation region and no Why? affordance', () => {
     render(<WeatherWidget weather={weather} hydrology={hydro} />)
     expect(screen.queryByRole('region', { name: /watering explanation/i })).toBeNull()
-    const bedsBtn = screen.getByRole('button', { name: /in-ground bed recommendation/i })
-    fireEvent.click(bedsBtn)
-    const panel = screen.getByRole('region', { name: /watering explanation/i })
-    expect(panel).toBeTruthy()
-    expect(panel.textContent.toLowerCase()).toMatch(/soak is coming/)
-    expect(panel.textContent.toLowerCase()).toMatch(/hold/)
-    // Pill is an inline component (remounts each render); re-query the live node before re-tapping.
-    fireEvent.click(screen.getByRole('button', { name: /in-ground bed recommendation/i }))
-    expect(screen.queryByRole('region', { name: /watering explanation/i })).toBeNull()
+    expect(screen.queryByText(/why\?/i)).toBeNull()
+  })
+
+  it('lanes are non-interactive — no buttons, no aria-expanded', () => {
+    const { container } = render(<WeatherWidget weather={weather} hydrology={hydro} />)
+    expect(screen.queryByRole('button', { name: /recommendation/i })).toBeNull()
+    expect(container.querySelector('[aria-expanded]')).toBeNull()
+    expect(container.querySelector('[aria-controls]')).toBeNull()
+  })
+
+  it('each lane announces its own recommendation (the rail is no longer masked by a Why? label)', () => {
+    // beds: a reliable soak is coming -> hold. containers: base 2 cans, no rain has landed -> water.
+    render(<WeatherWidget weather={weather} hydrology={hydro} />)
+    expect(screen.getByLabelText(/In-ground beds: hold, no water needed today/i)).toBeTruthy()
+    expect(screen.getByLabelText(/Containers: water — 2 of 3 cans/i)).toBeTruthy()
   })
 })
 
@@ -202,15 +210,11 @@ describe('WeatherWidget — V200 Slice 6 derived no-wrap headline', () => {
     expect(visible.textContent).toBe('Water both — containers and beds today.')
   })
 
-  it('lane expand trigger carries aria-controls pointing at the watering-explanation region', () => {
+  it('headlineFor survives the V4-WATERWHY-002 cut — it is the WCAG restatement surface', () => {
+    // The lanes are now aria-hidden decoration + a per-lane label; the headline stays the sentence
+    // that carries the guidance. Removing it would be the actual a11y regression.
     const h = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
     render(<WeatherWidget weather={w} hydrology={h} />)
-    const bedsBtn = screen.getByRole('button', { name: /in-ground bed recommendation/i })
-    expect(bedsBtn.getAttribute('aria-expanded')).toBe('false')
-    fireEvent.click(bedsBtn)
-    const region = screen.getByRole('region', { name: /watering explanation/i })
-    const controls = screen.getByRole('button', { name: /in-ground bed recommendation/i }).getAttribute('aria-controls')
-    expect(controls).toBeTruthy()
-    expect(controls).toBe(region.getAttribute('id'))
+    expect(screen.getByLabelText('Water containers, skip the beds today.')).toBeTruthy()
   })
 })

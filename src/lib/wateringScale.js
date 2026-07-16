@@ -6,6 +6,15 @@
 // per-task rows). Two lanes only: containers (dry fast; rain under-serves dense/covered bags) and
 // in-ground beds (hold moisture; benefit from rain -> defer for an incoming soak).
 // Source of truth: daily-plan-engine-build/weather-widget-redesign/wateringScale.js (LOCKED v1, DRG-TODAY-002).
+//
+// V4-WATERWHY-002 (2026-07-16) — EXPLICIT SUPERSEDE of V3-WATERWHY-001, by Dave's call. The
+// wateringReason() explanation generator and its railWords/inHg helpers were REMOVED from this
+// module, along with the "Why?" lane expander in WeatherWidget. This is a deliberate reversal of a
+// shipped feature, not a quiet edit to a LOCKED module: the scale math above (computeWateringScale /
+// canRail / pillState) is UNTOUCHED and remains LOCKED v1. Only the explanation layer is gone.
+// Rationale: the panel was collapsed by default and the copy was largely boilerplate restating the
+// lanes; DrG remains the WHY surface (drgReasoning.js), Today the ACTION surface. If an explanation
+// is ever wanted back, restore from git history at v3.49.0 — do not re-derive it.
 
 const clampHalf = (n) => Math.max(0, Math.min(3, Math.round(n * 2) / 2));
 
@@ -57,44 +66,4 @@ export function canRail(level) {
 // Pill state: active (>=0.5 -> emerald "do") vs wait (0 -> coral "pause").
 export function pillState(level) {
   return level >= 0.5 ? 'do' : 'wait';
-}
-
-// ── V3-WATERWHY-001 — human explanation for the watering-can recommendation ──────────────
-// Operational surface (not a reward): user taps a watering pill to understand WHY. Derived from the
-// SAME hydrology/weather signals + thresholds computeWateringScale uses, so the explanation can never
-// contradict the recommendation. A test cross-checks the stated level against computeWateringScale.
-function railWords(level) {
-  const cans = Math.round(level)
-  return cans <= 1 ? 'a light pass (1 can)' : cans === 2 ? 'a normal soak (2 cans)' : 'a deep soak (3 cans)'
-}
-const inHg = (n) => `${(n ?? 0).toFixed(2)}″`
-
-export function wateringReason(hydrology = {}, weather = {}) {
-  const recent = hydrology.recent_precip_in ?? 0
-  const todayIn = hydrology.today_precip_in ?? 0
-  const tmrwIn = hydrology.tomorrow_precip_in ?? hydrology.upcoming_precip_in ?? 0
-  const tmrwPop = hydrology.tomorrow_pop ?? 0
-  const hot = !!weather.hot
-  const { containers, beds, rainComing, rainToday } = computeWateringScale(hydrology, weather)
-  const wetNow = recent + todayIn
-
-  const cLines = ['Containers dry out fast, so they start at a normal soak.']
-  if (hot) cLines.push('It’s hot today — bump to a deeper soak.')
-  if (wetNow >= 0.8) cLines.push(`Heavy recent rain (${inHg(wetNow)}) already reached the pots — much less needed.`)
-  else if (wetNow >= 0.4) cLines.push(`Some recent rain (${inHg(wetNow)}) reached the pots — a little less needed.`)
-  cLines.push('Rain coming later isn’t counted for pots — covered or dense containers don’t catch it well.')
-  const cVerdict = containers >= 0.5 ? `Water containers: ${railWords(containers)}.` : 'Hold — containers don’t need water right now.'
-
-  const bLines = ['In-ground beds hold moisture longer, so they start lighter than pots.']
-  if (hot) bLines.push('It’s hot today — they’d want a bit more.')
-  if (rainToday) bLines.push('It’s raining enough today — skip the beds.')
-  else if (rainComing) bLines.push(`A reliable soak is coming (${inHg(tmrwIn)} at ${tmrwPop}%) — wait for it.`)
-  else if (wetNow >= 0.8) bLines.push(`The ground is already soaked (${inHg(wetNow)} recently) — skip.`)
-  else if (wetNow >= 0.4) bLines.push(`Some moisture in the ground (${inHg(wetNow)}) — a light touch only.`)
-  const bVerdict = beds >= 0.5 ? `Water beds: ${railWords(beds)}.` : 'Hold — beds don’t need water right now.'
-
-  return {
-    containers: { level: containers, verdict: cVerdict, lines: cLines },
-    beds: { level: beds, verdict: bVerdict, lines: bLines },
-  }
 }

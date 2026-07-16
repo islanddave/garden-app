@@ -33,10 +33,14 @@ const TABS = [
 // create. New project + Add inventory dropped from the FAB (Projects de-emphasizing from
 // first-class; inventory-add is reachable via More -> Inventory). Not a reward surface
 // (user-initiated create menu), so the sheet pattern is appropriate under Reward UX V102.
+// V4-SOWFAB-001: Sow from seed added as the 4th action, directly under Add a planting — the two
+// are the same verb from different starting points (existing plant vs seed packet), and /sow was
+// previously reachable only by URL. Fills the documented <=4 budget exactly; nothing displaced.
 const CREATE_ACTIONS = [
   { to: '/log',          iconName: 'event.other',      label: 'Log an event',   sub: 'Watering, harvest, a note…' },
   { to: '/log/many',     iconName: 'action.logmany',   label: 'Log many',        sub: 'One event across many plants' },
   { to: '/garden?add=1', iconName: 'lifecycle.sprout', label: 'Add a planting', sub: 'A plant growing in a project' },
+  { to: '/sow',          iconName: 'lifecycle.sprout', label: 'Sow from seed',  sub: 'Start something from your seed inventory' },
 ]
 
 // Shared menu-row style. `border:'none'` first so buttons drop their default border, then

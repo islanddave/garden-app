@@ -239,16 +239,25 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
     expect(screen.getByLabelText('Create').getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('clicking +LOG opens the sheet with the three create options', () => {
+  it('clicking +LOG opens the sheet with the four create options', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
     expect(screen.getByText('Log an event')).toBeDefined()
     expect(screen.getByText('Log many')).toBeDefined()
     expect(screen.getByText('Add a planting')).toBeDefined()
+    // V4-SOWFAB-001: Sow from seed is the 4th action (/sow was URL-only before).
+    expect(screen.getByText('Sow from seed')).toBeDefined()
     // Slice 9: New project + Add inventory dropped from the FAB.
     expect(screen.queryByText('New project')).toBeNull()
     expect(screen.queryByText('Add inventory')).toBeNull()
     expect(screen.getByLabelText('Create').getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('holds the documented <=4 action budget', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    const sheetLinks = screen.getAllByRole('link').filter(a => ['/log', '/log/many', '/garden?add=1', '/sow'].includes(a.getAttribute('href')))
+    expect(sheetLinks.length).toBeLessThanOrEqual(4)
   })
 
   it('each create option points to the correct route', () => {
@@ -257,6 +266,7 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
     expect(screen.getByText('Log an event').closest('a').getAttribute('href')).toBe('/log')
     expect(screen.getByText('Log many').closest('a').getAttribute('href')).toBe('/log/many')
     expect(screen.getByText('Add a planting').closest('a').getAttribute('href')).toBe('/garden?add=1')
+    expect(screen.getByText('Sow from seed').closest('a').getAttribute('href')).toBe('/sow')
   })
 
   it('selecting an option closes the sheet', () => {

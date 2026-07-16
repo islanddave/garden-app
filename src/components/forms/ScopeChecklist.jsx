@@ -112,7 +112,14 @@ export default function ScopeChecklist({
     setExcluded(on ? new Set() : new Set((preview?.plantings || []).map(pl => pl.id)))
   }, [preview])
 
-  const plantings = preview?.plantings || []
+  // BUG-BATCHORDER-001: display order only. The server-side ORDER BY in lambda/events is what makes
+  // the 500-cap deterministic; this mirrors EventNew.jsx:736's localeCompare so both log surfaces
+  // present the same list the same way regardless of Postgres collation. Order-independent consumers
+  // (total, committed) are unaffected.
+  const plantings = useMemo(
+    () => [...(preview?.plantings || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+    [preview]
+  )
   const total = plantings.length
   const committed = plantings.filter(p => !excluded.has(p.id))
   const committedCount = committed.length

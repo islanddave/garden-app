@@ -1,18 +1,24 @@
 import React from 'react'
 import Icon from '../Icon.jsx'
-import { computeWateringScale, canRail, pillState, wateringReason } from '../../lib/wateringScale.js'
+import { computeWateringScale, canRail, pillState } from '../../lib/wateringScale.js'
 import { P, tokens, ICON_COLORS } from '../../lib/tokens.js'
-import { chevronDataUri } from '../forms/formStyles.js'
 
-// Weather widget — V200 Slice 6 reskin (V4-THEME-001). Logic is byte-identical to LOCKED v1:
-// the watering-can scale (computeWateringScale/canRail/pillState), the inline "Why this" expand
-// (wateringReason), the probability-gated rain note (DRG-WXPROB-001), and the freshness/stale/uncertain
-// caveats all stay exactly as before. This pass is PRESENTATION ONLY: hardcoded PAL hexes -> V200 tokens,
-// the two side-by-side pills become stacked full-width lanes, a NET-NEW no-wrap derived headline is added,
-// "Why?" gains a visible affordance + caret, and the card sheds its hard 330px width (now 100% / border-box,
-// no 320px overflow). The scale math, lane computation, hydrology, and rain logic are NOT touched.
+// Weather widget — V200 Slice 6 reskin (V4-THEME-001). The watering-can scale
+// (computeWateringScale/canRail/pillState) is byte-identical to LOCKED v1, as are the
+// probability-gated rain note (DRG-WXPROB-001) and the freshness/stale/uncertain caveats.
+// The V200 pass was PRESENTATION ONLY: hardcoded PAL hexes -> V200 tokens, the two side-by-side
+// pills became stacked full-width lanes, a NET-NEW no-wrap derived headline was added, and the card
+// shed its hard 330px width (now 100% / border-box, no 320px overflow).
+//
+// V4-WATERWHY-002 (2026-07-16): the "Why?" lane expander is REMOVED — explicit supersede of
+// V3-WATERWHY-001 by Dave's call (see wateringScale.js header). The lane was a <button> whose ONLY
+// job was toggling that panel, so it is now a plain <div>: no aria-expanded/aria-controls, no
+// chevron, no reduced-motion transition. Each lane gained an aria-label stating its actual
+// recommendation — previously the button's "Why this…" aria-label MASKED the rail from screen
+// readers, so the intensity is now announced where it wasn't before. headlineFor() is untouched and
+// remains WCAG-load-bearing. DrG (drgReasoning.js) stays the WHY surface; Today is the ACTION surface.
 //   Tier 1: condition icon + highToday (bold) / tonightLow (medium), sun/moon minis, no labels.
-//   Tier 2: two STACKED lanes [target icon] [label] [can rail | pause shape] [Why? caret];
+//   Tier 2: two STACKED lanes [target icon] [label] [can rail | pause shape];
 //           pot = containers, mound+sprout = in-ground. N filled cans of 3 = water at intensity N;
 //           pause SHAPE = hold/skip (3-channel: count + text + color + shape). level>=0.5 -> sage "do",
 //           level 0 -> gold-tint "wait". Headline + rain note restate the guidance (WCAG 1.4.10).
@@ -27,8 +33,7 @@ const PAL = {
   doCan: ICON_COLORS.dropBody, doGhost: P.border, // can fill BLUE; empty slots = border outline
   // wait lane — gold-tint (light gold bg, gold ink/border; >=4.5:1 on the tint)
   waitBg: '#fbf3df', waitBorder: P.gold, waitInk: P.gold,
-  // why-expand surface = cream; warn (stale) = gold-tint warn tokens
-  whyBg: P.cream,
+  // warn (stale) = gold-tint warn tokens
   warnBg: '#fbf3df', warnBorder: P.gold, warnInk: P.gold,
 }
 
@@ -149,17 +154,6 @@ function liveTimeLabel(refreshedAt) {
   return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(d)
 }
 
-// Reduced-motion detection — repo helper pattern (Lightbox/CritterAnnouncement). Test-safe: returns
-// false when window/matchMedia is absent (jsdom), so the expand caret animates in tests without error.
-function prefersReducedMotion() {
-  if (typeof window === 'undefined' || !window.matchMedia) return false
-  try {
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  } catch {
-    return false
-  }
-}
-
 // NET-NEW — derive the no-wrap headline sentence from the two lane verdicts.
 function headlineFor(containersDo, bedsDo) {
   if (containersDo && bedsDo) return 'Water both — containers and beds today.'
@@ -177,13 +171,9 @@ export default function WeatherWidget({
   refreshedAt = null,
 }) {
   const scale = computeWateringScale(hydrology, weather)
-  const reason = wateringReason(hydrology, weather)
-  const [whyLane, setWhyLane] = React.useState(null)
-  const regionId = React.useId()
-  const reduceMotion = prefersReducedMotion()
 
   // DRG-WXROLL-001 — intraday freshness (unchanged). Live precip overlays the INFORMATIONAL rain figure +
-  // stamp ONLY; the watering recommendation (lanes/scale + reason) STAYS on the nightly hydrology.
+  // stamp ONLY; the watering recommendation (lanes/scale) STAYS on the nightly hydrology.
   const live = !!(liveHydrology && (liveHydrology.today_precip_in != null || liveHydrology.tomorrow_precip_in != null))
   const asOf = asOfLabel(generatedAt)
   const liveAt = live ? liveTimeLabel(refreshedAt) : null
@@ -211,43 +201,37 @@ export default function WeatherWidget({
   const bedsDo = pillState(scale.beds) === 'do'
   const headline = headlineFor(containersDo, bedsDo)
 
-  // A full-width stacked lane: [leading target icon] [label flex:1 min-width:0] [3-can rail OR pause shape] [Why? caret].
-  // The lane IS the expand trigger (button + aria-expanded + aria-controls). Single-open via whyLane.
-  const Lane = ({ level, Target, laneKey, label }) => {
-    const state = pillState(level)
-    const isDo = state === 'do'
+  // A full-width stacked lane: [leading target icon] [label flex:1 min-width:0] [3-can rail OR pause shape].
+  // V4-WATERWHY-002: non-interactive (was a <button> only to toggle the removed Why panel). The
+  // aria-label states the recommendation the rail encodes visually, so the intensity reaches screen
+  // readers — the old button's "Why this…" label overrode its children and hid it. minHeight 44 is
+  // kept: it's the lane's visual rhythm, not a tap target.
+  const Lane = ({ level, Target, label }) => {
+    const isDo = pillState(level) === 'do'
     const c = isDo
       ? { bg: PAL.doBg, br: PAL.doBorder, ink: PAL.doInk, can: PAL.doCan, ghost: PAL.doGhost }
       : { bg: PAL.waitBg, br: PAL.waitBorder, ink: PAL.waitInk }
-    const open = whyLane === laneKey
+    const cans = Math.round(level)
     return (
-      <button type="button"
-        onClick={() => setWhyLane(w => (w === laneKey ? null : laneKey))}
-        aria-expanded={open}
-        aria-controls={regionId}
-        aria-label={`Why this ${laneKey === 'beds' ? 'in-ground bed' : 'container'} recommendation`}
+      <div
+        aria-label={isDo ? `${label}: water — ${cans} of 3 cans` : `${label}: hold, no water needed today`}
         style={{
           width: '100%', boxSizing: 'border-box', minHeight: 44,
           borderRadius: tokens.radius.badge, display: 'flex', alignItems: 'center',
           gap: tokens.space.sm, padding: `${tokens.space.xs}px ${tokens.space.sm}px`,
-          background: c.bg, cursor: 'pointer', font: 'inherit', textAlign: 'left',
-          border: `${open ? 2 : 1}px solid ${open ? c.ink : c.br}`,
+          background: c.bg, textAlign: 'left',
+          border: `1px solid ${c.br}`,
         }}>
         <Target color={c.ink} />
-        <span style={{ flex: 1, minWidth: 0, fontWeight: 600, fontSize: tokens.type.sm, color: c.ink }}>{label}</span>
-        <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span aria-hidden="true" style={{ flex: 1, minWidth: 0, fontWeight: 600, fontSize: tokens.type.sm, color: c.ink }}>{label}</span>
+        <span aria-hidden="true" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
           {isDo ? (
             <span style={{ display: 'flex', alignItems: 'flex-end', gap: 3 }}>
               {canRail(level).map((f, i) => <Can key={i} fill={f} color={c.can} ghost={c.ghost} />)}
             </span>
           ) : <PauseIcon color={c.ink} />}
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: tokens.type.xs, fontWeight: 700, color: c.ink }}>
-            Why?
-            <img src={chevronDataUri(c.ink)} alt="" aria-hidden="true" width="11" height="8"
-              style={{ transition: reduceMotion ? 'none' : 'transform 140ms', transform: open ? 'rotate(180deg)' : 'none' }} />
-          </span>
         </span>
-      </button>
+      </div>
     )
   }
 
@@ -279,23 +263,9 @@ export default function WeatherWidget({
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.space.xs, marginTop: tokens.space.sm }}>
-        <Lane level={scale.containers} Target={PotIcon} laneKey="containers" label="Containers" />
-        <Lane level={scale.beds} Target={BedIcon} laneKey="beds" label="In-ground beds" />
+        <Lane level={scale.containers} Target={PotIcon} label="Containers" />
+        <Lane level={scale.beds} Target={BedIcon} label="In-ground beds" />
       </div>
-
-      {whyLane && (
-        <div id={regionId} role="region" aria-label="watering explanation" style={{
-          marginTop: tokens.space.sm, borderRadius: tokens.radius.card, padding: `${tokens.space.sm}px ${tokens.space.sm}px`,
-          textAlign: 'left', background: PAL.whyBg, border: `1px solid ${PAL.cardBorder}`,
-        }}>
-          <div style={{ fontWeight: 700, fontSize: tokens.type.xs, color: PAL.tempHi, marginBottom: 4 }}>
-            {reason[whyLane].verdict}
-          </div>
-          <ul style={{ margin: 0, paddingLeft: 16, fontSize: tokens.type.xs, lineHeight: 1.45, color: PAL.tempLo }}>
-            {reason[whyLane].lines.map((l, i) => <li key={i}>{l}</li>)}
-          </ul>
-        </div>
-      )}
 
       {(rainIn > 0 || uncertain || live) && (
         <div style={{ marginTop: tokens.space.sm, textAlign: 'center', fontSize: tokens.type.xs, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
