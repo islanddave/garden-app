@@ -8,3 +8,9 @@ dist/
 
 # ignore a node_modules symlink too (dir-only pattern above misses symlinks)
 node_modules
+
+# vitest's transpiled temp config — normally cleaned up, but left behind on a crashed/killed
+# run. 94 had accumulated (Jun 3 - Jul 1) before this rule; untracked, but enough to bury real
+# changes in git status.
+vitest.config.ts.timestamp-*.mjs
+vite.config.ts.timestamp-*.mjs
