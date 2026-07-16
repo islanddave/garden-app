@@ -123,7 +123,12 @@ export async function hashOriginal(file) {
   }
   try {
     const buf = await file.arrayBuffer();          // the only place the full 10MB materializes
-    const digest = await subtle.digest('SHA-256', buf);
+    // Hand digest() a TypedArray VIEW, not the raw ArrayBuffer. Both are legal per spec, but a
+    // bare ArrayBuffer is matched by realm: a buffer produced in one realm (jsdom) is rejected by
+    // a SubtleCrypto from another (node) with "2nd argument is not instance of ArrayBuffer".
+    // Constructing the view here re-anchors it to this realm. Free in a browser, where there is
+    // only one realm, and strictly more compatible everywhere.
+    const digest = await subtle.digest('SHA-256', new Uint8Array(buf));
     return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
   } catch (err) {
     console.warn('imagePipeline: hashing failed — content_hash null, de-dupe disabled:', err?.message ?? err);
