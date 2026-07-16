@@ -107,15 +107,26 @@ export async function readCaptureMeta(file, { headerBytes = HEADER_BYTES } = {})
   }
 }
 
-/** sha256 hex of the ORIGINAL bytes. See rule 2 above. Null if WebCrypto is unavailable. */
+/**
+ * sha256 hex of the ORIGINAL bytes. See rule 2 above.
+ * Returns null if WebCrypto is unavailable or the read fails — a null content_hash is a legal,
+ * degraded outcome (the photo still uploads; the partial UNIQUE index simply skips it), NOT an
+ * error worth blocking on. But it silently disables de-duplication, so say so rather than let it
+ * pass unnoticed. crypto.subtle requires a secure context; prod is https, so this should not fire.
+ */
 export async function hashOriginal(file) {
+  if (!file) return null;
+  const subtle = impl.subtle();
+  if (!subtle) {
+    console.warn('imagePipeline: crypto.subtle unavailable (insecure context?) — content_hash null, de-dupe disabled');
+    return null;
+  }
   try {
-    const subtle = impl.subtle();
-    if (!subtle || !file) return null;
     const buf = await file.arrayBuffer();          // the only place the full 10MB materializes
     const digest = await subtle.digest('SHA-256', buf);
     return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
-  } catch {
+  } catch (err) {
+    console.warn('imagePipeline: hashing failed — content_hash null, de-dupe disabled:', err?.message ?? err);
     return null;
   }
 }

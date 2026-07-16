@@ -16,14 +16,23 @@
 // jsdom has no createImageBitmap and no canvas encoder, so resize paths inject via __testing__.impl
 // (same seam convention as useUploadPhoto.js). The EXIF + hash paths need no seam — they are real.
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { webcrypto } from 'node:crypto';
 import {
   readCaptureMeta, hashOriginal, resizeImage, prepareForUpload,
   MAX_EDGE, QUALITY, __testing__,
 } from '../lib/imagePipeline.js';
+
+// Pin the crypto seam to a REAL WebCrypto rather than whatever the runtime happens to expose.
+// jsdom provides no crypto.subtle under node 20 (what CI pins); node 26 leaks the platform's, so
+// these tests passed locally and failed in CI — the local pass was the artifact, CI was right.
+// A browser in a secure context always has subtle, so this pins the ENVIRONMENT, not the contract:
+// the assertions below still exercise our hex-encoding and hash-the-original logic, and SHA-256
+// itself is not our code.
+__testing__.impl.subtle = () => globalThis.crypto?.subtle ?? webcrypto.subtle;
 
 // jsdom's Blob/File implement neither arrayBuffer() nor a usable stream, though every browser we
 // target has had Blob.arrayBuffer since Chrome 76. This is an ENVIRONMENT gap, not production
@@ -122,6 +131,39 @@ describe('hashOriginal', () => {
     const a = await hashOriginal(fixture('synthetic-gps.jpg'));
     const b = await hashOriginal(fixture('no-exif.jpg'));
     expect(a).not.toBe(b);
+  });
+
+  // A null content_hash silently disables de-duplication — the exact shape that made CI red while
+  // local was green (node 26 exposes crypto.subtle; CI's node 20 + jsdom does not). Degrading is
+  // correct; degrading QUIETLY is not.
+  it('warns rather than failing silently when crypto.subtle is unavailable', async () => {
+    const orig = __testing__.impl.subtle;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    __testing__.impl.subtle = () => undefined;
+    try {
+      const h = await hashOriginal(fixture('no-exif.jpg'));
+      expect(h).toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('de-dupe disabled'));
+    } finally {
+      __testing__.impl.subtle = orig;
+      warn.mockRestore();
+    }
+  });
+
+  // The photo is the point; the hash is an optimization. Losing the hash must never lose the photo.
+  it('a photo with no hashable bytes still uploads (null hash is not fatal)', async () => {
+    const orig = __testing__.impl.subtle;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    __testing__.impl.subtle = () => undefined;
+    try {
+      const out = await prepareForUpload(fixture('no-exif.jpg'));
+      expect(out.meta.content_hash).toBeNull();
+      expect(out.blob).toBeTruthy();
+      expect(out.meta.file_size_bytes).toBeGreaterThan(0);
+    } finally {
+      __testing__.impl.subtle = orig;
+      warn.mockRestore();
+    }
   });
 });
 
