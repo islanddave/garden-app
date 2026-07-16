@@ -204,10 +204,31 @@ describe('DRG-CADENCE-001: the 11 live plantings that fell to the naked 3-day de
     expect(TARGETS.length).toBe(11);
   });
 
+  // _via proves the lookup RESOLVES; it says nothing about resolving to a value that keeps the plant
+  // alive. Pin the numbers too — a fat-fingered 30 in place of Thunbergia's 1 would otherwise pass.
+  const EXPECTED = {
+    'genus:Sempervivum': [14, 21], 'genus:Helichrysum': [5, 7], 'genus:Coleus': [1, 2],
+    'genus:Torenia': [1, 2], 'genus:Petunia': [1, 3], 'genus:Thunbergia': [1, 3],
+    'genus:Cobaea': [2, 4], 'genus:Digitalis': [2, 4], 'genus:Abelmoschus': [2, 5],
+  };
+
   it.each(TARGETS)('$label no longer lands on cad.default (via $via)', ({ p, via }) => {
     const c = resolveCadence({ ...p, db_cadence: null }, cad);
     expect(c._via).not.toBe('default');
     expect(c._via).toBe(via);
+  });
+
+  it.each(TARGETS)('$label resolves to its audited cadence VALUE, not just a path', ({ p, via }) => {
+    const c = resolveCadence({ ...p, db_cadence: null }, cad);
+    const [cont, ing] = EXPECTED[via];
+    expect(c.water_interval_days_container).toBe(cont);
+    expect(c.water_interval_days_inground).toBe(ing);
+    // and never back to the naked default that caused DRG-CADENCE-001
+    expect(c.water_interval_days_container).not.toBe(cad.default.water_interval_days_container);
+  });
+
+  it('every audited genus is value-pinned (no genus silently unasserted)', () => {
+    expect(Object.keys(EXPECTED).sort()).toEqual([...new Set(TARGETS.map(t => t.via))].sort());
   });
 
   it('ROT GUARD: Sempervivum is never watered on a short cadence (>= 10d container)', () => {
@@ -218,12 +239,39 @@ describe('DRG-CADENCE-001: the 11 live plantings that fell to the naked 3-day de
     expect(c.drought_tolerance).toBe('high');
   });
 
-  it('ROT GUARD: high drought_tolerance is exempt from the >=88F interval reduction', () => {
-    // engine.js: `if(hot && c.drought_tolerance==='low' && wi>1) wi=wi-1` — heat must NOT shorten a
-    // succulent's interval. Guards the Sempervivum/Helichrysum rot cases against a future heat rule.
-    for (const g of ['Sempervivum', 'Helichrysum']) {
-      expect(cad.by_genus_fallback[g].drought_tolerance).toBe('high');
-    }
+  // The heat-rule guards below run through generatePlan on purpose. An earlier pass asserted the JSON's
+  // own `drought_tolerance` value instead, which reads the data file and never calls the engine — deleting
+  // the `==='low'` term in engine.js left that version green (L-269: a guard must ATTEMPT the forbidden
+  // thing). `interval` on the water row IS the engine's computed `wi`, so these fail when the rule breaks.
+  const planFor = (ps, weather) => generatePlan({
+    plantings: ps.map((p, i) => ({
+      id: 'hg-' + i, project: 'Audit', project_id: 'pa', status: 'vegetative',
+      substrate_start: '2026-05-01', last_water: '2026-01-01', last_fert: null, db_cadence: null, ...p,
+    })),
+    cadence: cad, fertModel: fm, today: '2026-07-16', weather: { unit: 'F', ...weather }, ownerFallback: 'dave',
+  });
+  const waterRow = (plan, name) =>
+    Object.values(plan.users).flatMap(u => [...u.tasks.water_due, ...u.tasks.no_history]).find(r => r.name === name);
+
+  it('ROT GUARD: heat does NOT shorten a high-drought-tolerance interval (95F day)', () => {
+    // engine.js: `if(hot && c.drought_tolerance==='low' && wi>1) wi=wi-1`. The `==='low'` term is the ONLY
+    // thing exempting a succulent; without it a 95F day walks Sempervivum 14 -> 13 -> ... toward the rot
+    // cadence this item exists to fix. 95 >= HOT_F(88).
+    const row = waterRow(planFor([{ name: 'Royal Ruby Hens & Chicks', variety: 'Royal Ruby', genus: 'Sempervivum' }],
+      { tonightLow: 62, highToday: 95 }), 'Royal Ruby Hens & Chicks');
+    expect(row, 'Sempervivum missing from the water bucket').toBeTruthy();
+    expect(row.in_ground).toBe(false);
+    expect(row.interval).toBe(14);           // NOT 13 — heat must not touch it
+  });
+
+  it('the >=88F reduction is LIVE for low-tolerance plants (not deleted wholesale)', () => {
+    // Counterpart to the guard above: proves the rot exemption wasn't "fixed" by removing the heat rule
+    // entirely. Petunia in-ground = 3d and drought_tolerance:'low', so a 95F day must take it to 2.
+    const row = waterRow(planFor([{ name: 'Petunia', variety: 'Petunia', genus: 'Petunia', container_type: 'in_ground' }],
+      { tonightLow: 62, highToday: 95 }), 'Petunia');
+    expect(row, 'Petunia missing from the water bucket').toBeTruthy();
+    expect(row.in_ground).toBe(true);
+    expect(row.interval).toBe(2);            // 3 - 1
   });
 
   it('DROUGHT GUARD: thin-leaved annuals get a 1-day container cadence', () => {
@@ -235,12 +283,14 @@ describe('DRG-CADENCE-001: the 11 live plantings that fell to the naked 3-day de
     }
   });
 
-  it('the >=88F reduction never drives an interval below 1', () => {
-    // The 1-day genera are drought_tolerance:'low', so the heat rule applies to them. The `wi>1` guard
-    // in engine.js is what keeps 1 from becoming 0 — pin it, since six genera now resolve to 1.
-    const wi = 1, hot = true;
-    let out = wi; if (hot && 'low' === 'low' && out > 1) out = out - 1;
-    expect(out).toBe(1);
+  it('the >=88F reduction never drives an interval below 1 (95F day)', () => {
+    // Coleus is drought_tolerance:'low' at a 1-day container cadence, so the heat rule DOES apply to it
+    // and only the `wi>1` term keeps 1 from becoming 0 (interval 0 = "always due", i.e. water it forever).
+    // Previously asserted with a hardcoded re-implementation of the rule, which could not fail.
+    const row = waterRow(planFor([{ name: 'Kiwi Fern Coleus', variety: 'Kiwi Fern', genus: 'Coleus' }],
+      { tonightLow: 62, highToday: 95 }), 'Kiwi Fern Coleus');
+    expect(row, 'Coleus missing from the water bucket').toBeTruthy();
+    expect(row.interval).toBe(1);
   });
 
   it('okra keeps drought_tolerance medium (heat must not shorten its interval)', () => {
@@ -249,6 +299,30 @@ describe('DRG-CADENCE-001: the 11 live plantings that fell to the naked 3-day de
     const c = resolveCadence({ name: 'Clemson Spineless 80', variety: 'Clemson Spineless 80', genus: 'Abelmoschus', db_cadence: null }, cad);
     expect(c.drought_tolerance).toBe('medium');
     expect(c.water_interval_days_inground).toBeGreaterThan(c.water_interval_days_container);
+  });
+
+  it('COLD BUCKET: the 7 tender genera now emit a cold task below their threshold', () => {
+    // Second-order effect of this item, documented deliberately. cad.default carries NO `cold` field, so
+    // all 11 previously produced ZERO cold tasks. 7 of the 9 additions set cold.tender, which feeds
+    // coldFor() (engine.js:194-206) — so a sub-50F night now surfaces "bring in tonight" rows that never
+    // appeared before. Agronomically right, but it is a behavior change beyond "fix the watering cadence":
+    // pin it so it is intentional and reviewable rather than a surprise on the first cold night.
+    const TENDER = { Helichrysum: 40, Coleus: 50, Torenia: 45, Petunia: 35, Thunbergia: 45, Cobaea: 40, Abelmoschus: 50 };
+    const plan = planFor(TARGETS.map(t => t.p), { tonightLow: 44, highToday: 70 });
+    const cold = Object.values(plan.users).flatMap(u => u.tasks.cold);
+    const coldGenera = new Set(cold.map(r => TARGETS.find(t => t.p.name === r.name)?.p.genus));
+    // at 44F: tender genera with protect_below_F >= 44 fire; Petunia (35) does not
+    for (const [g, pb] of Object.entries(TENDER)) {
+      expect(coldGenera.has(g), `${g} (protect<=${pb}F) at 44F`).toBe(pb >= 44);
+    }
+    // Sempervivum + Digitalis are NOT tender — they must never appear in the cold bucket
+    expect(coldGenera.has('Sempervivum')).toBe(false);
+    expect(coldGenera.has('Digitalis')).toBe(false);
+  });
+
+  it('COLD BUCKET: a warm night still emits no cold tasks for the 11', () => {
+    const plan = planFor(TARGETS.map(t => t.p), { tonightLow: 62, highToday: 80 });
+    expect(Object.values(plan.users).flatMap(u => u.tasks.cold)).toHaveLength(0);
   });
 
   it('`exclude` remains test-only — no real plant is hidden from the plan', () => {
