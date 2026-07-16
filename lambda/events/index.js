@@ -214,7 +214,7 @@ export const handler = async (event) => {
         -- BUG-BATCHORDER-001: the scope SELECT had NO ORDER BY, so row order was whatever the
         -- planner handed back — the review list came back in arbitrary order, and the LIMIT 501 +
         -- slice(0,500) below was nondeterministic across calls. Scope is PREVIEW determinism +
-        -- a sensible review order: the "if (capped) return resp(400)" guard at :228 fires before
+        -- a sensible review order: the "if (capped) return resp(400)" guard BELOW fires before
         -- any write, so a >500 scope can never log the "wrong" plantings — dry-run and write cannot
         -- diverge. p.id is the tiebreaker: display_name is NOT unique (two "Sun Gold" plantings),
         -- and ties would leave the cap nondeterministic in miniature. The client sort in

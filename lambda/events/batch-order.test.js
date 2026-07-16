@@ -3,8 +3,11 @@
 // Without an ORDER BY, row order is whatever the planner returns — the review list came back in
 // arbitrary order, and the `LIMIT 501` + `.slice(0, 500)` pair was nondeterministic across calls.
 // SCOPE OF THE BUG (do not overstate it — an earlier version of this header did): the
-// `if (capped) return resp(400)` guard at index.js:228 fires BEFORE any write, so a >500 scope can
-// never write the "wrong" plantings and dry-run/write cannot diverge. This is a preview-determinism
+// `if (capped) return resp(400)` guard in index.js, immediately after this SELECT, fires BEFORE any
+// write, so a >500 scope can never write the "wrong" plantings and dry-run/write cannot diverge.
+// (No line number on purpose: the first cut of this correction cited :228, and the correction's own
+// added lines pushed the guard to :231. Line citations rot — that IS the lesson here.)
+// This is a preview-determinism
 // and review-order fix — cosmetic, as Dave originally filed it. The client-side sort in
 // ScopeChecklist is presentation only and does not substitute for ordering the cap.
 //
