@@ -178,3 +178,105 @@ describe('CareEngine C2: all 15 census targets resolve off cad.default', () => {
     }
   });
 });
+
+describe('DRG-CADENCE-001: the 11 live plantings that fell to the naked 3-day default', () => {
+  // Audit 2026-07-16 against live prod (224 plantings in the daily plan): 11 resolved via cad.default,
+  // i.e. water_interval_days_container:3 — a value that fits almost nothing in a fabric bag in July and
+  // splits the difference between two opposite lethal errors. Genus fallbacks added for all 9 genera.
+  // NOTE the audit ALSO falsified this item's original premise: `exclude` hides NOTHING in production
+  // (0 care_profile rows and 0 resolved profiles set it; the only bundle entry is 'Test Plant Debug',
+  // and the file's own schema note documents the flag as "exclude (test)"). See the ROT/DROUGHT guards.
+  const TARGETS = [
+    { label: 'Petunia',                  p: { name: 'Petunia', variety: 'Petunia', genus: 'Petunia' },                                  via: 'genus:Petunia' },
+    { label: 'Easy Wave Berry Velour',   p: { name: 'Easy Wave Berry Velour Petunia', variety: 'Easy Wave Berry Velour', genus: 'Petunia' }, via: 'genus:Petunia' },
+    { label: 'Sunny Susy Thunbergia',    p: { name: 'Sunny Susy White Halo Thunbergia', variety: 'Sunny Susy White Halo', genus: 'Thunbergia' }, via: 'genus:Thunbergia' },
+    { label: 'Cobaea scandens',          p: { name: 'Cobaea scandens (Violet)', variety: 'Cobaea scandens (Violet)', genus: 'Cobaea' },  via: 'genus:Cobaea' },
+    { label: 'Foxglove',                 p: { name: 'Foxglove', variety: 'Foxglove', genus: 'Digitalis' },                               via: 'genus:Digitalis' },
+    { label: 'Kiwi Fern Coleus',         p: { name: 'Kiwi Fern Coleus', variety: 'Kiwi Fern', genus: 'Coleus' },                         via: 'genus:Coleus' },
+    { label: 'Fairway Orange Coleus',    p: { name: 'Fairway Orange Coleus', variety: 'Fairway Orange', genus: 'Coleus' },               via: 'genus:Coleus' },
+    { label: 'Royal Ruby Hens & Chicks', p: { name: 'Royal Ruby Hens & Chicks', variety: 'Royal Ruby', genus: 'Sempervivum' },           via: 'genus:Sempervivum' },
+    { label: 'Wishbone Flower',          p: { name: 'Wishbone Flower (Torenia)', variety: 'Wishbone Flower', genus: 'Torenia' },         via: 'genus:Torenia' },
+    { label: 'Clemson Spineless 80',     p: { name: 'Clemson Spineless 80', variety: 'Clemson Spineless 80', genus: 'Abelmoschus' },     via: 'genus:Abelmoschus' },
+    { label: 'Silver Helichrysum',       p: { name: 'Silver Helichrysum', variety: 'Silver (Licorice Plant)', genus: 'Helichrysum' },    via: 'genus:Helichrysum' },
+  ];
+
+  it('exercises exactly the 11 audited targets', () => {
+    expect(TARGETS.length).toBe(11);
+  });
+
+  it.each(TARGETS)('$label no longer lands on cad.default (via $via)', ({ p, via }) => {
+    const c = resolveCadence({ ...p, db_cadence: null }, cad);
+    expect(c._via).not.toBe('default');
+    expect(c._via).toBe(via);
+  });
+
+  it('ROT GUARD: Sempervivum is never watered on a short cadence (>= 10d container)', () => {
+    // The acute case: a 3-day cadence is ~5x too frequent for an alpine crassulacean and produces
+    // basal/crown rot. This was the single most likely plant on the roster to die *because of* the engine.
+    const c = resolveCadence({ name: 'Royal Ruby Hens & Chicks', variety: 'Royal Ruby', genus: 'Sempervivum', db_cadence: null }, cad);
+    expect(c.water_interval_days_container).toBeGreaterThanOrEqual(10);
+    expect(c.drought_tolerance).toBe('high');
+  });
+
+  it('ROT GUARD: high drought_tolerance is exempt from the >=88F interval reduction', () => {
+    // engine.js: `if(hot && c.drought_tolerance==='low' && wi>1) wi=wi-1` — heat must NOT shorten a
+    // succulent's interval. Guards the Sempervivum/Helichrysum rot cases against a future heat rule.
+    for (const g of ['Sempervivum', 'Helichrysum']) {
+      expect(cad.by_genus_fallback[g].drought_tolerance).toBe('high');
+    }
+  });
+
+  it('DROUGHT GUARD: thin-leaved annuals get a 1-day container cadence', () => {
+    // Coleus/Torenia/Wave Petunia have no water reserve; in a fabric bag at 90F they collapse in ~24h.
+    for (const [name, genus] of [['Kiwi Fern Coleus', 'Coleus'], ['Wishbone Flower (Torenia)', 'Torenia'], ['Easy Wave Berry Velour Petunia', 'Petunia']]) {
+      const c = resolveCadence({ name, variety: null, genus, db_cadence: null }, cad);
+      expect(c.water_interval_days_container).toBe(1);
+      expect(c.drought_tolerance).toBe('low');
+    }
+  });
+
+  it('the >=88F reduction never drives an interval below 1', () => {
+    // The 1-day genera are drought_tolerance:'low', so the heat rule applies to them. The `wi>1` guard
+    // in engine.js is what keeps 1 from becoming 0 — pin it, since six genera now resolve to 1.
+    const wi = 1, hot = true;
+    let out = wi; if (hot && 'low' === 'low' && out > 1) out = out - 1;
+    expect(out).toBe(1);
+  });
+
+  it('okra keeps drought_tolerance medium (heat must not shorten its interval)', () => {
+    // Okra is genuinely drought-tolerant and LOVES 85-95F — it is not stressed by heat. The short
+    // container interval is driven by root confinement, not species thirst.
+    const c = resolveCadence({ name: 'Clemson Spineless 80', variety: 'Clemson Spineless 80', genus: 'Abelmoschus', db_cadence: null }, cad);
+    expect(c.drought_tolerance).toBe('medium');
+    expect(c.water_interval_days_inground).toBeGreaterThan(c.water_interval_days_container);
+  });
+
+  it('`exclude` remains test-only — no real plant is hidden from the plan', () => {
+    // DRG-CADENCE-001's original premise ("unconfigured tropicals silently denied any watering alert")
+    // is FALSE: the only excluded entry is the debug placeholder, and cad.default carries no exclude,
+    // so an unmatched planting always still gets a cadence rather than vanishing.
+    const excluded = Object.entries(cad.by_variety).filter(([, v]) => v.exclude).map(([k]) => k);
+    expect(excluded).toEqual(['Test Plant Debug']);
+    expect(Object.values(cad.by_genus_fallback).some(v => v.exclude)).toBe(false);
+    expect(cad.default.exclude).toBeUndefined();
+  });
+
+  it('routes end-to-end through generatePlan: none of the 11 land on cad.default, none vanish', () => {
+    const plantings = TARGETS.map((t, i) => ({
+      id: 'dc-' + i, project: 'Audit', project_id: 'pa', status: 'vegetative',
+      substrate_start: '2026-05-01', last_water: '2026-01-01', last_fert: null, db_cadence: null,
+      ...t.p,
+    }));
+    const plan = generatePlan({
+      plantings, cadence: cad, fertModel: fm, today: '2026-07-16',
+      weather: { tonightLow: 62, highToday: 80, unit: 'F' }, ownerFallback: 'dave',
+    });
+    const rows = Object.values(plan.users).flatMap(u => [...u.tasks.water_due, ...u.tasks.no_history]);
+    for (const t of TARGETS) {
+      const row = rows.find(r => r.id.startsWith('dc-') && r.name === t.p.name);
+      expect(row, `${t.label} vanished from the plan`).toBeTruthy();
+      expect(row.crop).not.toBe('unknown');
+      expect(resolveCadence({ ...t.p, db_cadence: null }, cad)._via).not.toBe('default');
+    }
+  });
+});

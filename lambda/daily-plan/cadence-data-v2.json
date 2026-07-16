@@ -3120,6 +3120,159 @@
    "fertilize_interval_days": 45,
    "confidence": "high",
    "notes": "Shade perennial; likes regular, even moisture. Fully hardy in 5b (dies back and returns) — no cold protection needed, so cold.tender is false. His planting is in-ground, so the engine uses the inground interval (4)."
+  },
+  "Sempervivum": {
+   "crop": "hens & chicks (Sempervivum)",
+   "water_interval_days_container": 14,
+   "water_interval_days_inground": 21,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "Drench until it runs from the base, then withhold until the mix is dry to the bottom — weeks, not days. Skip entirely after soaking rain; if in doubt, do not water.",
+   "soil_moisture_target": "bone dry through the full profile between waterings; gritty/cactus mix, never moisture-retentive potting soil",
+   "drought_tolerance": "high",
+   "heat_response": "unbothered by heat; rosettes may close and growth pauses. Heat is NOT a watering trigger — do not shorten the interval on hot days",
+   "cold": {
+    "tender": false,
+    "protect_below_F": null
+   },
+   "fertilize_interval_days": null,
+   "confidence": "high",
+   "notes": "DRG-CADENCE-001: was falling to the naked 3-day default — ~5x too frequent, causes basal/crown rot. Hardy to zone 3; cold is not the risk, WINTER WET is (keep the container from holding standing water Nov-Mar)."
+  },
+  "Helichrysum": {
+   "crop": "licorice plant (Helichrysum petiolare)",
+   "water_interval_days_container": 5,
+   "water_interval_days_inground": 7,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "Water the soil, never the foliage — the felted leaves hold water and mildew. A thorough soak at long intervals beats frequent sips.",
+   "soil_moisture_target": "dry to 2in depth before rewatering; prefers erring dry",
+   "drought_tolerance": "high",
+   "heat_response": "thrives in heat and reflected sun; silvering intensifies with dry heat and strong light",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 40
+   },
+   "fertilize_interval_days": null,
+   "confidence": "high",
+   "notes": "DRG-CADENCE-001: was on the 3-day default — chronic overwatering causes root rot and lank green growth that loses the silver character. Feeding is counterproductive. Common spiller in mixed combo pots; if it shares a container with petunias the thirsty plant sets the cadence and this is the compromise."
+  },
+  "Coleus": {
+   "crop": "coleus (Plectranthus scutellarioides)",
+   "water_interval_days_container": 1,
+   "water_interval_days_inground": 2,
+   "water_method": "keep_evenly_moist",
+   "water_volume_note": "~1-1.5 gal per 5-gal fabric bag; on days >=88F in full sun water morning AND late afternoon. Do not use wilt as the trigger — repeated wilt/recover cycles cause permanent leaf drop.",
+   "soil_moisture_target": "consistently moist, never saturated and never fully dry; top 0.5in may dry",
+   "drought_tolerance": "low",
+   "heat_response": "heat is tolerated, the drying that comes with it is not; shade relief above ~95F",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 50
+   },
+   "fertilize_interval_days": 14,
+   "confidence": "high",
+   "notes": "DRG-CADENCE-001: was on the 3-day default — thin leaves, no water reserve; collapses in ~24h and crisps by ~48h in a fabric bag at 90F. Keep N moderate (excess nitrogen washes out leaf colour, the point of the plant). 'Kiwi Fern' (large vegetative type) runs thirstier than 'Fairway Orange' (compact seed type)."
+  },
+  "Torenia": {
+   "crop": "wishbone flower (Torenia fournieri)",
+   "water_interval_days_container": 1,
+   "water_interval_days_inground": 2,
+   "water_method": "keep_evenly_moist",
+   "water_volume_note": "~1 gal per 5-gal bag daily; twice daily above 88F if in any direct sun. Surface mulch buys margin.",
+   "soil_moisture_target": "continuously moist; no drought reserve and does not forgive a single dry-out",
+   "drought_tolerance": "low",
+   "heat_response": "prefers part shade; hot afternoon sun causes flower drop even when watered — shade is the fix, not more water",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 45
+   },
+   "fertilize_interval_days": 14,
+   "confidence": "high",
+   "notes": "DRG-CADENCE-001: was on the 3-day default — does not reliably recover from a hard wilt. Shade-to-part-shade annual; self-cleaning, no deadheading."
+  },
+  "Petunia": {
+   "crop": "petunia (Petunia x hybrida)",
+   "water_interval_days_container": 1,
+   "water_interval_days_inground": 3,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "Water at the base, not overhead (wet flowers mush/botrytis). ~1.5-2 gal per 5-gal bag for a mature Wave type. A dried-out fabric bag channels water down the sides without wetting the rootball — if it drains instantly it did not absorb.",
+   "soil_moisture_target": "moist but not soggy; top 1in may dry. Never let the bag go bone dry — a fully dried Wave petunia often will not re-flower that season",
+   "drought_tolerance": "low",
+   "heat_response": "blooms hard through heat if fed and watered; bud drop and legginess are the drought/hunger signal, not a heat signal",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 35
+   },
+   "fertilize_interval_days": 7,
+   "confidence": "high",
+   "notes": "DRG-CADENCE-001: was on the 3-day default — Wave/spreading types are the thirstiest and hungriest on the roster and can transpire a 5-gal bag dry in under a day. Heavy feeder: 14-day feeding visibly starves them. More cold-tolerant than most annuals here (shrugs off 35F, killed by hard frost)."
+  },
+  "Thunbergia": {
+   "crop": "black-eyed susan vine (Thunbergia alata)",
+   "water_interval_days_container": 1,
+   "water_interval_days_inground": 3,
+   "water_method": "keep_evenly_moist",
+   "water_volume_note": "~1-1.5 gal per 5-gal bag. Demand scales with vine length — a 6ft trellised vine may need double what it needed at 2ft. Leaf-edge crisping and bloom stall are the drought tell.",
+   "soil_moisture_target": "evenly moist; top 1in dry between waterings; dislikes both drying out and sitting wet",
+   "drought_tolerance": "low",
+   "heat_response": "tropical, enjoys heat, but bloom pauses if it dries; appreciates afternoon shade above 90F",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 45
+   },
+   "fertilize_interval_days": 14,
+   "confidence": "medium",
+   "notes": "DRG-CADENCE-001: was on the 3-day default. Tender perennial grown as annual; sulks below ~50F. Confidence medium — demand is a function of vine size, which a genus-level static interval cannot capture."
+  },
+  "Cobaea": {
+   "crop": "cup-and-saucer vine (Cobaea scandens)",
+   "water_interval_days_container": 2,
+   "water_interval_days_inground": 4,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "~1.5 gal per 5-gal bag. Demand rises sharply as the vine extends — a fully grown vine in a 5-gal bag is under-potted and may need daily water by August.",
+   "soil_moisture_target": "moist but well-drained; top 1-2in dry between waterings; tolerates brief dry",
+   "drought_tolerance": "medium",
+   "heat_response": "handles heat well; growth accelerates",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 40
+   },
+   "fertilize_interval_days": 21,
+   "confidence": "medium",
+   "notes": "DRG-CADENCE-001: was on the 3-day default. LOW NITROGEN — notorious for running all leaf and no flower on rich feeding. Late flowering is normal (often will not bloom until it runs out of trellis). Confidence medium: container culture is under-documented, most references assume in-ground."
+  },
+  "Digitalis": {
+   "crop": "foxglove (Digitalis purpurea)",
+   "water_interval_days_container": 2,
+   "water_interval_days_inground": 4,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "Water at the soil surface directing away from the crown — overhead water pooling in the rosette invites rot. ~1 gal per 5-gal bag.",
+   "soil_moisture_target": "evenly moist; top 1in dry before rewatering; never waterlogged at the crown",
+   "drought_tolerance": "medium",
+   "heat_response": "struggles above 90F; midday wilt is common and usually recovers by evening — afternoon shade helps more than extra water",
+   "cold": {
+    "tender": false,
+    "protect_below_F": null
+   },
+   "fertilize_interval_days": 30,
+   "confidence": "medium",
+   "notes": "DRG-CADENCE-001: the 3-day default was ACCEPTABLE here (2 is better, 3 was not damaging) — added for explicitness rather than harm. Biennial: first year rosette, second year flowers then dies; demand differs ~2x between the two, hence medium confidence. Hardy zone 4-8. All parts toxic (cardiac glycosides)."
+  },
+  "Abelmoschus": {
+   "crop": "okra (Abelmoschus esculentus)",
+   "water_interval_days_container": 2,
+   "water_interval_days_inground": 5,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "~1.5 gal per 5-gal bag, deeply. 5-gal is the minimum viable container; 7-10 gal is materially better and would push the interval to 3.",
+   "soil_moisture_target": "moderate and even, especially once flowering — inconsistent moisture causes bud drop and tough, woody pods",
+   "drought_tolerance": "medium",
+   "heat_response": "loves heat; 85-95F is optimal and it outproduces everything else in a heat wave. Do NOT shorten the interval on heat alone — it is not stressed",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 50
+   },
+   "fertilize_interval_days": 21,
+   "confidence": "high",
+   "notes": "DRG-CADENCE-001: was on the 3-day default. Genuinely drought-tolerant IN-GROUND via taproot, but in a container that taproot is constrained so the tolerance is functionally cancelled — the container interval is driven by root confinement, not species thirst. Keep N moderate (excess N = big leafy plant, no pods). Harvest pods at 3in and often; one pod left to mature signals the plant to stop producing."
   }
  },
  "default": {
