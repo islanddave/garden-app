@@ -1,5 +1,15 @@
 [
   {
+    "version": "3.50.0",
+    "date": "2026-07-16",
+    "highlights": [
+      "Log many now lists your plantings in alphabetical order. It had no set order at all — the list came back in whatever order the database happened to hand over, so the same scope could look different each time you opened it. It now sorts by name, the same way the single-event form already did.",
+      "Sow from seed is now one tap away. It sits in the + menu under \"Add a planting\" — previously the only way to reach it was through More, then Inventory, or by typing the address by hand.",
+      "The watering panel on Today is simpler. The \"Why?\" drop-down under Containers and In-ground beds is gone; it said close to the same thing every day. The advice itself is unchanged, and Doctor Gardener still explains the reasoning when you want it.",
+      "The watering advice now reads properly on a screen reader. Each lane announces what it recommends and how much — \"Containers: water, 2 of 3 cans\" — which it never did before, even when the panel was there."
+    ]
+  },
+  {
     "version": "3.49.0",
     "date": "2026-07-16",
     "highlights": [
