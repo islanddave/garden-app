@@ -12,11 +12,65 @@ describe('Sheet (V4-THEME-001)', () => {
     expect(screen.queryByRole('dialog')).toBe(null)
   })
 
-  it('open: role=dialog, aria-modal, accessible name from title', () => {
+  it('open: role=dialog, aria-modal, and a COMPUTED accessible name (L-275: a11y tree, not raw attr)', () => {
     render(<Sheet open title="Favorites" onClose={() => {}}><button>a</button></Sheet>)
-    const dlg = screen.getByRole('dialog')
+    // MUTANT-GUARD (accessible name): getByRole {name} computes the accessible name via
+    // dom-accessibility-api and THROWS if the dialog has no computed name (role stripped, or the
+    // label lands on a non-naming element). The prior getAttribute('aria-label')==='Favorites'
+    // only proved the raw string attribute existed — the exact L-275 antipattern that let the
+    // sow-forms a11y-blackout ship green. This asserts the a11y tree, not the attribute.
+    const dlg = screen.getByRole('dialog', { name: 'Favorites' })
+    expect(dlg).toBeTruthy()
     expect(dlg.getAttribute('aria-modal')).toBe('true')
-    expect(dlg.getAttribute('aria-label')).toBe('Favorites')
+  })
+
+  it('accessible name falls back to ariaLabel prop when no title (title || ariaLabel branch)', () => {
+    // MUTANT-GUARD: collapsing `aria-label={title || ariaLabel}` to just `title` nulls the name on
+    // every ariaLabel-only consumer. Computed-name assertion, no jest-dom (L-182).
+    render(<Sheet open ariaLabel="Quick log" onClose={() => {}}><button>a</button></Sheet>)
+    expect(screen.getByRole('dialog', { name: 'Quick log' })).toBeTruthy()
+  })
+
+  it('MUTANT-GUARD (focus restore): closing restores focus to the element focused before open', () => {
+    // qa-architect mutant: deleting the restore-focus cleanup (Sheet.jsx return-block) survived all
+    // prior tests. This kills it: an external control holds focus, the open effect must capture it,
+    // and close must return focus there (WCAG SC 2.4.3 — focus must not fall to <body>).
+    const opener = document.createElement('button')
+    opener.textContent = 'opener'
+    document.body.appendChild(opener)
+    opener.focus()
+    expect(document.activeElement).toBe(opener)
+    const { rerender } = render(
+      <Sheet open title="T" onClose={() => {}}><button>inside</button></Sheet>
+    )
+    // focus moved off the opener, into the panel
+    expect(document.activeElement).not.toBe(opener)
+    // close → focus must return to the opener
+    rerender(<Sheet open={false} title="T" onClose={() => {}}><button>inside</button></Sheet>)
+    expect(document.activeElement).toBe(opener)
+    document.body.removeChild(opener)
+  })
+
+  it('MUTANT-GUARD (tab trap): Tab at the last focusable wraps to the first; Shift+Tab at the first wraps to the last', () => {
+    // qa-architect mutant: deleting the ENTIRE Tab-trap block survived all prior tests. This asserts
+    // both wrap directions so removing (or half-removing) the trap fails (WCAG SC 2.1.2 — no focus
+    // escape from a modal).
+    render(
+      <Sheet open title="T" onClose={() => {}}>
+        <button>first</button>
+        <button>last</button>
+      </Sheet>
+    )
+    const first = screen.getByRole('button', { name: 'first' })
+    const last = screen.getByRole('button', { name: 'last' })
+    // forward wrap: focus last, Tab → first
+    last.focus()
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(first)
+    // backward wrap: focus first, Shift+Tab → last
+    first.focus()
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(last)
   })
 
   it('Escape and backdrop click both call onClose', () => {
