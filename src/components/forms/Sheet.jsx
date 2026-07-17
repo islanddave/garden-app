@@ -4,58 +4,124 @@
 // "Why this"). Backdrop + slide-up panel rounded at the top, grab handle, safe-area inset.
 // a11y: role=dialog + aria-modal, accessible name (title|ariaLabel), Escape to close,
 // focus moved into the panel on open and RESTORED to the prior element on close, backdrop
-// tap-to-dismiss. Reduced-motion: the panel still appears; no required motion to operate.
-// Ships DARK (no runtime importer until the adopting slice).
+// tap-to-dismiss.
+//
+// V4-OVERLAY-001 Slice 1 (§5) additions — additive, defaults preserve every existing consumer:
+//   size='peek'|'full'   peek = the historical 85vh; full = near-fullscreen for long forms (§5.1).
+//   dirty=false          when true, a backdrop tap NO-OPS (a stray tap must not discard a dirty
+//                        form — §5.2). Escape + the Close button stay live regardless.
+//   closeLabel='Close'   a11y label for the mandatory visible Close control (§5.3): the 36x4 grab
+//                        handle has no drag handler (a false affordance) and an invisible backdrop
+//                        is not a discoverable exit — so a real >=44px labelled Close is required.
+// Also: refcounted body scroll-lock (§5.4, overflow:hidden + overscroll-behavior:contain, restores
+// the prior values on the LAST close — unconditional, so a stacked sheet cannot strand the lock and
+// brick the app); Escape TOPMOST-arbitration (§5.5, only the top sheet responds so one Escape does
+// not fire two onCloses); focus-selector hardening (§5.6, :not([disabled]) + hidden/aria-hidden
+// filter). Reduced-motion: the panel still appears; no required motion to operate.
 import React, { useEffect, useRef } from 'react'
 import { P } from '../../lib/constants.js'
 
-export default function Sheet({ open, onClose, title, ariaLabel, children }) {
+// Module-level stack of OPEN sheets (each mounted-open Sheet pushes an opaque token). Drives two
+// cross-instance concerns that a per-instance effect cannot see: (a) refcounted body scroll-lock
+// and (b) Escape topmost-arbitration. Popped on close/unmount.
+const openStack = []
+let savedOverflow = null
+let savedOverscroll = null
+
+function lockBodyScroll() {
+  if (openStack.length !== 1) return // only the FIRST sheet captures + locks; nested pushes no-op
+  const b = document.body
+  savedOverflow = b.style.overflow
+  savedOverscroll = b.style.overscrollBehavior
+  b.style.overflow = 'hidden'
+  b.style.overscrollBehavior = 'contain'
+}
+function unlockBodyScroll() {
+  if (openStack.length !== 0) return // only the LAST close restores
+  const b = document.body
+  b.style.overflow = savedOverflow ?? ''
+  b.style.overscrollBehavior = savedOverscroll ?? ''
+  savedOverflow = savedOverscroll = null
+}
+
+// :not([disabled]) hardening (§5.6) + a jsdom-safe visibility filter (offsetParent is unreliable
+// without a layout engine, so we exclude only declaratively-hidden nodes, never layout-derived).
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+function focusablesIn(panel) {
+  if (!panel) return []
+  return Array.from(panel.querySelectorAll(FOCUSABLE)).filter(
+    (el) =>
+      !el.hasAttribute('hidden') &&
+      el.getAttribute('aria-hidden') !== 'true' &&
+      el.style.display !== 'none' &&
+      el.style.visibility !== 'hidden'
+  )
+}
+
+export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, closeLabel = 'Close' }) {
   const panelRef = useRef(null)
   const restoreRef = useRef(null)
-  // Latest-onClose ref: keeps the Escape handler current WITHOUT making onClose a dep of the
-  // focus effect. Callers pass inline onClose closures (recreated every render); if that identity
-  // drove the focus effect, every parent re-render (e.g. a keystroke updating form state) would
-  // re-run it and yank focus back to the first field. Focus-on-open must fire ONLY on open change.
+  // Latest-value refs: keep the keydown handler current WITHOUT making onClose/dirty deps of the
+  // focus effect. Callers pass inline closures recreated every render; if their identity drove the
+  // effect, every parent re-render (e.g. a keystroke updating form state) would re-run it and yank
+  // focus back to the first field. Focus-on-open must fire ONLY on open change.
   const onCloseRef = useRef(onClose)
   useEffect(() => { onCloseRef.current = onClose }, [onClose])
+  const dirtyRef = useRef(dirty)
+  useEffect(() => { dirtyRef.current = dirty }, [dirty])
 
   useEffect(() => {
     if (!open) return
+    // Register on the open-sheet stack BEFORE locking (lock reads openStack.length).
+    const token = {}
+    openStack.push(token)
+    lockBodyScroll()
+
     restoreRef.current = document.activeElement
     const panel = panelRef.current
-    // Move focus into the panel (first focusable, else the panel itself).
-    const focusable = panel?.querySelector(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    )
-    ;(focusable || panel)?.focus()
+    // Move focus into the panel: first focusable that is NOT the Close control (so forms still open
+    // on their first field), else the Close control, else the panel itself.
+    const items = focusablesIn(panel)
+    const initial = items.find((el) => !el.hasAttribute('data-sheet-close')) || items[0] || panel
+    initial?.focus()
 
     function onKey(e) {
+      // Escape topmost-arbitration (§5.5, SC 2.1.1): only the TOP sheet responds, so one Escape
+      // never fires two onCloses when sheets are stacked.
+      if (openStack[openStack.length - 1] !== token) return
       if (e.key === 'Escape') { e.preventDefault(); onCloseRef.current?.(); return }
       if (e.key !== 'Tab' || !panel) return
-      const items = panel.querySelectorAll(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      )
-      if (!items.length) return
-      const first = items[0], last = items[items.length - 1]
+      const ring = focusablesIn(panel)
+      if (!ring.length) return
+      const first = ring[0], last = ring[ring.length - 1]
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
     }
     document.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('keydown', onKey)
+      // Pop THIS token wherever it sits (robust to out-of-order close), then maybe unlock.
+      const i = openStack.indexOf(token)
+      if (i !== -1) openStack.splice(i, 1)
+      unlockBodyScroll()
       const el = restoreRef.current
       if (el && typeof el.focus === 'function') el.focus()
     }
-    // Deps = [open] ONLY (onClose read via ref): fire focus-into-panel on open transitions, never
-    // on incidental parent re-renders — the fix for the "keystroke steals focus back to Name" bug.
+    // Deps = [open] ONLY (onClose/dirty read via ref): fire on open transitions, never on incidental
+    // parent re-renders — the fix for the "keystroke steals focus back to Name" bug.
   }, [open])
 
   if (!open) return null
 
+  // Backdrop tap: dirty guard (§5.2). When dirty a stray backdrop tap no-ops; Escape/Close stay live.
+  const onBackdrop = () => { if (!dirty) onClose?.() }
+
+  const maxHeight = size === 'full' ? 'calc(100dvh - env(safe-area-inset-top) - 8px)' : '85vh'
+
   return (
     <>
       <div
-        onClick={onClose}
+        onClick={onBackdrop}
         style={{ position: 'fixed', inset: 0, zIndex: 190, backgroundColor: 'rgba(0,0,0,0.3)' }}
       />
       <div
@@ -67,7 +133,7 @@ export default function Sheet({ open, onClose, title, ariaLabel, children }) {
         style={{
           position: 'fixed',
           bottom: 0, left: 0, right: 0,
-          maxHeight: '85vh',
+          maxHeight,
           overflowY: 'auto',
           backgroundColor: P.white,
           borderRadius: '16px 16px 0 0',
@@ -79,11 +145,30 @@ export default function Sheet({ open, onClose, title, ariaLabel, children }) {
         }}
       >
         <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: P.border, margin: '0 auto 8px' }} />
-        {title && (
-          <div style={{ padding: '4px 24px 8px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>
-            {title}
-          </div>
-        )}
+        {/* Header row: title (if any) + the mandatory visible, labelled Close (>=44px). §5.3 */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '0 8px 4px' }}>
+          {title ? (
+            <div style={{ flex: 1, padding: '4px 16px 4px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>
+              {title}
+            </div>
+          ) : (
+            <div style={{ flex: 1 }} />
+          )}
+          <button
+            type="button"
+            data-sheet-close="true"
+            onClick={() => onClose?.()}
+            aria-label={closeLabel}
+            style={{
+              flexShrink: 0, width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'transparent', border: 'none', color: P.mid, cursor: 'pointer', borderRadius: 8,
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
         {children}
       </div>
     </>

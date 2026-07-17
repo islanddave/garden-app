@@ -61,16 +61,21 @@ describe('Sheet (V4-THEME-001)', () => {
         <button>last</button>
       </Sheet>
     )
-    const first = screen.getByRole('button', { name: 'first' })
-    const last = screen.getByRole('button', { name: 'last' })
-    // forward wrap: focus last, Tab → first
-    last.focus()
+    // The §5.3 Close control is now the first node in the DOM focus ring; compute boundaries from
+    // the actual ring rather than assuming the children are the boundaries.
+    const dlg = screen.getByRole('dialog')
+    const ring = [...dlg.querySelectorAll('button')] // [Close, first, last] in DOM order
+    const ringFirst = ring[0]
+    const ringLast = ring[ring.length - 1]
+    expect(ringLast).toBe(screen.getByRole('button', { name: 'last' }))
+    // forward wrap: focus the last, Tab wraps to the first (the Close control)
+    ringLast.focus()
     fireEvent.keyDown(document, { key: 'Tab' })
-    expect(document.activeElement).toBe(first)
-    // backward wrap: focus first, Shift+Tab → last
-    first.focus()
+    expect(document.activeElement).toBe(ringFirst)
+    // backward wrap: focus the first, Shift+Tab wraps to the last
+    ringFirst.focus()
     fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
-    expect(document.activeElement).toBe(last)
+    expect(document.activeElement).toBe(ringLast)
   })
 
   it('Escape and backdrop click both call onClose', () => {
@@ -125,5 +130,65 @@ describe('Sheet (V4-THEME-001)', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(first).not.toHaveBeenCalled()
     expect(second).toHaveBeenCalledTimes(1)
+  })
+
+  // ── V4-OVERLAY-001 Slice 1 §5 guards ─────────────────────────────────────────────
+  it('§5.3 MUTANT-GUARD (close control): a labelled Close button is present and calls onClose', () => {
+    const onClose = vi.fn()
+    render(<Sheet open title="T" onClose={onClose}><button>a</button></Sheet>)
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('§5.1 size: peek uses 85vh; full uses a near-fullscreen dvh height', () => {
+    const { rerender } = render(<Sheet open title="T" onClose={() => {}}><button>a</button></Sheet>)
+    expect(screen.getByRole('dialog').style.maxHeight).toBe('85vh')
+    rerender(<Sheet open size="full" title="T" onClose={() => {}}><button>a</button></Sheet>)
+    expect(screen.getByRole('dialog').style.maxHeight).toContain('dvh')
+  })
+
+  it('§5.4 MUTANT-GUARD (scroll lock): body scroll locks on open and the prior value is restored on close', () => {
+    // qa mutant class: dropping the body scroll-lock (or its restore). Asserts both edges.
+    expect(document.body.style.overflow).toBe('')
+    const { rerender } = render(<Sheet open title="T" onClose={() => {}}><button>a</button></Sheet>)
+    expect(document.body.style.overflow).toBe('hidden')
+    expect(document.body.style.overscrollBehavior).toBe('contain')
+    rerender(<Sheet open={false} title="T" onClose={() => {}}><button>a</button></Sheet>)
+    expect(document.body.style.overflow).toBe('') // restored to the prior value
+  })
+
+  it('§5.4 MUTANT-GUARD (no brick): unmounting WHILE open releases the scroll lock', () => {
+    // A stacked/cross-close path that unmounts an open sheet must not strand body.overflow:hidden
+    // (that bricks the whole app). Asserts release on unmount-while-open.
+    expect(document.body.style.overflow).toBe('')
+    const { unmount } = render(<Sheet open title="T" onClose={() => {}}><button>a</button></Sheet>)
+    expect(document.body.style.overflow).toBe('hidden')
+    unmount()
+    expect(document.body.style.overflow).toBe('')
+  })
+
+  it('§5.5 MUTANT-GUARD (escape arbitration): with two sheets stacked, one Escape closes ONLY the topmost', () => {
+    // qa mutant: no depth check -> one Escape fires BOTH onCloses (keyboard-only double-close, SC 2.1.1).
+    const outer = vi.fn(); const inner = vi.fn()
+    render(
+      <>
+        <Sheet open title="outer" onClose={outer}><button>o</button></Sheet>
+        <Sheet open title="inner" onClose={inner}><button>i</button></Sheet>
+      </>
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(inner).toHaveBeenCalledTimes(1)
+    expect(outer).not.toHaveBeenCalled()
+  })
+
+  it('§5.2 MUTANT-GUARD (dirty backdrop): when dirty a backdrop tap no-ops but Escape still closes', () => {
+    // A stray backdrop tap must not discard a dirty form; the deliberate Escape/Close paths stay live.
+    const onClose = vi.fn()
+    render(<Sheet open dirty title="T" onClose={onClose}><button>a</button></Sheet>)
+    const backdrop = screen.getByRole('dialog').previousSibling
+    fireEvent.click(backdrop)
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
