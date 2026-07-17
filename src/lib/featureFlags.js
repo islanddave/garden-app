@@ -32,3 +32,11 @@ export const EVENTNEW_ADD_DETAILS_EXPANDED = false
 // with the server env var AFTER shadow-soak. These are SEPARATE mechanisms — the CJS daily-plan Lambda cannot
 // import this ESM module, so the server reads process.env.CARE_RAIN_CREDIT_ENABLED and this is the client copy.
 export const CARE_RAIN_CREDIT_ENABLED = false
+
+// V4-OVERLAY-001 (design V102): route-backed overlays — forms/search open as flyovers over the
+// current tab instead of navigating away. Slice 1 = infra + /search consumer. When FALSE, every
+// overlay helper degrades to plain navigate/Link, no `background` is ever set, the overlay tree
+// never renders, and chrome reads the real location — behavior is byte-identical to pre-overlay.
+// Flip TRUE only after Slice-1 CI-green on pinned node 20.19.0. NOTE (design §9): this flag is a
+// true safety net for Slice 1 ONLY — Slices 2-3 mutate full-page rendering outside its guard.
+export const OVERLAY_ROUTES_ENABLED = false

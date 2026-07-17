@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
+import { useOverlayLocation } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { todayBand } from '../lib/todayBand.js'
@@ -34,7 +35,7 @@ export function barState(visible, total) {
 export default function TodayBand() {
   const { fetch } = useApiFetch()
   const navigate = useNavigate()
-  const location = useLocation()
+  const location = useOverlayLocation()
   const [dash, setDash] = useState(null)
   const inflight = useRef(false)
 

@@ -16,7 +16,7 @@
 // Fire-and-forget — silent no-op when VITE_API_CRITTERS unset or getToken returns null.
 
 import React, { useEffect, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useOverlayLocation } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { fetchActiveCritters } from '../lib/critterClient.js'
 import CritterArrival from './CritterArrival.jsx'
@@ -27,7 +27,7 @@ const SHOWN_CAP = 50
 
 export default function CritterArrivalController() {
   const { getToken } = useApiFetch()
-  const location = useLocation()
+  const location = useOverlayLocation()
   const [arrivingCritter, setArrivingCritter] = useState(null)
 
   useEffect(() => {

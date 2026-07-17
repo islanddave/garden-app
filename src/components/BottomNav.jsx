@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { useOverlayLocation } from '../context/OverlayContext.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import WhatsNewDot from './WhatsNewDot.jsx'
 import { P } from '../lib/constants.js'
@@ -67,7 +68,7 @@ function SectionLabel({ children }) {
 }
 
 export default function BottomNav() {
-  const location = useLocation()
+  const location = useOverlayLocation()
   const navigate = useNavigate()
   const { profile, signOut } = useAuth()
   const { getToken } = useApiFetch()

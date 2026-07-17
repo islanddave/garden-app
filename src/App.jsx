@@ -52,6 +52,9 @@ import CaptureFlow from './pages/CaptureFlow.jsx'
 import AddSeeds from './pages/AddSeeds.jsx'
 import SowNow from './pages/SowNow.jsx'
 import SplashScreen from './components/SplashScreen.jsx'
+import Sheet from './components/forms/Sheet.jsx'
+import { OverlayProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
+import { OVERLAY_ROUTES_ENABLED } from './lib/featureFlags.js'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -93,99 +96,126 @@ function Protected({ children }) {
   return user ? children : <Navigate to="/login" replace />
 }
 
+// V4-OVERLAY-001 Slice 1 (design V102 §3) — OverlayHost is a pure Sheet wrapper. It renders ONLY
+// inside the overlay tree, which itself renders only when a background exists — so `open` is always
+// true here. It wraps AROUND route.element (which already carries <Protected> + route-level
+// <ErrorBoundary>), so a form throw is still caught by the route boundary and its fallback renders
+// INSIDE the sheet. Passes ariaLabel (not title) so the dialog gets an accessible name with no
+// duplicate visible heading (SC 4.1.2). onClose routes both backdrop tap and Escape to §4 dismiss.
+function OverlayHost({ ariaLabel, size = 'peek', children }) {
+  const dismiss = useOverlayDismiss()
+  return (
+    <Sheet open onClose={dismiss} ariaLabel={ariaLabel} size={size}>
+      {children}
+    </Sheet>
+  )
+}
+
+// SINGLE source of truth for BOTH route trees (design V102 §3). Each `element` is IDENTICAL to the
+// historical inline JSX — <Protected> + route-level <ErrorBoundary> preserved verbatim — so the two
+// trees cannot drift and the overlay tree can never drop a boundary. Only `overlayable` routes
+// appear in the overlay tree, where their element is wrapped in <OverlayHost>; in the page tree the
+// SAME element renders unwrapped (full page). Declaration order is preserved from the original for
+// reviewability; react-router v6 ranks by specificity, so order does not affect matching. The route
+// rationale comments that used to sit here live in git history (pre-Slice-1 App.jsx).
+function renderRoutes({ overlay, user }) {
+  const routes = [
+    { path: '/',              element: <Navigate to="/today" replace /> },
+    { path: '/garden/:slug',  element: <ProjectPublic /> },
+    { path: '/garden',        element: <Protected><Garden /></Protected> },
+    { path: '/feed',          element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><FeedPage /></ErrorBoundary></Protected> },
+    { path: '/auth/callback', element: <AuthCallback /> },
+    { path: '/login',         element: user ? <Navigate to="/today" replace /> : <Login /> },
+    { path: '/dashboard',     element: <Protected><Dashboard /></Protected> },
+    { path: '/locations',     element: <Protected><Locations /></Protected> },
+    { path: '/locations/:id', element: <Protected><LocationDetail /></Protected> },
+    { path: '/tasks',         element: <Navigate to="/today" replace /> },
+    { path: '/zone',          element: <Protected><ZonePicker /></Protected> },
+    { path: '/projects',      element: <Protected><ProjectList /></Protected> },
+    { path: '/projects/new',  element: <Protected><ProjectNew /></Protected> },
+    { path: '/projects/:id',  element: <Protected><ProjectDetail /></Protected> },
+    { path: '/inactive',      element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><InactiveProjects /></ErrorBoundary></Protected> },
+    { path: '/inventory',     element: <Protected><Inventory /></Protected> },
+    { path: '/inventory/add', element: <Protected><InventoryAdd /></Protected> },
+    { path: '/inventory/add-seeds', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><AddSeeds /></ErrorBoundary></Protected> },
+    { path: '/inventory/:id', element: <Protected><InventoryDetail /></Protected> },
+    { path: '/sow',           element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SowNow /></ErrorBoundary></Protected> },
+    { path: '/log',           overlayable: true, ariaLabel: 'Log an event',      size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><EventNew /></ErrorBoundary></Protected> },
+    { path: '/log/many',      overlayable: true, ariaLabel: 'Log many',          size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><LogMany /></ErrorBoundary></Protected> },
+    { path: '/photos',        element: <Protected><PhotoLibrary /></Protected> },
+    { path: '/favorites',     element: <Protected><Favorites /></Protected> },
+    { path: '/search',        overlayable: true, ariaLabel: 'Search your garden', size: 'peek', element: <Protected><Search /></Protected> },
+    { path: '/project-types', element: <Protected><ProjectTypes /></Protected> },
+    { path: '/plants',        element: <PlantsRedirect /> },
+    { path: '/plants/catch-up', element: <Protected><PlantsCatchUp /></Protected> },
+    { path: '/projects/:id/events/:eventId', element: <Protected><EventDetail /></Protected> },
+    { path: '/projects/:id/plantings/:plantingId', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected> },
+    { path: '/achievements',  element: <Protected><Achievements /></Protected> },
+    { path: '/findings',      element: <Protected><Findings /></Protected> },
+    { path: '/today',         element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Today /></ErrorBoundary></Protected> },
+    { path: '/capture',       element: <Protected><CaptureFlow /></Protected> },
+    { path: '/collection',    element: <Protected><Collection /></Protected> },
+    { path: '/admin/classify', element: <Protected><ProjectsAdminClassify /></Protected> },
+    { path: '/admin/garden-activity', element: <Protected><GardenActivity /></Protected> },
+    { path: '/helper',        element: <Protected><GardenHelper /></Protected> },
+    { path: '/settings',      element: <Protected><Settings /></Protected> },
+    { path: '/settings/notifications', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SettingsNotifications /></ErrorBoundary></Protected> },
+    { path: '/field',         element: <Protected><FieldCapture /></Protected> },
+    { path: '/about',         element: <Protected><About /></Protected> },
+    { path: '/releases',      element: <Protected><ReleaseNotes /></Protected> },
+    { path: '*',              element: <Navigate to="/today" replace /> },
+  ]
+  const list = overlay ? routes.filter(r => r.overlayable) : routes
+  return list.map(r => (
+    <Route
+      key={r.path}
+      path={r.path}
+      element={overlay && r.overlayable ? <OverlayHost ariaLabel={r.ariaLabel} size={r.size}>{r.element}</OverlayHost> : r.element}
+    />
+  ))
+}
+
+// The authenticated shell. Reads the effective PAGE location (background when an overlay is open,
+// else the real location) so the page tree and chrome stay on the background while the overlay tree
+// (if any) renders at the real URL. See OverlayContext.
+function AppShell({ user }) {
+  const { pageLocation, overlayLocation, background } = useOverlay()
+  return (
+    <>
+      <TopChrome />
+      <div style={{
+        display: 'flex', flexDirection: 'column', minHeight: '100dvh',
+        paddingBottom: user ? 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))' : 0,
+      }}>
+        <div style={{ flex: 1 }}>
+          {/* PAGE tree — renders at pageLocation (== the real location when flag off / no overlay). */}
+          <Routes location={pageLocation}>
+            {renderRoutes({ overlay: false, user })}
+          </Routes>
+        </div>
+      </div>
+      {/* OVERLAY tree — mounts ONLY when a background exists (flag on + an overlay was opened).
+          Renders at the REAL location so overlay content reads the true URL (reads/writes aligned). */}
+      {OVERLAY_ROUTES_ENABLED && background && (
+        <Routes location={overlayLocation}>
+          {renderRoutes({ overlay: true, user })}
+        </Routes>
+      )}
+      {user && <TodayBand />}
+      {user && <BottomNav />}
+      {user && <CritterArrivalController />}
+    </>
+  )
+}
+
 function AppRoutes() {
   const { user } = useAuth()
   return (
     <BrowserRouter>
       <ErrorBoundary scope="app" fallback={<AppFallback />}>
-        <TopChrome />
-        <div style={{
-          display: 'flex', flexDirection: 'column', minHeight: '100dvh',
-          paddingBottom: user ? 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))' : 0,
-        }}>
-          <div style={{ flex: 1 }}>
-            <Routes>
-              <Route path="/"              element={<Navigate to="/today" replace />} />
-              <Route path="/garden/:slug"  element={<ProjectPublic />} />
-              <Route path="/garden"        element={<Protected><Garden /></Protected>} />
-              <Route path="/feed"          element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><FeedPage /></ErrorBoundary></Protected>} />
-              <Route path="/auth/callback" element={<AuthCallback />} />
-              <Route path="/login"         element={user ? <Navigate to="/today" replace /> : <Login />} />
-              <Route path="/dashboard"     element={<Protected><Dashboard /></Protected>} />
-              <Route path="/locations"     element={<Protected><Locations /></Protected>} />
-              <Route path="/locations/:id" element={<Protected><LocationDetail /></Protected>} />
-              <Route path="/tasks"         element={<Navigate to="/today" replace />} />
-              <Route path="/zone"          element={<Protected><ZonePicker /></Protected>} />
-              <Route path="/projects"      element={<Protected><ProjectList /></Protected>} />
-              <Route path="/projects/new"  element={<Protected><ProjectNew /></Protected>} />
-              <Route path="/projects/:id"  element={<Protected><ProjectDetail /></Protected>} />
-              <Route path="/inactive"      element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><InactiveProjects /></ErrorBoundary></Protected>} />
-              <Route path="/inventory"     element={<Protected><Inventory /></Protected>} />
-              <Route path="/inventory/add" element={<Protected><InventoryAdd /></Protected>} />
-              {/* V4-SEEDINV-001: bulk seed intake (photo / paste / one item). Literal route
-                  declared BEFORE /inventory/:id. Route-level ErrorBoundary (fresh fetch
-                  surface) mirrors /today, /inactive. */}
-              <Route path="/inventory/add-seeds" element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><AddSeeds /></ErrorBoundary></Protected>} />
-              <Route path="/inventory/:id" element={<Protected><InventoryDetail /></Protected>} />
-              {/* DRG-SOWNOW-001: what-can-I-sow-now buckets over v_sow_candidates. */}
-              <Route path="/sow"           element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SowNow /></ErrorBoundary></Protected>} />
-              <Route path="/log"           element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><EventNew /></ErrorBoundary></Protected>} />
-              <Route path="/log/many"      element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><LogMany /></ErrorBoundary></Protected>} />
-              <Route path="/photos"        element={<Protected><PhotoLibrary /></Protected>} />
-              <Route path="/favorites"     element={<Protected><Favorites /></Protected>} />
-              <Route path="/search"        element={<Protected><Search /></Protected>} />
-              <Route path="/project-types" element={<Protected><ProjectTypes /></Protected>} />
-              {/* V3-IA: Plants page retired; legacy links redirect into Garden (query preserved). */}
-              <Route path="/plants"        element={<PlantsRedirect />} />
-              <Route path="/plants/catch-up" element={<Protected><PlantsCatchUp /></Protected>} />
-              <Route path="/projects/:id/events/:eventId" element={<Protected><EventDetail /></Protected>} />
-              {/* V3-NAV-001 (Lane C / PR2): dedicated planting detail. Route-level ErrorBoundary
-                  (fresh fetch surface) mirrors /inactive, /log, /settings/notifications. */}
-              <Route path="/projects/:id/plantings/:plantingId" element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected>} />
-              <Route path="/achievements" element={<Protected><Achievements /></Protected>} />
-              <Route path="/findings"     element={<Protected><Findings /></Protected>} />
-              {/* DRG-TODAY-002: Today / daily care surface. Consumes GET /api/daily-plan (per-user read of
-                  the overnight Daily Plan engine, DRG-TODAY-001). Route-level ErrorBoundary (fresh fetch
-                  surface) mirrors /findings, /inactive. */}
-              <Route path="/today"        element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Today /></ErrorBoundary></Protected>} />
-              <Route path="/capture"      element={<Protected><CaptureFlow /></Protected>} />
-              <Route path="/collection" element={<Protected><Collection /></Protected>} />
-              {/* V1.2a-4 S6 admin classify route. Jen-invisible (no nav link).
-                  Desktop-only viewport guard inside the component. Lambda-side
-                  ADMIN_CLERK_SUBS allowlist is the real security; this route
-                  shows a placard to non-admins / mobile. */}
-              <Route path="/admin/classify" element={<Protected><ProjectsAdminClassify /></Protected>} />
-              {/* Inc 0 success-metric diagnostic. Jen-invisible (no nav link).
-                  Lambda-side ADMIN_CLERK_SUBS allowlist is the real security;
-                  non-admins see a neutral placard. */}
-              <Route path="/admin/garden-activity" element={<Protected><GardenActivity /></Protected>} />
-              {/* Post-V2 UX overhaul Inc 2 Bite 1: Rung-1 advisory helper-prompt.
-                  Non-recording scaffold (no DB writes); composes a prompt with a
-                  C4 untrusted-data fence and copies/shares to Claude.
-                  See postv2-ux-overhaul-inc2-bite-decomposition-V001-20260528.1145.md */}
-              <Route path="/helper"        element={<Protected><GardenHelper /></Protected>} />
-              {/* MVP-Critter Session 4 Phase A — Settings → Notifications.
-                  /settings parent permissive redirects to /settings/notifications per
-                  revision §3.23 (forward-compat for future nested settings).
-                  Wrap in ErrorBoundary per §3.23 — mirrors /inactive route-level pattern.
-                  See mvp-critter-pre-build-revision-V001-20260528.md §3.17/§3.23/§3.24. */}
-              <Route path="/settings"      element={<Protected><Settings /></Protected>} />
-              <Route path="/settings/notifications" element={<Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SettingsNotifications /></ErrorBoundary></Protected>} />
-              {/* Post-V2 UX overhaul Inc 2 Bite 3: Field capture surface MVP.
-                  Glove-and-glare mic UI + tap-to-type fallback + queued-count
-                  indicator. Gated on useMode()==='field'; Desk-mode visits
-                  redirect to /dashboard. SURFACE ONLY — Bite 4 wires real
-                  getUserMedia + IndexedDB. */}
-              <Route path="/field"         element={<Protected><FieldCapture /></Protected>} />
-              <Route path="/about"        element={<Protected><About /></Protected>} />
-              <Route path="/releases"     element={<Protected><ReleaseNotes /></Protected>} />
-              <Route path="*"             element={<Navigate to="/today" replace />} />
-            </Routes>
-          </div>
-        </div>
-        {user && <TodayBand />}
-        {user && <BottomNav />}
-        {user && <CritterArrivalController />}
+        <OverlayProvider>
+          <AppShell user={user} />
+        </OverlayProvider>
       </ErrorBoundary>
     </BrowserRouter>
   )

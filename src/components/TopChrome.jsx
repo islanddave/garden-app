@@ -16,7 +16,8 @@
 // "Release Notes" (already present). Header is now brand + search only.
 // SCRIM / DIM_SCRIM stops mirror scripts/banner_contrast.py STOPS — change BOTH together.
 import React, { useEffect, useMemo, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { useOverlayLocation, OverlayLink } from '../context/OverlayContext.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import { P, APP_NAME } from '../lib/constants.js'
 import { getRouteClass, CAPTURE_TITLES } from '../lib/routeClass.js'
@@ -40,7 +41,7 @@ function Magnifier({ size = 17 }) {
 
 export default function TopChrome() {
   const { user } = useAuth()
-  const { pathname } = useLocation()
+  const { pathname } = useOverlayLocation()
   const navigate = useNavigate()
   const [dayKey, setDayKey] = useState(() => new Date().toDateString())
   const [bannerReady, setBannerReady] = useState(false)
@@ -97,7 +98,7 @@ export default function TopChrome() {
         <div style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center' }}>
           <Link to="/dashboard" style={BRAND}>{APP_NAME}</Link>
         </div>
-        <Link
+        <OverlayLink
           to="/search" aria-label="Search your garden"
           style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: 8, height: 36, padding: '0 12px', borderRadius: 20, border: '1px solid rgba(255,255,255,0.75)', textDecoration: 'none', boxSizing: 'border-box', ...FROST }}
         >
@@ -106,7 +107,7 @@ export default function TopChrome() {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={P.greenDeep} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0" /><line x1="12" y1="18" x2="12" y2="21" />
           </svg>
-        </Link>
+        </OverlayLink>
       </header>
     )
   }
@@ -129,10 +130,10 @@ export default function TopChrome() {
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={P.greenDeep} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
       </button>
       <Link to="/dashboard" style={{ ...BRAND, position: 'relative', zIndex: 1, flex: 1, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis' }}>{APP_NAME}</Link>
-      <Link to="/search" aria-label="Search your garden"
+      <OverlayLink to="/search" aria-label="Search your garden"
         style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.75)', textDecoration: 'none', flexShrink: 0, ...FROST }}>
         <Magnifier size={18} />
-      </Link>
+      </OverlayLink>
     </header>
   )
 }
