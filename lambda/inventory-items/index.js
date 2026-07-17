@@ -317,7 +317,7 @@ export const handler = async (event) => {
 
       // INSERT writes BOTH user_id and created_by with the Clerk JWT.sub.
       // Both are NOT NULL TEXT in the deployed schema (twin-column reality —
-      // legacy from Supabase migration, not yet collapsed). prevent_ownership_transfer
+      // legacy from the original DB migration, not yet collapsed). prevent_ownership_transfer
       // trigger enforces created_by immutability post-INSERT.
       const rows = await sql`
         INSERT INTO inventory_items (

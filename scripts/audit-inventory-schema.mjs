@@ -209,12 +209,12 @@ async function main() {
     console.log('');
   }
 
-  // 11. auth.users existence (Supabase legacy)
+  // 11. auth.users existence (legacy auth schema from the original DB)
   const authUsers = await sql`
     SELECT 1 FROM information_schema.tables
     WHERE table_schema='auth' AND table_name='users'
   `;
-  console.log(`--- auth.users (Supabase legacy) ---`);
+  console.log(`--- auth.users (legacy auth schema) ---`);
   console.log(`  exists: ${authUsers.length > 0 ? 'YES' : 'NO'}`);
   console.log('');
 
