@@ -41,6 +41,10 @@ env:
   # shared-state: placeholder until the first staging deploy creates the Function URL; Dave updates this to the real URL.
   # V3-REWARDSTATE-001 substrate (featured-of-day + sighting-tally). No smoke assert added until the URL is real.
   STAGING_API_SHARED_STATE: https://nhkygabmmjfcksqlahk2n2t5di0webau.lambda-url.us-east-1.on.aws/
+  # No staging tags Lambda is provisioned. Declared empty so the reference below is explicit
+  # (was `vars.STAGING_API_TAGS`, an undefined repo var that silently baked VITE_API_TAGS="" into
+  # every staging build). WARN-tier in the Validate step; wire a real URL when staging tags exists.
+  STAGING_API_TAGS: ""
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
@@ -224,6 +228,40 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Validate env vars (staging)
+        run: |
+          # Ported from deploy.yml's prod Validate step. Staging previously had NO env validation,
+          # which let deploy-staging.yml bake VITE_API_TAGS="" into every build unnoticed (the lone
+          # `vars.STAGING_API_TAGS` typo referenced an undefined repo var). Hard-fail the core vars,
+          # WARN the ship-then-wire optionals, and assert a staging (pk_test_*) Clerk key.
+          for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD VITE_API_INVENTORY; do
+            [[ -n "${!VAR}" ]] || { echo "ERROR: $VAR not set"; exit 1; }
+          done
+          for VAR in VITE_API_VARIETIES VITE_API_APP_EVENTS VITE_API_UX_EVENTS VITE_API_CRITTERS VITE_API_SHARED_STATE VITE_API_TAGS; do
+            [[ -n "${!VAR}" ]] || echo "WARN: $VAR not set — its UI will not work on staging until wired (ship-then-wire)"
+          done
+          [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_test_* ]] || {
+            echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY must be pk_test_* for staging (got ${VITE_CLERK_PUBLISHABLE_KEY:0:12}...)"
+            exit 1
+          }
+          echo "All staging VITE_ vars present and valid"
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ env.STAGING_CLERK_KEY }}
+          VITE_API_PROJECTS:          ${{ env.STAGING_API_PROJECTS }}
+          VITE_API_PLANTS:            ${{ env.STAGING_API_PLANTS }}
+          VITE_API_LOCATIONS:         ${{ env.STAGING_API_LOCATIONS }}
+          VITE_API_EVENTS:            ${{ env.STAGING_API_EVENTS }}
+          VITE_API_FAVORITES:         ${{ env.STAGING_API_FAVORITES }}
+          VITE_API_PHOTOS:            ${{ env.STAGING_API_PHOTOS }}
+          VITE_API_DASHBOARD:         ${{ env.STAGING_API_DASHBOARD }}
+          VITE_API_INVENTORY:         ${{ env.STAGING_API_INVENTORY }}
+          VITE_API_VARIETIES:         ${{ env.STAGING_API_VARIETIES }}
+          VITE_API_APP_EVENTS:        ${{ env.STAGING_API_APP_EVENTS }}
+          VITE_API_UX_EVENTS:         ${{ env.STAGING_API_UX_EVENTS }}
+          VITE_API_CRITTERS:          ${{ env.STAGING_API_CRITTERS }}
+          VITE_API_SHARED_STATE:      ${{ env.STAGING_API_SHARED_STATE }}
+          VITE_API_TAGS:              ${{ env.STAGING_API_TAGS }}
+
       - name: Build (staging)
         id: build
         run: |
@@ -255,7 +293,7 @@ jobs:
           VITE_API_UX_EVENTS:         ${{ env.STAGING_API_UX_EVENTS }}
           VITE_API_CRITTERS:          ${{ env.STAGING_API_CRITTERS }}
           VITE_API_SHARED_STATE:      ${{ env.STAGING_API_SHARED_STATE }}
-          VITE_API_TAGS:              ${{ vars.STAGING_API_TAGS }}
+          VITE_API_TAGS:              ${{ env.STAGING_API_TAGS }}
 
       - name: Verify build output
         run: |
