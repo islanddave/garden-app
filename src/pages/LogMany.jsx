@@ -162,11 +162,17 @@ export default function LogMany() {
   // §4 draft stash: persist the in-progress form while dirty (overlay only), so a dismiss preserves
   // it; cleared on a successful confirm/undo below. Never persists the pristine default or the
   // post-result screen (result set = already written to DB, not a resumable draft).
+  // Gate on `!ready`: the persist effect runs synchronously on mount, BEFORE the async load's
+  // readDraft (which resolves in a later microtask inside the fetch .then). Without the gate, a user
+  // whose remembered eventType is non-watering trips `dirty` on mount and writes a pristine draft
+  // that the load then reads back — shadowing the localStorage `lastScope` restore (silent reset to
+  // "All plantings"). Deferring until ready (load resolved) makes readDraft see null and honors the
+  // lastScope memory; from then on it persists real edits normally.
   useEffect(() => {
-    if (!inOverlay || result) return
+    if (!inOverlay || result || !ready) return
     const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all'
     if (dirty) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, idemKey: idemRef.current })
-  }, [inOverlay, result, eventType, eventDate, scope])
+  }, [inOverlay, result, ready, eventType, eventDate, scope])
 
   // Server dry-run for ScopeChecklist. Stable (deps: fetch) — eventType/eventDate are
   // passed as call args so a vocabulary change retriggers the child's effect, not this fn.
