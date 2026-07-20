@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.52.0",
+    "date": "2026-07-20",
+    "highlights": [
+      "Logging is smoother: tapping Log or Log Many now opens a panel right over whatever you're looking at, instead of jumping you to a separate screen. Fill it in, save, and you land back exactly where you were. If you close by accident your entry is kept, the Save button always stays reachable, and a finished bulk log celebrates right there on the results screen."
+    ]
+  },
+  {
     "version": "3.51.0",
     "date": "2026-07-20",
     "highlights": [
