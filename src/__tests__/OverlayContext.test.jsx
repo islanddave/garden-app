@@ -5,6 +5,11 @@ import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
+
+// Pin the flag OFF for this file regardless of the shipped value, so the inert-path guarantees are
+// tested deterministically (the flag-ON mechanism is covered in OverlayContext.flagOn.test.jsx).
+vi.mock('../lib/featureFlags.js', () => ({ OVERLAY_ROUTES_ENABLED: false }))
+
 import { OverlayProvider, OverlaySurfaceProvider, useInOverlaySurface, useOverlayLocation, useOverlayNavigate, OverlayLink } from '../context/OverlayContext.jsx'
 
 function ShowLoc() {

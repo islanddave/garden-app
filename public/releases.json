@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.51.0",
+    "date": "2026-07-20",
+    "highlights": [
+      "Search now opens as a panel over whatever page you're on, instead of jumping you to a separate screen. Open it, find what you're after, and close it — you land back exactly where you were, on the same tab, with nothing lost. Tapping a result still opens it in full."
+    ]
+  },
+  {
     "version": "3.50.0",
     "date": "2026-07-16",
     "highlights": [

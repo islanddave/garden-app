@@ -39,4 +39,4 @@ export const CARE_RAIN_CREDIT_ENABLED = false
 // never renders, and chrome reads the real location — behavior is byte-identical to pre-overlay.
 // Flip TRUE only after Slice-1 CI-green on pinned node 20.19.0. NOTE (design §9): this flag is a
 // true safety net for Slice 1 ONLY — Slices 2-3 mutate full-page rendering outside its guard.
-export const OVERLAY_ROUTES_ENABLED = false
+export const OVERLAY_ROUTES_ENABLED = true
