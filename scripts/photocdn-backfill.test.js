@@ -64,7 +64,7 @@ describe('generator (V102 internal-invoke + blurhash) static guards', () => {
 });
 
 describe('deploy-lambda.yml matrix guards for photocdn-derivative', () => {
-  it('added to the matrix', () => { expect(YML).toMatch(/tags, photocdn-derivative\]/); });
+  it('added to the matrix', () => { expect(YML).toMatch(/photocdn-derivative\]/); }); // must remain the last matrix entry (predecessors may vary — V4-HARVESTCENTER-001 inserted storage-location/preservation before it)
   it('EXCLUDED from the public Function-URL step (spec-B2)', () => {
     expect(YML).toMatch(/Ensure Function URL exists[\s\S]*?matrix\.function != 'photocdn-derivative'/);
   });

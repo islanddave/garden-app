@@ -25,6 +25,8 @@ const IN_SCOPE = [
   'findings/index.js', // DRG findings read model — household-scoped reads (created_by = ANY(householdIds))
   'tags/index.js', // V4-TAGSUB faceted tag visibility — shared tags widen to householdScope
   'daily-plan-read/index.js', // V4-ASSIGNLENS-001 — OPT-IN ?include=household widening (default stays per-user)
+  'preservation/index.js', // V4-HARVESTCENTER-001 — Put-Up log is household-shared inventory (user_id = ANY(householdIds))
+  'storage-location/index.js', // V4-HARVESTCENTER-001 — Put-Up storage vocab, household-scoped like locations
 ];
 
 // Out-of-scope: must NOT import householdScope.
