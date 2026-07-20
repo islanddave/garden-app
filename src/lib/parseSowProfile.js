@@ -148,13 +148,22 @@ const NULL_SOW_FIELDS = Object.freeze({
  * sow_notes = zone_notes + packet_notes + range-fidelity lines for any
  * collapsed depth/spacing range + sun nuance when a compound sun collapsed.
  */
-export function packetToVarietyCols(packet) {
+export function packetToVarietyCols(packet, opts = {}) {
   const out = {
     name: packet.variety ?? packet.name ?? null,
     species: null,
   };
   const guess = packet.crop_type_slug_guess;
-  if (guess && guess !== 'other' && CROP_TYPE_SLUGS.includes(guess)) {
+  // V4-SEEDLOAD-001 fix: gate crop_type_slug on the LIVE crop_types catalog when the caller
+  // supplies it (opts.validSlugs — a Set or array of slugs read from the crop_types table),
+  // falling back to the static CROP_TYPE_SLUGS list for callers without DB access. The static
+  // list drifted behind crop_types (carrot, radish, four_o_clock, … were absent), so valid slugs
+  // were dropped to null and the loaded varieties vanished from the by-type (faceted) views.
+  const valid = opts.validSlugs;
+  const slugOk = valid
+    ? (valid instanceof Set ? valid.has(guess) : valid.includes(guess))
+    : CROP_TYPE_SLUGS.includes(guess);
+  if (guess && guess !== 'other' && slugOk) {
     out.crop_type_slug = guess;
   }
   const sp = packet.sow_profile;
