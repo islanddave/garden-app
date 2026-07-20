@@ -118,7 +118,7 @@ function OverlayHost({ ariaLabel, size = 'peek', children }) {
 // SAME element renders unwrapped (full page). Declaration order is preserved from the original for
 // reviewability; react-router v6 ranks by specificity, so order does not affect matching. The route
 // rationale comments that used to sit here live in git history (pre-Slice-1 App.jsx).
-function renderRoutes({ overlay, user }) {
+export function renderRoutes({ overlay, user }) {
   const routes = [
     { path: '/',              element: <Navigate to="/today" replace /> },
     { path: '/garden/:slug',  element: <ProjectPublic /> },
