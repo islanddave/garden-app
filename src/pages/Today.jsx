@@ -4,6 +4,7 @@ import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import WeatherWidget from '../components/today/WeatherWidget.jsx'
 import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
+import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'
 import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
 import { useMembers } from '../hooks/useMembers.js'
@@ -96,6 +97,10 @@ export default function Today() {
           <CareNeeded plan={plan} />
         </div>
       )}
+
+      {/* V4-HARVESTCENTER-001 (L10) — "use soon" from your put-up stores. Ambient, neutral, self-
+          fetching; renders nothing when empty, so it costs no space on a fresh account. */}
+      <PutUpUseSoonBand />
 
       {/* V4-ASSIGNLENS-001 — the rest of the household's care (opt-in, ambient, subordinate). Works
           whether or not the current user has their own plan today. Reuses CareNeeded so logging on

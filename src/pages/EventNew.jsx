@@ -15,7 +15,7 @@ import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import { useToast } from '../context/ToastContext.jsx'
-import { OverlaySwapLink, useInOverlaySurface } from '../context/OverlayContext.jsx'
+import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS, SEVERITY_LEVELS, ISSUE_OPTIONS } from '../lib/dropdownRegistry.js'
 
@@ -259,6 +259,12 @@ export default function EventNew() {
   // V4-OVERLAY-001 Slice 2: true only when this form is rendered INSIDE the overlay Sheet. Gates the
   // overlay-only behaviors (in-surface undo, draft stash) so the full-page path is byte-identical.
   const inOverlay = useInOverlaySurface()
+  // V4-HARVESTCENTER-001 (L9): the harvest-log habit-stack trigger. After a harvest saves, offer an
+  // ambient "preserve this?" affordance that opens /put-up carrying { prefill } (crop/variety/plant/
+  // harvest_log). useOverlaySwap so an in-overlay trigger swaps the SAME overlay's content (preserving
+  // the original background); full-page it degrades to a plain navigate. Reward-adjacent, no interrupt.
+  const putUpSwap = useOverlaySwap()
+  const [preserveCtx, setPreserveCtx] = useState(null)
   // §7 toast modality: the global Undo toast renders OUTSIDE the aria-modal dialog, so a screen
   // reader (and the focus trap) can't reach it. Inside the overlay we surface an in-panel, announced,
   // focusable undo instead. { message, eventId } | null.
@@ -314,6 +320,8 @@ export default function EventNew() {
     setSeverity(null); setIssueChoice(''); setIssueOther('')
     // V4-TREATLOG-001: reset treatment capture on type change.
     setTreatment({ pest_target: '', product_id: '', product_text: '', category: '', amount: '' })
+    // V4-HARVESTCENTER-001: a fresh type choice clears the lingering "preserve this?" affordance.
+    setPreserveCtx(null)
   }, [form.event_type])
 
   // V4-TREATLOG-001: lazy-load treatment-relevant inventory the first time a treatment event is
@@ -507,6 +515,7 @@ export default function EventNew() {
 
   async function handleSubmit(e, { keepMode = 'type' } = {}) {
     e.preventDefault()
+    setPreserveCtx(null)
     if (!form.event_type)  { setError('Select an event type above.'); return }
     if (!form.project_id)  { setError('Select a project.'); return }
 
@@ -661,6 +670,21 @@ export default function EventNew() {
     // and STAY on the form, never navigate away ("no more Save and go back to Garden").
     // Two entry points: keepMode 'plant' (default / Enter) and keepMode 'type'.
     const projName = projects.find(p => p.id === form.project_id)?.name ?? 'event'
+
+    // V4-HARVESTCENTER-001 (L9): capture the "preserve this?" prefill BEFORE resetForNext clears
+    // form.plant_id. Provenance is best-effort — crop/variety resolve off the selected planting's
+    // variety_ref; harvest_log_id off the events response's harvest row. At least one of {crop,
+    // variety} is what Put-Up needs; if neither resolves, the affordance still opens (user picks a crop).
+    if (isHarvest && eventId) {
+      const selectedPlant = plantsForProject.find(p => p.id === form.plant_id)
+      const pf = {}
+      if (selectedPlant?.variety_ref?.crop_type_slug) pf.crop_type_slug = selectedPlant.variety_ref.crop_type_slug
+      if (selectedPlant?.variety_ref?.id) pf.variety_id = selectedPlant.variety_ref.id
+      if (form.plant_id) pf.plant_id = form.plant_id
+      if (result?.harvest?.id) pf.harvest_log_id = result.harvest.id
+      setPreserveCtx({ prefill: pf })
+    }
+
     resetForNext(keepMode)
     clearDraft(EVENTNEW_DRAFT_KEY)   // saved to DB — the working draft is spent
     // Operational confirmation + undo. Undo = soft-delete the just-logged event. Rewards stay
@@ -732,6 +756,32 @@ export default function EventNew() {
               borderRadius: 6, padding: '5px 12px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer',
               fontFamily: 'inherit',
             }}>Undo</button>
+          </div>
+        )}
+
+        {/* V4-HARVESTCENTER-001 (L9): ambient "preserve this?" affordance after a harvest logs. No
+            interrupt, no modal — an inline, dismissible offer that opens Put-Up prefilled. Honors
+            Reward-UX (reward-adjacent, not a reward surface). Renders on both the overlay + full-page
+            paths (putUpSwap degrades to a plain navigate full-page). */}
+        {preserveCtx && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap',
+            backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: '12px 14px',
+          }}>
+            <span style={{ flex: 1, minWidth: 160, fontSize: '0.9rem', fontWeight: 600, color: P.green }}>
+              Putting any of this up for later?
+            </span>
+            <button type="button"
+              onClick={() => putUpSwap('/put-up', { state: { prefill: preserveCtx.prefill } })}
+              style={{ background: P.green, color: P.white, border: 'none', borderRadius: 6,
+                padding: '7px 14px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Log a put-up
+            </button>
+            <button type="button" onClick={() => setPreserveCtx(null)}
+              style={{ background: 'transparent', color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 6,
+                padding: '7px 12px', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Not now
+            </button>
           </div>
         )}
 

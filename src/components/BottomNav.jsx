@@ -164,6 +164,13 @@ export default function BottomNav() {
         <Link to="/inventory" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.inventory" size={22} decorative />Inventory
         </Link>
+        {/* V4-HARVESTCENTER-001 — Put-Up mounts under "more" (design V101 §6 dec.2 → route under More).
+            OverlayLink so it opens as a flyover over the current page when OVERLAY_ROUTES_ENABLED (flag
+            off: a plain <Link>, full-page — byte-identical). Emoji glyph mirrors the Achievements row
+            (avoids the icon-completeness harness for a brand-new destination). */}
+        <OverlayLink to="/put-up" onClick={closeMore} style={menuRowStyle}>
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🫙</span>Put-Up
+        </OverlayLink>
         <Link to="/achievements" onClick={closeMore} style={menuRowStyle}>
           <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏆</span>Achievements
         </Link>

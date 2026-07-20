@@ -15,6 +15,11 @@ const { planState, fetchMock, toastMock } = vi.hoisted(() => ({
 vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: () => planState.current }))
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+  // V4-HARVESTCENTER-001: Today now composes <PutUpUseSoonBand/>, which reads location/navigate via
+  // OverlayContext. The band self-fetches use-soon (mocked useApiFetch returns no items → renders null),
+  // so these only need to exist, not carry real routing.
+  useLocation: () => ({ pathname: '/today' }),
+  useNavigate: () => vi.fn(),
 }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
 vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))

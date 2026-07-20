@@ -11,21 +11,21 @@ const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => 
 const overlayPaths = () => renderRoutes({ overlay: true, user: true }).map((r) => r.props.path)
 
 describe('App route table (single source of truth)', () => {
-  it('the page tree has the full 44-route set with no duplicates', () => {
+  it('the page tree has the full 45-route set with no duplicates', () => {
     const paths = pagePaths()
-    expect(paths).toHaveLength(44)
-    expect(new Set(paths).size).toBe(44)
+    expect(paths).toHaveLength(45)
+    expect(new Set(paths).size).toBe(45)
   })
 
   it('includes the catch-all, index redirect, and every key route', () => {
     const paths = pagePaths()
-    for (const p of ['/', '*', '/today', '/search', '/log', '/log/many', '/garden/:slug', '/login', '/projects/:id/plantings/:plantingId']) {
+    for (const p of ['/', '*', '/today', '/search', '/log', '/log/many', '/put-up', '/garden/:slug', '/login', '/projects/:id/plantings/:plantingId']) {
       expect(paths).toContain(p)
     }
   })
 
-  it('the overlay tree contains ONLY the three overlayable routes', () => {
-    expect(overlayPaths().sort()).toEqual(['/log', '/log/many', '/search'])
+  it('the overlay tree contains ONLY the four overlayable routes', () => {
+    expect(overlayPaths().sort()).toEqual(['/log', '/log/many', '/put-up', '/search'])
   })
 
   it('an overlayable route is wrapped (OverlayHost) in the overlay tree but raw in the page tree', () => {
