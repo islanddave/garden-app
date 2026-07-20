@@ -3,6 +3,7 @@ import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { OverlaySurfaceProvider } from '../context/OverlayContext.jsx'
 
 const SAMPLE = {
   '/api/plants': [
@@ -42,5 +43,13 @@ describe('Search page (V4-SEARCH-001)', () => {
     const input = await screen.findByLabelText('Search your garden')
     fireEvent.change(input, { target: { value: 'zzzzz' } })
     expect(await screen.findByText(/No matches/)).toBeTruthy()
+  })
+
+  it('§6: as an overlay surface it does NOT autofocus the input (the Sheet owns focus-on-open)', async () => {
+    render(<MemoryRouter initialEntries={['/search']}><OverlaySurfaceProvider><Search /></OverlaySurfaceProvider></MemoryRouter>)
+    const input = await screen.findByLabelText('Search your garden')
+    // Full-page Search autofocuses on mount; inside a Sheet it must defer so it does not corrupt
+    // the Sheet's focus-restore target (§6, SC 2.4.3). Nothing here focuses it.
+    expect(document.activeElement).not.toBe(input)
   })
 })

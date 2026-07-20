@@ -5,7 +5,7 @@ import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
-import { OverlayProvider, useOverlayLocation, useOverlayNavigate, OverlayLink } from '../context/OverlayContext.jsx'
+import { OverlayProvider, OverlaySurfaceProvider, useInOverlaySurface, useOverlayLocation, useOverlayNavigate, OverlayLink } from '../context/OverlayContext.jsx'
 
 function ShowLoc() {
   const loc = useOverlayLocation()
@@ -45,5 +45,13 @@ describe('OverlayContext — flag OFF (inert, shipped default)', () => {
   it('OverlayLink renders a plain link to the target when the flag is off', () => {
     render(<MemoryRouter initialEntries={['/today']}><OverlayLink to="/search" aria-label="Search">x</OverlayLink></MemoryRouter>)
     expect(screen.getByRole('link', { name: 'Search' }).getAttribute('href')).toBe('/search')
+  })
+
+  it('useInOverlaySurface defaults false, and is true inside OverlaySurfaceProvider', () => {
+    function Probe() { return <div data-testid="in">{String(useInOverlaySurface())}</div> }
+    const { rerender } = render(<Probe />)
+    expect(screen.getByTestId('in').textContent).toBe('false')
+    rerender(<OverlaySurfaceProvider><Probe /></OverlaySurfaceProvider>)
+    expect(screen.getByTestId('in').textContent).toBe('true')
   })
 })

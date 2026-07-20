@@ -12,6 +12,18 @@ import { OVERLAY_ROUTES_ENABLED } from '../lib/featureFlags.js'
 
 const OverlayContext = createContext(null)
 
+// Signals to route content that it is rendering INSIDE an overlay Sheet (vs full-page). OverlayHost
+// provides `true`; everywhere else it defaults false. Lets a route (e.g. Search) drop its full-page
+// 100dvh floor and defer initial focus to the Sheet when it is shown as a flyover (§6/§7). Inert
+// when the flag is off — OverlayHost never mounts, so this stays false.
+const OverlaySurfaceContext = createContext(false)
+export function OverlaySurfaceProvider({ children }) {
+  return <OverlaySurfaceContext.Provider value={true}>{children}</OverlaySurfaceContext.Provider>
+}
+export function useInOverlaySurface() {
+  return useContext(OverlaySurfaceContext)
+}
+
 // A background is honored only if the flag is on AND it looks like a real location. Guards the
 // "stale background across reload/deploy" trap (§V102 failure mode b): an unparseable/legacy value
 // degrades to full-page (background=undefined) instead of rendering a broken overlay tree.

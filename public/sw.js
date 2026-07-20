@@ -72,9 +72,10 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Network-first for HTML navigation (always fresh shell)
+  // Network-first for HTML navigation (always fresh shell), with an SPA fallback to the precached
+  // app shell so any client-side route works offline.
   if (request.mode === 'navigate') {
-    event.respondWith(networkFirst(request, STATIC_CACHE))
+    event.respondWith(navigationFallback(request))
     return
   }
 })
@@ -138,6 +139,25 @@ async function trimCache(cacheName, maxEntries) {
   if (keys.length <= maxEntries) return
   for (let i = 0; i < keys.length - maxEntries; i++) {
     await cache.delete(keys[i])
+  }
+}
+
+// Navigation strategy: fresh shell when online; offline, serve the exact cached URL if present,
+// else fall back to the precached app shell '/' (§7). Without the '/' fallback, an unvisited route
+// (or a client-side overlay transition to /search etc.) returned bare "Offline" — the SPA shell at
+// '/' can render ANY route client-side, so it is the correct offline entry for every navigation.
+async function navigationFallback(request) {
+  try {
+    const networkReq = new Request(request, { cache: 'no-store' })
+    const response = await fetch(networkReq)
+    if (response.ok) {
+      const cache = await caches.open(STATIC_CACHE)
+      cache.put(request, response.clone())
+    }
+    return response
+  } catch {
+    const cached = await caches.match(request)
+    return cached || (await caches.match('/')) || new Response('Offline', { status: 503 })
   }
 }
 

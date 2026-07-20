@@ -53,7 +53,7 @@ import AddSeeds from './pages/AddSeeds.jsx'
 import SowNow from './pages/SowNow.jsx'
 import SplashScreen from './components/SplashScreen.jsx'
 import Sheet from './components/forms/Sheet.jsx'
-import { OverlayProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
+import { OverlayProvider, OverlaySurfaceProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
 import { OVERLAY_ROUTES_ENABLED } from './lib/featureFlags.js'
 
 function AppFallback({ error, retry } = {}) {
@@ -106,7 +106,7 @@ function OverlayHost({ ariaLabel, size = 'peek', children }) {
   const dismiss = useOverlayDismiss()
   return (
     <Sheet open onClose={dismiss} ariaLabel={ariaLabel} size={size}>
-      {children}
+      <OverlaySurfaceProvider>{children}</OverlaySurfaceProvider>
     </Sheet>
   )
 }

@@ -10,6 +10,7 @@
 // "type it" fallback); the mic only renders where isTranscriptionSupported() is true.
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { useInOverlaySurface } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { startLiveTranscription, isTranscriptionSupported } from '../lib/transcribe.js'
 import { P } from '../lib/constants.js'
@@ -38,6 +39,7 @@ const EMPTY_SERVER = { plantings: [], projects: [], locations: [], varieties: []
 
 export default function Search() {
   const { fetch } = useApiFetch()
+  const inOverlay = useInOverlaySurface()
   const [params] = useSearchParams()
   const [q, setQ] = useState('')
   const [plants, setPlants] = useState([])
@@ -69,7 +71,11 @@ export default function Search() {
     return () => { alive = false }
   }, [fetch])
 
-  useEffect(() => { inputRef.current?.focus() }, [params])
+  // Full-page: autofocus the search box on mount. As an overlay: DEFER to the Sheet's focus-on-open
+  // (it focuses the first non-close focusable = this input). If Search autofocused here, its child
+  // effect would run before the Sheet's parent effect and the Sheet would capture THIS input as its
+  // focus-restore target -> focus falls to <body> on close (§6, SC 2.4.3).
+  useEffect(() => { if (!inOverlay) inputRef.current?.focus() }, [params, inOverlay])
   useEffect(() => () => { try { voiceRef.current?.cancel?.() } catch {} }, [])
 
   const stopVoice = useCallback(() => {
@@ -153,7 +159,7 @@ export default function Search() {
   }
 
   return (
-    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
+    <div style={{ minHeight: inOverlay ? 0 : 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: 16 }}>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: P.white, border: `1px solid ${P.border}`, borderRadius: 22, height: 44, padding: '0 12px', position: 'sticky', top: 8, zIndex: 5, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
