@@ -1,0 +1,164 @@
+# gates.yml
+# V4-PUTUP-001 — storage_location vocab + preservation_log put-up table (two NEW empty tables).
+#
+# PROMOTE-TIME SEQUENCING (ORDERED — do not reorder, do not skip):
+#   1. STAGING: run pre gates -> apply 0a-additive-ddl.sql -> post gates.
+#      (No data loader and no `sweep` step: both tables are created EMPTY with INLINE born-valid CHECKs,
+#       so there is no populated data to validate — cf. v4-seedinv-001 which needed NOT VALID + 0c.)
+#   2. deploy-staging + full regression pass on staging (build-and-test remains the required promote gate).
+#   3. PROD: run pre gates -> apply 0a -> post gates. Dave-gated apply; confirm the DATABASE_URL host
+#      printed by the runner before applying.
+#   4. Promote (version bump set at ship per L-171).
+#
+# Pre:  neither table exists yet; the FK-target tables (crop_types, plant_varieties, plants, harvest_log,
+#       photos) are present.
+# Post: both tables + their CHECKs + indexes exist and schema_version is recorded — this IS the DoD's
+#       scripted information_schema/pg_constraint contract assertion.
+
+pre:
+  - name: pre_preservation_log_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='preservation_log'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_storage_location_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='storage_location'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_crop_types_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='crop_types'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_harvest_log_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='harvest_log'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_plants_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_storage_location_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='storage_location'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_preservation_log_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='preservation_log'
+    expect: rowcount_eq
+    value: 1
+
+  # Attribution CHECK (L7 — at least one of crop_type_slug / variety_id).
+  - name: post_attribution_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname='chk_preservation_log_attribution'
+    expect: rowcount_eq
+    value: 1
+
+  # Method vocab CHECK exists AND enforces the canning safety split (can_water_bath / can_pressure,
+  # never a generic 'can'). Asserting the exact 13-value vocab guards against a silent vocab drift.
+  - name: post_method_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname='chk_preservation_log_method'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_method_no_generic_can
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_preservation_log_method'
+         AND pg_get_constraintdef(oid) LIKE '%can_water_bath%'
+         AND pg_get_constraintdef(oid) LIKE '%can_pressure%'
+         AND pg_get_constraintdef(oid) NOT LIKE '%''can''%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_method_other_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname='chk_preservation_log_method_other'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_quantity_value_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname='chk_preservation_log_quantity_value'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_package_count_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname='chk_preservation_log_package_count'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_storage_location_kind_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname='chk_storage_location_kind'
+    expect: rowcount_eq
+    value: 1
+
+  # ON DELETE SET NULL on plant_id + harvest_log_id (L8 / preserve-history) — assert the FK action is 'n'.
+  - name: post_plant_fk_set_null
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.preservation_log'::regclass
+         AND contype='f' AND confrelid='public.plants'::regclass
+         AND confdeltype='n'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_harvest_fk_set_null
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.preservation_log'::regclass
+         AND contype='f' AND confrelid='public.harvest_log'::regclass
+         AND confdeltype='n'
+    expect: rowcount_eq
+    value: 1
+
+  # crop_type_slug FK targets crop_types(slug) — GROUND-TRUTH the whole attribution model rests on.
+  - name: post_crop_fk_to_slug
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.preservation_log'::regclass
+         AND contype='f' AND confrelid='public.crop_types'::regclass
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_user_index_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='preservation_log' AND indexname='idx_preservation_log_user'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_use_by_index_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='preservation_log' AND indexname='idx_preservation_log_use_by'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.14.0-putup-001'
+    expect: rowcount_eq
+    value: 1
