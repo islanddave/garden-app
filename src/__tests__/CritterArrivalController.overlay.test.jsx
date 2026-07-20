@@ -34,9 +34,9 @@ function Dismisser() {
   return <button onClick={() => navigate('/today', { replace: true })}>dismiss</button>
 }
 
-function renderOverlayOpen() {
+function renderOverlayOpen(entry = { pathname: '/log', state: { background: { pathname: '/today', search: '' } } }) {
   return render(
-    <MemoryRouter initialEntries={[{ pathname: '/log', state: { background: { pathname: '/today', search: '' } } }]}>
+    <MemoryRouter initialEntries={[entry]}>
       <OverlayProvider>
         <Dismisser />
         <CritterArrivalController />
@@ -66,5 +66,31 @@ describe('CritterArrivalController — overlay suppression (§7)', () => {
     const el = screen.queryByTestId('critter-arrival')
     expect(el).not.toBeNull()
     expect(el?.getAttribute('data-critter-id')).toBe('c-queued')
+  })
+})
+
+describe('CritterArrivalController — batch reward fires on the result screen (Slice 2 follow-up)', () => {
+  // (a) A critterCheck signal on the REAL /log/many overlay location = the confirm→result reward
+  // moment; the batch critter shows NOW, on the result screen, even though the overlay is still open.
+  it('shows the batch critter on the /log/many result screen (critterCheck bypasses suppression)', async () => {
+    fetchActiveCrittersMock.mockResolvedValue([critter({ id: 'c-batch' })])
+    await act(async () => {
+      renderOverlayOpen({ pathname: '/log/many', state: { background: { pathname: '/today', search: '' }, critterCheck: 123456 } })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const el = screen.queryByTestId('critter-arrival')
+    expect(el).not.toBeNull()
+    expect(el?.getAttribute('data-critter-id')).toBe('c-batch')
+  })
+
+  // (b) An ambient poll-surfaced critter while the /log/many form is being FILLED (no critterCheck)
+  // still suppresses-and-queues — §7 holds; the reward does not pop over the active form.
+  it('still suppresses an ambient critter while the /log/many form is active (no critterCheck)', async () => {
+    fetchActiveCrittersMock.mockResolvedValue([critter({ id: 'c-ambient' })])
+    await act(async () => {
+      renderOverlayOpen({ pathname: '/log/many', state: { background: { pathname: '/today', search: '' } } })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByTestId('critter-arrival')).toBeNull()
   })
 })

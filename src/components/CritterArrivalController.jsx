@@ -16,7 +16,7 @@
 // Fire-and-forget — silent no-op when VITE_API_CRITTERS unset or getToken returns null.
 
 import React, { useEffect, useRef, useState } from 'react'
-import { useOverlayLocation, useOpenOverlayPath } from '../context/OverlayContext.jsx'
+import { useOverlayLocation, useOpenOverlayPath, useOverlayRewardSignal } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { fetchActiveCritters } from '../lib/critterClient.js'
 import CritterArrival from './CritterArrival.jsx'
@@ -35,6 +35,13 @@ export default function CritterArrivalController() {
   // AFTER the result screen" precedent: rewards fire on completion, never initiation.
   const openOverlayPath = useOpenOverlayPath()
   const formOverlayOpen = openOverlayPath === '/log' || openOverlayPath === '/log/many'
+  // Slice 2 follow-up (Dave 2026-07-20): the batch-earned critter must fire ON the /log/many RESULT
+  // screen (the accomplishment moment), NOT be deferred to dismiss. LogMany pushes state.critterCheck
+  // onto the REAL overlay location at confirm→result; that explicit "reward-OK, show now" signal both
+  // (a) re-triggers the poll (pageLocation — the stable background — does not change on that push) and
+  // (b) bypasses the form-open suppression below. A plain ambient poll (no critterCheck) during active
+  // entry has no signal, so it stays suppressed-and-queued (§7 holds).
+  const rewardSignal = useOverlayRewardSignal()
   const queuedRef = useRef(null)
 
   // Flush a queued critter once the form overlay closes.
@@ -66,8 +73,9 @@ export default function CritterArrivalController() {
         candidates.sort((a, b) => Date.parse(b.earned_at) - Date.parse(a.earned_at))
         const fresh = candidates[0]
         if (!on) return
-        // Suppress-and-queue while a capture form overlay is open; else present immediately.
-        if (formOverlayOpen) queuedRef.current = fresh
+        // Suppress-and-queue while a capture form overlay is open — UNLESS an explicit reward signal
+        // (critterCheck) says a batch just completed, which shows now on the result screen.
+        if (formOverlayOpen && !rewardSignal) queuedRef.current = fresh
         else setArrivingCritter(fresh)
         // Record immediately (don't wait for animation done) to avoid duplicate fires.
         try {
@@ -81,7 +89,7 @@ export default function CritterArrivalController() {
     }
     poll()
     return () => { on = false }
-  }, [getToken, location.pathname, location.state, formOverlayOpen])
+  }, [getToken, location.pathname, location.state, formOverlayOpen, rewardSignal])
 
   return <CritterArrival critter={arrivingCritter} onDone={() => setArrivingCritter(null)} />
 }

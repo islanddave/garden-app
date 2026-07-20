@@ -157,3 +157,15 @@ export function useOpenOverlayPath() {
   if (!ctx || !ctx.background) return null
   return ctx.overlayLocation?.pathname ?? null
 }
+
+// Slice 2 follow-up (Dave 2026-07-20) — the explicit reward signal LogMany pushes onto the REAL
+// overlay location's state at the confirm→result moment (state.critterCheck). Unlike an ambient
+// poll-surfaced critter, it means "a batch was just completed — show the reward NOW, on the result
+// screen." The CritterArrivalController treats it as a show-now trigger that BYPASSES the §7 form-open
+// suppression (which otherwise queues the reward to dismiss, deferring it off the accomplishment
+// moment onto the underlying page). It reads the REAL overlay location — NOT background/pageLocation,
+// where the same-path push does NOT land. null outside a provider / when no signal is present.
+export function useOverlayRewardSignal() {
+  const ctx = useContext(OverlayContext)
+  return ctx?.overlayLocation?.state?.critterCheck ?? null
+}
