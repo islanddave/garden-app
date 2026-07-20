@@ -26,6 +26,8 @@
 //   /api/tags               → VITE_API_TAGS         faceted tag substrate CRUD (V4-TAGSUB-001)
 //   /api/entity-tags        → VITE_API_TAGS         entity↔tag attach/detach + projected derived tags
 //   /api/search             → VITE_API_DASHBOARD    server-side universal search (V4-SEARCH-002)
+//   /api/storage-locations  → VITE_API_STORAGE_LOCATIONS  Put-Up storage vocab CRUD (V4-HARVESTCENTER-001)
+//   /api/preservation       → VITE_API_PRESERVATION  Put-Up log CRUD + whats-put-up/use-soon reads (V4-HARVESTCENTER-001)
 
 import { useAuth } from '@clerk/react'
 import { useCallback } from 'react'
@@ -51,6 +53,8 @@ const FUNCTION_URLS = {
   '/api/members':           import.meta.env.VITE_API_MEMBERS        ?? '',
   '/api/tags':              import.meta.env.VITE_API_TAGS           ?? '',
   '/api/entity-tags':       import.meta.env.VITE_API_TAGS           ?? '',
+  '/api/storage-locations': import.meta.env.VITE_API_STORAGE_LOCATIONS ?? '',
+  '/api/preservation':      import.meta.env.VITE_API_PRESERVATION   ?? '',
 }
 
 export function resolveUrl(path, urls = FUNCTION_URLS) {

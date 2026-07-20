@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         # One job per Lambda function directory under lambda/
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, ux-events, xp-reconcile, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, daily-plan, tags, photocdn-derivative]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, ux-events, xp-reconcile, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, daily-plan, tags, storage-location, preservation, photocdn-derivative]
       # No max-parallel cap: all functions dispatch in one wave so the
       # environment:production approval gate prompts ONCE (not 3 batches of 4).
       # Re-add `max-parallel: N` here only if Lambda control-plane rate limits appear.
