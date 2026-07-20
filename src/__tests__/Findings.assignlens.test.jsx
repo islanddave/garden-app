@@ -24,6 +24,8 @@ const apiFetch = vi.fn(async (path) => {
 
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+  // V4-OVERLAY-001 Slice 2: FindingCard now renders OverlayLink, which calls useLocation().
+  useLocation: () => ({ pathname: '/', search: '', hash: '', state: null, key: 'test' }),
 }))
 vi.mock('../hooks/useFindings.js', () => ({ useFindings: () => findingsState.current }))
 vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: () => ({ data: null, loading: false }) }))
