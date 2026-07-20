@@ -7,6 +7,7 @@ import { P, PROJECT_STATUSES } from '../lib/constants.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { severityTier, SEVERITY_STYLES } from '../lib/waterDue.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
+import { useOverlayNavigate } from '../context/OverlayContext.jsx'
 import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
 import HeadsUpTile from '../components/HeadsUpTile.jsx'
 import NotifyButton from '../components/NotifyButton.jsx'
@@ -554,7 +555,7 @@ function GiveAttentionTile({ nextAttention, hasProjects }) {
 
 // ─── Tile 2: Water me (3 states + severity tiers) ────────────────────────────
 function WaterMeTile({ waterDue, hasProjects }) {
-  const navigate = useNavigate()
+  const navigate = useOverlayNavigate()
   const [expanded, setExpanded] = useState(false)
 
   if (!hasProjects) return null

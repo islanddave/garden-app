@@ -15,6 +15,8 @@ import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import { useToast } from '../context/ToastContext.jsx'
+import { OverlaySwapLink, useInOverlaySurface } from '../context/OverlayContext.jsx'
+import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS, SEVERITY_LEVELS, ISSUE_OPTIONS } from '../lib/dropdownRegistry.js'
 
 // V3-EVENT-008: EVENT_TYPE_META lives in the canonical src/lib/eventTypes.js
@@ -40,6 +42,15 @@ function readLastHarvestUnit() {
 // LogMany's quicklog.lastScope pattern (module-const key + guarded localStorage,
 // validated against live projects on load). Stored as a bare project id string.
 const LAST_PROJECT_KEY = 'logone.lastProject'
+
+// V4-OVERLAY-001 Slice 2 draft stash key + the form fields that survive a dismiss/re-open. Only the
+// `form` object is stashed: the type-specific panels (metadata/harvest/treatment/severity/container)
+// are RESET by the form.event_type-change effect, so restoring them would be immediately clobbered —
+// stashing `form` (which those effects never touch) keeps the irreplaceable typed content (event
+// type, target plant, notes, quantity, date) without fighting the reset effects. project_id is
+// excluded so the load effect's remembered/validated project stands (avoids a mount-order race).
+const EVENTNEW_DRAFT_KEY = 'logone'
+const DRAFT_FORM_FIELDS = ['event_type', 'notes', 'private_notes', 'quantity', 'event_date', 'is_public', 'plant_id']
 
 function readLastProjectId() {
   try {
@@ -245,6 +256,13 @@ export default function EventNew() {
 
   // Tier 2 metadata state — { [field.key]: value } — only populated keys submitted
   const { show: showToast, showUndo } = useToast()
+  // V4-OVERLAY-001 Slice 2: true only when this form is rendered INSIDE the overlay Sheet. Gates the
+  // overlay-only behaviors (in-surface undo, draft stash) so the full-page path is byte-identical.
+  const inOverlay = useInOverlaySurface()
+  // §7 toast modality: the global Undo toast renders OUTSIDE the aria-modal dialog, so a screen
+  // reader (and the focus trap) can't reach it. Inside the overlay we surface an in-panel, announced,
+  // focusable undo instead. { message, eventId } | null.
+  const [inlineUndo, setInlineUndo] = useState(null)
   const [metadataState, setMetadataState] = useState({})
   // V4-TREATLOG-001: dedicated treatment capture (pest_treatment / doctored).
   const [treatment, setTreatment] = useState({ pest_target: '', product_id: '', product_text: '', category: '', amount: '' })
@@ -325,6 +343,33 @@ export default function EventNew() {
     if (form.event_type === 'watering') { ux.tap(); ux.step(1, 'start_capture') }
   }, [form.event_type])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // §4 draft stash — restore a dismissed-while-dirty overlay form. Once, on mount, ONLY when opened
+  // as an overlay with no seed deep-link (a bare "Log an event" tap): a deep-link's params express an
+  // explicit fresh intent and must win over a stale draft. Restores `form` fields only (see key doc).
+  useEffect(() => {
+    if (!inOverlay) return
+    const hasSeed = !!(preselectedProjectId || preselectedEventType || preselectedPlantId || resolveEventId || fromQuick)
+    if (hasSeed) return
+    const draft = readDraft(EVENTNEW_DRAFT_KEY)
+    if (!draft || !draft.form) return
+    const picked = {}
+    for (const k of DRAFT_FORM_FIELDS) if (k in draft.form) picked[k] = draft.form[k]
+    setForm(f => ({ ...f, ...picked }))
+    if (typeof draft.showPrivate === 'boolean') setShowPrivate(draft.showPrivate)
+    if (typeof draft.showAddDetails === 'boolean') setShowAddDetails(draft.showAddDetails)
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // §4 draft stash — persist the in-progress form while dirty (overlay only). Cleared on a successful
+  // save (spent) above. Dirty = any user-entered content; the pristine default is never stashed.
+  useEffect(() => {
+    if (!inOverlay) return
+    const dirty = !!(form.notes || form.private_notes || form.quantity || form.plant_id || form.event_type)
+    if (!dirty) return
+    const snap = {}
+    for (const k of DRAFT_FORM_FIELDS) snap[k] = form[k]
+    writeDraft(EVENTNEW_DRAFT_KEY, { form: snap, showPrivate, showAddDetails })
+  }, [inOverlay, form, showPrivate, showAddDetails])
+
   // Load plants when project selection changes
   useEffect(() => {
     if (!form.project_id) { setPlantsForProject([]); return }
@@ -400,6 +445,19 @@ export default function EventNew() {
     if (photoPreview) URL.revokeObjectURL(photoPreview)
     setPhotoPreview(null)
   }
+
+  // §7 in-surface undo — soft-delete the just-logged event (same action as the global toast's Undo).
+  function undoInline() {
+    if (!inlineUndo) return
+    apiFetch('/api/events/' + inlineUndo.eventId, { method: 'DELETE' }).catch(() => {})
+    setInlineUndo(null)
+  }
+  // Auto-dismiss the in-surface undo after 5s, mirroring the global undo toast's lifetime.
+  useEffect(() => {
+    if (!inlineUndo) return
+    const t = setTimeout(() => setInlineUndo(null), 5000)
+    return () => clearTimeout(t)
+  }, [inlineUndo])
 
   // V1.2a-2 Wave 3: client-side harvest validation — mirrors the server contract
   // in lambda/events/validators.js. Returns an error string, or null if valid.
@@ -604,14 +662,20 @@ export default function EventNew() {
     // Two entry points: keepMode 'plant' (default / Enter) and keepMode 'type'.
     const projName = projects.find(p => p.id === form.project_id)?.name ?? 'event'
     resetForNext(keepMode)
-    // Operational confirmation + undo via the GLOBAL toast layer (renders on THIS tab,
-    // not just Dashboard). Undo = soft-delete the just-logged event. Rewards stay
+    clearDraft(EVENTNEW_DRAFT_KEY)   // saved to DB — the working draft is spent
+    // Operational confirmation + undo. Undo = soft-delete the just-logged event. Rewards stay
     // ambient per Reward-UX V101 — never dispatched here.
     if (eventId) {
-      showUndo({
-        message: `Logged event for ${projName}`,
-        onUndo: () => { apiFetch('/api/events/' + eventId, { method: 'DELETE' }).catch(() => {}) },
-      })
+      if (inOverlay) {
+        // §7 modality fix: the global toast is AT-invisible behind aria-modal, so surface the undo
+        // INSIDE the panel (announced + focusable). Global toast is skipped to avoid a duplicate.
+        setInlineUndo({ message: `Logged event for ${projName}`, eventId })
+      } else {
+        showUndo({
+          message: `Logged event for ${projName}`,
+          onUndo: () => { apiFetch('/api/events/' + eventId, { method: 'DELETE' }).catch(() => {}) },
+        })
+      }
     } else {
       showToast({ message: keepMode === 'type' ? 'Saved — pick the next plant' : 'Saved — log the next event' })
     }
@@ -629,9 +693,11 @@ export default function EventNew() {
           <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
             Log an event
           </h1>
-          {/* V3-LOGBTN-001: themed ghost button (cream/sage/terra), not a raw text link. */}
+          {/* V3-LOGBTN-001: themed ghost button (cream/sage/terra), not a raw text link.
+              V4-OVERLAY-001 Slice 2: OverlaySwapLink so this in-overlay cross-link swaps content to
+              Log Many while preserving the background (full-page: a plain push, unchanged). */}
           <div style={{ marginTop: 8 }}>
-            <Link
+            <OverlaySwapLink
               to="/log/many"
               style={{
                 display: 'inline-block', marginTop: 4,
@@ -642,12 +708,32 @@ export default function EventNew() {
               }}
             >
               Log many →
-            </Link>
+            </OverlaySwapLink>
           </div>
         </div>
 
         {error && <ErrorBanner style={{ marginBottom: 16 }}>{error}</ErrorBanner>}
         {notice && <ErrorBanner style={{ marginBottom: 16 }}>{notice}</ErrorBanner>}
+
+        {/* §7 in-surface undo — announced (role=status + aria-live) and focusable INSIDE the dialog,
+            so the just-logged event is reversible for AT + keyboard users the global toast can't reach
+            (it renders outside aria-modal). Overlay-only; the full-page path uses the global toast. */}
+        {inOverlay && inlineUndo && (
+          <div role="status" aria-live="polite" style={{
+            display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
+            backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10,
+            padding: '10px 14px',
+          }}>
+            <span style={{ flex: 1, fontSize: '0.88rem', fontWeight: 600, color: P.green }}>
+              ✓ {inlineUndo.message}
+            </span>
+            <button type="button" onClick={undoInline} style={{
+              background: 'transparent', color: P.green, border: `1px solid ${P.greenLight}`,
+              borderRadius: 6, padding: '5px 12px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}>Undo</button>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
@@ -1011,17 +1097,19 @@ export default function EventNew() {
           </Section>
 
           {/* ── Floating Save — V3-EVENT-005 (Dave to eyeball bottom offset) ── */}
-          {/* Spacer so content isn't hidden behind the fixed buttons */}
+          {/* Spacer so content isn't hidden behind the sticky button */}
           <div style={{ height: 120 }} aria-hidden="true" />
-          {/* V3-EVENT-001: Save & Next sits beside the primary Save. It submits with
-              keepOpen so the form resets for another entry (scope preserved) instead
-              of navigating to the dashboard. Secondary variant to subordinate it to
-              the primary save action. */}
+          {/* V4-OVERLAY-001 Slice 2 (§6, BUG-SHEET-001 class): sticky, NOT fixed. `fixed` positions
+              against the viewport, so inside a Sheet (which sets no transform/containing block) the
+              CTA escaped the panel's scroll region and painted over the sheet at the same z200. sticky
+              keeps it inside its scroll container — the Sheet when overlaid, the document when full
+              page. bottom:68 still clears the fixed BottomNav on the full-page path. right:20 is dropped
+              (a sticky block spans the content column; justify-content:flex-end right-aligns the button,
+              and the form's own right padding gives the gap) so the inset can't shift it off-panel. */}
           <div
             style={{
-              position: 'fixed',
+              position: 'sticky',
               bottom: 68,
-              right: 20,
               zIndex: 200,
               display: 'flex',
               justifyContent: 'flex-end',

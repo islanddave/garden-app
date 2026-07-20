@@ -5,7 +5,7 @@
 // hasn't been looked at recently.
 
 import React from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useOverlayNavigate } from '../context/OverlayContext.jsx'
 import { P } from '../lib/constants.js'
 
 // "Observed N days ago" copy from days_since_obs (null => not yet observed).
@@ -69,7 +69,7 @@ const TILE_LABEL_STYLE = {
 }
 
 export default function HarvestReadyTile({ harvestReady, onDataRefresh }) {
-  const navigate = useNavigate()
+  const navigate = useOverlayNavigate()
   // onDataRefresh is accepted for forward-compat (inline log/refresh in a later
   // wave). Intentionally unused here — reference it so linters don't flag it.
   void onDataRefresh

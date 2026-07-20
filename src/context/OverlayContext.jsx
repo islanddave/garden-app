@@ -91,12 +91,69 @@ export function OverlayLink({ to, state, children, ...rest }) {
 
 // Dismiss (§4): NEVER bare navigate(-1) (history.back() at idx 0 is a no-op — the overlay would
 // stick open). Replace to the background URL (immune to history index), else /today. `replace`
-// avoids growing history.
+// avoids growing history. Resilient outside a provider (useContext, not useOverlay) so overlay
+// route content (LogMany "Done") can call it in isolated unit tests that render without a provider —
+// there background is simply undefined and it falls back to /today (same as flag-off / no overlay).
 export function useOverlayDismiss() {
   const navigate = useNavigate()
-  const { background } = useOverlay()
+  const ctx = useContext(OverlayContext)
+  const background = ctx ? ctx.background : undefined
   return useCallback(() => {
     if (background) navigate(background.pathname + background.search, { replace: true })
     else navigate('/today', { replace: true })
   }, [navigate, background])
+}
+
+// Slice 2 — safe read of the current background (undefined when no overlay / flag off / outside a
+// provider). Lets overlay content preserve `background` when it re-navigates to the SAME url with new
+// state (LogMany's post-batch critterCheck push, §4) without pulling in useLocation() — which the
+// bare-mock unit tests for these pages do not provide.
+export function useOverlayBackground() {
+  const ctx = useContext(OverlayContext)
+  return ctx ? ctx.background : undefined
+}
+
+// Slice 2 — SWAP the overlay's content WITHOUT changing the background. For cross-links that live
+// INSIDE an overlay (Log one <-> Log many, and Log Many's harvest→per-plant route): using
+// useOverlayNavigate there would set background to the overlay's OWN url (/log or /log/many), which
+// would render a form as the page-tree "background" and dismiss to the wrong place. Instead we carry
+// the EXISTING background forward and `replace` (a content swap must not grow history). When no
+// overlay is open (full-page, or flag off) this is a plain push navigate — identical to the old
+// <Link>/navigate() the call site used before.
+export function useOverlaySwap() {
+  const navigate = useNavigate()
+  const ctx = useContext(OverlayContext)
+  const background = ctx ? ctx.background : undefined
+  return useCallback(
+    (to, opts = {}) => {
+      if (OVERLAY_ROUTES_ENABLED && background) {
+        navigate(to, { replace: true, ...opts, state: { ...opts.state, background } })
+      } else {
+        navigate(to, opts)
+      }
+    },
+    [navigate, background]
+  )
+}
+
+// Declarative equivalent of useOverlaySwap for cross-link <Link>s inside an overlay.
+export function OverlaySwapLink({ to, state, replace: replaceProp, children, ...rest }) {
+  const ctx = useContext(OverlayContext)
+  const background = ctx ? ctx.background : undefined
+  const inOverlay = OVERLAY_ROUTES_ENABLED && !!background
+  const linkState = inOverlay ? { ...state, background } : state
+  return (
+    <Link to={to} state={linkState} replace={inOverlay || !!replaceProp} {...rest}>
+      {children}
+    </Link>
+  )
+}
+
+// Slice 2 — safe read of the OPEN overlay's pathname (null when no overlay is open / outside a
+// provider). Drives the CritterArrivalController suppress-and-queue: a reward must never pop over an
+// open capture form (§7). Returns null (not-open) in isolated tests with no provider.
+export function useOpenOverlayPath() {
+  const ctx = useContext(OverlayContext)
+  if (!ctx || !ctx.background) return null
+  return ctx.overlayLocation?.pathname ?? null
 }

@@ -43,6 +43,9 @@ describe('LogMany — unified event selector (V4-EVENTSEL-003)', () => {
     render(<LogMany />)
     const harvested = await screen.findByText('Harvested')
     fireEvent.click(harvested.closest('button'))
-    expect(navigate).toHaveBeenCalledWith('/log?event_type=harvest')
+    // V4-OVERLAY-001 Slice 2: harvest routing now goes through useOverlaySwap (cross-nav that
+    // preserves the background inside an overlay). With no overlay open it is a plain navigate to the
+    // same target; the swap passes an (empty) options object, so assert the first arg.
+    expect(navigate.mock.calls[0][0]).toBe('/log?event_type=harvest')
   })
 })

@@ -54,6 +54,10 @@ describe('QuickActions', () => {
     const file = new File(['x'], 'p.jpg', { type: 'image/jpeg' })
     fireEvent.change(input, { target: { files: [file] } })
     expect(setPendingSpy).toHaveBeenCalledWith(file)
-    expect(navigateSpy).toHaveBeenCalledWith('/log?project=proj1&plant=pl1&event_type=photo&fromquick=1')
+    // V4-OVERLAY-001 Slice 2: the photo deep-link now opens /log as an overlay, so the nav carries a
+    // `background` in options state (flag on). Assert the target + that a background is carried.
+    const [toArg, optsArg] = navigateSpy.mock.calls[0]
+    expect(toArg).toBe('/log?project=proj1&plant=pl1&event_type=photo&fromquick=1')
+    expect(optsArg?.state?.background).toBeTruthy()
   })
 })

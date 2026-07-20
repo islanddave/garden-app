@@ -6,6 +6,7 @@ vi.mock('react-router-dom', () => {
   const sp = new URLSearchParams()
   return {
     Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+    useLocation: () => ({ pathname: '/garden', search: '', state: null }),
     useNavigate: () => () => {},
     useSearchParams: () => [sp, () => {}],
   }

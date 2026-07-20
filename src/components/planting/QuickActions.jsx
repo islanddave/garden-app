@@ -6,7 +6,7 @@
 // status <select> that lived here was removed so status has a single home.
 // Operational confirmations via useOptionalToast (reward-UX operational carve-out only).
 import React, { useState, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useOverlayNavigate } from '../../context/OverlayContext.jsx'
 import { setPendingCapture } from '../../lib/pendingCapture.js'
 import { useApiFetch } from '../../lib/api.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'
@@ -24,7 +24,7 @@ export default function QuickActions({ planting, onLogged }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
   const [watering, setWatering] = useState(false)
-  const navigate = useNavigate()
+  const navigate = useOverlayNavigate()
   const photoInputRef = useRef(null)
 
   if (!planting) return null

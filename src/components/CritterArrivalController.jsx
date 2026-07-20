@@ -15,8 +15,8 @@
 //
 // Fire-and-forget — silent no-op when VITE_API_CRITTERS unset or getToken returns null.
 
-import React, { useEffect, useState } from 'react'
-import { useOverlayLocation } from '../context/OverlayContext.jsx'
+import React, { useEffect, useRef, useState } from 'react'
+import { useOverlayLocation, useOpenOverlayPath } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { fetchActiveCritters } from '../lib/critterClient.js'
 import CritterArrival from './CritterArrival.jsx'
@@ -29,6 +29,21 @@ export default function CritterArrivalController() {
   const { getToken } = useApiFetch()
   const location = useOverlayLocation()
   const [arrivingCritter, setArrivingCritter] = useState(null)
+  // V4-OVERLAY-001 Slice 2 (§7): a reward must NEVER pop over an open capture form. While a /log or
+  // /log/many overlay is open, a fresh critter is suppressed-and-queued (never dropped — dropping is
+  // its own dopamine-loop defect) and flushed on dismiss. Mirrors LogMany's "wake the controller
+  // AFTER the result screen" precedent: rewards fire on completion, never initiation.
+  const openOverlayPath = useOpenOverlayPath()
+  const formOverlayOpen = openOverlayPath === '/log' || openOverlayPath === '/log/many'
+  const queuedRef = useRef(null)
+
+  // Flush a queued critter once the form overlay closes.
+  useEffect(() => {
+    if (!formOverlayOpen && queuedRef.current) {
+      setArrivingCritter(queuedRef.current)
+      queuedRef.current = null
+    }
+  }, [formOverlayOpen])
 
   useEffect(() => {
     let on = true
@@ -51,7 +66,9 @@ export default function CritterArrivalController() {
         candidates.sort((a, b) => Date.parse(b.earned_at) - Date.parse(a.earned_at))
         const fresh = candidates[0]
         if (!on) return
-        setArrivingCritter(fresh)
+        // Suppress-and-queue while a capture form overlay is open; else present immediately.
+        if (formOverlayOpen) queuedRef.current = fresh
+        else setArrivingCritter(fresh)
         // Record immediately (don't wait for animation done) to avoid duplicate fires.
         try {
           shown.push(fresh.id)
@@ -64,7 +81,7 @@ export default function CritterArrivalController() {
     }
     poll()
     return () => { on = false }
-  }, [getToken, location.pathname, location.state])
+  }, [getToken, location.pathname, location.state, formOverlayOpen])
 
   return <CritterArrival critter={arrivingCritter} onDone={() => setArrivingCritter(null)} />
 }

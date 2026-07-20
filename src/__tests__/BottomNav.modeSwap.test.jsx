@@ -34,8 +34,12 @@ vi.mock('../components/CatchUpBadge.jsx', () => ({
 }))
 
 // Stub feature flag — keep CATCH_UP_EDITOR_SHIPPED stable for the test.
+// V4-OVERLAY-001 Slice 2: BottomNav's create-menu Log/Log-many rows are now <OverlayLink>s, which
+// read OVERLAY_ROUTES_ENABLED at render; the partial mock must export it (vitest throws on an
+// undefined mocked export). Prod value is true.
 vi.mock('../lib/featureFlags.js', () => ({
   CATCH_UP_EDITOR_SHIPPED: false,
+  OVERLAY_ROUTES_ENABLED: true,
 }))
 
 import BottomNav from '../components/BottomNav.jsx'

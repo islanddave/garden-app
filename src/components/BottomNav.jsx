@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { useOverlayLocation } from '../context/OverlayContext.jsx'
+import { useOverlayLocation, OverlayLink } from '../context/OverlayContext.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import WhatsNewDot from './WhatsNewDot.jsx'
 import { P } from '../lib/constants.js'
@@ -43,6 +43,9 @@ const CREATE_ACTIONS = [
   { to: '/garden?add=1', iconName: 'lifecycle.sprout', label: 'Add a planting', sub: 'A plant growing in a project' },
   { to: '/sow',          iconName: 'lifecycle.sprout', label: 'Sow from seed',  sub: 'Start something from your seed inventory' },
 ]
+
+// The create-menu targets that open as overlays (§6). Others navigate as pages.
+const OVERLAYABLE_CREATE = new Set(['/log', '/log/many'])
 
 // Shared menu-row style. `border:'none'` first so buttons drop their default border, then
 // `borderTop` as the row separator (later longhand wins over the shorthand).
@@ -105,20 +108,25 @@ export default function BottomNav() {
         <div style={{ padding: '6px 24px 8px', fontSize: '0.8rem', color: P.light }}>
           Add to your garden
         </div>
-        {CREATE_ACTIONS.map(action => (
-          <Link
-            key={action.label}
-            to={action.to}
-            onClick={closeCreate}
-            style={{ ...menuRowStyle, padding: '12px 24px' }}
-          >
-            <Icon name={action.iconName} size={24} decorative style={{ color: P.green }} />
-            <span style={{ display: 'flex', flexDirection: 'column' }}>
-              <span style={{ fontSize: '1rem', fontWeight: 600 }}>{action.label}</span>
-              <span style={{ fontSize: '0.78rem', color: P.light }}>{action.sub}</span>
-            </span>
-          </Link>
-        ))}
+        {CREATE_ACTIONS.map(action => {
+          // V4-OVERLAY-001 Slice 2: /log + /log/many open as flyovers over the current page; /sow and
+          // /garden?add=1 stay plain page navigations (§6 — /sow is a page, add-planting is Slice 3).
+          const RowLink = OVERLAYABLE_CREATE.has(action.to) ? OverlayLink : Link
+          return (
+            <RowLink
+              key={action.label}
+              to={action.to}
+              onClick={closeCreate}
+              style={{ ...menuRowStyle, padding: '12px 24px' }}
+            >
+              <Icon name={action.iconName} size={24} decorative style={{ color: P.green }} />
+              <span style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '1rem', fontWeight: 600 }}>{action.label}</span>
+                <span style={{ fontSize: '0.78rem', color: P.light }}>{action.sub}</span>
+              </span>
+            </RowLink>
+          )
+        })}
       </Sheet>
 
       {/* More menu (Sheet primitive) */}

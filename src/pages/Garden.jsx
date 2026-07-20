@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { loadGroupsExpanded, saveGroupsExpanded } from '../lib/projectTree.js'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams, useLocation } from 'react-router-dom'
+import { OverlayLink } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
@@ -121,6 +122,10 @@ export default function Garden() {
   // editor: null | { mode:'add' } | { mode:'edit', plant }. Opened by query params
   // (?add=1 / ?edit=<id> / packet deep-link params), mirroring the old Plants.jsx contract.
   const [searchParams, setSearchParams] = useSearchParams()
+  // V4-OVERLAY-001 Slice 2 (§4): these param-strip effects run on mount; setSearchParams defaults the
+  // location state to null, which would silently drop a carried `background` (or any other state). Read
+  // the live state so every strip below can spread it through (behavior-neutral when state is null).
+  const location = useLocation()
   const sourceInventoryItemId = searchParams.get('source_inventory_item_id') || null
   const queryVarietyId        = searchParams.get('variety_id') || null
   const [editor, setEditor] = useState(null)
@@ -270,7 +275,7 @@ export default function Garden() {
       if (searchParams.get('add') === '1') {
         const next = new URLSearchParams(searchParams)
         next.delete('add')
-        setSearchParams(next, { replace: true })
+        setSearchParams(next, { replace: true, state: location.state })
       }
     }
   }, [searchParams, sourceInventoryItemId, queryVarietyId, setSearchParams])
@@ -282,7 +287,7 @@ export default function Garden() {
     if (!editId || loading) return
     const next = new URLSearchParams(searchParams)
     next.delete('edit')
-    setSearchParams(next, { replace: true })
+    setSearchParams(next, { replace: true, state: location.state })
     const target = plants.find(p => String(p.id) === String(editId))
     if (target) {
       setEditor({ mode: 'edit', plant: target })
@@ -298,7 +303,7 @@ export default function Garden() {
       const next = new URLSearchParams(searchParams)
       next.delete('source_inventory_item_id')
       next.delete('variety_id')
-      setSearchParams(next, { replace: true })
+      setSearchParams(next, { replace: true, state: location.state })
     }
   }, [searchParams, setSearchParams, sourceInventoryItemId, queryVarietyId])
 
@@ -515,9 +520,9 @@ export default function Garden() {
             <Link to="/capture" data-testid="snap-entry-garden" style={btnGhostIcon}>
               <Icon name="media.camera" size={16} decorative style={{ color: P.green }} />Snap
             </Link>
-            <Link to="/log/many" style={btnGhostIcon}>
+            <OverlayLink to="/log/many" style={btnGhostIcon}>
               <Icon name="action.logmany" size={16} decorative style={{ color: P.green }} />Log many
-            </Link>
+            </OverlayLink>
             {/* V4-APPBAR-003: Favorites rehomed here from the retired header heart (Dave: into the Garden tab). */}
             <Link to="/favorites" aria-label="Favorites" style={btnGhostIcon}>
               <Icon name="action.heart" size={16} decorative style={{ color: P.green }} />Favorites

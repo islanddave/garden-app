@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate, useSearchParams, Link } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useOverlaySwap, OverlaySwapLink, useOverlayDismiss, useOverlayBackground, useInOverlaySurface } from '../context/OverlayContext.jsx'
+import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { BATCH_EVENT_TYPES, EVENT_TYPE_META, buildSecondaryGroups, PRIMARY_EVENT_TYPES } from '../lib/eventTypes.js'
@@ -69,9 +71,15 @@ function todayYMD() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+const DRAFT_KEY = 'logmany'
+
 export default function LogMany() {
   const { fetch } = useApiFetch()
   const navigate = useNavigate()
+  const swap = useOverlaySwap()               // in-overlay cross-nav that preserves the background (§4)
+  const dismiss = useOverlayDismiss()          // §4 dismiss — never bare navigate(-1)
+  const background = useOverlayBackground()     // preserved through the post-batch critterCheck push
+  const inOverlay = useInOverlaySurface()       // draft stash only applies when rendered as an overlay
   const [params] = useSearchParams()
 
   const [projects, setProjects]   = useState([])
@@ -101,7 +109,9 @@ export default function LogMany() {
   // entry (need a quantity); photo is hidden in bulk (absent from LOGMANY_PRIMARIES); everything
   // else selects for the batch apply.
   function goPerPlant(type) {
-    navigate(`/log?event_type=${encodeURIComponent(type)}`)
+    // Cross-nav to Log One INSIDE the overlay — swap keeps the underlying page as background so
+    // dismiss still returns to it (using useOverlayNavigate here would wrongly set bg to /log/many).
+    swap(`/log?event_type=${encodeURIComponent(type)}`)
   }
   function handlePick(v) {
     if (HARVEST_ROUTE_TYPES.has(v)) goPerPlant(v)
@@ -122,18 +132,41 @@ export default function LogMany() {
         if (seedProject && proj.some(p => p.id === seedProject)) setScope({ type: 'project', project_id: seedProject })
         else if (seedLocation && locs.some(l => l.id === seedLocation)) setScope({ type: 'space', location_id: seedLocation })
         else {
-          try {
-            const saved = JSON.parse(localStorage.getItem(SCOPE_KEY) || 'null')
-            if (saved && saved.type === 'all') setScope(saved)
-            else if (saved && saved.type === 'project' && proj.some(p => p.id === saved.project_id)) setScope(saved)
-            else if (saved && saved.type === 'space' && locs.some(l => l.id === saved.location_id)) setScope(saved)
-          } catch (e) {}
+          // §4 draft stash: a dismissed-while-dirty overlay resumes here (validated against live
+          // data). Takes priority over the localStorage lastScope memory; only when opened as an
+          // overlay with no seed deep-link (a bare "Log many" tap), so a deep-link intent still wins.
+          const draft = inOverlay ? readDraft(DRAFT_KEY) : null
+          if (draft) {
+            if (draft.eventType && BATCH_EVENT_TYPES.includes(draft.eventType)) setEventType(draft.eventType)
+            if (typeof draft.eventDate === 'string') setEventDate(draft.eventDate)
+            const ds = draft.scope
+            if (ds && (ds.type === 'all'
+              || (ds.type === 'project' && proj.some(p => p.id === ds.project_id))
+              || (ds.type === 'space' && locs.some(l => l.id === ds.location_id)))) setScope(ds)
+            if (typeof draft.idemKey === 'string') idemRef.current = draft.idemKey   // idempotent retry across dismiss
+          } else {
+            try {
+              const saved = JSON.parse(localStorage.getItem(SCOPE_KEY) || 'null')
+              if (saved && saved.type === 'all') setScope(saved)
+              else if (saved && saved.type === 'project' && proj.some(p => p.id === saved.project_id)) setScope(saved)
+              else if (saved && saved.type === 'space' && locs.some(l => l.id === saved.location_id)) setScope(saved)
+            } catch (e) {}
+          }
         }
         setReady(true)
       })
       .catch(err => { if (on) { setLoadErr(err.message); setReady(true) } })
     return () => { on = false }
-  }, [fetch, params])
+  }, [fetch, params, inOverlay])
+
+  // §4 draft stash: persist the in-progress form while dirty (overlay only), so a dismiss preserves
+  // it; cleared on a successful confirm/undo below. Never persists the pristine default or the
+  // post-result screen (result set = already written to DB, not a resumable draft).
+  useEffect(() => {
+    if (!inOverlay || result) return
+    const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all'
+    if (dirty) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, idemKey: idemRef.current })
+  }, [inOverlay, result, eventType, eventDate, scope])
 
   // Server dry-run for ScopeChecklist. Stable (deps: fetch) — eventType/eventDate are
   // passed as call args so a vocabulary change retriggers the child's effect, not this fn.
@@ -161,6 +194,9 @@ export default function LogMany() {
   async function confirm() {
     if (committedCount === 0 || saving) return
     if (!idemRef.current) idemRef.current = genKey()
+    // §4: persist the idempotency key immediately (a ref change won't re-run the persist effect). If
+    // the POST fails and the user dismisses, re-opening restores THIS key so the retry is idempotent.
+    if (inOverlay) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, idemKey: idemRef.current })
     setSaving(true); setError(null)
     try {
       const r = await fetch('/api/events/batch', { method: 'POST', body: JSON.stringify({
@@ -175,8 +211,13 @@ export default function LogMany() {
       // Stage-1 flash fires on this page without a route change. The controller's effect dep
       // includes location.state — pushing a new state object (same pathname, replace:true)
       // triggers a re-poll. Critter is in DB before this resolves (Lambda awards inline).
+      clearDraft(DRAFT_KEY)   // batch is in the DB — no longer a resumable draft
       setResult(r)
-      navigate('.', { state: { critterCheck: Date.now() }, replace: true })
+      // §4 FIX: spread the existing state so the carried `background` survives this same-path push.
+      // The bug: replacing state wholesale destroyed `background` → the overlay unmounted → `result`
+      // was lost → the success screen + Undo became permanently unreachable for a batch already
+      // written to the DB. Preserving `background` keeps the overlay mounted on the result screen.
+      navigate('.', { state: { ...(background ? { background } : {}), critterCheck: Date.now() }, replace: true })
     } catch (err) { setError(err.message) }
     setSaving(false)
   }
@@ -187,11 +228,12 @@ export default function LogMany() {
     try {
       await fetch('/api/events/batch/' + id, { method: 'DELETE' })
       idemRef.current = null
+      clearDraft(DRAFT_KEY)
       setResult(null); setError(null)   // ScopeChecklist remounts → fresh preview
     } catch (err) { setError('Undo failed: ' + err.message) }
   }
 
-  function logMore() { idemRef.current = null; setResult(null); setError(null) }
+  function logMore() { idemRef.current = null; clearDraft(DRAFT_KEY); setResult(null); setError(null) }
 
   if (!ready) return <Shell><Spinner /></Shell>
   if (loadErr) return <Shell><ErrMsg msg={loadErr} /></Shell>
@@ -210,7 +252,9 @@ export default function LogMany() {
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <button type="button" onClick={undo} style={btnGhost}>Undo</button>
             <button type="button" onClick={logMore} style={btnGhost}>Log more</button>
-            <button type="button" onClick={() => navigate('/garden')} style={btnPrimary}>Done</button>
+            {/* §4 FIX: dismiss to the background (the page the user opened this from), not a hard
+                navigate('/garden') that dumped them on Garden. Full-page fallback = /today. */}
+            <button type="button" onClick={dismiss} style={btnPrimary}>Done</button>
           </div>
         </div>
         {error && <ErrInline msg={error} />}
@@ -283,7 +327,7 @@ function Header() {
       {/* V4-EVENTSEL-004: cross-link matches Log Event's exactly — same ghost style, sitting
           UNDERNEATH the title (Log Event's pattern), not right-floated. */}
       <div style={{ marginTop: 8 }}>
-        <Link to="/log" style={crossLinkStyle}>Log one →</Link>
+        <OverlaySwapLink to="/log" style={crossLinkStyle}>Log one →</OverlaySwapLink>
       </div>
     </div>
   )

@@ -9,7 +9,8 @@
 // scrim gradients / control backgrounds are intentional literals (mirrors Lightbox). Palette
 // colors come from P; glyphs come from Icon.
 import React from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
+import { OverlayLink } from '../../context/OverlayContext.jsx'
 import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
 import FavoriteToggle from '../FavoriteToggle.jsx'
@@ -138,13 +139,13 @@ export default function HeroPhoto({ planting, src, alt, onOpenLightbox, onOpenDe
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', gap: 14, backgroundColor: P.greenPale }}>
         <Icon name={glyph} size={56} decorative style={{ color: P.greenLight }} />
-        <Link to={logHref} aria-label="Add the first photo for this planting"
+        <OverlayLink to={logHref} aria-label="Add the first photo for this planting"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 44,
             backgroundColor: P.green, color: P.white, border: 'none', borderRadius: 10,
             padding: '0 16px', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }}>
           <Icon name="media.camera" size={18} decorative surface="inverse" style={{ color: P.white }} />
           Tap to add first photo
-        </Link>
+        </OverlayLink>
       </div>
       <div style={topScrim} />
       <div style={bottomScrim} />

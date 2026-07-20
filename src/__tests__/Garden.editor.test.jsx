@@ -19,6 +19,7 @@ const { fetchSpy, getTokenSpy, searchParamsRef, setSearchParamsSpy } = vi.hoiste
 
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+    useLocation: () => ({ pathname: '/garden', search: '', state: null }),
   useNavigate: () => () => {},
   useSearchParams: () => [searchParamsRef.current, setSearchParamsSpy],
 }))

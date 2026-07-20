@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { OverlayLink } from '../../context/OverlayContext.jsx'
 import { P } from '../../lib/constants.js'
 import UrgencyIcon from './UrgencyIcon.jsx'
 import ConfidenceBasis from './ConfidenceBasis.jsx'
@@ -93,15 +94,15 @@ export default function FindingCard({ finding, onResolve, caretaker = null }) {
         <span>{DECAY_LABEL[f.decay_state] ?? f.decay_state}</span>
         <span style={{ flex: 1 }} />
         {canTreat && (
-          <a
-            href={treatHref}
+          <OverlayLink
+            to={treatHref}
             style={{
               padding: 0, marginRight: 12, textDecoration: 'none',
               fontSize: '0.7rem', fontWeight: 600, color: P.green,
             }}
           >
             Treated…
-          </a>
+          </OverlayLink>
         )}
         {canResolve && (
           <button
