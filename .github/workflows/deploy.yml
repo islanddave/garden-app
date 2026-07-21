@@ -118,6 +118,11 @@ jobs:
           VITE_API_CRITTERS:          ${{ vars.VITE_API_CRITTERS }}
           VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
           VITE_API_SHARED_STATE:      ${{ vars.VITE_API_SHARED_STATE }}
+          # V4-HARVESTCENTER-001 (Put-Up). Ship-then-wire like critters/tags: the Lambdas are created
+          # by the first deploy, Dave/Claude then set vars.VITE_API_* to the new Function URLs and the
+          # NEXT build bakes them. Empty until wired — Put-Up is simply unreachable, nothing else breaks.
+          VITE_API_PRESERVATION:      ${{ vars.VITE_API_PRESERVATION }}
+          VITE_API_STORAGE_LOCATIONS: ${{ vars.VITE_API_STORAGE_LOCATIONS }}
 
       - name: Build
         run: npm run build
@@ -141,6 +146,10 @@ jobs:
           VITE_API_CRITTERS:          ${{ vars.VITE_API_CRITTERS }}
           VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
           VITE_API_SHARED_STATE:      ${{ vars.VITE_API_SHARED_STATE }}
+          # V4-HARVESTCENTER-001 (Put-Up) — MUST be in THIS block: vite bakes import.meta.env at build
+          # time, so a repo var absent here is silently empty in the bundle no matter what vars.* holds.
+          VITE_API_PRESERVATION:      ${{ vars.VITE_API_PRESERVATION }}
+          VITE_API_STORAGE_LOCATIONS: ${{ vars.VITE_API_STORAGE_LOCATIONS }}
 
       - name: Verify build output
         run: |
