@@ -1,0 +1,456 @@
+{
+  "schema": "garden.harvest_attributes.v1",
+  "version": "1.0.0",
+  "authored": "2026-07-21",
+  "zone": "5b western Massachusetts, ~518ft",
+  "note": "Per-CROP-TYPE harvest-readiness attributes. Keyed by crop_types.slug (NOT by variety — cf. lambda/daily-plan/cadence-data-v2.json which is variety-keyed watering/care and is a different key space). This file is the authoring source of record for migrations/v4-harvattr-001/0b-data.sql; the DB columns on crop_types are the runtime source of truth. NULL/omitted attribute = UNKNOWN, and a readiness predicate MUST NOT fire on it. Never substitute a default.",
+  "field_contract": {
+    "harvest_habit": "single | repeat | cut_and_come_again. single = one terminal harvest per planting; repeat = discrete fruits picked over a season; cut_and_come_again = the plant regrows the harvested tissue.",
+    "repeat_interval_days": "peak-season days between picks. NULL when harvest_habit='single'.",
+    "loss_horizon_hours": "hours from 'ready' until quality is materially lost if unpicked (on-plant hold, not post-harvest shelf life).",
+    "set_to_first_pick_days": "days from fruit set to first pickable fruit. Only meaningful for fruit-set crops; NULL for leaf/root/bulb crops where status='fruiting' is not the readiness signal.",
+    "harvest_season_start_doy / harvest_season_end_doy": "day-of-year window, set ONLY where harvesting OUTSIDE the window is actively harmful or physically impossible. Deliberately NULL for crops whose window is merely typical — a wrong window SUPPRESSES a true readiness signal, which is the same class of harm inverted.",
+    "confidence": "high | medium | low — authoring confidence. 'low' values are flagged in the coverage report and should be treated as provisional.",
+    "harvest_tracked": "false = deliberately NULL-seeded (ornamental / houseplant / non-fruiting in this zone). Present only on the exclusion list."
+  },
+  "by_crop_type": {
+    "pepper": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 7,
+      "loss_horizon_hours": 168,
+      "set_to_first_pick_days": 50,
+      "confidence": "high",
+      "notes": "50-55d set -> full-size green; a further 14-21d to red/colored. Holds on the plant well, hence the long loss horizon. Slug covers BOTH sweet and hot peppers; C. chinense super-hots run longer to colored (add ~7-14d)."
+    },
+    "tomato": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 3,
+      "loss_horizon_hours": 72,
+      "set_to_first_pick_days": 45,
+      "confidence": "medium",
+      "notes": "set->pick is size-dependent: cherry ~30d, slicer ~45d, beefsteak/large heirloom ~55-60d. 45 is a mid-population estimate across Dave's 44 plantings (mixed cherry/slicer/beefsteak/paste). Ripe fruit splits after rain; cherry types split fastest."
+    },
+    "tomatillo": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 3,
+      "loss_horizon_hours": 96,
+      "set_to_first_pick_days": 30,
+      "confidence": "medium",
+      "notes": "Ready when the husk splits/fills. Drops to the ground when over-ripe; ground-drop fruit is still usable, so the loss horizon is forgiving."
+    },
+    "eggplant": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 4,
+      "loss_horizon_hours": 72,
+      "set_to_first_pick_days": 20,
+      "confidence": "medium",
+      "notes": "Pick at glossy skin; dull skin = seedy and bitter. 3-5d cadence in peak."
+    },
+    "okra": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 2,
+      "loss_horizon_hours": 60,
+      "set_to_first_pick_days": 5,
+      "confidence": "high",
+      "notes": "Fastest-turning crop in the set. Pods go woody in 48-72h past ready; miss two days and the pod is inedible."
+    },
+    "cucumber": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 2,
+      "loss_horizon_hours": 60,
+      "set_to_first_pick_days": 8,
+      "confidence": "high",
+      "notes": "2-3d cadence. An oversized fruit left on the vine suppresses further set — the loss is to the whole plant, not just the fruit."
+    },
+    "cucamelon": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 3,
+      "loss_horizon_hours": 72,
+      "set_to_first_pick_days": 10,
+      "confidence": "low",
+      "notes": "UNCERTAIN. Little zone-5b data; extrapolated from cucumber with a slower cadence for the small fruit size. Pick at grape size; larger fruit turns sour."
+    },
+    "bitter_melon": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 3,
+      "loss_horizon_hours": 72,
+      "set_to_first_pick_days": 12,
+      "confidence": "low",
+      "notes": "UNCERTAIN. Extrapolated from cucurbit relatives. Pick while green and firm; the fruit splits and reddens quickly once mature."
+    },
+    "squash": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 2,
+      "loss_horizon_hours": 36,
+      "set_to_first_pick_days": 5,
+      "confidence": "high",
+      "notes": "SEEDED AS SUMMER SQUASH. Both live plantings are summer types (Dark Green Zucchini, Zephyr). The crop_types vocabulary has ONE 'squash' slug covering summer AND winter squash, which are horticulturally opposite (winter squash is harvest_habit='single', a ~50d set->pick, and a months-long cure/hold). See flags: a winter_squash slug split is required before any winter type is planted, or this row is actively wrong for it."
+    },
+    "melon": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": 168,
+      "set_to_first_pick_days": 42,
+      "confidence": "medium",
+      "notes": "Muskmelon/cantaloupe/charentais. 'single' per fruit and effectively per planting in zone 5b — the short season yields one concentrated flush. Slip stage (stem detaches at light pressure) is the readiness signal, not calendar."
+    },
+    "watermelon": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": 240,
+      "set_to_first_pick_days": 45,
+      "confidence": "medium",
+      "notes": "No slip cue — readiness is the dried tendril + ground-spot color. Over-ripening on the vine is slow, hence the long horizon. Zone 5b is marginal; 45d set->pick assumes a short-season variety."
+    },
+    "bean": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 3,
+      "loss_horizon_hours": 72,
+      "set_to_first_pick_days": 8,
+      "confidence": "high",
+      "notes": "Snap bean. 2-3d cadence; pods go stringy and the plant stops setting if left to fill seed. NOT currently planted — seeded because the slug exists and the values are high-confidence."
+    },
+    "pea": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 3,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": 7,
+      "confidence": "medium",
+      "notes": "Snap/snow pea cadence. Shelling peas turn starchy fastest. NOT currently planted."
+    },
+    "broccoli": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 6,
+      "loss_horizon_hours": 72,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Main head first, then side shoots every 5-7d for weeks. set_to_first_pick is NULL by design: the head is a flower bud, not a fruit set — status='fruiting' is not the readiness signal here. Bolts to yellow flower in 2-4d of heat once the beads loosen."
+    },
+    "cabbage": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": 720,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "One terminal head. Holds in the field for weeks in cool fall weather; splits after heavy rain once mature, which is the real loss event and is weather-triggered rather than time-triggered."
+    },
+    "kohlrabi": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": 336,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "Pick at 2-3in; goes woody if left much past size. Modern varieties hold better than the 2-week estimate suggests."
+    },
+    "collard": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 10,
+      "loss_horizon_hours": 96,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Bottom-up leaf harvest, 7-10d. Improves after frost. Very forgiving — old leaves toughen but the plant is not lost."
+    },
+    "kale": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 8,
+      "loss_horizon_hours": 96,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "7-10d bottom-up. NOT currently planted."
+    },
+    "chard": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 8,
+      "loss_horizon_hours": 96,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "7-10d outer-leaf harvest. NOT currently planted."
+    },
+    "lettuce": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 7,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Leaf-lettuce cadence. Bolts bitter fast in July heat; the 48h horizon is a heat-season figure and is conservative in spring/fall."
+    },
+    "arugula": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 7,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Bolts and turns hot/pungent within days in summer heat."
+    },
+    "endive": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 10,
+      "loss_horizon_hours": 72,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "Outer-leaf harvest. Heading types (escarole) behave closer to 'single'; the slug does not distinguish."
+    },
+    "beet": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": 336,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "Root is one terminal harvest. The GREENS are genuinely cut_and_come_again — a single harvest_habit cannot express a dual-organ crop. Seeded to the root (the primary harvest); see flags."
+    },
+    "potato": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": 720,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "Terminal dig after vine die-back. Tubers hold in dry ground for weeks; wet soil is the loss driver, not time. New-potato robbing is a real practice but is not the primary harvest."
+    },
+    "sweet_potato": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": 336,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "Terminal dig, and the horizon is FROST-bounded rather than quality-bounded in zone 5b: roots chill-injure below ~50F soil and must come out before the first hard frost. Requires curing."
+    },
+    "garlic": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": 336,
+      "set_to_first_pick_days": null,
+      "harvest_season_start_doy": 186,
+      "harvest_season_end_doy": 211,
+      "confidence": "medium",
+      "notes": "Zone 5b lift window ~Jul 5 - Jul 30 (3-4 lower leaves browned). DOY window IS set here because lifting outside it is a real loss: too early = undersized bulbs, too late = the wrapper splits and the bulb will not store. Scapes are a separate earlier harvest (~mid-June) not modeled by these columns."
+    },
+    "onion": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": 336,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "SEEDED AS BULB ONION (long-day storage type). 2 of the 4 live plantings are SCALLION-type, which are cut_and_come_again on a ~14d cadence — the single 'onion' slug cannot express both. See flags."
+    },
+    "shallot": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": 336,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "Lifts alongside garlic; same cure-and-store pattern. No DOY window set — shallot tolerates a wider lift window than garlic."
+    },
+    "leek": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": 1440,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "Stands in the ground into winter in zone 5b; the 60d horizon reflects genuine field-holding, not shelf life. Pull as needed."
+    },
+    "asparagus": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 1,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": null,
+      "harvest_season_start_doy": 115,
+      "harvest_season_end_doy": 166,
+      "confidence": "high",
+      "notes": "THE hard-window case. Daily spear cutting Apr 25 - Jun 15; cutting AFTER the window starves and damages the crown, so a readiness signal outside it is actively harmful, not merely useless. Spears fern out and go woody within ~48h in warm weather. Do not harvest at all in years 1-2 of a new crown."
+    },
+    "basil": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 12,
+      "loss_horizon_hours": 24,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Tip-pinch above a leaf node every 10-14d; pinching is what prevents bolt, so the cadence is a plant-health action as much as a harvest. 24h horizon = cut basil wilts same-day; unpinched plants flower and the leaf turns bitter within days."
+    },
+    "mint": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 14,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Nearly unkillable; cut hard and it returns. Flavor peaks just before flowering."
+    },
+    "oregano": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 18,
+      "loss_horizon_hours": 72,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Woody perennial herb, 14-21d. Best flavor just before bloom. Stop hard cuts ~4 weeks before first frost so the crown hardens off."
+    },
+    "thyme": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 21,
+      "loss_horizon_hours": 96,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Woody, slow-regrowing. Never cut into old wood."
+    },
+    "rosemary": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 21,
+      "loss_horizon_hours": 96,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Woody. Zone 5b is not hardy for rosemary — overwinters indoors, so the cadence continues year-round on a container plant, slower in winter."
+    },
+    "sage": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 18,
+      "loss_horizon_hours": 72,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Woody perennial, 14-21d. Do not cut into old wood late in the season."
+    },
+    "tarragon": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 18,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "French tarragon. Semi-woody; flavor is strongest in early summer and fades after bloom."
+    },
+    "chives": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 14,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Shear to ~2in; regrows fully in about 2 weeks. Flowers are edible."
+    },
+    "parsley": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 12,
+      "loss_horizon_hours": 96,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Outer-stem harvest, 10-14d. Biennial: bolts and is finished in its second spring."
+    },
+    "cilantro": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 10,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "Bolts within days of summer heat and the leaf changes character entirely. The short horizon is a bolt risk, not a wilt risk."
+    },
+    "culantro": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 14,
+      "loss_horizon_hours": 72,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "Outer-leaf rosette harvest. Far more bolt-resistant than cilantro; prefers shade in zone 5b summer."
+    },
+    "dill": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 12,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "Frond harvest. Bolts to seed head quickly — at which point the harvest target changes from frond to seed, which these columns do not model."
+    },
+    "lemongrass": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 30,
+      "loss_horizon_hours": 168,
+      "set_to_first_pick_days": null,
+      "confidence": "low",
+      "notes": "UNCERTAIN cadence. Outer stalks are cut at the base as they reach pencil thickness; regrowth is slow and clump-size-dependent rather than time-dependent. 30d is a rough placeholder."
+    },
+    "bay": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 30,
+      "loss_horizon_hours": 168,
+      "set_to_first_pick_days": null,
+      "confidence": "low",
+      "notes": "UNCERTAIN — arguably not schedulable at all. Bay leaves are picked as needed from a slow-growing evergreen; there is no biological readiness event. 30d/168h is a placeholder that keeps the row non-NULL; consider reverting it to NULL if the predicate produces noise."
+    },
+    "nasturtium": {
+      "harvest_habit": "cut_and_come_again",
+      "repeat_interval_days": 7,
+      "loss_horizon_hours": 24,
+      "set_to_first_pick_days": null,
+      "confidence": "medium",
+      "notes": "JUDGMENT CALL — seeded despite category='flower'. Leaves, flowers and seed pods are all genuinely eaten and the plant is grown at least partly for that. Flowers wilt within a day of picking, hence 24h. If Dave grows these purely as ornamentals, NULL this row."
+    },
+    "strawberry": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 2,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": 28,
+      "confidence": "medium",
+      "notes": "Every-other-day picking through the flush. Over-ripe fruit molds on the plant within ~48h, faster in wet weather. NO DOY window set on purpose: June-bearers flush ~Jun 15 - Jul 15 but day-neutral/everbearing types fruit into fall, and a June-only window would SUPPRESS a true fall readiness signal."
+    },
+    "blueberry": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 4,
+      "loss_horizon_hours": 120,
+      "set_to_first_pick_days": 60,
+      "confidence": "medium",
+      "notes": "3-5d picking over a 3-4 week window. Berries hold on the bush well once blue — but wait ~5d past first blue for actual sugar. Birds, not senescence, are the real loss vector. No DOY window: cultivar ripening spread in zone 5b runs early-July to late-August."
+    },
+    "red_raspberry": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 2,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": 30,
+      "confidence": "medium",
+      "notes": "Every-other-day at peak. Ripe fruit molds/drops fast. No DOY window: summer-bearing (floricane) and everbearing (primocane) types have completely different windows — Jul vs Sep — and the slug does not distinguish."
+    },
+    "black_raspberry": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 2,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": 30,
+      "confidence": "medium",
+      "notes": "As red raspberry, ~1-2 weeks earlier in zone 5b. NOT currently planted."
+    },
+    "wineberry": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 2,
+      "loss_horizon_hours": 48,
+      "set_to_first_pick_days": 30,
+      "confidence": "medium",
+      "notes": "Rubus phoenicolasius; behaves as a raspberry, ripening mid-July onward in western MA. Fruit is very soft and drops within ~2d of ripe."
+    },
+    "peach": {
+      "harvest_habit": "repeat",
+      "repeat_interval_days": 3,
+      "loss_horizon_hours": 72,
+      "set_to_first_pick_days": 100,
+      "confidence": "low",
+      "notes": "UNCERTAIN. A tree ripens over ~2 weeks, so 'repeat' with a 3d cadence rather than 'single'. set_to_first_pick ~100d (bloom-to-harvest is ~110-130d for mid-season varieties; measured from SET it is shorter and highly cultivar-dependent). Zone 5b peach cropping is bud-hardiness-limited and irregular year to year."
+    }
+  },
+  "not_harvest_tracked": {
+    "note": "Deliberately left NULL in the DB. These are ornamentals, houseplants, succulents, or (avocado) a plant that will not fruit in this zone. NULL here is a decision, not a gap — but it is indistinguishable from 'unseeded' at the column level, which is why this list is recorded.",
+    "slugs": [
+      "geranium", "coleus", "fittonia", "petunia", "tradescantia", "sedum", "echeveria",
+      "succulent", "cactus", "christmas_cactus", "sempervivum", "haworthia", "jade",
+      "japanese_maple", "spider_plant", "pothos", "dracaena", "lithops",
+      "flower_mix", "marigold", "rose", "hibiscus", "hosta", "begonia", "chrysanthemum",
+      "cobaea", "foxglove", "helichrysum", "thunbergia", "torenia", "sunflower",
+      "morning_glory", "poppy", "stock", "viola", "columbine", "delphinium", "hollyhock",
+      "carnation", "milkweed", "money_plant", "four_o_clock", "edelweiss", "tweedia",
+      "blackberry_lily", "crown_of_thorns", "avocado", "pineapple", "bee_balm"
+    ],
+    "contested": {
+      "bee_balm": "Monarda is a real culinary/tea herb (category='herb' in the vocab) but is grown here as a pollinator ornamental. Left NULL per brief; flip to cut_and_come_again/14d if Dave actually picks it.",
+      "avocado": "Will not fruit as a zone-5b container houseplant. NULL is correct and permanent, not provisional.",
+      "nasturtium": "NOT on this list — seeded as edible. See by_crop_type.nasturtium."
+    }
+  },
+  "unseeded_vocabulary": {
+    "note": "Edible slugs in crop_types with NO live planting and NO seeded values. Left NULL rather than guessed; seed them when something is actually planted.",
+    "slugs": [
+      "artichoke", "bok_choy", "brussels_sprouts", "carrot", "celery", "luffa",
+      "mustard", "parsnip", "radish", "spinach", "perilla", "borage", "althaea",
+      "vietnamese_coriander"
+    ]
+  }
+}

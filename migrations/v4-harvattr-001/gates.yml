@@ -1,0 +1,206 @@
+# gates.yml
+# V4-HARVATTR-001 — crop_types harvest-readiness attribute columns + zone-5b seed.
+#
+# PROMOTE-TIME SEQUENCING (ORDERED — do not reorder, do not skip):
+#   1. STAGING: run pre gates -> apply 0a-additive-ddl.sql -> apply 0b-data.sql -> apply
+#      0c-validate.sql -> post gates.
+#      0c runs AFTER 0b on purpose: the VALIDATE pass is then a real assertion over the 51 seeded
+#      rows rather than a vacuous scan of all-NULL columns.
+#   2. deploy-staging + full regression pass on staging (build-and-test remains the required
+#      promote gate). Nothing reads these columns yet, so the regression risk is confined to
+#      `SELECT *` consumers of crop_types receiving six extra NULL keys.
+#   3. PROD: run pre gates -> 0a -> 0b -> 0c -> post gates. Dave-gated apply; confirm the
+#      DATABASE_URL host printed by the runner before applying.
+#   4. Promote (version bump set at ship per L-171).
+#
+# Pre:  crop_types exists with its 9 original columns and NONE of the six new columns; the five
+#       CHECK constraint names are unused.
+# Post: all six columns exist and are NULLABLE with NO default (the NULL=UNKNOWN contract is
+#       structural, not a convention); all five CHECKs exist AND are convalidated; the seed landed
+#       on exactly the intended rows; and — the assertions that actually matter — no 'single' crop
+#       carries a repeat interval, every DOY bound is paired, and the deliberate ornamental/
+#       houseplant NULLs were not accidentally filled.
+
+pre:
+  - name: pre_crop_types_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='crop_types'
+    expect: rowcount_eq
+    value: 1
+
+  # None of the six columns may pre-exist — a name collision would mean this migration is
+  # silently adopting someone else's column with unknown semantics.
+  - name: pre_harvest_columns_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='crop_types'
+         AND column_name IN ('harvest_habit','repeat_interval_days','loss_horizon_hours',
+                             'set_to_first_pick_days','harvest_season_start_doy',
+                             'harvest_season_end_doy')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_check_constraint_names_free
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_crop_types_harvest_habit','chk_crop_types_repeat_interval',
+                         'chk_crop_types_loss_horizon','chk_crop_types_set_to_first_pick',
+                         'chk_crop_types_harvest_season_doy')
+    expect: rowcount_eq
+    value: 0
+
+  # The seed keys on slug; confirm the vocabulary is populated before seeding into it.
+  - name: pre_crop_types_populated
+    sql: |
+      SELECT 1 FROM public.crop_types WHERE deleted_at IS NULL HAVING count(*) >= 100
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_all_six_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='crop_types'
+         AND column_name IN ('harvest_habit','repeat_interval_days','loss_horizon_hours',
+                             'set_to_first_pick_days','harvest_season_start_doy',
+                             'harvest_season_end_doy')
+    expect: rowcount_eq
+    value: 6
+
+  # NULL = UNKNOWN is the design's central contract. A NOT NULL or a DEFAULT on any of these six
+  # would break it structurally, so assert their ABSENCE rather than trusting the DDL text.
+  - name: post_columns_nullable_and_defaultless
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='crop_types'
+         AND column_name IN ('harvest_habit','repeat_interval_days','loss_horizon_hours',
+                             'set_to_first_pick_days','harvest_season_start_doy',
+                             'harvest_season_end_doy')
+         AND (is_nullable <> 'YES' OR column_default IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_all_five_checks_present_and_validated
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_crop_types_harvest_habit','chk_crop_types_repeat_interval',
+                         'chk_crop_types_loss_horizon','chk_crop_types_set_to_first_pick',
+                         'chk_crop_types_harvest_season_doy')
+         AND convalidated
+    expect: rowcount_eq
+    value: 5
+
+  # The habit vocab is what every readiness predicate branches on; assert the exact three values.
+  - name: post_habit_vocab_exact
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_crop_types_harvest_habit'
+         AND pg_get_constraintdef(oid) LIKE '%single%'
+         AND pg_get_constraintdef(oid) LIKE '%repeat%'
+         AND pg_get_constraintdef(oid) LIKE '%cut_and_come_again%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_seed_row_count
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE deleted_at IS NULL AND harvest_habit IS NOT NULL
+      HAVING count(*) = 51
+    expect: rowcount_eq
+    value: 1
+
+  # Every seeded habit value is in vocab (belt-and-braces over the CHECK).
+  - name: post_no_out_of_vocab_habit
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE harvest_habit IS NOT NULL
+         AND harvest_habit NOT IN ('single','repeat','cut_and_come_again')
+    expect: rowcount_eq
+    value: 0
+
+  # A 'single' crop with a repeat interval would nag forever after a one-shot harvest.
+  - name: post_no_interval_on_single
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE harvest_habit='single' AND repeat_interval_days IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  # Conversely, a repeat/cut-and-come-again crop with no interval is an unusable half-seed.
+  - name: post_repeat_crops_all_have_interval
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE harvest_habit IN ('repeat','cut_and_come_again')
+         AND repeat_interval_days IS NULL
+    expect: rowcount_eq
+    value: 0
+
+  # A half-open DOY window is uninterpretable. Both bounds or neither.
+  - name: post_doy_bounds_paired
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE (harvest_season_start_doy IS NULL) <> (harvest_season_end_doy IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # DOY windows are set for exactly two crops (asparagus, garlic) — the only two where harvesting
+  # outside the window is actively harmful. A third appearing means someone added a merely-typical
+  # season window, which SUPPRESSES true readiness signals.
+  - name: post_doy_windows_only_asparagus_and_garlic
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE harvest_season_start_doy IS NOT NULL
+         AND slug NOT IN ('asparagus','garlic')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_asparagus_window_correct
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug='asparagus' AND harvest_habit='repeat'
+         AND harvest_season_start_doy=115 AND harvest_season_end_doy=166
+    expect: rowcount_eq
+    value: 1
+
+  # set_to_first_pick_days is what makes status='fruiting' interpretable. Assert the flagship value
+  # (pepper 50d set->green) survived the seed — this is the number the whole readiness design rests on.
+  - name: post_pepper_set_to_first_pick
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug='pepper' AND set_to_first_pick_days=50 AND harvest_habit='repeat'
+         AND repeat_interval_days=7
+    expect: rowcount_eq
+    value: 1
+
+  # The deliberate NULLs must stay NULL — an over-broad seed here is silently wrong, not loud.
+  - name: post_ornamentals_still_null
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE harvest_habit IS NOT NULL
+         AND slug IN ('geranium','coleus','fittonia','petunia','tradescantia','sedum','echeveria',
+                      'succulent','cactus','christmas_cactus','sempervivum','haworthia','jade',
+                      'japanese_maple','spider_plant','pothos','flower_mix','marigold','rose',
+                      'hibiscus','hosta','begonia','avocado','bee_balm')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_index_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='crop_types'
+         AND indexname='idx_crop_types_harvest_habit'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_schema_version_ddl_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.15.0-harvattr-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_schema_version_seed_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.15.1-harvattr-seed-001'
+    expect: rowcount_eq
+    value: 1
