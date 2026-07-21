@@ -28,11 +28,20 @@ import { P } from '../lib/constants.js'
 
 const DEBOUNCE_MS = 250
 
+// Max rows rendered in the listbox. Was a hard 50, which SILENTLY truncated: with 398 live
+// varieties the browse list died in the C's, and even crop-scoped `pepper` is 107. Raised, and
+// truncation is now VISIBLE (footer below) so a capped list can never again read as "that's all".
+const MAX_RESULTS = 200
+
 export default function VarietyPicker({
   value = null,
   onChange,
   allowCreate = true,
   speciesFilter,
+  // Optional crop scoping (V4-HARVESTCENTER-001): when set, only varieties of that crop_type_slug
+  // are offered — e.g. Put-Up picks "pepper" so you choose Jalapeño vs Habanero, not all 398.
+  // Undefined (every other consumer) = unchanged behaviour.
+  cropSlugFilter,
   required = false,
   disabled = false,
   placeholder = 'Search varieties…',
@@ -87,19 +96,25 @@ export default function VarietyPicker({
   useEffect(() => { setHighlight(0) }, [varieties, query, createStage])
 
   // ── Filtered list (server already filtered by ?q=; this is a defensive client filter) ──
-  const filtered = useMemo(() => {
+  // `matched` is the FULL match set; `filtered` is what we render (capped at MAX_RESULTS). Keeping
+  // both lets the listbox tell the user when there is more, instead of truncating silently.
+  const matched = useMemo(() => {
     const q = query.trim().toLowerCase()
     let list = varieties
     if (speciesFilter) list = list.filter(v => v.species === speciesFilter)
+    if (cropSlugFilter) list = list.filter(v => v.crop_type_slug === cropSlugFilter)
     const byName = (a, b) => (a.name || '').localeCompare(b.name || '')
-    if (!q) return [...list].sort(byName).slice(0, 50)
+    if (!q) return [...list].sort(byName)
     return list.filter(v => {
       const name = (v.name || '').toLowerCase()
       const sp = (v.species || '').toLowerCase()
       const cn = (v.common_name || '').toLowerCase()
       return name.includes(q) || sp.includes(q) || cn.includes(q)
-    }).sort(byName).slice(0, 50)
-  }, [varieties, query, speciesFilter])
+    }).sort(byName)
+  }, [varieties, query, speciesFilter, cropSlugFilter])
+
+  const filtered = useMemo(() => matched.slice(0, MAX_RESULTS), [matched])
+  const hiddenCount = matched.length - filtered.length
 
   const showCreateFooter = allowCreate && query.trim().length > 0 && !filtered.some(v =>
     (v.name || '').toLowerCase() === query.trim().toLowerCase()
@@ -351,6 +366,15 @@ export default function VarietyPicker({
                   </li>
                 )
               })}
+              {/* Truncation is VISIBLE, never silent (the old hard 50-cap just cut the list off
+                  mid-alphabet with no indication). Not a role=option — it is not selectable and
+                  must stay out of the listbox's focusable item count. */}
+              {!loading && hiddenCount > 0 && (
+                <li role="presentation" style={{ padding: '8px 12px', fontSize: '0.78rem', color: P.mid,
+                  borderTop: `1px solid ${P.border}`, background: P.cream }}>
+                  Showing {filtered.length} of {matched.length} — keep typing to narrow.
+                </li>
+              )}
               {showCreateFooter && !loading && (
                 <li
                   role="option"

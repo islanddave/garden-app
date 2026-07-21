@@ -530,3 +530,47 @@ describe('VarietyPicker — crop-type create (PLANTTYPE)', () => {
     expect(screen.queryByText(/Crop type for/)).toBeNull()
   })
 })
+
+// ── V4-HARVESTCENTER-001: crop scoping + visible truncation ─────────────────
+// The picker used to slice to a hard 50 with no indication, so with 398 live varieties the
+// browse list silently died mid-alphabet (Dave, 2026-07-21). These lock in both fixes.
+describe('VarietyPicker — cropSlugFilter + truncation notice', () => {
+  const PEPPER = { id: 'p-1', name: 'Jalapeño', species: 'Capsicum annuum', crop_type_slug: 'pepper' }
+  const PEPPER2 = { id: 'p-2', name: 'Habanero', species: 'Capsicum chinense', crop_type_slug: 'pepper' }
+  const TOM = { id: 't-1', name: 'Black Krim', species: 'Solanum lycopersicum', crop_type_slug: 'tomato' }
+
+  it('offers only the matching crop when cropSlugFilter is set', async () => {
+    fetchSpy.mockResolvedValueOnce([PEPPER, PEPPER2, TOM])
+    setup({ cropSlugFilter: 'pepper' })
+    fireEvent.focus(screen.getByRole('combobox'))
+    await waitFor(() => expect(screen.getByText('Jalapeño')).toBeDefined())
+    expect(screen.getByText('Habanero')).toBeDefined()
+    expect(screen.queryByText('Black Krim')).toBeNull()
+  })
+
+  it('shows every crop when cropSlugFilter is not set (other consumers unaffected)', async () => {
+    fetchSpy.mockResolvedValueOnce([PEPPER, TOM])
+    setup()
+    fireEvent.focus(screen.getByRole('combobox'))
+    await waitFor(() => expect(screen.getByText('Jalapeño')).toBeDefined())
+    expect(screen.getByText('Black Krim')).toBeDefined()
+  })
+
+  it('tells the user when the list is capped instead of truncating silently', async () => {
+    const many = Array.from({ length: 260 }, (_, i) => ({
+      id: `v-${i}`, name: `Variety ${String(i).padStart(3, '0')}`, species: 'Capsicum annuum', crop_type_slug: 'pepper',
+    }))
+    fetchSpy.mockResolvedValueOnce(many)
+    setup()
+    fireEvent.focus(screen.getByRole('combobox'))
+    await waitFor(() => expect(screen.getByText(/Showing 200 of 260/)).toBeDefined())
+  })
+
+  it('shows no truncation notice when everything fits', async () => {
+    fetchSpy.mockResolvedValueOnce([PEPPER, TOM])
+    setup()
+    fireEvent.focus(screen.getByRole('combobox'))
+    await waitFor(() => expect(screen.getByText('Jalapeño')).toBeDefined())
+    expect(screen.queryByText(/Showing \d+ of/)).toBeNull()
+  })
+})

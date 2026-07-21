@@ -277,8 +277,14 @@ function PutUpForm({ prefill, onLogged }) {
             sit with the crop (Dave, 2026-07-21). Optional: the attribution CHECK needs crop OR variety. */}
         <div style={{ marginTop: 14 }}>
           <Field label="Which variety?" htmlFor="pu-variety" optional
-            help="e.g. Jalapeño, Habanero — so you know exactly what you put up.">
-            <VarietyPicker id="pu-variety" value={variety} onChange={setVariety} placeholder="Search varieties…" />
+            help={cropSlug
+              ? 'e.g. Jalapeño, Habanero — so you know exactly what you put up.'
+              : 'Choose a crop above to narrow this list — or search them all.'}>
+            {/* Scoped to the chosen crop so this is a short, relevant list (pepper = 107 of 398)
+                rather than every variety in the garden. */}
+            <VarietyPicker id="pu-variety" value={variety} onChange={setVariety}
+              cropSlugFilter={cropSlug || undefined}
+              placeholder={cropSlug ? 'Search this crop’s varieties…' : 'Search varieties…'} />
           </Field>
         </div>
 
