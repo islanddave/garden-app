@@ -1,5 +1,15 @@
 [
   {
+    "version": "3.55.0",
+    "date": "2026-07-21",
+    "highlights": [
+      "Add a new crop type right when you add a planting — no more plants stuck as 'no crop type'",
+      "Backfilled every untyped variety, so nothing is hidden from the type-grouped views",
+      "Photo intake groundwork: tagging a bulk photo now clears it from the inbox and can set the plant's featured photo",
+      "Re-uploading the same photo is recognised as a duplicate instead of erroring"
+    ]
+  },
+  {
     "version": "3.54.0",
     "date": "2026-07-21",
     "highlights": [
