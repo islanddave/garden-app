@@ -86,6 +86,9 @@ export default function VarietyPicker({
   const [conflict, setConflict] = useState(null)
 
   const inputRef = useRef(null)
+  // Mirrors createStage for the deferred blur-close, which runs 150ms later and would otherwise
+  // read a stale captured value. See onBlur.
+  const createStageRef = useRef(null)
   const listboxId = useMemo(() => `vp-list-${Math.random().toString(36).slice(2, 9)}`, [])
   const debounceRef = useRef(null)
   const lastSentRef = useRef('')
@@ -289,11 +292,22 @@ export default function VarietyPicker({
     }
   }
 
+  // Keep the blur-close ref in step with the stage it guards.
+  useEffect(() => { createStageRef.current = createStage }, [createStage])
+
   const onFocus = () => { if (!disabled) setOpen(true) }
   const onBlur = () => {
     // Delay close so a click on the listbox (which preventDefaults mousedown to keep input
     // focus) lands first. A real blur — e.g. tabbing away — still closes the dropdown.
-    setTimeout(() => setOpen(false), 150)
+    setTimeout(() => {
+      // ...EXCEPT while the 'newcrop' panel is open. That panel deliberately takes focus (its Name
+      // field autoFocuses) rather than preventDefaulting mousedown the way the listbox does, so the
+      // combobox genuinely blurs — and since the panel's render guard includes `open`, closing here
+      // unmounted the form ~150ms after it opened, making the feature unusable in a real browser.
+      // Read through a ref: this closure would otherwise capture the stage from BEFORE the click.
+      if (createStageRef.current === 'newcrop') return
+      setOpen(false)
+    }, 150)
     setTouched(true)
   }
 

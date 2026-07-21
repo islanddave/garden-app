@@ -716,3 +716,69 @@ describe('VarietyPicker — inline crop-type creation (CROPTYPE)', () => {
     expect(values).toEqual(['', 'flower', 'vegetable'])
   })
 })
+
+// ── V4-CROPTYPE-001 regression: the panel must survive the combobox blur ────
+// Caught by the pre-promote regression pass, NOT by the tests above — and that is the point.
+// The other tests drive focus with fireEvent.focus(), a synthetic event that never sets
+// document.activeElement, so the combobox never really blurs and its deferred 150ms close never
+// runs. In a real browser the panel's autoFocused Name input DOES steal focus, the blur fires, and
+// the form unmounted ~150ms after opening — the feature was unusable while 7 green tests said
+// otherwise (the L-275 "green tests outvoted the suspicion" trap). These use REAL focus.
+describe('VarietyPicker — crop-type panel survives real focus transfer', () => {
+  const CROPS = [
+    { slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'tender_perennial', category: 'vegetable', sort_order: 0 },
+  ]
+
+  it('stays mounted after the combobox genuinely blurs and the close timer fires', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      fetchSpy.mockImplementation((path) => {
+        if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+        return Promise.resolve([])
+      })
+      setup()
+      const input = screen.getByRole('combobox')
+      input.focus()                       // REAL focus, so a real blur can follow
+      fireEvent.focus(input)
+      fireEvent.change(input, { target: { value: 'Mahogany Splendor' } })
+      await waitFor(() => screen.getByText(/Create/))
+      await act(async () => { fireEvent.click(screen.getByText(/Create/).closest('li')) })
+      await waitFor(() => screen.getByText('Pepper'))
+
+      await act(async () => { fireEvent.click(screen.getByText(/New crop type/).closest('li')) })
+      const nameField = await screen.findByLabelText('Name')
+      // The panel autoFocuses Name; blur the combobox for real, exactly as the browser does.
+      await act(async () => { fireEvent.blur(input) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(400) })
+
+      // Before the fix this returned null — the form had unmounted itself.
+      expect(screen.queryByLabelText('Name')).not.toBeNull()
+      expect(nameField.isConnected).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still closes the dropdown on a real blur when NOT in the crop-type form', async () => {
+    // The guard must be narrow: tabbing away from the plain listbox must still dismiss it.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      fetchSpy.mockImplementation((path) => {
+        if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+        return Promise.resolve([])
+      })
+      setup()
+      const input = screen.getByRole('combobox')
+      input.focus()
+      fireEvent.focus(input)
+      fireEvent.change(input, { target: { value: 'Mahogany Splendor' } })
+      await waitFor(() => screen.getByText(/Create/))
+
+      await act(async () => { fireEvent.blur(input) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(400) })
+      await waitFor(() => expect(screen.queryByText(/Create/)).toBeNull())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

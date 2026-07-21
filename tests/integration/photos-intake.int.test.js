@@ -329,3 +329,37 @@ describe('POST /api/photos/batch — server-derived presign', () => {
     expect(res.body.uploads[0].content_type).toBe('image/jpeg')
   })
 })
+
+describe('POST /api/photos — intake_status validation', () => {
+  // Found by the pre-promote regression pass: intake_status was bound straight from the body into
+  // a CHECK-constrained column, so a bad value surfaced as an opaque 500 via isUpstream().
+  it('400s an intake_status outside the CHECK vocabulary instead of 500ing', async () => {
+    const res = await callHandler(handler, {
+      method: 'POST', path: '/api/photos',
+      body: { storage_path: `inbox/${USER}/bad-status-${RUN}.jpg`, plant_id: plantId, intake_status: 'sorta_pending' },
+    })
+    expect(res.status).toBe(400)
+    expect(res.body.error).toMatch(/intake_status/)
+  })
+
+  it("400s a parentless 'upload_failed' — photos_must_have_parent only admits pending_tag", async () => {
+    const res = await callHandler(handler, {
+      method: 'POST', path: '/api/photos',
+      body: { storage_path: `inbox/${USER}/orphan-failed-${RUN}.jpg`, intake_status: 'upload_failed' },
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('still accepts the two legal values', async () => {
+    const a = await callHandler(handler, {
+      method: 'POST', path: '/api/photos',
+      body: { storage_path: `inbox/${USER}/ok-pending-${RUN}.jpg`, intake_status: 'pending_tag' },
+    })
+    expect(a.status).toBe(201)
+    const b = await callHandler(handler, {
+      method: 'POST', path: '/api/photos',
+      body: { storage_path: `inbox/${USER}/ok-failed-${RUN}.jpg`, plant_id: plantId, intake_status: 'upload_failed' },
+    })
+    expect(b.status).toBe(201)
+  })
+})

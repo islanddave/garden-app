@@ -36,6 +36,9 @@ const CORS = {}; // Lambda URL config is sole CORS source — handler must not d
 // V4-PHOTOBULK-001 batch-presign limits/validators. These guard values that become an S3 KEY or a
 // signed ContentType, so they are allowlists, not sanitizers — anything not matching is rejected.
 const MAX_BATCH = 20;
+// Mirrors the photos_intake_status_valid CHECK. Only these two are stored; every other state in
+// the design (tagged / skipped) is DERIVED, so a third value here would be a bug, not a feature.
+const INTAKE_STATUSES = ['pending_tag', 'upload_failed'];
 const SAFE_KEY_SEGMENT = /^[A-Za-z0-9._-]+$/;  // Clerk subs look like user_3D2gM0hIl03gjW3JM2DjtPzm0jI
 const SAFE_EXT = /^[a-z0-9]{1,8}$/;
 const SAFE_CONTENT_TYPE = /^image\/[a-zA-Z0-9.+-]{1,32}$/;
@@ -324,6 +327,19 @@ export const handler = async (event) => {
     if (rawPath === '/api/photos' && method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.storage_path) return resp(400, { error: 'storage_path is required' });
+
+      // intake_status reaches a CHECK-constrained column, so validate it here rather than letting
+      // Postgres reject it — a 23514 falls through isUpstream() to an opaque 500 the client cannot
+      // act on. Mirrors photos_intake_status_valid.
+      if (body.intake_status != null && !INTAKE_STATUSES.includes(body.intake_status)) {
+        return resp(400, { error: `intake_status must be one of: ${INTAKE_STATUSES.join(', ')}` });
+      }
+      // photos_must_have_parent admits a parentless row ONLY for 'pending_tag'. An 'upload_failed'
+      // row with no parent is therefore a guaranteed constraint violation; 400 it explicitly.
+      if (body.intake_status === 'upload_failed'
+          && !(body.project_id || body.event_id || body.location_id || body.plant_id || body.inventory_item_id)) {
+        return resp(400, { error: "intake_status 'upload_failed' requires a parent" });
+      }
 
       // neon serverless driver: tagged-template calls are auto-committed individually.
       // For atomicity, wrap in sql.transaction([...]) — multiple tagged templates
