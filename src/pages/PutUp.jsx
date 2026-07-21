@@ -158,8 +158,11 @@ function PutUpForm({ prefill, onLogged }) {
   const [error, setError]         = useState(null)
   const [success, setSuccess]     = useState(null)
 
-  // Provenance carried from the harvest trigger (L9) — never shown, submitted verbatim.
-  const plantId = prefill.plant_id || null
+  // Which planting this came from (optional). Seeded from the harvest trigger (L9) but now
+  // USER-EDITABLE: the direct "More → Put-Up" entry had no way to attach a planting at all, which
+  // broke the seed → planting → harvest → put-up spine for anything not logged off a harvest.
+  // Successions are the reason this matters — three waves of the same variety are three plantings.
+  const [plantId, setPlantId] = useState(prefill.plant_id || null)
   const harvestLogId = prefill.harvest_log_id || null
   const prefillVarietyId = prefill.variety_id || null
   const effectiveVarietyId = variety?.id ?? prefillVarietyId ?? null
@@ -172,7 +175,8 @@ function PutUpForm({ prefill, onLogged }) {
   useEffect(() => { loadStorage() }, [loadStorage])
 
   function validate() {
-    if (!cropSlug && !effectiveVarietyId) return 'Pick a crop (or a variety) so this put-up is attributed.'
+    // A planting is sufficient attribution on its own — the server derives crop + variety from it.
+    if (!cropSlug && !effectiveVarietyId && !plantId) return 'Pick a crop, a variety, or a planting so this put-up is attributed.'
     const q = Number(qtyValue)
     if (qtyValue === '' || !Number.isFinite(q) || q <= 0) return 'Enter how much you put up (greater than zero).'
     if (!qtyUnit) return 'Pick a unit.'
@@ -230,7 +234,10 @@ function PutUpForm({ prefill, onLogged }) {
   }
 
   function resetForNext() {
-    setQtyValue(''); setNotes(''); setPackageCount('1'); setVariety(null)
+    // Crop is kept (you're usually processing one crop in a session); variety and planting are
+    // cleared. Clearing the planting is deliberate: it is MORE specific than the variety being
+    // cleared alongside it, so carrying it over would silently mis-attribute the next put-up.
+    setQtyValue(''); setNotes(''); setPackageCount('1'); setVariety(null); setPlantId(null)
     setSuccess(null); setError(null)
   }
 
@@ -286,6 +293,24 @@ function PutUpForm({ prefill, onLogged }) {
               cropSlugFilter={cropSlug || undefined}
               placeholder={cropSlug ? 'Search this crop’s varieties…' : 'Search varieties…'} />
           </Field>
+        </div>
+
+        {/* Which planting? The spine link. Optional by design (V101 line 57: a put-up drawn from
+            several waves has no single planting), but offered on EVERY entry — not just the
+            harvest-triggered one — so "3 waves of zucchini, tracked separately" actually works.
+            Selecting a planting derives crop + variety, so this alone is full attribution. */}
+        <div style={{ marginTop: 14 }}>
+          <PlantingField
+            value={plantId}
+            onChange={setPlantId}
+            cropSlug={cropSlug}
+            varietyId={effectiveVarietyId}
+            fetch={fetch}
+            onDerive={({ crop_type_slug, variety_id, variety }) => {
+              if (crop_type_slug && !cropSlug) setCropSlug(crop_type_slug)
+              if (variety_id && !effectiveVarietyId && variety) setVariety(variety)
+            }}
+          />
         </div>
 
         <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
@@ -416,6 +441,89 @@ function PutUpForm({ prefill, onLogged }) {
   )
 }
 
+// Which-planting field. A plain Select, not a combobox: once scoped to a crop the candidate set is
+// a handful of plantings, and the whole point is SEEING the waves side by side rather than
+// searching for one. Scoping is progressive — variety (tightest) > crop > everything.
+//
+// Wave disambiguation is the job here: three "Dark Green Zucchini" rows are indistinguishable by
+// name, so each option carries its succession ordinal and sown date. Sorted by sown date so the
+// list reads in planting order.
+export function plantingOptionLabel(p) {
+  const base = p.name || p.variety_ref?.name || 'Planting'
+  const bits = []
+  if (p.succession_order != null) bits.push(`wave ${p.succession_order}`)
+  if (p.sown_at) { const d = prettyDate(p.sown_at); if (d) bits.push(`sown ${d}`) }
+  return bits.length ? `${base} — ${bits.join(', ')}` : base
+}
+
+function PlantingField({ value, onChange, cropSlug, varietyId, fetch, onDerive }) {
+  const [plants, setPlants] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    fetch('/api/plants')
+      .then(rows => { if (live) setPlants(Array.isArray(rows) ? rows : []) })
+      .catch(() => { if (live) setFailed(true) })
+      .finally(() => { if (live) setLoading(false) })
+    return () => { live = false }
+  }, [fetch])
+
+  // Progressive scoping. A variety pins it exactly; a crop narrows to that crop's plantings; with
+  // neither we offer everything rather than an empty list the user can't explain.
+  const candidates = useMemo(() => {
+    let list = plants
+    if (varietyId) list = list.filter(p => String(p.variety_id ?? p.variety_ref?.id ?? '') === String(varietyId))
+    else if (cropSlug) list = list.filter(p => p.variety_ref?.crop_type_slug === cropSlug)
+    return [...list].sort((a, b) => {
+      const at = a.sown_at ? Date.parse(a.sown_at) : Infinity
+      const bt = b.sown_at ? Date.parse(b.sown_at) : Infinity
+      if (at !== bt) return (isNaN(at) ? Infinity : at) - (isNaN(bt) ? Infinity : bt)
+      return (a.name || '').localeCompare(b.name || '')
+    })
+  }, [plants, cropSlug, varietyId])
+
+  // The selected planting may sit OUTSIDE the current scope (prefilled from a harvest, or the user
+  // narrowed the crop afterwards). Keep it in the list regardless — silently dropping the current
+  // value would blank the field and quietly discard the link.
+  const selected = plants.find(p => String(p.id) === String(value)) || null
+  const options = selected && !candidates.some(p => String(p.id) === String(selected.id))
+    ? [selected, ...candidates]
+    : candidates
+
+  function handleChange(e) {
+    const id = e.target.value || null
+    onChange(id)
+    if (!id) return
+    const p = plants.find(x => String(x.id) === String(id))
+    if (!p) return
+    onDerive?.({
+      crop_type_slug: p.variety_ref?.crop_type_slug ?? null,
+      variety_id: p.variety_id ?? p.variety_ref?.id ?? null,
+      variety: p.variety_ref ?? null,
+    })
+  }
+
+  const help = failed
+    ? "Couldn't load your plantings — you can still save without one."
+    : varietyId ? 'Plantings of this variety — pick the wave this came from.'
+      : cropSlug ? 'Plantings of this crop. Pick a variety above to narrow further.'
+        : 'Ties this put-up back to what you actually grew.'
+
+  return (
+    <Field label="From which planting?" htmlFor="pu-planting" optional help={help}>
+      <Select id="pu-planting" value={value || ''} onChange={handleChange}
+        disabled={loading || failed} aria-label="From which planting">
+        <option value="">{loading ? 'Loading plantings…' : '— Not tied to a planting —'}</option>
+        {options.map(p => (
+          <option key={p.id} value={p.id}>{plantingOptionLabel(p)}</option>
+        ))}
+      </Select>
+    </Field>
+  )
+}
+
 // Inline storage-location field with a lightweight "＋ New location" creator (POST /api/storage-locations).
 function StorageField({ value, onChange, locations, onCreated, fetch }) {
   const [adding, setAdding] = useState(false)
@@ -505,8 +613,9 @@ function StoresView() {
           value={group}
           onChange={setGroup}
           options={[
-            { value: 'storage', label: 'By storage' },
-            { value: 'crop',    label: 'By crop' },
+            { value: 'storage',  label: 'By storage' },
+            { value: 'crop',     label: 'By crop' },
+            { value: 'planting', label: 'By planting' },
           ]}
         />
       </div>
@@ -643,6 +752,15 @@ function RecordRow({ rec, onChanged, fetch }) {
         {' · put up '}{prettyDate(rec.preserved_at)}
         {rec.use_by_target ? ` · use by ${prettyDate(rec.use_by_target)}` : ''}
       </div>
+      {/* Planting provenance — which wave this jar actually came from. Only rendered when the link
+          exists; a put-up spanning several plantings legitimately has none. */}
+      {rec.planting_name && (
+        <div style={{ fontSize: '0.76rem', color: P.mid, marginTop: 3 }}>
+          from {rec.planting_name}
+          {rec.planting_succession_order != null ? ` · wave ${rec.planting_succession_order}` : ''}
+          {rec.planting_sown_at ? ` · sown ${prettyDate(rec.planting_sown_at)}` : ''}
+        </div>
+      )}
       {rec.notes && <div style={{ fontSize: '0.8rem', color: P.mid, marginTop: 4 }}>{rec.notes}</div>}
       {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginTop: 6 }}>{err}</div>}
 

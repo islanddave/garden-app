@@ -7,6 +7,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';
+import { reconcilePlantAttribution, plantingLabel } from './attribution.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -112,8 +113,13 @@ export function classifyUseBy(preservedAt, useByTarget, now = new Date()) {
 
 export function validateCreate(body) {
   if (!body || typeof body !== 'object') return 'body required';
-  // L7: at least one of {crop_type_slug, variety_id} (mirrors chk_preservation_log_attribution).
-  if (!body.crop_type_slug && !body.variety_id) return 'at least one of crop_type_slug or variety_id is required';
+  // L7: at least one of {crop_type_slug, variety_id, plant_id}. The DB CHECK only knows about the
+  // first two (chk_preservation_log_attribution) — plant_id is accepted here because the handler
+  // DERIVES crop+variety from the planting before insert, so the CHECK is always satisfied by the
+  // time the row lands. Picking a planting alone is complete attribution from the user's side.
+  if (!body.crop_type_slug && !body.variety_id && !body.plant_id) {
+    return 'at least one of crop_type_slug, variety_id or plant_id is required';
+  }
   if (!body.method || !VALID_METHODS.includes(body.method)) return `method must be one of: ${VALID_METHODS.join(', ')}`;
   if (body.method === 'other' && (!body.method_other_text || !String(body.method_other_text).trim())) {
     return "method_other_text is required when method is 'other'";
@@ -130,6 +136,38 @@ export function validateCreate(body) {
 // decrement (remaining_count / consumed_at). Same core validation as create.
 export const validateUpdate = validateCreate;
 
+export { reconcilePlantAttribution, plantingLabel };
+
+// ── Planting attribution (L7 cross-field integrity) ──────────────────────────
+// reconcilePlantAttribution + plantingLabel live in ./attribution.js — dependency-free so unit
+// tests can import them without this file's neon/clerk/aws imports (which are NOT in the root
+// package.json and so are absent under `npm ci` in CI). See that file's header.
+
+// Load the planting behind a plant_id, HOUSEHOLD-SCOPED. garden_node is the canonical plantings
+// view (plants.name → display_name, plants.variety_id → cultivar_id); cultivar carries crop_type_slug.
+// SCOPE (required — without it any authenticated user could attach another household's plant_id,
+// which both leaks that planting's name/variety back through the read surface and writes a
+// cross-household FK). A planting is in scope when EITHER its own created_by or its container's
+// is in the household: lambda/plants scopes through container.created_by, but garden_node carries
+// created_by too, and container-less plantings exist (the integration fixture creates them). Both
+// columns are populated on all 240 live plantings, so this is belt-and-braces, not a widening —
+// every branch still terminates in `= ANY(householdIds)`.
+// Returning null makes reconcilePlantAttribution reject with the generic "does not match a
+// planting you can log against" — no existence oracle for out-of-household ids.
+async function loadPlanting(sql, plantId, householdIds) {
+  const rows = await sql`
+    SELECT gn.id, gn.display_name, gn.sown_at, gn.succession_order, gn.succession_group_id,
+           gn.cultivar_id AS variety_id, cv.crop_type_slug, cv.display_name AS variety_name
+    FROM garden_node gn
+    LEFT JOIN container pp ON pp.id = gn.container_id
+    LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
+    WHERE gn.id = ${plantId}
+      AND gn.deleted_at IS NULL
+      AND (gn.created_by = ANY(${householdIds}) OR pp.created_by = ANY(${householdIds}))
+  `;
+  return rows.length ? rows[0] : null;
+}
+
 // Shared row projection for the read surfaces (single source of columns).
 function projectRow(r) {
   return {
@@ -138,6 +176,11 @@ function projectRow(r) {
     crop_type_slug: r.crop_type_slug,
     variety_id: r.variety_id,
     plant_id: r.plant_id,
+    // Planting provenance for display (present only on reads that JOIN garden_node). Lets the
+    // record row say WHICH wave a put-up came from without a second round-trip.
+    planting_name: r.planting_name ?? null,
+    planting_sown_at: r.planting_sown_at ?? null,
+    planting_succession_order: r.planting_succession_order ?? null,
     harvest_log_id: r.harvest_log_id,
     preserved_at: r.preserved_at,
     method: r.method,
@@ -196,15 +239,26 @@ export const handler = async (event) => {
     // per-record units — NEVER sums across incompatible quantity_units (L5).
     if (rawPath === '/api/preservation/whats-put-up') {
       if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
-      const groupBy = event.queryStringParameters?.group === 'crop' ? 'crop' : 'storage';
+      const rawGroup = event.queryStringParameters?.group;
+      const groupBy = rawGroup === 'crop' ? 'crop' : rawGroup === 'planting' ? 'planting' : 'storage';
+      // Optional ?plant_id= — scopes the whole surface to ONE planting (the seed→…→put-up spine:
+      // "what did wave 2 of the zucchini actually yield into the freezer"). Feeds the planting-detail
+      // surface. Empty result is a legitimate answer, not a 404.
+      const plantFilter = event.queryStringParameters?.plant_id || null;
       const rows = await sql`
-        SELECT p.*, s.label AS storage_label, s.kind AS storage_kind, ct.display_name AS crop_display_name
+        SELECT p.*, s.label AS storage_label, s.kind AS storage_kind, ct.display_name AS crop_display_name,
+               gn.display_name AS planting_name, gn.sown_at AS planting_sown_at,
+               gn.succession_order AS planting_succession_order,
+               cv.display_name AS planting_variety_name
         FROM preservation_log p
         LEFT JOIN storage_location s ON s.id = p.storage_location_id
         LEFT JOIN crop_types ct ON ct.slug = p.crop_type_slug
+        LEFT JOIN garden_node gn ON gn.id = p.plant_id AND gn.deleted_at IS NULL
+        LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
         WHERE p.user_id = ANY(${householdIds})
           AND p.deleted_at IS NULL
           AND (p.remaining_count IS NULL OR p.remaining_count > 0)
+          AND (${plantFilter}::uuid IS NULL OR p.plant_id = ${plantFilter}::uuid)
         ORDER BY p.preserved_at DESC, p.created_at DESC
       `;
       const groups = new Map();
@@ -214,6 +268,17 @@ export const handler = async (event) => {
           key = r.crop_type_slug ?? 'unattributed';
           label = r.crop_display_name ?? (r.crop_type_slug ?? 'Unattributed');
           extra = { crop_type_slug: r.crop_type_slug ?? null };
+        } else if (groupBy === 'planting') {
+          // plant_id is OPTIONAL by design (a put-up drawn from several waves has no single
+          // planting — design V101 line 57 "multi-planting → nullable"). Those land in an explicit
+          // bucket rather than being hidden or forced into a false attribution.
+          key = r.plant_id ?? 'no_planting';
+          label = r.plant_id ? plantingLabel(r) : 'Not tied to a planting';
+          extra = {
+            plant_id: r.plant_id ?? null,
+            planting_sown_at: r.planting_sown_at ?? null,
+            planting_succession_order: r.planting_succession_order ?? null,
+          };
         } else {
           key = r.storage_location_id ?? 'unassigned';
           label = r.storage_label ?? 'Unassigned';
@@ -230,11 +295,19 @@ export const handler = async (event) => {
         g.records.push(proj);
       }
       const out = [...groups.values()].map((g) => ({ ...g, units: [...g.units] }));
-      // Unassigned/unattributed bucket sorts last; otherwise alphabetical by label.
+      // Catch-all buckets sort last; otherwise alphabetical by label — EXCEPT plantings, which sort
+      // by sown date so successive waves of the same variety read in the order they went in the
+      // ground (alphabetical would interleave "wave 10" between 1 and 2).
+      const CATCHALL = new Set(['unassigned', 'unattributed', 'no_planting']);
       out.sort((a, b) => {
-        const au = a.group_key === 'unassigned' || a.group_key === 'unattributed';
-        const bu = b.group_key === 'unassigned' || b.group_key === 'unattributed';
+        const au = CATCHALL.has(a.group_key);
+        const bu = CATCHALL.has(b.group_key);
         if (au !== bu) return au ? 1 : -1;
+        if (groupBy === 'planting' && !au && !bu) {
+          const at = a.planting_sown_at ? dayMs(a.planting_sown_at) : Infinity;
+          const bt = b.planting_sown_at ? dayMs(b.planting_sown_at) : Infinity;
+          if (at !== bt) return at - bt;
+        }
         return String(a.label).localeCompare(String(b.label));
       });
       return resp(200, { group_by: groupBy, groups: out });
@@ -247,10 +320,14 @@ export const handler = async (event) => {
     if (rawPath === '/api/preservation/use-soon') {
       if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
       const rows = await sql`
-        SELECT p.*, s.label AS storage_label, s.kind AS storage_kind, ct.display_name AS crop_display_name
+        SELECT p.*, s.label AS storage_label, s.kind AS storage_kind, ct.display_name AS crop_display_name,
+               gn.display_name AS planting_name, gn.sown_at AS planting_sown_at,
+               gn.succession_order AS planting_succession_order, cv.display_name AS planting_variety_name
         FROM preservation_log p
         LEFT JOIN storage_location s ON s.id = p.storage_location_id
         LEFT JOIN crop_types ct ON ct.slug = p.crop_type_slug
+        LEFT JOIN garden_node gn ON gn.id = p.plant_id AND gn.deleted_at IS NULL
+        LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
         WHERE p.user_id = ANY(${householdIds})
           AND p.deleted_at IS NULL
           AND p.use_by_target IS NOT NULL
@@ -279,10 +356,14 @@ export const handler = async (event) => {
 
       if (method === 'GET') {
         const rows = await sql`
-          SELECT p.*, s.label AS storage_label, s.kind AS storage_kind, ct.display_name AS crop_display_name
+          SELECT p.*, s.label AS storage_label, s.kind AS storage_kind, ct.display_name AS crop_display_name,
+               gn.display_name AS planting_name, gn.sown_at AS planting_sown_at,
+               gn.succession_order AS planting_succession_order, cv.display_name AS planting_variety_name
           FROM preservation_log p
           LEFT JOIN storage_location s ON s.id = p.storage_location_id
           LEFT JOIN crop_types ct ON ct.slug = p.crop_type_slug
+          LEFT JOIN garden_node gn ON gn.id = p.plant_id AND gn.deleted_at IS NULL
+          LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
           WHERE p.id = ${rowId} AND p.user_id = ANY(${householdIds}) AND p.deleted_at IS NULL
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
@@ -295,6 +376,15 @@ export const handler = async (event) => {
         const verr = validateUpdate(body);
         if (verr) return resp(400, { error: verr });
 
+        // L7 cross-field: same planting reconciliation as POST, so an edit can't drift a put-up
+        // onto a planting of a different crop.
+        let attr = { crop_type_slug: body.crop_type_slug ?? null, variety_id: body.variety_id ?? null };
+        if (body.plant_id) {
+          const rec = reconcilePlantAttribution(body, await loadPlanting(sql, body.plant_id, householdIds));
+          if (rec.error) return resp(400, { error: rec.error });
+          attr = rec;
+        }
+
         const packageCount = body.package_count ?? 1;
         const remaining = body.remaining_count ?? null;
         // Server convenience for the "used up" case: stamp consumed_at when count hits 0 and the
@@ -303,8 +393,8 @@ export const handler = async (event) => {
 
         const rows = await sql`
           UPDATE preservation_log SET
-            crop_type_slug      = ${body.crop_type_slug ?? null},
-            variety_id          = ${body.variety_id ?? null},
+            crop_type_slug      = ${attr.crop_type_slug ?? null},
+            variety_id          = ${attr.variety_id ?? null},
             plant_id            = ${body.plant_id ?? null},
             harvest_log_id      = ${body.harvest_log_id ?? null},
             preserved_at        = ${body.preserved_at},
@@ -347,10 +437,14 @@ export const handler = async (event) => {
 
     if (method === 'GET') {
       const rows = await sql`
-        SELECT p.*, s.label AS storage_label, s.kind AS storage_kind, ct.display_name AS crop_display_name
+        SELECT p.*, s.label AS storage_label, s.kind AS storage_kind, ct.display_name AS crop_display_name,
+               gn.display_name AS planting_name, gn.sown_at AS planting_sown_at,
+               gn.succession_order AS planting_succession_order, cv.display_name AS planting_variety_name
         FROM preservation_log p
         LEFT JOIN storage_location s ON s.id = p.storage_location_id
         LEFT JOIN crop_types ct ON ct.slug = p.crop_type_slug
+        LEFT JOIN garden_node gn ON gn.id = p.plant_id AND gn.deleted_at IS NULL
+        LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
         WHERE p.user_id = ANY(${householdIds}) AND p.deleted_at IS NULL
         ORDER BY p.preserved_at DESC, p.created_at DESC
       `;
@@ -361,6 +455,18 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       const verr = validateCreate(body);
       if (verr) return resp(400, { error: verr });
+
+      // L7 cross-field: resolve the planting FIRST — it can supply the crop/variety the DB CHECK
+      // needs, and it rejects a planting that contradicts an explicitly-picked crop or variety.
+      let attr = { crop_type_slug: body.crop_type_slug ?? null, variety_id: body.variety_id ?? null };
+      if (body.plant_id) {
+        const rec = reconcilePlantAttribution(body, await loadPlanting(sql, body.plant_id, householdIds));
+        if (rec.error) return resp(400, { error: rec.error });
+        attr = rec;
+      }
+      if (!attr.crop_type_slug && !attr.variety_id) {
+        return resp(400, { error: 'that planting has no variety — pick a crop as well' });
+      }
 
       const packageCount = body.package_count ?? 1;
       // Fresh put-up: initialize remaining_count so the decrement/"used up" flow + fully-consumed
@@ -385,7 +491,7 @@ export const handler = async (event) => {
           preserved_at, method, method_other_text, quantity_value, quantity_unit,
           package_count, storage_location_id, use_by_target, remaining_count, notes, photo_id
         ) VALUES (
-          ${userId}, ${body.crop_type_slug ?? null}, ${body.variety_id ?? null}, ${body.plant_id ?? null}, ${body.harvest_log_id ?? null},
+          ${userId}, ${attr.crop_type_slug ?? null}, ${attr.variety_id ?? null}, ${body.plant_id ?? null}, ${body.harvest_log_id ?? null},
           ${body.preserved_at}, ${body.method}, ${body.method === 'other' ? (body.method_other_text ?? null) : null}, ${body.quantity_value}, ${body.quantity_unit},
           ${packageCount}, ${body.storage_location_id ?? null}, ${useByTarget ?? null}, ${remaining}, ${body.notes ?? null}, ${body.photo_id ?? null}
         ) RETURNING *

@@ -178,7 +178,7 @@ export const handler = async (event) => {
                      'sun_requirements', pv.sun_requirements,
                      'common_diseases', pv.common_diseases,
                      'expected_yield_notes', pv.expected_yield_notes,
-                     'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle
+                     'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug
                    )
                  ELSE NULL END AS variety_ref,
                  parent.display_name AS parent_plant_name, parent.container_id AS parent_project_id,
@@ -437,7 +437,7 @@ export const handler = async (event) => {
                        'sun_requirements', pv.sun_requirements,
                        'common_diseases', pv.common_diseases,
                        'expected_yield_notes', pv.expected_yield_notes,
-                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle
+                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug
                      )
                    ELSE NULL END AS variety_ref
             FROM public.garden_node p
@@ -476,7 +476,7 @@ export const handler = async (event) => {
                        'sun_requirements', pv.sun_requirements,
                        'common_diseases', pv.common_diseases,
                        'expected_yield_notes', pv.expected_yield_notes,
-                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle
+                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug
                      )
                    ELSE NULL END AS variety_ref
             FROM public.garden_node p

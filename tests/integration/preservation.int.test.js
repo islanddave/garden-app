@@ -89,14 +89,16 @@ afterAll(async () => {
 })
 
 describe('POST /api/preservation — validation', () => {
-  it('no crop and no variety -> 400 (attribution)', async () => {
+  it('no crop, no variety and no planting -> 400 (attribution)', async () => {
     setTestUserId(USER)
     const { status, body } = await callHandler(handler, {
       method: 'POST', path: '/api/preservation',
       body: { method: 'whole_freeze', quantity_value: 2, quantity_unit: 'lb', preserved_at: isoDate(0) },
     })
     expect(status).toBe(400)
-    expect(body.error).toMatch(/at least one of crop_type_slug or variety_id/i)
+    // V4-PUTUPLINK-001 widened this: a planting is now sufficient attribution on its own (the
+    // handler derives crop+variety from it), so plant_id joins the accepted set.
+    expect(body.error).toMatch(/at least one of crop_type_slug, variety_id or plant_id/i)
   })
 
   it('invalid method -> 400', async () => {
@@ -406,5 +408,194 @@ describe('ON DELETE SET NULL — put-up survives parent deletion', () => {
     const rows = await directSql`SELECT harvest_log_id FROM preservation_log WHERE id = ${created.body.id}`
     expect(rows).toHaveLength(1)
     expect(rows[0].harvest_log_id).toBeNull() // FK ON DELETE SET NULL
+  })
+})
+
+// ── V4-PUTUPLINK-001: planting attribution (the seed → planting → harvest → put-up spine) ──────
+// plant_id shipped in the schema and the API but was unreachable from the UI, and the L7 cross-field
+// rule from design V101 ("planting_id's crop must match") was never implemented. These cover the
+// derive / reject / scope behaviour against real Postgres — the mismatch rule is pure JS, but the
+// household scoping and the group=planting SQL are not.
+describe('planting attribution — derive, reject, scope (L7)', () => {
+  let varietyId, cropSlug, wave1Id, wave2Id, foreignPlantId
+
+  beforeAll(async () => {
+    // A real variety with a crop — the fixture planting in the outer beforeAll deliberately has
+    // neither, so derivation needs its own.
+    const v = await directSql`
+      SELECT id, crop_type_slug FROM plant_varieties
+      WHERE crop_type_slug IS NOT NULL AND deleted_at IS NULL LIMIT 1
+    `
+    varietyId = v[0].id
+    cropSlug = v[0].crop_type_slug
+
+    // Two successions of that variety — same name, different waves. This is the shape the whole
+    // feature exists for.
+    const w1 = await directSql`
+      INSERT INTO plants (name, created_by, variety_id, sown_at, succession_order)
+      VALUES (${'link-wave-' + RUN}, ${USER}, ${varietyId}, ${isoDate(-120)}, ${1}) RETURNING id
+    `
+    wave1Id = w1[0].id
+    const w2 = await directSql`
+      INSERT INTO plants (name, created_by, variety_id, sown_at, succession_order)
+      VALUES (${'link-wave-' + RUN}, ${USER}, ${varietyId}, ${isoDate(-60)}, ${2}) RETURNING id
+    `
+    wave2Id = w2[0].id
+
+    // A planting owned by ANOTHER household — must be unreachable as a plant_id.
+    const fp = await directSql`
+      INSERT INTO plants (name, created_by, variety_id)
+      VALUES (${'link-foreign-' + RUN}, ${FOREIGN_USER}, ${varietyId}) RETURNING id
+    `
+    foreignPlantId = fp[0].id
+  })
+
+  afterAll(async () => {
+    await directSql`DELETE FROM preservation_log WHERE plant_id IN (${wave1Id}, ${wave2Id})`
+    await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id = ${foreignPlantId}`
+    await directSql`DELETE FROM plants WHERE id = ${foreignPlantId}`
+  })
+
+  it('plant_id ALONE is sufficient attribution — crop and variety derive from the planting', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/preservation',
+      body: { method: 'whole_freeze', quantity_value: 4, quantity_unit: 'lb', preserved_at: isoDate(-1), plant_id: wave2Id },
+    })
+    expect(status).toBe(201)
+    expect(body.plant_id).toBe(wave2Id)
+    // Derived server-side — the client sent neither. This is what satisfies the DB attribution CHECK.
+    expect(body.crop_type_slug).toBe(cropSlug)
+    expect(body.variety_id).toBe(varietyId)
+  })
+
+  it('a crop that contradicts the planting is REJECTED, not silently rewritten', async () => {
+    setTestUserId(USER)
+    const other = await directSql`
+      SELECT slug FROM crop_types WHERE slug <> ${cropSlug} LIMIT 1
+    `
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/preservation',
+      body: { method: 'whole_freeze', quantity_value: 1, quantity_unit: 'lb', preserved_at: isoDate(-1),
+              plant_id: wave2Id, crop_type_slug: other[0].slug },
+    })
+    expect(status).toBe(400)
+    expect(body.error).toMatch(/does not match that planting/i)
+  })
+
+  it('a matching crop passes through', async () => {
+    setTestUserId(USER)
+    const { status } = await callHandler(handler, {
+      method: 'POST', path: '/api/preservation',
+      body: { method: 'whole_freeze', quantity_value: 1, quantity_unit: 'lb', preserved_at: isoDate(-1),
+              plant_id: wave1Id, crop_type_slug: cropSlug },
+    })
+    expect(status).toBe(201)
+  })
+
+  it("another household's planting is not attachable (no cross-household FK, no existence oracle)", async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/preservation',
+      body: { method: 'whole_freeze', quantity_value: 1, quantity_unit: 'lb', preserved_at: isoDate(-1), plant_id: foreignPlantId },
+    })
+    expect(status).toBe(400)
+    expect(body.error).toMatch(/does not match a planting you can log against/i)
+    // The message must not reveal that the row exists — same error as a bogus uuid.
+    expect(body.error).not.toMatch(/household|permission|exists/i)
+  })
+
+  it('a planting with no variety cannot attribute on its own', async () => {
+    setTestUserId(USER)
+    // `plantId` from the outer fixture has neither variety nor crop.
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/preservation',
+      body: { method: 'whole_freeze', quantity_value: 1, quantity_unit: 'lb', preserved_at: isoDate(-1), plant_id: plantId },
+    })
+    expect(status).toBe(400)
+    expect(body.error).toMatch(/no variety/i)
+  })
+
+  it('PUT enforces the same rule — an edit cannot drift onto a mismatched planting', async () => {
+    setTestUserId(USER)
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/preservation',
+      body: { method: 'whole_freeze', quantity_value: 2, quantity_unit: 'lb', preserved_at: isoDate(-1), plant_id: wave1Id },
+    })
+    expect(created.status).toBe(201)
+    const other = await directSql`SELECT slug FROM crop_types WHERE slug <> ${cropSlug} LIMIT 1`
+    const { status, body } = await callHandler(handler, {
+      method: 'PUT', path: `/api/preservation/${created.body.id}`,
+      body: { method: 'whole_freeze', quantity_value: 2, quantity_unit: 'lb', preserved_at: isoDate(-1),
+              plant_id: wave1Id, crop_type_slug: other[0].slug },
+    })
+    expect(status).toBe(400)
+    expect(body.error).toMatch(/does not match that planting/i)
+  })
+
+  it('?group=planting separates successions and buckets the unlinked ones', async () => {
+    setTestUserId(USER)
+    // One put-up with no planting at all — legitimately spans waves (design V101: nullable).
+    await callHandler(handler, {
+      method: 'POST', path: '/api/preservation',
+      body: { crop_type_slug: cropSlug, method: 'whole_freeze', quantity_value: 1, quantity_unit: 'lb', preserved_at: isoDate(-1) },
+    })
+    const res = await handler({
+      requestContext: { http: { method: 'GET' } },
+      rawPath: '/api/preservation/whats-put-up',
+      headers: { authorization: `Bearer stub-token-for-${USER}` },
+      queryStringParameters: { group: 'planting' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.group_by).toBe('planting')
+
+    const w1 = body.groups.find((g) => g.group_key === wave1Id)
+    const w2 = body.groups.find((g) => g.group_key === wave2Id)
+    expect(w1).toBeTruthy()
+    expect(w2).toBeTruthy()
+    // Same variety, different waves -> DISTINCT groups with distinguishable labels.
+    expect(w1.group_key).not.toBe(w2.group_key)
+    expect(w1.label).toMatch(/wave 1/)
+    expect(w2.label).toMatch(/wave 2/)
+    // Sown-date ordering: wave 1 (older) precedes wave 2.
+    expect(body.groups.indexOf(w1)).toBeLessThan(body.groups.indexOf(w2))
+
+    const none = body.groups.find((g) => g.group_key === 'no_planting')
+    expect(none).toBeTruthy()
+    expect(none.label).toBe('Not tied to a planting')
+    // Catch-all bucket sorts last.
+    expect(body.groups[body.groups.length - 1].group_key).toBe('no_planting')
+  })
+
+  it('?plant_id= scopes the surface to one planting (feeds the planting-detail read)', async () => {
+    setTestUserId(USER)
+    const res = await handler({
+      requestContext: { http: { method: 'GET' } },
+      rawPath: '/api/preservation/whats-put-up',
+      headers: { authorization: `Bearer stub-token-for-${USER}` },
+      queryStringParameters: { group: 'planting', plant_id: wave2Id },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.groups.length).toBe(1)
+    expect(body.groups[0].group_key).toBe(wave2Id)
+    // Every record really is that planting's.
+    for (const rec of body.groups[0].records) expect(rec.plant_id).toBe(wave2Id)
+  })
+
+  it('reads carry planting provenance for display', async () => {
+    setTestUserId(USER)
+    const res = await handler({
+      requestContext: { http: { method: 'GET' } },
+      rawPath: '/api/preservation/whats-put-up',
+      headers: { authorization: `Bearer stub-token-for-${USER}` },
+      queryStringParameters: { plant_id: wave2Id },
+    })
+    const body = JSON.parse(res.body)
+    const rec = body.groups.flatMap((g) => g.records)[0]
+    expect(rec.planting_name).toBeTruthy()
+    expect(rec.planting_succession_order).toBe(2)
+    expect(rec.planting_sown_at).toBeTruthy()
   })
 })
