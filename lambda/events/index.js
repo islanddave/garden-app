@@ -510,6 +510,80 @@ export const handler = async (event) => {
       return resp(200, { undone: true, batch_id: batchId });
     }
 
+    // V4-HARVESTSURF-001: GET /api/events/harvest-ready — CANDIDATES for the Today harvest-ready
+    // band. Literal sub-route, matched BEFORE the /api/events/:id regex (same precedence handling as
+    // harvest-summary above). Household-scoped through container.created_by exactly like the feed.
+    //
+    // This route deliberately returns candidates, NOT verdicts: SQL narrows (live plantings owned by
+    // the household that have ≥1 prior harvest, plus the crop's cadence attributes and the ET-day age
+    // of the last pick); src/lib/harvestReadiness.js decides eligibility and ranking as a pure,
+    // testable function. et_doy travels with the payload so the client never does zone math.
+    //
+    // Correctness invariants (same live-data review as harvest-summary):
+    //   * The harvest DATE is event_log.event_date — NEVER harvest_log.created_at (30% backdated).
+    //   * Evidence only: the harvest_log join means a planting with no prior pick can never appear,
+    //     so nothing here is a prediction of first harvest.
+    //   * days_since_last_harvest is whole ET days; it can be NEGATIVE if a pick was future-dated,
+    //     and that row is passed through unfiltered for the pure predicate to reject.
+    //   * Live planting = deleted_at/archived_at NULL and status not failed/ended. (Unlike
+    //     harvest-summary, archived IS filtered — this is an ambient nudge, not a pinned detail page.)
+    if (rawPath === '/api/events/harvest-ready' && method === 'GET') {
+      const rows = await sql`
+        WITH last_pick AS (
+          SELECT e.plant_id,
+                 MAX((e.event_date AT TIME ZONE ${HARVEST_TZ})::date) AS last_date,
+                 COUNT(*) AS harvest_count
+          FROM event_log e
+          JOIN harvest_log h ON h.event_id = e.id AND h.deleted_at IS NULL
+          WHERE e.event_type IN ('harvest', 'first_harvest')
+            AND e.deleted_at IS NULL
+            AND e.plant_id IS NOT NULL
+          GROUP BY e.plant_id
+        )
+        SELECT p.id AS plant_id, p.project_id, p.name,
+               ct.slug AS crop_type_slug, ct.display_name AS crop_display_name,
+               ct.harvest_habit, ct.repeat_interval_days,
+               ct.harvest_season_start_doy, ct.harvest_season_end_doy,
+               lp.last_date, lp.harvest_count,
+               ((NOW() AT TIME ZONE ${HARVEST_TZ})::date - lp.last_date) AS days_since_last_harvest
+        FROM last_pick lp
+        JOIN plants p ON p.id = lp.plant_id
+        JOIN public.container c ON c.id = p.project_id
+        JOIN plant_varieties pv ON pv.id = p.variety_id AND pv.deleted_at IS NULL
+        JOIN crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
+        WHERE c.created_by = ANY(${householdIds})
+          AND c.deleted_at IS NULL
+          AND c.archived_at IS NULL
+          AND p.deleted_at IS NULL
+          AND p.archived_at IS NULL
+          AND (p.status IS NULL OR p.status NOT IN ('failed', 'ended'))
+      `;
+      const meta = await sql`
+        SELECT (NOW() AT TIME ZONE ${HARVEST_TZ})::date AS et_today,
+               EXTRACT(DOY FROM (NOW() AT TIME ZONE ${HARVEST_TZ})::date)::int AS et_doy
+      `;
+      const ymdRO = (v) => (v == null ? null : (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)));
+      return resp(200, {
+        time_zone: HARVEST_TZ,
+        et_today: ymdRO(meta[0]?.et_today),
+        et_doy: meta[0]?.et_doy ?? null,
+        candidates: rows.map(r => ({
+          plant_id: r.plant_id,
+          project_id: r.project_id,
+          name: r.name,
+          crop_type_slug: r.crop_type_slug,
+          crop_display_name: r.crop_display_name,
+          harvest_habit: r.harvest_habit,
+          repeat_interval_days: r.repeat_interval_days == null ? null : Number(r.repeat_interval_days),
+          harvest_season_start_doy: r.harvest_season_start_doy == null ? null : Number(r.harvest_season_start_doy),
+          harvest_season_end_doy: r.harvest_season_end_doy == null ? null : Number(r.harvest_season_end_doy),
+          last_harvest_date: ymdRO(r.last_date),
+          harvest_count: Number(r.harvest_count),
+          days_since_last_harvest: r.days_since_last_harvest == null ? null : Number(r.days_since_last_harvest),
+        })),
+      });
+    }
+
     // ── Route 2/3 (F10 precedence): /api/events/:id (PATCH then GET) ──────────────────────────
     const idMatch = rawPath.match(/^\/api\/events\/([^/]+)$/);
     if (idMatch) {
