@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.57.0",
+    "date": "2026-07-21",
+    "highlights": [
+      "Each planting now shows the stretch you've been picking over, not just the last pick",
+      "A planting whose only harvest was logged as a first harvest now counts toward what's ready to pick — before, it was invisible"
+    ]
+  },
+  {
     "version": "3.56.0",
     "date": "2026-07-21",
     "highlights": [
