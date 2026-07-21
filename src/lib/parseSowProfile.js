@@ -15,7 +15,7 @@ export const CROP_TYPE_SLUGS = Object.freeze([
   'fittonia', 'garlic', 'geranium', 'haworthia', 'hosta', 'jade',
   'japanese_maple', 'leek', 'lemongrass', 'lettuce', 'lithops', 'luffa',
   'marigold', 'melon', 'mint', 'nasturtium', 'onion', 'oregano', 'parsley',
-  'peach', 'pepper', 'pineapple', 'potato', 'pothos', 'rose', 'rosemary',
+  'peach', 'pepper', 'pineapple', 'potato', 'pothos', 'radicchio', 'rose', 'rosemary',
   'sage', 'sedum', 'shallot', 'spinach', 'squash', 'strawberry', 'succulent',
   'sweet_potato', 'tarragon', 'tomatillo', 'tomato', 'tradescantia',
   'vietnamese_coriander', 'watermelon', 'wineberry',
