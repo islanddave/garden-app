@@ -272,6 +272,16 @@ function PutUpForm({ prefill, onLogged }) {
           </Select>
         </Field>
 
+        {/* Which one? Crop alone ("Peppers") isn't enough to know what's in the jar — jalapeño vs
+            habanero matters when you go looking for it later. Promoted out of the "More" reveal to
+            sit with the crop (Dave, 2026-07-21). Optional: the attribution CHECK needs crop OR variety. */}
+        <div style={{ marginTop: 14 }}>
+          <Field label="Which variety?" htmlFor="pu-variety" optional
+            help="e.g. Jalapeño, Habanero — so you know exactly what you put up.">
+            <VarietyPicker id="pu-variety" value={variety} onChange={setVariety} placeholder="Search varieties…" />
+          </Field>
+        </div>
+
         <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
           <div style={{ flex: 2 }}>
             <Field label="How much *" htmlFor="pu-qty">
@@ -381,9 +391,6 @@ function PutUpForm({ prefill, onLogged }) {
             <Field label="Number of containers" htmlFor="pu-packages" help="How many bags / jars / boxes.">
               <Input id="pu-packages" type="number" min={1} value={packageCount}
                 onChange={e => setPackageCount(e.target.value)} aria-label="Number of containers" />
-            </Field>
-            <Field label="Variety" htmlFor="pu-variety" optional help="Attach a specific variety instead of (or as well as) the crop.">
-              <VarietyPicker id="pu-variety" value={variety} onChange={setVariety} placeholder="Search varieties…" />
             </Field>
             <Field label="Notes" htmlFor="pu-notes" optional>
               <Textarea id="pu-notes" value={notes} onChange={e => setNotes(e.target.value)}
