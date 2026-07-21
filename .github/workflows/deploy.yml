@@ -211,7 +211,7 @@ jobs:
         # not yet provisioned). Fixed 2026-05-12 (3f27c817 V1.2a-1 Session 2 first-deploy of garden-app-events).
         run: |
           CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE","PATCH"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
-          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events garden-achievements; do
+          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events garden-achievements garden-preservation garden-storage-location; do
             if aws lambda get-function --function-name "$fn" >/dev/null 2>&1; then
               echo -n "CORS $fn: "
               aws lambda update-function-url-config \
@@ -225,11 +225,14 @@ jobs:
           done
 
       - name: Post-deploy Lambda health check
-        # Confirms all 10 prod Lambda functions are Active after deploy.
+        # Confirms all 13 prod Lambda functions are Active after deploy.
+        # garden-preservation + garden-storage-location added 2026-07-21 (V4-PUTUPLINK-001): they
+        # shipped with Put-Up but were never added to either list, so a CORS drift on them would
+        # have gone unrestored and unnoticed. Both are origin-locked to the same prod domain.
         # Catches: broken zip, failed update, function in Pending/Failed state.
         run: |
           HEALTH_FAIL=0
-          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events garden-achievements; do
+          for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events garden-achievements garden-preservation garden-storage-location; do
             if ! aws lambda get-function --function-name "$fn" >/dev/null 2>&1; then
               echo "⚠️ $fn: NOT YET PROVISIONED (skipping health check — first-deploy in progress)"
               continue
