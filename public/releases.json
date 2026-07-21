@@ -1,5 +1,15 @@
 [
   {
+    "version": "3.56.0",
+    "date": "2026-07-21",
+    "highlights": [
+      "See how much you've picked from each planting — recent totals and the running total for this year",
+      "Today now shows what's ready to pick again, based on how often each crop actually needs picking",
+      "Knows the difference between crops you pick over and over and crops you harvest once, so finished plantings stop asking",
+      "Won't nudge you to cut asparagus outside its window, when cutting would set the plant back"
+    ]
+  },
+  {
     "version": "3.55.0",
     "date": "2026-07-21",
     "highlights": [
