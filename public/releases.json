@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.53.2",
+    "date": "2026-07-21",
+    "highlights": [
+      "Put-Up now asks which variety right next to the crop — choose Peppers and you'll see your pepper varieties, so you can record that it was Jalapeños rather than just 'peppers'. The variety list also no longer stops partway through: it's scoped to the crop you picked, and if there are still more than fit it tells you instead of quietly cutting off."
+    ]
+  },
+  {
     "version": "3.53.1",
     "date": "2026-07-21",
     "highlights": [
