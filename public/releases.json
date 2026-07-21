@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.54.0",
+    "date": "2026-07-21",
+    "highlights": [
+      "Put-Up now ties to a specific planting — pick the wave a put-up came from, see it on the planting page, and attach a photo."
+    ]
+  },
+  {
     "version": "3.53.2",
     "date": "2026-07-21",
     "highlights": [
