@@ -12,6 +12,9 @@ import {
   parseStartMethod,
   packetToVarietyCols,
   packetToInventoryPayload,
+  slugifyCropName,
+  checkCropGuess,
+  CROP_GUESS_SYNONYMS,
 } from '../lib/parseSowProfile.js';
 
 // Real packets from /tmp/seed-load-dataset-V1.json (garden.seed_load_dataset.v1),
@@ -276,5 +279,108 @@ describe('packetToInventoryPayload', () => {
       metadata: { blob: 'x'.repeat(9000) },
     };
     expect(() => packetToInventoryPayload(bloated, IDS)).toThrow(/8192/);
+  });
+});
+
+// ── V4-CROPGUESS-001 — crop-guess cross-check (croptype-mistyping-20260721 Pending 1) ────────
+// The prevention for L-286's defect class: a slug can be VALID and still be WRONG. Three real
+// instances shipped this way (Radicchio->endive, Chervil->parsley, Borage->basil), each passing
+// every existing guard because none compared the guess to the packet's own crop name.
+describe('slugifyCropName', () => {
+  it('normalises the comma-head form (a subtype, not a disagreement)', () => {
+    expect(slugifyCropName('Pepper, Chile')).toBe('pepper');
+    expect(slugifyCropName('Basil, Holy (Tulsi)')).toBe('basil');
+  });
+  it('strips parentheticals', () => {
+    expect(slugifyCropName('Potato (true seed)')).toBe('potato');
+    expect(slugifyCropName('Eggplant (ornamental)')).toBe('eggplant');
+  });
+  it('lowercases and underscores multi-word crops', () => {
+    expect(slugifyCropName('Winter Squash')).toBe('winter_squash');
+    expect(slugifyCropName('Chinese Broccoli (Gai Lan)')).toBe('chinese_broccoli');
+  });
+  it('is total over junk input', () => {
+    for (const v of [null, undefined, '', '   ', '---']) expect(slugifyCropName(v)).toBe('');
+  });
+});
+
+describe('checkCropGuess', () => {
+  const pk = (crop, crop_type_slug_guess) => ({ crop, crop_type_slug_guess });
+
+  it('accepts a guess that agrees with the packet crop', () => {
+    expect(checkCropGuess(pk('Tomato', 'tomato')).status).toBe('match');
+    expect(checkCropGuess(pk('Tomato', 'tomato')).slug).toBe('tomato');
+  });
+
+  it('accepts a reviewed synonym', () => {
+    const r = checkCropGuess(pk('Winter Squash', 'squash'));
+    expect(r.status).toBe('synonym');
+    expect(r.slug).toBe('squash');
+  });
+
+  it('does NOT accept an arbitrary mismatch just because the synonym KEY exists', () => {
+    // pumpkin is a known key, but only ever maps to squash. Any other target must not ride it.
+    expect(checkCropGuess(pk('Pumpkin', 'melon')).status).toBe('unresolved');
+  });
+
+  // The three real defects. Each was VALID and each was WRONG.
+  it('flags Radicchio -> endive as unresolved (C. intybus vs C. endivia)', () => {
+    const r = checkCropGuess(pk('Radicchio', 'endive'));
+    expect(r.status).toBe('unresolved');
+    expect(r.slug).toBeNull();
+  });
+  it('flags Chervil -> parsley as unresolved (Anthriscus vs Petroselinum)', () => {
+    expect(checkCropGuess(pk('Chervil', 'parsley')).status).toBe('unresolved');
+  });
+  it('flags Borage -> basil as unresolved (Borago vs Ocimum)', () => {
+    expect(checkCropGuess(pk('Borage', 'basil')).status).toBe('unresolved');
+  });
+  it('accepts each of those three once corrected', () => {
+    for (const [c, g] of [['Radicchio', 'radicchio'], ['Chervil', 'chervil'], ['Borage', 'borage']]) {
+      expect(checkCropGuess(pk(c, g)).status).toBe('match');
+    }
+  });
+
+  it("treats an absent guess and the explicit 'other' escape hatch as nothing-to-check", () => {
+    expect(checkCropGuess(pk('Tomato', null)).status).toBe('none');
+    expect(checkCropGuess(pk('Tomato', 'other')).status).toBe('none');
+  });
+
+  it('honours an injected synonym table (callers can review their own)', () => {
+    const r = checkCropGuess(pk('Rapini', 'broccoli'), { synonyms: { rapini: 'broccoli' } });
+    expect(r.status).toBe('synonym');
+  });
+});
+
+describe('packetToVarietyCols cross-check wiring', () => {
+  const radicchioMistyped = { crop: 'Radicchio', variety: 'Palla Rossa Mavrik', crop_type_slug_guess: 'endive' };
+
+  it('is OPT-IN: default behaviour is unchanged, so already-run loaders cannot shift silently', () => {
+    const out = packetToVarietyCols(radicchioMistyped, { validSlugs: ['endive'] });
+    expect(out.crop_type_slug).toBe('endive');
+    expect(out.crop_guess).toBeUndefined();
+  });
+
+  it('with crossCheck:true, refuses to bind an unresolved guess and reports the verdict', () => {
+    const out = packetToVarietyCols(radicchioMistyped, { validSlugs: ['endive'], crossCheck: true });
+    expect(out.crop_type_slug).toBeUndefined();
+    expect(out.crop_guess.status).toBe('unresolved');
+    expect(out.crop_guess.cropSlug).toBe('radicchio');
+    expect(out.crop_guess.guess).toBe('endive');
+  });
+
+  it('with crossCheck:true, still binds a matching guess', () => {
+    const out = packetToVarietyCols(
+      { crop: 'Radicchio', variety: 'Palla Rossa Mavrik', crop_type_slug_guess: 'radicchio' },
+      { validSlugs: ['radicchio'], crossCheck: true });
+    expect(out.crop_type_slug).toBe('radicchio');
+    expect(out.crop_guess.status).toBe('match');
+  });
+
+  it('cross-check does not rescue a slug the live catalog rejects (both gates apply)', () => {
+    const out = packetToVarietyCols(
+      { crop: 'Radicchio', crop_type_slug_guess: 'radicchio' },
+      { validSlugs: ['tomato'], crossCheck: true });
+    expect(out.crop_type_slug).toBeUndefined();
   });
 });

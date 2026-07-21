@@ -21,6 +21,77 @@ export const CROP_TYPE_SLUGS = Object.freeze([
   'vietnamese_coriander', 'watermelon', 'wineberry',
 ]);
 
+// ── V4-CROPGUESS-001 — crop-guess cross-check (croptype-mistyping-20260721 Pending 1) ────────
+// THE DEFECT CLASS (L-286): `crop_type_slug_guess` is LLM-authored per packet. When no correct crop
+// type existed, the guess settled for the nearest VALID neighbour — Radicchio (Cichorium intybus)
+// -> `endive` (C. endivia), Chervil (Anthriscus cerefolium) -> `parsley` (Petroselinum crispum),
+// Borage (Borago officinalis) -> `basil` (Ocimum basilicum). Every existing guard passed, because
+// they all ask "is this slug in the catalog?" and none asks "does it match the packet's own crop
+// name?". A test had even ENSHRINED the radicchio case.
+//
+// NOT COSMETIC: crop_types carries BEHAVIOUR — harvest_habit, repeat_interval_days and
+// loss_horizon_hours all ride the slug. Radicchio inherited endive's cut_and_come_again/10d when
+// radicchio heads are cut ONCE. A mis-typed variety silently gets a wrong harvest model.
+//
+// THE CHECK: slugify the packet's own `crop` field and compare it to the guess. Agreement is
+// self-evidence. Disagreement is accepted ONLY via an explicit reviewed synonym; anything else
+// resolves to UNRESOLVED so a loader surfaces it for review rather than silently binding it.
+// "No valid target exists" is a first-class outcome, not licence to approximate.
+
+/** Packet `crop` -> comparable slug. Comma-head ("Pepper, Chile" -> pepper) and parentheticals
+ *  ("Potato (true seed)" -> potato) are formatting, not disagreement, so they are normalised away
+ *  BEFORE comparison — that alone removes 2 of the false alarms the original detector produced. */
+export function slugifyCropName(crop) {
+  if (crop == null) return '';
+  return String(crop)
+    .split(',')[0]
+    .replace(/\([^)]*\)/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+/**
+ * Reviewed synonyms: slugified crop name -> accepted crop_type_slug. Every entry is a HUMAN
+ * decision recorded with its reason. Seeded from a re-run of the measured audit over both seed
+ * datasets (179 packets). Adding an entry here is the ONLY sanctioned way to accept a mismatch.
+ *
+ * NOTE — `pumpkin` and `winter_squash` are accepted because `squash` is the only available target
+ * TODAY, not because the mapping is horticulturally clean. Both are the known squash-slug
+ * conflation: `crop_types.squash` carries harvest_habit=repeat / repeat_interval_days=2, a SUMMER
+ * squash cadence, while these are single-harvest crops cured for months. Recorded here so the debt
+ * is visible and greppable rather than invisible. See harvest-surfacing-20260721.
+ */
+export const CROP_GUESS_SYNONYMS = Object.freeze({
+  collards: 'collard',           // plural of the same crop; the catalog slug is singular
+  pumpkin: 'squash',             // Cucurbita spp.; no pumpkin/winter_squash type exists yet
+  winter_squash: 'squash',       // same conflation as pumpkin — see the note above
+  broccoli_raab: 'broccoli',     // Rapini, Brassica rapa Ruvo. OPEN judgment call (Dave), not a defect
+  chinese_broccoli: 'broccoli',  // Kailaan, B. oleracea Alboglabra — same species as broccoli
+});
+
+export const CROP_GUESS_UNRESOLVED = 'UNRESOLVED';
+
+/**
+ * Cross-check a packet's guess against its own crop name.
+ * -> { status: 'match'|'synonym'|'unresolved'|'none', slug, cropSlug, guess }
+ * `none` = nothing to check (absent guess, or the explicit 'other' escape hatch).
+ * Only 'match' and 'synonym' yield a bindable `slug`; 'unresolved' yields null BY DESIGN.
+ */
+export function checkCropGuess(packet, opts = {}) {
+  const guess = packet?.crop_type_slug_guess ?? null;
+  const cropSlug = slugifyCropName(packet?.crop);
+  if (!guess || guess === 'other') return { status: 'none', slug: null, cropSlug, guess };
+  if (cropSlug && cropSlug === guess) return { status: 'match', slug: guess, cropSlug, guess };
+  const synonyms = opts.synonyms ?? CROP_GUESS_SYNONYMS;
+  if (cropSlug && Object.prototype.hasOwnProperty.call(synonyms, cropSlug)
+      && synonyms[cropSlug] === guess) {
+    return { status: 'synonym', slug: guess, cropSlug, guess };
+  }
+  return { status: 'unresolved', slug: null, cropSlug, guess };
+}
+
 const RANGE_RE = /(\d+(?:\.\d+)?)\s*(?:[-–—]\s*(\d+(?:\.\d+)?))?/;
 
 /**
@@ -163,7 +234,16 @@ export function packetToVarietyCols(packet, opts = {}) {
   const slugOk = valid
     ? (valid instanceof Set ? valid.has(guess) : valid.includes(guess))
     : CROP_TYPE_SLUGS.includes(guess);
-  if (guess && guess !== 'other' && slugOk) {
+  // V4-CROPGUESS-001. Validity and CORRECTNESS are different questions and the catalog check only
+  // answers the first — `endive` was a perfectly valid slug for a radicchio packet. crossCheck is
+  // OPT-IN (default off) so this cannot silently change what already-run loaders bind; a caller
+  // passing crossCheck:true gets `crop_type_slug: null` plus a `crop_guess` verdict to surface in
+  // its dry-run decision table. Unresolved means UNKNOWN — never approximate to the nearest valid
+  // neighbour, which is the exact move that produced the defect.
+  const check = checkCropGuess(packet, opts);
+  const crossCheckBlocks = opts.crossCheck === true && check.status === 'unresolved';
+  if (opts.crossCheck === true) out.crop_guess = check;
+  if (guess && guess !== 'other' && slugOk && !crossCheckBlocks) {
     out.crop_type_slug = guess;
   }
   const sp = packet.sow_profile;

@@ -133,7 +133,13 @@ function computeFills(existing, cols) {
 // ---- Build the per-packet plan ------------------------------------------------------------------------------
 const plan = [];
 for (const packet of packets) {
-  const cols = packetToVarietyCols(packet);
+  // V4-CROPGUESS-001 cross-check. This loader is HISTORICAL (applied June 2026) and its dataset has
+  // since been corrected for all three known defects, so a re-run is expected to report zero — the
+  // check is here so a re-run cannot silently RE-INTRODUCE one. Note this loader writes
+  // `crop_type_slug ?? null`, so an unresolved guess would otherwise become a NULL slug, and a NULL
+  // slug does not error — the variety silently vanishes from every faceted view. Hence the explicit
+  // WARN-MISTYPED refusal below rather than letting it fall through.
+  const cols = packetToVarietyCols(packet, { crossCheck: true });
   const wk = parseRange(packet.sow_profile?.start_indoor_weeks_before_lastfrost ?? null);
   const weeksLabel = wk.min == null ? '-' : (wk.min === wk.max ? `${wk.min}w` : `${wk.min}-${wk.max}w`);
   const entry = { packet, cols, weeksLabel };
@@ -161,7 +167,11 @@ for (const packet of packets) {
     plan.push(entry); continue;
   }
 
-  if (m.kind === 'none') {
+  if (m.kind === 'none' && cols.crop_guess && cols.crop_guess.status === 'unresolved') {
+    const cg = cols.crop_guess;
+    entry.action = 'WARN-MISTYPED';
+    entry.detail = `new variety "${cols.name}" has a WRONG-BUT-VALID crop guess: crop "${packet.crop}" slugifies to '${cg.cropSlug}' but guess is '${cg.guess}' — correct the guess or add a reviewed CROP_GUESS_SYNONYMS entry; NOT loading`;
+  } else if (m.kind === 'none') {
     entry.action = 'CREATE';
     entry.detail = `new variety "${cols.name}"${cols.crop_type_slug ? ` [${cols.crop_type_slug}]` : ''}${packet.sow_profile ? '' : ' (null sow profile; needs_confirmation preserved)'}`;
   } else {
@@ -186,7 +196,8 @@ plan.forEach((e, i) => {
 });
 
 const counts = plan.reduce((a, e) => { a[e.action] = (a[e.action] ?? 0) + 1; return a; }, {});
-console.log(`\nplan: MATCH=${counts.MATCH ?? 0} CREATE=${counts.CREATE ?? 0} SKIP=${counts.SKIP ?? 0} (of ${plan.length})`);
+console.log(`\nplan: MATCH=${counts.MATCH ?? 0} CREATE=${counts.CREATE ?? 0} SKIP=${counts.SKIP ?? 0} WARN-MISTYPED=${counts['WARN-MISTYPED'] ?? 0} (of ${plan.length})`);
+if (counts['WARN-MISTYPED']) console.error('REFUSING to load mistyped varieties — a guess is valid but disagrees with its packet crop (V4-CROPGUESS-001).');
 
 if (!apply) {
   console.log('DRY-RUN complete — no writes. Re-run with --apply to execute.');
@@ -197,7 +208,9 @@ if (!apply) {
 let matched = 0; let created = 0; let inserted = 0; let fillsApplied = 0; const failures = [];
 
 for (const [i, e] of plan.entries()) {
-  if (e.action === 'SKIP') continue;
+  // WARN-MISTYPED must skip the write path too, or the refusal would be advisory-only and the
+  // mistyped variety would still be created (V4-CROPGUESS-001).
+  if (e.action === 'SKIP' || e.action === 'WARN-MISTYPED') continue;
   const c = e.cols; const p = e.payload;
   const meta = JSON.stringify(p.metadata ?? {});
   try {

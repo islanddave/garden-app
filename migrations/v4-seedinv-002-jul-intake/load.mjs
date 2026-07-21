@@ -135,7 +135,11 @@ const plannedCreates = new Map();
 const nameKey = (c) => `${(c.name || '').toLowerCase()}|${(c.species || '').toLowerCase()}`;
 const plan = [];
 for (const packet of packets) {
-  const cols = packetToVarietyCols(packet, { validSlugs }); // V4-SEEDLOAD-001 fix: live-catalog gate
+  // V4-SEEDLOAD-001: live-catalog gate (is the slug real?).
+  // V4-CROPGUESS-001: cross-check (does the slug MATCH THIS PACKET'S OWN CROP?). The catalog
+  // gate cannot answer the second question — `endive` was a perfectly valid slug for a radicchio
+  // packet. An unresolved guess yields no crop_type_slug and is refused below, same as untyped.
+  const cols = packetToVarietyCols(packet, { validSlugs, crossCheck: true });
   const wk = parseRange(packet.sow_profile?.start_indoor_weeks_before_lastfrost ?? null);
   const weeksLabel = wk.min == null ? '-' : (wk.min === wk.max ? `${wk.min}w` : `${wk.min}-${wk.max}w`);
   const entry = { packet, cols, weeksLabel };
@@ -159,8 +163,19 @@ for (const packet of packets) {
   }
   if (m.kind === 'none') {
     if (cols.crop_type_slug == null) {
-      entry.action = 'WARN-UNTYPED';
-      entry.detail = `new variety "${cols.name}" would be UNTYPED (guess=${packet.crop_type_slug_guess ?? 'null'} not in crop_types) — would vanish from by-type; NOT loading`;
+      // Two distinct causes, deliberately reported apart: an UNTYPED packet has no valid slug at
+      // all; a MISTYPED one has a slug that is valid but disagrees with the packet's own crop name
+      // (the Radicchio->endive class). Collapsing them would send the reader to the wrong fix —
+      // untyped means "create the crop type", mistyped means "correct the guess, or add a reviewed
+      // synonym". Both refuse to load.
+      const cg = cols.crop_guess;
+      if (cg && cg.status === 'unresolved') {
+        entry.action = 'WARN-MISTYPED';
+        entry.detail = `new variety "${cols.name}" has a WRONG-BUT-VALID crop guess: crop "${packet.crop}" slugifies to '${cg.cropSlug}' but guess is '${cg.guess}' — correct the guess or add a reviewed CROP_GUESS_SYNONYMS entry; NOT loading`;
+      } else {
+        entry.action = 'WARN-UNTYPED';
+        entry.detail = `new variety "${cols.name}" would be UNTYPED (guess=${packet.crop_type_slug_guess ?? 'null'} not in crop_types) — would vanish from by-type; NOT loading`;
+      }
     } else {
       const k = nameKey(cols);
       if (plannedCreates.has(k)) {
@@ -189,8 +204,9 @@ plan.forEach((e, i) => {
   console.log(`${' '.repeat(24)}${e.detail}`);
 });
 const counts = plan.reduce((a, e) => { a[e.action] = (a[e.action] ?? 0) + 1; return a; }, {});
-console.log(`\nplan: MATCH=${counts.MATCH ?? 0} CREATE=${counts.CREATE ?? 0} LINK-NEW=${counts['LINK-NEW'] ?? 0} SKIP=${counts.SKIP ?? 0} WARN-UNTYPED=${counts['WARN-UNTYPED'] ?? 0} (of ${plan.length})`);
+console.log(`\nplan: MATCH=${counts.MATCH ?? 0} CREATE=${counts.CREATE ?? 0} LINK-NEW=${counts['LINK-NEW'] ?? 0} SKIP=${counts.SKIP ?? 0} WARN-UNTYPED=${counts['WARN-UNTYPED'] ?? 0} WARN-MISTYPED=${counts['WARN-MISTYPED'] ?? 0} (of ${plan.length})`);
 if (counts['WARN-UNTYPED']) console.error('REFUSING to load untyped varieties — fix crop_types/slug gate first.');
+if (counts['WARN-MISTYPED']) console.error('REFUSING to load mistyped varieties — a guess is valid but disagrees with its packet crop (V4-CROPGUESS-001). Correct the guess, or add a reviewed CROP_GUESS_SYNONYMS entry.');
 
 if (!apply) { console.log('\nDRY-RUN complete — no writes. Re-run with --apply to execute.'); process.exit(0); }
 
@@ -198,7 +214,7 @@ if (!apply) { console.log('\nDRY-RUN complete — no writes. Re-run with --apply
 let matched = 0; let created = 0; let linked = 0; let inserted = 0; let fillsApplied = 0; const failures = [];
 const createdIds = new Map(); // nameKey -> variety id created this run (for LINK-NEW dup packets)
 for (const [i, e] of plan.entries()) {
-  if (e.action === 'SKIP' || e.action === 'WARN-UNTYPED') continue;
+  if (e.action === 'SKIP' || e.action === 'WARN-UNTYPED' || e.action === 'WARN-MISTYPED') continue;
   const c = e.cols; const p = e.payload; const meta = JSON.stringify(p.metadata ?? {});
   try {
     if (e.action === 'MATCH') {
