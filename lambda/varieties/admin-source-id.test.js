@@ -11,13 +11,21 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
+// Anchor for the VARIETY POST block. These guards used to do SRC.indexOf("if (method === 'POST')")
+// and take the first hit, which silently stopped meaning "the variety POST" once V4-CROPTYPE-001
+// added an earlier POST on /api/varieties/crop-types — the ordering assertions below then compared
+// offsets from two different routes. Anchoring on the POST guard immediately preceding the
+// sourceProjId declaration names the block by its actual content, so any number of future routes
+// can be added anywhere in the file without re-breaking these tests.
+const varietyPostStart = SRC.lastIndexOf("if (method === 'POST')", SRC.indexOf('const sourceProjId'));
+
 describe('varieties Lambda POST source_proj_rescope_project_id path (S6)', () => {
   it('reads source_proj_rescope_project_id from body', () => {
     expect(SRC).toMatch(/body\.source_proj_rescope_project_id/);
   });
 
   it('idempotent SELECT runs BEFORE rate limit + fuzzy-match when sourceProjId set', () => {
-    const postStart = SRC.indexOf("if (method === 'POST')");
+    const postStart = varietyPostStart;
     const idemIdx = SRC.indexOf('if (sourceProjId)', postStart);
     const rateIdx = SRC.indexOf('checkRateLimit', postStart);
     const fuzzyIdx = SRC.indexOf('allow_duplicate', postStart);
@@ -37,7 +45,7 @@ describe('varieties Lambda POST source_proj_rescope_project_id path (S6)', () =>
   });
 
   it('INSERT includes source_proj_rescope_project_id in column list', () => {
-    const postStart = SRC.indexOf("if (method === 'POST')");
+    const postStart = varietyPostStart;
     const insertIdx = SRC.indexOf('INSERT INTO public.cultivar', postStart);
     const valuesIdx = SRC.indexOf('VALUES', insertIdx);
     const colBlock = SRC.slice(insertIdx, valuesIdx);
@@ -45,7 +53,7 @@ describe('varieties Lambda POST source_proj_rescope_project_id path (S6)', () =>
   });
 
   it('INSERT VALUES binds sourceProjId in correct position', () => {
-    const postStart = SRC.indexOf("if (method === 'POST')");
+    const postStart = varietyPostStart;
     const valuesIdx = SRC.indexOf('VALUES', postStart);
     const returningIdx = SRC.indexOf('RETURNING', valuesIdx);
     const valuesBlock = SRC.slice(valuesIdx, returningIdx);

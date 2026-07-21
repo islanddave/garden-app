@@ -34,7 +34,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validateBody } from './validate.js';
+import { validateBody, validateCropTypeBody, resolveCropTypeName } from './validate.js';
 import { applyDerive } from './crop-derive.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -106,14 +106,86 @@ export const handler = async (event) => {
     // PLANTTYPE: controlled crop-type vocabulary. Globally readable; checked BEFORE the
     // /api/varieties/:id route so "crop-types" is not mis-parsed as a variety id.
     if (rawPath === '/api/varieties/crop-types') {
-      if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
-      const rows = await sql`
-        SELECT slug, display_name, default_lifecycle, category, sort_order
-        FROM public.crop_types
-        WHERE deleted_at IS NULL
-        ORDER BY sort_order ASC, display_name ASC
-      `;
-      return resp(200, rows);
+      if (method === 'GET') {
+        const rows = await sql`
+          SELECT slug, display_name, default_lifecycle, category, sort_order
+          FROM public.crop_types
+          WHERE deleted_at IS NULL
+          ORDER BY sort_order ASC, display_name ASC
+        `;
+        return resp(200, rows);
+      }
+
+      // V4-CROPTYPE-001 — mint a crop type inline while adding a planting.
+      // Until now the vocabulary was read-only from the app: new types could only be born from an
+      // intake script or raw SQL, so a plant with no matching type had to be saved with
+      // crop_type_slug = NULL and then vanished from every type-grouped/faceted view.
+      //
+      // Dave's accepted design is "always-add-on-the-fly, guard only the 8 code-coupled slugs".
+      // The slug is DERIVED server-side from display_name and never accepted from the caller — it
+      // is this table's PRIMARY KEY and the FK target of plant_varieties + preservation_log.
+      if (method === 'POST') {
+        const body = JSON.parse(event.body ?? '{}');
+        const err = validateCropTypeBody(body);
+        if (err) return resp(400, { error: err });
+
+        const allowed = await checkRateLimit(sql, userId, 'crop_types.create', 20);
+        if (!allowed) return resp(429, { error: 'Rate limit exceeded — 20/hour for crop_types.create' });
+
+        // Collision set deliberately includes SOFT-DELETED rows: slug is the PK, so a resurrect
+        // would violate it rather than politely conflict.
+        const allSlugs = await sql`SELECT slug FROM public.crop_types`;
+        const verdict = resolveCropTypeName(body.display_name, allSlugs.map(r => r.slug));
+
+        if (!verdict.ok) {
+          if (verdict.reason === 'invalid') {
+            return resp(400, { error: 'display_name must contain at least one letter or number' });
+          }
+          const [row] = await sql`
+            SELECT slug, display_name, default_lifecycle, category, sort_order, deleted_at
+            FROM public.crop_types WHERE slug = ${verdict.existingSlug}
+          `;
+          // A previously soft-deleted type is RESTORED rather than refused — the user is asking
+          // for exactly this type and Soft-Delete-Only means the row never actually left.
+          if (row?.deleted_at) {
+            const [restored] = await sql`
+              UPDATE public.crop_types
+                 SET deleted_at = NULL, updated_at = now()
+               WHERE slug = ${verdict.existingSlug}
+              RETURNING slug, display_name, default_lifecycle, category, sort_order
+            `;
+            return resp(200, { ...restored, restored: true });
+          }
+          // Otherwise steer to what already exists. `reason` lets the client word it correctly:
+          //   exists/plural      -> "Hibiscus already exists" (benign, just use it)
+          //   coupled_synonym    -> naming a second type for a crop the derive engine special-cases
+          //                         would silently strip its facets, so this one is a real save.
+          return resp(409, {
+            error: verdict.reason === 'coupled_synonym'
+              ? `"${body.display_name}" is another name for the existing "${row.display_name}" crop type`
+              : `Crop type "${row.display_name}" already exists`,
+            reason: verdict.reason,
+            existing: row,
+            hint: 'Use the existing crop type instead of creating a duplicate.',
+          });
+        }
+
+        const [created] = await sql`
+          INSERT INTO public.crop_types (slug, display_name, default_lifecycle, category, sort_order, created_by)
+          VALUES (
+            ${verdict.slug},
+            ${body.display_name.trim()},
+            ${body.default_lifecycle ?? null},
+            ${body.category ?? null},
+            0,
+            ${userId}
+          )
+          RETURNING slug, display_name, default_lifecycle, category, sort_order
+        `;
+        return resp(201, created);
+      }
+
+      return resp(405, { error: 'Method not allowed' });
     }
 
     const idMatch = rawPath.match(/^\/api\/varieties\/([^/]+)$/);

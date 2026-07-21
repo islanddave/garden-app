@@ -574,3 +574,145 @@ describe('VarietyPicker — cropSlugFilter + truncation notice', () => {
     expect(screen.queryByText(/Showing \d+ of/)).toBeNull()
   })
 })
+
+// ── V4-CROPTYPE-001: mint a crop type inline ────────────────────────────────
+// Before this, stage 2 was a CLOSED vocabulary: a plant with no matching crop type could only be
+// saved as "No crop type", which drops it out of every type-grouped view. These cover the new
+// third stage and the server's steer-to-existing response.
+describe('VarietyPicker — inline crop-type creation (CROPTYPE)', () => {
+  const CROPS = [
+    { slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'tender_perennial', category: 'vegetable', sort_order: 0 },
+    { slug: 'tomato', display_name: 'Tomato', default_lifecycle: 'tender_perennial', category: 'vegetable', sort_order: 0 },
+  ]
+
+  // Drive the picker to stage 2 (the crop chooser) for a brand-new variety name.
+  async function toCropStage(name = 'Mahogany Splendor') {
+    const utils = setup()
+    const input = screen.getByRole('combobox')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: name } })
+    await waitFor(() => screen.getByText(/Create/))
+    await act(async () => { fireEvent.click(screen.getByText(/Create/).closest('li')) })
+    await waitFor(() => screen.getByText('Pepper'))
+    return utils
+  }
+
+  it('offers a "New crop type" row in the crop chooser', async () => {
+    fetchSpy.mockImplementation((path) => {
+      if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+      return Promise.resolve([])
+    })
+    await toCropStage()
+    expect(screen.getByText(/New crop type/)).toBeDefined()
+  })
+
+  it('creates the crop type then continues the variety create with the new slug', async () => {
+    fetchSpy.mockImplementation((path, opts) => {
+      if (path === '/api/varieties/crop-types' && opts?.method === 'POST') {
+        return Promise.resolve({ slug: 'hibiscus', display_name: 'Hibiscus', default_lifecycle: 'tender_perennial', category: 'ornamental', sort_order: 0 })
+      }
+      if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+      if (opts?.method === 'POST') return Promise.resolve({ id: 'var-new', name: 'Mahogany Splendor', crop_type_slug: 'hibiscus' })
+      return Promise.resolve([])
+    })
+    const { onChange } = await toCropStage()
+
+    await act(async () => { fireEvent.click(screen.getByText(/New crop type/).closest('li')) })
+    const nameInput = await screen.findByLabelText('Name')
+    fireEvent.change(nameInput, { target: { value: 'Hibiscus' } })
+    fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'vegetable' } })
+    fireEvent.change(screen.getByLabelText('Lifecycle'), { target: { value: 'tender_perennial' } })
+    await act(async () => { fireEvent.click(screen.getByText('Create crop type')) })
+
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+
+    const cropPost = fetchSpy.mock.calls.find(c => c[0] === '/api/varieties/crop-types' && c[1]?.method === 'POST')
+    expect(cropPost).toBeDefined()
+    expect(JSON.parse(cropPost[1].body)).toMatchObject({
+      display_name: 'Hibiscus', category: 'vegetable', default_lifecycle: 'tender_perennial',
+    })
+
+    // The variety create must carry the NEWLY created slug — creating the type but leaving the
+    // variety untyped would reproduce the exact bug this feature fixes.
+    const varPost = fetchSpy.mock.calls.find(c => c[0] === '/api/varieties' && c[1]?.method === 'POST')
+    expect(JSON.parse(varPost[1].body).crop_type_slug).toBe('hibiscus')
+  })
+
+  it('does NOT prefill the crop-type name with the variety name', async () => {
+    // "Mahogany Splendor" is the VARIETY; its crop type is "Hibiscus". Prefilling would push the
+    // vocabulary toward one type per variety, which is the fragmentation the guard exists to stop.
+    fetchSpy.mockImplementation((path) => {
+      if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+      return Promise.resolve([])
+    })
+    await toCropStage('Mahogany Splendor')
+    await act(async () => { fireEvent.click(screen.getByText(/New crop type/).closest('li')) })
+    expect((await screen.findByLabelText('Name')).value).toBe('')
+  })
+
+  it('surfaces the steer and adopts the existing type on confirm', async () => {
+    const err = new Error('"Chili" is another name for the existing "Pepper" crop type')
+    err.body = { reason: 'coupled_synonym', existing: { slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'tender_perennial' } }
+    fetchSpy.mockImplementation((path, opts) => {
+      if (path === '/api/varieties/crop-types' && opts?.method === 'POST') return Promise.reject(err)
+      if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+      if (opts?.method === 'POST') return Promise.resolve({ id: 'var-new', name: 'Mahogany Splendor', crop_type_slug: 'pepper' })
+      return Promise.resolve([])
+    })
+    const { onChange } = await toCropStage()
+    await act(async () => { fireEvent.click(screen.getByText(/New crop type/).closest('li')) })
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Chili' } })
+    await act(async () => { fireEvent.click(screen.getByText('Create crop type')) })
+
+    // The steer is shown, and no variety has been created yet.
+    await waitFor(() => screen.getByText(/another name for the existing/))
+    expect(fetchSpy.mock.calls.some(c => c[0] === '/api/varieties' && c[1]?.method === 'POST')).toBe(false)
+
+    // Adopting it continues the variety create with the EXISTING slug.
+    await act(async () => { fireEvent.click(screen.getByText(/Use "Pepper"/)) })
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    const varPost = fetchSpy.mock.calls.find(c => c[0] === '/api/varieties' && c[1]?.method === 'POST')
+    expect(JSON.parse(varPost[1].body).crop_type_slug).toBe('pepper')
+  })
+
+  it('Back returns to the crop chooser without creating anything', async () => {
+    fetchSpy.mockImplementation((path) => {
+      if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+      return Promise.resolve([])
+    })
+    await toCropStage()
+    await act(async () => { fireEvent.click(screen.getByText(/New crop type/).closest('li')) })
+    await screen.findByLabelText('Name')
+    await act(async () => { fireEvent.click(screen.getByText('Back')) })
+    await waitFor(() => screen.getByText(/Crop type for/))
+    expect(fetchSpy.mock.calls.some(c => c[1]?.method === 'POST')).toBe(false)
+  })
+
+  it('disables Create crop type until a name is entered', async () => {
+    fetchSpy.mockImplementation((path) => {
+      if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+      return Promise.resolve([])
+    })
+    await toCropStage()
+    await act(async () => { fireEvent.click(screen.getByText(/New crop type/).closest('li')) })
+    const btn = await screen.findByText('Create crop type')
+    expect(btn.disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Hibiscus' } })
+    expect(screen.getByText('Create crop type').disabled).toBe(false)
+  })
+
+  it('offers only categories already in the vocabulary', async () => {
+    // Derived from live data, so the picker can never offer a category the server would reject.
+    fetchSpy.mockImplementation((path) => {
+      if (path === '/api/varieties/crop-types') {
+        return Promise.resolve([...CROPS, { slug: 'rose', display_name: 'Rose', category: 'flower', sort_order: 0 }])
+      }
+      return Promise.resolve([])
+    })
+    await toCropStage()
+    await act(async () => { fireEvent.click(screen.getByText(/New crop type/).closest('li')) })
+    const sel = await screen.findByLabelText('Category')
+    const values = Array.from(sel.options).map(o => o.value)
+    expect(values).toEqual(['', 'flower', 'vegetable'])
+  })
+})

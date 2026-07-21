@@ -100,3 +100,105 @@ export function validateBody(body, { requireName = true } = {}) {
   }
   return null;
 }
+
+// ── V4-CROPTYPE-001 — user-minted crop types ────────────────────────────────────────────────
+// Dave's accepted design: "synonyms-not-types + always-add-on-the-fly. Guard only the 8
+// code-coupled slugs; all else creates free." Everything below implements exactly that, and
+// nothing more restrictive — a genuinely new crop (hibiscus, amaranth, luffa) must create freely.
+
+// The categories actually in use. `crop_types.category` has NO CHECK constraint, so this is the
+// only thing keeping the facet vocabulary from fragmenting into ornamental/Ornamental/ornamentals.
+export const VALID_CROP_CATEGORY = [
+  'vegetable', 'flower', 'herb', 'fruit', 'succulent', 'houseplant', 'tree', 'ornamental',
+];
+
+// The 8 slugs that crop-derive branches on (lambda/{varieties,tags}/crop-derive.js, kept
+// byte-identical by a test). A variety typed to one of these gets crop-specific DERIVED facets:
+// pepper -> heat/scoville, tomato -> determinacy, onion -> day_length, onion|garlic|shallot|chives
+// -> allium_type, basil -> basil_use, bean -> bean_type/habit/use.
+// This is why they are guarded: minting "Peppers" as a SECOND type does not error anywhere — it
+// silently produces varieties that derive NO heat facet and quietly fall out of those views. The
+// failure is invisible, which is exactly the kind worth blocking at the door.
+export const COUPLED_CROP_SLUGS = ['basil', 'bean', 'chives', 'garlic', 'onion', 'pepper', 'shallot', 'tomato'];
+
+// Hand-maintained aliases for the coupled 8 ONLY. Deliberately narrow: a false positive here
+// blocks a legitimate crop, so entries must be names that are unambiguously the coupled crop.
+// (Notably absent: "garlic chives" — that is a distinct crop from both garlic and chives, and
+// Dave already keeps it as its own thing.)
+export const COUPLED_CROP_SYNONYMS = {
+  chili: 'pepper', chile: 'pepper', chilli: 'pepper', capsicum: 'pepper',
+  sweet_pepper: 'pepper', hot_pepper: 'pepper', bell_pepper: 'pepper', chili_pepper: 'pepper',
+  tomatoe: 'tomato', love_apple: 'tomato',
+  scallion: 'onion', green_onion: 'onion', spring_onion: 'onion', bunching_onion: 'onion',
+  snap_bean: 'bean', green_bean: 'bean', string_bean: 'bean', pole_bean: 'bean', bush_bean: 'bean',
+  sweet_basil: 'basil',
+};
+
+// display_name -> slug. Server-derived, never caller-supplied: the slug is a PRIMARY KEY and an FK
+// target, so letting a client name it invites collisions and unicode games.
+export function slugifyCropType(name) {
+  if (typeof name !== 'string') return '';
+  return name
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '') // strip combining accents: "Épinard" -> "Epinard"
+    .toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60);
+}
+
+// Crude singularization, enough for the plural-collision case ("Tomatoes" -> tomato). Only ever
+// used to LOOK UP an existing slug, never to mint one, so an over-eager strip is harmless.
+function singularize(slug) {
+  if (/ies$/.test(slug)) return slug.replace(/ies$/, 'y');
+  // 'o' is in the group for tomatoes/potatoes; without it "Tomatoes" only resolves via the
+  // hand-maintained synonym map, which would leave every NON-coupled plural unguarded.
+  if (/(ch|sh|s|x|z|o)es$/.test(slug)) return slug.replace(/es$/, '');
+  if (/[^s]s$/.test(slug)) return slug.replace(/s$/, '');
+  return slug;
+}
+
+// Decide what a proposed crop-type name should do.
+//   { ok: true,  slug }                          -> create it
+//   { ok: false, reason, slug, existingSlug }    -> steer to existingSlug instead
+// `existingSlugs` is the live set of crop_types.slug (including soft-deleted, so a resurrect
+// collides rather than violating the PK).
+export function resolveCropTypeName(name, existingSlugs = []) {
+  const slug = slugifyCropType(name);
+  if (!slug) return { ok: false, reason: 'invalid', slug: '', existingSlug: null };
+
+  const have = new Set(existingSlugs);
+  // 1. Exact collision — steer to it whether or not it is coupled. Not an error: the user asked
+  //    for a type that already exists, so the right outcome is "use that one".
+  if (have.has(slug)) return { ok: false, reason: 'exists', slug, existingSlug: slug };
+
+  // 2. Plural of something that exists ("Tomatoes" when tomato exists).
+  const sing = singularize(slug);
+  if (sing !== slug && have.has(sing)) return { ok: false, reason: 'plural', slug, existingSlug: sing };
+
+  // 2b. ...and the reverse: a SINGULAR of an existing plural ("Chive" when chives exists). Without
+  // this, every crop whose canonical slug is already plural is unguarded from the singular form.
+  if (have.has(`${slug}s`)) return { ok: false, reason: 'plural', slug, existingSlug: `${slug}s` };
+
+  // 3. Known alias of a COUPLED slug. Checked on both the raw and singularized form so
+  //    "chilis" -> chili -> pepper resolves.
+  const alias = COUPLED_CROP_SYNONYMS[slug] ?? COUPLED_CROP_SYNONYMS[sing];
+  if (alias && have.has(alias)) return { ok: false, reason: 'coupled_synonym', slug, existingSlug: alias };
+
+  // Everything else creates free — including brand-new crops that no code branches on.
+  return { ok: true, slug, existingSlug: null };
+}
+
+export function validateCropTypeBody(body) {
+  if (!body || typeof body !== 'object') return 'body required';
+  if (!body.display_name || typeof body.display_name !== 'string' || !body.display_name.trim()) {
+    return 'display_name is required';
+  }
+  if (body.display_name.length > 80) return 'display_name must be <= 80 characters';
+  if (body.category != null && !VALID_CROP_CATEGORY.includes(body.category)) {
+    return `category must be one of: ${VALID_CROP_CATEGORY.join(', ')}`;
+  }
+  if (body.default_lifecycle != null && !VALID_LIFECYCLE.includes(body.default_lifecycle)) {
+    return `default_lifecycle must be one of: ${VALID_LIFECYCLE.join(', ')}`;
+  }
+  return null;
+}
