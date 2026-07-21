@@ -54,6 +54,10 @@ function resp(statusCode, body) {
 
 // Daily flat-XP cap (V002 §11; F16 brief override): cap event_logged grants at 30 XP/user/day.
 // Achievement XP is encouragement-class — milestones celebrate progress, not bounded by daily limits.
+// V4-HARVESTQTY-001 reporting zone. The harvest summary's "this year" and "last 14 days" windows
+// are CALENDAR windows anchored at 00:00 in this zone, not UTC days.
+const HARVEST_TZ = 'America/New_York';
+
 const DAILY_FLAT_XP_CAP = 30;
 const FLAT_XP_PER_EVENT = 10;
 
@@ -394,6 +398,70 @@ export const handler = async (event) => {
         LIMIT ${limit} OFFSET ${offset}
       `;
       return resp(200, { events: rows, limit, offset, has_more: rows.length === limit });
+    }
+
+    // V4-HARVESTQTY-001: GET /api/events/harvest-summary?plant_id= — raw harvest rows for ONE
+    // planting, plus that planting's project's UNATTRIBUTED harvests. Literal sub-route, matched
+    // BEFORE the /api/events/:id regex (mirrors the whats-put-up precedent in the preservation
+    // Lambda). Deliberately NOT folded into GET /api/plants/:id — a self-fetching section keeps
+    // the shared planting payload untouched.
+    //
+    // Correctness invariants (from live-data review of 112 harvest_log rows):
+    //   * The harvest DATE is event_log.event_date. harvest_log has NO date column and
+    //     harvest_log.created_at misdates the 30% of rows that were backdated.
+    //   * Attribution is harvest_log.event_id -> event_log.id, filtered on event_log.plant_id.
+    //   * Soft-delete is filtered at every hop that exists in the chain: harvest_log.deleted_at,
+    //     event_log.deleted_at, plants.deleted_at (+ ownership via container.created_by).
+    //     plants.archived_at is INTENTIONALLY not filtered here — see the note below.
+    //   * event_date is projected to the reporting zone server-side so the client never does
+    //     tz math; a 23:00 ET Dec 31 pick returns harvest_date '2025-12-31'.
+    if (rawPath === '/api/events/harvest-summary' && method === 'GET') {
+      const plantId = event.queryStringParameters?.plant_id || null;
+      if (!plantId || !UUID_RE.test(plantId)) return resp(400, { error: 'plant_id (uuid) required' });
+      // NOTE on archived_at: GET /api/plants/:id filters only deleted_at, so an ARCHIVED planting
+      // is still reachable on the planting-detail page (it renders an Unarchive affordance).
+      // Filtering p.archived_at IS NULL on the pinned planting would blank the harvest summary on
+      // exactly that page. Deletion hides; archiving does not.
+      const rows = await sql`
+        SELECT h.id, h.quantity, h.unit, h.quality_rating,
+               e.id AS event_id, e.event_date,
+               (e.event_date AT TIME ZONE ${HARVEST_TZ})::date AS harvest_date
+        FROM harvest_log h
+        JOIN event_log e ON e.id = h.event_id
+        JOIN plants p ON p.id = e.plant_id
+        JOIN public.container c ON c.id = e.project_id
+        WHERE e.plant_id = ${plantId}::uuid
+          AND h.deleted_at IS NULL
+          AND e.deleted_at IS NULL
+          AND p.deleted_at IS NULL
+          AND c.created_by = ANY(${householdIds})
+        ORDER BY e.event_date DESC
+      `;
+      // Unattributed: harvests in the SAME project with no plant_id. Surfaced (never silently
+      // dropped) — 13 of 107 July rows are unlinked and three landed the same day, so this is a
+      // live daily inflow. A summary that quietly omits them reads low and destroys trust.
+      const unattributed = await sql`
+        SELECT h.id, h.quantity, h.unit,
+               (e.event_date AT TIME ZONE ${HARVEST_TZ})::date AS harvest_date
+        FROM harvest_log h
+        JOIN event_log e ON e.id = h.event_id
+        JOIN public.container c ON c.id = e.project_id
+        WHERE e.plant_id IS NULL
+          AND e.project_id = (SELECT project_id FROM plants WHERE id = ${plantId}::uuid AND deleted_at IS NULL)
+          AND h.deleted_at IS NULL
+          AND e.deleted_at IS NULL
+          AND c.created_by = ANY(${householdIds})
+        ORDER BY e.event_date DESC
+      `;
+      const todayRows = await sql`SELECT (NOW() AT TIME ZONE ${HARVEST_TZ})::date AS et_today`;
+      const ymd = (v) => (v == null ? null : (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)));
+      return resp(200, {
+        plant_id: plantId,
+        time_zone: HARVEST_TZ,
+        et_today: ymd(todayRows[0]?.et_today),
+        rows: rows.map(r => ({ id: r.id, quantity: r.quantity, unit: r.unit, quality_rating: r.quality_rating, event_id: r.event_id, event_date: ymd(r.harvest_date) })),
+        unattributed: unattributed.map(r => ({ id: r.id, quantity: r.quantity, unit: r.unit, event_date: ymd(r.harvest_date) })),
+      });
     }
 
     // DELETE /api/events/batch/:id — undo a batch (soft-delete its events + recompute watering memory).

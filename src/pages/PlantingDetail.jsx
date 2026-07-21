@@ -39,6 +39,7 @@ import CropCard from '../components/planting/CropCard.jsx'
 import CareStatus from '../components/CareStatus.jsx'
 import GrowthStrip from '../components/planting/GrowthStrip.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
+import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
 import { formatBotanical } from '../lib/keyFact.js'
 import { buildLifeStory } from '../lib/lifeStory.js'
 
@@ -518,6 +519,16 @@ export default function PlantingDetail() {
           </div>
         </>
       )}
+
+      {/* ── Harvested (V4-HARVESTQTY-001) — the near end of the spine, immediately upstream of Put
+          up: how much actually came off this planting, recent + cumulative. Renders
+          UNCONDITIONALLY for the same reason Put up does — "nothing yet" on a planting you are
+          looking at is itself the answer, and hiding it would make the section appear only after a
+          harvest exists, which reads as a bug. Self-fetches; does not widen /api/plants/:id. ── */}
+      <SectionHeader>Harvested</SectionHeader>
+      <div style={cardStyle}>
+        <HarvestFromPlanting planting={pl} fetch={fetch} />
+      </div>
 
       {/* ── Put up (V4-PUTUPLINK-001) — the far end of the spine: what this planting yielded that is
           still in the stores. Renders UNCONDITIONALLY (unlike Growth/Photos, which hide when empty):
