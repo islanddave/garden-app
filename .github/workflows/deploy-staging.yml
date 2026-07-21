@@ -45,6 +45,13 @@ env:
   # (was `vars.STAGING_API_TAGS`, an undefined repo var that silently baked VITE_API_TAGS="" into
   # every staging build). WARN-tier in the Validate step; wire a real URL when staging tags exists.
   STAGING_API_TAGS: ""
+  # Put-Up (V4-HARVESTCENTER-001). Both staging Lambdas were provisioned but never wired here, so
+  # every staging build baked VITE_API_PRESERVATION="" / VITE_API_STORAGE_LOCATIONS="" and the whole
+  # Put-Up surface was dead on staging while working in prod. URLs read from
+  # `aws lambda get-function-url-config` for garden-preservation-staging /
+  # garden-storage-location-staging and probed 2026-07-21: both return 401 (alive + auth-gated).
+  STAGING_API_PRESERVATION:      https://gmcwnewzjykdlnd7nllagvyrlm0vgrjn.lambda-url.us-east-1.on.aws/
+  STAGING_API_STORAGE_LOCATIONS: https://4arsh5rxe6f5f5bgbyeyueftee0qquwa.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
@@ -261,6 +268,8 @@ jobs:
           VITE_API_CRITTERS:          ${{ env.STAGING_API_CRITTERS }}
           VITE_API_SHARED_STATE:      ${{ env.STAGING_API_SHARED_STATE }}
           VITE_API_TAGS:              ${{ env.STAGING_API_TAGS }}
+          VITE_API_PRESERVATION:      ${{ env.STAGING_API_PRESERVATION }}
+          VITE_API_STORAGE_LOCATIONS: ${{ env.STAGING_API_STORAGE_LOCATIONS }}
 
       - name: Build (staging)
         id: build
@@ -294,6 +303,8 @@ jobs:
           VITE_API_CRITTERS:          ${{ env.STAGING_API_CRITTERS }}
           VITE_API_SHARED_STATE:      ${{ env.STAGING_API_SHARED_STATE }}
           VITE_API_TAGS:              ${{ env.STAGING_API_TAGS }}
+          VITE_API_PRESERVATION:      ${{ env.STAGING_API_PRESERVATION }}
+          VITE_API_STORAGE_LOCATIONS: ${{ env.STAGING_API_STORAGE_LOCATIONS }}
 
       - name: Verify build output
         run: |
@@ -428,6 +439,8 @@ jobs:
           STAGING_API_INVENTORY: ${{ env.STAGING_API_INVENTORY }}
           STAGING_API_APP_EVENTS: ${{ env.STAGING_API_APP_EVENTS }}
           STAGING_API_UX_EVENTS: ${{ env.STAGING_API_UX_EVENTS }}
+          STAGING_API_PRESERVATION: ${{ env.STAGING_API_PRESERVATION }}
+          STAGING_API_STORAGE_LOCATIONS: ${{ env.STAGING_API_STORAGE_LOCATIONS }}
           COMMIT_SHA:            ${{ needs.deploy-frontend.outputs.commit-sha }}
           # Phase 2 (authenticated CRUD) — set these GHA secrets to enable:
           # CLERK_SECRET_KEY_STAGING = sk_test_... (Clerk dev instance secret key)

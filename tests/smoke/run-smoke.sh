@@ -224,6 +224,21 @@ echo "   (photos Lambda skipped in reachability phase — multipart-only endpoin
 # unauthenticated call proves the route is routed and its module loads.
 check_reachable "lambda:events:harvest-ready"   "${STAGING_API_EVENTS%/}/api/events/harvest-ready"
 check_reachable "lambda:events:harvest-summary" "${STAGING_API_EVENTS%/}/api/events/harvest-summary"
+
+# Put-Up (V4-HARVESTCENTER-001). Both staging Lambdas existed but were never referenced by
+# deploy-staging.yml, so staging builds baked VITE_API_PRESERVATION="" and the surface was dead on
+# staging while healthy in prod — invisible precisely because nothing checked it. Guarded so this
+# stays a graceful skip if the vars are ever unset, matching the ux-events pattern above.
+if [[ -n "${STAGING_API_PRESERVATION:-}" ]]; then
+  check_reachable "lambda:preservation" "$STAGING_API_PRESERVATION"
+else
+  echo "   (preservation reachability skipped — STAGING_API_PRESERVATION unset)"
+fi
+if [[ -n "${STAGING_API_STORAGE_LOCATIONS:-}" ]]; then
+  check_reachable "lambda:storage-locations" "$STAGING_API_STORAGE_LOCATIONS"
+else
+  echo "   (storage-locations reachability skipped — STAGING_API_STORAGE_LOCATIONS unset)"
+fi
 echo ""
 
 # ── Phase 2: Authenticated CRUD ──────────────────────────────────────────────

@@ -7,9 +7,21 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
+// Bound the slice by the NEXT route handler, never by a fixed character count. The original
+// `slice(i, i + 1800)` was a byte-count guess, and measured 2026-07-21 the feed route is 2940 chars
+// — so the window was TRUNCATING the route by ~1100 chars, not overrunning it. (A prior handoff
+// recorded the opposite, that it ran 4 lines into the harvest-summary comment; that was measured and
+// is false. Correcting it here so the next reader doesn't re-derive it.)
+// Both directions are bugs, in opposite ways: truncation makes an assertion fail once its target
+// moves past the cutoff (loud, but a false alarm), while overrun makes assertions silently match
+// FOREIGN code (quiet, and a false pass). A route-bounded window has neither failure mode and stops
+// tracking file growth. harvest-ready.test.js already uses this next-marker pattern; this aligns.
 function feedBlock(src) {
   const i = src.indexOf("rawPath === '/api/events/feed'");
-  return i === -1 ? '' : src.slice(i, i + 1800);
+  if (i === -1) return '';
+  // First route handler declared after feed. Falls back to end-of-file if feed is ever last.
+  const next = src.indexOf("if (rawPath === '/api/events/", i + 1);
+  return src.slice(i, next === -1 ? undefined : next);
 }
 
 describe('events Lambda — V3-FEED-001 /api/events/feed', () => {

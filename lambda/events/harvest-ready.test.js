@@ -33,9 +33,25 @@ describe('harvest-ready SQL shape', () => {
     expect(candidates).not.toMatch(/h\.created_at/);
   });
 
-  it('requires evidence: a harvest_log join on harvest/first_harvest events', () => {
+  it('requires evidence: a dated harvest/first_harvest event', () => {
     expect(candidates).toMatch(/JOIN harvest_log h ON h\.event_id = e\.id/);
     expect(candidates).toMatch(/e\.event_type IN \('harvest', 'first_harvest'\)/);
+  });
+
+  // The evidence rule is "a DATED pick", not "a logged quantity". first_harvest is a milestone that
+  // never has a harvest_log row (validators.js 400s on harvest fields for it), so the original INNER
+  // JOIN silently made any planting whose only pick was a first_harvest invisible here forever.
+  // These two assertions pin BOTH halves of the replacement, because each half alone is a bug:
+  // an INNER JOIN re-opens the hole, and a bare LEFT JOIN with no predicate would admit a `harvest`
+  // event whose harvest_log row was soft-deleted (i.e. a retracted pick counting as evidence).
+  it('admits first_harvest as evidence via a LEFT JOIN, not an INNER JOIN', () => {
+    expect(candidates).toMatch(/LEFT JOIN harvest_log h ON h\.event_id = e\.id/);
+    expect(candidates).not.toMatch(/(?<!LEFT )JOIN harvest_log h ON h\.event_id = e\.id/);
+  });
+
+  it('still rejects a harvest event whose harvest_log row was soft-deleted', () => {
+    // Without this predicate the LEFT JOIN would let a retracted quantity count as a pick.
+    expect(candidates).toMatch(/h\.id IS NOT NULL OR e\.event_type = 'first_harvest'/);
   });
 
   it('filters soft-deletes at every hop', () => {

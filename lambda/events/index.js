@@ -521,8 +521,24 @@ export const handler = async (event) => {
     //
     // Correctness invariants (same live-data review as harvest-summary):
     //   * The harvest DATE is event_log.event_date — NEVER harvest_log.created_at (30% backdated).
-    //   * Evidence only: the harvest_log join means a planting with no prior pick can never appear,
-    //     so nothing here is a prediction of first harvest.
+    //   * Evidence only: a planting with no prior recorded pick can never appear, so nothing here is
+    //     a prediction of first harvest. WHAT COUNTS AS EVIDENCE IS THE DATED PICK, NOT A QUANTITY.
+    //     This was originally an INNER JOIN to harvest_log, which silently excluded every
+    //     `first_harvest` event: first_harvest is a MILESTONE that carries no quantity by design
+    //     (validators.js 400s on harvest fields for it, and the harvest_log write CTE is gated on
+    //     eventType === 'harvest'), so it NEVER has a harvest_log row. Verified in prod 2026-07-21:
+    //     5/5 first_harvest orphaned vs 112/112 harvest logged. Net effect was a permanent structural
+    //     hole — a planting whose ONLY pick was logged as first_harvest was invisible here forever.
+    //     The LEFT JOIN + `(h.id IS NOT NULL OR e.event_type = 'first_harvest')` admits that dated
+    //     evidence while STILL rejecting a `harvest` event whose harvest_log row was soft-deleted
+    //     (h.id goes NULL and the event_type escape does not apply to it). Deliberately NOT fixed by
+    //     backfilling harvest_log: quantity/unit are NOT NULL with a unit CHECK and no source value
+    //     exists, so a backfill would fabricate user data that harvest-summary renders as recorded.
+    //     Measured delta on prod at the time of the change: candidates 25 -> 27, zero lost, and zero
+    //     newly ELIGIBLE (both added rows are scallions on the 'onion' slug, habit='single').
+    //   * harvest_count now counts milestone picks too. It has no consumer today (produced in the
+    //     payload, read nowhere) — if one appears, note it means "recorded picks", not "logged
+    //     quantities".
     //   * days_since_last_harvest is whole ET days; it can be NEGATIVE if a pick was future-dated,
     //     and that row is passed through unfiltered for the pure predicate to reject.
     //   * Live planting = deleted_at/archived_at NULL and status not failed/ended. (Unlike
@@ -534,10 +550,11 @@ export const handler = async (event) => {
                  MAX((e.event_date AT TIME ZONE ${HARVEST_TZ})::date) AS last_date,
                  COUNT(*) AS harvest_count
           FROM event_log e
-          JOIN harvest_log h ON h.event_id = e.id AND h.deleted_at IS NULL
+          LEFT JOIN harvest_log h ON h.event_id = e.id AND h.deleted_at IS NULL
           WHERE e.event_type IN ('harvest', 'first_harvest')
             AND e.deleted_at IS NULL
             AND e.plant_id IS NOT NULL
+            AND (h.id IS NOT NULL OR e.event_type = 'first_harvest')
           GROUP BY e.plant_id
         )
         SELECT p.id AS plant_id, p.project_id, p.name,
