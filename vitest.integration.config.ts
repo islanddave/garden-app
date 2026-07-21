@@ -8,8 +8,18 @@ export default defineConfig({
   // inlined lambda handler and the test's vi.mock() target the same module — otherwise the
   // handler resolves its own nested lambda/<fn>/node_modules copy and the mock misses it
   // (first run: real SecretsManagerClient ran -> CredentialsProviderError). neon stays REAL.
+  // s3-request-presigner + client-s3 are here for lambda/photos: its handler signs URLs at request
+  // time, so the photos integration test must be able to vi.mock the presigner (there are no AWS
+  // credentials in CI). Same dedupe reasoning as above — without it the inlined handler resolves its
+  // own lambda/photos/node_modules copy and the mock silently misses.
   resolve: {
-    dedupe: ['@aws-sdk/client-secrets-manager', '@clerk/backend', '@neondatabase/serverless'],
+    dedupe: [
+      '@aws-sdk/client-secrets-manager',
+      '@aws-sdk/client-s3',
+      '@aws-sdk/s3-request-presigner',
+      '@clerk/backend',
+      '@neondatabase/serverless',
+    ],
   },
   test: {
     environment: 'node',
@@ -19,7 +29,14 @@ export default defineConfig({
     include: ['tests/integration/**/*.int.test.js'],
     server: {
       deps: {
-        inline: [/lambda\//, /^@clerk\/backend/, /^@aws-sdk\/client-secrets-manager/, /^@neondatabase\/serverless/],
+        inline: [
+          /lambda\//,
+          /^@clerk\/backend/,
+          /^@aws-sdk\/client-secrets-manager/,
+          /^@aws-sdk\/client-s3/,
+          /^@aws-sdk\/s3-request-presigner/,
+          /^@neondatabase\/serverless/,
+        ],
       },
     },
   },

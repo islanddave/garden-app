@@ -22,7 +22,10 @@ describe('photos Lambda — Household Mode uploaded_by -> created_by switch', ()
     expect(SRC).not.toMatch(/uploaded_by = \$\{userId\}/);
     expect(SRC).not.toMatch(/p\.uploaded_by = \$\{userId\}/);
     // The INSERT column list still names uploaded_by (display/author column).
-    expect(SRC).toMatch(/uploaded_by, created_by\)/);
+    // `[,)]` not `)`: V4-PHOTOBULK-001 appended capture-metadata columns after created_by, so
+    // created_by is no longer the LAST column. That was incidental to this guard — the invariant
+    // is that uploaded_by and created_by are both still bound, not their position in the list.
+    expect(SRC).toMatch(/uploaded_by, created_by[,)]/);
   });
 
   it('scope filters + cross-entity featured-photo guards use created_by = ANY(${householdIds})', () => {
@@ -41,8 +44,11 @@ describe('photos Lambda — Household Mode uploaded_by -> created_by switch', ()
 
   it('INSERT still binds uploaded_by + created_by = ${userId}', () => {
     const insIdx = SRC.indexOf('INSERT INTO photos');
-    const block = SRC.slice(insIdx, insIdx + 600);
-    expect(block).toMatch(/uploaded_by, created_by\)/);
+    // Window widened 600 -> 1200: the INSERT grew by 8 capture-metadata columns
+    // (V4-PHOTOBULK-001) and the old window no longer reached the end of the statement, so the
+    // householdIds negative assertion below was scanning a truncated block.
+    const block = SRC.slice(insIdx, insIdx + 1200);
+    expect(block).toMatch(/uploaded_by, created_by[,)]/);
     expect(block).not.toMatch(/householdIds/);
   });
 

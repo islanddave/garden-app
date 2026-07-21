@@ -40,12 +40,12 @@ jobs:
       # (root has only @clerk/react). Pinned to the versions lambda/events uses for
       # driver fidelity. --no-save: do not mutate package.json/lock in CI.
       - name: Install handler deps at root (harness driver + mock targets)
-        run: npm install --no-save --legacy-peer-deps "@neondatabase/serverless@^0.10.0" "@clerk/backend@^1.0.0" "@aws-sdk/client-secrets-manager@^3.0.0"
+        run: npm install --no-save --legacy-peer-deps "@neondatabase/serverless@^0.10.0" "@clerk/backend@^1.0.0" "@aws-sdk/client-secrets-manager@^3.0.0" "@aws-sdk/client-s3@^3.0.0" "@aws-sdk/s3-request-presigner@^3.0.0"
 
       # Install in-place lambda deps so the real handler imports resolve.
       - name: Install lambda deps (handlers under test)
         run: |
-          for fn in events plants locations inventory-items shared-state findings evidence-ingest storage-location preservation; do
+          for fn in events plants locations inventory-items shared-state findings evidence-ingest storage-location preservation photos; do
             echo "--- npm install lambda/$fn ---"
             (cd lambda/$fn && npm install --omit=dev)
           done

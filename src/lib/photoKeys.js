@@ -20,6 +20,13 @@
 //
 // Throws on invalid input — callers should never pass user-provided strings here.
 
+// NOTE — 'inbox' is DELIBERATELY ABSENT (V4-PHOTOBULK-001, 2026-07-21). Bulk-intake keys
+// (inbox/{userId}/{uuid}.{ext}) are derived SERVER-SIDE by POST /api/photos/batch from the
+// authenticated Clerk sub; that route accepts no caller-supplied key at all. Listing 'inbox' here
+// would hand the client a builder for a key space it must never name, re-opening the
+// trust-the-client hole the batch route was designed to delete. An earlier draft of
+// reference/garden-photo-model-decision.md asks for 'inbox' to be added here — that line predates
+// the server-derivation decision in the same document and is superseded by it. Do not add it.
 export const PHOTO_PREFIXES = Object.freeze([
   'standalone',
   'events',

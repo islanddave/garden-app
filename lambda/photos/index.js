@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
@@ -32,6 +33,13 @@ async function getSecrets() {
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
+// V4-PHOTOBULK-001 batch-presign limits/validators. These guard values that become an S3 KEY or a
+// signed ContentType, so they are allowlists, not sanitizers — anything not matching is rejected.
+const MAX_BATCH = 20;
+const SAFE_KEY_SEGMENT = /^[A-Za-z0-9._-]+$/;  // Clerk subs look like user_3D2gM0hIl03gjW3JM2DjtPzm0jI
+const SAFE_EXT = /^[a-z0-9]{1,8}$/;
+const SAFE_CONTENT_TYPE = /^image\/[a-zA-Z0-9.+-]{1,32}$/;
+
 function resp(statusCode, body) {
   return {
     statusCode,
@@ -64,6 +72,66 @@ async function getUploadUrl(photoId, ext, contentType) {
 async function getViewUrl(storagePath) {
   const cmd = new GetObjectCommand({ Bucket: BUCKET, Key: storagePath });
   return getSignedUrl(s3, cmd, { expiresIn: 900 });
+}
+
+// Featured-photo auto-promote: parent-by-parent, only if the photo has the linkage AND the
+// parent's featured_photo_id IS NULL AND the caller owns the parent. Each UPDATE is a separate
+// atomic statement; the WHERE clauses guard race conditions (only the first to commit wins).
+// Best-effort + NON-FATAL by contract: the photo row is already persisted before this runs, so a
+// promote failure must never fail the request.
+//
+// Called from TWO paths, which are not the same event:
+//   POST            — first upload of a photo that already carries its parent.
+//   PUT/PATCH       — ONLY when the row was previously intake_status='pending_tag'. A bulk-uploaded
+//                     photo's POST had no parent, so the TAG is its first deposit; without this the
+//                     plant silently stays photo-less. A re-tag of an already-tagged photo is still
+//                     a correction, not a deposit, and still does NOT promote.
+async function autoPromoteFeatured(sql, photo, householdIds) {
+  try {
+    if (photo.project_id) {
+      await sql`
+        UPDATE public.container
+           SET featured_photo_id = ${photo.id}
+         WHERE id = ${photo.project_id}
+           AND created_by = ANY(${householdIds})
+           AND featured_photo_id IS NULL
+           AND deleted_at IS NULL
+      `;
+    }
+    if (photo.plant_id) {
+      await sql`
+        UPDATE public.garden_node p
+           SET featured_photo_id = ${photo.id}
+          FROM public.container pp
+         WHERE p.id = ${photo.plant_id}
+           AND p.container_id = pp.id
+           AND pp.created_by = ANY(${householdIds})
+           AND p.featured_photo_id IS NULL
+           AND p.deleted_at IS NULL
+      `;
+    }
+    if (photo.location_id) {
+      await sql`
+        UPDATE locations
+           SET featured_photo_id = ${photo.id}
+         WHERE id = ${photo.location_id}
+           AND featured_photo_id IS NULL
+           AND deleted_at IS NULL
+      `;
+    }
+    if (photo.inventory_item_id) {
+      await sql`
+        UPDATE inventory_items
+           SET featured_photo_id = ${photo.id}
+         WHERE id = ${photo.inventory_item_id}
+           AND created_by = ANY(${householdIds})
+           AND featured_photo_id IS NULL
+           AND deleted_at IS NULL
+      `;
+    }
+  } catch (promoteErr) {
+    console.error('auto-promote non-fatal failure', promoteErr?.message ?? promoteErr);
+  }
 }
 
 export const handler = async (event) => {
@@ -112,6 +180,45 @@ export const handler = async (event) => {
       const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType });
       const upload_url = await getSignedUrl(s3, cmd, { expiresIn: 300 });
       return resp(200, { upload_url, key });
+    }
+
+    // POST /api/photos/batch — V4-PHOTOBULK-001. Presign-ONLY, up to MAX_BATCH at a time.
+    // There is deliberately no /confirm: POST /api/photos already IS the confirm, and per-photo
+    // confirms give the progress granularity the bulk UX wants. getSignedUrl is a local HMAC (no S3
+    // round trip), so signing 20 in one call is nearly free.
+    //
+    // SECURITY — this route accepts NO caller-supplied key. The key is DERIVED from the
+    // authenticated Clerk sub: inbox/{userId}/{uuid}.{ext}. The older GET /api/photos/upload-url
+    // above presigns whatever key it is handed with no prefix or ownership check; rather than
+    // validating around that, the new path deletes the class. A presigned URL always inherits the
+    // SIGNER's identity (this Lambda's role), so an IAM policy scoped to inbox/* is not the control
+    // here and would break every other prefix this same role signs — server-side derivation is.
+    if (rawPath === '/api/photos/batch' && method === 'POST') {
+      const body = JSON.parse(event.body ?? '{}');
+      const files = Array.isArray(body.files) ? body.files : null;
+      if (!files || files.length === 0) return resp(400, { error: 'files[] is required' });
+      if (files.length > MAX_BATCH) {
+        return resp(400, { error: `too many files (max ${MAX_BATCH}, got ${files.length})` });
+      }
+      // The Clerk sub becomes a path segment — validate rather than trust it.
+      if (!SAFE_KEY_SEGMENT.test(userId)) return resp(400, { error: 'invalid user identifier' });
+
+      const uploads = [];
+      for (const f of files) {
+        const ext = String(f?.ext ?? 'jpg').toLowerCase();
+        if (!SAFE_EXT.test(ext)) return resp(400, { error: `invalid ext: ${f?.ext}` });
+        const contentType = typeof f?.content_type === 'string' && SAFE_CONTENT_TYPE.test(f.content_type)
+          ? f.content_type
+          : 'image/jpeg';
+        const key = `inbox/${userId}/${randomUUID()}.${ext}`;
+        const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType });
+        uploads.push({
+          key,
+          upload_url: await getSignedUrl(s3, cmd, { expiresIn: 900 }),
+          content_type: contentType,
+        });
+      }
+      return resp(200, { uploads, expires_in: 900 });
     }
 
     // GET /api/photos/view-url/:id — returns pre-signed GET URL for a photo record
@@ -221,10 +328,23 @@ export const handler = async (event) => {
       // neon serverless driver: tagged-template calls are auto-committed individually.
       // For atomicity, wrap in sql.transaction([...]) — multiple tagged templates
       // run in one BEGIN/COMMIT and roll back together on failure.
+      // V4-PHOTOBULK-001 — the capture-metadata columns are additive: every existing caller sends
+      // none of them, so they all bind NULL and behavior is byte-identical to before.
+      //
+      // ON CONFLICT targets idx_photos_content_hash_uniq, the PARTIAL unique index
+      // (created_by, content_hash) WHERE content_hash IS NOT NULL AND deleted_at IS NULL — so the
+      // predicate must be restated here for Postgres to match that index. Re-uploading the same
+      // bytes is expected in bulk intake (re-picking a photo, a retried batch); today that raises a
+      // 23505 which falls through isUpstream() to an opaque 500.
+      // DO UPDATE, never DO NOTHING: DO NOTHING returns ZERO rows, so insertedRows[0] is undefined
+      // and the very next line TypeErrors into the same 500 it was meant to fix.
+      // (xmax = 0) distinguishes a real insert from a conflict-update in the same round trip.
       const insertQuery = sql`
         INSERT INTO photos
           (project_id, event_id, location_id, plant_id, inventory_item_id,
-           storage_path, caption, is_public, uploaded_by, created_by)
+           storage_path, caption, is_public, uploaded_by, created_by,
+           taken_at, content_hash, file_size_bytes, mime_type, original_filename,
+           gps_lat, gps_lon, intake_status)
         VALUES (
           ${body.project_id ?? null},
           ${body.event_id ?? null},
@@ -235,64 +355,33 @@ export const handler = async (event) => {
           ${body.caption ?? null},
           ${body.is_public ?? true},
           ${userId},
-          ${userId}
+          ${userId},
+          ${body.taken_at ?? null},
+          ${body.content_hash ?? null},
+          ${body.file_size_bytes ?? null},
+          ${body.mime_type ?? null},
+          ${body.original_filename ?? null},
+          ${body.gps_lat ?? null},
+          ${body.gps_lon ?? null},
+          ${body.intake_status ?? null}
         )
-        RETURNING *
+        ON CONFLICT (created_by, content_hash)
+          WHERE content_hash IS NOT NULL AND deleted_at IS NULL
+          DO UPDATE SET updated_at = now()
+        RETURNING *, (xmax = 0) AS was_inserted
       `;
 
       const insertedRows = await insertQuery;
-      const inserted = insertedRows[0];
+      const { was_inserted: wasInserted, ...inserted } = insertedRows[0];
 
-      // Auto-promote: parent-by-parent, only if photo has the linkage AND
-      // parent's featured_photo_id IS NULL AND caller owns the parent.
-      // Each UPDATE is a separate atomic statement; the WHERE clauses guard
-      // race conditions. Failures here are non-fatal: the photo row is
-      // already persisted, auto-promote is best-effort.
-      try {
-        if (inserted.project_id) {
-          await sql`
-            UPDATE public.container
-               SET featured_photo_id = ${inserted.id}
-             WHERE id = ${inserted.project_id}
-               AND created_by = ANY(${householdIds})
-               AND featured_photo_id IS NULL
-               AND deleted_at IS NULL
-          `;
-        }
-        if (inserted.plant_id) {
-          await sql`
-            UPDATE public.garden_node p
-               SET featured_photo_id = ${inserted.id}
-              FROM public.container pp
-             WHERE p.id = ${inserted.plant_id}
-               AND p.container_id = pp.id
-               AND pp.created_by = ANY(${householdIds})
-               AND p.featured_photo_id IS NULL
-               AND p.deleted_at IS NULL
-          `;
-        }
-        if (inserted.location_id) {
-          await sql`
-            UPDATE locations
-               SET featured_photo_id = ${inserted.id}
-             WHERE id = ${inserted.location_id}
-               AND featured_photo_id IS NULL
-               AND deleted_at IS NULL
-          `;
-        }
-        if (inserted.inventory_item_id) {
-          await sql`
-            UPDATE inventory_items
-               SET featured_photo_id = ${inserted.id}
-             WHERE id = ${inserted.inventory_item_id}
-               AND created_by = ANY(${householdIds})
-               AND featured_photo_id IS NULL
-               AND deleted_at IS NULL
-          `;
-        }
-      } catch (promoteErr) {
-        console.error('auto-promote non-fatal failure', promoteErr?.message ?? promoteErr);
+      // A duplicate is NOT a new deposit. Return the existing row and stop here — BEFORE
+      // auto-promote and BEFORE the evidence-capture block below, or a re-upload appends a second
+      // first-party evidence row for the same photo and inflates DrG's confidence off one observation.
+      if (wasInserted === false) {
+        return resp(200, { ...inserted, duplicate: true });
       }
+
+      await autoPromoteFeatured(sql, inserted, householdIds);
 
       // DRG-ENGINE-003 V1.1 — auto-capture on photo log (Dave 2026-06-21): a photo logged against a
       // planting is first-party observational evidence. Resolve the canonical entity_id (entity registry,
@@ -348,25 +437,53 @@ export const handler = async (event) => {
     // modal. Full-replace semantics (not partial-merge): the tag modal submits the full
     // {project_id, location_id, plant_id, caption} set every save, so a missing field
     // means "cleared", not "unchanged".
-    // Does NOT re-run featured-photo auto-promote: auto-promote is a first-upload
-    // behavior (POST); a re-tag is a correction, not a new deposit. (V1.2a-3 Increment A
-    // scope decision — revisit if re-tag-to-unfeatured-parent UX is wanted later.)
+    // V4-PHOTOBULK-001 — this route is ALSO the bulk-intake tag path (the quick-tag carousel), not
+    // just the Photo Library tag modal. Two behaviors are conditional on the row's PRIOR
+    // intake_status, captured via a CTE snapshot (the CTE sees the pre-UPDATE row; RETURNING sees
+    // the post-UPDATE row):
+    //
+    //   1. DRAIN THE INBOX. Tagging clears intake_status, returning the row to the strict
+    //      "must have a parent" invariant. Without this, idx_photos_intake_pending keeps matching
+    //      and the carousel re-serves photos you already tagged — the inbox can never drain.
+    //      CRITICAL: clear it ONLY when a parent is actually being set. This route has full-replace
+    //      semantics, so a PUT with all-null parents means "cleared" — and blindly nulling
+    //      intake_status on such a row makes it parentless AND non-pending, which the
+    //      photos_must_have_parent CHECK rejects (a 500 on a legitimate un-tag). A pending_tag row
+    //      that is un-tagged must STAY pending_tag.
+    //   2. AUTO-PROMOTE, but only if the row WAS 'pending_tag' — see autoPromoteFeatured. A re-tag
+    //      of an already-tagged photo remains a correction and still does not promote, preserving
+    //      the original V1.2a-3 Increment A semantics exactly for every legacy row.
     const idMatch = rawPath.match(/^\/api\/photos\/([^/]+)$/);
     if (idMatch && (method === 'PUT' || method === 'PATCH')) {
       const photoId = idMatch[1];
       const body = JSON.parse(event.body ?? '{}');
+      // Only the parents this route can actually set. event_id / inventory_item_id are untouched
+      // here, so a legacy row parented by one of those keeps satisfying the CHECK on its own.
+      // `||` not `??`: an empty-string id must read as "no parent", not as a present value.
+      const setsParent = Boolean(body.project_id || body.location_id || body.plant_id);
       const updatedRows = await sql`
-        UPDATE photos
-           SET project_id  = ${body.project_id ?? null},
-               location_id = ${body.location_id ?? null},
-               plant_id    = ${body.plant_id ?? null},
-               caption     = ${body.caption ?? null}
-         WHERE id = ${photoId}
-           AND created_by = ANY(${householdIds})
-        RETURNING *
+        WITH prev AS (
+          SELECT id, intake_status
+            FROM photos
+           WHERE id = ${photoId}
+             AND created_by = ANY(${householdIds})
+        )
+        UPDATE photos p
+           SET project_id    = ${body.project_id ?? null},
+               location_id   = ${body.location_id ?? null},
+               plant_id      = ${body.plant_id ?? null},
+               caption       = ${body.caption ?? null},
+               intake_status = CASE WHEN ${setsParent}::boolean THEN NULL ELSE p.intake_status END
+          FROM prev
+         WHERE p.id = prev.id
+        RETURNING p.*, prev.intake_status AS prev_intake_status
       `;
       if (!updatedRows.length) return resp(404, { error: 'Photo not found' });
-      return resp(200, updatedRows[0]);
+      const { prev_intake_status: prevIntakeStatus, ...updated } = updatedRows[0];
+      if (prevIntakeStatus === 'pending_tag') {
+        await autoPromoteFeatured(sql, updated, householdIds);
+      }
+      return resp(200, updated);
     }
 
     return resp(405, { error: 'Method not allowed' });
