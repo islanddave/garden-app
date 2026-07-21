@@ -24,6 +24,8 @@ import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, SegmentedControl } from '../components/forms'
 import VarietyPicker from '../components/VarietyPicker.jsx'
+import PutUpPhotoThumb from '../components/PutUpPhotoThumb.jsx'
+import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -152,6 +154,14 @@ function PutUpForm({ prefill, onLogged }) {
   const [packageCount, setPackageCount] = useState('1')
   const [notes, setNotes]         = useState('')
   const [variety, setVariety]     = useState(null)
+  // V4-PUTUPPHOTO-001: the file is STAGED here and uploaded on submit, never before. Uploading on
+  // pick would orphan an S3 object + photos row every time someone changes their mind or abandons
+  // the form. 'swallow' because the photo is never worth failing a put-up over (the DDL comment
+  // says as much: "save succeeds independent of photo upload").
+  const [photoFile, setPhotoFile] = useState(null)
+  const [photoPreview, setPhotoPreview] = useState(null)
+  const [photoWarning, setPhotoWarning] = useState(null)
+  const { upload: uploadPhoto, isUploading } = useUploadPhoto({ errorMode: 'swallow' })
 
   const [storageLocations, setStorageLocations] = useState([])
   const [saving, setSaving]       = useState(false)
@@ -217,7 +227,22 @@ function PutUpForm({ prefill, onLogged }) {
     else if (useByMode === 'custom') body.use_by_target = useByDate
 
     setSaving(true)
+    setPhotoWarning(null)
     try {
+      // Photo FIRST, then the row. The handoff assumed this needed create -> upload -> re-PUT
+      // (because useUploadPhoto wants a parentId), but the 'standalone' key prefix takes no
+      // parentId and photos POST only requires storage_path — so the photo can exist before the
+      // put-up does, and photo_id rides along on the single create. No second write, no
+      // re-PUT against the full-replace contract.
+      //
+      // Deliberately NOT linked to the planting via photos.plant_id: PlantingDetail's gallery
+      // unions plant_id-attached photos, so a shot of jars in a freezer would surface in that
+      // planting's Growth timeline. The link belongs on preservation_log.photo_id only.
+      if (photoFile) {
+        const res = await uploadPhoto(photoFile, { keyPrefix: 'standalone', is_public: false })
+        if (res?.photo?.id) body.photo_id = res.photo.id
+        else setPhotoWarning("Your put-up was saved, but the photo didn't upload.")
+      }
       const row = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(body) })
       // L10 cold-start competence payoff — reflect it straight back into the inventory, no celebration.
       const storeLabel = storageLocations.find(s => String(s.id) === String(storageId))?.label || 'your stores'
@@ -233,11 +258,22 @@ function PutUpForm({ prefill, onLogged }) {
     }
   }
 
+  // Own the object-URL lifecycle here (useUploadPhoto only manages the one IT creates at upload
+  // time; this preview exists before any upload). Revoke on replace, clear, and unmount.
+  function selectPhoto(file) {
+    setPhotoPreview(prev => { if (prev) URL.revokeObjectURL(prev); return file ? URL.createObjectURL(file) : null })
+    setPhotoFile(file)
+    setPhotoWarning(null)
+  }
+  function clearPhoto() { selectPhoto(null) }
+  useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview) }, [photoPreview])
+
   function resetForNext() {
     // Crop is kept (you're usually processing one crop in a session); variety and planting are
     // cleared. Clearing the planting is deliberate: it is MORE specific than the variety being
     // cleared alongside it, so carrying it over would silently mis-attribute the next put-up.
     setQtyValue(''); setNotes(''); setPackageCount('1'); setVariety(null); setPlantId(null)
+    clearPhoto()
     setSuccess(null); setError(null)
   }
 
@@ -251,6 +287,14 @@ function PutUpForm({ prefill, onLogged }) {
           <div style={{ fontWeight: 700, color: P.green, fontSize: '0.98rem', marginBottom: 4 }}>✓ Put up</div>
           <div style={{ fontSize: '0.9rem', color: P.mid }}>{success.text}</div>
         </div>
+        {/* The put-up SAVED; only the photo failed. Says so plainly rather than letting a silently
+            photo-less record read as a successful attach. */}
+        {photoWarning && (
+          <div role="status" style={{ fontSize: '0.82rem', color: P.bannerInk, backgroundColor: P.warn,
+            border: `1px solid ${P.warnBorder}`, borderRadius: 8, padding: '10px 12px', marginBottom: 16 }}>
+            {photoWarning}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <Button type="button" variant="primary" onClick={resetForNext}>Log another</Button>
           <Button type="button" variant="secondary" onClick={onLogged}>See what&rsquo;s put up</Button>
@@ -427,12 +471,28 @@ function PutUpForm({ prefill, onLogged }) {
               <Textarea id="pu-notes" value={notes} onChange={e => setNotes(e.target.value)}
                 aria-label="Notes" style={{ height: 72, resize: 'vertical' }} placeholder="Anything worth remembering" />
             </Field>
+            {/* Photo. `capture` is intentionally absent: on mobile it would force the camera and
+                block picking an existing shot, and most put-ups get photographed while you're
+                labelling jars, not at the moment you open the form. */}
+            <Field label="Photo" htmlFor="pu-photo" optional help="A shot of the jars or bags — helps you spot it later.">
+              {photoPreview ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <img src={photoPreview} alt="Selected put-up photo" width={64} height={64}
+                    style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6, border: `1px solid ${P.border}` }} />
+                  <Button type="button" variant="secondary" onClick={clearPhoto}>Remove photo</Button>
+                </div>
+              ) : (
+                <input id="pu-photo" type="file" accept="image/*" aria-label="Photo"
+                  onChange={e => selectPhoto(e.target.files?.[0] ?? null)}
+                  style={{ fontSize: '0.85rem' }} />
+              )}
+            </Field>
           </div>
         )}
       </Card>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…"
+        <Button type="submit" variant="primary" loading={saving || isUploading} loadingLabel={isUploading ? "Uploading photo…" : "Saving…"}
           disabled={offline} style={{ minWidth: 160 }}>
           Save put-up
         </Button>
@@ -532,15 +592,65 @@ function StorageField({ value, onChange, locations, onCreated, fetch }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
 
+  // BUG-PUTUPLOC-001 — the first "add location" failed and the retry succeeded, with CloudWatch
+  // proving NO POST ever reached garden-storage-location. Falsified already: fetch prop not passed,
+  // CORS, Button swallowing type, stale bundle. Remaining theory: a cold-start / token-refresh race
+  // that throws client-side before the request leaves the browser.
+  //
+  // The old catch collapsed every cause into one string, which is why the bug is still open — the
+  // one occurrence carried no evidence. This does two things instead:
+  //   1. SELF-HEALS: one automatic retry for the failure classes that are plausibly transient
+  //      (request never reached the server, or auth). If the race theory is right, Dave stops
+  //      seeing the bug at all.
+  //   2. SELF-REPORTS: classifies the failure and puts a short code in the message, and logs the
+  //      full error. A recurrence now arrives with its own diagnosis instead of "it failed once".
+  // A retry is only safe because this POST is a create the user explicitly re-triggered; a
+  // duplicate would be a visible extra location, not silent data damage.
+  function classify(e) {
+    const status = e?.status
+    if (typeof status === 'number') {
+      if (status === 401 || status === 403) return { code: 'AUTH', retry: true }
+      if (status >= 500) return { code: 'SRV', retry: true }
+      return { code: `HTTP${status}`, retry: false }
+    }
+    // No status at all = the request threw before it got a response: network drop, CORS preflight
+    // rejection, or an auth-token fetch that failed. This is the class BUG-PUTUPLOC-001 lives in.
+    return { code: 'NET', retry: true }
+  }
+
+  async function post() {
+    return fetch('/api/storage-locations', {
+      method: 'POST', body: JSON.stringify({ label: label.trim(), kind }),
+    })
+  }
+
   async function create() {
     if (!label.trim()) { setErr('Give the location a name.'); return }
     setBusy(true); setErr(null)
     try {
-      const row = await fetch('/api/storage-locations', { method: 'POST', body: JSON.stringify({ label: label.trim(), kind }) })
+      let row
+      try {
+        row = await post()
+      } catch (e1) {
+        const c = classify(e1)
+        console.error('BUG-PUTUPLOC-001 add-location attempt 1 failed', { code: c.code, status: e1?.status, message: e1?.message })
+        if (!c.retry) throw e1
+        await new Promise(r => setTimeout(r, 400))
+        try {
+          row = await post()
+          console.warn('BUG-PUTUPLOC-001 recovered on retry', { firstFailure: c.code })
+        } catch (e2) {
+          const c2 = classify(e2)
+          console.error('BUG-PUTUPLOC-001 retry ALSO failed', { code: c2.code, status: e2?.status, message: e2?.message })
+          const err = new Error(e2?.message ?? 'retry failed'); err.code = c2.code
+          throw err
+        }
+      }
       onCreated(row)
       setAdding(false); setLabel(''); setKind('deep_freezer')
     } catch (e) {
-      setErr("Couldn't add that location — try again.")
+      const code = e?.code ?? classify(e).code
+      setErr(`Couldn't add that location — try again. (${code})`)
     } finally { setBusy(false) }
   }
 
@@ -733,7 +843,11 @@ function RecordRow({ rec, onChanged, fetch }) {
       : null
 
   return (
-    <div style={{ padding: '12px 16px', borderTop: `1px solid ${P.cream}` }}>
+    <div style={{ padding: '12px 16px', borderTop: `1px solid ${P.cream}`, display: 'flex', gap: 12 }}>
+      {/* V4-PUTUPPHOTO-001 — renders nothing when there is no photo (or it fails to resolve), so
+          rows without one keep their original full-width layout. */}
+      <PutUpPhotoThumb photoId={rec.photo_id} fetch={fetch} alt={`Photo of ${rec.quantity_unit} put up`} />
+      <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
         <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.92rem' }}>
           {rec.quantity_value} {rec.quantity_unit}
@@ -776,6 +890,7 @@ function RecordRow({ rec, onChanged, fetch }) {
             <RowAction onClick={() => setConfirmDelete(false)} disabled={busy}>Cancel</RowAction>
           </>
         )}
+      </div>
       </div>
     </div>
   )

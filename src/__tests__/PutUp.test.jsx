@@ -8,7 +8,22 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const fetchMock = vi.fn()
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }) }))
+// `apiFetch` is required because PutUp now imports useUploadPhoto (V4-PUTUPPHOTO-001), which
+// re-exports it through its __testing__ seam. Omitting it fails the whole suite at collect time.
+vi.mock('../lib/api.js', () => ({
+  useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }),
+  // Lazy wrapper, NOT a bare `fetchMock` reference: vi.mock is hoisted above the const, so an
+  // eager reference throws "Cannot access 'fetchMock' before initialization" at collect time.
+  apiFetch: (...args) => fetchMock(...args),
+}))
+
+// Photo upload is stubbed at the hook boundary — the 3-step S3 engine has its own coverage in
+// useUploadPhoto.test.js. What matters HERE is the ordering contract: upload resolves BEFORE the
+// preservation POST, and its id rides along on that single create.
+const uploadMock = vi.fn()
+vi.mock('../hooks/useUploadPhoto.js', () => ({
+  useUploadPhoto: () => ({ upload: uploadMock, isUploading: false, error: null, photo: null, preview: null, reset: vi.fn() }),
+}))
 vi.mock('../hooks/useCropTypes.js', () => ({
   useCropTypes: () => ({
     cropTypes: [
@@ -72,7 +87,20 @@ function putCalls() {
   return fetchMock.mock.calls.filter(([, o]) => o?.method === 'PUT')
 }
 
-beforeEach(() => { fetchMock.mockReset(); wire() })
+beforeEach(() => {
+  fetchMock.mockReset(); uploadMock.mockReset(); wire()
+  uploadMock.mockResolvedValue({ photo: { id: 'photo-1' } })
+  // jsdom has no object-URL implementation.
+  if (!URL.createObjectURL) { URL.createObjectURL = vi.fn(() => 'blob:preview'); URL.revokeObjectURL = vi.fn() }
+})
+
+function pickPhoto() {
+  fireEvent.click(screen.getByRole('button', { name: /More/i }))
+  const input = screen.getByLabelText('Photo')
+  const file = new File(['x'], 'jars.jpg', { type: 'image/jpeg' })
+  fireEvent.change(input, { target: { files: [file] } })
+  return file
+}
 
 describe('PutUp — log form (progressive disclosure)', () => {
   it('blocks submit when neither a crop nor a variety is attributed', async () => {
@@ -186,6 +214,55 @@ describe('PutUp — planting attribution (succession spine)', () => {
   })
 })
 
+// V4-PUTUPPHOTO-001. The handoff assumed this needed create -> upload -> re-PUT; the 'standalone'
+// key prefix takes no parentId, so the photo can exist first and photo_id rides the single create.
+describe('PutUp — photo capture', () => {
+  it('uploads BEFORE the put-up and sends photo_id on the single create (no re-PUT)', async () => {
+    renderPutUp({ crop_type_slug: 'tomato' })
+    pickPhoto()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save put-up' }))
+
+    await waitFor(() => expect(lastPost()).not.toBeNull())
+    expect(uploadMock).toHaveBeenCalledTimes(1)
+    // standalone => no parentId needed, which is what makes upload-first possible.
+    expect(uploadMock.mock.calls[0][1]).toMatchObject({ keyPrefix: 'standalone' })
+    expect(lastPost().photo_id).toBe('photo-1')
+    expect(putCalls().length).toBe(0)   // the re-PUT the old design would have needed
+  })
+
+  it('still saves the put-up when the photo upload fails, and says so', async () => {
+    uploadMock.mockResolvedValue({ error: 'S3 upload failed: 500' })
+    renderPutUp({ crop_type_slug: 'tomato' })
+    pickPhoto()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save put-up' }))
+
+    await waitFor(() => expect(lastPost()).not.toBeNull())
+    expect('photo_id' in lastPost()).toBe(false)   // never sends a bogus id
+    expect(await screen.findByText(/photo didn.t upload/i)).toBeTruthy()
+  })
+
+  it('sends no photo_id when no photo was picked', async () => {
+    renderPutUp({ crop_type_slug: 'tomato' })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save put-up' }))
+    await waitFor(() => expect(lastPost()).not.toBeNull())
+    expect(uploadMock).not.toHaveBeenCalled()
+    expect('photo_id' in lastPost()).toBe(false)
+  })
+
+  it('a picked photo can be removed before saving', async () => {
+    renderPutUp({ crop_type_slug: 'tomato' })
+    pickPhoto()
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove photo' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save put-up' }))
+    await waitFor(() => expect(lastPost()).not.toBeNull())
+    expect(uploadMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('PutUp — "what\'s put up" read surface', () => {
   it('defaults to grouping by storage and regroups by crop on one tap', async () => {
     renderPutUp()
@@ -234,5 +311,85 @@ describe('PutUp — "what\'s put up" read surface', () => {
     // Full replace carries the row's identity fields forward.
     expect(body.crop_type_slug).toBe('tomato')
     expect(body.quantity_value).toBe(14)
+  })
+})
+
+// BUG-PUTUPLOC-001 — the add-location failure that succeeded on retry and left no evidence.
+// These lock in the self-heal (one automatic retry for transient classes) and the self-report
+// (a diagnostic code in the message), so a recurrence arrives already classified.
+describe('PutUp — add storage location resilience (BUG-PUTUPLOC-001)', () => {
+  function openNewLocation() {
+    fireEvent.click(screen.getByRole('button', { name: /New location/i }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'New location name' }), { target: { value: 'Garage freezer' } })
+  }
+
+  it('auto-retries once when the request never reached the server, and succeeds silently', async () => {
+    let calls = 0
+    fetchMock.mockImplementation((path, options = {}) => {
+      const method = options.method || 'GET'
+      if (path === '/api/storage-locations' && method === 'POST') {
+        calls += 1
+        if (calls === 1) return Promise.reject(new Error('Failed to fetch'))  // no .status => NET
+        return Promise.resolve({ id: 'loc-9', label: 'Garage freezer', kind: 'deep_freezer' })
+      }
+      if (path === '/api/storage-locations') return Promise.resolve([])
+      if (path === '/api/plants') return Promise.resolve(PLANTS_FIXTURE)
+      if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve(STORES_FIXTURE)
+      return Promise.resolve(null)
+    })
+    renderPutUp({ crop_type_slug: 'tomato' })
+    openNewLocation()
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    // Recovered: the location lands in the select and NO error is shown.
+    await waitFor(() => expect(calls).toBe(2))
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Storage location' }).textContent).toMatch(/Garage freezer/))
+    expect(screen.queryByText(/Couldn't add that location/)).toBeNull()
+  })
+
+  it('surfaces a diagnostic code when both attempts fail', async () => {
+    fetchMock.mockImplementation((path, options = {}) => {
+      const method = options.method || 'GET'
+      if (path === '/api/storage-locations' && method === 'POST') return Promise.reject(new Error('Failed to fetch'))
+      if (path === '/api/storage-locations') return Promise.resolve([])
+      if (path === '/api/plants') return Promise.resolve(PLANTS_FIXTURE)
+      if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve(STORES_FIXTURE)
+      return Promise.resolve(null)
+    })
+    renderPutUp({ crop_type_slug: 'tomato' })
+    openNewLocation()
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    // (NET) = threw before reaching the server — the class BUG-PUTUPLOC-001 lives in.
+    expect(await screen.findByText(/Couldn't add that location.*\(NET\)/)).toBeTruthy()
+  })
+
+  it('does NOT retry a client error — a 400 is not transient', async () => {
+    let calls = 0
+    fetchMock.mockImplementation((path, options = {}) => {
+      const method = options.method || 'GET'
+      if (path === '/api/storage-locations' && method === 'POST') {
+        calls += 1
+        const err = new Error('bad request'); err.status = 400
+        return Promise.reject(err)
+      }
+      if (path === '/api/storage-locations') return Promise.resolve([])
+      if (path === '/api/plants') return Promise.resolve(PLANTS_FIXTURE)
+      if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve(STORES_FIXTURE)
+      return Promise.resolve(null)
+    })
+    renderPutUp({ crop_type_slug: 'tomato' })
+    openNewLocation()
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(await screen.findByText(/\(HTTP400\)/)).toBeTruthy()
+    expect(calls).toBe(1)   // retrying a 400 would just duplicate a guaranteed failure
+  })
+
+  it('still blocks an empty name before any request goes out', async () => {
+    renderPutUp({ crop_type_slug: 'tomato' })
+    fireEvent.click(screen.getByRole('button', { name: /New location/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(await screen.findByText('Give the location a name.')).toBeTruthy()
+    expect(fetchMock.mock.calls.filter(([p, o]) => p === '/api/storage-locations' && o?.method === 'POST')).toHaveLength(0)
   })
 })

@@ -14,6 +14,7 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
+import PutUpPhotoThumb from '../PutUpPhotoThumb.jsx'
 
 const METHOD_LABELS = {
   roast_freeze: 'Roast & freeze', whole_freeze: 'Freeze', blanch_freeze: 'Blanch & freeze',
@@ -113,7 +114,10 @@ export default function PutUpFromPlanting({ planting, fetch }) {
         {rows.map(r => {
           const remaining = r.remaining_count ?? r.package_count ?? 0
           return (
-            <li key={r.id} style={{ padding: '10px 0', borderTop: `1px solid ${P.cream}` }}>
+            <li key={r.id} style={{ padding: '10px 0', borderTop: `1px solid ${P.cream}`, display: 'flex', gap: 10 }}>
+              <PutUpPhotoThumb photoId={r.photo_id} fetch={fetch} size={36}
+                alt={`Photo of ${r.quantity_unit} put up`} />
+              <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: '0.9rem', color: P.dark, fontWeight: 600 }}>
                 {r.quantity_value} {r.quantity_unit}
                 <span style={{ color: P.mid, fontWeight: 400 }}>
@@ -126,6 +130,7 @@ export default function PutUpFromPlanting({ planting, fetch }) {
                 put up {prettyDate(r.preserved_at)}
                 {remaining !== r.package_count ? ` · ${remaining} left` : ''}
                 {r.use_by_target ? ` · use by ${prettyDate(r.use_by_target)}` : ''}
+              </div>
               </div>
             </li>
           )
