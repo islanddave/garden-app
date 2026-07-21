@@ -115,4 +115,30 @@ describe('HarvestFromPlanting', () => {
     render(<HarvestFromPlanting planting={PLANTING} fetch={fetchMock} />)
     expect(await screen.findByText(/Couldn’t load harvests/)).toBeTruthy()
   })
+
+  // ── V4-HARVESTSURF-001 remainder — the OBSERVED harvest window ────────────────────────────
+  // Descriptive, not predictive. A predicted first-pick window was killed by measurement.
+  it('renders the observed picking window when the history spans multiple days', async () => {
+    renderSection(payload([
+      { id: 'h1', quantity: '2.000', unit: 'lb', event_date: '2026-06-28' },
+      { id: 'h2', quantity: '3.000', unit: 'lb', event_date: TODAY },
+    ]))
+    const win = await screen.findByTestId('harvest-window')
+    expect(win.textContent).toMatch(/Picking over 24 days/)
+  })
+
+  it('does NOT render a window for a single-day history (the "Last picked" line covers it)', async () => {
+    renderSection(payload([
+      { id: 'h1', quantity: '2.000', unit: 'lb', event_date: TODAY },
+    ]))
+    // Wait for the section to settle before asserting an absence, or this passes vacuously.
+    await screen.findByRole('row', { name: /All time/ })
+    expect(screen.queryByTestId('harvest-window')).toBeNull()
+  })
+
+  it('does NOT render a window when the planting has no harvests', async () => {
+    renderSection(payload([]))
+    await waitFor(() => expect(screen.queryByTestId('harvest-window')).toBeNull())
+  })
+
 })

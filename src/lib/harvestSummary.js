@@ -131,6 +131,54 @@ function emptySummary(windowDays) {
   }
 }
 
+// ── V4-HARVESTSURF-001 (remainder) — the OBSERVED per-plant harvest window ───────────────────
+// The original ask was a "per-plant harvest window". A PREDICTED window was measured and killed:
+// only 22 of 233 live plantings (9.4%) carry BOTH a fruit_set anchor and a crop
+// set_to_first_pick_days, so a predicted first-pick date would be silent for 90% of the garden and
+// speculative on the rest. (The prior session killed prediction at 20% coverage; this substrate is
+// thinner, not richer.)
+//
+// What IS fully supported is the OBSERVED window — the span this planting has actually produced
+// over, which is evidence, not a forecast, and is defined for 100% of plantings that have any
+// harvest at all. Same posture as the readiness predicate: never assert what wasn't recorded.
+//
+// PURE and clock-free: both anchors come from summarizeHarvests and are already reporting-zone
+// 'YYYY-MM-DD' days, so this is calendar arithmetic on UTC anchors with no zone math and no `new
+// Date()` on the current time.
+
+/**
+ * Inclusive calendar-day span between two 'YYYY-MM-DD' anchors.
+ * Same day => 1. Returns null when either anchor is missing or unparseable.
+ */
+export function harvestSpanDays(first, last) {
+  if (!first || !last) return null
+  const parse = (iso) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso))
+    if (!m) return null
+    return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  }
+  const a = parse(first)
+  const b = parse(last)
+  if (a == null || b == null) return null
+  // Defensive: anchors arrive sorted from summarizeHarvests, but never emit a negative span.
+  const lo = Math.min(a, b)
+  const hi = Math.max(a, b)
+  return Math.round((hi - lo) / 86400000) + 1
+}
+
+/**
+ * The observed window for a summary, or null when there is nothing to describe.
+ * `isSpan` is false for a single-day history — one pick is a date, not a window, and the caller
+ * already renders "Last picked <date>", so repeating it as a one-day span would be noise.
+ */
+export function harvestWindow(summary) {
+  const first = summary?.firstHarvestDate ?? null
+  const last = summary?.lastHarvestDate ?? null
+  const days = harvestSpanDays(first, last)
+  if (days == null) return null
+  return { first, last, days, isSpan: first !== last }
+}
+
 // numeric(N,3) serializes as "3.000" — never print it raw. Up to 2dp, trailing zeros trimmed.
 export function fmtQuantity(n) {
   const num = Number(n)

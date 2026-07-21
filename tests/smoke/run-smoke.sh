@@ -213,6 +213,17 @@ else
 fi
 # Photos Lambda handles multipart — skip reachability to avoid misleading error shape
 echo "   (photos Lambda skipped in reachability phase — multipart-only endpoint)"
+
+# V4-HARVESTSURF-001 / V4-HARVESTQTY-001 sub-route reachability.
+# Both shipped to prod in v3.56.0 with ZERO smoke coverage — this closes that gap.
+# These are LITERAL sub-routes that must match BEFORE the /api/events/:id regex, so a
+# precedence regression makes them fall through to the id branch and 404 rather than 401.
+# They also SELECT columns added by migration v4-harvattr-001; if the Lambda ships ahead of
+# the migration (or a column is renamed), the query throws and the route 500s. check_reachable
+# accepts 2xx/4xx and FAILS on 5xx, which is exactly the signal that matters here — an
+# unauthenticated call proves the route is routed and its module loads.
+check_reachable "lambda:events:harvest-ready"   "${STAGING_API_EVENTS%/}/api/events/harvest-ready"
+check_reachable "lambda:events:harvest-summary" "${STAGING_API_EVENTS%/}/api/events/harvest-summary"
 echo ""
 
 # ── Phase 2: Authenticated CRUD ──────────────────────────────────────────────

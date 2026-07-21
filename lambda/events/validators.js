@@ -97,7 +97,13 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 // CI (`npm run check:event-types`) fails on any drift. The deployed Lambda is a standalone
 // zip with no bundler, so it imports the generated SIBLING (not src/lib/) at runtime.
 // Excluded by design (see BATCH_EXCLUDED_TYPES in eventTypes.js):
-//   - harvest / first_harvest — require quantity+unit (dual-write to harvest_log)
+//   - harvest                 — requires quantity+unit (dual-write to harvest_log)
+//   - first_harvest           — MILESTONE only: carries NO quantity, writes NO harvest_log row.
+//                               validateEventBody above REJECTS harvest fields on it (400), and
+//                               index.js gates the harvest_log CTE on eventType === 'harvest'.
+//                               Excluded from batch for per-plant-entry reasons, NOT for quantity.
+//                               See the long note in src/lib/eventTypes.js for why this matters to
+//                               evidence-only surfaces that INNER JOIN harvest_log.
 //   - photo                   — requires a file upload (no bulk semantics)
 //   - divided / cutting_taken — HS-1: spawn child plantings (lineage/transaction risk)
 //   - hand_pollinated / fruit_set — HS-1: single-plant events, no bulk semantics

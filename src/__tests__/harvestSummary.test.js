@@ -2,9 +2,7 @@
 // live data or in review: backdated rows, mixed units on one planting, the year boundary at
 // 23:00 ET, and the "count" schema token leaking into the UI.
 import { describe, it, expect } from 'vitest'
-import {
-  summarizeHarvests, formatEntries, formatEntry, unitLabel, fmtQuantity, etDay, addDays, cropNoun,
-} from '../lib/harvestSummary.js'
+import { summarizeHarvests, formatEntries, formatEntry, unitLabel, fmtQuantity, etDay, addDays, cropNoun, harvestSpanDays, harvestWindow } from '../lib/harvestSummary.js'
 
 const TODAY = '2026-07-21'
 const opts = (extra = {}) => ({ today: TODAY, windowDays: 14, ...extra })
@@ -160,5 +158,56 @@ describe('formatting', () => {
     expect(cropNoun({ variety_ref: { crop_type_slug: 'sweet-pepper' } })).toBe('sweet pepper')
     expect(cropNoun({ variety_ref: {} })).toBe(null)
     expect(formatEntry({ unit: 'count', quantity: 4 }, 'squash')).toBe('4 squashes')
+  })
+})
+
+// ── V4-HARVESTSURF-001 remainder — OBSERVED harvest window ──────────────────────────────────
+// Descriptive only. A PREDICTED window was killed by measurement (22/233 live plantings carry both
+// a fruit_set anchor and set_to_first_pick_days), so nothing here forecasts a future pick date.
+describe('harvestSpanDays / harvestWindow', () => {
+  it('same day is an inclusive span of 1', () => {
+    expect(harvestSpanDays('2026-07-21', '2026-07-21')).toBe(1)
+  })
+  it('counts inclusively across a month boundary', () => {
+    expect(harvestSpanDays('2026-06-28', '2026-07-21')).toBe(24)
+  })
+  it('is DST-immune (a 23h and a 25h day both count as one day)', () => {
+    // US DST forward 2026-03-08, back 2026-11-01. UTC anchors make both spans exact.
+    expect(harvestSpanDays('2026-03-07', '2026-03-09')).toBe(3)
+    expect(harvestSpanDays('2026-10-31', '2026-11-02')).toBe(3)
+  })
+  it('spans a leap day correctly', () => {
+    expect(harvestSpanDays('2028-02-28', '2028-03-01')).toBe(3)
+  })
+  it('returns null on a missing or unparseable anchor', () => {
+    expect(harvestSpanDays(null, '2026-07-21')).toBeNull()
+    expect(harvestSpanDays('2026-07-21', null)).toBeNull()
+    expect(harvestSpanDays('not-a-date', '2026-07-21')).toBeNull()
+  })
+  it('never returns a negative span even if anchors arrive reversed', () => {
+    expect(harvestSpanDays('2026-07-21', '2026-06-28')).toBe(24)
+  })
+  it('harvestWindow marks a single-day history as NOT a span (caller shows "Last picked")', () => {
+    const w = harvestWindow({ firstHarvestDate: '2026-07-21', lastHarvestDate: '2026-07-21' })
+    expect(w).toEqual({ first: '2026-07-21', last: '2026-07-21', days: 1, isSpan: false })
+  })
+  it('harvestWindow marks a multi-day history as a span', () => {
+    const w = harvestWindow({ firstHarvestDate: '2026-06-28', lastHarvestDate: '2026-07-21' })
+    expect(w.isSpan).toBe(true)
+    expect(w.days).toBe(24)
+  })
+  it('harvestWindow is null when the planting has no harvests at all', () => {
+    expect(harvestWindow({ firstHarvestDate: null, lastHarvestDate: null })).toBeNull()
+    expect(harvestWindow(null)).toBeNull()
+    expect(harvestWindow(summarizeHarvests([], { today: '2026-07-21' }))).toBeNull()
+  })
+  it('composes with a real summarizeHarvests result', () => {
+    const rows = [
+      { quantity: 2, unit: 'lb', event_date: '2026-06-28' },
+      { quantity: 1, unit: 'lb', event_date: '2026-07-05' },
+      { quantity: 3, unit: 'lb', event_date: '2026-07-21' },
+    ]
+    const w = harvestWindow(summarizeHarvests(rows, { today: '2026-07-21' }))
+    expect(w).toEqual({ first: '2026-06-28', last: '2026-07-21', days: 24, isSpan: true })
   })
 })

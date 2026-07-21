@@ -156,9 +156,25 @@ export const PRIMARY_EVENT_TYPES = [
 // Types that must NOT be bulk-loggable via /api/events/batch.
 //
 //   needs-extra-input (no bulk semantics):
-//     harvest, first_harvest — require quantity+unit (dual-write to harvest_log);
+//     harvest                — requires quantity+unit (dual-write to harvest_log);
 //                              reachable in the unified selector but ROUTED to per-plant
 //                              entry, never batch-submitted (V4-EVENTSEL-002).
+//     first_harvest          — a MILESTONE event that carries NO quantity and writes NO
+//                              harvest_log row. The API actively REJECTS harvest fields on
+//                              it (validators.js "harvest fields only valid on
+//                              event_type=harvest"), and the harvest_log CTE is gated on
+//                              `isHarvest = eventType === 'harvest'` (events/index.js), so
+//                              first_harvest is excluded by construction. Excluded from
+//                              batch for the same per-plant-entry reason as harvest, NOT
+//                              because it needs quantity. CONSEQUENCE (verified 2026-07-21,
+//                              prod: 5/5 first_harvest orphaned vs 112/112 harvest logged):
+//                              a planting whose ONLY pick is logged as first_harvest is
+//                              invisible to every evidence-only surface that INNER JOINs
+//                              harvest_log — e.g. /api/events/harvest-ready. Do not "fix"
+//                              that by backfilling harvest_log: quantity and unit are NOT
+//                              NULL with a unit CHECK enum and no source value exists, so a
+//                              backfill must fabricate user-facing data that
+//                              /api/events/harvest-summary then renders as recorded.
 //     photo                  — requires a file upload.
 //
 //   HS-1 data-integrity (V002 §4 — propagation / single-plant events):

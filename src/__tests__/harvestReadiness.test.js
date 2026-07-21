@@ -74,6 +74,33 @@ describe('isReadyToPick', () => {
   it('rejects a null/undefined candidate', () => {
     expect(isReadyToPick(null, 202)).toBe(false)
   })
+
+  // ── INCOHERENT MIXED ROW (added 2026-07-21 after a 7-agent crucible) ────────────────────────
+  // A candidate can arrive carrying habit='single' TOGETHER WITH a non-null repeat_interval_days.
+  // That shape is impossible within crop_types — chk_crop_types_repeat_interval forbids it — but
+  // it becomes constructible the moment any resolver merges attributes from two sources (e.g. a
+  // variety-level habit override inheriting the crop's interval). No table-local CHECK can reject
+  // it, because the invariant spans two rows.
+  //
+  // Today isReadyToPick rejects it ONLY because the REPEATING_HABITS test happens to sit after the
+  // interval test. That safety is a property of guard ORDER, not of the contract — and overdueRatio
+  // reads repeat_interval_days with NO habit check at all, so the coincidence does not generalize.
+  // These tests pin the behavior so a future reorder fails loudly instead of shipping a 2-day nag
+  // on a single-harvest crop (the winter-squash hazard).
+  it('never fires on habit=single even when an interval is present and exceeded', () => {
+    expect(isReadyToPick(c({ harvest_habit: 'single', repeat_interval_days: 2, days_since_last_harvest: 9 }), 202)).toBe(false)
+  })
+  it('never fires on habit=single regardless of how far past the interval it is', () => {
+    for (const days of [2, 30, 400]) {
+      expect(isReadyToPick(c({ harvest_habit: 'single', repeat_interval_days: 2, days_since_last_harvest: days }), 202)).toBe(false)
+    }
+  })
+  it('a habit override with no interval is INERT, not a firing signal', () => {
+    // The mirror-image case. Overriding habit to a repeating value while the interval resolves to
+    // NULL (e.g. crop_types.onion has harvest_habit='single' and repeat_interval_days NULL) is a
+    // silent no-op — NULL still means UNKNOWN. Pinned so nobody assumes a habit-only fix "works".
+    expect(isReadyToPick(c({ harvest_habit: 'cut_and_come_again', repeat_interval_days: null, days_since_last_harvest: 44 }), 202)).toBe(false)
+  })
 })
 
 describe('rankHarvestReady', () => {

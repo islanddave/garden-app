@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { P } from '../../lib/constants.js'
 import { formatDate } from '../../lib/format.js'
-import { summarizeHarvests, formatEntries, cropNoun } from '../../lib/harvestSummary.js'
+import { summarizeHarvests, formatEntries, cropNoun, harvestWindow } from '../../lib/harvestSummary.js'
 
 const WINDOW_DAYS = 14
 
@@ -63,6 +63,9 @@ export default function HarvestFromPlanting({ planting, fetch }) {
     )
   }
 
+  // `window_` (trailing underscore) — `window` is the global; shadowing it inside a component is a
+  // footgun waiting for the next person who reaches for window.matchMedia in this file.
+  const window_ = harvestWindow(summary)
   const seasonYear = String(summary.seasonStart ?? '').slice(0, 4)
   const rows = [
     { key: 'recent', label: `Last ${WINDOW_DAYS} days`, b: summary.recent },
@@ -99,6 +102,14 @@ export default function HarvestFromPlanting({ planting, fetch }) {
       {summary.lastHarvestDate && (
         <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 8 }}>
           Last picked {formatDate(summary.lastHarvestDate)}
+        </div>
+      )}
+      {/* Observed harvest window. Descriptive, never predictive — see harvestWindow() for why a
+          predicted first-pick date was measured and dropped. Hidden for a single-day history,
+          which the "Last picked" line above already states. */}
+      {window_?.isSpan && (
+        <div data-testid="harvest-window" style={{ fontSize: '0.78rem', color: P.light, marginTop: 2 }}>
+          {`Picking over ${window_.days} days · ${formatDate(window_.first)} – ${formatDate(window_.last)}`}
         </div>
       )}
       {summary.allTime.unattributed > 0 && <UnlinkedNote n={summary.allTime.unattributed} />}

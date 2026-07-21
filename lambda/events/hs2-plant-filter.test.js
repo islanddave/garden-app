@@ -24,11 +24,25 @@ describe('events Lambda — HS-2 server-side plant_id filter', () => {
     expect(SRC).toMatch(/AND e\.plant_id = \$\{plantId\}/);
   });
 
+  // ROUTE-SCOPED ANCHOR (hardened 2026-07-21). These assertions previously used a GLOBAL
+  // SRC.indexOf('AND e.plant_id = ${plantId}') first-match. index.js has since grown routes
+  // containing near-identical predicates (harvest-summary carries
+  // `WHERE e.plant_id = ${plantId}::uuid`), and any future route inserted ABOVE the list route with
+  // a literal `AND e.plant_id = ${plantId}` would silently RE-TARGET these asserts at foreign SQL
+  // while still passing — the filter-precedes-cap check would find some other LIMIT and go green.
+  // Anchoring to the list route's own branch marker makes that class of drift impossible.
+  const listRouteFrom = () => {
+    const branchIdx = SRC.indexOf('const rows = (projectId && plantId)');
+    expect(branchIdx, 'list-route branch marker not found — update this anchor').toBeGreaterThan(-1);
+    return SRC.slice(branchIdx);
+  };
+
   it('the plant_id filter is applied BEFORE the LIMIT (so the cap scopes to the planting)', () => {
-    const plantIdx = SRC.indexOf('AND e.plant_id = ${plantId}');
-    expect(plantIdx).toBeGreaterThan(-1);
+    const route = listRouteFrom();
+    const plantIdx = route.indexOf('AND e.plant_id = ${plantId}');
+    expect(plantIdx, 'plant_id predicate not found inside the list route').toBeGreaterThan(-1);
     // The very next LIMIT after the plant_id predicate must follow it (filter precedes cap).
-    const after = SRC.slice(plantIdx);
+    const after = route.slice(plantIdx);
     const limitIdx = after.indexOf('LIMIT ${limit}');
     expect(limitIdx).toBeGreaterThan(-1);
     // And no second plant_id predicate sneaks in after that LIMIT within this block.
@@ -36,8 +50,10 @@ describe('events Lambda — HS-2 server-side plant_id filter', () => {
   });
 
   it('still household-scoped (does not leak another household\'s planting events)', () => {
-    const plantIdx = SRC.indexOf('AND e.plant_id = ${plantId}');
-    const block = SRC.slice(Math.max(0, plantIdx - 300), plantIdx);
+    const route = listRouteFrom();
+    const plantIdx = route.indexOf('AND e.plant_id = ${plantId}');
+    expect(plantIdx).toBeGreaterThan(-1);
+    const block = route.slice(Math.max(0, plantIdx - 300), plantIdx);
     expect(block).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\)/);
   });
 
