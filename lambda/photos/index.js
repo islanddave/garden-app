@@ -6,6 +6,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
+import { isAllowedUploadKey } from './uploadKeyPolicy.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // requestChecksumCalculation/responseChecksumValidation: newer SDK v3 versions (3.679+) default
@@ -175,11 +176,18 @@ export const handler = async (event) => {
 
   try {
     // GET /api/photos/upload-url — returns pre-signed S3 PUT URL for browser upload
-    // Query params: key (full S3 key, caller-generated), content_type (MIME type)
+    // Query params: key (caller-generated via src/lib/photoKeys.js), content_type (MIME type)
+    // SECURITY (A0.1) — the caller names the key, so the key is confined to the closed
+    // buildPhotoKey grammar (uploadKeyPolicy.js) and the signed ContentType to image/*.
+    // Anything else — inbox/* (server-derived only, per the batch route), traversal, absolute
+    // keys, foreign prefixes, non-image types — 403s before any presign happens.
     if (rawPath === '/api/photos/upload-url' && method === 'GET') {
       const key = event.queryStringParameters?.key;
       const contentType = event.queryStringParameters?.content_type ?? 'image/jpeg';
       if (!key) return resp(400, { error: 'key is required' });
+      if (!isAllowedUploadKey(key) || !SAFE_CONTENT_TYPE.test(contentType)) {
+        return resp(403, { error: 'Forbidden' });
+      }
       const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType });
       const upload_url = await getSignedUrl(s3, cmd, { expiresIn: 300 });
       return resp(200, { upload_url, key });
@@ -192,10 +200,11 @@ export const handler = async (event) => {
     //
     // SECURITY — this route accepts NO caller-supplied key. The key is DERIVED from the
     // authenticated Clerk sub: inbox/{userId}/{uuid}.{ext}. The older GET /api/photos/upload-url
-    // above presigns whatever key it is handed with no prefix or ownership check; rather than
-    // validating around that, the new path deletes the class. A presigned URL always inherits the
-    // SIGNER's identity (this Lambda's role), so an IAM policy scoped to inbox/* is not the control
-    // here and would break every other prefix this same role signs — server-side derivation is.
+    // above still takes a caller-named key but confines it to the closed legacy grammar (A0.1,
+    // uploadKeyPolicy.js); inbox/* remains exclusively server-derived — the legacy route 403s any
+    // inbox key. A presigned URL always inherits the SIGNER's identity (this Lambda's role), so an
+    // IAM policy scoped to inbox/* is not the control here and would break every other prefix this
+    // same role signs — server-side derivation is.
     if (rawPath === '/api/photos/batch' && method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       const files = Array.isArray(body.files) ? body.files : null;
