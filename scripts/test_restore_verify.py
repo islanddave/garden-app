@@ -185,7 +185,7 @@ def _patch_introspect(monkeypatch, prod_tables, rest_tables, prod_counts, rest_c
     monkeypatch.setattr(rv, "row_counts", fake_row_counts)
 
 
-CORE = {"projects", "plants", "events", "locations", "inventory_items", "plant_varieties"}
+CORE = {"plant_projects", "plants", "event_log", "locations", "inventory_items", "plant_varieties"}
 
 
 def test_assess_coherent_ok(monkeypatch):
@@ -199,7 +199,7 @@ def test_assess_coherent_ok(monkeypatch):
 def test_assess_missing_table_fails(monkeypatch):
     cfg = rv.Config(env=env())
     counts = {t: 100 for t in CORE}
-    rest = set(CORE); rest.discard("events")
+    rest = set(CORE); rest.discard("event_log")
     _patch_introspect(monkeypatch, CORE, rest, counts, {t: 100 for t in rest})
     ok, rep = rv.assess(cfg, "postgresql://scratch")
     assert not ok and any("MISSING" in f for f in rep["hard_failures"])
@@ -225,10 +225,10 @@ def test_assess_empty_restore_fails(monkeypatch):
 def test_assess_truncated_table_fails(monkeypatch):
     cfg = rv.Config(env=env())
     counts = {t: 100 for t in CORE}
-    rest = {t: 100 for t in CORE}; rest["events"] = 5  # 5/100 = 0.05 < floor 0.5
+    rest = {t: 100 for t in CORE}; rest["event_log"] = 5  # 5/100 = 0.05 < floor 0.5
     _patch_introspect(monkeypatch, CORE, CORE, counts, rest)
     ok, rep = rv.assess(cfg, "postgresql://scratch")
-    assert not ok and any("events" in f and "<<" in f for f in rep["hard_failures"])
+    assert not ok and any("event_log" in f and "<<" in f for f in rep["hard_failures"])
 
 
 def test_assess_small_table_drift_tolerated(monkeypatch):

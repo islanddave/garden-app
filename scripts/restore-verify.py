@@ -51,9 +51,9 @@ HTTP_TIMEOUT = 60
 
 # Core tables that must exist + be populated for a restore to count as coherent.
 SANITY_TABLES = [
-    "projects",
+    "plant_projects",
     "plants",
-    "events",
+    "event_log",
     "locations",
     "inventory_items",
     "plant_varieties",
