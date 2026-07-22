@@ -356,7 +356,7 @@ def compute_rpo(cfg):
     try:
         latest = _psql_scalar(
             cfg.neon_backup_url,
-            "SELECT COALESCE(max(created_at)::text, 'none') FROM events;",
+            "SELECT COALESCE(max(created_at)::text, 'none') FROM event_log;",
         )
     except RevertError:
         latest = "unknown"
