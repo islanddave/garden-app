@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.57.1",
+    "date": "2026-07-22",
+    "highlights": [
+      "Behind the scenes: the daily check that watches over the app's release protections was raising a false alarm. It now says plainly when it can't complete a check, instead of reporting a problem that isn't there."
+    ]
+  },
+  {
     "version": "3.57.0",
     "date": "2026-07-21",
     "highlights": [
