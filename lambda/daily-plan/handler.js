@@ -1,5 +1,5 @@
 'use strict';
-// DRG-TODAY-001 — overnight Daily Plan generator (HELD: not yet wired into deploy-lambda.yml's 4 dir lists; AE-050).
+// DRG-TODAY-001 — overnight Daily Plan generator.
 // Pattern mirrors garden-xp-reconcile: EventBridge nightly (midnight ET), DRY_RUN-gated, no Fn URL, kill-switchable.
 // Reads Neon (conn from Secrets Manager SECRET_ARN_NEON — NEVER hardcode), resolves weather from each Space's
 // postal_code (zip-driven, not hardcoded), runs ./engine per CARETAKER, idempotent upsert into daily_plan.
