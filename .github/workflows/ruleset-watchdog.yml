@@ -5,7 +5,30 @@ name: Ruleset Drift Watchdog
 # so its own definition is capability-gated — an agent writing dev cannot unilaterally alter
 # it (dev->main is a Dave-approved gate). NOT load-bearing (the gate already blocks agent
 # writes to main); this catches accidental or manual ruleset tampering.
-# Requires secret RULESET_READ_PAT = a token with administration:read on the repo.
+#
+# AUTH (rewired 2026-07-22): mints a garden-bot App token per run instead of reading the
+# long-lived `RULESET_READ_PAT` secret. WHY: that secret was set 2026-06-03 and holds a token
+# value that no longer exists in the account, so this workflow had been 401ing — while BOTH
+# live account PATs were perfectly healthy. A repo secret is a stored COPY of a token and rots
+# INDEPENDENTLY of the account's token list, so "my PATs are fine" and "this workflow is 401ing"
+# are both true at once. Diagnosing the 401 as an expired account PAT was wrong and cost a
+# rotation request that was never needed. App tokens are minted per run and cannot rot, which
+# removes the whole class. Falls back to RULESET_READ_PAT when the mint fails, so landing this
+# cannot make things worse than they already are.
+# NOTE: garden-bot needs `administration: read` on the repo for the rulesets API.
+#
+# FAIL-SOFT ON AUTH, HARD ON DRIFT (added 2026-07-22, per L-288): the previous version mapped
+# EVERY failure — auth, network, timeout — onto "RULESET DRIFT detected" and failed the run.
+# That is precisely the defect L-288 records in pstate's verify: conflating "I could not ask"
+# with "the answer is no", then escalating to the strongest available claim. A watchdog that
+# cries drift when it merely could not reach GitHub trains its reader to ignore it, which
+# destroys the signal it exists to carry. Now:
+#   - genuine drift           -> ::error::   + exit 1  (alert, unchanged)
+#   - could not verify at all -> ::warning:: + exit 0  (visible, but not a false drift alarm)
+# The tradeoff is deliberate and stated: an unverifiable watchdog is a DEGRADED guard and says
+# so in its annotation, instead of a red X that means nothing. A 404 on /rulesets is treated as
+# unverifiable, NOT as "ruleset deleted" — 404 is ambiguous between a missing permission and a
+# missing resource. Only a SUCCESSFUL read whose id list omits the ruleset counts as drift.
 
 on:
   schedule:
@@ -19,46 +42,71 @@ jobs:
   assert-ruleset:
     runs-on: ubuntu-latest
     steps:
+      - name: Mint garden-bot token
+        id: bot
+        continue-on-error: true
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547  # v1
+        with:
+          app-id: ${{ secrets.GARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.GARDEN_BOT_PRIVATE_KEY }}
+
       - name: Assert main-capability-gate ruleset intact
         env:
-          GH_TOKEN: ${{ secrets.RULESET_READ_PAT }}
+          GH_TOKEN: ${{ steps.bot.outputs.token || secrets.RULESET_READ_PAT }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::RULESET_READ_PAT not set (needs administration:read). Cannot verify the ruleset."
-            exit 1
+            echo "::warning::UNVERIFIED - no usable credential (garden-bot mint failed and RULESET_READ_PAT is unset). The ruleset was NOT checked. Degraded guard, not a drift signal."
+            exit 0
           fi
           python3 - <<'PY'
-          import json, os, sys, urllib.request
+          import json, os, sys, urllib.error, urllib.request
           tok = os.environ["GH_TOKEN"]; repo = os.environ["REPO"]
           EXPECT_ID = 17227141; EXPECT_BOT = 3951762
+
+          class Unverifiable(Exception):
+              """Could not reach or read the API. NOT evidence of drift."""
+
           def api(path):
               req = urllib.request.Request(
                   "https://api.github.com/repos/%s%s" % (repo, path),
                   headers={"Authorization": "token %s" % tok,
                            "Accept": "application/vnd.github+json"})
-              return json.load(urllib.request.urlopen(req))
-          fail = []
-          ids = [r["id"] for r in api("/rulesets")]
-          if EXPECT_ID not in ids:
-              fail.append("ruleset %d MISSING (present: %s)" % (EXPECT_ID, ids))
-          else:
-              d = api("/rulesets/%d" % EXPECT_ID)
-              if d.get("enforcement") != "active":
-                  fail.append("enforcement=%s != active" % d.get("enforcement"))
-              ba = d.get("bypass_actors", [])
-              ok_bypass = (len(ba) == 1 and ba[0].get("actor_id") == EXPECT_BOT
-                           and ba[0].get("actor_type") == "Integration")
-              if not ok_bypass:
-                  fail.append("bypass_actors drifted: %s" % ba)
-              rules = set(r["type"] for r in d.get("rules", []))
-              for need in ("pull_request", "non_fast_forward", "deletion"):
-                  if need not in rules:
-                      fail.append("missing rule: %s" % need)
-              inc = d.get("conditions", {}).get("ref_name", {}).get("include", [])
-              if inc != ["refs/heads/main"]:
-                  fail.append("ref scope drifted: %s" % inc)
+              try:
+                  return json.load(urllib.request.urlopen(req, timeout=30))
+              except urllib.error.HTTPError as e:
+                  raise Unverifiable("HTTP %s on %s" % (e.code, path))
+              except Exception as e:
+                  raise Unverifiable("%s on %s" % (type(e).__name__, path))
+
+          try:
+              fail = []
+              ids = [r["id"] for r in api("/rulesets")]
+              if EXPECT_ID not in ids:
+                  fail.append("ruleset %d MISSING (present: %s)" % (EXPECT_ID, ids))
+              else:
+                  d = api("/rulesets/%d" % EXPECT_ID)
+                  if d.get("enforcement") != "active":
+                      fail.append("enforcement=%s != active" % d.get("enforcement"))
+                  ba = d.get("bypass_actors", [])
+                  ok_bypass = (len(ba) == 1 and ba[0].get("actor_id") == EXPECT_BOT
+                               and ba[0].get("actor_type") == "Integration")
+                  if not ok_bypass:
+                      fail.append("bypass_actors drifted: %s" % ba)
+                  rules = set(r["type"] for r in d.get("rules", []))
+                  for need in ("pull_request", "non_fast_forward", "deletion"):
+                      if need not in rules:
+                          fail.append("missing rule: %s" % need)
+                  inc = d.get("conditions", {}).get("ref_name", {}).get("include", [])
+                  if inc != ["refs/heads/main"]:
+                      fail.append("ref scope drifted: %s" % inc)
+          except Unverifiable as u:
+              print("::warning::UNVERIFIED - could not read the ruleset (%s). The ruleset was NOT "
+                    "checked; this is NOT a drift signal. If garden-bot is the credential, it needs "
+                    "administration:read on the repo." % u)
+              sys.exit(0)
+
           if fail:
               print("::error::main-capability-gate RULESET DRIFT detected:")
               for f in fail:
