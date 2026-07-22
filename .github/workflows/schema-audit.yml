@@ -1,21 +1,40 @@
-name: L-081 Schema Audit (Pre-merge)
+name: L-081 Schema Audit (dev)
 
-# Pre-flight gate before any dev->main squash-merge.
-# Verifies columns asserted in lambda/**/select-columns.test.js are present
-# in prod Neon's information_schema.columns.
+# Verifies lambda code's column references are present in prod Neon's
+# information_schema.columns: Phase 1 = lambda/**/select-columns.test.js
+# assertions; Phases 2-3 = INSERT column lists + soft-delete deleted_at refs
+# in lambda/**/index.js.
 # Catches the L-081 bug class (local_3f62f153 2026-05-19 prod incident):
 # lambda code references columns that exist in staging but not prod, deploy
 # succeeds, every endpoint 500s.
 #
-# Currently runs in advisory mode (failure does NOT block PR merge). Once
-# validated across a few PRs, flip to required check via branch protection.
+# Trigger re-homed 2026-07-22 (OPS-GUARDINTEG-001): the original
+# `pull_request -> main` trigger became structurally unreachable when
+# OPS-GATE-001 (2026-06-03) retired PRs to main — main advances ONLY by
+# garden-bot fast-forward via promote-gate, so no PR to main can ever exist.
+# The workflow sat dead 7 weeks while looking configured. It now fires on
+# push to dev, path-filtered to exactly what the audit reads (the lambda
+# column sources), plus migrations/** as the schema-change signal and the
+# audit script + this workflow themselves.
+#
+# Advisory: a genuine FAIL (missing column) fails this workflow, but nothing
+# gates on it yet. The fail-soft paths (missing secret, inconclusive) no
+# longer exit 0 silently — they emit a loud UNVERIFIED warning + job summary.
+# Resurrect observably first; consider wiring into the pre-promote impact
+# pass once a green history exists.
 #
 # Audit script: scripts/dev-main-schema-audit.py (canonical here in garden-app/).
 # A reference copy lives in claude-ops/scripts/ for local sandbox invocation. Keep in sync.
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches: [dev]
+    paths:
+      - 'lambda/**/index.js'
+      - 'lambda/**/select-columns.test.js'
+      - 'migrations/**'
+      - 'scripts/dev-main-schema-audit.py'
+      - '.github/workflows/schema-audit.yml'
   workflow_dispatch:
 
 permissions:
@@ -53,19 +72,27 @@ jobs:
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
         run: |
           if [[ -z "$NEON_DATABASE_URL" ]]; then
-            echo "::warning title=L-081 audit not configured::NEON_DATABASE_URL secret not set on this repo. Audit cannot run."
-            echo "::warning::Add NEON_DATABASE_URL to Settings -> Secrets and variables -> Actions to enable the gate."
-            echo "Skipping audit. This run will not block the PR. Manual audit still required per L-081 until secret is configured."
+            echo "::warning title=L-081 audit UNVERIFIED::UNVERIFIED — NEON_DATABASE_URL secret not set; schema audit did NOT run. Green here verifies nothing."
+            {
+              echo "### ⚠️ UNVERIFIED — L-081 schema audit did not run"
+              echo "NEON_DATABASE_URL is not configured (Settings → Secrets and variables → Actions). No column refs were checked against prod Neon this run."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           python3 scripts/dev-main-schema-audit.py --repo-root . --verbose | tee audit-output.txt
           AUDIT_EXIT=${PIPESTATUS[0]}
           if [[ "$AUDIT_EXIT" -eq 0 ]]; then
-            echo "::notice title=L-081 audit PASS::All lambda column refs present in prod Neon. Squash-merge safe per L-081."
+            echo "::notice title=L-081 audit PASS::All lambda column refs present in prod Neon."
+            echo "✅ L-081 schema audit PASS — all lambda column refs present in prod Neon." >> "$GITHUB_STEP_SUMMARY"
           elif [[ "$AUDIT_EXIT" -eq 1 ]]; then
-            echo "::error title=L-081 audit FAIL::Lambda code references columns missing in prod Neon. HALT squash-merge. Apply additive migration to prod first."
+            echo "::error title=L-081 audit FAIL::Lambda code references columns missing in prod Neon. Apply additive migration to prod before promote."
+            echo "❌ L-081 schema audit FAIL — lambda code references columns missing in prod Neon. See run log." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           else
-            echo "::warning title=L-081 audit inconclusive::Script exited $AUDIT_EXIT (config/connection/parse failure). Investigate before merging."
+            echo "::warning title=L-081 audit UNVERIFIED::UNVERIFIED — audit inconclusive (script exited $AUDIT_EXIT: config/connection/parse failure). Schema state was NOT verified this run."
+            {
+              echo "### ⚠️ UNVERIFIED — L-081 schema audit inconclusive"
+              echo "Audit script exited $AUDIT_EXIT (config/connection/parse failure). No PASS/FAIL determination was made; schema state is unverified."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
