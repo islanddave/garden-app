@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.58.1",
+    "date": "2026-07-22",
+    "highlights": [
+      "The save confirmation now includes a View planting shortcut — jump straight to the planting you just logged"
+    ]
+  },
+  {
     "version": "3.58.0",
     "date": "2026-07-22",
     "highlights": [
