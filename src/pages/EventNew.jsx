@@ -704,6 +704,10 @@ export default function EventNew() {
     // and STAY on the form, never navigate away ("no more Save and go back to Garden").
     // Two entry points: keepMode 'plant' (default / Enter) and keepMode 'type'.
     const projName = projects.find(p => p.id === form.project_id)?.name ?? 'event'
+    // V4-VIEWPLANT-001: display name for the card's "View {planting}" action, captured from
+    // client state BEFORE resetForNext clears form.plant_id. Label only — the href ids come from
+    // the POST response. null → literal-noun "View planting" fallback; never fetched.
+    const plantName = form.plant_id ? (plantsForProject.find(p => p.id === form.plant_id)?.name ?? null) : null
 
     // V4-HARVESTCENTER-001 (L9): capture the "preserve this?" prefill BEFORE resetForNext clears
     // form.plant_id. Provenance is best-effort — crop/variety resolve off the selected planting's
@@ -731,6 +735,11 @@ export default function EventNew() {
         setConfirmation({
           eventId,
           projectId: result.project_id ?? null,
+          // V4-VIEWPLANT-001: plantId gates + builds the "View planting" action. RESPONSE-sourced
+          // (same event row as project_id, so the pair corresponds by construction — the project-
+          // scoped planting route's ownership guard, PlantingDetail.jsx:126, is satisfied).
+          plantId: result.plant_id ?? null,
+          plantName,
           projName,
           eventLabel: (EVENT_TYPE_META[form.event_type]?.label ?? 'event').replace('\n', ' '),
           eventEmoji: EVENT_TYPE_META[form.event_type]?.emoji ?? '✓',
@@ -754,14 +763,22 @@ export default function EventNew() {
   // ── V4-LOGCONF-001 (C1+C2): durable overlay confirmation — replaces the sheet body ──
   // Pattern copied from LogMany's proven result screen (:248-269). Overlay-only: the full-page
   // branch keeps the global toast + always-visible form (see handleSubmit). Dismissed ONLY by
-  // explicit action: Close (primary → dismiss overlay), View event (secondary, literal noun,
-  // targets EventDetail from the POST response), Log another (rapid entry, V3-EVENT-001 — the form
-  // is already reset underneath), Undo (tertiary: separated placement + icon + lighter weight, not
+  // explicit action: Close (primary → dismiss overlay), View event + View planting (sibling
+  // secondaries, literal nouns — EventDetail / PlantingDetail from the POST response; the planting
+  // one renders only when the event has a plant_id — V4-VIEWPLANT-001), Log another (rapid entry,
+  // V3-EVENT-001 — the form is already reset underneath), Undo (tertiary: separated placement + icon + lighter weight, not
   // color alone; ≥44pt). The action footer is sticky with env(safe-area-inset-bottom) ON the footer
   // and a visualViewport lift so the iOS keyboard can never occlude it.
   if (inOverlay && confirmation) {
     const viewHref = (!confirmation.undone && confirmation.projectId && confirmation.eventId)
       ? `/projects/${confirmation.projectId}/events/${confirmation.eventId}` : null
+    // V4-VIEWPLANT-001: sibling secondary to View event, shown ONLY when the created event has a
+    // planting (response plant_id). Route: the project-scoped planting route is the ONLY registered
+    // PlantingDetail route (App.jsx `/projects/:id/plantings/:plantingId`; V3-NAV-001 added entry
+    // points, not an un-scoped route). Its ownership guard 404s a mismatched project/planting pair
+    // (PlantingDetail.jsx:126) — safe here because BOTH ids come from the same POST response row.
+    const viewPlantingHref = (!confirmation.undone && confirmation.projectId && confirmation.plantId)
+      ? `/projects/${confirmation.projectId}/plantings/${confirmation.plantId}` : null
     return (
       <div style={{ backgroundColor: P.cream, display: 'flex', flexDirection: 'column', minHeight: '45dvh' }}>
         <div style={{ maxWidth: 600, width: '100%', margin: '0 auto', padding: '24px 16px 8px', flex: 1, boxSizing: 'border-box' }}>
@@ -818,6 +835,16 @@ export default function EventNew() {
           {viewHref && (
             <Link to={viewHref} style={{ ...confirmBtnGhost, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
               View event
+            </Link>
+          )}
+          {viewPlantingHref && (
+            <Link to={viewPlantingHref} style={{ ...confirmBtnGhost, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', maxWidth: 180 }}>
+              {/* long plant names: clamp the label text (ellipsis needs the inner span — an
+                  inline-flex box won't ellipsize itself), keep the 44pt target; the footer's
+                  flexWrap stacks/wraps at ~390px rather than shrinking targets */}
+              <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {confirmation.plantName ? `View ${confirmation.plantName}` : 'View planting'}
+              </span>
             </Link>
           )}
           <button type="button" ref={closeBtnRef} onClick={dismissOverlay} style={confirmBtnPrimary}>

@@ -201,6 +201,62 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2)', () => {
     expect(navigateSpy).toHaveBeenCalledWith('/today', { replace: true })
   })
 
+  // ── V4-VIEWPLANT-001: "View planting" sibling secondary on the confirmation card ──
+  // ROUTE CHOICE (load-bearing): the project-scoped `/projects/:id/plantings/:plantingId` is the
+  // ONLY registered PlantingDetail route (App.jsx — V3-NAV-001 shipped entry points to it, not an
+  // un-scoped route). Its ownership guard treats a project/planting mismatch as not-found
+  // (PlantingDetail.jsx:126 — "the URL's project segment must match the planting's real project").
+  // Using it here is safe because BOTH href ids come from the SAME POST-response event row
+  // (result.project_id + result.plant_id), which correspond by construction — the server created
+  // the event for that planting inside that project. Client-side ids are never used for the href.
+  it('View planting renders as a link when the response has a plant_id — named from client state, href from the response', async () => {
+    // response ids deliberately differ from client selections (proj-1 / pl-1) — href must follow the response
+    dataRef.plants = [{ id: 'pl-1', name: 'Cayenne #1' }]
+    dataRef.postResult = { id: 'evt-7', project_id: 'proj-9', plant_id: 'pl-42' }
+    renderInOverlay('event_type=watering')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await waitFor(() => screen.getByText('Cayenne #1'))
+    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
+    // display name is the cheap client-state lookup; ids are the response's corresponding pair
+    const link = screen.getByRole('link', { name: 'View Cayenne #1' })
+    expect(link.getAttribute('href')).toBe('/projects/proj-9/plantings/pl-42')
+    // sibling secondary — View event still present alongside
+    expect(screen.getByRole('link', { name: 'View event' })).toBeTruthy()
+  })
+
+  it('View planting falls back to the literal noun when no client-side name resolves — visibility is response-driven', async () => {
+    // no plant selected client-side, but the response row carries a plant_id → action still offered
+    dataRef.postResult = { id: 'evt-3', project_id: 'proj-1', plant_id: 'pl-77' }
+    renderInOverlay('event_type=watering')
+    await flushLoad()
+    await saveOnce()
+    const link = screen.getByRole('link', { name: 'View planting' })
+    expect(link.getAttribute('href')).toBe('/projects/proj-1/plantings/pl-77')
+  })
+
+  it('no plant_id in the response → card unchanged: View event is the only link', async () => {
+    renderInOverlay('event_type=watering')
+    await flushLoad()
+    await saveOnce()
+    const links = screen.getAllByRole('link')
+    expect(links.length).toBe(1)
+    expect(links[0].textContent).toBe('View event')
+    expect(screen.queryByRole('link', { name: /planting/i })).toBeNull()
+  })
+
+  it('Undo withdraws View planting along with View event', async () => {
+    dataRef.postResult = { id: 'evt-3', project_id: 'proj-1', plant_id: 'pl-77' }
+    renderInOverlay('event_type=watering')
+    await flushLoad()
+    await saveOnce()
+    expect(screen.getByRole('link', { name: 'View planting' })).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /undo/i })) })
+    expect(screen.queryByRole('link', { name: 'View planting' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'View event' })).toBeNull()
+  })
+
   it('non-overlay branch: no confirmation card; the timed global undo toast is preserved', async () => {
     renderFullPage('event_type=watering')
     await flushLoad()
