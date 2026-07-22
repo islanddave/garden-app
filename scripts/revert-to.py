@@ -115,9 +115,9 @@ REHEARSAL_BRANCH_PREFIX = "revert-rehearsal-"
 
 # Key tables for the row-count sanity validate + RPO probe (read-only).
 SANITY_TABLES = [
-    "projects",
+    "plant_projects",
     "plants",
-    "events",
+    "event_log",
     "locations",
     "inventory_items",
     "plant_varieties",
