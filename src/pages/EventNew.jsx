@@ -15,7 +15,7 @@ import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import { useToast } from '../context/ToastContext.jsx'
-import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap } from '../context/OverlayContext.jsx'
+import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap, useOverlayDismiss } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS, SEVERITY_LEVELS, ISSUE_OPTIONS } from '../lib/dropdownRegistry.js'
 
@@ -125,6 +125,24 @@ function useVoiceInput() {
   }, [])
 
   return { start, stop, listening, fieldKey, supported }
+}
+
+// V4-LOGCONF-001 (C1): the iOS keyboard shrinks the VISUAL viewport but neither dvh nor the layout
+// viewport tracks it, so a bottom-anchored sticky footer inside the overlay Sheet can sit under the
+// keyboard. Track the occluded inset via visualViewport (0 where unsupported, incl. jsdom) and lift
+// bottom-stuck elements by it.
+function useVisualViewportInset() {
+  const [inset, setInset] = useState(0)
+  useEffect(() => {
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null
+    if (!vv) return
+    const update = () => setInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop))
+    update()
+    vv.addEventListener('resize', update)
+    vv.addEventListener('scroll', update)
+    return () => { vv.removeEventListener('resize', update); vv.removeEventListener('scroll', update) }
+  }, [])
+  return inset
 }
 
 function MicBtn({ fieldKey, onResult, voice, top = '50%', transform = 'translateY(-50%)' }) {
@@ -265,10 +283,16 @@ export default function EventNew() {
   // the original background); full-page it degrades to a plain navigate. Reward-adjacent, no interrupt.
   const putUpSwap = useOverlaySwap()
   const [preserveCtx, setPreserveCtx] = useState(null)
-  // §7 toast modality: the global Undo toast renders OUTSIDE the aria-modal dialog, so a screen
-  // reader (and the focus trap) can't reach it. Inside the overlay we surface an in-panel, announced,
-  // focusable undo instead. { message, eventId } | null.
-  const [inlineUndo, setInlineUndo] = useState(null)
+  // V4-LOGCONF-001 (C1+C2, supersedes the §7 inlineUndo timed banner): after an overlay save the
+  // sheet BODY is replaced by a DURABLE confirmation card — no timer, dismissed only by explicit
+  // action (Close / View event / Log another / Undo). Same §7 modality rationale (the global toast
+  // is AT-invisible behind aria-modal) but as a state change, not a 5s race the user always loses.
+  // { eventId, projectId, projName, eventLabel, eventEmoji, undone, error } | null.
+  // projectId comes from the POST RESPONSE (not staged client state) — it builds the View link.
+  const [confirmation, setConfirmation] = useState(null)
+  const closeBtnRef = useRef(null)
+  const dismissOverlay = useOverlayDismiss()
+  const kbInset = useVisualViewportInset()
   const [metadataState, setMetadataState] = useState({})
   // V4-TREATLOG-001: dedicated treatment capture (pest_treatment / doctored).
   const [treatment, setTreatment] = useState({ pest_target: '', product_id: '', product_text: '', category: '', amount: '' })
@@ -454,18 +478,28 @@ export default function EventNew() {
     setPhotoPreview(null)
   }
 
-  // §7 in-surface undo — soft-delete the just-logged event (same action as the global toast's Undo).
-  function undoInline() {
-    if (!inlineUndo) return
-    apiFetch('/api/events/' + inlineUndo.eventId, { method: 'DELETE' }).catch(() => {})
-    setInlineUndo(null)
+  // V4-LOGCONF-001 undo — REUSES the sanctioned soft-delete (DELETE /api/events/:id sets deleted_at
+  // + recomputes watering memory; same path as EventDetail's delete and the global toast's Undo).
+  // Awaited so the card reflects the outcome: success flips to a durable "removed" state; failure
+  // surfaces a retryable error instead of silently losing the undo (ADHD forgiveness — a mistake
+  // must never have a shame-outcome with no recovery path).
+  async function undoEvent() {
+    if (!confirmation || confirmation.undone) return
+    try {
+      await apiFetch('/api/events/' + confirmation.eventId, { method: 'DELETE' })
+      setConfirmation(c => (c ? { ...c, undone: true, error: null } : c))
+    } catch {
+      setConfirmation(c => (c ? { ...c, error: "Couldn't undo — try again." } : c))
+    }
   }
-  // Auto-dismiss the in-surface undo after 5s, mirroring the global undo toast's lifetime.
+  // Deliberate focus management (C1): when the card appears (and again when Undo lands), move focus
+  // to the primary Close action. Keyed on the PHASE string, not the confirmation object, so an undo
+  // FAILURE (error added, phase unchanged) never yanks focus away from the retryable Undo button.
+  // (BUG-SOWFOCUS-001 class: never key a focus effect on an identity that changes per render.)
+  const confirmPhase = confirmation ? (confirmation.undone ? 'undone' : 'logged') : null
   useEffect(() => {
-    if (!inlineUndo) return
-    const t = setTimeout(() => setInlineUndo(null), 5000)
-    return () => clearTimeout(t)
-  }, [inlineUndo])
+    if (confirmPhase) closeBtnRef.current?.focus()
+  }, [confirmPhase])
 
   // V1.2a-2 Wave 3: client-side harvest validation — mirrors the server contract
   // in lambda/events/validators.js. Returns an error string, or null if valid.
@@ -691,10 +725,22 @@ export default function EventNew() {
     // ambient per Reward-UX V101 — never dispatched here.
     if (eventId) {
       if (inOverlay) {
-        // §7 modality fix: the global toast is AT-invisible behind aria-modal, so surface the undo
-        // INSIDE the panel (announced + focusable). Global toast is skipped to avoid a duplicate.
-        setInlineUndo({ message: `Logged event for ${projName}`, eventId })
+        // V4-LOGCONF-001 (C1+C2): durable confirmation card replaces the sheet body — no timer.
+        // Global toast is skipped (AT-invisible behind aria-modal, §7). projectId is taken from the
+        // POST RESPONSE so the View link can never point at a stale/mismatched client-side project.
+        setConfirmation({
+          eventId,
+          projectId: result.project_id ?? null,
+          projName,
+          eventLabel: (EVENT_TYPE_META[form.event_type]?.label ?? 'event').replace('\n', ' '),
+          eventEmoji: EVENT_TYPE_META[form.event_type]?.emoji ?? '✓',
+          undone: false,
+          error: null,
+        })
       } else {
+        // Non-overlay (full page) DELIBERATELY keeps the global operational toast: outside the
+        // aria-modal sheet the toast IS AT-reachable, and the full-page rapid-entry flow keeps the
+        // form on screen — a body-replacing card here would add a tap to every sequential log.
         showUndo({
           message: `Logged event for ${projName}`,
           onUndo: () => { apiFetch('/api/events/' + eventId, { method: 'DELETE' }).catch(() => {}) },
@@ -703,6 +749,83 @@ export default function EventNew() {
     } else {
       showToast({ message: keepMode === 'type' ? 'Saved — pick the next plant' : 'Saved — log the next event' })
     }
+  }
+
+  // ── V4-LOGCONF-001 (C1+C2): durable overlay confirmation — replaces the sheet body ──
+  // Pattern copied from LogMany's proven result screen (:248-269). Overlay-only: the full-page
+  // branch keeps the global toast + always-visible form (see handleSubmit). Dismissed ONLY by
+  // explicit action: Close (primary → dismiss overlay), View event (secondary, literal noun,
+  // targets EventDetail from the POST response), Log another (rapid entry, V3-EVENT-001 — the form
+  // is already reset underneath), Undo (tertiary: separated placement + icon + lighter weight, not
+  // color alone; ≥44pt). The action footer is sticky with env(safe-area-inset-bottom) ON the footer
+  // and a visualViewport lift so the iOS keyboard can never occlude it.
+  if (inOverlay && confirmation) {
+    const viewHref = (!confirmation.undone && confirmation.projectId && confirmation.eventId)
+      ? `/projects/${confirmation.projectId}/events/${confirmation.eventId}` : null
+    return (
+      <div style={{ backgroundColor: P.cream, display: 'flex', flexDirection: 'column', minHeight: '45dvh' }}>
+        <div style={{ maxWidth: 600, width: '100%', margin: '0 auto', padding: '24px 16px 8px', flex: 1, boxSizing: 'border-box' }}>
+          <div style={{ backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: 20, textAlign: 'center' }}>
+            <div role="status" aria-live="polite">
+              {confirmation.undone ? (
+                <p style={{ margin: 0, fontWeight: 700, color: P.green, fontSize: '1.05rem' }}>
+                  <span aria-hidden="true">↩ </span>Event removed
+                </p>
+              ) : (
+                <>
+                  <div style={{ fontSize: '2rem', lineHeight: 1, marginBottom: 8 }} aria-hidden="true">{confirmation.eventEmoji}</div>
+                  <p style={{ margin: '0 0 4px', fontWeight: 700, color: P.green, fontSize: '1.05rem' }}>
+                    ✓ Logged {confirmation.eventLabel}
+                  </p>
+                  <p style={{ margin: 0, color: P.mid, fontSize: '0.85rem' }}>for {confirmation.projName}</p>
+                </>
+              )}
+            </div>
+            {confirmation.error && (
+              <p role="alert" style={{ margin: '10px 0 0', color: P.terra, fontSize: '0.82rem', fontWeight: 600 }}>
+                {confirmation.error}
+              </p>
+            )}
+            {!confirmation.undone && (
+              <div style={{ marginTop: 14, paddingTop: 10, borderTop: `1px solid ${P.greenLight}` }}>
+                <button type="button" onClick={undoEvent} style={{
+                  background: 'transparent', border: 'none', color: P.mid, fontWeight: 500,
+                  fontSize: '0.88rem', cursor: 'pointer', minHeight: 44, minWidth: 44,
+                  padding: '10px 14px', fontFamily: 'inherit',
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}>
+                  <span aria-hidden="true">↩</span> Undo this log
+                </button>
+              </div>
+            )}
+          </div>
+          {preserveCtx && !confirmation.undone && (
+            <PreserveOffer
+              onOpen={() => putUpSwap('/put-up', { state: { prefill: preserveCtx.prefill } })}
+              onDismiss={() => setPreserveCtx(null)}
+            />
+          )}
+        </div>
+        <div style={{
+          position: 'sticky', bottom: kbInset, zIndex: 200, backgroundColor: P.cream,
+          borderTop: `1px solid ${P.border}`, padding: '10px 16px',
+          paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
+          display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap',
+        }}>
+          <button type="button" onClick={() => setConfirmation(null)} style={confirmBtnGhost}>
+            Log another
+          </button>
+          {viewHref && (
+            <Link to={viewHref} style={{ ...confirmBtnGhost, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+              View event
+            </Link>
+          )}
+          <button type="button" ref={closeBtnRef} onClick={dismissOverlay} style={confirmBtnPrimary}>
+            Close
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -739,50 +862,15 @@ export default function EventNew() {
         {error && <ErrorBanner style={{ marginBottom: 16 }}>{error}</ErrorBanner>}
         {notice && <ErrorBanner style={{ marginBottom: 16 }}>{notice}</ErrorBanner>}
 
-        {/* §7 in-surface undo — announced (role=status + aria-live) and focusable INSIDE the dialog,
-            so the just-logged event is reversible for AT + keyboard users the global toast can't reach
-            (it renders outside aria-modal). Overlay-only; the full-page path uses the global toast. */}
-        {inOverlay && inlineUndo && (
-          <div role="status" aria-live="polite" style={{
-            display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
-            backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10,
-            padding: '10px 14px',
-          }}>
-            <span style={{ flex: 1, fontSize: '0.88rem', fontWeight: 600, color: P.green }}>
-              ✓ {inlineUndo.message}
-            </span>
-            <button type="button" onClick={undoInline} style={{
-              background: 'transparent', color: P.green, border: `1px solid ${P.greenLight}`,
-              borderRadius: 6, padding: '5px 12px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer',
-              fontFamily: 'inherit',
-            }}>Undo</button>
-          </div>
-        )}
-
-        {/* V4-HARVESTCENTER-001 (L9): ambient "preserve this?" affordance after a harvest logs. No
-            interrupt, no modal — an inline, dismissible offer that opens Put-Up prefilled. Honors
-            Reward-UX (reward-adjacent, not a reward surface). Renders on both the overlay + full-page
-            paths (putUpSwap degrades to a plain navigate full-page). */}
+        {/* V4-HARVESTCENTER-001 (L9): ambient "preserve this?" affordance after a harvest logs. On
+            the overlay path it now renders on the V4-LOGCONF-001 confirmation card (see above); here
+            it covers the full-page path and the post-"Log another" form (preserveCtx survives the
+            card dismissal so the habit-stack offer isn't lost). */}
         {preserveCtx && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap',
-            backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: '12px 14px',
-          }}>
-            <span style={{ flex: 1, minWidth: 160, fontSize: '0.9rem', fontWeight: 600, color: P.green }}>
-              Putting any of this up for later?
-            </span>
-            <button type="button"
-              onClick={() => putUpSwap('/put-up', { state: { prefill: preserveCtx.prefill } })}
-              style={{ background: P.green, color: P.white, border: 'none', borderRadius: 6,
-                padding: '7px 14px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-              Log a put-up
-            </button>
-            <button type="button" onClick={() => setPreserveCtx(null)}
-              style={{ background: 'transparent', color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 6,
-                padding: '7px 12px', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-              Not now
-            </button>
-          </div>
+          <PreserveOffer
+            onOpen={() => putUpSwap('/put-up', { state: { prefill: preserveCtx.prefill } })}
+            onDismiss={() => setPreserveCtx(null)}
+          />
         )}
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1156,10 +1244,12 @@ export default function EventNew() {
               page. bottom:68 still clears the fixed BottomNav on the full-page path. right:20 is dropped
               (a sticky block spans the content column; justify-content:flex-end right-aligns the button,
               and the form's own right padding gives the gap) so the inset can't shift it off-panel. */}
+          {/* V4-LOGCONF-001 (C1): + kbInset — visualViewport lift so the iOS keyboard (untracked by
+              dvh) can never occlude the Save CTA inside the overlay Sheet. 0 when no keyboard. */}
           <div
             style={{
               position: 'sticky',
-              bottom: 68,
+              bottom: 68 + kbInset,
               zIndex: 200,
               display: 'flex',
               justifyContent: 'flex-end',
@@ -1243,6 +1333,35 @@ function FlagModeFields({ severity, onSeverity, issueChoice, onIssueChoice, issu
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// V4-LOGCONF-001 action styles — mirror LogMany's result-screen buttons; min 44pt touch targets.
+const confirmBtnPrimary = { backgroundColor: P.green, color: P.white, border: 'none', borderRadius: 8, padding: '11px 18px', minHeight: 44, fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
+const confirmBtnGhost = { backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 8, padding: '10px 16px', minHeight: 44, fontSize: '0.88rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }
+
+// V4-HARVESTCENTER-001 (L9) "preserve this?" offer — extracted so the V4-LOGCONF-001 confirmation
+// card and the form view render the identical affordance. Reward-adjacent, ambient, dismissible.
+function PreserveOffer({ onOpen, onDismiss }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, marginBottom: 16, flexWrap: 'wrap',
+      backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: '12px 14px',
+    }}>
+      <span style={{ flex: 1, minWidth: 160, fontSize: '0.9rem', fontWeight: 600, color: P.green }}>
+        Putting any of this up for later?
+      </span>
+      <button type="button" onClick={onOpen}
+        style={{ background: P.green, color: P.white, border: 'none', borderRadius: 6,
+          padding: '7px 14px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+        Log a put-up
+      </button>
+      <button type="button" onClick={onDismiss}
+        style={{ background: 'transparent', color: P.green, border: `1px solid ${P.greenLight}`, borderRadius: 6,
+          padding: '7px 12px', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+        Not now
+      </button>
     </div>
   )
 }
