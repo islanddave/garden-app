@@ -70,6 +70,7 @@ export default function NotifyButton({ eventCount = 0, harvestCount = 0, enabled
   })
   const [saveError, setSaveError] = useState(false)
   const [howToOpen, setHowToOpen] = useState(false)
+  const [installOpen, setInstallOpen] = useState(false)
   const [requesting, setRequesting] = useState(false)
 
   const { fetch: apiFetch } = useApiFetch()
@@ -84,28 +85,73 @@ export default function NotifyButton({ eventCount = 0, harvestCount = 0, enabled
   // ─── Kill switch ────────────────────────────────────────────────────────────
   if (!enabled) return null
 
-  // ─── Capability gate ────────────────────────────────────────────────────────
-  // Push API unavailable (e.g. iOS Safari outside a PWA) → nothing to show.
-  if (typeof window !== 'undefined' && !('Notification' in window)) return null
-
   // ─── Engagement gate ────────────────────────────────────────────────────────
-  // Avoid front-loading a permissions decision before the user is invested.
+  // Avoid front-loading a permissions/install decision before the user is invested.
   if (eventCount < MIN_EVENTS && harvestCount < MIN_HARVESTS) return null
 
-  // ─── iOS Safari non-PWA passive notice ──────────────────────────────────────
+  // ─── iOS Safari non-PWA guidance (MUST precede the capability gate) ─────────
+  // iOS Safari outside an installed PWA has no window.Notification at all, so a
+  // capability check placed first made this branch unreachable on the exact
+  // device it targets (push-P0 gate-order fix, 2026-07-22). Guidance tile with a
+  // user-initiated expandable A2HS how-to — same primitive as the denied how-to.
   if (isIOS() && !isStandalonePWA()) {
     return (
-      <div style={tileStyle} data-testid="notify-button">
-        <span style={{ fontSize: '1.4rem' }}>🔔</span>
-        <div>
-          <div style={labelStyle}>REMINDERS</div>
-          <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
-            Reminders work best in the installed app
+      <div
+        style={{ ...tileStyle, flexDirection: 'column', alignItems: 'stretch', gap: 8 }}
+        data-testid="notify-button"
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: '1.4rem' }}>🔔</span>
+          <div>
+            <div style={labelStyle}>REMINDERS</div>
+            <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
+              Reminders work best in the installed app
+            </div>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => setInstallOpen(o => !o)}
+          aria-expanded={installOpen}
+          style={{
+            alignSelf: 'flex-start',
+            minHeight: 44,
+            background: 'transparent',
+            border: 'none',
+            color: P.green,
+            fontSize: '0.85rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            padding: '4px 0',
+            textAlign: 'left',
+          }}
+        >
+          {installOpen ? 'How to install ▾' : 'How to install ▸'}
+        </button>
+        {installOpen && (
+          <ol
+            data-testid="notify-install-howto"
+            style={{
+              margin: 0,
+              paddingLeft: 20,
+              fontSize: '0.82rem',
+              color: P.mid,
+              lineHeight: 1.5,
+            }}
+          >
+            <li>In Safari, tap the Share button (the square with an arrow).</li>
+            <li>Scroll down and tap “Add to Home Screen”, then tap Add.</li>
+            <li>Open Gardens from your Home Screen — reminders can be turned on there.</li>
+          </ol>
+        )}
       </div>
     )
   }
+
+  // ─── Capability gate ────────────────────────────────────────────────────────
+  // Notification API absent (non-iOS browsers without it, or an installed iOS
+  // PWA on iOS < 16.4) → nothing actionable to show.
+  if (typeof window !== 'undefined' && !('Notification' in window)) return null
 
   async function handleEnable() {
     if (requesting) return

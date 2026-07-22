@@ -18,11 +18,10 @@ document.head.appendChild(globalStyle)
 
 registerServiceWorker()
 
-let deferredPrompt = null
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault()
-  deferredPrompt = e
-})
+// beforeinstallprompt is intentionally NOT captured: no install UI consumes a
+// deferred prompt, and calling preventDefault() suppressed Chrome's native
+// install affordance for nothing (push-P0, 2026-07-22). If P4+ builds an
+// in-app install button, capture the event there and consume it via .prompt().
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
