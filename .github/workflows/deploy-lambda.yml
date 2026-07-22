@@ -370,6 +370,73 @@ jobs:
             --source-arn "$RULE_ARN" 2>/dev/null || echo "AddPermission already exists (expected on re-deploy)."
           echo "EventBridge rule $RULE_NAME wired to garden-daily-plan (DISABLED, cron 0 6 * * ? *)"
 
+  # A0.3 — post-deploy verification (HARD GATE; deliberately NOT continue-on-error).
+  # The deploy matrix tolerates partial config failures (many continue-on-error steps); this job is
+  # the backstop that fails the whole deploy loudly when the daily-plan safety invariants don't hold
+  # in the LIVE account:
+  #   (1) garden-daily-plan env contains ALL of DRY_RUN / SYSTEM_CLERK_SUB / OWNER_FALLBACK_SUB —
+  #       guards the set-not-merge wipe hazard, where a transient read failure in any env-merge step
+  #       replaces the entire Variables map with a partial one;
+  #   (2) DRY_RUN == "false" — a wiped/reset value silently re-darkens the nightly engine (L-186 class);
+  #   (3) EventBridge rule garden-daily-plan-nightly is ENABLED with exactly one target.
+  # environment:production is REQUIRED (the OIDC trust for AWS_DEPLOY_ROLE_ARN is scoped to the
+  # env:production subject) — in this repo's observed behavior that means a SECOND approval prompt
+  # after the deploy matrix completes. needs:deploy default semantics: this job runs only when the
+  # matrix succeeded; a red matrix already fails the run on its own.
+  verify-daily-plan:
+    runs-on: ubuntu-latest
+    needs: deploy
+    environment: production
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Assert daily-plan safety invariants (hard fail)
+        run: |
+          set -euo pipefail
+          FN=garden-daily-plan
+          RULE=garden-daily-plan-nightly
+          fail=0
+          ENVJSON=$(aws lambda get-function-configuration --function-name "$FN" --region us-east-1 \
+            --query 'Environment.Variables' --output json 2>/dev/null) || ENVJSON=""
+          if [[ -z "$ENVJSON" || "$ENVJSON" == "null" ]]; then
+            echo "::error::INVARIANT 1 BROKEN: could not read $FN env, or env is EMPTY (function missing, or set-not-merge wipe)"
+            fail=1
+            ENVJSON="{}"
+          fi
+          for k in DRY_RUN SYSTEM_CLERK_SUB OWNER_FALLBACK_SUB; do
+            v=$(echo "$ENVJSON" | jq -r --arg k "$k" '.[$k] // empty')
+            if [[ -z "$v" ]]; then
+              echo "::error::INVARIANT 1 BROKEN: $FN env is missing key $k (set-not-merge wipe hazard)"
+              fail=1
+            fi
+          done
+          DR=$(echo "$ENVJSON" | jq -r '.DRY_RUN // empty')
+          if [[ "$DR" != "false" ]]; then
+            echo "::error::INVARIANT 2 BROKEN: $FN DRY_RUN='$DR' (expected 'false') — nightly engine would be dark"
+            fail=1
+          fi
+          STATE=$(aws events describe-rule --name "$RULE" --region us-east-1 \
+            --query 'State' --output text 2>/dev/null) || STATE="MISSING"
+          if [[ "$STATE" != "ENABLED" ]]; then
+            echo "::error::INVARIANT 3 BROKEN: EventBridge rule $RULE state=$STATE (expected ENABLED)"
+            fail=1
+          fi
+          NTARGETS=$(aws events list-targets-by-rule --rule "$RULE" --region us-east-1 \
+            --query 'length(Targets)' --output text 2>/dev/null) || NTARGETS="0"
+          if [[ "$NTARGETS" != "1" ]]; then
+            echo "::error::INVARIANT 3 BROKEN: $RULE has $NTARGETS targets (expected exactly 1)"
+            fail=1
+          fi
+          if [[ "$fail" -ne 0 ]]; then
+            echo "::error::A0.3 post-deploy verification FAILED — daily-plan safety invariants do not hold; treat this deploy as BAD."
+            exit 1
+          fi
+          echo "A0.3 verify OK: env keys present, DRY_RUN=false, $RULE ENABLED with exactly 1 target."
+
 # Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
 # at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).
 # These are NOT injected as GitHub Actions env vars — no DB credentials touch GitHub.
