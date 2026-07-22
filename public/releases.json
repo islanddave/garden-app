@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.58.0",
+    "date": "2026-07-22",
+    "highlights": [
+      "Saving an event now shows a lasting confirmation with Close, View event, Undo, and Log another — no more disappearing banner",
+      "Overnight care-plan generation is now reliable — it had been silently retrying every night",
+      "Behind the scenes: photo upload security hardening"
+    ]
+  },
+  {
     "version": "3.57.1",
     "date": "2026-07-22",
     "highlights": [
