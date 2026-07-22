@@ -47,12 +47,19 @@ export default defineConfig({
         'src/hooks/**',
         'src/components/**',
         'src/context/**',
+        // A0.4: instrument the daily-plan Lambda (engine/handler/station are heavily unit-tested but
+        // lambda/** was entirely absent from coverage; index.js is the AWS entrypoint, currently 0%).
+        // Ratchet stays at active_target: 0 — this only adds measurement, no new gate.
+        'lambda/daily-plan/**',
       ],
       exclude: [
         'src/__tests__/**',
         'src/main.jsx',
         'src/shims/**',
         '**/*.d.ts',
+        // Colocated lambda test files must not count as covered source (this custom exclude list
+        // replaces vitest's defaults, which would otherwise have excluded them).
+        'lambda/**/*.test.js',
       ],
     },
   },
