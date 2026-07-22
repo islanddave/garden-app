@@ -150,4 +150,24 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   }
   return { today, dryRun, rows: plans.length, plans };
 }
-module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace };
+
+// A0.2-EVENT-OVERRIDES — invoke-payload parsing for the manual re-run wrapper (scripts/rerun-daily-plan.sh).
+// Pure + dependency-free so it is unit-testable (index.js pulls AWS/neon at module load and cannot be).
+// SAFETY CONTRACT (fail-safe direction ONLY):
+//   * event.dryRun === true (strict boolean) forces a DRY run even when env DRY_RUN=false (prod live).
+//   * The event can NEVER force a live run: live writes stay gated solely by env DRY_RUN=false, so the
+//     env kill switch (DRY_RUN=true) always wins over any payload — including the wrapper's --live.
+//   * event.today overrides the plan date ONLY when it is a strict 'YYYY-MM-DD' string.
+//   * event.ping === true -> caller wants a no-op liveness probe (index.handler returns before any
+//     secrets/DB/network work).
+// EventBridge scheduled events ({source:'aws.events','detail-type':'Scheduled Event',detail:{},...})
+// carry none of these keys, so the nightly run's behavior is byte-identical to pre-A0.2.
+function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
+  const envLive = String(envDryRun ?? 'true').toLowerCase() === 'false';
+  const dryRun = (event && event.dryRun === true) ? true : !envLive;
+  const today = (event && typeof event.today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(event.today))
+    ? event.today : todayDefault;
+  return { dryRun, today, ping: !!(event && event.ping === true) };
+}
+
+module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions };

@@ -13,7 +13,7 @@ const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client
 const { Pool, neonConfig } = require('@neondatabase/serverless');
 const ws = require('ws');
 neonConfig.webSocketConstructor = ws;
-const { run } = require('./handler');
+const { run, resolveInvokeOptions } = require('./handler');
 const { stationConfig } = require('./station'); // DRG-WXSTATION-001
 
 const SECRET_NAME = process.env.SECRET_NAME || 'garden-app/secrets';
@@ -148,9 +148,15 @@ async function fetchStation() {
   }
 }
 
-exports.handler = async () => {
-  const dryRun = (process.env.DRY_RUN ?? 'true').toLowerCase() !== 'false';
-  const today = todayET();
+exports.handler = async (event) => {
+  // A0.2-EVENT-OVERRIDES sentinel — scripts/rerun-daily-plan.sh greps the DEPLOYED zip's index.js for
+  // this exact marker before ANY invoke (older deploys ignored the payload entirely, so a "dry" invoke
+  // against them would really run env-live). Do not rename/remove. Override semantics are fail-safe-only:
+  // see handler.resolveInvokeOptions — the payload can force DRY or override the date, never force live.
+  const { dryRun, today, ping } = resolveInvokeOptions(event, {
+    envDryRun: process.env.DRY_RUN, todayDefault: todayET(),
+  });
+  if (ping) return { ok: true, ping: true, eventOverrides: true, today, dryRun };
   const started = Date.now();
   const { NEON_DATABASE_URL } = await getSecrets();
   const pool = new Pool({ connectionString: NEON_DATABASE_URL });
