@@ -19,6 +19,13 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
+// L-081 schema-audit declared contract (scripts/dev-main-schema-audit.py Phase 1):
+// the prod relation(s) every *_COLUMNS array below must exist in. The audit reads
+// this declaration instead of reverse-parsing the extractSelectBlocks regex
+// (BUG-VARVIEW-001: `FROM\s+public\.cultivar` used to mis-capture table "public").
+// All handler reads/writes bind the canonical view public.cultivar.
+const AUDIT_TABLES = ['cultivar'];
+
 // Per migrations/v4-seedinv-001/0a-additive-ddl.sql: 3 v4-classify columns re-added
 // (base-only until this migration widens the view) + 11 sow-profile columns.
 const SEEDINV_COLUMNS = [

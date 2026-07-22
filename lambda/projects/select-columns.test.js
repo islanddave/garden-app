@@ -20,6 +20,15 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
+// L-081 schema-audit declared contract (scripts/dev-main-schema-audit.py Phase 1):
+// the prod relation(s) every *_COLUMNS array below must exist in. Declared as the
+// BASE TABLE plant_projects (still a live handler target: 4 FROM + 1 UPDATE in
+// index.js), where kind/target_end_date/kind_set_at are all physical columns. On
+// the public.container view the kind key is backed by `classification AS kind`
+// (rename), so auditing `kind` against the view would false-FAIL a rename the
+// handler explicitly aliases back; target_end_date + kind_set_at exist on both.
+const AUDIT_TABLES = ['plant_projects'];
+
 const PROJ_RESCOPE_PROJECT_COLUMNS = ['kind', 'target_end_date', 'kind_set_at'];
 
 // Extract each SELECT...FROM {plant_projects | public.container} block.

@@ -25,9 +25,12 @@ Two phases (both run; failure in either fails the audit):
     SELECT/WHERE/SET/jsonb_build_object/RETURNING are NOT audited here (full
     SQL parse is a separate, fragility-prone effort - intentionally deferred).
 
-Pre-flight gate. Run before any dev->main squash-merge on garden-app.
+Pre-flight gate. Run before any dev->main promote on garden-app.
 Returns PASS / FAIL with specific (file, table, column) tuples on FAIL.
-Wired into `.github/workflows/schema-audit.yml` as an advisory PR check.
+Wired into `.github/workflows/schema-audit.yml`, which runs on pushes to dev
+(path-filtered to the audited sources; advisory -- trigger re-homed 2026-07-22,
+OPS-GUARDINTEG-001, after the original pull_request->main trigger went
+structurally dead under OPS-GATE-001).
 
 Usage:
     python3 scripts/dev-main-schema-audit.py [--repo-root PATH] [--env-file PATH] [--verbose]
@@ -67,23 +70,46 @@ def load_neon_url(env_path: Path | None) -> str | None:
     return None
 
 
+# Declared audit contract: `const AUDIT_TABLES = ['table1', ...]` in the test file.
+_AUDIT_TABLES_DECL = re.compile(r"const\s+AUDIT_TABLES\s*=\s*\[(.*?)\]", re.DOTALL)
+# Fallback: JS regex literal text `FROM\s+<table>` / `FROM\s+public\.<table>`.
+# The JS source characters are: F R O M \ s + [p u b l i c \ .] table_name
+_FROM_LITERAL = re.compile(r"FROM\\s\+(?:public\\\.)?(\w+)")
+
+
 def parse_test_file(path: Path) -> list[tuple[str, list[str]]]:
     """Phase 1. Returns [(table, [columns]), ...] tuples from a
     select-columns.test.js file.
 
-    Strategy: extract target table from the extractSelectBlocks regex pattern
-    (e.g., FROM\\s+plants), then collect every `const X_COLUMNS = ['...', '...']`
-    array of string literals in the file. Same table for all arrays in the file
-    (current convention).
+    Table resolution, in priority order (BUG-VARVIEW-001 fix, 2026-07-22):
+      1. Declared contract: `const AUDIT_TABLES = ['t', ...]` in the test file.
+         Explicit, robust to any extractSelectBlocks regex shape (alternations,
+         schema qualification, aliases). Each *COLUMNS array is audited against
+         EVERY declared table.
+      2. Fallback (files without a declaration): the first `FROM\\s+<table>`
+         JS-regex literal, schema-qualification-aware (`public\\.` is consumed,
+         not captured -- the old parser captured "public" as the table).
+         Alternation forms (`FROM\\s+(?:a|b)`) are NOT parseable this way;
+         such files MUST declare AUDIT_TABLES or they are skipped (counted
+         loudly in the run summary).
+
+    Column arrays: every `const *COLUMN[S] = ['...', ...]` array of string
+    literals. Note `AUDIT_TABLES` itself does not match that collector, and
+    neither do absence-assertion arrays like LEGACY_COLUMNS_REMOVED_IN_2_0_5
+    (identifier must END in COLUMN/COLUMNS).
     """
     src = path.read_text()
 
-    # Match the table name from a JS source regex `FROM\s+<table>`.
-    # In the JS source the literal characters are: F R O M \ s + table_name
-    table_match = re.search(r"FROM\\s\+(\w+)", src)
-    if not table_match:
+    tables: list[str] = []
+    decl = _AUDIT_TABLES_DECL.search(src)
+    if decl:
+        tables = re.findall(r"['\"](\w+)['\"]", decl.group(1))
+    if not tables:
+        m = _FROM_LITERAL.search(src)
+        if m:
+            tables = [m.group(1)]
+    if not tables:
         return []
-    table = table_match.group(1)
 
     results = []
     # Match `const ANYTHING_COLUMNS = [ ... ];` -- DOTALL so multi-line arrays work.
@@ -94,7 +120,8 @@ def parse_test_file(path: Path) -> list[tuple[str, list[str]]]:
         # Extract every quoted string literal (single or double quote).
         cols = re.findall(r"['\"]([a-zA-Z_][a-zA-Z0-9_]*)['\"]", cols_text)
         if cols:
-            results.append((table, cols))
+            for table in tables:
+                results.append((table, cols))
     return results
 
 
@@ -241,14 +268,38 @@ def main() -> int:
     missing: list[tuple[str, str, str, str]] = []
 
     # --- Phase 1: select-columns.test.js assertions ---
+    p1_parsed = 0
+    p1_skipped: list[str] = []
     for tf in test_files:
         rel = str(Path(tf).relative_to(repo))
         parsed = parse_test_file(Path(tf))
         if not parsed:
-            print(f"WARN: could not parse table/columns from {rel} -- skipping", file=sys.stderr)
+            print(
+                f"WARN: could not parse table/columns from {rel} -- NOT audited "
+                f"(declare `const AUDIT_TABLES = [...]` in the test file)",
+                file=sys.stderr,
+            )
+            p1_skipped.append(rel)
             continue
+        p1_parsed += 1
         for table, cols in parsed:
             prod_cols = cols_for(table)
+            if not prod_cols:
+                # Empty-relation guard (BUG-VARVIEW-001): a resolved table with
+                # ZERO columns in information_schema is a parse/config error
+                # (mis-captured table name, bad AUDIT_TABLES declaration, or a
+                # dropped relation) -- NEVER report it as "every column
+                # missing". Inconclusive -> exit 2 (workflow UNVERIFIED path).
+                # Scoped to Phase 1 only: Phase 2/3 tables come from real SQL,
+                # where a missing relation is a genuine L-081 FAIL.
+                conn.close()
+                print(
+                    f"ERROR: relation '{table}' (resolved from {rel}) has ZERO "
+                    f"columns in prod information_schema -- Phase-1 parse/config "
+                    f"error, audit inconclusive.",
+                    file=sys.stderr,
+                )
+                return 2
             for col in cols:
                 asserted.append(("P1", rel, table, col))
                 if col not in prod_cols:
@@ -286,6 +337,16 @@ def main() -> int:
             status = "MISS" if col not in table_cache.get(table, set()) else "OK"
             print(f"{status:4s}  [{phase}] {table}.{col}  ({ref})")
         print()
+
+    # Phase-1 parse visibility: a skipped file is an UNAUDITED column contract.
+    p1_summary = (
+        f"P1: {len(test_files)} select-columns file(s), "
+        f"{p1_parsed} parsed, {len(p1_skipped)} skipped"
+    )
+    if p1_skipped:
+        p1_summary += f" -- UNAUDITED: {', '.join(p1_skipped)}"
+        print(f"WARN: {p1_summary}", file=sys.stderr)
+    print(p1_summary)
 
     total = len(asserted)
     if missing:

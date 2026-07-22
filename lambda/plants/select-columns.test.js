@@ -24,6 +24,14 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
+// L-081 schema-audit declared contract (scripts/dev-main-schema-audit.py Phase 1):
+// the prod relation(s) every *_COLUMNS array below must exist in. Since Foundation
+// V101 every read/write in index.js binds the canonical view public.garden_node
+// (zero live `FROM plants` refs remain -- the `plants` half of the
+// extractSelectBlocks alternation is rename-tolerance for source text only), so
+// the audit contract is the view the code actually queries.
+const AUDIT_TABLES = ['garden_node'];
+
 // Per migrations/proj-rescope-s1-0a-additive.sql, the 21 columns added to
 // public.plants (excluding pre-existing variety_id/metadata/source_inventory_item_id
 // from VARIETY-REF S2 which were already returned).
