@@ -66,17 +66,41 @@ jobs:
           S3_KEY="db/garden-$(date +%Y%m%d).dump"
           aws s3 cp "$DUMP_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$S3_KEY"
 
-      - name: Verify upload
+      - name: Verify upload (restorability floor)
+        # OPS-GUARDINTEG-001 (2026-07-22): the old check asserted S3 existence only —
+        # its comment claimed "non-zero size" but nothing checked size, so a zero-byte
+        # or truncated dump passed green. Now three assertions, any failure is red:
+        #   1. pg_restore --list on the local dump proves it is a readable pg
+        #      custom-format archive (cheap, no DB connection; pg17 binary — the
+        #      default pg16 pg_restore cannot read pg17 archives).
+        #   2. The S3 object exists (list-objects-v2 = same ListBucket permission
+        #      the previous `aws s3 ls` check already used; no IAM change).
+        #   3. The S3 object exceeds a 400KB floor: the dump was ~500KB at first
+        #      backup (2026-05) and is ~2.4MB and growing today (2026-07) — anything
+        #      under 400KB is a failed/truncated dump, not a plausible database.
+        #      Raise the floor as the DB grows; never lower it without a schema shrink.
         run: |
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
           S3_KEY="db/garden-$(date +%Y%m%d).dump"
-          # Confirm the object exists in S3 and has non-zero size
-          RESULT=$(aws s3 ls "s3://${{ vars.BACKUP_BUCKET_NAME }}/$S3_KEY" 2>&1)
-          if [ $? -ne 0 ] || [ -z "$RESULT" ]; then
-            echo "ERROR: Upload verification failed — object not found in S3"
-            echo "aws s3 ls output: $RESULT"
+          MIN_BYTES=409600
+          if ! pg_restore --list "$DUMP_FILE" > /dev/null; then
+            echo "::error::Backup verification FAILED — pg_restore --list cannot read $DUMP_FILE; dump is not a valid archive"
             exit 1
           fi
-          echo "Upload verified: $RESULT"
+          if ! OBJ_BYTES=$(aws s3api list-objects-v2 --bucket "${{ vars.BACKUP_BUCKET_NAME }}" --prefix "$S3_KEY" --query 'Contents[0].Size' --output text); then
+            echo "::error::Backup verification FAILED — could not query S3 for $S3_KEY"
+            exit 1
+          fi
+          if [ -z "$OBJ_BYTES" ] || [ "$OBJ_BYTES" = "None" ]; then
+            echo "::error::Backup verification FAILED — object $S3_KEY not found in S3"
+            exit 1
+          fi
+          if [ "$OBJ_BYTES" -lt "$MIN_BYTES" ]; then
+            echo "::error::Backup verification FAILED — $S3_KEY is ${OBJ_BYTES} bytes, below the ${MIN_BYTES}-byte restorability floor (truncated or empty dump)"
+            exit 1
+          fi
+          echo "Upload verified: $S3_KEY (${OBJ_BYTES} bytes >= ${MIN_BYTES} floor; pg_restore --list OK)"
 
       - name: Cleanup local dump
         if: always()
