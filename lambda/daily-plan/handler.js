@@ -13,8 +13,9 @@ const fertModel = require('./fertilization-model.json'); // substrate-aware feed
 async function weatherForSpace(space, { geocodeZip, fetchNWS }) {
   let { weather_lat: lat, weather_lng: lng, postal_code } = space;
   if ((lat == null || lng == null) && postal_code && geocodeZip) {
-    const g = await geocodeZip(postal_code);                // e.g. zippopotam: 01341 -> {lat,lng}; cache back to spaces
-    lat = g.lat; lng = g.lng;
+    // DRG-NIGHTLYTIMEOUT-001: geocodeZip is now bounded (AbortSignal) and throws on timeout; guard
+    // like coordsForSpace so a geocode failure degrades to null weather instead of crashing the run.
+    try { const g = await geocodeZip(postal_code); lat = g.lat; lng = g.lng; } catch (_) { return null; }
   }
   if (lat == null || lng == null) return null;              // no Space location -> no weather coupling (engine still runs)
   return fetchNWS(lat, lng);                                // -> { tonightLow, highToday, code, unit, short }
@@ -27,7 +28,9 @@ async function weatherForSpace(space, { geocodeZip, fetchNWS }) {
 // dry -- we proceed with no rain-credit and raise the uncertainty flag (engine.hydrologyStatus).
 async function hydrologyForSpace(space, { geocodeZip, fetchPrecip }) {
   let { weather_lat: lat, weather_lng: lng, postal_code } = space;
-  if ((lat == null || lng == null) && postal_code && geocodeZip) { const g = await geocodeZip(postal_code); lat = g.lat; lng = g.lng; }
+  if ((lat == null || lng == null) && postal_code && geocodeZip) {
+    try { const g = await geocodeZip(postal_code); lat = g.lat; lng = g.lng; } catch (_) { return null; } // DRG-NIGHTLYTIMEOUT-001: degrade, don't crash
+  }
   if (lat == null || lng == null || !fetchPrecip) return null;
   // fetchPrecip(lat,lng) -> { recent_precip_in (D-2+D-1 actual), upcoming_precip_in (D1+D2),
   //                           tomorrow_precip_in, tomorrow_pop }
@@ -47,6 +50,9 @@ async function coordsForSpace(space, { geocodeZip }) {
 }
 
 async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchStation }) {
+  // DRG-NIGHTLYTIMEOUT-001 — cheap nightly progress markers (db-ready / station-fetched / space-wx)
+  // pin the stall site (Neon cold-resume vs fetch hang) in CloudWatch in one night. ms = since run() start.
+  const t0 = Date.now();
   // active plantings + last water/fert + caretaker + the planting's Space (workspace_id -> spaces).
   const { rows: plantings } = await pg.query(`
     select p.id, p.name, p.project_id, p.status, p.container_type, p.container_size,
@@ -86,6 +92,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       and (p.status is null or p.status not in ('ended','failed','dead','archived'))
       and (pj.status is null or pj.status <> 'planning')
       and pj.archived_at is null`);
+  console.log(JSON.stringify({ msg: 'db-ready', ms: Date.now() - t0, rows: plantings.length })); // first pool.query done — includes any Neon cold-resume stall
   // Guard: remap System-account assignees -> null so ownerFallback applies (stray-pick guard).
   // Real System/bot account = user_3D7u…; the prior default here (user_3E2x…) is actually Jen in the live
   // Clerk instance and wrongly nulled her assignments. Env override supports a comma-separated list. (DRG-ASSIGN-FIX)
@@ -98,6 +105,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // fetchStation is fully guarded (returns null on any secret/HTTP/timeout failure) so it can NEVER empty the
   // nightly plan (B6); a null station simply leaves Open-Meteo/NWS as the source.
   const stationRaw = fetchStation ? await fetchStation() : null;
+  console.log(JSON.stringify({ msg: 'station-fetched', ms: Date.now() - t0, present: !!stationRaw }));
   const station = deriveStation(stationRaw, { nowMs: Date.now() });
   let boundSpaces = 0;
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.
@@ -119,6 +127,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     hyBySpace[s.id] = hy;
     stationProvBySpace[s.id] = prov;
     coordsBySpace[s.id] = await coordsForSpace(s, { geocodeZip });               // DRG-WXROLL-001: for client live-refresh
+    console.log(JSON.stringify({ msg: 'space-wx', space: s.id, ms: Date.now() - t0, wx: !!wx, hy: !!hy }));
   }
   // Group plantings by Space so each gets its own forecast; within a Space, engine splits per caretaker.
   // DRG-WXSTATION-001 observability (V200 §3): one structured line per run — chosen source, recent value,

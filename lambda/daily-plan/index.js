@@ -36,8 +36,12 @@ function todayET() {
 }
 
 // zip -> {lat,lng} (public, no key). Upstream caches to spaces.weather_lat/lng.
+// DRG-NIGHTLYTIMEOUT-001: every external fetch below is bounded (AbortSignal.timeout) so a hung
+// upstream can never eat the Lambda budget; each caller degrades to null on failure (never crashes
+// the run). The DB Pool is deliberately UNBOUNDED — the Neon cold-resume stall must be waited out
+// (aborting the connect just converts slow success into failure); the 120s fn timeout covers it.
 async function geocodeZip(zip) {
-  const r = await fetch(`https://api.zippopotam.us/us/${encodeURIComponent(zip)}`);
+  const r = await fetch(`https://api.zippopotam.us/us/${encodeURIComponent(zip)}`, { signal: AbortSignal.timeout(4000) });
   if (!r.ok) throw new Error(`geocodeZip ${zip} -> ${r.status}`);
   const j = await r.json();
   const p = j.places && j.places[0];
@@ -51,14 +55,14 @@ async function geocodeZip(zip) {
 async function fetchNWS(lat, lng) {
   try {
     const hdr = { 'User-Agent': 'garden-app daily-plan (islanddave@gmail.com)', Accept: 'application/geo+json' };
-    const pts = await (await fetch(`https://api.weather.gov/points/${lat},${lng}`, { headers: hdr })).json();
-    const fc = await (await fetch(pts.properties.forecast, { headers: hdr })).json();
+    const pts = await (await fetch(`https://api.weather.gov/points/${lat},${lng}`, { headers: hdr, signal: AbortSignal.timeout(6000) })).json();
+    const fc = await (await fetch(pts.properties.forecast, { headers: hdr, signal: AbortSignal.timeout(6000) })).json();
     const periods = (fc.properties && fc.properties.periods) || [];
     const day = periods.find((p) => p.isDaytime);
     const night = periods.find((p) => !p.isDaytime);
     let code = null;
     try {
-      const om = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&daily=weather_code&timezone=America/New_York&forecast_days=1`)).json();
+      const om = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&daily=weather_code&timezone=America/New_York&forecast_days=1`, { signal: AbortSignal.timeout(6000) })).json();
       code = om.daily && om.daily.weather_code && om.daily.weather_code[0];
     } catch (_) { /* code is cosmetic (icon); proceed without */ }
     return {
@@ -78,7 +82,7 @@ async function fetchPrecip(lat, lng) {
   try {
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
       `&daily=precipitation_sum,precipitation_probability_max&precipitation_unit=inch&timezone=America/New_York&past_days=2&forecast_days=3`;
-    const j = await (await fetch(url)).json();
+    const j = await (await fetch(url, { signal: AbortSignal.timeout(6000) })).json();
     const ps = (j.daily && j.daily.precipitation_sum) || [];   // [D-2, D-1, D0, D1, D2]
     const pop = (j.daily && j.daily.precipitation_probability_max) || [];
     const tomorrow = ps[3] || 0;
