@@ -328,6 +328,30 @@ jobs:
             --source-arn "$RULE_ARN" 2>/dev/null || echo "AddPermission already exists (expected on re-deploy)."
           echo "EventBridge rule $RULE_NAME wired to garden-xp-reconcile (cron 0 4 * * ? *)"
 
+      - name: Ensure daily-plan config
+        # DRG-NIGHTLYTIMEOUT-001: the nightly first attempt stacks a Neon scale-to-zero cold-resume
+        # stall (~21-26s on the first pool.query at 2am ET) on 6-9s of real work, blowing the 30s
+        # create-function default on 24/30 nights (the async retry succeeds only because the dead
+        # first attempt already woke the DB). timeout=120s absorbs the stall; memory INTENTIONALLY
+        # untouched at 256MB (diagnosis proved I/O wait, not CPU). Idempotent compare-then-update,
+        # cloned from "Ensure inventory-items config". NEVER pass --environment here (set-not-merge
+        # wipe hazard — see verify-daily-plan invariant 1).
+        if: matrix.function == 'daily-plan'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
+        run: |
+          FN="garden-daily-plan"
+          T=$(aws lambda get-function-configuration --function-name "$FN" --query 'Timeout' --output text 2>/dev/null || echo "None")
+          if [[ "$T" == "120" ]]; then
+            echo "timeout already correct on $FN (timeout=$T)"
+          else
+            echo "Setting timeout=120 on $FN (was: timeout=$T; memory left untouched)"
+            aws lambda update-function-configuration \
+              --function-name "$FN" \
+              --timeout 120 >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "timeout=120 set on $FN"
+          fi
+
       - name: Set daily-plan DRY_RUN + OWNER_FALLBACK_SUB env on first deploy
         if: matrix.function == 'daily-plan'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration; idempotent
