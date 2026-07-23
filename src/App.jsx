@@ -35,6 +35,7 @@ import PlantsCatchUp from './pages/PlantsCatchUp.jsx'
 import LocationDetail from './pages/LocationDetail.jsx'
 import EventDetail from './pages/EventDetail.jsx'
 import PlantingDetail from './pages/PlantingDetail.jsx'
+import Harvests from './pages/Harvests.jsx'
 import Achievements from './pages/Achievements.jsx'
 import Collection from './pages/Collection.jsx'
 import InactiveProjects from './pages/InactiveProjects.jsx'
@@ -145,6 +146,7 @@ export function renderRoutes({ overlay, user }) {
     { path: '/log/many',      overlayable: true, ariaLabel: 'Log many',          size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><LogMany /></ErrorBoundary></Protected> },
     { path: '/put-up',        overlayable: true, ariaLabel: 'Log a put-up',       size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PutUp /></ErrorBoundary></Protected> },
     { path: '/photos',        element: <Protected><PhotoLibrary /></Protected> },
+    { path: '/harvests',      element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Harvests /></ErrorBoundary></Protected> },
     { path: '/favorites',     element: <Protected><Favorites /></Protected> },
     { path: '/search',        overlayable: true, ariaLabel: 'Search your garden', size: 'peek', element: <Protected><Search /></Protected> },
     { path: '/project-types', element: <Protected><ProjectTypes /></Protected> },

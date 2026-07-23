@@ -154,6 +154,14 @@ describe('BottomNav — More menu', () => {
     expect(link.getAttribute('href')).toBe('/inventory')
   })
 
+  it('More menu shows the Harvests link pointing to /harvests (V4-HARVESTVIEW-001; plain Link, not overlay)', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    const link = screen.getByText('Harvests').closest('a')
+    expect(link).not.toBeNull()
+    expect(link.getAttribute('href')).toBe('/harvests')
+  })
+
   it('More menu shows the Dashboard link pointing to /dashboard (DRG-TODAY-003 demotion)', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('More navigation options'))

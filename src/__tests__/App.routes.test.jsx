@@ -11,15 +11,15 @@ const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => 
 const overlayPaths = () => renderRoutes({ overlay: true, user: true }).map((r) => r.props.path)
 
 describe('App route table (single source of truth)', () => {
-  it('the page tree has the full 45-route set with no duplicates', () => {
+  it('the page tree has the full 46-route set with no duplicates', () => {
     const paths = pagePaths()
-    expect(paths).toHaveLength(45)
-    expect(new Set(paths).size).toBe(45)
+    expect(paths).toHaveLength(46)
+    expect(new Set(paths).size).toBe(46)
   })
 
   it('includes the catch-all, index redirect, and every key route', () => {
     const paths = pagePaths()
-    for (const p of ['/', '*', '/today', '/search', '/log', '/log/many', '/put-up', '/garden/:slug', '/login', '/projects/:id/plantings/:plantingId']) {
+    for (const p of ['/', '*', '/today', '/search', '/log', '/log/many', '/put-up', '/harvests', '/garden/:slug', '/login', '/projects/:id/plantings/:plantingId']) {
       expect(paths).toContain(p)
     }
   })
