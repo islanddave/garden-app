@@ -45,9 +45,48 @@ def vitest_min_threshold():
     return min(vals), dict(zip(keys, vals))
 
 
+def measured_lowest():
+    # Read ACTUAL measured coverage from the json-summary reporter output. Used by the
+    # post-test `--measured` gate so the ratchet protects real coverage, not just the
+    # (much lower) config thresholds. Run ONLY after `npm test` has emitted the summary.
+    p = REPO_ROOT / "coverage" / "coverage-summary.json"
+    if not p.exists():
+        print("FATAL: coverage/coverage-summary.json not found — run `npm test` "
+              "(json-summary reporter) before the --measured check.", file=sys.stderr)
+        sys.exit(2)
+    total = json.loads(p.read_text())["total"]
+    keys = ["lines", "functions", "branches", "statements"]
+    vals = {k: round(float(total[k]["pct"]), 2) for k in keys}
+    return min(vals.values()), vals
+
+
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="Coverage ratchet enforcement (No-Date-Gating).")
+    ap.add_argument("--measured", action="store_true",
+                    help="Gate on ACTUAL measured coverage (coverage/coverage-summary.json) "
+                         "instead of the vitest config thresholds. Run AFTER `npm test`.")
+    args = ap.parse_args()
+
     ratchet = load_ratchet()
     target = active_target(ratchet)
+
+    if args.measured:
+        low, vals = measured_lowest()
+        print(f"Active target      : {target}%")
+        print(f"Measured coverage  : {vals}")
+        print(f"Lowest measured    : {low}%")
+        if low < target:
+            print()
+            print("FATAL: Measured coverage below the ratchet floor.")
+            print(f"  Active target:          {target}%")
+            print(f"  Lowest measured metric: {low}%")
+            print("  Fix: add tests to raise coverage, or lower active_target "
+                  "(milestone regression, Dave-gated).")
+            sys.exit(1)
+        print(f"OK: measured floor satisfied ({low}% >= {target}%)")
+        return
+
     actual_min, all_vals = vitest_min_threshold()
     active_ms = next((m["name"] for m in ratchet.get("milestones", [])
                       if int(m.get("target", -1)) == target and m.get("status") == "reached"),

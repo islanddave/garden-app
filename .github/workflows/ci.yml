@@ -94,3 +94,17 @@ jobs:
         env:
           TZ: America/New_York
 
+      - name: Coverage ratchet — measured floor (WS-B M4)
+        # The pre-test ratchet step above compares only the CONFIG thresholds to
+        # active_target. This reads ACTUAL measured coverage (coverage/coverage-summary.json,
+        # emitted by the json-summary reporter) and fails if it drops below active_target,
+        # wiring the ratchet to real coverage so advancing active_target (a Dave-gated
+        # milestone decision) immediately protects it. No-op while active_target is 0.
+        run: python3 scripts/check-coverage-ratchet.py --measured
+
+      - name: Dependency audit (advisory, WS-B M6)
+        # Surface prod-dependency CVEs in the CI log. Advisory (|| true) until the current
+        # highs are triaged (js-cookie via @clerk/shared; react-router open-redirect),
+        # then promote to a fail-on-high gate.
+        run: npm audit --omit=dev || true
+
