@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.60.0",
+    "date": "2026-07-23",
+    "highlights": [
+      "New Harvests page — everything your garden has given you, grouped by day, with per-crop season totals",
+      "Filter your harvest log by crop or project, and tap any total to jump to those entries",
+      "After you log a harvest, the confirmation shows your running season total for that crop"
+    ]
+  },
+  {
     "version": "3.59.0",
     "date": "2026-07-23",
     "highlights": [
