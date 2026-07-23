@@ -15,7 +15,7 @@ beforeEach(() => fetchSpy.mockReset())
 // Route the mocked apiFetch by URL: /api/projects → project rows; unfiltered `include=aggregates`
 // (no entries) → the picker's crop universe; everything else (main + snapshot) → harvest entries,
 // honoring a crop=/project= query param so the tests can drive the filtered-empty path.
-function mockRoutes({ entries = [], crops = [], other = [], cropList = [], projects = [] }) {
+function mockRoutes({ entries = [], crops = [], other = [], firstPick = [], cropList = [], projects = [] }) {
   fetchSpy.mockImplementation((url) => {
     const u = String(url)
     if (u === '/api/projects') return Promise.resolve(projects)
@@ -27,7 +27,7 @@ function mockRoutes({ entries = [], crops = [], other = [], cropList = [], proje
     let rows = entries
     if (cropM) rows = rows.filter((e) => e.crop_type_slug === decodeURIComponent(cropM[1]))
     if (projM) rows = rows.filter((e) => e.project_id === decodeURIComponent(projM[1]))
-    return Promise.resolve({ entries: rows, aggregates: { crops, other }, cursor: null })
+    return Promise.resolve({ entries: rows, aggregates: { crops, other, first_pick: firstPick }, cursor: null })
   })
 }
 
@@ -133,5 +133,46 @@ describe('Harvests page', () => {
     await waitFor(() => expect(screen.getByText(/No harvests match these filters/i)).toBeTruthy())
     fireEvent.click(screen.getByText('Clear filters'))
     await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
+  })
+
+  it('expands a Totals crop row in place to show varieties + first pick', async () => {
+    const crops = [{
+      crop_type_slug: 'tomato', crop_name: 'Tomato',
+      units: [{ unit: 'count', unit_key: 'count', total: 6, count: 2 }], unquantified: 1,
+      varieties: [
+        { variety_id: 'v1', variety_name: 'Sungold', units: [{ unit: 'count', unit_key: 'count', total: 4, count: 1 }], unquantified: 0 },
+        { variety_id: 'v2', variety_name: 'Brandywine', units: [{ unit: 'count', unit_key: 'count', total: 2, count: 1 }], unquantified: 0 },
+      ],
+    }]
+    const firstPick = [{ plant_id: 'p1', planting_name: 'Bed A tomato', crop_type_slug: 'tomato', first_pick_date: '2026-06-14' }]
+    mockRoutes({ entries: [TWO_CROPS[0]], crops, firstPick })
+    render(<Harvests />)
+    await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy()) // Log entry first
+
+    fireEvent.click(screen.getByText('Totals'))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Tomato/ })).toBeTruthy())
+    expect(screen.queryByText('Brandywine')).toBeNull() // collapsed — no variety sub-rows yet
+
+    fireEvent.click(screen.getByRole('button', { name: /Tomato/ }))
+    expect(screen.getByText('Brandywine')).toBeTruthy() // expanded variety sub-row
+    expect(screen.getByText(/First pick Jun 14/)).toBeTruthy()
+    expect(screen.getByText(/See in log/)).toBeTruthy()
+  })
+
+  it('jumps from a Totals crop row to the crop-filtered Log via "See in log"', async () => {
+    const crops = [{ crop_type_slug: 'tomato', crop_name: 'Tomato', units: [{ unit: 'count', unit_key: 'count', total: 4, count: 1 }], unquantified: 0, varieties: [] }]
+    mockRoutes({ entries: TWO_CROPS, crops })
+    render(<Harvests />)
+    await waitFor(() => expect(screen.getByText('Genovese')).toBeTruthy())
+
+    fireEvent.click(screen.getByText('Totals'))
+    fireEvent.click(await screen.findByRole('button', { name: /Tomato/ }))
+    fireEvent.click(screen.getByText(/See in log/))
+
+    // back in the Log, filtered to tomato: basil gone, crop pill present
+    await waitFor(() => expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('crop=tomato'))).toBe(true))
+    await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
+    expect(screen.queryByText('Genovese')).toBeNull()
+    expect(screen.getByRole('button', { name: /clear crop filter/i })).toBeTruthy()
   })
 })

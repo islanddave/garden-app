@@ -46,6 +46,9 @@ export default function Harvests() {
   const filterActive = timeframe !== '' || crop !== '' || project !== ''
 
   const clearAll = () => { setTimeframe(''); setCrop(''); setCropLabel(''); setProject(''); setProjectLabel('') }
+  // "See in log →" from an expanded Totals crop row: filter the Log to that crop and switch tabs
+  // (design §3c: a Totals crop-row tap switches to Log with a visible dismissible filter pill).
+  const seeInLog = (slug, name) => { setCrop(slug); setCropLabel(name); setView('log') }
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
@@ -84,7 +87,7 @@ export default function Harvests() {
         ) : view === 'log' ? (
           <LogView entries={entries} filterActive={filterActive} onClearFilters={clearAll} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore} />
         ) : (
-          <TotalsView aggregates={aggregates} />
+          <TotalsView aggregates={aggregates} onSeeInLog={seeInLog} />
         )}
       </div>
 
@@ -360,23 +363,42 @@ function HarvestEntry({ entry: e }) {
   )
 }
 
-// ── Totals (minimal: per-crop native-unit sums; expansion/sparkline/year selector = S3) ────────────
-function TotalsView({ aggregates }) {
+// ── Totals (S3-a: per-crop rows expand IN PLACE — variety sub-rows, first-pick dates, unquantified
+// count, "See in log →". Global sparkline + independent year selector = S3-b/S3-c.) ────────────────
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+// Absolute, judgment-free first-pick date (design §6: neutral fact, never "9 days late"). "Jun 14";
+// the year is appended only when it isn't the current calendar year. Pure string math on the day_key.
+function fmtFirstPick(dayKey) {
+  const [y, m, d] = String(dayKey).slice(0, 10).split('-').map(Number)
+  if (!y || !m || !d) return String(dayKey)
+  const cur = new Date().getFullYear()
+  return `${MONTHS[m - 1]} ${d}${y !== cur ? `, ${y}` : ''}`
+}
+
+function TotalsView({ aggregates, onSeeInLog }) {
+  const [expanded, setExpanded] = useState(() => new Set())
   const crops = aggregates?.crops ?? []
   const other = aggregates?.other ?? []
+  const firstPick = aggregates?.first_pick ?? []
   if (crops.length === 0 && other.length === 0) {
     return <EmptyState emoji="🧺" title="No totals yet" body="Once you log harvests, season totals show up here by crop." />
   }
+  const toggle = (slug) => setExpanded((prev) => {
+    const n = new Set(prev)
+    if (n.has(slug)) n.delete(slug); else n.add(slug)
+    return n
+  })
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {crops.map((c) => (
-        <div key={c.crop_type_slug} style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 14px' }}>
-          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>{c.crop_name}</div>
-          <div style={{ fontSize: '0.88rem', color: P.green, fontWeight: 600 }}>{unitsLine(c.units, c.crop_name)}</div>
-          {c.unquantified > 0 && (
-            <div style={{ fontSize: '0.75rem', color: P.light, marginTop: 2 }}>+{c.unquantified} unrecorded</div>
-          )}
-        </div>
+        <CropTotalRow
+          key={c.crop_type_slug}
+          crop={c}
+          firstPicks={firstPick.filter((f) => f.crop_type_slug === c.crop_type_slug)}
+          open={expanded.has(c.crop_type_slug)}
+          onToggle={() => toggle(c.crop_type_slug)}
+          onSeeInLog={onSeeInLog}
+        />
       ))}
       {other.length > 0 && (
         <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 14px' }}>
@@ -387,6 +409,63 @@ function TotalsView({ aggregates }) {
               <span style={{ fontWeight: 600 }}>{unitsLine(o.units, null) || `+${o.unquantified} unrecorded`}</span>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// One expandable crop total. Collapsed = crop name + per-unit season total + unquantified count.
+// Expanded (in place) adds variety sub-rows, first-pick date per planting, and the See-in-log jump.
+function CropTotalRow({ crop: c, firstPicks, open, onToggle, onSeeInLog }) {
+  const varieties = Array.isArray(c.varieties) ? c.varieties : []
+  // A single unnamed variety is just the crop total again — only surface sub-rows when they add info.
+  const showVarieties = varieties.length > 1 || (varieties.length === 1 && !!varieties[0].variety_name)
+  return (
+    <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 10 }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '12px 14px', cursor: 'pointer', borderRadius: 10 }}
+      >
+        <span style={{ minWidth: 0 }}>
+          <span style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>{c.crop_name}</span>
+          <span style={{ display: 'block', fontSize: '0.88rem', color: P.green, fontWeight: 600 }}>{unitsLine(c.units, c.crop_name)}</span>
+          {c.unquantified > 0 && (
+            <span style={{ display: 'block', fontSize: '0.75rem', color: P.light, marginTop: 2 }}>+{c.unquantified} unrecorded</span>
+          )}
+        </span>
+        <span aria-hidden="true" style={{ flex: '0 0 auto', color: P.light, fontSize: '0.8rem', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.12s' }}>▶</span>
+      </button>
+      {open && (
+        <div style={{ padding: '0 14px 12px', borderTop: `1px solid ${P.border}` }}>
+          {showVarieties && (
+            <div style={{ marginTop: 8 }}>
+              {varieties.map((v) => (
+                <div key={v.variety_id ?? '__novar__'} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.83rem', color: P.mid, padding: '3px 0' }}>
+                  <span>{v.variety_name || 'Unspecified'}</span>
+                  <span style={{ fontWeight: 600 }}>{unitsLine(v.units, c.crop_name) || (v.unquantified > 0 ? `+${v.unquantified} unrecorded` : '')}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {firstPicks.length > 0 && (
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {firstPicks.map((f) => (
+                <div key={f.plant_id} style={{ fontSize: '0.8rem', color: P.mid }}>
+                  First pick {fmtFirstPick(f.first_pick_date)}{f.planting_name ? ` · ${f.planting_name}` : ''}
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => onSeeInLog?.(c.crop_type_slug, c.crop_name)}
+            style={{ marginTop: 10, padding: '6px 0', background: 'transparent', border: 'none', color: P.green, fontSize: '0.83rem', fontWeight: 700, cursor: 'pointer' }}
+          >
+            See in log →
+          </button>
         </div>
       )}
     </div>
