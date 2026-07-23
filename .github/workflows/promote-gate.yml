@@ -103,7 +103,10 @@ jobs:
     needs: resolve
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 30
+    # 50 (was 30): the staging write-path smoke gate below polls up to ~27.5min + ~5min locate;
+    # FF+snap need ~10min after. Widened 2026-07-23 after two promotes fail-closed when a runner-queue
+    # backlog pushed the ~16min staging pipeline past the old window (staging was green both times).
+    timeout-minutes: 50
     steps:
       - name: Mint garden-bot installation token
         id: bot
@@ -149,16 +152,18 @@ jobs:
           echo "dispatched deploy-staging for $DEV_SHA at epoch $DISPATCH_EPOCH"
           # 2) locate the run we just created (head_sha == DEV_SHA, newest created at/after dispatch)
           RUN_ID=""
-          for i in $(seq 1 12); do
+          for i in $(seq 1 30); do
             sleep 10
             RUN_ID=$(apiq "https://api.github.com/repos/$REPO/actions/workflows/deploy-staging.yml/runs?event=workflow_dispatch&per_page=20" | python3 -c "import sys,json,datetime as t; d=json.load(sys.stdin); rs=[r for r in d.get('workflow_runs',[]) if r.get('head_sha')=='$DEV_SHA' and t.datetime.strptime(r['created_at'],'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=t.timezone.utc).timestamp()>=$DISPATCH_EPOCH-30]; print(max(rs,key=lambda r:r['created_at'])['id'] if rs else '')")
             if [ -n "$RUN_ID" ]; then echo "run id: $RUN_ID"; break; fi
             echo "  ...waiting for run to register ($i)"
           done
           if [ -z "$RUN_ID" ]; then echo "::error::could not locate dispatched deploy-staging run"; exit 1; fi
-          # 3) poll the run to completion (bounded so FF+snap still fit under timeout-minutes)
+          # 3) poll the run to completion (bounded so FF+snap still fit under timeout-minutes).
+          # ~27.5min ceiling (165x10s): the staging pipeline runs ~3-5min but can sit queued 10-13min
+          # under runner-queue backlog; the old 95 (~16min) fail-closed twice on 2026-07-23 despite green staging.
           ST="queued"
-          for i in $(seq 1 95); do
+          for i in $(seq 1 165); do
             ST=$(apiq "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID" | python3 -c "import sys,json;print(json.load(sys.stdin)['status'])")
             echo "  run $RUN_ID status=$ST ($i)"
             [ "$ST" = "completed" ] && break
