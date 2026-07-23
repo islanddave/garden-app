@@ -11,7 +11,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const FILES = [
   'projects/index.js', 'plants/index.js', 'events/index.js',
   'inventory-items/index.js', 'photos/index.js', 'dashboard/handlers.js',
-  'harvests/index.js',
+  'harvests/index.js', 'facebook-share/index.js',
 ];
 
 // Match REAL tagged templates only: `sql` as an identifier (not preceded by a word

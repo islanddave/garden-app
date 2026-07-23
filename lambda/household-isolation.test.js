@@ -28,6 +28,7 @@ const IN_SCOPE = [
   'preservation/index.js', // V4-HARVESTCENTER-001 — Put-Up log is household-shared inventory (user_id = ANY(householdIds))
   'storage-location/index.js', // V4-HARVESTCENTER-001 — Put-Up storage vocab, household-scoped like locations
   'harvests/index.js', // V4-HARVESTVIEW-001 — Harvests read model, household-scoped (plant_projects.created_by = ANY(householdIds))
+  'facebook-share/index.js', // V4-FBSHARE-001 — admin-only FB share; photo fetch scoped to household (photos.created_by = ANY(householdIds))
 ];
 
 // Out-of-scope: must NOT import householdScope.

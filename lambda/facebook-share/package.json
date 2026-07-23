@@ -1,0 +1,12 @@
+{
+  "name": "garden-lambda-facebook-share",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "V4-FBSHARE-001 — Facebook Page sharing. POST /api/share/facebook: Clerk-authed, ADMIN_CLERK_SUBS-gated, household-scoped. Reads photo bytes from S3, strips EXIF, byte-uploads to the Graph API (single /photos, or published=false + /feed attached_media for multi), records to share_log for idempotency + orphan cleanup. Kill switch FB_SHARE_ENABLED. Pure helpers (exif.js/graph.js) unit-test without runtime deps; mirrors lambda/harvests.",
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.0",
+    "@clerk/backend": "^1.0.0",
+    "@aws-sdk/client-secrets-manager": "^3.0.0",
+    "@aws-sdk/client-s3": "^3.0.0"
+  }
+}
