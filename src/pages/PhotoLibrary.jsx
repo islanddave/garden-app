@@ -181,6 +181,9 @@ export default function PhotoLibrary() {
   }
   function openShare(photoList) { setSharePhotos(photoList); setShareOpen(true) }
   const selectedPhotos = photos.filter(p => selected.has(p.id))
+  // Dormant-until-configured: the FB share UI only appears once VITE_API_FACEBOOK_SHARE is wired
+  // (set at go-live, after the lambda is deployed). Keeps a half-feature out of prod on any promote.
+  const fbShareEnabled = !!import.meta.env.VITE_API_FACEBOOK_SHARE
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
@@ -198,7 +201,7 @@ export default function PhotoLibrary() {
             </h1>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
-            {photos.length > 0 && (
+            {photos.length > 0 && fbShareEnabled && (
               <button
                 onClick={() => (selectMode ? exitSelectMode() : enterSelectMode())}
                 style={{
@@ -418,7 +421,7 @@ export default function PhotoLibrary() {
             tagErr={tagErr}
             projects={projects}
             locations={locations}
-            onShare={() => { setModal(null); openShare([modal]) }}
+            onShare={fbShareEnabled ? (() => { setModal(null); openShare([modal]) }) : undefined}
           />
         </ErrorBoundary>
       )}

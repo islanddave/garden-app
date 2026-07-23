@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         # One job per Lambda function directory under lambda/
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, ux-events, xp-reconcile, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, daily-plan, tags, storage-location, preservation, harvests, photocdn-derivative]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, ux-events, xp-reconcile, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, daily-plan, tags, storage-location, preservation, harvests, facebook-share, photocdn-derivative]
       # No max-parallel cap: all functions dispatch in one wave so the
       # environment:production approval gate prompts ONCE (not 3 batches of 4).
       # Re-add `max-parallel: N` here only if Lambda control-plane rate limits appear.
@@ -143,6 +143,32 @@ jobs:
             aws lambda wait function-updated --function-name "$FN"
             echo "GARDEN_HOUSEHOLD_IDS set on $FN"
           fi
+
+      # V4-FBSHARE-001: garden-facebook-share is admin-only + household-scoped and byte-uploads photos
+      # to the Graph API. Net-new, so create-function sets ZERO env — read-merge its config here.
+      # FB_SHARE_ENABLED is deliberately NOT set (unset => kill switch OFF): the endpoint returns 503
+      # until Dave flips it at go-live, AFTER the garden-app/facebook-page-token secret exists.
+      # memory=512/timeout=60: parallel byte-uploads of up to 10 JPEGs need headroom over the 256/30 default.
+      - name: Ensure facebook-share config (household + admin + bucket + secret; read-merge)
+        if: matrix.function == 'facebook-share'
+        continue-on-error: true  # requires lambda:Get/UpdateFunctionConfiguration on deploy role
+        run: |
+          FN="garden-facebook-share"
+          HH=$(aws lambda get-function-configuration --function-name garden-events \
+            --query 'Environment.Variables.GARDEN_HOUSEHOLD_IDS' --output text 2>/dev/null || echo "None")
+          EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
+            --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+          UPDATED=$(echo "$EXISTING" | jq \
+            --arg hh "$HH" \
+            --arg b "garden-photos-prod" \
+            --arg a "user_3D2gM0hIl03gjW3JM2DjtPzm0jI" \
+            --arg s "garden-app/facebook-page-token" \
+            '. + {S3_PHOTOS_BUCKET:$b, ADMIN_CLERK_SUBS:$a, FB_SECRET_NAME:$s} + (if $hh != "None" and $hh != "" then {GARDEN_HOUSEHOLD_IDS:$hh} else {} end)')
+          echo "{\"Variables\": $UPDATED}" > /tmp/env-fbshare.json
+          aws lambda update-function-configuration --function-name "$FN" \
+            --environment file:///tmp/env-fbshare.json --timeout 60 --memory-size 512 >/dev/null
+          aws lambda wait function-updated --function-name "$FN"
+          echo "facebook-share config ensured (household=$HH; admin; bucket; secret; 512MB/60s)"
 
       - name: Ensure S3_PHOTOS_BUCKET env for ${{ matrix.function }}
         # Idempotent: only updates if value differs. Required for photo-enriching
