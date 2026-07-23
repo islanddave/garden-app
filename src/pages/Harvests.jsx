@@ -2,17 +2,21 @@ import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
+import Sheet from '../components/forms/Sheet.jsx'
 import QualityDots from '../components/QualityDots.jsx'
 import StatTile from '../components/StatTile.jsx'
 import { useHarvests } from '../hooks/useHarvests.js'
 import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
+import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
 import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
 import { fmtQuantity, unitLabel, formatEntry, etDay } from '../lib/harvestSummary.js'
 
 // Harvests — V4-HARVESTVIEW-001 S2a/S2b. Route + snapshot strip + Log feed + minimal Totals, reading
 // the shipped GET /api/harvests. Retrospective/reflective: never prompts, counts down, or scores
 // (design §1). Snapshot self-labels FIXED windows (design §3b) so it's independent of the Log filter.
-// S2b adds the snapshot strip + timeframe chips. Crop/project pickers + Totals year selector = later.
+// S2b part 1 added the snapshot strip + timeframe chips; part 2 adds crop + project picker sheets +
+// dismissible pills. Crop/project scope the LOG only (design §3b) — they're dropped from the query on
+// the Totals tab, so minimal Totals stays the whole-season overview until S3's year selector lands.
 
 const HARVEST_TZ = 'America/New_York'
 const currentGrowYear = (d) => (d.getMonth() >= 10 ? d.getFullYear() + 1 : d.getFullYear())
@@ -20,9 +24,28 @@ const currentGrowYear = (d) => (d.getMonth() >= 10 ? d.getFullYear() + 1 : d.get
 export default function Harvests() {
   const [view, setView] = useState('log') // 'log' | 'totals'
   const [timeframe, setTimeframe] = useState('') // '' = all time
-  const { entries, aggregates, hasMore, loading, loadingMore, error, reload, loadMore } = useHarvests({ timeframe: timeframe || undefined })
+  const [crop, setCrop] = useState('') // crop_type_slug; '' = all crops
+  const [cropLabel, setCropLabel] = useState('')
+  const [project, setProject] = useState('') // project_id (uuid); '' = all projects
+  const [projectLabel, setProjectLabel] = useState('')
+  const [cropSheetOpen, setCropSheetOpen] = useState(false)
+  const [projectSheetOpen, setProjectSheetOpen] = useState(false)
+
+  // Crop/project scope the LOG (design §3b: "filters scope the Log only"). On the Totals tab we drop
+  // them so the minimal Totals shows the timeframe-only aggregate universe (its own year selector +
+  // row-tap-to-filter arrive in S3). No filter active → params identical across views → no refetch on
+  // a Log↔Totals toggle; a refetch happens only when a crop/project filter is actually set.
+  const logScoped = view === 'log'
+  const { entries, aggregates, hasMore, loading, loadingMore, error, reload, loadMore } = useHarvests({
+    timeframe: timeframe || undefined,
+    crop: logScoped ? (crop || undefined) : undefined,
+    project: logScoped ? (project || undefined) : undefined,
+  })
   const { snapshot } = useHarvestSnapshot()
-  const filterActive = timeframe !== ''
+  const { crops: cropOptions, projects: projectOptions } = useHarvestFilterOptions()
+  const filterActive = timeframe !== '' || crop !== '' || project !== ''
+
+  const clearAll = () => { setTimeframe(''); setCrop(''); setCropLabel(''); setProject(''); setProjectLabel('') }
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
@@ -43,16 +66,48 @@ export default function Harvests() {
 
         <TimeframeChips value={timeframe} onChange={setTimeframe} />
 
+        {view === 'log' && (
+          <FilterControls
+            cropValue={crop ? (cropLabel || crop) : ''}
+            onOpenCrop={() => setCropSheetOpen(true)}
+            onClearCrop={() => { setCrop(''); setCropLabel('') }}
+            projectValue={project ? (projectLabel || project) : ''}
+            onOpenProject={() => setProjectSheetOpen(true)}
+            onClearProject={() => { setProject(''); setProjectLabel('') }}
+          />
+        )}
+
         {loading ? (
           <LoadingSkeleton />
         ) : error ? (
           <ErrorState message={error} onRetry={reload} />
         ) : view === 'log' ? (
-          <LogView entries={entries} filterActive={filterActive} onClearFilters={() => setTimeframe('')} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore} />
+          <LogView entries={entries} filterActive={filterActive} onClearFilters={clearAll} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore} />
         ) : (
           <TotalsView aggregates={aggregates} />
         )}
       </div>
+
+      <PickerSheet
+        open={cropSheetOpen}
+        onClose={() => setCropSheetOpen(false)}
+        title="Filter by crop"
+        allLabel="All crops"
+        emptyText="No crops logged yet."
+        selected={crop}
+        options={cropOptions.map((c) => ({ value: c.crop_type_slug, label: c.display_name }))}
+        onSelect={(value, label) => { setCrop(value); setCropLabel(label); setCropSheetOpen(false) }}
+      />
+      <PickerSheet
+        open={projectSheetOpen}
+        onClose={() => setProjectSheetOpen(false)}
+        title="Filter by project"
+        allLabel="All projects"
+        emptyText="No projects yet."
+        selected={project}
+        options={projectOptions.map((p) => ({ value: p.id, label: p.name }))}
+        onSelect={(value, label) => { setProject(value); setProjectLabel(label); setProjectSheetOpen(false) }}
+      />
     </div>
   )
 }
@@ -113,7 +168,7 @@ function TimeframeChips({ value, onChange }) {
     { value: `season:${growYear}`, label: 'This season' },
   ]
   return (
-    <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }} role="group" aria-label="Filter by timeframe">
+    <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }} role="group" aria-label="Filter by timeframe">
       {chips.map((c) => {
         const active = value === c.value
         return (
@@ -132,14 +187,88 @@ function TimeframeChips({ value, onChange }) {
   )
 }
 
+// ── Crop/project filters (design §3b): picker sheets rendering dismissible pills, Log-scoped ────────
+function FilterControls({ cropValue, onOpenCrop, onClearCrop, projectValue, onOpenProject, onClearProject }) {
+  return (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }} role="group" aria-label="Filter by crop or project">
+      <FilterPill placeholder="Crop" value={cropValue} onOpen={onOpenCrop} onClear={onClearCrop} />
+      <FilterPill placeholder="Project" value={projectValue} onOpen={onOpenProject} onClear={onClearProject} />
+    </div>
+  )
+}
+
+// One pill: tap the label to open the picker; when a value is set, an adjacent × clears it. Selection
+// is conveyed by both text (the chosen name) and color — never color alone (design §3b special rows).
+function FilterPill({ placeholder, value, onOpen, onClear }) {
+  const active = !!value
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'stretch', borderRadius: 20, overflow: 'hidden', border: `1px solid ${active ? P.green : P.border}` }}>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={active ? `${placeholder}: ${value}. Change filter` : `Filter by ${placeholder.toLowerCase()}`}
+        style={{ padding: active ? '6px 8px 6px 14px' : '6px 14px', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', border: 'none', backgroundColor: active ? P.greenPale : P.white, color: active ? P.green : P.mid, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      >
+        {active ? value : placeholder}
+        {!active && <span aria-hidden="true" style={{ fontSize: '0.7rem', opacity: 0.7 }}>▾</span>}
+      </button>
+      {active && (
+        <button
+          type="button"
+          onClick={onClear}
+          aria-label={`Clear ${placeholder.toLowerCase()} filter`}
+          style={{ padding: '0 11px', border: 'none', borderLeft: `1px solid ${P.green}`, backgroundColor: P.greenPale, color: P.green, cursor: 'pointer', fontSize: '1rem', fontWeight: 700, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}
+        >
+          ×
+        </button>
+      )}
+    </div>
+  )
+}
+
+// Picker sheet (reuses the canonical Sheet fly-up): an "All" reset row + one row per option, the
+// active row checked. Options come from useHarvestFilterOptions (the UNFILTERED universe), so the list
+// never collapses when a filter is applied.
+function PickerSheet({ open, onClose, title, allLabel, emptyText, selected, options, onSelect }) {
+  return (
+    <Sheet open={open} onClose={onClose} title={title}>
+      <div role="listbox" aria-label={title} style={{ padding: '2px 8px 8px', display: 'flex', flexDirection: 'column' }}>
+        <PickerRow label={allLabel} selected={selected === ''} onClick={() => onSelect('', '')} />
+        {options.length === 0 ? (
+          <div style={{ padding: '14px 16px', fontSize: '0.85rem', color: P.light }}>{emptyText}</div>
+        ) : (
+          options.map((o) => (
+            <PickerRow key={o.value} label={o.label} selected={selected === o.value} onClick={() => onSelect(o.value, o.label)} />
+          ))
+        )}
+      </div>
+    </Sheet>
+  )
+}
+
+function PickerRow({ label, selected, onClick }) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      onClick={onClick}
+      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', textAlign: 'left', padding: '12px 16px', minHeight: 44, background: selected ? P.greenPale : 'transparent', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: '0.92rem', fontWeight: selected ? 700 : 500, color: selected ? P.green : P.dark }}
+    >
+      <span>{label}</span>
+      {selected && <span aria-hidden="true" style={{ color: P.green, fontWeight: 700 }}>✓</span>}
+    </button>
+  )
+}
+
 // ── Log ──────────────────────────────────────────────────────────────────────────────────────────
 function LogView({ entries, filterActive, onClearFilters, hasMore, loadingMore, onLoadMore }) {
   if (!entries || entries.length === 0) {
     return filterActive
       ? (
         <div style={{ textAlign: 'center', padding: '40px 20px', color: P.light }}>
-          <p style={{ margin: '0 0 12px', fontSize: '0.95rem', fontWeight: 600, color: P.mid }}>No harvests match this timeframe.</p>
-          <button type="button" onClick={onClearFilters} style={{ padding: '8px 18px', fontSize: '0.85rem', borderRadius: 8, border: `1px solid ${P.border}`, background: P.white, color: P.green, fontWeight: 700, cursor: 'pointer' }}>Clear filter</button>
+          <p style={{ margin: '0 0 12px', fontSize: '0.95rem', fontWeight: 600, color: P.mid }}>No harvests match these filters.</p>
+          <button type="button" onClick={onClearFilters} style={{ padding: '8px 18px', fontSize: '0.85rem', borderRadius: 8, border: `1px solid ${P.border}`, background: P.white, color: P.green, fontWeight: 700, cursor: 'pointer' }}>Clear filters</button>
         </div>
       )
       : <EmptyState emoji="🧺" title="Your harvests will collect here" body="The first one starts the season — log a harvest and it shows up here." />

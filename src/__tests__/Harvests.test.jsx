@@ -12,6 +12,30 @@ import Harvests from '../pages/Harvests.jsx'
 
 beforeEach(() => fetchSpy.mockReset())
 
+// Route the mocked apiFetch by URL: /api/projects → project rows; unfiltered `include=aggregates`
+// (no entries) → the picker's crop universe; everything else (main + snapshot) → harvest entries,
+// honoring a crop=/project= query param so the tests can drive the filtered-empty path.
+function mockRoutes({ entries = [], crops = [], other = [], cropList = [], projects = [] }) {
+  fetchSpy.mockImplementation((url) => {
+    const u = String(url)
+    if (u === '/api/projects') return Promise.resolve(projects)
+    if (u.includes('include=aggregates') && !u.includes('entries')) {
+      return Promise.resolve({ aggregates: { crop_list: cropList, crops: [], other: [] } })
+    }
+    const cropM = /[?&]crop=([^&]+)/.exec(u)
+    const projM = /[?&]project=([^&]+)/.exec(u)
+    let rows = entries
+    if (cropM) rows = rows.filter((e) => e.crop_type_slug === decodeURIComponent(cropM[1]))
+    if (projM) rows = rows.filter((e) => e.project_id === decodeURIComponent(projM[1]))
+    return Promise.resolve({ entries: rows, aggregates: { crops, other }, cursor: null })
+  })
+}
+
+const TWO_CROPS = [
+  { event_id: 'e1', day_key: '2026-07-20', event_date: '2026-07-20T12:00:00Z', plant_id: 'p1', project_id: 'pr1', crop_type_slug: 'tomato', crop_name: 'Tomato', variety_name: 'Sungold', quantity: 4, unit: 'count', quality_rating: 4, harvest_log_id: 'h1', photos: [] },
+  { event_id: 'e2', day_key: '2026-07-19', event_date: '2026-07-19T12:00:00Z', plant_id: 'p2', project_id: 'pr2', crop_type_slug: 'basil', crop_name: 'Basil', variety_name: 'Genovese', quantity: 2, unit: 'bunch', quality_rating: 5, harvest_log_id: 'h2', photos: [] },
+]
+
 describe('Harvests page', () => {
   it('shows the first-run empty state when there are no harvests', async () => {
     fetchSpy.mockResolvedValue({ entries: [], aggregates: { crops: [], other: [] }, cursor: null })
@@ -47,5 +71,67 @@ describe('Harvests page', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
     expect(screen.getByText(/harvest service had a problem/i)).toBeTruthy()
     expect(screen.getByText('Retry')).toBeTruthy()
+  })
+
+  it('filters the log by crop via the picker and shows a dismissible pill', async () => {
+    mockRoutes({ entries: TWO_CROPS, cropList: [{ crop_type_slug: 'basil', display_name: 'Basil' }, { crop_type_slug: 'tomato', display_name: 'Tomato' }] })
+    render(<Harvests />)
+    await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
+    expect(screen.getByText('Genovese')).toBeTruthy() // both crops visible unfiltered
+
+    fireEvent.click(screen.getByRole('button', { name: /filter by crop/i }))
+    await waitFor(() => expect(screen.getByRole('option', { name: /^Tomato/ })).toBeTruthy())
+    fireEvent.click(screen.getByRole('option', { name: /^Tomato/ }))
+
+    // request now carries crop=tomato; basil entry drops out, tomato remains
+    await waitFor(() => expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('crop=tomato'))).toBe(true))
+    await waitFor(() => expect(screen.queryByText('Genovese')).toBeNull())
+    expect(screen.getByText('Sungold')).toBeTruthy()
+    // the pill is present and dismissible
+    expect(screen.getByRole('button', { name: /clear crop filter/i })).toBeTruthy()
+  })
+
+  it('dismisses the crop pill to clear the filter', async () => {
+    mockRoutes({ entries: TWO_CROPS, cropList: [{ crop_type_slug: 'basil', display_name: 'Basil' }, { crop_type_slug: 'tomato', display_name: 'Tomato' }] })
+    render(<Harvests />)
+    await waitFor(() => expect(screen.getByText('Genovese')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /filter by crop/i }))
+    fireEvent.click(await screen.findByRole('option', { name: /^Tomato/ }))
+    await waitFor(() => expect(screen.queryByText('Genovese')).toBeNull())
+
+    fireEvent.click(screen.getByRole('button', { name: /clear crop filter/i }))
+    // unfiltered again — basil returns and the pill is gone
+    await waitFor(() => expect(screen.getByText('Genovese')).toBeTruthy())
+    expect(screen.queryByRole('button', { name: /clear crop filter/i })).toBeNull()
+  })
+
+  it('filters the log by project via the picker', async () => {
+    mockRoutes({ entries: TWO_CROPS, projects: [{ id: 'pr2', name: 'Back Bed' }, { id: 'pr1', name: 'Front Bed' }] })
+    render(<Harvests />)
+    await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /filter by project/i }))
+    fireEvent.click(await screen.findByRole('option', { name: /Front Bed/ }))
+
+    await waitFor(() => expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('project=pr1'))).toBe(true))
+    // only the pr1 (tomato) entry survives
+    await waitFor(() => expect(screen.queryByText('Genovese')).toBeNull())
+    expect(screen.getByText('Sungold')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /clear project filter/i })).toBeTruthy()
+  })
+
+  it('shows a clear-filters affordance when a filter yields no matches', async () => {
+    // only tomato entries exist, but basil is a pickable crop → picking it empties the log
+    mockRoutes({ entries: [TWO_CROPS[0]], cropList: [{ crop_type_slug: 'basil', display_name: 'Basil' }] })
+    render(<Harvests />)
+    await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /filter by crop/i }))
+    fireEvent.click(await screen.findByRole('option', { name: /^Basil/ }))
+
+    await waitFor(() => expect(screen.getByText(/No harvests match these filters/i)).toBeTruthy())
+    fireEvent.click(screen.getByText('Clear filters'))
+    await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
   })
 })
