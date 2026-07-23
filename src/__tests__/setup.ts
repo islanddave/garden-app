@@ -8,6 +8,42 @@
 // @ts-expect-error — global not typed by default
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
+// Node-version tolerance (Wave 0 / WS-B M1): some Node×jsdom combinations don't
+// expose a working localStorage/sessionStorage on the test global (observed under
+// Node 26). CI pins Node 20.19 (see .nvmrc + package.json "engines") where jsdom
+// provides them; this guard installs a minimal in-memory Storage ONLY when the
+// native one is missing/broken, so the suite is green on newer local Node too.
+// No-op on CI where jsdom's Storage is present.
+function makeMemoryStorage(): Storage {
+  let store: Record<string, string> = {};
+  return {
+    get length() { return Object.keys(store).length; },
+    clear() { store = {}; },
+    getItem(key: string) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
+    setItem(key: string, value: string) { store[key] = String(value); },
+    removeItem(key: string) { delete store[key]; },
+    key(i: number) { return Object.keys(store)[i] ?? null; },
+  } as Storage;
+}
+for (const name of ['localStorage', 'sessionStorage'] as const) {
+  let broken = false;
+  try {
+    const existing = (globalThis as Record<string, unknown>)[name] as Storage | undefined;
+    if (!existing || typeof existing.clear !== 'function') broken = true;
+  } catch {
+    broken = true;
+  }
+  if (broken) {
+    const mem = makeMemoryStorage();
+    Object.defineProperty(globalThis, name, { value: mem, writable: true, configurable: true });
+    // In the jsdom env `window` aliases globalThis, but bind it explicitly in case
+    // a test reaches for `window.localStorage` on a distinct window object.
+    if (typeof window !== 'undefined' && (window as unknown) !== globalThis) {
+      Object.defineProperty(window, name, { value: mem, writable: true, configurable: true });
+    }
+  }
+}
+
 // Silence noisy console.error in tests unless you need to debug
 const originalConsoleError = console.error;
 beforeEach(() => {

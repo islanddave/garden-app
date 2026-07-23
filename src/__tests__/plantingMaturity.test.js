@@ -13,14 +13,19 @@ describe('computeMaturity', () => {
     expect(computeMaturity(null).ageDays).toBeNull()
   })
 
+  // NOTE: the lifecycle anchors below are date-only strings, which computeMaturity
+  // parses as LOCAL midnight. `today` must be in the same (local) frame or the day
+  // diff shifts by the UTC offset (10 days in UTC/CI, 9 in a UTC-negative TZ like
+  // EDT). Pass `today` WITHOUT the trailing Z so both are local-midnight → exact
+  // 10-day gap in any timezone. (Wave 0 / WS-B M2: fixes a TZ-fragile assertion.)
   it('ages from the most-advanced lifecycle date (transplanted over sown)', () => {
-    const m = computeMaturity({ sown_at: '2026-02-01', transplanted_at: '2026-04-15' }, new Date('2026-04-25T00:00:00Z'))
+    const m = computeMaturity({ sown_at: '2026-02-01', transplanted_at: '2026-04-15' }, new Date('2026-04-25T00:00:00'))
     expect(m.anchorLabel).toBe('transplanted')
     expect(m.ageDays).toBe(10)
   })
 
   it('falls back to sown when no later date exists', () => {
-    const m = computeMaturity({ sown_at: '2026-06-01' }, new Date('2026-06-11T00:00:00Z'))
+    const m = computeMaturity({ sown_at: '2026-06-01' }, new Date('2026-06-11T00:00:00'))
     expect(m.anchorLabel).toBe('sown')
     expect(m.ageDays).toBe(10)
   })

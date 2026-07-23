@@ -68,8 +68,11 @@ describe('Collection — V007 candy-pastel float-free redesign', () => {
   })
 
   it('reveals collected entry: name in alt + div, caption shows Seen + month/day date', () => {
+    // Noon UTC (not midnight) so the caption's LOCAL-rendered date is "May 10" in any
+    // realistic timezone — a midnight-UTC value renders as May 9 in a UTC-negative TZ
+    // (EDT), which is the class of TZ-fragility fixed in Wave 0 / WS-B M2.
     const collected = new Map([
-      ['C050', { speciesId: 3, count: 4, firstSeenAt: '2026-05-10T00:00:00Z', lastSeenAt: '2026-05-20T00:00:00Z' }],
+      ['C050', { speciesId: 3, count: 4, firstSeenAt: '2026-05-10T12:00:00Z', lastSeenAt: '2026-05-20T12:00:00Z' }],
     ])
     setState({ collected })
     render(<Collection />)

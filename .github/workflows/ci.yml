@@ -85,3 +85,12 @@ jobs:
         # vitest exits non-zero if coverage thresholds (in vitest.config.ts) not met.
         # Path A baseline: thresholds at 0%; schedule ratchets up per coverage-ratchet.json.
 
+      - name: Unit tests under America/New_York TZ (date-fragility guard)
+        # Wave 0 / WS-B M2: the run above executes under UTC (GHA default), which hid a
+        # class of TZ-fragile date assertions that only fail in a UTC-negative zone like
+        # the app's own EDT/EST (plantingMaturity ageDays, Collection "Seen" caption).
+        # Re-run the suite under the app's real timezone so that class fails CI, not prod.
+        run: npx vitest run --no-coverage
+        env:
+          TZ: America/New_York
+
