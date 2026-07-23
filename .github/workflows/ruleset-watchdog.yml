@@ -10,25 +10,37 @@ name: Ruleset Drift Watchdog
 # long-lived `RULESET_READ_PAT` secret. WHY: that secret was set 2026-06-03 and holds a token
 # value that no longer exists in the account, so this workflow had been 401ing — while BOTH
 # live account PATs were perfectly healthy. A repo secret is a stored COPY of a token and rots
-# INDEPENDENTLY of the account's token list, so "my PATs are fine" and "this workflow is 401ing"
-# are both true at once. Diagnosing the 401 as an expired account PAT was wrong and cost a
-# rotation request that was never needed. App tokens are minted per run and cannot rot, which
-# removes the whole class. Falls back to RULESET_READ_PAT when the mint fails, so landing this
-# cannot make things worse than they already are.
+# INDEPENDENTLY of the account's token list. App tokens are minted per run and cannot rot.
 # NOTE: garden-bot needs `administration: read` on the repo for the rulesets API.
 #
-# FAIL-SOFT ON AUTH, HARD ON DRIFT (added 2026-07-22, per L-288): the previous version mapped
-# EVERY failure — auth, network, timeout — onto "RULESET DRIFT detected" and failed the run.
-# That is precisely the defect L-288 records in pstate's verify: conflating "I could not ask"
-# with "the answer is no", then escalating to the strongest available claim. A watchdog that
-# cries drift when it merely could not reach GitHub trains its reader to ignore it, which
-# destroys the signal it exists to carry. Now:
-#   - genuine drift           -> ::error::   + exit 1  (alert, unchanged)
-#   - could not verify at all -> ::warning:: + exit 0  (visible, but not a false drift alarm)
-# The tradeoff is deliberate and stated: an unverifiable watchdog is a DEGRADED guard and says
-# so in its annotation, instead of a red X that means nothing. A 404 on /rulesets is treated as
-# unverifiable, NOT as "ruleset deleted" — 404 is ambiguous between a missing permission and a
-# missing resource. Only a SUCCESSFUL read whose id list omits the ruleset counts as drift.
+# FAIL-SOFT ON AUTH, HARD ON DRIFT (added 2026-07-22, per L-288): auth/network/timeout map to
+# ::warning:: + exit 0 (visible, not a false drift alarm); only a SUCCESSFUL read that shows an
+# actually-wrong ruleset is ::error:: + exit 1.
+#
+# PARTIAL-READ FIX (added 2026-07-23, after this guard's FIRST scheduled run false-failed with
+# "bypass_actors drifted: []" while the live ruleset was verifiably intact — owner-token read
+# showed bypass_actors=[garden-bot App 3951762, Integration, always]). ROOT CAUSE: the prior
+# version handled a read that THREW (HTTPError -> Unverifiable -> warning) but NOT a read that
+# SUCCEEDED with a permission-emptied field. A GitHub App INSTALLATION token can read a
+# ruleset's enforcement/rules/conditions but gets bypass_actors=[] because that field is
+# admin-gated. Empirically (the false-failed run) ONLY bypass_actors was blank — enforcement,
+# rules and ref-scope all read correctly — so those stay HARD drift signals; bypass_actors gets
+# three-way handling:
+#   - non-empty & exactly the expected garden-bot Integration actor -> OK
+#   - non-empty & any OTHER/extra actor                             -> ::error:: DRIFT
+#        (this is the real attack surface: someone ADDING a rogue bypass actor is still caught)
+#   - empty while enforcement=active                                -> UNVERIFIED (::warning::),
+#        NOT drift. An empty list is a permission blind-spot, not proof the bypass was cleared
+#        (and clearing garden-bot's bypass would self-alarm by breaking the promote path, and is
+#        a lock-DOWN not an escalation).
+# SELF-HEAL: on an empty read, the check retries with RULESET_READ_PAT when that secret is
+# present and distinct from the App token — a fine-grained user PAT with administration:read
+# DOES return bypass_actors. Provision a live token there and this check verifies for real with
+# no code change (RES-005: a provisioned secret, never a pasted PAT).
+# ANTI-GREEN-BLINDNESS: a persistent UNVERIFIED state must not hide forever. The check reads its
+# own recent run annotations (stateless; needs only actions:read + checks:read on GITHUB_TOKEN)
+# and escalates ::warning:: -> ::error:: after STREAK_THRESHOLD consecutive unverified runs, so a
+# blind guard eventually forces the credential fix instead of staying quietly degraded.
 
 on:
   schedule:
@@ -37,6 +49,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  checks: read
 
 jobs:
   assert-ruleset:
@@ -52,25 +66,38 @@ jobs:
 
       - name: Assert main-capability-gate ruleset intact
         env:
-          GH_TOKEN: ${{ steps.bot.outputs.token || secrets.RULESET_READ_PAT }}
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          FALLBACK_PAT: ${{ secrets.RULESET_READ_PAT }}
+          HISTORY_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          if [ -z "${GH_TOKEN:-}" ]; then
+          if [ -z "${BOT_TOKEN:-}" ] && [ -z "${FALLBACK_PAT:-}" ]; then
             echo "::warning::UNVERIFIED - no usable credential (garden-bot mint failed and RULESET_READ_PAT is unset). The ruleset was NOT checked. Degraded guard, not a drift signal."
             exit 0
           fi
           python3 - <<'PY'
           import json, os, sys, urllib.error, urllib.request
-          tok = os.environ["GH_TOKEN"]; repo = os.environ["REPO"]
-          EXPECT_ID = 17227141; EXPECT_BOT = 3951762
+
+          REPO = os.environ["REPO"]
+          EXPECT_ID = 17227141
+          EXPECT_BOT = 3951762
+          STREAK_THRESHOLD = 3
+          MARKER = "WATCHDOG_BYPASS_UNVERIFIED"
+
+          bot = os.environ.get("BOT_TOKEN") or ""
+          pat = os.environ.get("FALLBACK_PAT") or ""
+          primary = bot or pat
+          history_tok = os.environ.get("HISTORY_TOKEN") or primary
+          run_id = os.environ.get("RUN_ID") or ""
 
           class Unverifiable(Exception):
               """Could not reach or read the API. NOT evidence of drift."""
 
-          def api(path):
+          def api(path, tok):
               req = urllib.request.Request(
-                  "https://api.github.com/repos/%s%s" % (repo, path),
+                  "https://api.github.com/repos/%s%s" % (REPO, path),
                   headers={"Authorization": "token %s" % tok,
                            "Accept": "application/vnd.github+json"})
               try:
@@ -80,38 +107,109 @@ jobs:
               except Exception as e:
                   raise Unverifiable("%s on %s" % (type(e).__name__, path))
 
-          try:
+          def check_ruleset(tok):
+              # Returns (structural_fail:list, bypass_status). enforcement/rules/scope are NOT
+              # permission-gated and are trusted as hard drift signals; bypass_status is one of
+              # 'ok' | 'drift' | 'empty' | 'missing'.
               fail = []
-              ids = [r["id"] for r in api("/rulesets")]
+              ids = [r["id"] for r in api("/rulesets", tok)]
               if EXPECT_ID not in ids:
                   fail.append("ruleset %d MISSING (present: %s)" % (EXPECT_ID, ids))
+                  return fail, "missing"
+              d = api("/rulesets/%d" % EXPECT_ID, tok)
+              if d.get("enforcement") != "active":
+                  fail.append("enforcement=%s != active" % d.get("enforcement"))
+              rules = set(r["type"] for r in d.get("rules", []))
+              for need in ("pull_request", "non_fast_forward", "deletion"):
+                  if need not in rules:
+                      fail.append("missing rule: %s" % need)
+              inc = d.get("conditions", {}).get("ref_name", {}).get("include", [])
+              if inc != ["refs/heads/main"]:
+                  fail.append("ref scope drifted: %s" % inc)
+              ba = d.get("bypass_actors", [])
+              if len(ba) == 0:
+                  bstatus = "empty"
+              elif (len(ba) == 1 and ba[0].get("actor_id") == EXPECT_BOT
+                    and ba[0].get("actor_type") == "Integration"):
+                  bstatus = "ok"
               else:
-                  d = api("/rulesets/%d" % EXPECT_ID)
-                  if d.get("enforcement") != "active":
-                      fail.append("enforcement=%s != active" % d.get("enforcement"))
-                  ba = d.get("bypass_actors", [])
-                  ok_bypass = (len(ba) == 1 and ba[0].get("actor_id") == EXPECT_BOT
-                               and ba[0].get("actor_type") == "Integration")
-                  if not ok_bypass:
-                      fail.append("bypass_actors drifted: %s" % ba)
-                  rules = set(r["type"] for r in d.get("rules", []))
-                  for need in ("pull_request", "non_fast_forward", "deletion"):
-                      if need not in rules:
-                          fail.append("missing rule: %s" % need)
-                  inc = d.get("conditions", {}).get("ref_name", {}).get("include", [])
-                  if inc != ["refs/heads/main"]:
-                      fail.append("ref scope drifted: %s" % inc)
+                  bstatus = "drift"
+                  fail.append("bypass_actors drifted (unexpected actor present): %s" % ba)
+              return fail, bstatus
+
+          def count_prior_unverified():
+              # Consecutive most-recent PRIOR completed runs of THIS workflow whose job carried the
+              # MARKER annotation. Stateless; any read failure returns 0 (never falsely escalate).
+              if not run_id:
+                  return 0
+              try:
+                  this_run = api("/actions/runs/%s" % run_id, history_tok)
+                  wf_id = this_run.get("workflow_id")
+                  if not wf_id:
+                      return 0
+                  runs = api("/actions/workflows/%d/runs?status=completed&per_page=%d"
+                             % (wf_id, STREAK_THRESHOLD + 2), history_tok).get("workflow_runs", [])
+              except Unverifiable:
+                  return 0
+              count = 0
+              for r in runs:
+                  if str(r.get("id")) == str(run_id):
+                      continue
+                  try:
+                      jobs = api("/actions/runs/%d/jobs" % r["id"], history_tok).get("jobs", [])
+                      if not jobs:
+                          break
+                      anns = api("/check-runs/%d/annotations" % jobs[0]["id"], history_tok)
+                  except Unverifiable:
+                      break
+                  if any(MARKER in (a.get("message") or "") for a in anns):
+                      count += 1
+                  else:
+                      break
+              return count
+
+          if not primary:
+              print("::warning::UNVERIFIED - no usable credential. Degraded guard, not a drift signal.")
+              sys.exit(0)
+
+          try:
+              fail, bstatus = check_ruleset(primary)
           except Unverifiable as u:
               print("::warning::UNVERIFIED - could not read the ruleset (%s). The ruleset was NOT "
                     "checked; this is NOT a drift signal. If garden-bot is the credential, it needs "
                     "administration:read on the repo." % u)
               sys.exit(0)
 
+          # An App token reads bypass_actors as []; a fine-grained admin-read PAT does not. If the
+          # primary read came back empty and a DISTINCT fallback PAT exists, re-read with it.
+          if bstatus == "empty" and pat and pat != primary:
+              try:
+                  fail, bstatus = check_ruleset(pat)
+              except Unverifiable:
+                  pass
+
           if fail:
               print("::error::main-capability-gate RULESET DRIFT detected:")
               for f in fail:
                   print("  - " + f)
               sys.exit(1)
-          print("OK: main-capability-gate ruleset intact (id %d, bypass=garden-bot %d)"
-                % (EXPECT_ID, EXPECT_BOT))
+
+          if bstatus == "ok":
+              print("OK: main-capability-gate ruleset intact (id %d, bypass=garden-bot %d)"
+                    % (EXPECT_ID, EXPECT_BOT))
+              sys.exit(0)
+
+          # bstatus == "empty": enforcement/rules/scope intact, bypass_actors unreadable.
+          streak = 1 + count_prior_unverified()
+          if streak >= STREAK_THRESHOLD:
+              print("::error::%s for %d consecutive runs (threshold %d). enforcement/rules/scope "
+                    "are intact, but bypass_actors could not be read. Provision a bypass-capable "
+                    "credential in the RULESET_READ_PAT secret (fine-grained, administration:read) "
+                    "so this check can verify the garden-bot bypass actor."
+                    % (MARKER, streak, STREAK_THRESHOLD))
+              sys.exit(1)
+          print("::warning::%s - enforcement/rules/scope intact, but bypass_actors read empty "
+                "(token lacks admin visibility of bypass actors). NOT a drift signal. "
+                "Consecutive unverified: %d/%d." % (MARKER, streak, STREAK_THRESHOLD))
+          sys.exit(0)
           PY
