@@ -2,7 +2,7 @@
 // live data or in review: backdated rows, mixed units on one planting, the year boundary at
 // 23:00 ET, and the "count" schema token leaking into the UI.
 import { describe, it, expect } from 'vitest'
-import { summarizeHarvests, formatEntries, formatEntry, unitLabel, fmtQuantity, etDay, addDays, cropNoun, harvestSpanDays, harvestWindow } from '../lib/harvestSummary.js'
+import { summarizeHarvests, formatEntries, formatEntry, unitLabel, fmtQuantity, etDay, addDays, cropNoun, harvestSpanDays, harvestWindow, seasonTotalPhrase } from '../lib/harvestSummary.js'
 
 const TODAY = '2026-07-21'
 const opts = (extra = {}) => ({ today: TODAY, windowDays: 14, ...extra })
@@ -209,5 +209,23 @@ describe('harvestSpanDays / harvestWindow', () => {
     ]
     const w = harvestWindow(summarizeHarvests(rows, { today: '2026-07-21' }))
     expect(w).toEqual({ first: '2026-06-28', last: '2026-07-21', days: 24, isSpan: true })
+  })
+})
+
+// V4-HARVESTVIEW-001 S4a — the EventNew post-harvest "Season: …" ambient line phrase.
+describe('seasonTotalPhrase', () => {
+  it('appends the crop noun after a mass/volume unit', () => {
+    expect(seasonTotalPhrase({ crop_name: 'Blueberry', units: [{ unit: 'cup', total: 4.5 }] })).toBe('4.5 cups blueberry')
+  })
+  it('folds the crop noun INTO a lone count unit (never "6 count blueberry")', () => {
+    expect(seasonTotalPhrase({ crop_name: 'Tomato', units: [{ unit: 'count', total: 6 }] })).toBe('6 tomatoes')
+  })
+  it('joins multiple units and appends the noun once', () => {
+    expect(seasonTotalPhrase({ crop_name: 'Pepper', units: [{ unit: 'lb', total: 2 }, { unit: 'count', total: 3 }] })).toBe('2 lb · 3 pepper')
+  })
+  it('returns null when there is no quantified total', () => {
+    expect(seasonTotalPhrase({ crop_name: 'Kale', units: [] })).toBeNull()
+    expect(seasonTotalPhrase(null)).toBeNull()
+    expect(seasonTotalPhrase(undefined)).toBeNull()
   })
 })

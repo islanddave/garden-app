@@ -305,3 +305,28 @@ describe('PlantingDetail — Slice 5a care band', () => {
     expect(screen.queryByText(/Overdue|Due today/)).toBeNull()
   })
 })
+
+describe('PlantingDetail — V4-HARVESTVIEW-001 S4b "All harvests →"', () => {
+  it('links the Harvested block to the crop-filtered Harvests page when the crop key resolves', async () => {
+    const planting = { ...PLANTING, variety_ref: { name: 'Sungold', crop_type_slug: 'tomato' } }
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve(planting)
+      if (path.startsWith('/api/events')) return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+    renderAt()
+    const link = await screen.findByRole('link', { name: /All harvests/ })
+    expect(link.getAttribute('href')).toBe('/harvests?crop=tomato')
+  })
+
+  it('omits the link when the planting has no crop key (nothing to filter by)', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING) // variety_ref has no crop_type_slug
+      if (path.startsWith('/api/events')) return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    expect(screen.queryByRole('link', { name: /All harvests/ })).toBeNull()
+  })
+})

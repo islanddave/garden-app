@@ -528,6 +528,15 @@ export default function PlantingDetail() {
       <SectionHeader>Harvested</SectionHeader>
       <div style={cardStyle}>
         <HarvestFromPlanting planting={pl} fetch={fetch} />
+        {/* V4-HARVESTVIEW-001 S4b: crop-filtered jump to the Harvests page (design §2.3). Shown only
+            when the crop key resolves, since the destination is filtered by crop_type_slug. */}
+        {pl.variety_ref?.crop_type_slug && (
+          <div style={{ marginTop: 12, textAlign: 'right' }}>
+            <Link to={`/harvests?crop=${encodeURIComponent(pl.variety_ref.crop_type_slug)}`} style={{ color: P.green, textDecoration: 'none', fontSize: '0.82rem', fontWeight: 700 }}>
+              All harvests →
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* ── Put up (V4-PUTUPLINK-001) — the far end of the spine: what this planting yielded that is

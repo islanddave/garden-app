@@ -215,6 +215,22 @@ export function formatEntries(entries, countNoun) {
   return entries.map(e => formatEntry(e, countNoun)).join(' · ')
 }
 
+// V4-HARVESTVIEW-001 S4a: a one-line season-total phrase for a SINGLE crop aggregate (a
+// `/api/harvests` aggregates.crops[] element: { crop_name, units:[{unit,total}] }). Feeds the
+// EventNew post-harvest "Season: …" ambient line. "4.5 cups blueberry" / "6 tomatoes" (a lone count
+// folds the crop noun in via unitLabel) / null when there's no quantified total. Multi-unit crops
+// join with ' · '. Ambient reassurance only — never a denominator, never a link (design §2/§6).
+export function seasonTotalPhrase(crop) {
+  const units = Array.isArray(crop?.units) ? crop.units : []
+  if (units.length === 0) return null
+  const noun = String(crop.crop_name ?? '').trim().toLowerCase() || null
+  if (units.length === 1 && normUnit(units[0].unit) === 'count') {
+    return formatEntry({ quantity: units[0].total, unit: units[0].unit }, noun)
+  }
+  const qtys = units.map(u => formatEntry({ quantity: u.total, unit: u.unit }, null)).join(' · ')
+  return noun ? `${qtys} ${noun}` : qtys
+}
+
 // crop_type_slug ('sweet-pepper') → a display noun ('sweet pepper') for the count-unit label.
 export function cropNoun(planting) {
   const slug = planting?.variety_ref?.crop_type_slug

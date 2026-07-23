@@ -10,6 +10,7 @@ import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components
 import { formatQty } from '../lib/format.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
+import { seasonTotalPhrase } from '../lib/harvestSummary.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
@@ -290,6 +291,10 @@ export default function EventNew() {
   // { eventId, projectId, projName, eventLabel, eventEmoji, undone, error } | null.
   // projectId comes from the POST RESPONSE (not staged client state) — it builds the View link.
   const [confirmation, setConfirmation] = useState(null)
+  // V4-HARVESTVIEW-001 S4a: ambient "Season: 4.5 cups blueberry" line on the harvest confirmation
+  // card (design §2 loop-closer). STATIC text, best-effort, overlay-only. Null unless the just-logged
+  // harvest resolved a crop AND the post-save aggregates GET returned a total.
+  const [seasonLine, setSeasonLine] = useState(null)
   const closeBtnRef = useRef(null)
   const dismissOverlay = useOverlayDismiss()
   const kbInset = useVisualViewportInset()
@@ -713,10 +718,12 @@ export default function EventNew() {
     // form.plant_id. Provenance is best-effort — crop/variety resolve off the selected planting's
     // variety_ref; harvest_log_id off the events response's harvest row. At least one of {crop,
     // variety} is what Put-Up needs; if neither resolves, the affordance still opens (user picks a crop).
+    // V4-HARVESTVIEW-001 S4a: the crop whose running season total the confirmation card will echo.
+    let seasonCropSlug = null
     if (isHarvest && eventId) {
       const selectedPlant = plantsForProject.find(p => p.id === form.plant_id)
       const pf = {}
-      if (selectedPlant?.variety_ref?.crop_type_slug) pf.crop_type_slug = selectedPlant.variety_ref.crop_type_slug
+      if (selectedPlant?.variety_ref?.crop_type_slug) { pf.crop_type_slug = selectedPlant.variety_ref.crop_type_slug; seasonCropSlug = selectedPlant.variety_ref.crop_type_slug }
       if (selectedPlant?.variety_ref?.id) pf.variety_id = selectedPlant.variety_ref.id
       if (form.plant_id) pf.plant_id = form.plant_id
       if (result?.harvest?.id) pf.harvest_log_id = result.harvest.id
@@ -746,6 +753,16 @@ export default function EventNew() {
           undone: false,
           error: null,
         })
+        // V4-HARVESTVIEW-001 S4a: post-save season-total line (design §2 loop-closer). Cleared first
+        // so a prior harvest's total can never flash on this card; then a harvest-only aggregates GET
+        // fills it. Best-effort + STATIC text: renders nothing on failure, adds no link (the card's
+        // link count is a pinned B5 invariant), and does not touch confirmPhase, so focus stays put.
+        setSeasonLine(null)
+        if (isHarvest && seasonCropSlug) {
+          apiFetch(`/api/harvests?include=aggregates&crop=${encodeURIComponent(seasonCropSlug)}`)
+            .then(d => { const phrase = seasonTotalPhrase(d?.aggregates?.crops?.[0]); if (phrase) setSeasonLine(`Season: ${phrase}`) })
+            .catch(() => { /* ambient — the card never surfaces a harvests-read failure */ })
+        }
       } else {
         // Non-overlay (full page) DELIBERATELY keeps the global operational toast: outside the
         // aria-modal sheet the toast IS AT-reachable, and the full-page rapid-entry flow keeps the
@@ -798,6 +815,13 @@ export default function EventNew() {
                 </>
               )}
             </div>
+            {/* V4-HARVESTVIEW-001 S4a: ambient season-total line (design §2). STATIC text, NOT a link
+                — the card's link count is a pinned B5 invariant (EventNewOverlaySlice2). Outside the
+                role=status region so it isn't re-announced when it arrives async. Hidden once undone
+                (the just-logged harvest was removed, so the total would be stale). */}
+            {seasonLine && !confirmation.undone && (
+              <p style={{ margin: '10px 0 0', color: P.green, fontSize: '0.9rem', fontWeight: 600 }}>{seasonLine}</p>
+            )}
             {confirmation.error && (
               <p role="alert" style={{ margin: '10px 0 0', color: P.terra, fontSize: '0.82rem', fontWeight: 600 }}>
                 {confirmation.error}
@@ -829,7 +853,7 @@ export default function EventNew() {
           paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
           display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap',
         }}>
-          <button type="button" onClick={() => setConfirmation(null)} style={confirmBtnGhost}>
+          <button type="button" onClick={() => { setConfirmation(null); setSeasonLine(null) }} style={confirmBtnGhost}>
             Log another
           </button>
           {viewHref && (

@@ -2,15 +2,16 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
-const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
+const { fetchSpy, searchParamsRef } = vi.hoisted(() => ({ fetchSpy: vi.fn(), searchParamsRef: { current: new URLSearchParams() } }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+  useSearchParams: () => [searchParamsRef.current, () => {}],
 }))
 
 import Harvests from '../pages/Harvests.jsx'
 
-beforeEach(() => fetchSpy.mockReset())
+beforeEach(() => { fetchSpy.mockReset(); searchParamsRef.current = new URLSearchParams() })
 
 // Route the mocked apiFetch by URL: /api/projects → project rows; unfiltered `include=aggregates`
 // (no entries) → the picker's crop universe; everything else (main + snapshot) → harvest entries,
@@ -174,5 +175,18 @@ describe('Harvests page', () => {
     await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
     expect(screen.queryByText('Genovese')).toBeNull()
     expect(screen.getByRole('button', { name: /clear crop filter/i })).toBeTruthy()
+  })
+
+  it('seeds the crop filter from ?crop= in the URL (S4 deep link from EventNew / a planting)', async () => {
+    searchParamsRef.current = new URLSearchParams('crop=basil')
+    mockRoutes({ entries: TWO_CROPS, cropList: [{ crop_type_slug: 'basil', display_name: 'Basil' }] })
+    render(<Harvests />)
+    // lands already filtered to basil: the query carries crop=basil, tomato entry absent
+    await waitFor(() => expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('crop=basil'))).toBe(true))
+    await waitFor(() => expect(screen.getByText('Genovese')).toBeTruthy())
+    expect(screen.queryByText('Sungold')).toBeNull()
+    // the pill resolves its label from the option list and offers a clear
+    expect(screen.getByRole('button', { name: /clear crop filter/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Crop: Basil\. Change filter/i })).toBeTruthy()
   })
 })

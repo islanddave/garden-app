@@ -49,6 +49,7 @@ function wireApiFetch() {
     if (path === '/api/projects') return Promise.resolve(dataRef.projects)
     if (path === '/api/locations/with-path') return Promise.resolve(dataRef.locations)
     if (path.startsWith('/api/plants')) return Promise.resolve(dataRef.plants)
+    if (path.startsWith('/api/harvests')) return Promise.resolve(dataRef.harvestsAgg ?? null)
     return Promise.resolve(null)
   })
 }
@@ -77,7 +78,7 @@ beforeEach(() => {
   apiFetchSpy.mockReset(); navigateSpy.mockReset(); postCalls.length = 0
   searchParamsRef.current = new URLSearchParams()
   dataRef.projects = [PROJECT]; dataRef.locations = []; dataRef.plants = []
-  dataRef.postResult = { id: 'evt-1', project_id: 'proj-1' }; dataRef.postError = null; dataRef.deleteError = null
+  dataRef.postResult = { id: 'evt-1', project_id: 'proj-1' }; dataRef.postError = null; dataRef.deleteError = null; dataRef.harvestsAgg = null
   sessionStorage.clear()
   wireApiFetch()
 })
@@ -270,5 +271,30 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2)', () => {
     expect(screen.getByRole('status').textContent).toMatch(/Logged event for Tomatoes 2026/)
     act(() => { vi.advanceTimersByTime(5001) })
     expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  // ── V4-HARVESTVIEW-001 S4a: post-harvest ambient season-total line (the loop-closer, design §2) ──
+  it('a logged harvest shows the running season total as STATIC text — no extra link, focus intact', async () => {
+    dataRef.plants = [{ id: 'pl-1', name: 'Blue #1', variety_ref: { crop_type_slug: 'blueberry' } }]
+    // No plant_id in the RESPONSE → no "View planting" link, so "View event" is the sole link and the
+    // B5 count stays 1. The crop slug still resolves from the CLIENT-selected plant, so the line fires.
+    dataRef.postResult = { id: 'evt-1', project_id: 'proj-1' }
+    dataRef.harvestsAgg = { aggregates: { crops: [{ crop_name: 'Blueberry', units: [{ unit: 'cup', total: 4.5 }] }] } }
+    renderInOverlay('event_type=harvest')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await waitFor(() => screen.getByText('Blue #1'))
+    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
+    fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '2' } })
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
+
+    // the ambient season total renders (async, after the post-save aggregates GET)
+    expect(await screen.findByText('Season: 4.5 cups blueberry')).toBeTruthy()
+    // B5 invariant: the season line is NOT a link — View event stays the ONLY link on the card
+    const links = screen.getAllByRole('link')
+    expect(links.length).toBe(1)
+    expect(links[0].textContent).toBe('View event')
+    // the async line never steals focus from the primary Close action (confirmPhase-keyed effect)
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close' }))
   })
 })

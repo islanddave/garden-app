@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import Sheet from '../components/forms/Sheet.jsx'
@@ -22,9 +22,13 @@ const HARVEST_TZ = 'America/New_York'
 const currentGrowYear = (d) => (d.getMonth() >= 10 ? d.getFullYear() + 1 : d.getFullYear())
 
 export default function Harvests() {
+  // S4: EventNew's post-harvest line + PlantingDetail's "All harvests →" land here pre-filtered to a
+  // crop via ?crop=<slug>. Seeded once on mount; the pickers drive local state from there (no two-way
+  // URL sync in V1 — server-persisted last filter is a named phase-2 item, design §9).
+  const [searchParams] = useSearchParams()
   const [view, setView] = useState('log') // 'log' | 'totals'
   const [timeframe, setTimeframe] = useState('') // '' = all time
-  const [crop, setCrop] = useState('') // crop_type_slug; '' = all crops
+  const [crop, setCrop] = useState(() => searchParams.get('crop') || '') // crop_type_slug; '' = all crops
   const [cropLabel, setCropLabel] = useState('')
   const [project, setProject] = useState('') // project_id (uuid); '' = all projects
   const [projectLabel, setProjectLabel] = useState('')
@@ -71,7 +75,7 @@ export default function Harvests() {
 
         {view === 'log' && (
           <FilterControls
-            cropValue={crop ? (cropLabel || crop) : ''}
+            cropValue={crop ? (cropLabel || cropOptions.find((o) => o.crop_type_slug === crop)?.display_name || crop) : ''}
             onOpenCrop={() => setCropSheetOpen(true)}
             onClearCrop={() => { setCrop(''); setCropLabel('') }}
             projectValue={project ? (projectLabel || project) : ''}
