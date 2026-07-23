@@ -28,8 +28,8 @@ describe('FacebookShareSheet', () => {
 
   it('appends the hashtag to the caption', () => {
     render(<FacebookShareSheet open photos={photos} onClose={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: /#GardensAtMatthews/i }));
-    expect(screen.getByLabelText(/caption/i).value).toContain('#GardensAtMatthews');
+    fireEvent.click(screen.getByRole('button', { name: /#GardensAtMathews/i }));
+    expect(screen.getByLabelText(/caption/i).value).toContain('#GardensAtMathews');
   });
 
   it('posts and shows success + a working View on Facebook link, and calls onPosted', async () => {

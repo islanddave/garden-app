@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react'
 import { P } from '../lib/constants.js'
 import { useShareToFacebook } from '../hooks/useShareToFacebook.js'
 
-// V4-FBSHARE-001 — compose + post sheet for sharing photos to the "Gardens at Matthews" FB Page.
+// V4-FBSHARE-001 — compose + post sheet for sharing photos to the "Gardens at Mathews" FB Page.
 // Reused for single-photo (from the tag modal) and multi-select (from the selection bar). The bytes
 // are uploaded server-side; nothing here touches is_public. Bottom-sheet layout keeps the Post button
 // in the thumb zone.
-const HASHTAG = '#GardensAtMatthews'
+const HASHTAG = '#GardensAtMathews'
 const MAX_CAPTION = 5000
 
 export default function FacebookShareSheet({ open, photos = [], onClose, onPosted }) {
@@ -52,7 +52,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 18px 8px' }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: P.green }}>
-            Share to Gardens at Matthews
+            Share to Gardens at Mathews
           </h2>
           <button type="button" aria-label="Close" onClick={() => closable && onClose()} disabled={!closable}
             style={{ background: 'none', border: 'none', fontSize: '1.1rem', color: P.mid, cursor: closable ? 'pointer' : 'default', padding: 4 }}>✕</button>
@@ -121,7 +121,7 @@ function Success({ result, onClose }) {
     <div style={{ padding: '8px 18px 22px', textAlign: 'center' }}>
       <div style={{ fontSize: '2.2rem', marginBottom: 8 }}>✅</div>
       <p style={{ margin: '0 0 4px', fontWeight: 700, color: P.dark, fontSize: '0.98rem' }}>Posted to Facebook</p>
-      <p style={{ margin: '0 0 16px', fontSize: '0.84rem', color: P.mid }}>Your photos are live on the Gardens at Matthews page.</p>
+      <p style={{ margin: '0 0 16px', fontSize: '0.84rem', color: P.mid }}>Your photos are live on the Gardens at Mathews page.</p>
       <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
         {link && (
           <a href={link} target="_blank" rel="noopener noreferrer"

@@ -1,5 +1,5 @@
 // /api/share/facebook — V4-FBSHARE-001 (Phase A). Admin-only one-click post of garden photos to the
-// "Gardens at Matthews" Facebook Page via the Graph API. WRITE endpoint (posts externally + writes
+// "Gardens at Mathews" Facebook Page via the Graph API. WRITE endpoint (posts externally + writes
 // share_log). Solo Dev-Mode feasible: Dave is Page admin AND app owner, so NO App Review is needed.
 //
 // Mirrors lambda/harvests (auth/secrets/Function-URL seam) and lambda/photos (S3 GetObject byte read,

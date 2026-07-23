@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
 
-// V4-FBSHARE-001 — post selected garden photos to the "Gardens at Matthews" Facebook Page via the
+// V4-FBSHARE-001 — post selected garden photos to the "Gardens at Mathews" Facebook Page via the
 // admin-only POST /api/share/facebook (Graph byte-upload; NOT the OS share sheet in lib/shareEntity.js).
 //
 // State machine: idle -> posting -> success | error | forbidden | token_invalid | disabled.

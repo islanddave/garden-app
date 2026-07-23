@@ -1,6 +1,6 @@
 -- V4-FBSHARE-001 P1 — Facebook Page sharing: share_log audit / idempotency table.
 --
--- Additive-only. Records each attempt to post a garden photo to the "Gardens at Matthews"
+-- Additive-only. Records each attempt to post a garden photo to the "Gardens at Mathews"
 -- Facebook Page via the Graph API (POST /api/share/facebook). ONE ROW PER PHOTO PER POST; the
 -- N photos of one multi-photo post share a post_group_id.
 --
