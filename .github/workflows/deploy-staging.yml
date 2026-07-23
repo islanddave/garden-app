@@ -52,6 +52,13 @@ env:
   # garden-storage-location-staging and probed 2026-07-21: both return 401 (alive + auth-gated).
   STAGING_API_PRESERVATION:      https://gmcwnewzjykdlnd7nllagvyrlm0vgrjn.lambda-url.us-east-1.on.aws/
   STAGING_API_STORAGE_LOCATIONS: https://4arsh5rxe6f5f5bgbyeyueftee0qquwa.lambda-url.us-east-1.on.aws/
+  # Harvests page (V4-HARVESTVIEW-001). Declared empty until the first staging deploy creates
+  # garden-harvests-staging + its Function URL; then set this to the real URL (read from
+  # `aws lambda get-function-url-config --function-name garden-harvests-staging`). WARN-tier in the
+  # Validate step while empty (ship-then-wire) — an empty value bakes VITE_API_HARVESTS="" (Harvests
+  # unreachable on staging, nothing else breaks). Declared explicitly so the env reference is not an
+  # undefined-var silent-empty (the STAGING_API_TAGS lesson).
+  STAGING_API_HARVESTS: ""
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
@@ -64,7 +71,7 @@ jobs:
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     strategy:
       matrix:
-        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, storage-location, preservation]
+        function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, storage-location, preservation, harvests]
       max-parallel: 4
       fail-fast: false
 
@@ -176,6 +183,32 @@ jobs:
             echo "ADMIN_CLERK_SUBS set on $FN"
           fi
 
+      - name: Ensure GARDEN_HOUSEHOLD_IDS env for harvests-staging (household-scope; read-merge)
+        # B1 (staging side): garden-harvests-staging is household-scoped; create-function above sets
+        # ONLY SECRET_NAME, so without this it collapses to per-user scope and the both-household
+        # staging smoke would show divergent lists. Read-merge (NOT set — set wipes SECRET_NAME) the
+        # value from the sibling garden-events-staging (canonical live source).
+        if: matrix.function == 'harvests'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on staging deploy role
+        run: |
+          FN="garden-harvests-staging"
+          SRC="garden-events-staging"
+          HH=$(aws lambda get-function-configuration --function-name "$SRC" \
+            --query 'Environment.Variables.GARDEN_HOUSEHOLD_IDS' --output text 2>/dev/null || echo "None")
+          if [[ "$HH" == "None" || -z "$HH" ]]; then
+            echo "::warning::B1(staging) — GARDEN_HOUSEHOLD_IDS not readable from $SRC; garden-harvests-staging"
+            echo "::warning::stays per-user until set. The both-household staging smoke will diverge until fixed."
+            exit 0
+          fi
+          EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
+            --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
+          UPDATED=$(echo "$EXISTING" | jq --arg v "$HH" '. + {GARDEN_HOUSEHOLD_IDS: $v}')
+          echo "{\"Variables\": $UPDATED}" > /tmp/env-harvests-household-staging.json
+          aws lambda update-function-configuration \
+            --function-name "$FN" --environment file:///tmp/env-harvests-household-staging.json >/dev/null
+          aws lambda wait function-updated --function-name "$FN"
+          echo "GARDEN_HOUSEHOLD_IDS ensured on $FN"
+
       - name: Ensure Function URL exists for ${{ matrix.function }}-staging
         # First-deploy support: mirror deploy-lambda.yml Function URL creation step.
         # Existing URLs unchanged; missing URLs created with public access (handler owns CORS).
@@ -244,7 +277,7 @@ jobs:
           for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD VITE_API_INVENTORY; do
             [[ -n "${!VAR}" ]] || { echo "ERROR: $VAR not set"; exit 1; }
           done
-          for VAR in VITE_API_VARIETIES VITE_API_APP_EVENTS VITE_API_UX_EVENTS VITE_API_CRITTERS VITE_API_SHARED_STATE VITE_API_TAGS; do
+          for VAR in VITE_API_VARIETIES VITE_API_APP_EVENTS VITE_API_UX_EVENTS VITE_API_CRITTERS VITE_API_SHARED_STATE VITE_API_TAGS VITE_API_HARVESTS; do
             [[ -n "${!VAR}" ]] || echo "WARN: $VAR not set — its UI will not work on staging until wired (ship-then-wire)"
           done
           [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_test_* ]] || {
@@ -270,6 +303,7 @@ jobs:
           VITE_API_TAGS:              ${{ env.STAGING_API_TAGS }}
           VITE_API_PRESERVATION:      ${{ env.STAGING_API_PRESERVATION }}
           VITE_API_STORAGE_LOCATIONS: ${{ env.STAGING_API_STORAGE_LOCATIONS }}
+          VITE_API_HARVESTS:          ${{ env.STAGING_API_HARVESTS }}
 
       - name: Build (staging)
         id: build
@@ -305,6 +339,7 @@ jobs:
           VITE_API_TAGS:              ${{ env.STAGING_API_TAGS }}
           VITE_API_PRESERVATION:      ${{ env.STAGING_API_PRESERVATION }}
           VITE_API_STORAGE_LOCATIONS: ${{ env.STAGING_API_STORAGE_LOCATIONS }}
+          VITE_API_HARVESTS:          ${{ env.STAGING_API_HARVESTS }}
 
       - name: Verify build output
         run: |
@@ -441,6 +476,7 @@ jobs:
           STAGING_API_UX_EVENTS: ${{ env.STAGING_API_UX_EVENTS }}
           STAGING_API_PRESERVATION: ${{ env.STAGING_API_PRESERVATION }}
           STAGING_API_STORAGE_LOCATIONS: ${{ env.STAGING_API_STORAGE_LOCATIONS }}
+          STAGING_API_HARVESTS: ${{ env.STAGING_API_HARVESTS }}
           COMMIT_SHA:            ${{ needs.deploy-frontend.outputs.commit-sha }}
           # Phase 2 (authenticated CRUD) — set these GHA secrets to enable:
           # CLERK_SECRET_KEY_STAGING = sk_test_... (Clerk dev instance secret key)

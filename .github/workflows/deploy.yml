@@ -93,6 +93,11 @@ jobs:
           # VITE_API_SHARED_STATE — same first-deploy bootstrap (V3-REWARDSTATE-001).
           [[ -n "${VITE_API_SHARED_STATE:-}" ]] || echo "WARN: VITE_API_SHARED_STATE not set — shared-garden reward substrate unreachable until set"
           [[ -n "${VITE_API_TAGS:-}" ]] || echo "WARN: VITE_API_TAGS not set — tag UI will not work until set (ship-then-wire; GARDENIA)"
+          # VITE_API_HARVESTS — same first-deploy bootstrap (V4-HARVESTVIEW-001). deploy-lambda.yml
+          # creates garden-harvests on first prod deploy; Dave then sets vars.VITE_API_HARVESTS to the
+          # new Function URL and the NEXT build bakes it. Empty until wired — Harvests page unreachable,
+          # nothing else breaks (ship-then-wire; the Harvests UI ships in a later slice regardless).
+          [[ -n "${VITE_API_HARVESTS:-}" ]] || echo "WARN: VITE_API_HARVESTS not set — Harvests page will not work until set"
           [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_live_* ]] || {
             echo "ERROR: VITE_CLERK_PUBLISHABLE_KEY must be pk_live_* for prod (got ${VITE_CLERK_PUBLISHABLE_KEY:0:12}...)"
             exit 1
@@ -123,6 +128,7 @@ jobs:
           # NEXT build bakes them. Empty until wired — Put-Up is simply unreachable, nothing else breaks.
           VITE_API_PRESERVATION:      ${{ vars.VITE_API_PRESERVATION }}
           VITE_API_STORAGE_LOCATIONS: ${{ vars.VITE_API_STORAGE_LOCATIONS }}
+          VITE_API_HARVESTS:          ${{ vars.VITE_API_HARVESTS }}
 
       - name: Build
         run: npm run build
@@ -150,6 +156,9 @@ jobs:
           # time, so a repo var absent here is silently empty in the bundle no matter what vars.* holds.
           VITE_API_PRESERVATION:      ${{ vars.VITE_API_PRESERVATION }}
           VITE_API_STORAGE_LOCATIONS: ${{ vars.VITE_API_STORAGE_LOCATIONS }}
+          # V4-HARVESTVIEW-001 — MUST be in THIS block: vite bakes import.meta.env at build time, so a
+          # repo var absent here is silently empty in the bundle no matter what vars.* holds.
+          VITE_API_HARVESTS:          ${{ vars.VITE_API_HARVESTS }}
 
       - name: Verify build output
         run: |
@@ -277,6 +286,7 @@ jobs:
           VITE_API_DAILY_PLAN_READ:   ${{ vars.VITE_API_DAILY_PLAN_READ }}
           VITE_API_MEMBERS:          ${{ vars.VITE_API_MEMBERS }}
           VITE_API_TAGS:              ${{ vars.VITE_API_TAGS }}
+          VITE_API_HARVESTS:          ${{ vars.VITE_API_HARVESTS }}
         run: |
           set -uo pipefail
           SMOKE_FAIL=0
@@ -315,6 +325,7 @@ jobs:
           probe_api app-events   "$VITE_API_APP_EVENTS"   app-events      no
           probe_api achievements "$VITE_API_ACHIEVEMENTS" achievements    no
           probe_api tags         "$VITE_API_TAGS"         tags            no
+          probe_api harvests     "$VITE_API_HARVESTS"     harvests        no
           SPA_CODE="000"; SPA_BODY=""
           for attempt in 1 2; do
             SPA_BODY=$(curl -s --max-time 25 --connect-timeout 10 -w $'\n%{http_code}' "$SPA_URL/") || SPA_BODY=$'\n000'

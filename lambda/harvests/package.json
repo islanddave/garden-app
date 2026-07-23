@@ -1,0 +1,11 @@
+{
+  "name": "garden-lambda-harvests",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "V4-HARVESTVIEW-001 — Harvests page read model. GET /api/harvests: Clerk-authed, household-scoped, read-only. Log entries (keyset-paginated, day-grouped) + live-computed Totals aggregates over event_log/harvest_log. Mirrors lambda/daily-plan-read (auth/secrets seam) and lambda/preservation (crop-key join + household scope).",
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.0",
+    "@clerk/backend": "^1.0.0",
+    "@aws-sdk/client-secrets-manager": "^3.0.0"
+  }
+}
