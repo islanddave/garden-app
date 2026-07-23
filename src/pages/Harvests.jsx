@@ -3,30 +3,36 @@ import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import QualityDots from '../components/QualityDots.jsx'
+import StatTile from '../components/StatTile.jsx'
 import { useHarvests } from '../hooks/useHarvests.js'
-import { groupByDay, dayLabel } from '../lib/harvestGrouping.js'
-import { fmtQuantity, unitLabel, formatEntry } from '../lib/harvestSummary.js'
+import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
+import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
+import { fmtQuantity, unitLabel, formatEntry, etDay } from '../lib/harvestSummary.js'
 
-// Harvests — V4-HARVESTVIEW-001 S2a (first user-visible slice). Route + Log feed + minimal Totals,
-// reading the shipped GET /api/harvests. Retrospective/reflective surface: never prompts, counts down,
-// or scores (design §1). Snapshot strip + filters = S2b; Totals expansion + sparkline + year selector
-// = S3. HarvestEntry is page-local here; extraction to a shared EventRow primitive is the S3 job.
+// Harvests — V4-HARVESTVIEW-001 S2a/S2b. Route + snapshot strip + Log feed + minimal Totals, reading
+// the shipped GET /api/harvests. Retrospective/reflective: never prompts, counts down, or scores
+// (design §1). Snapshot self-labels FIXED windows (design §3b) so it's independent of the Log filter.
+// S2b adds the snapshot strip + timeframe chips. Crop/project pickers + Totals year selector = later.
 
-const displayYear = () => new Date().getFullYear()
+const HARVEST_TZ = 'America/New_York'
+const currentGrowYear = (d) => (d.getMonth() >= 10 ? d.getFullYear() + 1 : d.getFullYear())
 
 export default function Harvests() {
   const [view, setView] = useState('log') // 'log' | 'totals'
-  const { entries, aggregates, hasMore, loading, loadingMore, error, reload, loadMore } = useHarvests()
+  const [timeframe, setTimeframe] = useState('') // '' = all time
+  const { entries, aggregates, hasMore, loading, loadingMore, error, reload, loadMore } = useHarvests({ timeframe: timeframe || undefined })
+  const { snapshot } = useHarvestSnapshot()
+  const filterActive = timeframe !== ''
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 700, margin: '0 auto', padding: '24px 16px 60px' }}>
         <h1 style={{ margin: '0 0 2px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Harvests</h1>
-        <p style={{ margin: '0 0 16px', fontSize: '0.82rem', color: P.light }}>
-          What the garden gave you.
-        </p>
+        <p style={{ margin: '0 0 16px', fontSize: '0.82rem', color: P.light }}>What the garden gave you.</p>
 
-        <div style={{ marginBottom: 18 }}>
+        <SnapshotStrip snapshot={snapshot} onOpenLog={() => setView('log')} onOpenTotals={() => setView('totals')} />
+
+        <div style={{ marginBottom: 12 }}>
           <SegmentedControl
             options={[{ value: 'log', label: 'Log' }, { value: 'totals', label: 'Totals' }]}
             value={view}
@@ -35,12 +41,14 @@ export default function Harvests() {
           />
         </div>
 
+        <TimeframeChips value={timeframe} onChange={setTimeframe} />
+
         {loading ? (
           <LoadingSkeleton />
         ) : error ? (
           <ErrorState message={error} onRetry={reload} />
         ) : view === 'log' ? (
-          <LogView entries={entries} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore} />
+          <LogView entries={entries} filterActive={filterActive} onClearFilters={() => setTimeframe('')} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore} />
         ) : (
           <TotalsView aggregates={aggregates} />
         )}
@@ -49,19 +57,95 @@ export default function Harvests() {
   )
 }
 
-// ── Log ──────────────────────────────────────────────────────────────────────────────────────────
-function LogView({ entries, hasMore, loadingMore, onLoadMore }) {
-  if (!entries || entries.length === 0) {
-    return (
-      <EmptyState
-        emoji="🧺"
-        title="Your harvests will collect here"
-        body="The first one starts the season — log a harvest and it shows up here."
+// ── Snapshot strip (design §3a): 3 static, tappable tiles; fixed windows, filter-independent ───────
+function SnapshotStrip({ snapshot, onOpenLog, onOpenTotals }) {
+  if (!snapshot) return null
+  const { lastHarvest: lh, seasonCropCount, last7 } = snapshot
+  const todayKey = etDay(new Date(), HARVEST_TZ)
+
+  const lhName = lh ? (lh.variety_name || lh.crop_name || lh.planting_name || 'Harvest') : null
+  const lhQty = lh && lh.harvest_log_id != null && lh.quantity != null ? formatEntry({ quantity: lh.quantity, unit: lh.unit }, lh.crop_name) : null
+  const lhTo = lh
+    ? (lh.plant_id && !lh.planting_removed && lh.project_id ? `/projects/${lh.project_id}/plantings/${lh.plant_id}` : (lh.project_id ? `/projects/${lh.project_id}` : null))
+    : null
+
+  return (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <StatTile
+        label="Last harvest"
+        primary={lh ? (lhQty ? `${lhName} · ${lhQty}` : lhName) : 'None yet'}
+        secondary={lh ? relativeDay(lh.day_key, todayKey) : 'this season'}
+        to={lhTo || undefined}
       />
-    )
+      <StatTile
+        label="Last 7 days"
+        primary={last7.count > 0 ? last7Phrase(last7.top) : 'A quiet week'}
+        secondary={last7.count > 0 ? `${last7.count} pick${last7.count === 1 ? '' : 's'}` : undefined}
+        onClick={onOpenLog}
+      />
+      <StatTile
+        label="This season"
+        primary={`${seasonCropCount} crop${seasonCropCount === 1 ? '' : 's'}`}
+        secondary="Nov–Oct"
+        onClick={onOpenTotals}
+      />
+    </div>
+  )
+}
+
+// "3 cups blueberries · 6 zucchini" — native units when a crop's window is single-unit + fully
+// quantified; otherwise a count phrase ("5 blueberry picks"). Design §3a(b) mixed-unit fallback.
+function last7Phrase(top) {
+  return top.map((c) => {
+    const name = String(c.name || '').toLowerCase()
+    if (c.nativeUnit && c.nativeUnit.unit !== 'count') return `${fmtQuantity(c.nativeUnit.total)} ${unitLabel(c.nativeUnit.unit, c.nativeUnit.total)} ${name}`
+    if (c.nativeUnit && c.nativeUnit.unit === 'count') return `${fmtQuantity(c.nativeUnit.total)} ${name}`
+    return `${c.count} ${name} pick${c.count === 1 ? '' : 's'}`
+  }).join(' · ')
+}
+
+function TimeframeChips({ value, onChange }) {
+  const growYear = currentGrowYear(new Date())
+  const chips = [
+    { value: '', label: 'All time' },
+    { value: '7d', label: 'Last 7 days' },
+    { value: 'month', label: 'This month' },
+    { value: `season:${growYear}`, label: 'This season' },
+  ]
+  return (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }} role="group" aria-label="Filter by timeframe">
+      {chips.map((c) => {
+        const active = value === c.value
+        return (
+          <button
+            key={c.value || 'all'}
+            type="button"
+            onClick={() => onChange(c.value)}
+            aria-pressed={active}
+            style={{ padding: '6px 14px', borderRadius: 20, fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', border: `1px solid ${active ? P.green : P.border}`, backgroundColor: active ? P.greenPale : P.white, color: active ? P.green : P.mid }}
+          >
+            {c.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Log ──────────────────────────────────────────────────────────────────────────────────────────
+function LogView({ entries, filterActive, onClearFilters, hasMore, loadingMore, onLoadMore }) {
+  if (!entries || entries.length === 0) {
+    return filterActive
+      ? (
+        <div style={{ textAlign: 'center', padding: '40px 20px', color: P.light }}>
+          <p style={{ margin: '0 0 12px', fontSize: '0.95rem', fontWeight: 600, color: P.mid }}>No harvests match this timeframe.</p>
+          <button type="button" onClick={onClearFilters} style={{ padding: '8px 18px', fontSize: '0.85rem', borderRadius: 8, border: `1px solid ${P.border}`, background: P.white, color: P.green, fontWeight: 700, cursor: 'pointer' }}>Clear filter</button>
+        </div>
+      )
+      : <EmptyState emoji="🧺" title="Your harvests will collect here" body="The first one starts the season — log a harvest and it shows up here." />
   }
   const sections = groupByDay(entries)
-  const year = displayYear()
+  const year = new Date().getFullYear()
   return (
     <div>
       {sections.map((sec) => (
@@ -96,8 +180,6 @@ function HarvestEntry({ entry: e }) {
   const hasQty = e.harvest_log_id != null && e.quantity != null
   const qtyText = hasQty ? formatEntry({ quantity: e.quantity, unit: e.unit }, countNoun) : 'harvest logged — no amount recorded'
 
-  // Row tap target (design §3b): planting detail anchored at the event; unassigned → its project;
-  // deleted planting → not navigable.
   const mainTo = !removed && !unassigned && e.project_id && e.plant_id
     ? `/projects/${e.project_id}/plantings/${e.plant_id}`
     : (unassigned && e.project_id ? `/projects/${e.project_id}` : null)
@@ -182,7 +264,6 @@ function TotalsView({ aggregates }) {
   )
 }
 
-// "4.5 cups · 12 tomatoes" — one native unit per segment, no conversion (design §3c).
 function unitsLine(units, cropName) {
   if (!Array.isArray(units) || units.length === 0) return ''
   return units.map((u) => `${fmtQuantity(u.total)} ${unitLabel(u.unit, u.total, cropName)}`.trim()).join(' · ')

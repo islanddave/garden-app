@@ -27,6 +27,16 @@ describe('useHarvests', () => {
     expect(result.current.entries).toEqual([])
   })
 
+  it('includes timeframe + crop + project filters in the query', async () => {
+    fetchSpy.mockResolvedValue({ entries: [], aggregates: null, cursor: null })
+    const { result } = renderHook(() => useHarvests({ timeframe: '7d', crop: 'tomato', project: 'pr1' }))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    const url = fetchSpy.mock.calls[0][0]
+    expect(url).toContain('timeframe=7d')
+    expect(url).toContain('crop=tomato')
+    expect(url).toContain('project=pr1')
+  })
+
   it('loadMore appends the next page and advances the cursor', async () => {
     fetchSpy
       .mockResolvedValueOnce({ entries: [{ event_id: 'a' }], aggregates: null, cursor: 'CUR1' })

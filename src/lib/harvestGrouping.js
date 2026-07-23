@@ -28,3 +28,17 @@ export function dayLabel(dayKey, currentYear) {
   if (currentYear != null && y !== currentYear) opts.year = 'numeric';
   return dt.toLocaleDateString(undefined, opts);
 }
+
+// Relative label for the "Last harvest" tile (design §3a): today / yesterday / N days ago within a
+// week, absolute date beyond. Pure string-key math (both keys are YYYY-MM-DD in the garden zone).
+function keyToUTC(k) { const [y, m, d] = k.split('-').map(Number); return Date.UTC(y, m - 1, d); }
+export function relativeDay(dayKey, todayKey) {
+  const a = String(dayKey ?? ''); const t = String(todayKey ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(a)) return a;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return dayLabel(a);
+  const diff = Math.round((keyToUTC(t) - keyToUTC(a)) / 86400000);
+  if (diff <= 0) return 'today';
+  if (diff === 1) return 'yesterday';
+  if (diff <= 7) return `${diff} days ago`;
+  return dayLabel(a, Number(t.slice(0, 4)));
+}

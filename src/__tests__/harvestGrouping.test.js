@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { groupByDay, dayLabel } from '../lib/harvestGrouping.js'
+import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
 
 describe('groupByDay', () => {
   it('groups entries by day_key, preserving feed order across and within days', () => {
@@ -31,5 +31,16 @@ describe('dayLabel', () => {
   })
   it('passes a non-date string through unchanged', () => {
     expect(dayLabel('unknown', 2026)).toBe('unknown')
+  })
+})
+
+describe('relativeDay', () => {
+  it('today / yesterday / N days ago within a week', () => {
+    expect(relativeDay('2026-07-23', '2026-07-23')).toBe('today')
+    expect(relativeDay('2026-07-22', '2026-07-23')).toBe('yesterday')
+    expect(relativeDay('2026-07-20', '2026-07-23')).toBe('3 days ago')
+  })
+  it('absolute date beyond a week', () => {
+    expect(relativeDay('2026-06-01', '2026-07-23')).toMatch(/Jun/)
   })
 })
