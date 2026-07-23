@@ -41,9 +41,25 @@ vi.mock('@clerk/backend', () => ({
 }))
 
 export function makeEvent({ method = 'GET', path = '/api/events', body = null, userId = _testUserId } = {}) {
+  // Emulate the AWS Function URL v2 payload: rawPath carries NO query string; the query is
+  // split out into rawQueryString + queryStringParameters (absent when empty, per AWS). Handlers
+  // that read event.queryStringParameters?.x (e.g. harvests timeframe/include/cursor) need this;
+  // handlers that only match rawPath are unaffected (a no-query path is unchanged). The prior
+  // version left the full query glued onto rawPath, so a handler with a strict rawPath equality
+  // guard 405'd every request and query params never reached the handler at all.
+  const qIdx = path.indexOf('?')
+  const rawPath = qIdx >= 0 ? path.slice(0, qIdx) : path
+  const rawQueryString = qIdx >= 0 ? path.slice(qIdx + 1) : ''
+  let queryStringParameters
+  if (rawQueryString) {
+    queryStringParameters = {}
+    for (const [k, v] of new URLSearchParams(rawQueryString)) queryStringParameters[k] = v
+  }
   return {
     requestContext: { http: { method } },
-    rawPath: path,
+    rawPath,
+    rawQueryString,
+    queryStringParameters,
     headers: { authorization: `Bearer stub-token-for-${userId}` },
     body: body ? JSON.stringify(body) : null,
   }

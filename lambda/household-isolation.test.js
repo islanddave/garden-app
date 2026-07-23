@@ -27,6 +27,7 @@ const IN_SCOPE = [
   'daily-plan-read/index.js', // V4-ASSIGNLENS-001 — OPT-IN ?include=household widening (default stays per-user)
   'preservation/index.js', // V4-HARVESTCENTER-001 — Put-Up log is household-shared inventory (user_id = ANY(householdIds))
   'storage-location/index.js', // V4-HARVESTCENTER-001 — Put-Up storage vocab, household-scoped like locations
+  'harvests/index.js', // V4-HARVESTVIEW-001 — Harvests read model, household-scoped (plant_projects.created_by = ANY(householdIds))
 ];
 
 // Out-of-scope: must NOT import householdScope.
