@@ -6,6 +6,7 @@ import { formatQty } from '../lib/format.js'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
+import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
 
 // ---- Photo Library ----
 // Browse all photos, upload standalone photos (event_id = null),
@@ -42,6 +43,12 @@ export default function PhotoLibrary() {
   const [plantsForModal, setPlantsForModal] = useState([])
   const [tagging,        setTagging]        = useState(false)
   const [tagErr,         setTagErr]         = useState(null)
+
+  // V4-FBSHARE-001 — multi-select + Facebook Page share
+  const [selectMode,  setSelectMode]  = useState(false)
+  const [selected,    setSelected]    = useState(() => new Set())
+  const [shareOpen,   setShareOpen]   = useState(false)
+  const [sharePhotos, setSharePhotos] = useState([])
 
   // ---- Initial data load ----
   useEffect(() => {
@@ -166,6 +173,15 @@ export default function PhotoLibrary() {
     }
   }
 
+  // ---- V4-FBSHARE-001 select-mode + share handlers ----
+  function enterSelectMode() { setSelectMode(true); setShowUpload(false) }
+  function exitSelectMode() { setSelectMode(false); setSelected(new Set()) }
+  function toggleSelect(id) {
+    setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  }
+  function openShare(photoList) { setSharePhotos(photoList); setShareOpen(true) }
+  const selectedPhotos = photos.filter(p => selected.has(p.id))
+
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 700, margin: '0 auto', padding: '28px 16px 60px' }}>
@@ -181,17 +197,31 @@ export default function PhotoLibrary() {
               Photos
             </h1>
           </div>
-          <button
-            onClick={() => { setShowUpload(s => !s); setUploadErr(null) }}
-            style={{
-              backgroundColor: showUpload ? P.light : P.green,
-              color: P.white, border: 'none', borderRadius: 8,
-              padding: '10px 16px', fontSize: '0.88rem', fontWeight: 700,
-              cursor: 'pointer', marginTop: 20,
-            }}
-          >
-            {showUpload ? 'Cancel' : '+ Upload'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+            {photos.length > 0 && (
+              <button
+                onClick={() => (selectMode ? exitSelectMode() : enterSelectMode())}
+                style={{
+                  backgroundColor: selectMode ? P.light : P.white,
+                  color: selectMode ? P.white : P.green,
+                  border: `1px solid ${selectMode ? P.light : P.green}`, borderRadius: 8,
+                  padding: '10px 16px', fontSize: '0.88rem', fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                {selectMode ? 'Cancel' : 'Select'}
+              </button>
+            )}
+            <button
+              onClick={() => { setShowUpload(s => !s); setUploadErr(null) }}
+              style={{
+                backgroundColor: showUpload ? P.light : P.green,
+                color: P.white, border: 'none', borderRadius: 8,
+                padding: '10px 16px', fontSize: '0.88rem', fontWeight: 700, cursor: 'pointer',
+              }}
+            >
+              {showUpload ? 'Cancel' : '+ Upload'}
+            </button>
+          </div>
         </div>
 
         {/* ── Upload form ── */}
@@ -352,7 +382,13 @@ export default function PhotoLibrary() {
           >
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
               {photos.map(photo => (
-                <PhotoCard key={photo.id} photo={photo} onClick={() => openModal(photo)} />
+                <PhotoCard
+                  key={photo.id}
+                  photo={photo}
+                  selectMode={selectMode}
+                  selected={selected.has(photo.id)}
+                  onClick={() => (selectMode ? toggleSelect(photo.id) : openModal(photo))}
+                />
               ))}
             </div>
           </ErrorBoundary>
@@ -382,23 +418,48 @@ export default function PhotoLibrary() {
             tagErr={tagErr}
             projects={projects}
             locations={locations}
+            onShare={() => { setModal(null); openShare([modal]) }}
           />
         </ErrorBoundary>
       )}
+
+      {/* V4-FBSHARE-001 — selection action bar (only in select-mode) */}
+      {selectMode && selected.size > 0 && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 150, background: P.white, borderTop: `1px solid ${P.border}`, padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, boxShadow: '0 -2px 10px rgba(0,0,0,0.08)' }}>
+          <span style={{ fontSize: '0.9rem', fontWeight: 700, color: P.mid }}>{selected.size} selected</span>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {selected.size > 10 && <span style={{ fontSize: '0.72rem', color: P.terra }}>Max 10</span>}
+            <button type="button" onClick={exitSelectMode} style={{ background: 'transparent', color: P.mid, border: `1px solid ${P.border}`, borderRadius: 8, padding: '10px 16px', fontSize: '0.86rem', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+            <button type="button" onClick={() => openShare(selectedPhotos)} disabled={selected.size > 10}
+              style={{ background: selected.size > 10 ? P.light : P.green, color: P.white, border: 'none', borderRadius: 8, padding: '10px 16px', fontSize: '0.86rem', fontWeight: 700, cursor: selected.size > 10 ? 'default' : 'pointer' }}>
+              Post to Facebook
+            </button>
+          </div>
+        </div>
+      )}
+
+      <FacebookShareSheet
+        open={shareOpen}
+        photos={sharePhotos}
+        onClose={() => setShareOpen(false)}
+        onPosted={() => exitSelectMode()}
+      />
     </div>
   )
 }
 
 // ---- Photo card ----
 // Uses photo.view_url (signed S3 URL from Lambda) and photo.project_name (inline JOIN)
-function PhotoCard({ photo, onClick }) {
+function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
   const project = photo.project_name
 
   return (
     <button
       onClick={onClick}
+      aria-pressed={selectMode ? selected : undefined}
       style={{
-        background: 'none', border: `1px solid ${P.border}`,
+        background: 'none',
+        border: selected ? `2px solid ${P.green}` : `1px solid ${P.border}`,
         borderRadius: 8, overflow: 'hidden', cursor: 'pointer', padding: 0, textAlign: 'left',
       }}
     >
@@ -410,6 +471,14 @@ function PhotoCard({ photo, onClick }) {
             loading="lazy"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
           />
+        )}
+        {selectMode && (
+          <span aria-hidden="true" style={{
+            position: 'absolute', top: 6, left: 6, width: 22, height: 22, borderRadius: '50%',
+            border: `2px solid ${P.white}`, backgroundColor: selected ? P.green : 'rgba(0,0,0,0.35)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: P.white, fontSize: '0.75rem', fontWeight: 700,
+          }}>{selected ? '✓' : ''}</span>
         )}
         {!photo.event_id && (
           <span style={{
@@ -434,7 +503,7 @@ function PhotoCard({ photo, onClick }) {
 
 // ---- Photo modal ----
 // Uses photo.view_url for display
-function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClose, tagging, tagErr, projects, locations }) {
+function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClose, tagging, tagErr, projects, locations, onShare }) {
   const hasEvent = !!photo.event_id
 
   return (
@@ -475,6 +544,13 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
         <div style={{ padding: '16px 20px 20px' }}>
           {photo.caption && (
             <p style={{ margin: '0 0 12px', fontSize: '0.88rem', color: P.mid }}>{photo.caption}</p>
+          )}
+
+          {onShare && (
+            <button type="button" onClick={onShare}
+              style={{ width: '100%', marginBottom: 14, background: P.white, color: P.green, border: `1px solid ${P.green}`, borderRadius: 8, padding: '11px', fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer' }}>
+              Share to Facebook
+            </button>
           )}
 
           {hasEvent ? (

@@ -29,6 +29,7 @@
 //   /api/storage-locations  → VITE_API_STORAGE_LOCATIONS  Put-Up storage vocab CRUD (V4-HARVESTCENTER-001)
 //   /api/preservation       → VITE_API_PRESERVATION  Put-Up log CRUD + whats-put-up/use-soon reads (V4-HARVESTCENTER-001)
 //   /api/harvests           → VITE_API_HARVESTS     Harvests page read model — Log + Totals (V4-HARVESTVIEW-001)
+//   /api/share/facebook     → VITE_API_FACEBOOK_SHARE  post photos to the Gardens at Matthews FB Page (V4-FBSHARE-001)
 
 import { useAuth } from '@clerk/react'
 import { useCallback } from 'react'
@@ -57,6 +58,7 @@ const FUNCTION_URLS = {
   '/api/storage-locations': import.meta.env.VITE_API_STORAGE_LOCATIONS ?? '',
   '/api/preservation':      import.meta.env.VITE_API_PRESERVATION   ?? '',
   '/api/harvests':          import.meta.env.VITE_API_HARVESTS       ?? '',
+  '/api/share/facebook':    import.meta.env.VITE_API_FACEBOOK_SHARE ?? '',
 }
 
 export function resolveUrl(path, urls = FUNCTION_URLS) {
