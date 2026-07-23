@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.59.0",
+    "date": "2026-07-23",
+    "highlights": [
+      "Behind the scenes: groundwork for a new Harvests page"
+    ]
+  },
+  {
     "version": "3.58.1",
     "date": "2026-07-22",
     "highlights": [
