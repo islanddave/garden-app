@@ -246,6 +246,13 @@ if [[ -z "${CLERK_SECRET_KEY_STAGING:-}" ]] || [[ -z "${CLERK_TEST_USER_ID:-}" ]
   echo "--- Phase 2: Authenticated CRUD --- SKIPPED"
   echo "   (Set GHA secrets CLERK_SECRET_KEY_STAGING and CLERK_TEST_USER_ID to enable)"
   echo "   See: regression-testing-plan.md → Dave Action Items"
+  # WS-B M3 (fail-closed): when the CI smoke job requires auth (SMOKE_REQUIRE_AUTH=1), a
+  # missing staging Clerk secret must FAIL, not vacuously pass on Phase-1 reachability
+  # alone. Local/dev runs (flag unset) keep the graceful skip.
+  if [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+    echo "FATAL [fail-closed, WS-B M3]: SMOKE_REQUIRE_AUTH=1 but a Clerk staging secret is unset — the write-path gate cannot pass on reachability alone."
+    exit 1
+  fi
 else
   echo "--- Phase 2: Authenticated CRUD ---"
 
@@ -277,6 +284,10 @@ else
     echo "   secret-key probe GET /v1/users -> HTTP $KEYPROBE (200 => key valid, so check CLERK_TEST_USER_ID; 401 => key invalid/wrong instance)"
     echo "   (Verify CLERK_TEST_USER_ID is a real user in the CLERK_SECRET_KEY_STAGING instance.)"
     rm -f "$SESS_TMP"
+    if [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+      echo "FATAL [fail-closed, WS-B M3]: SMOKE_REQUIRE_AUTH=1 but the Clerk session could not be minted (HTTP $SESS_CODE) — write-path unverified."
+      exit 1
+    fi
     echo ""
     echo "=== Smoke tests: $PASS passed, $FAIL failed ==="
     [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1
@@ -291,6 +302,10 @@ else
     echo "WARNING [jwt-mint]: did not receive a valid 3-part session JWT (got ${JWT_PARTS}-part)"
     echo "   Token prefix: ${CLERK_JWT:0:20}..."
     echo "   Phase 2 skipped."
+    if [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+      echo "FATAL [fail-closed, WS-B M3]: SMOKE_REQUIRE_AUTH=1 but no valid 3-part session JWT (got ${JWT_PARTS}-part) — write-path unverified."
+      exit 1
+    fi
     echo ""
     echo "=== Smoke tests: $PASS passed, $FAIL failed ==="
     [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1

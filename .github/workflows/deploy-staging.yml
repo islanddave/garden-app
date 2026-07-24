@@ -483,6 +483,10 @@ jobs:
           # CLERK_TEST_USER_ID       = user_...    (existing user in dev Clerk instance)
           CLERK_SECRET_KEY_STAGING: ${{ secrets.CLERK_SECRET_KEY_STAGING }}
           CLERK_TEST_USER_ID:       ${{ secrets.CLERK_TEST_USER_ID }}
+          # WS-B M3: this is the ship-gate smoke — Phase 2 (authed write-path) MUST run.
+          # With this set, a missing Clerk secret or a failed session mint FAILS the job
+          # (fail-closed) instead of vacuously passing on Phase-1 reachability alone.
+          SMOKE_REQUIRE_AUTH: "1"
 
       - name: L-058 smoke-test row hygiene cleanup
         # Hard-delete any rows matching '%smoke%' in staging plant_projects.
