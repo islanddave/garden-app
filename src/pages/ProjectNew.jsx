@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, projectKindOptions } from '../lib/constants.js'
+import { todayLocalISO } from '../lib/dateLocal.js'
 import { VARIETY_REF_UI_SHIPPED } from '../lib/featureFlags.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, StatusSelect, SelectChip } from '../components/forms'
@@ -20,7 +21,7 @@ function generateSlug(name, startDate) {
 export default function ProjectNew() {
   const { fetch } = useApiFetch()
   const navigate  = useNavigate()
-  const today = new Date().toISOString().split('T')[0]
+  const today = todayLocalISO()
   // M1 telemetry (Inc 0) — create_project flow. Fire-and-forget; never affects UX.
   // Taps counted: start-capture (first name entry) + submit. complete() fires on success.
   const ux = useUxFlow(FLOWS.CREATE_PROJECT)

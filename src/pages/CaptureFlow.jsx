@@ -22,6 +22,7 @@ import Field from '../components/forms/Field.jsx'
 import Input from '../components/forms/Input.jsx'
 import Select from '../components/forms/Select.jsx'
 import Button from '../components/forms/Button.jsx'
+import { todayLocalISO } from '../lib/dateLocal.js'
 
 const MODES = [
   { id: 'planting',  label: 'New planting',     hint: 'Create a planting, this photo becomes its picture' },
@@ -29,7 +30,7 @@ const MODES = [
   { id: 'replace',   label: 'Update a photo',    hint: 'Set this as an existing planting’s photo' },
   { id: 'inventory', label: 'Add inventory',     hint: 'Create a supply/equipment item with this photo' },
 ]
-const todayStr = () => new Date().toISOString().slice(0, 10)
+const todayStr = () => todayLocalISO()
 const card = { background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 16 }
 const fieldStack = { display: 'flex', flexDirection: 'column', gap: 12 }
 const pickBtn = { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 12px', border: `2px dashed ${P.border}`, borderRadius: 8, cursor: 'pointer', backgroundColor: P.white, color: P.mid, fontSize: '0.88rem', fontWeight: 600 }

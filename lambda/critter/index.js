@@ -89,7 +89,9 @@ async function readUserPrefs(sql, clerkSub) {
   const rows = await sql`
     SELECT critter_visit, quiet_hours_start, quiet_hours_end,
            coachmark_seen_at, opt_in_prompt_seen_at, last_garden_view_at,
-           garden_group_by, created_at, updated_at
+           garden_group_by, garden_sort_order, garden_expanded,
+           garden_bloom_seen, garden_helper_rung1_seen,
+           created_at, updated_at
       FROM public.user_notification_prefs
      WHERE created_by = ${clerkSub}
      LIMIT 1
