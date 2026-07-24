@@ -287,6 +287,31 @@ export const handler = async (event) => {
             END,
             updated_at = NOW()
         `,
+        sql`
+          -- Care re-key Step B (care-rekey-001): ADDITIVE plant-keyed dual-write. Mirrors the
+          -- project-keyed upsert above but keyed PER-PLANTING on p.id, ON CONFLICT (plant_id).
+          -- Columns match 0b-backfill.sql (no next_water_at — the plant cache is a pure recency
+          -- cache; the daily-plan engine owns "due"). Reads still project-keyed (Step D cuts over).
+          INSERT INTO entity_memory
+            (plant_id, last_event_at,
+             last_watered_at, last_fertilized_at, last_pruned_at, last_observed_at, last_harvested_at)
+          SELECT p.id,
+            ${eventDate}::timestamptz,
+            CASE WHEN ${eventType} IN ('watering','rain')            THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} = 'fertilizing'                   THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} = 'pruning'                       THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} = 'observation'                   THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} IN ('harvest','first_harvest')    THEN ${eventDate}::timestamptz ELSE NULL END
+          FROM public.garden_node p WHERE p.id = ANY(${plantIds})
+          ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL DO UPDATE SET
+            last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
+            last_watered_at    = CASE WHEN ${eventType} IN ('watering','rain')         THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
+            last_fertilized_at = CASE WHEN ${eventType} = 'fertilizing'                THEN GREATEST(COALESCE(entity_memory.last_fertilized_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_fertilized_at END,
+            last_pruned_at     = CASE WHEN ${eventType} = 'pruning'                    THEN GREATEST(COALESCE(entity_memory.last_pruned_at,     ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_pruned_at     END,
+            last_observed_at   = CASE WHEN ${eventType} = 'observation'                THEN GREATEST(COALESCE(entity_memory.last_observed_at,   ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_observed_at   END,
+            last_harvested_at  = CASE WHEN ${eventType} IN ('harvest','first_harvest') THEN GREATEST(COALESCE(entity_memory.last_harvested_at,  ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_harvested_at  END,
+            updated_at = NOW()
+        `,
         // V4-EVENTSEL-002 — batch trigger-parity: flowering + fruit_set advance planting
         // status exactly like the single-event path (the two UPDATEs in the single tx below),
         // forward-only and IDEMPOTENT via the *_SOURCE_STATUSES guard (a planting already at or
@@ -504,6 +529,26 @@ export const handler = async (event) => {
             END,
             updated_at = NOW()
           FROM surv WHERE em.project_id = surv.project_id
+        `,
+        sql`
+          -- Care re-key Step B (care-rekey-001): parallel plant-keyed watering recompute after the
+          -- batch soft-delete. Recomputes EACH affected planting's last_watered_at from its OWN
+          -- surviving events (keyed on e.plant_id). Recency-only (no next_water_at). Runs in the
+          -- same tx after the soft-delete, so MAX() excludes the undone rows.
+          WITH affected AS (
+            SELECT DISTINCT plant_id FROM event_log
+            WHERE metadata->>'batch_id' = ${batchId} AND plant_id IS NOT NULL
+          ),
+          surv AS (
+            SELECT a.plant_id,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = a.plant_id AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw
+            FROM affected a
+          )
+          UPDATE entity_memory em SET
+            last_watered_at = surv.mw,
+            updated_at = NOW()
+          FROM surv WHERE em.plant_id = surv.plant_id
         `,
         sql`UPDATE event_batches SET undone_at = NOW() WHERE id = ${batchId}`,
       ]);
@@ -777,7 +822,7 @@ export const handler = async (event) => {
       // cron concern, V1.2a-2).
       if (method === 'DELETE') {
         const owned = await sql`
-          SELECT el.id, el.project_id, el.event_type
+          SELECT el.id, el.project_id, el.event_type, el.plant_id
           FROM event_log el
           JOIN public.container pp ON pp.id = el.project_id
           WHERE el.id = ${eventId}
@@ -787,6 +832,7 @@ export const handler = async (event) => {
         `;
         if (!owned.length) return resp(404, { error: 'Not found' });
         const projectId = owned[0].project_id;
+        const plantId = owned[0].plant_id;
         const stmts = [
           sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
           sql`UPDATE event_log SET deleted_at = NOW(), updated_at = NOW()
@@ -816,6 +862,19 @@ export const handler = async (event) => {
               updated_at = NOW()
             FROM surv WHERE em.project_id = ${projectId}
           `);
+          if (plantId) {
+            stmts.push(sql`
+              -- Care re-key Step B (care-rekey-001): plant-keyed watering recompute (single undo).
+              -- Recency-only (no next_water_at). Recomputes THIS planting's last_watered_at from its
+              -- own surviving events. Guarded on plantId (project-level events have plant_id NULL).
+              WITH surv AS (
+                SELECT (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.plant_id = ${plantId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw
+              )
+              UPDATE entity_memory em SET last_watered_at = surv.mw, updated_at = NOW()
+              FROM surv WHERE em.plant_id = ${plantId}
+            `);
+          }
         }
         await sql.transaction(stmts);
         return resp(200, { undone: true, id: eventId });
@@ -1028,6 +1087,31 @@ export const handler = async (event) => {
               THEN GREATEST(COALESCE(entity_memory.last_issue_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz)
               ELSE entity_memory.last_issue_at
             END,
+            updated_at = NOW()
+        `,
+        sql`
+          -- Care re-key Step B (care-rekey-001): ADDITIVE plant-keyed dual-write (single event).
+          -- Self-guards on plant_id — project-level events have plant_id NULL, so the SELECT yields
+          -- no row (never violates the 3-way exactly-one-parent CHECK). Columns match 0b-backfill.sql
+          -- (no next_water_at / last_issue_at). Reads still project-keyed (Step D cuts over).
+          INSERT INTO entity_memory
+            (plant_id, last_event_at,
+             last_watered_at, last_fertilized_at, last_pruned_at, last_observed_at, last_harvested_at)
+          SELECT ${body.plant_id ?? null}::uuid,
+            ${eventDate}::timestamptz,
+            CASE WHEN ${eventType} IN ('watering','rain')            THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} = 'fertilizing'                   THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} = 'pruning'                       THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} = 'observation'                   THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${eventType} IN ('harvest','first_harvest')    THEN ${eventDate}::timestamptz ELSE NULL END
+          WHERE ${body.plant_id ?? null}::uuid IS NOT NULL
+          ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL DO UPDATE SET
+            last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
+            last_watered_at    = CASE WHEN ${eventType} IN ('watering','rain')         THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
+            last_fertilized_at = CASE WHEN ${eventType} = 'fertilizing'                THEN GREATEST(COALESCE(entity_memory.last_fertilized_at, ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_fertilized_at END,
+            last_pruned_at     = CASE WHEN ${eventType} = 'pruning'                    THEN GREATEST(COALESCE(entity_memory.last_pruned_at,     ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_pruned_at     END,
+            last_observed_at   = CASE WHEN ${eventType} = 'observation'                THEN GREATEST(COALESCE(entity_memory.last_observed_at,   ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_observed_at   END,
+            last_harvested_at  = CASE WHEN ${eventType} IN ('harvest','first_harvest') THEN GREATEST(COALESCE(entity_memory.last_harvested_at,  ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_harvested_at  END,
             updated_at = NOW()
         `,
         // V3-FRUITSET-001: logging a `fruit_set` event on a specific planting auto-advances

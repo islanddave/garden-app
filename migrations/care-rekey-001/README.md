@@ -2,9 +2,11 @@
 
 Care re-key (`project_id` → `plant_id`) for `entity_memory`. Design: `../../../care-rekey-plantid-design-V100-20260723.md`. This is **Phase A (additive DDL) + Phase C (backfill) SQL only** — the first, reversible, non-cutover step. Dual-write, read-cutover, and the destructive column drop are later, separately-gated phases.
 
-## ⚠ Gating
+## ✅ APPLIED — staging + prod, 2026-07-24
 
-Applying either file to **live Neon is Dave-gated**. Nothing in CI/CD auto-applies `migrations/**` — `schema-audit.yml` only *reads* prod to check lambda column refs. Landing these files on `dev` changes **zero** runtime behavior (no code reads `plant_id` yet).
+Both files are **applied to live Neon (staging branch `br-damp-frog-amdfxwrr` + prod)** as of 2026-07-24 (session `v362-cve-carerekey` pickup). Results: 0a clean; 0b backfilled **11 rows** (staging) / **236 rows** (prod); `entity_memory` em_total 82→318 on prod (76 project + 6 location rows preserved, +236 new plant rows). Proven first on a **prod-cloned ephemeral Neon branch** (236 plantings, all invariants + fan-out verified), then applied to prod. Zero runtime behavior change (no code reads `entity_memory.plant_id` yet; the watering verdict reads `event_log.plant_id` directly).
+
+The prior **Dave-gate on live-Neon application was lifted by Dave 2026-07-24** ("nothing in live neon should require me — you have access to that"); Neon migration application is now Claude-run. Nothing in CI/CD auto-applies `migrations/**` — `schema-audit.yml` only *reads* prod to check lambda column refs.
 
 ## Apply order (per environment: staging first, then prod)
 
@@ -27,4 +29,4 @@ Fully reversible while no plant-keyed rows are relied upon:
 
 ## Verification
 
-`../../tests/integration/care-rekey-backfill.int.test.js` proves the **backfill reconstruction is per-plant correct** (two plantings in one project get independent cadences; project-only events don't leak into a plant row) against the real ephemeral Neon branch — WITHOUT applying the schema DDL to the shared branch (the suite shares one branch; no test mutates schema). The live schema DDL is proven when Dave applies `0a` to a prod-cloned branch and runs the full backfill row-count sweep (Phase E).
+`../../tests/integration/care-rekey-backfill.int.test.js` proves the **backfill reconstruction is per-plant correct** (two plantings in one project get independent cadences; project-only events don't leak into a plant row) against the real ephemeral Neon branch — WITHOUT applying the schema DDL to the shared branch (the suite shares one branch; no test mutates schema). The live schema DDL was proven on 2026-07-24 by applying `0a`+`0b` to a **prod-cloned ephemeral Neon branch** (236 plantings; row-count + fan-out + all invariants verified — Phase E dry-run) BEFORE applying to prod. Both staging and prod are now applied (see the APPLIED banner above).

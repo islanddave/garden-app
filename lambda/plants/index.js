@@ -374,6 +374,16 @@ export const handler = async (event) => {
               last_event_at = GREATEST(COALESCE(entity_memory.last_event_at, NOW()), NOW()),
               updated_at = NOW()
           `);
+          // Care re-key Step B (care-rekey-001): plant-keyed dual-write of the status-change touch
+          // (last_event_at only). Self-guards on plantId. Reads still project-keyed (Step D cuts over).
+          _stmts.push(sql`
+            INSERT INTO entity_memory (plant_id, last_event_at)
+            SELECT ${plantId}::uuid, NOW()
+            WHERE ${plantId}::uuid IS NOT NULL
+            ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL DO UPDATE SET
+              last_event_at = GREATEST(COALESCE(entity_memory.last_event_at, NOW()), NOW()),
+              updated_at = NOW()
+          `);
         }
         const _txr = await sql.transaction(_stmts);
         const rows = _txr[1];
