@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.60.1",
+    "date": "2026-07-23",
+    "highlights": [
+      "Location detail: cards show their borders again",
+      "Behind the scenes: stronger automated tests and release safety checks"
+    ]
+  },
+  {
     "version": "3.60.0",
     "date": "2026-07-23",
     "highlights": [
