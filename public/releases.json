@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.62.0",
+    "date": "2026-07-24",
+    "highlights": [
+      "Security update: refreshed the login and navigation components to their latest patched versions",
+      "Behind-the-scenes reliability and maintenance improvements"
+    ]
+  },
+  {
     "version": "3.61.0",
     "date": "2026-07-24",
     "highlights": [
