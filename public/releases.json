@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.60.2",
+    "date": "2026-07-23",
+    "highlights": [
+      "Loading spinners now animate consistently across every screen",
+      "Location pages: cleaner layout, friendlier errors, less technical clutter"
+    ]
+  },
+  {
     "version": "3.60.1",
     "date": "2026-07-23",
     "highlights": [

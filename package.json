@@ -1,7 +1,7 @@
 {
   "name": "garden-app",
   "private": true,
-  "version": "3.60.1",
+  "version": "3.60.2",
   "type": "module",
   "engines": {
     "node": "20.x"
