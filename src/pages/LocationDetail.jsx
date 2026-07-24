@@ -4,6 +4,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
+import Spinner from '../components/forms/Spinner.jsx'
 
 // DEFERRED:
 //   - Sub-location list (children of this location) → V2
@@ -16,10 +17,6 @@ function Shell({ children }) {
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 20px' }}>{children}</div>
     </div>
   )
-}
-
-function Spinner() {
-  return <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div>
 }
 
 export default function LocationDetail() {
@@ -46,7 +43,7 @@ export default function LocationDetail() {
     return () => { mounted = false }
   }, [id, fetch])
 
-  if (loading) return <Shell><Spinner /></Shell>
+  if (loading) return <Shell><Spinner block /></Shell>
   if (error) return (
     <Shell>
       <p style={{ color: 'crimson', marginBottom: 12 }}>{error}</p>

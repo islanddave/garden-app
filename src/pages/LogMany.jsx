@@ -7,6 +7,7 @@ import { P } from '../lib/constants.js'
 import { BATCH_EVENT_TYPES, EVENT_TYPE_META, buildSecondaryGroups, PRIMARY_EVENT_TYPES } from '../lib/eventTypes.js'
 import Icon from '../components/Icon.jsx'
 import { ScopeChecklist } from '../components/forms'
+import Spinner from '../components/forms/Spinner.jsx'
 import EventTypePicker, { EVENT_TYPES_UI } from '../components/forms/EventTypePicker.jsx'
 
 // Bulk "Quick Log" (Unit A). Apply ONE event type to MANY plantings at once —
@@ -241,7 +242,7 @@ export default function LogMany() {
 
   function logMore() { idemRef.current = null; clearDraft(DRAFT_KEY); setResult(null); setError(null) }
 
-  if (!ready) return <Shell><Spinner /></Shell>
+  if (!ready) return <Shell><Spinner block /></Shell>
   if (loadErr) return <Shell><ErrMsg msg={loadErr} /></Shell>
 
   // ── Result (ambient confirmation + durable undo) ──
@@ -355,7 +356,6 @@ function Shell({ children }) {
     </div>
   )
 }
-function Spinner() { return <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div> }
 function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div> }
 function ErrInline({ msg }) { return <p role="alert" style={{ color: P.terra, fontSize: '0.85rem', margin: '0 0 12px' }}>{msg}</p> }
 

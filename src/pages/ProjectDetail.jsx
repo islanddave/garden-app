@@ -18,6 +18,7 @@ import ProjectOptions from '../components/ProjectOptions.jsx'
 import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import { PlantForm, Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
+import Spinner from '../components/forms/Spinner.jsx'
 
 
 function todayLocal() {
@@ -454,7 +455,7 @@ export default function ProjectDetail() {
     }
   }
 
-  if (loading) return <Shell><Spinner /></Shell>
+  if (loading) return <Shell><Spinner block /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
   if (!project) return null
 
@@ -1140,7 +1141,6 @@ function Shell({ children }) {
     </div>
   )
 }
-function Spinner() { return <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div> }
 function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div> }
 function ErrBanner({ msg }) {
   return <div style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: '0.875rem', color: '#7a2a10' }}>{msg}</div>

@@ -5,6 +5,7 @@ import { useInventory } from '../hooks/useInventory.js'
 import { P } from '../lib/constants.js'
 import { formatQty, formatMoney, formatDate } from '../lib/format.js'
 import { INVENTORY_TYPES, INVENTORY_STATUS_OPTIONS, INVENTORY_CATEGORY_OPTIONS, INVENTORY_CATEGORY_LABELS } from '../lib/inventoryEnums.js'
+import Spinner from '../components/forms/Spinner.jsx'
 
 // V3-CONFIG-001 — inventory filter vocabulary is single-sourced from inventoryEnums.js (the
 // drift-guarded canonical mirror of the live CHECK constraints); no local re-declaration here.
@@ -20,7 +21,7 @@ export default function Inventory() {
   const [filterStatus,   setFilterStatus]   = useState('active')
   const [sortBy,         setSortBy]         = useState('name_asc')
 
-  if (loading) return <Shell><Spinner /></Shell>
+  if (loading) return <Shell><Spinner block /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
   // ── Filter ──
@@ -477,9 +478,6 @@ function Shell({ children }) {
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px' }}>{children}</div>
     </div>
   )
-}
-function Spinner() {
-  return <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div>
 }
 function ErrMsg({ msg }) {
   return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div>

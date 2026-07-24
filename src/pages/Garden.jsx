@@ -18,6 +18,7 @@ import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA } from '../lib/projectTree.js'
 import GroupByControl from '../components/forms/GroupByControl.jsx'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
+import Spinner from '../components/forms/Spinner.jsx'
 import TileGrid from '../components/forms/TileGrid.jsx'
 import PlantingTile from '../components/PlantingTile.jsx'
 import { setPlantingSequence } from '../lib/plantingSequence.js'
@@ -474,7 +475,7 @@ export default function Garden() {
     showBadges ? (caretakerMap.get(effectiveAssignee(pl, projectsById)) || null) : null
   ), [showBadges, caretakerMap, projectsById])
 
-  if (loading) return <Shell><Spinner /></Shell>
+  if (loading) return <Shell><Spinner block /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
   const effectiveGroupBy = facetOptions.some(o => o.value === groupBy) ? groupBy : 'none'
@@ -784,7 +785,6 @@ function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongP
   )
 }
 
-function Spinner() { return <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div> }
 function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div> }
 
 function EmptyState() {

@@ -8,6 +8,7 @@ import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS, INVENTORY_STATUSES as STATUSES } from '../lib/inventoryEnums.js'
 import { EnumSelect, Field, Input, Textarea, Button } from '../components/forms'
+import Spinner from '../components/forms/Spinner.jsx'
 import { formatQty } from '../lib/format.js'
 
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
@@ -173,7 +174,7 @@ export default function InventoryDetail() {
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  if (loading) return <Shell><Spinner /></Shell>
+  if (loading) return <Shell><Spinner block /></Shell>
   if (loadErr) return <Shell><ErrMsg msg={loadErr} /></Shell>
   if (!item)   return <Shell><ErrMsg msg="Item not found." /></Shell>
 
@@ -528,9 +529,6 @@ function Shell({ children }) {
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px' }}>{children}</div>
     </div>
   )
-}
-function Spinner() {
-  return <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div>
 }
 function ErrMsg({ msg }) {
   return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div>

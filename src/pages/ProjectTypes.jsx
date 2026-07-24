@@ -5,6 +5,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { PROJECT_CATEGORY_OPTIONS } from '../lib/dropdownRegistry.js'
 import { Field, Input, Select, Button } from '../components/forms'
+import Spinner from '../components/forms/Spinner.jsx'
 
 const DEFAULT_ICONS = ['🌳','🌿','🪴','🌱','🥕','🍅','🌻','🌾','🪵','🏠','🚜','🔨','🛠️','📦','💧','🌍']
 
@@ -119,7 +120,7 @@ export default function ProjectTypes() {
           </form>
         )}
 
-        {loading ? <Spinner /> : (
+        {loading ? <Spinner block /> : (
           <>
             <Section title="🌱 Garden" types={garden} userId={user?.id} onDelete={handleDelete} />
             <Section title="🔨 Infrastructure" types={infra} userId={user?.id} onDelete={handleDelete} />
@@ -176,4 +177,3 @@ function ErrBanner({ msg, onClose }) {
 const card = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 20 }
 const labelStyle = { display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }
 const btnPrimary = { backgroundColor: P.green, color: P.white, border: 'none', borderRadius: 6, padding: '9px 18px', fontSize: '0.88rem', fontWeight: 600, cursor: 'pointer' }
-function Spinner() { return <div style={{ padding: 40, textAlign: 'center', color: P.light }}>Loading…</div> }
