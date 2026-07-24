@@ -35,11 +35,12 @@
 
 import React, { useCallback, useRef } from 'react';
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js';
+import { P } from '../lib/constants.js';
 
 const DEFAULT_BTN_STYLE = {
   display: 'inline-block',
   padding: '0.75rem 1.25rem',
-  background: '#7c9885',
+  background: P.sage,
   color: '#fff',
   borderRadius: '0.5rem',
   cursor: 'pointer',
@@ -58,7 +59,7 @@ const CHOICE_BTN_STYLE = {
   flex: '1 1 0',
   minWidth: 0,
   padding: '0.7rem 0.9rem',
-  background: '#7c9885',
+  background: P.sage,
   color: '#fff',
   borderRadius: '0.5rem',
   cursor: 'pointer',
@@ -210,7 +211,7 @@ export function PhotoUpload({
         <button type="button" onClick={reset} data-testid="photo-upload-reset"
                 style={{ marginTop: '0.5rem', fontSize: '0.85rem',
                          background: 'transparent', border: 'none',
-                         color: '#7c9885', cursor: 'pointer',
+                         color: P.sage, cursor: 'pointer',
                          textDecoration: 'underline' }}>
           Upload another
         </button>

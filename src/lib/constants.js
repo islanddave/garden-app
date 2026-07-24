@@ -8,6 +8,7 @@ export const P = {
   green:       '#2d6a4f',
   greenLight:  '#52b788',
   greenPale:   '#d8f3dc',
+  sage:        '#7c9885',  // HG-1: muted sage. LocationDetail card borders reference P.sage (was undefined -> borderless); also tokenizes PhotoUpload's former off-palette #7c9885. Value unchanged (parity-preserving).
   terra:       '#b7532a',
   gold:        '#8a6e2a',  // darkened for WCAG AA contrast on cream (was #c9a84c)
   dark:        '#1a1a1a',
