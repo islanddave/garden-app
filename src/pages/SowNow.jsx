@@ -15,19 +15,26 @@ import { useToast } from '../context/ToastContext.jsx'
 import { Sheet } from '../components/forms'
 import PlantingEditor from '../components/PlantingEditor.jsx'
 
-// Section order is FIXED per the panel deltas spec.
+// Section order is FIXED per the panel deltas spec. Third element = optional subtitle.
+// `sow_next_year` sits below every this-season section but above the non-actionable ones. It is
+// DEMOTED (muted heading) but never collapsed: it is actionable and deadline-bearing, and hiding it
+// behind a disclosure is exactly how a window closes unseen.
 const BUCKET_META = [
   ['window_closing',     'Window closing'],
   ['start_indoors_now',  'Start indoors now'],
   ['direct_sow_now',     'Direct sow now'],
   ['sow_inside_anytime', 'Sow inside anytime'],
+  ['sow_next_year',      'For next year — sow now', 'Sow these this summer; they flower next spring.'],
   ['hold',               'Hold for later'],
   ['needs_profile',      'Needs a sow profile'],
   ['too_late',           'Too late this year'],
 ]
 
+// Sections rendered with the demoted (muted) heading treatment.
+const DEMOTED = new Set(['sow_next_year'])
+
 // Buckets whose cards carry a Sow action.
-const ACTIONABLE = new Set(['window_closing', 'start_indoors_now', 'direct_sow_now', 'sow_inside_anytime'])
+const ACTIONABLE = new Set(['window_closing', 'start_indoors_now', 'direct_sow_now', 'sow_inside_anytime', 'sow_next_year'])
 
 // Unicode vulgar fractions for the common seed depths (text, not emoji).
 const FRACTIONS = { 0.125: '⅛', 0.25: '¼', 0.5: '½', 0.75: '¾' }
@@ -137,6 +144,11 @@ export default function SowNow({ todayISO = localTodayISO() }) {
           {line && (
             <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 3 }}>{line}</div>
           )}
+          {/* Why this one is being held. Gated alliums land in `hold` alongside ordinary holds, so
+              the section heading cannot explain them — the reason has to ride on the card. */}
+          {entry.gateReason && (
+            <div style={gateReasonLine}>{entry.gateReason}</div>
+          )}
         </div>
         {ACTIONABLE.has(bucketKey) && (
           sown ? (
@@ -149,6 +161,22 @@ export default function SowNow({ todayISO = localTodayISO() }) {
               style={sowBtn}
             >
               Sow
+            </button>
+          )
+        )}
+        {/* Override: an engine misclassification must never hard-block an action the gardener
+            knows is right. Gated holds keep a secondary path to the same sow sheet. */}
+        {!ACTIONABLE.has(bucketKey) && entry.gated && (
+          sown ? (
+            <span style={sownChip} role="status">Sown &#10003;</span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => openSowSheet(entry)}
+              aria-label={`Sow ${title} anyway`}
+              style={profileBtn}
+            >
+              Sow anyway
             </button>
           )
         )}
@@ -166,7 +194,7 @@ export default function SowNow({ todayISO = localTodayISO() }) {
     )
   }
 
-  function renderSection(key, label) {
+  function renderSection(key, label, subtitle) {
     const entries = buckets[key]
     if (!entries || entries.length === 0) return null // collapsed when empty
 
@@ -192,10 +220,11 @@ export default function SowNow({ todayISO = localTodayISO() }) {
 
     return (
       <section key={key} style={{ marginBottom: 20 }}>
-        <h2 style={sectionHeading}>
+        <h2 style={DEMOTED.has(key) ? demotedSectionHeading : sectionHeading}>
           {label}
           <span style={countBadge}>{entries.length}</span>
         </h2>
+        {subtitle && <p style={sectionSubtitle}>{subtitle}</p>}
         <div style={sectionList}>{entries.map((e) => renderCard(e, key))}</div>
       </section>
     )
@@ -238,7 +267,7 @@ export default function SowNow({ todayISO = localTodayISO() }) {
         )}
 
         {!loading && !error && buckets && totalCount > 0 && (
-          BUCKET_META.map(([key, label]) => renderSection(key, label))
+          BUCKET_META.map(([key, label, subtitle]) => renderSection(key, label, subtitle))
         )}
       </div>
 
@@ -283,6 +312,23 @@ const sectionHeading = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
+}
+
+// Demoted heading for next-year work: visually subordinate to this-season sections, still a real
+// heading (P.mid on P.cream clears 4.5:1 — same pairing the too_late disclosure already ships).
+const demotedSectionHeading = { ...sectionHeading, color: P.mid }
+
+const sectionSubtitle = {
+  margin: '-4px 0 10px',
+  fontSize: '0.78rem',
+  color: P.light,
+}
+
+const gateReasonLine = {
+  fontSize: '0.78rem',
+  color: P.mid,
+  marginTop: 5,
+  lineHeight: 1.4,
 }
 
 const countBadge = {

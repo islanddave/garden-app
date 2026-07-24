@@ -1,0 +1,89 @@
+# gates.yml
+# V4-SOWNOW-PHOTOPERIOD-001 — v_sow_candidates += growth_habit, day_length_response.
+#
+# PROMOTE-TIME SEQUENCING (ORDERED — do not reorder, do not skip):
+#   1. STAGING: pre gates -> apply 0a-additive-ddl.sql -> post gates.
+#   2. deploy-staging + regression pass (build-and-test remains the required promote gate).
+#   3. PROD: pre gates -> apply 0a -> post gates. This mutates SHARED prod Neon — additive and
+#      read-inert, but treat it with deploy-level care, not as a neutral pre-step.
+#   4. THEN deploy the engine. The view-widen MUST land before the code that reads it; the engine's
+#      gate fails SAFE (over-gates via crop_type_slug) if the columns are absent, never fails open.
+#
+# Pre:  the two columns are not yet exposed by the view; the source columns exist on the base table.
+# Post: the view exposes both, the pre-existing 27 columns all survived (append-only proof), and
+#       schema_version is recorded.
+#
+# NOTE: there is no sweep phase — this migration adds no constraint and mutates no row.
+
+pre:
+  - name: pre_view_lacks_growth_habit
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates' AND column_name='growth_habit'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_view_lacks_day_length_response
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates' AND column_name='day_length_response'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_base_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties'
+         AND column_name IN ('growth_habit','day_length_response')
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_view_exists
+    sql: |
+      SELECT 1 FROM information_schema.views
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_view_exposes_growth_habit
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates' AND column_name='growth_habit'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_view_exposes_day_length_response
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates' AND column_name='day_length_response'
+    expect: rowcount_eq
+    value: 1
+
+  # Append-only proof: every pre-existing column must still be present under its original name.
+  - name: post_prior_columns_intact
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+         AND column_name IN ('inventory_item_id','item_name','quantity_on_hand','unit','created_by',
+                             'purchase_date','source','metadata','variety_id','variety_name',
+                             'crop_type_slug','lifecycle','grown_as','sun_requirements',
+                             'days_to_maturity_min','days_to_maturity_max','start_method',
+                             'start_indoor_weeks_min','start_indoor_weeks_max','direct_sow_timing',
+                             'sow_depth_in','seed_spacing_in','row_spacing_in','days_to_germ_min',
+                             'days_to_germ_max','sow_season','sow_notes')
+    expect: rowcount_eq
+    value: 27
+
+  - name: post_view_column_count
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+    expect: scalar_eq
+    value: 29
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.14.0-sownow-photoperiod-001'
+    expect: rowcount_eq
+    value: 1

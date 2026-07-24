@@ -240,3 +240,97 @@ describe('SowNow — Sow sheet embeds the canonical PlantingEditor (orphan-safe)
     expect(body.status).toBe('seed')
   })
 })
+
+// ── V4-SOWNOW-PHOTOPERIOD-001 — gated alliums + the next-year section ────────────
+// FLAT_OF_ITALY carries the real prod growth_habit prose; on today=2026-07-10 the gate holds it
+// for next February. PURE_BIENNIAL is a pure class-H row — the only shape that reaches the new
+// sow_next_year bucket (the real Hollyhock co-carries a class-B clause and stays this-season).
+const FLAT_OF_ITALY = {
+  inventory_item_id: 'inv-flatitaly', item_name: 'Flat of Italy Onion Seeds',
+  variety_name: 'Flat of Italy', variety_id: 'var-flatitaly',
+  quantity_on_hand: '1', unit: 'packet', created_by: 'user_x',
+  purchase_date: '2026-06-09', source: 'Botanical Interests', metadata: {},
+  crop_type_slug: 'onion', lifecycle: 'annual', grown_as: 'annual',
+  sun_requirements: 'full_sun', days_to_maturity_min: '70', days_to_maturity_max: '70',
+  start_method: 'both', start_indoor_weeks_min: '10', start_indoor_weeks_max: '12',
+  direct_sow_timing: '4-6 weeks before last frost or as soon as soil can be worked',
+  sow_depth_in: '0.25', seed_spacing_in: '4', row_spacing_in: '12',
+  days_to_germ_min: '7', days_to_germ_max: '14', sow_season: 'cool', sow_notes: null,
+  growth_habit: 'Intermediate-day (leaning intermediate-to-long-day) heirloom Italian cipollini; forms flattened, disk-shaped bulbs rather than tall globes. Biennial grown as a warm-season annual for bulb harvest.',
+  day_length_response: null,
+}
+const PURE_BIENNIAL = {
+  inventory_item_id: 'inv-biennial', item_name: 'Sweet William Seeds',
+  variety_name: 'Sweet William', variety_id: 'var-biennial',
+  quantity_on_hand: '1', unit: 'packet', created_by: 'user_x',
+  purchase_date: '2026-06-09', source: 'Botanical Interests', metadata: {},
+  crop_type_slug: null, lifecycle: 'biennial', grown_as: 'biennial',
+  sun_requirements: 'full_sun', days_to_maturity_min: null, days_to_maturity_max: null,
+  start_method: 'direct_sow', start_indoor_weeks_min: null, start_indoor_weeks_max: null,
+  direct_sow_timing: 'sow in summer for next-year bloom',
+  sow_depth_in: '0.125', seed_spacing_in: '8', row_spacing_in: null,
+  days_to_germ_min: '5', days_to_germ_max: '14', sow_season: 'cool_warm', sow_notes: null,
+  growth_habit: null, day_length_response: null,
+}
+
+describe('SowNow — allium gate + next-year section', () => {
+  it('renders the sow_next_year section without crashing (new bucket key is seeded)', async () => {
+    routeFetch({ candidates: [...FIXTURES, PURE_BIENNIAL] })
+    await renderSowNow()
+    expect(await screen.findByText('For next year — sow now')).toBeDefined()
+  })
+
+  // Anti-collapse requirement: the section is demoted but NEVER hidden behind a disclosure — it is
+  // actionable and deadline-bearing, and a hidden window is a window that closes unseen.
+  it('the next-year section is expanded on arrival, with its subtitle and a Sow action', async () => {
+    routeFetch({ candidates: [PURE_BIENNIAL] })
+    await renderSowNow()
+
+    await screen.findByText('For next year — sow now')
+    expect(screen.getByText('Sow these this summer; they flower next spring.')).toBeDefined()
+    // Card content is present with no click — not behind a ▸ toggle.
+    expect(screen.getByText('Sweet William')).toBeDefined()
+    expect(screen.getByText('36 days left')).toBeDefined()
+    expect(screen.getByLabelText('Sow Sweet William')).toBeDefined()
+  })
+
+  it('places the next-year section below this-season work but above too_late', async () => {
+    routeFetch({ candidates: [...FIXTURES, PURE_BIENNIAL] })
+    await renderSowNow()
+
+    const nextYear = await screen.findByText('For next year — sow now')
+    const directSow = screen.getByText('Direct sow now')
+    const tooLate = screen.getByText('Too late this year')
+    // Node.DOCUMENT_POSITION_FOLLOWING === 4
+    expect(directSow.compareDocumentPosition(nextYear) & 4).toBeTruthy()
+    expect(nextYear.compareDocumentPosition(tooLate) & 4).toBeTruthy()
+  })
+
+  it('a gated onion is held, explains why on the card, and keeps a Sow anyway override', async () => {
+    routeFetch({ candidates: [FLAT_OF_ITALY] })
+    await renderSowNow()
+
+    await screen.findByText('Hold for later')
+    expect(screen.getByText('Flat of Italy')).toBeDefined()
+    // It must NOT appear in any this-season actionable section.
+    expect(screen.queryByText('Direct sow now')).toBeNull()
+    expect(screen.queryByText('Start indoors now')).toBeNull()
+    expect(screen.queryByText('Window closing')).toBeNull()
+    // Per-card "why" — the section heading cannot explain a gated hold.
+    expect(screen.getByText(/Bulb onions need a spring start/)).toBeDefined()
+    // Reopen badge carries the YEAR so a 7-month hold cannot read as imminent.
+    expect(screen.getByText(/opens ~Feb 25, 2027/)).toBeDefined()
+    // Override: an engine misclassification must never be a dead end.
+    expect(screen.getByLabelText('Sow Flat of Italy anyway')).toBeDefined()
+  })
+
+  it('an ordinary (non-gated) hold shows no reason line and no override button', async () => {
+    routeFetch({ candidates: [FLAT_OF_ITALY, ...FIXTURES] })
+    await renderSowNow()
+
+    await screen.findByText('Hold for later')
+    // Only the gated card carries these affordances.
+    expect(screen.queryAllByText(/need a spring start/)).toHaveLength(1)
+    expect(screen.queryAllByLabelText(/anyway$/)).toHaveLength(1)
+  })
+})

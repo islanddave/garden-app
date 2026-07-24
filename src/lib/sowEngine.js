@@ -17,6 +17,44 @@ export const FALL_SLOWDOWN_DAYS = 14;
 /** Fall indoor-pass grace days by season (warm gets no fall pass). */
 export const FALL_GRACE_DAYS = Object.freeze({ cool: 28, cool_warm: 14 });
 
+// ── Allium viability gate (V4-SOWNOW-PHOTOPERIOD-001) ────────────────────────────
+// Bulb-forming alliums are SPRING-ESTABLISHMENT crops: a summer sowing cannot size a bulb before
+// frost, and a seedling that overwintered would vernalize and bolt instead of bulbing. Both failure
+// modes point the same way, so these are held for spring rather than offered in July.
+//
+// POLARITY IS DELIBERATE AND CORRECTNESS-CRITICAL — gate UNLESS confirmed bunching, never "gate if
+// confirmed bulbing". growth_habit is free-text prose and the affirmative bulbing patterns miss the
+// real rows: on 2026-07-24 all five bulbing onion sow-candidates in prod (Flat of Italy, Monastrell,
+// Red Amposta, Yellow Granex PRR, Yellow Sweet Spanish Utah) carry prose that matches no bulbing
+// pattern, while the one bunching onion (Tokyo Long White) matches 'non-bulbing' cleanly. An
+// affirmative predicate would have shipped the reported bug unfixed.
+//
+// garlic is deliberately NOT gated: it is fall-planted and needs vernalization, so a spring-only
+// gate would be horticulturally wrong. It is not a seed sow-candidate in prod today, and if garlic
+// seed is ever added its 240-270d maturity math buckets it correctly without this gate.
+const GATED_ALLIUM_SLUGS = new Set(['onion', 'shallot']);
+
+// Bunching/non-bulbing exclusion. Narrow by design: this is the only half of alliumType()
+// (lambda/varieties/crop-derive.js) the engine needs, kept local so src/lib stays dependency-free
+// instead of becoming a third synced copy of that module. sowEngine.test.js pins this predicate
+// against the real prod prose corpus so the two cannot silently diverge.
+const BUNCHING_HABIT_RE = /non[-_ ]?bulbing|bunching|scallion/i;
+
+const GATE_REASONS = Object.freeze({
+  onion: 'Bulb onions need a spring start — a summer sowing will not size a bulb before frost. Start indoors in late winter.',
+  shallot: 'Shallots need a spring start — a summer sowing will not size bulbs before frost. Start indoors in late winter.',
+});
+
+/**
+ * True when the candidate is a bulb-forming allium that must not be offered outside spring.
+ * Fails SAFE on an absent growth_habit column (engine deployed ahead of the view-widen): no prose
+ * means not-confirmed-bunching, so the candidate is still gated. It never fails open.
+ */
+export function isSpringEstablishmentAllium(candidate) {
+  if (!GATED_ALLIUM_SLUGS.has(candidate?.crop_type_slug)) return false;
+  return !BUNCHING_HABIT_RE.test(String(candidate?.growth_habit ?? ''));
+}
+
 const DAY_MS = 86400000;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -37,6 +75,13 @@ function msToISO(ms) {
 function labelDate(ms) {
   const d = new Date(ms);
   return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+/** labelDate, plus the year when it is not the year being bucketed (a hold can reopen months out). */
+function labelDateAcrossYears(ms, ctxYear) {
+  const d = new Date(ms);
+  const base = labelDate(ms);
+  return d.getUTCFullYear() === ctxYear ? base : `${base}, ${d.getUTCFullYear()}`;
 }
 
 function num(value) {
@@ -163,11 +208,18 @@ function methodIncludesIndoor(method) {
   return method === 'start_indoors' || method === 'both' || method === 'indoors_only';
 }
 
-function buildDirectWindows(candidate, dtm, ctx) {
+function buildDirectWindows(candidate, dtm, ctx, gated = false) {
   const clauses = splitClauses(candidate.direct_sow_timing).map(classifyClause);
   // Class K: zone-conditional — keep the 5b/6a clause, drop mild-climate ones.
   const hasZoneClause = clauses.some((cl) => cl.zone5b6a);
-  const kept = hasZoneClause ? clauses.filter((cl) => !cl.mildClimates) : clauses;
+  let kept = hasZoneClause ? clauses.filter((cl) => !cl.mildClimates) : clauses;
+
+  // Gated alliums keep ONLY their class-A spring window. The dropped clauses are exactly the paths
+  // that surfaced a bulb onion in July: class C ("as soon as soil can be worked") runs open all the
+  // way to latest_safe in August, and B/D/E/F/G/H open summer or fall windows a bulbing allium
+  // cannot use. Dropping G/H here is also what enforces B1-over-A precedence — a gated bulber can
+  // never surface a next-year window.
+  if (gated) kept = kept.filter((cl) => cl.cls === 'A');
 
   const latestSafe = latestSafeMs(candidate, dtm, ctx);
   const windows = [];
@@ -179,6 +231,7 @@ function buildDirectWindows(candidate, dtm, ctx) {
     let open = null;
     let close = null;
     let clamp = true;
+    let horizon = 'this_season';
     switch (cl.cls) {
       case 'A':
         open = ctx.LF - cl.weeksMax * 7 * DAY_MS;
@@ -201,7 +254,7 @@ function buildDirectWindows(candidate, dtm, ctx) {
         break;
       case 'F':
         for (const [o, c2] of cl.monthWindows) {
-          pushDirect(windows, cl, anchorToMs(o, ctx.year), anchorToMs(c2, ctx.year), latestSafe, true, ctx);
+          pushDirect(windows, cl, anchorToMs(o, ctx.year), anchorToMs(c2, ctx.year), latestSafe, true, ctx, 'this_season');
         }
         continue;
       case 'G': {
@@ -219,9 +272,11 @@ function buildDirectWindows(candidate, dtm, ctx) {
         break;
       }
       case 'H':
+        // Summer-sown for NEXT year's bloom — real, actionable, but not a this-season crop.
         open = anchorToMs('06-01', ctx.year);
         close = anchorToMs('08-15', ctx.year);
         clamp = false;
+        horizon = 'next_year';
         break;
       case 'J':
         anyJ = true;
@@ -230,7 +285,7 @@ function buildDirectWindows(candidate, dtm, ctx) {
       default:
         continue;
     }
-    pushDirect(windows, cl, open, close, latestSafe, clamp, ctx);
+    pushDirect(windows, cl, open, close, latestSafe, clamp, ctx, horizon);
   }
 
   // Class D (succession): open from the earliest other direct window (else
@@ -239,13 +294,13 @@ function buildDirectWindows(candidate, dtm, ctx) {
     if (latestSafe == null) continue;
     const opens = windows.map((w) => w.open);
     const open = opens.length ? Math.min(...opens) : ctx.LF - 42 * DAY_MS;
-    pushDirect(windows, cl, open, latestSafe, latestSafe, true, ctx);
+    pushDirect(windows, cl, open, latestSafe, latestSafe, true, ctx, 'this_season');
   }
 
   return { windows, anyJ, neverTooLate };
 }
 
-function pushDirect(windows, cl, open, close, latestSafe, clamp, ctx) {
+function pushDirect(windows, cl, open, close, latestSafe, clamp, ctx, horizon = 'this_season') {
   // Class I soil-temp modifier clamps the open date, never extends the close.
   const floor = soilTempFloor(cl.soilTempF, ctx.year);
   if (floor != null && floor > open) open = floor;
@@ -257,10 +312,11 @@ function pushDirect(windows, cl, open, close, latestSafe, clamp, ctx) {
     action: 'direct_sow',
     cls: cl.cls,
     soilTempF: cl.soilTempF ?? null,
+    horizon,
   });
 }
 
-function buildIndoorWindows(candidate, dtm, ctx) {
+function buildIndoorWindows(candidate, dtm, ctx, gated = false) {
   const windows = [];
   if (!methodIncludesIndoor(candidate.start_method)) return windows;
   let wMin = num(candidate.start_indoor_weeks_min);
@@ -275,6 +331,10 @@ function buildIndoorWindows(candidate, dtm, ctx) {
       cls: 'spring_indoor',
     });
   }
+  // Gated alliums get NO fall indoor pass — it exists to squeeze in a fall crop, which a bulbing
+  // allium cannot do. This is the second of the two windows that leaked Flat of Italy into July.
+  if (gated) return windows;
+
   // Fall indoor pass: cool|cool_warm only; dtm null -> skip fall math.
   const grace = FALL_GRACE_DAYS[candidate.sow_season];
   if (grace != null && dtm != null) {
@@ -302,14 +362,21 @@ function bucketOne(candidate, ctx) {
   }
 
   const dtm = num(candidate.days_to_maturity_max) ?? num(candidate.days_to_maturity_min);
-  const indoorWindows = buildIndoorWindows(candidate, dtm, ctx);
+  const gated = isSpringEstablishmentAllium(candidate);
+  const gateFields = gated
+    ? { gated: true, gateReason: GATE_REASONS[candidate.crop_type_slug] ?? GATE_REASONS.onion }
+    : null;
+  const indoorWindows = buildIndoorWindows(candidate, dtm, ctx, gated);
   const { windows: directWindows, anyJ, neverTooLate } =
-    buildDirectWindows(candidate, dtm, ctx);
+    buildDirectWindows(candidate, dtm, ctx, gated);
   const all = [...indoorWindows, ...directWindows];
 
   const isOpen = (w) => w.open <= ctx.today && ctx.today <= w.close;
+  // Horizon partition runs BEFORE any close/daysLeft/label math, so a next-year window can never
+  // mislabel a this-season card. Indoor windows are always this-season.
+  const isThisSeason = (w) => (w.horizon ?? 'this_season') === 'this_season';
   const openIndoor = indoorWindows.filter(isOpen);
-  const openDirect = directWindows.filter(isOpen);
+  const openDirect = directWindows.filter((w) => isOpen(w) && isThisSeason(w));
 
   if (openIndoor.length || openDirect.length) {
     const primary = openIndoor.length ? openIndoor : openDirect;
@@ -324,6 +391,23 @@ function bucketOne(candidate, ctx) {
       ? 'window_closing'
       : (action === 'start_indoors' ? 'start_indoors_now' : 'direct_sow_now');
     return { bucket, entry: { candidate, action, daysLeft, windowLabel } };
+  }
+
+  // A — next-year horizon. Only reachable when NO this-season window is open, so this never
+  // outranks a live this-season sowing. Gated alliums cannot land here (B1 drops their G/H clauses).
+  const openNextYear = directWindows.filter((w) => isOpen(w) && !isThisSeason(w));
+  if (openNextYear.length) {
+    const close = Math.max(...openNextYear.map((w) => w.close));
+    const daysLeft = Math.round((close - ctx.today) / DAY_MS);
+    return {
+      bucket: 'sow_next_year',
+      entry: {
+        candidate,
+        action: 'direct_sow',
+        daysLeft,
+        windowLabel: `Direct sow through ${labelDate(close)} · flowers next year`,
+      },
+    };
   }
 
   // Indoor-only / class J overlay: always sowable inside when no actionable
@@ -344,9 +428,39 @@ function bucketOne(candidate, ctx) {
         candidate,
         action: next.action,
         reopensOn: msToISO(next.open),
-        windowLabel: `Opens ${labelDate(next.open)} · ${actionPhrase(next.action).toLowerCase()}`,
+        ...gateFields,
+        windowLabel: `Opens ${labelDateAcrossYears(next.open, ctx.year)} · ${actionPhrase(next.action).toLowerCase()}`,
       },
     };
+  }
+
+  // Gated allium past its spring window: rebuild its windows against NEXT year's anchors so it lands
+  // in `hold` (future-actionable, reopening at the indoor start) instead of `too_late` (a dead end).
+  // Rebuilt rather than +365d-shifted so the roll stays correct across leap years.
+  if (gated) {
+    const nextCtx = {
+      ...ctx,
+      year: ctx.year + 1,
+      LF: anchorToMs(ctx.lastSpringFrost, ctx.year + 1),
+      FF: anchorToMs(ctx.firstFallFrost, ctx.year + 1),
+    };
+    const rolled = [
+      ...buildIndoorWindows(candidate, dtm, nextCtx, true),
+      ...buildDirectWindows(candidate, dtm, nextCtx, true).windows,
+    ].sort((a, b) => a.open - b.open);
+    if (rolled.length) {
+      const next = rolled[0];
+      return {
+        bucket: 'hold',
+        entry: {
+          candidate,
+          action: next.action,
+          reopensOn: msToISO(next.open),
+          ...gateFields,
+          windowLabel: `Opens ${labelDateAcrossYears(next.open, ctx.year)} · ${actionPhrase(next.action).toLowerCase()}`,
+        },
+      };
+    }
   }
 
   // Class G guarantees a future window (rolls to next year), so a G candidate
@@ -359,7 +473,7 @@ function bucketOne(candidate, ctx) {
         candidate,
         action: 'direct_sow',
         reopensOn: msToISO(open),
-        windowLabel: `Opens ${labelDate(open)} · direct sow`,
+        windowLabel: `Opens ${labelDateAcrossYears(open, ctx.year)} · direct sow`,
       },
     };
   }
@@ -376,7 +490,7 @@ function bucketOne(candidate, ctx) {
  * @param {string} todayISO 'YYYY-MM-DD'; anchors resolve against its year
  * @param {object} [anchors] partial FROST_ANCHORS override
  * @returns {{start_indoors_now:[], direct_sow_now:[], sow_inside_anytime:[],
- *   window_closing:[], hold:[], too_late:[], needs_profile:[]}}
+ *   sow_next_year:[], window_closing:[], hold:[], too_late:[], needs_profile:[]}}
  */
 export function bucketize(candidates, todayISO, anchors = {}) {
   const cfg = { ...FROST_ANCHORS, ...anchors };
@@ -388,11 +502,17 @@ export function bucketize(candidates, todayISO, anchors = {}) {
     LF: anchorToMs(cfg.lastSpringFrost, year),
     FF: anchorToMs(cfg.firstFallFrost, year),
     closingDays: cfg.windowClosingDays,
+    // mm-dd anchors kept on ctx so the gated-allium hold can rebuild windows against year+1.
+    lastSpringFrost: cfg.lastSpringFrost,
+    firstFallFrost: cfg.firstFallFrost,
   };
+  // EVERY bucket key bucketOne can return MUST appear here — `buckets[bucket].push(entry)` below
+  // throws on a missing key, which propagates out of the SowNow useMemo and white-screens /sow.
   const buckets = {
     start_indoors_now: [],
     direct_sow_now: [],
     sow_inside_anytime: [],
+    sow_next_year: [],
     window_closing: [],
     hold: [],
     too_late: [],
