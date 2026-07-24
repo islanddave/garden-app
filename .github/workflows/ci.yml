@@ -102,9 +102,11 @@ jobs:
         # milestone decision) immediately protects it. No-op while active_target is 0.
         run: python3 scripts/check-coverage-ratchet.py --measured
 
-      - name: Dependency audit (advisory, WS-B M6)
-        # Surface prod-dependency CVEs in the CI log. Advisory (|| true) until the current
-        # highs are triaged (js-cookie via @clerk/shared; react-router open-redirect),
-        # then promote to a fail-on-high gate.
-        run: npm audit --omit=dev || true
+      - name: Dependency audit (blocking on high, WS-B M6)
+        # Fail the build on any prod-dependency HIGH/CRITICAL advisory. The 2026-07 highs
+        # (js-cookie via @clerk/shared) are remediated as of the Clerk 6.12.7 bump; this gate
+        # keeps them from regressing. Residual react-router MODERATE advisories require a v7
+        # major (tracked follow-up) and are intentionally not gated yet — tighten this to
+        # --audit-level=moderate once react-router-dom is on v7.18.1+.
+        run: npm audit --omit=dev --audit-level=high
 
