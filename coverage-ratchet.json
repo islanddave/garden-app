@@ -7,7 +7,7 @@
     "applies_to": "vitest.config.ts coverage thresholds (lines/functions/branches/statements minimum)",
     "how_to_advance": "When a milestone's completion criteria are met (and Dave agrees), set that milestone status=reached and set active_target to its target. Enforcement = vitest min threshold must be >= active_target."
   },
-  "active_target": 0,
+  "active_target": 73,
   "milestones": [
     {
       "name": "Path A baseline",
@@ -17,17 +17,22 @@
     {
       "name": "V2 close",
       "target": 10,
-      "status": "pending"
+      "status": "reached"
     },
     {
       "name": "V2.1",
       "target": 25,
-      "status": "pending"
+      "status": "reached"
     },
     {
       "name": "V3",
       "target": 50,
-      "status": "pending"
+      "status": "reached"
+    },
+    {
+      "name": "Wave 0 anti-regression floor (measured ~81 on include set, 8pt buffer)",
+      "target": 73,
+      "status": "reached"
     }
   ]
 }

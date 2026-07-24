@@ -29,18 +29,18 @@ export default defineConfig({
       reporter: ['text', 'json-summary', 'lcov', 'html'],
       reportsDirectory: './coverage',
       thresholds: {
-        // Floor thresholds — set just below current actual coverage to prevent regression.
-        // Forward enforcement is driven by coverage-ratchet.json + scripts/check-coverage-ratchet.py
-        // (calendar-due target). When the ratchet calendar bumps the target, raise these
-        // thresholds in lockstep AND add tests to clear them.
-        // Current actual (2026-05-08, post INV-LAMBDA-FOUNDATION): lines 16.93 / funcs 7.69 /
-        // branches 69.01 / stmts 16.93. components/, context/, lib/ at 0% — preexisting tech debt.
-        // hooks/useInventory.js at 97.65% (carry that forward via per-file thresholds in a
-        // future pass — not done here to keep the unblock surgical).
-        lines:      15,
-        functions:   5,
-        branches:   45,
-        statements: 15,
+        // Anti-regression floor (Wave 0 / WS-B) — set ~8pts below current MEASURED coverage of
+        // the `include` set below, so normal churn passes but a re-skin that guts the tests reds
+        // CI. Enforced two ways: vitest fails `npm test` if measured < these, AND
+        // scripts/check-coverage-ratchet.py --measured (WS-B M4) fails if the lowest measured
+        // metric drops below coverage-ratchet.json active_target.
+        // Measured 2026-07-23 (dev 451fd56): lines 90.97 / funcs 83.21 / branches 81.32 / stmts 90.97.
+        // Advancing the floor is a milestone decision (No-Date-Gating, gardening.md) — raise these
+        // in lockstep with active_target and add tests to clear the new bar.
+        lines:      82,
+        functions:  75,
+        branches:   73,
+        statements: 82,
       },
       include: [
         'src/lib/**',
