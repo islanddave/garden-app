@@ -46,8 +46,13 @@ export default function LocationDetail() {
   if (loading) return <Shell><Spinner block /></Shell>
   if (error) return (
     <Shell>
-      <p style={{ color: 'crimson', marginBottom: 12 }}>{error}</p>
-      <button onClick={() => navigate('/locations')} style={{ cursor: 'pointer' }}>← Locations</button>
+      <p style={{ color: P.terra, marginBottom: 12 }}>{error}</p>
+      <button
+        onClick={() => navigate('/locations')}
+        style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 8, color: P.green, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600, padding: '8px 14px' }}
+      >
+        ← All locations
+      </button>
     </Shell>
   )
 
@@ -60,15 +65,6 @@ export default function LocationDetail() {
           <h1 style={{ margin: '0 0 6px', color: P.green, fontSize: '1.4rem', fontWeight: 700 }}>
             {location.name}
           </h1>
-          {location.level != null && (
-            <span style={{
-              fontSize: '0.75rem', color: P.light,
-              backgroundColor: '#eee', borderRadius: 12,
-              padding: '3px 10px', display: 'inline-block',
-            }}>
-              Level {location.level}
-            </span>
-          )}
         </div>
         <button
           onClick={() => navigate('/locations')}
@@ -80,7 +76,7 @@ export default function LocationDetail() {
 
       {location.description && (
         <div style={{
-          background: '#fff', border: `1px solid ${P.sage}`,
+          background: P.white, border: `1px solid ${P.sage}`,
           borderRadius: 10, padding: '14px 18px', marginBottom: 20,
           fontSize: '0.9rem', color: P.dark, lineHeight: 1.6,
         }}>
@@ -88,32 +84,18 @@ export default function LocationDetail() {
         </div>
       )}
 
-      <div style={{
-        background: '#fff', border: `1px solid ${P.sage}`,
-        borderRadius: 10, padding: '14px 18px',
-        fontSize: '0.87rem', color: P.dark,
-      }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 24px' }}>
-          {location.slug && (
-            <>
-              <span style={{ color: P.light }}>Slug</span>
-              <span>{location.slug}</span>
-            </>
-          )}
-          {location.is_active != null && (
-            <>
-              <span style={{ color: P.light }}>Status</span>
-              <span>{location.is_active ? 'Active' : 'Inactive'}</span>
-            </>
-          )}
-          {location.sort_order != null && (
-            <>
-              <span style={{ color: P.light }}>Sort order</span>
-              <span>{location.sort_order}</span>
-            </>
-          )}
+      {location.is_active != null && (
+        <div style={{
+          background: P.white, border: `1px solid ${P.sage}`,
+          borderRadius: 10, padding: '14px 18px',
+          fontSize: '0.87rem', color: P.dark,
+        }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 24px' }}>
+            <span style={{ color: P.light }}>Status</span>
+            <span>{location.is_active ? 'Active' : 'Inactive'}</span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ---- Location photos (V2-PHOTO-F1 Session 2) ---- */}
       <div style={{ marginTop: 28 }}>
@@ -121,7 +103,7 @@ export default function LocationDetail() {
           Location photos
         </h2>
         <div style={{
-          background: '#fff', border: `1px solid ${P.sage}`,
+          background: P.white, border: `1px solid ${P.sage}`,
           borderRadius: 10, padding: '14px 18px',
         }}>
           <p style={{ margin: '0 0 12px', fontSize: '0.85rem', color: P.mid }}>
