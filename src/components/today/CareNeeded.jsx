@@ -228,9 +228,21 @@ export default function CareNeeded({ plan }) {
       announce('Logged ' + NEED_LABEL[row.need] + ' for ' + row.name + ' — ' + remaining + ' remaining')
       toast.showUndo({
         message: 'Logged ' + NEED_LABEL[row.need] + ' for ' + row.name,
-        onUndo: () => {
-          if (id) fetch('/api/events/' + id, { method: 'DELETE' }).catch(() => {})
-          setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+        onUndo: async () => {
+          // WS-A5: only un-fade the row once the DELETE is confirmed. A failed undo must KEEP the
+          // row hidden — re-surfacing it lets it be re-logged as a duplicate (L-104). A 404 means
+          // the event is already gone, so re-surfacing is safe there.
+          if (!id) { setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n }); return }
+          try {
+            await fetch('/api/events/' + id, { method: 'DELETE' })
+            setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+          } catch (e) {
+            if (e?.status === 404) {
+              setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+            } else {
+              toast.show({ message: 'Couldn’t undo — the log is still saved', tone: 'error' })
+            }
+          }
         },
       })
     } catch {
@@ -274,18 +286,17 @@ export default function CareNeeded({ plan }) {
     const targets = candidatesFor(etype).filter(r => keys.has(r.key))
     if (!targets.length) { setBulkType(null); return }
     setBulkProgress({ done: 0, total: targets.length })
-    const createdIds = []
-    const doneKeys = []
+    const created = []   // { id, key } per successfully-created row (id known = undoable)
     let failures = 0
     for (let i = 0; i < targets.length; i++) {
       const row = targets[i]
       try {
         const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row)) })
-        if (res && res.id) createdIds.push(res.id)
-        doneKeys.push(row.key)
+        created.push({ id: (res && res.id) || null, key: row.key })
       } catch { failures++ }
       setBulkProgress({ done: i + 1, total: targets.length })
     }
+    const doneKeys = created.map(c => c.key)
     if (doneKeys.length) setLogged(prev => { const n = new Set(prev); doneKeys.forEach(k => n.add(k)); return n })
     setBulkType(null); setBulkProgress(null)
     const okMsg = 'Logged ' + doneKeys.length + (failures ? ' — ' + failures + ' failed' : '')
@@ -293,9 +304,19 @@ export default function CareNeeded({ plan }) {
     if (failures) toast.show({ message: okMsg, tone: 'error' })
     else toast.showUndo({
       message: okMsg,
-      onUndo: () => {
-        createdIds.forEach(id => fetch('/api/events/' + id, { method: 'DELETE' }).catch(() => {}))
-        setLogged(prev => { const n = new Set(prev); doneKeys.forEach(k => n.delete(k)); return n })
+      // WS-A5: await each DELETE; only un-fade rows whose delete is confirmed (or 404 = already
+      // gone). Rows we can't confirm stay hidden, so a failed undo can't re-surface → re-log a dup.
+      onUndo: async () => {
+        const undoneKeys = []
+        await Promise.all(created.map(async c => {
+          if (!c.id) return
+          try { await fetch('/api/events/' + c.id, { method: 'DELETE' }); undoneKeys.push(c.key) }
+          catch (e) { if (e?.status === 404) undoneKeys.push(c.key) }
+        }))
+        if (undoneKeys.length) setLogged(prev => { const n = new Set(prev); undoneKeys.forEach(k => n.delete(k)); return n })
+        if (undoneKeys.length < created.length) {
+          toast.show({ message: 'Couldn’t undo ' + (created.length - undoneKeys.length) + ' of ' + created.length + ' — those logs are still saved', tone: 'error' })
+        }
       },
     })
   }, [fetch, toast, candidatesFor, announce])

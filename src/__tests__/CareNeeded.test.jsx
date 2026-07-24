@@ -2,7 +2,7 @@
 // toBe/toBeTruthy/toBeNull only. Mocks: react-router Link, useApiFetch, ToastContext.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 
 const { fetchMock, toastMock } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
@@ -104,5 +104,62 @@ describe('CareNeeded — Slice 7', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Log all \(1\)/i }))
     await waitFor(() => expect(fetchMock.mock.calls.filter(c => c[0] === '/api/events').length).toBe(1))
     await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalled())
+  })
+
+  // ── WS-A5: undo must await the DELETE; a failed undo keeps the row hidden (no phantom re-log) ──
+  it('single undo awaits the DELETE then re-surfaces the row', async () => {
+    render(<CareNeeded plan={plan()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Log Water for Bhut Jolokia/i }))
+    await waitFor(() => expect(screen.queryByText('Bhut Jolokia')).toBeNull())
+    const { onUndo } = toastMock.showUndo.mock.calls[0][0]
+    await act(async () => { await onUndo() })
+    expect(fetchMock.mock.calls.some(c => c[0] === '/api/events/ev-new' && c[1]?.method === 'DELETE')).toBe(true)
+    await waitFor(() => expect(screen.getByText('Bhut Jolokia')).toBeTruthy())
+  })
+
+  it('single undo failure keeps the row hidden + error toast (no re-surface -> no duplicate)', async () => {
+    render(<CareNeeded plan={plan()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Log Water for Bhut Jolokia/i }))
+    await waitFor(() => expect(screen.queryByText('Bhut Jolokia')).toBeNull())
+    const { onUndo } = toastMock.showUndo.mock.calls[0][0]
+    toastMock.show.mockClear()
+    fetchMock.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('down'), { status: 500 })))
+    await act(async () => { await onUndo() })
+    expect(toastMock.show).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Bhut Jolokia')).toBeNull()
+  })
+
+  it('bulk undo awaits all DELETEs then re-surfaces the rows', async () => {
+    let n = 0
+    fetchMock.mockImplementation((path) => {
+      if (path === '/api/plants' || path === '/api/locations/with-path') return Promise.resolve([])
+      if (path === '/api/events') return Promise.resolve({ id: 'ev-' + (++n) })
+      return Promise.resolve({ undone: true })
+    })
+    render(<CareNeeded plan={plan()} />)
+    fireEvent.click(screen.getByRole('button', { name: /^Log all watering \(2\)$/i }))
+    await waitFor(() => expect(screen.queryByText('Bhut Jolokia')).toBeNull())
+    const { onUndo } = toastMock.showUndo.mock.calls[0][0]
+    await act(async () => { await onUndo() })
+    const deletes = fetchMock.mock.calls.filter(c => c[0].startsWith('/api/events/') && c[1]?.method === 'DELETE')
+    expect(deletes.length).toBe(2)
+    await waitFor(() => expect(screen.getByText('Bhut Jolokia')).toBeTruthy())
+  })
+
+  it('bulk undo failure keeps rows hidden + error toast', async () => {
+    let n = 0
+    fetchMock.mockImplementation((path, opts) => {
+      if (path === '/api/plants' || path === '/api/locations/with-path') return Promise.resolve([])
+      if (path === '/api/events' && (!opts || opts.method === 'POST')) return Promise.resolve({ id: 'ev-' + (++n) })
+      return Promise.reject(Object.assign(new Error('down'), { status: 500 }))
+    })
+    render(<CareNeeded plan={plan()} />)
+    fireEvent.click(screen.getByRole('button', { name: /^Log all watering \(2\)$/i }))
+    await waitFor(() => expect(screen.queryByText('Bhut Jolokia')).toBeNull())
+    toastMock.show.mockClear()
+    const { onUndo } = toastMock.showUndo.mock.calls[0][0]
+    await act(async () => { await onUndo() })
+    expect(toastMock.show).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Bhut Jolokia')).toBeNull()
   })
 })
