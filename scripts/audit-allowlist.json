@@ -1,0 +1,6 @@
+{
+  "_README": "GHSA advisory IDs waived from the CI dependency-audit gate (ci.yml 'Dependency audit', WS-B M6, scripts/audit-gate.py). Each value documents WHY the advisory is non-applicable to this app, the date, and the approver. Waivers are the exception, not the rule — remediate by bumping the dep whenever a fixed, installable line exists; revisit each entry when upstream ships a fix.",
+  "allow": {
+    "GHSA-qwww-vcr4-c8h2": "react-router 'RSC Mode CSRF Bypass' (range 7.12.0-8.2.0, hits the M6-installed react-router-dom 7.18.1). NON-APPLICABLE: this app is a client-side Vite SPA (declarative <BrowserRouter>, no React Server Components / RSC data-router) served static from S3/CloudFront — the RSC server-action path the advisory targets does not exist here, so the flaw is non-exploitable. react-router core is fixed in 8.3.0 but react-router-dom has no 8.x line yet, so there is no forward fix installable without a v8 migration. Waived 2026-07-24, Dave-approved. Revisit when react-router-dom ships a fixed release."
+  }
+}

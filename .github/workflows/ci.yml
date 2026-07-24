@@ -103,10 +103,12 @@ jobs:
         run: python3 scripts/check-coverage-ratchet.py --measured
 
       - name: Dependency audit (blocking on moderate, WS-B M6)
-        # Fail the build on any prod-dependency MODERATE+ advisory. Both the 2026-07 highs
-        # (js-cookie via @clerk/shared → Clerk 6.12.7) and the react-router moderates
-        # (→ react-router-dom 7.18.1) are remediated: `npm audit --omit=dev` = 0 vulnerabilities.
-        # Tightened from --audit-level=high now that the prod tree is fully clean; dev-only
-        # advisories stay excluded by --omit=dev (no allowlist needed).
-        run: npm audit --omit=dev --audit-level=moderate
+        # Fail the build on any prod-dependency MODERATE+ advisory EXCEPT documented, dated
+        # waivers in scripts/audit-allowlist.json (each a justified non-applicability note).
+        # Replaces the bare `npm audit --omit=dev --audit-level=moderate`. The js-cookie high
+        # (→ Clerk 6.12.7) and the old react-router moderates (→ react-router-dom 7.18.1) stay
+        # remediated. Currently WAIVED: GHSA-qwww-vcr4-c8h2 (react-router RSC-mode CSRF —
+        # non-applicable to this client SPA / no RSC; no react-router-dom fix line yet).
+        # Dave-approved 2026-07-24. Dev-only advisories stay excluded by --omit=dev.
+        run: python3 scripts/audit-gate.py
 
