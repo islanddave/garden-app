@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import { useParams, Link } from 'react-router-dom'
 import { apiFetch } from '../lib/api.js'

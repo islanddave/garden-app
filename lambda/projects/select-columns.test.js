@@ -49,6 +49,10 @@ function extractSelectBlocks(src) {
     if (/\bAS old_status\b/.test(m[1])) continue;
     // V3-REPARENT-001: skip reparent-internal selects (not client GET reads).
     if (/reparent-internal/.test(m[1])) continue;
+    // WS-A1: skip the public-slug allowlist SELECT — an unauthenticated deny-by-default
+    // public projection that intentionally OMITS kind/target_end_date/kind_set_at (they are
+    // not public fields). Same skip precedent as reparent-internal above.
+    if (/public-slug/.test(m[1])) continue;
     blocks.push(m[1]);
   }
   return blocks;

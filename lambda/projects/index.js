@@ -129,6 +129,74 @@ export async function reparentCore(sql, { subjectId, newParentId, opId, expected
   }
 }
 
+// WS-A1: public project share route target. `/garden/:slug` is an UNAUTHENTICATED surface, so
+// this runs BEFORE verifyToken in the handler (early return). Strict deny-by-default projection:
+// slug is globally unique (plant_projects_slug_key) and every non-deleted, non-archived project
+// is viewable by slug (post-PUBHIDE: no is_public gate, per Dave's locked decision). The security
+// boundary is the column allowlist below — the response object is built key-by-key and a DB row
+// is NEVER spread, so a newly-added or sensitive column can't leak by default. `slug` is a bound
+// parameter (neon tagged-template), never string-interpolated.
+async function handlePublicProject(slug, secrets) {
+  try {
+    const sql = neon(secrets.NEON_DATABASE_URL);
+    // Location comes via a LEFT JOIN taking ONLY full_path; raw location_id is never returned.
+    const rows = await sql`
+      SELECT /* public-slug: deny-by-default allowlist */
+             c.id,
+             c.display_name,
+             c.slug,
+             c.status,
+             c.species,
+             c.variety,
+             c.description,
+             to_char(c.start_date, 'YYYY-MM-DD') AS start_date,
+             lwp.full_path AS location_path
+      FROM public.container c
+      LEFT JOIN locations_with_path lwp
+        ON lwp.id = c.location_id AND lwp.deleted_at IS NULL
+      WHERE c.slug = ${slug}
+        AND c.deleted_at IS NULL
+        AND c.archived_at IS NULL
+      LIMIT 1
+    `;
+    if (!rows.length) return resp(404, { error: 'Not found' });
+    const row = rows[0];
+
+    // Public timeline: an explicit allowlist of event columns; every other event column is
+    // omitted by default (deny-by-default), so nothing sensitive can leak into the response.
+    const events = await sql`
+      SELECT id, event_type, event_date, notes, quantity
+      FROM event_log
+      WHERE project_id = ${row.id}
+        AND deleted_at IS NULL
+      ORDER BY event_date DESC
+      LIMIT 200
+    `;
+
+    // Deny-by-default: build the public response object key-by-key. NEVER spread a DB row.
+    return resp(200, {
+      name: row.display_name,
+      slug: row.slug,
+      status: row.status,
+      species: row.species,
+      variety: row.variety,
+      description: row.description,
+      start_date: row.start_date,
+      location_path: row.location_path ?? null,
+      events: events.map((e) => ({
+        id: e.id,
+        event_type: e.event_type,
+        event_date: e.event_date,
+        notes: e.notes,
+        quantity: e.quantity,
+      })),
+    });
+  } catch (err) {
+    console.error('handlePublicProject error', err?.message ?? err);
+    return resp(500, { error: 'Internal server error' });
+  }
+}
+
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return { statusCode: 204, headers: CORS, body: '' };
@@ -144,6 +212,18 @@ export const handler = async (event) => {
   } catch (err) {
     console.error('projects lambda: secrets fetch failed', err);
     return resp(500, { error: 'Internal server error' });
+  }
+
+  // WS-A1: public project share route. Served BEFORE verifyToken so `/garden/:slug` renders
+  // unauthenticated. Two-segment path (/public/:slug) — cannot collide with the one-segment
+  // by-id idMatch (/api/projects/:id) below, which requires no interior slash. GET-only; any
+  // other method to this path falls through to verifyToken (stays auth-gated).
+  const publicMethod = event.requestContext?.http?.method ?? 'GET';
+  const publicMatch = publicMethod === 'GET'
+    ? (event.rawPath ?? '').match(/^\/api\/projects\/public\/([^/]+)$/)
+    : null;
+  if (publicMatch) {
+    return await handlePublicProject(publicMatch[1], secrets);
   }
 
   const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
