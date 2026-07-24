@@ -1,5 +1,17 @@
 [
   {
+    "version": "3.61.0",
+    "date": "2026-07-24",
+    "highlights": [
+      "Inventory list redesigned: category icons, quantity & low-stock at a glance, grouped by category",
+      "Public garden share links are fixed",
+      "Garden view preferences now stay in sync across your devices",
+      "Watering undo no longer risks a duplicate log",
+      "Screens no longer spin forever when the connection stalls",
+      "Small fixes: evening-date logging, a duplicated featured photo, and the treatment-details heading"
+    ]
+  },
+  {
     "version": "3.60.2",
     "date": "2026-07-23",
     "highlights": [
