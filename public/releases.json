@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.62.1",
+    "date": "2026-07-24",
+    "highlights": [
+      "Under-the-hood care-tracking improvements"
+    ]
+  },
+  {
     "version": "3.62.0",
     "date": "2026-07-24",
     "highlights": [
