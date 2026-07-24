@@ -15,7 +15,7 @@ Barrel: `src/components/forms/index.js`. Token layer: `formStyles.js` (`T`) + pa
 | Primitive | Role |
 |---|---|
 | **Card** | Bounded content container (the surface block). |
-| **Section** | Titled grouping inside a page/card. |
+| **AsyncRegion** | Async-state content region: error → loading → empty → children. NOT a titled section — compose a local titled `<section>` for headings. |
 | **PageShell** | Page-level frame (safe-area + max-width + heading slot). |
 | **Field** | Label + control + error wrapper (the form-row unit). |
 | **Input** | Text/number/date input. |

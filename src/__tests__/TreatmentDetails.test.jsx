@@ -38,4 +38,8 @@ describe('TreatmentDetails (V4-TREATLOG-001)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Amendment' }))
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ category: 'amendment' }))
   })
+  it('renders the "Treatment details" section heading (HG-1 — was dropped by the misused async Section)', () => {
+    render(<TreatmentDetails value={empty} onChange={() => {}} inventory={inv} eventType="pest_treatment" />)
+    expect(screen.getByRole('heading', { name: 'Treatment details' })).toBeTruthy()
+  })
 })

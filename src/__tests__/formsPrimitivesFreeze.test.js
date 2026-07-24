@@ -10,7 +10,7 @@ import * as forms from '../components/forms/index.js'
 
 // The frozen canonical set (component exports) + the formStyles token namespace.
 const FROZEN = [
-  'Card', 'Section', 'PageShell',
+  'Card', 'AsyncRegion', 'PageShell',
   'Field', 'Input', 'Textarea', 'Select', 'EnumSelect', 'StatusSelect', 'SelectChip',
   'Button', 'Badge',
   'SegmentedControl', 'Sheet', 'TileGrid',

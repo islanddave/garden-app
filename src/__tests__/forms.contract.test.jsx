@@ -10,7 +10,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { P } from '../lib/constants.js'
 import {
-  Field, Input, Select, Textarea, Button, Badge, Card, Section, PageShell,
+  Field, Input, Select, Textarea, Button, Badge, Card, AsyncRegion, PageShell,
   Spinner, ErrorBanner, Toast, formStyles,
 } from '../components/forms'
 
@@ -136,15 +136,15 @@ describe('Button — variants + one disabled convention', () => {
   })
 })
 
-describe('Shell primitives — Section / PageShell / ErrorBanner / Spinner / Toast', () => {
-  it('Section precedence: error beats loading beats empty beats children', () => {
-    const { rerender } = render(<Section error="boom" loading empty>kids</Section>)
+describe('Shell primitives — AsyncRegion / PageShell / ErrorBanner / Spinner / Toast', () => {
+  it('AsyncRegion precedence: error beats loading beats empty beats children', () => {
+    const { rerender } = render(<AsyncRegion error="boom" loading empty>kids</AsyncRegion>)
     expect(screen.getByRole('alert').textContent).toContain('boom')
-    rerender(<Section loading empty>kids</Section>)
+    rerender(<AsyncRegion loading empty>kids</AsyncRegion>)
     expect(screen.getByRole('status')).toBeDefined()
-    rerender(<Section empty emptyLabel="None yet">kids</Section>)
+    rerender(<AsyncRegion empty emptyLabel="None yet">kids</AsyncRegion>)
     expect(screen.getByText('None yet')).toBeDefined()
-    rerender(<Section>kids</Section>)
+    rerender(<AsyncRegion>kids</AsyncRegion>)
     expect(screen.getByText('kids')).toBeDefined()
   })
 

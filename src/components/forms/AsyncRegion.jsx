@@ -1,14 +1,16 @@
-// src/components/forms/Section.jsx
-// Lane D / Phase A — content region that freezes the three async states every
-// page was hand-rolling: loading / error / empty. Precedence: error → loading →
-// empty → children. This is the Phase A "shell primitives" deliverable (plan §5):
-// without it pages keep re-inventing these three states and Phase A under-delivers.
+// src/components/forms/AsyncRegion.jsx
+// Lane D / Phase A — async-state content region that freezes the three states every page was
+// hand-rolling: loading / error / empty. Precedence: error → loading → empty → children.
+// NOT a titled section. Renamed from `Section` (HG-1, 2026-07): the old name wrongly implied a
+// titled grouping — FROZEN.md documented it as one and TreatmentDetails misused it that way, so
+// its `label` was silently dropped and the heading vanished. For a titled grouping, compose a
+// local titled <section> with a heading; this primitive only owns the three async states.
 import React from 'react'
 import { P } from '../../lib/constants.js'
 import Spinner from './Spinner.jsx'
 import ErrorBanner from './ErrorBanner.jsx'
 
-export default function Section({
+export default function AsyncRegion({
   loading = false,
   error = null,
   empty = false,

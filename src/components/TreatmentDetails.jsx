@@ -9,7 +9,7 @@
 // Dave 2026-07-14), and how much / what strength.
 import React from 'react'
 import { P } from '../lib/constants.js'
-import { Section, Input, Select } from './forms'
+import { Input, Select } from './forms'
 import { PEST_TARGET_SUGGESTIONS, TREATMENT_CATEGORY_OPTIONS, TREATMENT_CATEGORY_TO_INVENTORY } from '../lib/dropdownRegistry.js'
 
 const fieldLabel = {
@@ -17,7 +17,7 @@ const fieldLabel = {
   marginBottom: 6, letterSpacing: '0.4px', textTransform: 'uppercase',
 }
 
-export default function TreatmentDetails({ value, onChange, inventory = [], eventType }) {
+export default function TreatmentDetails({ value, onChange, inventory = [] }) {
   const v = value || {}
   const set = (patch) => onChange({ ...v, ...patch })
 
@@ -42,7 +42,10 @@ export default function TreatmentDetails({ value, onChange, inventory = [], even
   }
 
   return (
-    <Section label={eventType === 'doctored' ? 'Treatment details' : 'Treatment details'}>
+    <section style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '16px 18px' }}>
+      <h3 style={{ margin: '0 0 10px', fontSize: '0.77rem', fontWeight: 700, color: P.mid, letterSpacing: '0.4px', textTransform: 'uppercase' }}>
+        Treatment details
+      </h3>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {/* Pest / disease target — free-type with suggestions (type anything, or pick a common one). */}
         <div>
@@ -118,6 +121,6 @@ export default function TreatmentDetails({ value, onChange, inventory = [], even
           />
         </div>
       </div>
-    </Section>
+    </section>
   )
 }
