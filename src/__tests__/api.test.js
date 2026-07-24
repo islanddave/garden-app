@@ -2,8 +2,8 @@
 // Longest-prefix-first is enforced by insertion order in FUNCTION_URLS.
 // Pass an explicit urls map to resolveUrl so tests are env-decoupled.
 
-import { describe, it, expect } from 'vitest'
-import { resolveUrl } from '../lib/api.js'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { resolveUrl, apiFetch, API_TIMEOUT_MS } from '../lib/api.js'
 
 // Mirror of FUNCTION_URLS insertion order from src/lib/api.js. Order matters:
 // /api/projects/inactive MUST precede /api/projects so the longer prefix wins.
@@ -82,5 +82,36 @@ describe('resolveUrl — prefix routing', () => {
       .toBe('https://x.lambda/api/events')
     expect(resolveUrl('/api/events', { '/api/events': 'https://x.lambda' }))
       .toBe('https://x.lambda/api/events')
+  })
+})
+
+describe('apiFetch — timeout + abort (WS-A6)', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
+
+  it('returns parsed json on success', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: 1 }) })))
+    expect(await apiFetch('/api/events', {}, 't')).toEqual({ ok: 1 })
+  })
+
+  it('aborts and throws a timeout error when the request hangs past API_TIMEOUT_MS', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn((_url, opts) => new Promise((_, reject) => {
+      opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+    })))
+    const p = apiFetch('/api/events', {}, 't')
+    const assertion = expect(p).rejects.toMatchObject({ status: 0, timeout: true })
+    await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS + 10)
+    await assertion
+  })
+
+  it('re-throws (does not mask) an abort from a caller-provided signal', async () => {
+    const ac = new AbortController()
+    vi.stubGlobal('fetch', vi.fn((_url, opts) => new Promise((_, reject) => {
+      opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+    })))
+    const p = apiFetch('/api/events', { signal: ac.signal }, 't')
+    const assertion = expect(p).rejects.toMatchObject({ name: 'AbortError' })
+    ac.abort()
+    await assertion
   })
 })

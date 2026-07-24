@@ -68,11 +68,40 @@ export function resolveUrl(path, urls = FUNCTION_URLS) {
   throw new Error(`No Lambda URL configured for path: ${path}`)
 }
 
+// WS-A6: bound every API call so a hung Lambda/network can't spin forever. AbortController
+// (NOT AbortSignal.timeout — Safari 16 gap). 15s clears a cold Neon+Lambda start plus a heavy
+// txn; a caller can override via options.timeoutMs and still pass its own options.signal.
+export const API_TIMEOUT_MS = 15000
+
 export async function apiFetch(path, options = {}, token) {
   const url = resolveUrl(path)
-  const headers = { 'Content-Type': 'application/json', ...(options.headers ?? {}) }
+  const { timeoutMs = API_TIMEOUT_MS, signal: callerSignal, headers: optHeaders, ...fetchOpts } = options
+  const headers = { 'Content-Type': 'application/json', ...(optHeaders ?? {}) }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(url, { ...options, headers })
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort()
+    else callerSignal.addEventListener('abort', () => controller.abort(), { once: true })
+  }
+
+  let res
+  try {
+    res = await fetch(url, { ...fetchOpts, headers, signal: controller.signal })
+  } catch (e) {
+    // Our timeout fired (the caller didn't abort): surface a friendly, catchable error.
+    if (e?.name === 'AbortError' && !callerSignal?.aborted) {
+      const te = new Error('Request timed out')
+      te.status = 0
+      te.timeout = true
+      throw te
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+
   if (!res.ok) {
     let errBody
     try { errBody = await res.json() } catch { errBody = { error: res.statusText } }

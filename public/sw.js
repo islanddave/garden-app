@@ -82,6 +82,21 @@ self.addEventListener('fetch', (event) => {
 
 // ---- Strategies ----
 
+// WS-A6: bound the network leg so a hung Lambda can't hang a request forever.
+const SW_TIMEOUT_MS = 12000
+async function fetchWithTimeout(request, ms) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  try {
+    return await fetch(request, { signal: controller.signal })
+  } catch (err) {
+    if (err && err.name === 'AbortError') { const e = new Error('Network timeout'); e.name = 'TimeoutError'; throw e }
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // V4-PHOTOCDN-001 P2: CloudFront signed-URL params rotate per mint; keying the cache on the
 // full URL would make every re-mint a miss + an immortal entry. Strip signing params for
 // BOTH match and put. Dormant until the photo CDN issues signed URLs; harmless today.
@@ -149,7 +164,8 @@ async function trimCache(cacheName, maxEntries) {
 async function navigationFallback(request) {
   try {
     const networkReq = new Request(request, { cache: 'no-store' })
-    const response = await fetch(networkReq)
+    // WS-A6: bound the navigation fetch too; on timeout/offline the catch serves the presign-free '/' shell.
+    const response = await fetchWithTimeout(networkReq, SW_TIMEOUT_MS)
     if (response.ok) {
       const cache = await caches.open(STATIC_CACHE)
       cache.put(request, response.clone())
@@ -166,13 +182,19 @@ async function networkFirst(request, cacheName) {
     // cache: 'no-store' bypasses browser HTTP disk cache — prevents stale 300/redirect
     // responses from reaching Lambda (root cause of photo gallery not refreshing)
     const networkReq = new Request(request, { cache: 'no-store' })
-    const response = await fetch(networkReq)
+    const response = await fetchWithTimeout(networkReq, SW_TIMEOUT_MS)
     if (response.ok) {
       const cache = await caches.open(cacheName)
       cache.put(request, response.clone())
     }
     return response
-  } catch {
+  } catch (e) {
+    // WS-A6: a TIMEOUT must NOT serve a possibly-stale cached API body — stale JSON can carry
+    // expired presigned photo URLs (→ 403 broken images). Return a synthetic 504 so the client
+    // surfaces an error/retry. A real offline reject still falls back to cache (unchanged).
+    if (e && e.name === 'TimeoutError') {
+      return new Response('Gateway Timeout', { status: 504 })
+    }
     const cached = await caches.match(request)
     return cached || new Response('Offline', { status: 503 })
   }
