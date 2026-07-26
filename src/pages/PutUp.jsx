@@ -63,10 +63,28 @@ const CANNING_METHODS = new Set(['can_water_bath', 'can_pressure'])
 
 // Curated unit pick-list (L5) — free-text units make "how many quarts left" un-queryable. Weight /
 // count / volume / container classes. Grouped views list per-record units and never sum across them.
+// V4-PUTUPPROV-003: the Bulk group exists because provenance made bought produce loggable, and
+// bought produce does not arrive in cups. Orchards and farm stands sell by the bushel, half-bushel,
+// peck and flat — an apple bushel is ~42 lb, a peach bushel ~48-50 lb, a peck of apples ~10-12 lb.
+// Without these you guess-convert to pounds at entry time and permanently degrade the quantity data
+// on exactly the purchases this feature was built to record. The conversions are deliberately NOT
+// applied automatically: a bushel is a volume measure and its weight varies by fruit, so silently
+// storing an inferred poundage would be writing a guess into a column the UI shows as fact.
+//
+// STILL NO DB CHECK ON quantity_unit, and that is now a considered decision rather than an omission.
+// The original plan called for adding one. An audit of live data killed it: harvest_log stores
+// SINGULAR units ('cup', 'count', 'head', 'bunch' on prod) while this pick-list is PLURAL ('cups',
+// 'lbs'), so the two tables already disagree despite the preservation_log DDL claiming to mirror
+// harvest_log's convention — it mirrors the shape, not the vocabulary. A CHECK pinned to this list
+// would 400 any future harvest-to-put-up prefill that copies harvest_log.unit, and would also break
+// 31 integration writes of 'lb'. The column has no free-text path from the app anyway (every write
+// comes from this dropdown), so the CHECK would buy little and risk a lot. Reconciling the two
+// vocabularies is its own piece of work and must not be smuggled into a units addition.
 const UNIT_GROUPS = [
   { group: 'Weight',     options: ['lbs', 'oz'] },
   { group: 'Count',      options: ['count'] },
   { group: 'Volume',     options: ['cups', 'pints', 'quarts'] },
+  { group: 'Bulk',       options: ['bushels', 'half-bushels', 'pecks', 'flats'] },
   { group: 'Containers', options: ['jars', 'bags'] },
 ]
 

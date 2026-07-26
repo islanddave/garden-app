@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.64.1",
+    "date": "2026-07-26",
+    "highlights": [
+      "Put-Up now accepts bulk units — bushels, half-bushels, pecks and flats — so a farm-stand box can be logged as bought rather than guess-converted to pounds",
+      "Thirteen fruits added to the crop list (apple, pear, plum, cherry, tart cherry, apricot, nectarine, cranberry, grape, raspberry, blackberry, elderberry, rhubarb) so bought and foraged produce can be named"
+    ]
+  },
+  {
     "version": "3.64.0",
     "date": "2026-07-26",
     "highlights": [
