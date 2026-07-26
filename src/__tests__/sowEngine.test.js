@@ -693,11 +693,21 @@ describe('allium viability gate — bucketing on 2026-07-24 (the reported bug)',
     expect(one(tokyo, GATE_DAY).entry.gated).toBeUndefined();
   });
 
-  it('a gated bulber still inside its spring window holds WITH the reason attached', () => {
-    const { bucket, entry } = one(flatOfItaly(), '2026-01-15');
-    expect(bucket).toBe('hold');
-    expect(entry.gated).toBe(true);
-    expect(entry.reopensOn).toBe('2026-02-25'); // this year's indoor start, not next year's
+  // gateReason means "the gate removed something". In January nothing is suppressed — the spring
+  // window is simply still ahead — so the card must be an ORDINARY hold. Attaching the reason here
+  // produced a contradiction in spring: "a summer sowing will not size a bulb … start indoors in
+  // late winter" shown beside a direct-sow window opening 27 days later.
+  it('a gated bulber whose spring window is merely still ahead is an ORDINARY hold, no reason', () => {
+    const jan = one(flatOfItaly(), '2026-01-15');
+    expect(jan.bucket).toBe('hold');
+    expect(jan.entry.reopensOn).toBe('2026-02-25'); // this year's indoor start, not next year's
+    expect(jan.entry.gated).toBeUndefined();
+    expect(jan.entry.gateReason).toBeUndefined();
+
+    // March: the next window is a DIRECT sow 27 days out — reason text would contradict it outright.
+    const mar = one(flatOfItaly(), '2026-03-12');
+    expect(mar.bucket).toBe('hold');
+    expect(mar.entry.gateReason).toBeUndefined();
   });
 
   // The gate suppresses out-of-season windows only — it must not touch the spring window itself.
@@ -752,5 +762,159 @@ describe('next-year horizon — sow_next_year bucket', () => {
     }));
     expect(bucket).toBe('hold');
     expect(entry.gated).toBe(true);
+  });
+});
+
+// ── Hardening pass (pre-promote QA + regression-impact review, 2026-07-26) ───────
+// Each block below was added because a mutation survived the original suite, or because a probe
+// found a reachable hole. Tests that only restate the implementation are worthless; these are
+// written so that reverting the corresponding fix makes them fail.
+
+describe('bunching predicate — negated and comparative prose must NOT un-gate a bulb onion', () => {
+  // THE FAIL-OPEN CLASS. Every string below is realistic seed-catalog copy for a BULBING onion
+  // that happens to contain a bunching token inside a negation or comparison. Before the guard,
+  // all of these escaped the gate — the reported bug, re-introduced through the data layer.
+  // growth_habit is free text (varieties API validates only typeof === 'string'), so an enrichment
+  // rewrite of any current variety could land one of these.
+  const MUST_GATE = [
+    'A true storage bulb onion, not a bunching type; forms large globes for winter keeping.',
+    'Unlike a scallion, this long-day variety sizes a heavy 4-in bulb by late summer.',
+    'Not a bunching onion. Intermediate-day Spanish heirloom forming semi-flat globes.',
+    'This is a bulbing (non-bunching) onion requiring 14 hours of daylight.',
+    'Harvest thinnings as scallions; remaining plants form storage bulbs by September.',
+    'Can be pulled young as a scallion or left to mature into a large yellow globe onion.',
+    'Sweeter than bunching onions; produces a single large storage bulb.',
+    'Grown for bulbs rather than scallions.',
+    'A storage onion, never a bunching type.',
+    'Bulbs well in the north — this is not a scallion variety.',
+  ];
+  for (const prose of MUST_GATE) {
+    it(`gates: "${prose.slice(0, 52)}…"`, () => {
+      expect(isSpringEstablishmentAllium(viewRow({ crop_type_slug: 'onion', growth_habit: prose }))).toBe(true);
+    });
+  }
+
+  // The exclusion must still fire on genuine, unqualified bunching prose.
+  const MUST_NOT_GATE = [
+    PROSE.tokyoLongWhite,
+    'upright non-bulbing clump, 12-18 in; thin hollow green leaves; harvested as green bunching onion before bulb forms',
+    'upright non-bulbing clump, 12-18 in; thin green hollow leaves; bunching habit if A. fistulosum',
+    'Japanese bunching onion; tall white shanks, harvested green.',
+    'Perennial scallion, forms clumps and never bulbs.',
+  ];
+  for (const prose of MUST_NOT_GATE) {
+    it(`does NOT gate: "${prose.slice(0, 52)}…"`, () => {
+      expect(isSpringEstablishmentAllium(viewRow({ crop_type_slug: 'onion', growth_habit: prose }))).toBe(false);
+    });
+  }
+
+  // Each alternation pinned INDEPENDENTLY. Previously all three tokens co-occurred in every
+  // bunching fixture, so deleting any one of them — or the case-insensitive flag — left the suite
+  // fully green. These fail individually if an alternation or the /i flag is dropped.
+  it('pins each bunching alternation and case-insensitivity separately', () => {
+    const g = (p) => isSpringEstablishmentAllium(viewRow({ crop_type_slug: 'onion', growth_habit: p }));
+    expect(g('non-bulbing clump')).toBe(false);   // needs non[-_ ]?bulbing
+    expect(g('non bulbing clump')).toBe(false);   // needs the [-_ ]? separator class
+    expect(g('a bunching habit')).toBe(false);    // needs |bunching
+    expect(g('classic scallion')).toBe(false);    // needs |scallion
+    expect(g('NON-BULBING CLUMP')).toBe(false);   // needs the /i flag
+    expect(g('Bunching Onion')).toBe(false);      // needs the /i flag
+    expect(g('forms a large globe')).toBe(true);  // no signal at all -> fail safe
+  });
+});
+
+describe('gate clause filter — every dropped class is pinned', () => {
+  // Mutating the filter to leak B, D, E, F or G previously left the suite green, while a leaked
+  // class B reproduced the reported bug verbatim ("Direct sow through Aug 3" on a bulb onion).
+  // One case per class: each timing below MUST NOT produce an actionable bucket on the gate day.
+  const TIMINGS = {
+    B: 'sow 2 weeks after last frost',
+    C: 'as soon as soil can be worked',
+    D: 'succession sow every 3 weeks',
+    E: 'sow 8-10 wks before first fall frost',
+    F: 'direct sow late summer',
+    G: 'fall sow for spring germination',
+    H: 'sow in summer for next-year bloom',
+  };
+  for (const [cls, timing] of Object.entries(TIMINGS)) {
+    it(`class ${cls} is dropped for a gated allium ("${timing}")`, () => {
+      const { bucket, entry } = one(flatOfItaly({ direct_sow_timing: timing }));
+      expect(bucket).toBe('hold');
+      expect(entry.gated).toBe(true);
+    });
+  }
+});
+
+describe('gate — holes found by probe', () => {
+  // start_method 'indoors_only' returned `sow_inside_anytime` (an ACTIONABLE bucket) BEFORE the
+  // gated branch, so a bulb onion kept a live Sow button in July with no reason and no gate.
+  it('an indoors_only gated allium does not escape via the sow-inside-anytime overlay', () => {
+    const { bucket, entry } = one(flatOfItaly({ start_method: 'indoors_only' }));
+    expect(bucket).toBe('hold');
+    expect(entry.gated).toBe(true);
+  });
+
+  // No class-A clause AND no indoor weeks -> nothing to rebuild. This previously fell through to
+  // `too_late`: collapsed, no reason line, and no "Sow anyway" (the override keys on entry.gated).
+  it('a gated allium with nothing rebuildable still holds, with reason and override intact', () => {
+    const { bucket, entry } = one(flatOfItaly({
+      direct_sow_timing: 'as soon as soil can be worked',
+      start_indoor_weeks_min: null,
+      start_indoor_weeks_max: null,
+    }));
+    expect(bucket).toBe('hold');
+    expect(entry.gated).toBe(true);
+    expect(entry.gateReason).toMatch(/spring start/i);
+    expect(entry.reopensOn).toBeUndefined();
+  });
+
+  it('shallots carry their own reason text, not the onion one', () => {
+    const { entry } = one(viewRow({
+      variety_name: 'Zebrune', crop_type_slug: 'shallot',
+      days_to_maturity_min: 100, days_to_maturity_max: 100,
+      start_method: 'start_indoors', start_indoor_weeks_min: 8, start_indoor_weeks_max: 10,
+      direct_sow_timing: 'Indoor start strongly preferred in Zone 5b', growth_habit: PROSE.zebrune,
+    }));
+    expect(entry.gated).toBe(true);
+    expect(entry.gateReason).toMatch(/^Shallots/);
+  });
+
+  // The year+1 hold REBUILDS against next year's anchors rather than adding 365 days. Replacing it
+  // with +365d survived the old suite because the 2026->2027 roll is not a leap boundary. A
+  // 2027->2028 roll diverges by exactly one day; this pins the correct value.
+  it('the year+1 rebuild stays correct across a leap boundary', () => {
+    expect(one(flatOfItaly(), '2027-07-24').entry.reopensOn).toBe('2028-02-26');
+  });
+});
+
+describe('sow_next_year — window boundaries', () => {
+  const pureH = () => viewRow({
+    variety_name: 'Pure Biennial', lifecycle: 'biennial', grown_as: 'biennial',
+    start_method: 'direct_sow', direct_sow_timing: 'sow in summer for next-year bloom',
+    sow_season: 'cool_warm',
+  });
+  // Dropping the isOpen() guard on the next-year partition survived the old suite, yet produced
+  // sow_next_year with daysLeft -1 after the close and +106 before the open.
+  it('is not used before the window opens', () => {
+    expect(one(pureH(), '2026-05-01').bucket).toBe('hold');
+  });
+  it('is used on the open date and on the close date', () => {
+    expect(one(pureH(), '2026-06-01').bucket).toBe('sow_next_year');
+    const close = one(pureH(), '2026-08-15');
+    expect(close.bucket).toBe('sow_next_year');
+    expect(close.entry.daysLeft).toBe(0);
+  });
+  it('is not used after the window closes', () => {
+    expect(one(pureH(), '2026-08-16').bucket).toBe('too_late');
+  });
+  // An open next-year window used to vanish entirely when a this-season window took the card.
+  it('surfaces as a hint when a this-season window owns the card', () => {
+    const both = one(viewRow({
+      variety_name: 'Both Horizons', grown_as: 'annual',
+      days_to_maturity_min: 60, days_to_maturity_max: 60,
+      start_method: 'both', start_indoor_weeks_min: 4, start_indoor_weeks_max: 6,
+      direct_sow_timing: 'sow in summer for next-year bloom', sow_season: 'cool_warm',
+    }));
+    expect(both.entry.windowLabel).toContain('also sowable now for next year');
   });
 });

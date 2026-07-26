@@ -38,7 +38,31 @@ const GATED_ALLIUM_SLUGS = new Set(['onion', 'shallot']);
 // (lambda/varieties/crop-derive.js) the engine needs, kept local so src/lib stays dependency-free
 // instead of becoming a third synced copy of that module. sowEngine.test.js pins this predicate
 // against the real prod prose corpus so the two cannot silently diverge.
-const BUNCHING_HABIT_RE = /non[-_ ]?bulbing|bunching|scallion/i;
+const BUNCHING_HABIT_RE = /non[-_ ]?bulbing|bunching|scallions?/gi;
+
+// A bunching token sitting inside a negation or comparison describes what the variety is NOT:
+// "not a bunching type", "unlike a scallion", "pulled young as a scallion", "(non-bunching)".
+// That phrasing is stock seed-catalog copy for BULB onions, so counting it as a bunching signal
+// fails the gate OPEN — the exact prose-matching failure this gate exists to correct, pointed the
+// other way. growth_habit is free text (varieties API validates only `typeof === 'string'`), so an
+// enrichment rewrite could otherwise delete a variety's gate with no signal.
+//
+// Bounded to the same clause and ~30 chars back. 'as' is included deliberately even though it also
+// appears in genuine bunching prose ("grown as an annual scallion"): a variety whose ONLY signal is
+// that phrasing gates conservatively and keeps its "Sow anyway" override, whereas omitting 'as'
+// lets "harvest thinnings as scallions" un-gate a true bulb onion. Fail-safe wins.
+const NEGATED_BEFORE_RE = /\b(?:not|non|no|never|unlike|rather|than|instead|versus|vs|as)\b[^.;]{0,30}$/i;
+
+/** True when prose carries at least one bunching signal that is NOT negated or comparative. */
+function hasUnqualifiedBunchingSignal(prose) {
+  const re = new RegExp(BUNCHING_HABIT_RE.source, 'gi');
+  let m;
+  while ((m = re.exec(prose)) !== null) {
+    const before = prose.slice(Math.max(0, m.index - 30), m.index);
+    if (!NEGATED_BEFORE_RE.test(before)) return true;
+  }
+  return false;
+}
 
 const GATE_REASONS = Object.freeze({
   onion: 'Bulb onions need a spring start — a summer sowing will not size a bulb before frost. Start indoors in late winter.',
@@ -52,7 +76,7 @@ const GATE_REASONS = Object.freeze({
  */
 export function isSpringEstablishmentAllium(candidate) {
   if (!GATED_ALLIUM_SLUGS.has(candidate?.crop_type_slug)) return false;
-  return !BUNCHING_HABIT_RE.test(String(candidate?.growth_habit ?? ''));
+  return !hasUnqualifiedBunchingSignal(String(candidate?.growth_habit ?? ''));
 }
 
 const DAY_MS = 86400000;
@@ -377,6 +401,7 @@ function bucketOne(candidate, ctx) {
   const isThisSeason = (w) => (w.horizon ?? 'this_season') === 'this_season';
   const openIndoor = indoorWindows.filter(isOpen);
   const openDirect = directWindows.filter((w) => isOpen(w) && isThisSeason(w));
+  const openNextYear = directWindows.filter((w) => isOpen(w) && !isThisSeason(w));
 
   if (openIndoor.length || openDirect.length) {
     const primary = openIndoor.length ? openIndoor : openDirect;
@@ -385,6 +410,9 @@ function bucketOne(candidate, ctx) {
     const daysLeft = Math.round((close - ctx.today) / DAY_MS);
     let windowLabel = `${actionPhrase(action)} through ${labelDate(close)}`;
     if (openIndoor.length && openDirect.length) windowLabel += ' · also direct-sowable';
+    // The horizon partition routes this card by its this-season window, so an open next-year
+    // window would otherwise vanish from the page entirely. Keep it visible as a hint.
+    if (openNextYear.length) windowLabel += ' · also sowable now for next year';
     const soil = primary.find((w) => w.soilTempF != null);
     if (soil) windowLabel += ` · soil ≥${soil.soilTempF}°F`;
     const bucket = daysLeft <= ctx.closingDays
@@ -395,7 +423,9 @@ function bucketOne(candidate, ctx) {
 
   // A — next-year horizon. Only reachable when NO this-season window is open, so this never
   // outranks a live this-season sowing. Gated alliums cannot land here (B1 drops their G/H clauses).
-  const openNextYear = directWindows.filter((w) => isOpen(w) && !isThisSeason(w));
+  // Deliberately NOT escalated to `window_closing` near the close: that bucket is labelled as
+  // this-season work, and mislabelling the horizon is worse than a muted heading. Urgency still
+  // reaches the user — the card carries the same red "N days left" badge.
   if (openNextYear.length) {
     const close = Math.max(...openNextYear.map((w) => w.close));
     const daysLeft = Math.round((close - ctx.today) / DAY_MS);
@@ -411,14 +441,21 @@ function bucketOne(candidate, ctx) {
   }
 
   // Indoor-only / class J overlay: always sowable inside when no actionable
-  // outdoor/indoor-calendar window is open.
-  if (candidate.start_method === 'indoors_only' || anyJ) {
+  // outdoor/indoor-calendar window is open. Gated alliums are EXCLUDED — this branch returns an
+  // actionable bucket, so without the guard an `indoors_only` bulb onion would still be offered
+  // in July, straight past the gate. (`anyJ` cannot fire for a gated candidate: gating filters
+  // clauses to class A, so no class-J clause survives. The `start_method` half is the real hole.)
+  if ((candidate.start_method === 'indoors_only' && !gated) || anyJ) {
     return {
       bucket: 'sow_inside_anytime',
       entry: { candidate, action: 'sow_inside', windowLabel: 'Grow indoors year-round' },
     };
   }
 
+  // Ordinary hold: a window is still ahead THIS year, so nothing is being suppressed — deliberately
+  // NO gateFields here. Attaching them made a gated onion in March read "a summer sowing will not
+  // size a bulb… start indoors in late winter" next to a direct-sow window opening in 27 days.
+  // gateReason means "the gate removed something", and it must appear only when that is true.
   const future = all.filter((w) => w.open > ctx.today).sort((a, b) => a.open - b.open);
   if (future.length) {
     const next = future[0];
@@ -428,7 +465,6 @@ function bucketOne(candidate, ctx) {
         candidate,
         action: next.action,
         reopensOn: msToISO(next.open),
-        ...gateFields,
         windowLabel: `Opens ${labelDateAcrossYears(next.open, ctx.year)} · ${actionPhrase(next.action).toLowerCase()}`,
       },
     };
@@ -461,6 +497,19 @@ function bucketOne(candidate, ctx) {
         },
       };
     }
+    // Nothing rebuildable (no class-A clause AND no indoor weeks — e.g. a C-only onion profile).
+    // Still `hold`, never `too_late`: too_late is a collapsed dead end with no reason line and no
+    // "Sow anyway" override, so a gated card landing there would be silently suppressed with no
+    // explanation and no recourse — the one outcome the gate's design explicitly forbids.
+    return {
+      bucket: 'hold',
+      entry: {
+        candidate,
+        action: null,
+        ...gateFields,
+        windowLabel: 'Held until its spring window',
+      },
+    };
   }
 
   // Class G guarantees a future window (rolls to next year), so a G candidate
