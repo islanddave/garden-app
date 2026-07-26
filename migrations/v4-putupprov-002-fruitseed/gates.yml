@@ -1,0 +1,70 @@
+# gates.yml
+# V4-PUTUPPROV-002 — seed the bought/foraged fruit class into crop_types.
+#
+# PROMOTE-TIME SEQUENCING:
+#   1. STAGING: pre -> apply 0a -> post.
+#   2. PROD: pre -> apply 0a -> post.
+#   This migration is DATA ONLY and ships NO code, so it does not need to be sequenced against a
+#   promote at all — unlike v4-putupprov-001, nothing in the bundle references these rows by slug.
+#   Applying to prod ahead of any deploy is inert: the rows simply appear in the crop picker.
+#
+# ANY pre/post assertion failing is a HARD ABORT.
+
+pre:
+  - name: pre_crop_types_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='crop_types'
+    expect: rowcount_eq
+    value: 1
+
+  # The provenance columns must already exist — this seed only has a point once Put-Up can record
+  # where produce came from.
+  - name: pre_provenance_shipped
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log' AND column_name='source_kind'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_schema_version_not_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.15.1-putupprov-002'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_all_thirteen_fruit_types_present
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug IN ('apple','pear','plum','cherry','sour_cherry','apricot','nectarine',
+                      'cranberry','grape','raspberry','blackberry','elderberry','rhubarb')
+         AND deleted_at IS NULL
+    expect: scalar_eq
+    value: 13
+
+  # NULL = UNKNOWN = never fires. A non-zero count here means somebody invented harvest behaviour
+  # for a tree that is not in this garden — the V4-HARVATTR-001 honesty contract, applied to a seed.
+  - name: post_no_invented_harvest_behaviour
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug IN ('apple','pear','plum','cherry','sour_cherry','apricot','nectarine',
+                      'cranberry','grape','raspberry','blackberry','elderberry','rhubarb')
+         AND (harvest_habit IS NOT NULL OR repeat_interval_days IS NOT NULL
+              OR loss_horizon_hours IS NOT NULL OR set_to_first_pick_days IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # The seed must not have disturbed anything that already existed. peach predates this migration.
+  - name: post_preexisting_peach_untouched
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug='peach' AND harvest_habit='repeat' AND set_to_first_pick_days=100
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.15.1-putupprov-002'
+    expect: rowcount_eq
+    value: 1
