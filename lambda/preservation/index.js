@@ -457,11 +457,17 @@ export const handler = async (event) => {
             -- NOTE the CASE keys on the REQUEST's source_kind, not COALESCE(request, stored): keying
             -- on the stored value would null the label whenever the row was already own_garden,
             -- which is the bug the boss pass caught in the first draft.
-            source_kind         = COALESCE(${body.source_kind ?? null}, source_kind),
+            -- ::text CASTS ARE LOAD-BEARING, not decoration. A bare placeholder in a
+            -- WHEN ... IS NULL test gives Postgres no type context, and the neon driver sends
+            -- untyped params — the server answers "could not determine data type of parameter $18"
+            -- and the whole PUT 500s. Caught by the real-Postgres integration suite; every unit
+            -- and static-parity test passed with it broken, because none of them speak to a
+            -- database. Keep the casts on every placeholder inside this CASE.
+            source_kind         = COALESCE(${body.source_kind ?? null}::text, source_kind),
             source_label        = CASE
-                                    WHEN ${body.source_kind ?? null} IS NULL       THEN source_label
-                                    WHEN ${body.source_kind ?? null} = 'own_garden' THEN NULL
-                                    ELSE ${normalizeSourceLabel(body.source_label)}
+                                    WHEN ${body.source_kind ?? null}::text IS NULL         THEN source_label
+                                    WHEN ${body.source_kind ?? null}::text = 'own_garden'  THEN NULL
+                                    ELSE ${normalizeSourceLabel(body.source_label)}::text
                                   END,
             updated_at          = NOW()
           WHERE id = ${rowId}

@@ -85,7 +85,24 @@ describe('the provenance deviation from house style is documented in place', () 
   // editor WILL be tempted to normalize it. This test makes that a red build rather than a
   // regression nobody notices for a season.
   it('the UPDATE preserves source_kind instead of nulling an absent key', () => {
-    expect(lambdaSrc).toContain('source_kind         = COALESCE(')
+    expect(lambdaSrc).toMatch(/source_kind\s+= COALESCE\(/)
+  })
+
+  // The ::text casts are load-bearing, not cosmetic: a bare placeholder in `WHEN $n IS NULL` gives
+  // Postgres no type context and the neon driver sends untyped params, so the whole PUT 500s with
+  // "could not determine data type of parameter". That shipped once and NO unit or static test
+  // caught it — only the real-Postgres integration suite did. This assertion is the cheap guard so
+  // it cannot come back the next time someone reformats this block.
+  it('every placeholder in the source_label CASE is explicitly ::text cast', () => {
+    const caseBlock = lambdaSrc.slice(
+      lambdaSrc.indexOf('source_label        = CASE'),
+      lambdaSrc.indexOf('updated_at          = NOW()'))
+    const placeholders = caseBlock.match(/\$\{[^}]+\}/g) ?? []
+    expect(placeholders.length).toBeGreaterThan(0)
+    for (const ph of placeholders) {
+      const at = caseBlock.indexOf(ph)
+      expect(caseBlock.slice(at + ph.length, at + ph.length + 6)).toBe('::text')
+    }
   })
 
   it('the source_label CASE keys on the REQUEST kind, not the stored kind', () => {
@@ -94,7 +111,7 @@ describe('the provenance deviation from house style is documented in place', () 
     const caseBlock = lambdaSrc.slice(
       lambdaSrc.indexOf('source_label        = CASE'),
       lambdaSrc.indexOf('updated_at          = NOW()'))
-    expect(caseBlock).toContain('IS NULL       THEN source_label')
+    expect(caseBlock).toMatch(/IS NULL\s+THEN source_label/)
     expect(caseBlock).not.toContain('COALESCE(')
   })
 })
