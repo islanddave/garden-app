@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.64.0",
+    "date": "2026-07-26",
+    "highlights": [
+      "Put-Up now records where produce came from — log bought or gifted food (farm stand, u-pick, CSA, store, gift, foraged) without tying it to a planting you never grew",
+      "Name the place it came from — \"Warner Farms\", \"Clarkdale Fruit Farm\" — and see it on your stores list",
+      "New \"Bought already preserved\" method for things like store-bought frozen fruit, which no longer have to be logged as \"Other\""
+    ]
+  },
+  {
     "version": "3.63.0",
     "date": "2026-07-26",
     "highlights": [
