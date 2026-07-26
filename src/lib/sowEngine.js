@@ -210,18 +210,71 @@ function soilTempFloor(soilTempF, year) {
   return null; // cooler temps are advisory only
 }
 
+// BUG-SOWNONANNUAL-001 constants. Establishment arithmetic, derived not asserted:
+// root growth continues past first frost until soil drops below ~43F, ~35 days after FF here; a
+// rosette needs ~8 weeks of ACTIVE growth to reach the crown mass that resists March frost heave
+// (which kills more first-winter perennials in Franklin County than cold does) and, for the
+// vernalization-requiring biennials, to be large enough to actually bolt in year 2. October growth
+// is worth well under half of July growth, hence the existing FALL_SLOWDOWN_DAYS discount.
+//   FF + 35 - 56 - 14  ==  FF - 35d  ==  Aug 24 when FF = Sep 28.
+// Sanity check: class H's existing Aug 15 close is independently derived and agrees within 9 days.
+const ESTABLISH_DAYS = 56;
+const FALL_GROWTH_TAIL = 35;
+// A "days to maturity" over this on a NON-annual is days-to-BLOOM across a winter, not days to a
+// harvest — the year-2 bloomers in the catalog carry dtm=300. Using it as a season-length clamp is
+// a category error that produces close dates in the previous November.
+const DTM_NOT_A_MATURITY = 200;
+
+// Biennials/perennials that nonetheless yield a real FIRST-year harvest, so the ordinary dtm clamp
+// is the correct rule for them. BRIDGE, NOT A DESTINATION: the honest fix is a first_year_harvest
+// flag on the variety. The default (establishment) is the safe direction for an ornamental but the
+// WRONG direction for a vegetable, so a biennial veg whose slug is missing here and whose timing
+// text never says "harvest" gets told to wait a year. See BUG-SOWFIRSTYEAR-001.
+const FIRST_YEAR_HARVEST_CROPS = new Set([
+  'brussels_sprouts', 'carrot', 'beet', 'chard', 'parsley', 'parsnip', 'celery', 'celeriac',
+  'kale', 'turnip', 'rutabaga', 'salsify', 'fennel', 'leek', 'onion', 'cabbage',
+]);
+const HARVEST_TEXT_RE = /for\s+(?:a\s+)?(?:fall|summer|winter|spring)?\s*harvest|first[-\s]year\s+harvest/i;
+
 /**
- * latest-safe direct-sow close date (ms) or null when the table has no row:
- * cool hardy FF+28-dtm | warm annual FF-dtm-14 | cool_warm annual FF-dtm-7 |
- * cool annual FF+14-dtm. Effective lifecycle key = grown_as ?? lifecycle.
+ * What is this sowing FOR? The season-length question is not "is it an annual" but "is the payoff
+ * a harvest this season, or an overwintering crown". A Brussels sprout is biennial and you eat it
+ * in year 1; a hollyhock is biennial and the payoff is next June. They need opposite clamps.
+ */
+export function sowGoal(candidate, dtm) {
+  const effective = candidate.grown_as ?? candidate.lifecycle;
+  if (effective === 'annual') return 'harvest';
+  if (dtm == null || dtm > DTM_NOT_A_MATURITY) return 'establishment';
+  if (FIRST_YEAR_HARVEST_CROPS.has(candidate.crop_type_slug)) return 'harvest';
+  if (HARVEST_TEXT_RE.test(candidate.direct_sow_timing || '')) return 'harvest';
+  if (HARVEST_TEXT_RE.test(candidate.sow_notes || '')) return 'harvest';
+  return 'establishment';
+}
+
+/**
+ * latest-safe direct-sow close date (ms), or null when it is genuinely UNKNOWN.
+ * harvest goal:       cool hardy FF+28-dtm | warm FF-dtm-14 | cool_warm FF-dtm-7 | cool FF+14-dtm
+ * establishment goal: FF-35 regardless of dtm — nothing is maturing this year.
+ *
+ * BUG-SOWNONANNUAL-001: this used to `return null` for every non-annual, which left class-B windows
+ * with NO season-length clamp so they closed at the raw ctx.FF — four cards read "Direct sow through
+ * Sep 28" for biennials that will not flower until next year.
+ * DO NOT "fix" that by deleting the lifecycle check. Hollyhock (dtm=300) would then take the
+ * cool_warm branch to FF-307 = Nov 25 of the PREVIOUS year, open > close, and pushDirect's
+ * annihilation guard would make the card VANISH SILENTLY — a worse bug than the wrong date, and it
+ * takes marshmallow and blackberry lily with it.
  */
 function latestSafeMs(candidate, dtm, ctx) {
-  if (dtm == null) return null;
   const season = candidate.sow_season;
   const notes = candidate.sow_notes || '';
-  if (season === 'cool' && HARDY_RE.test(notes)) return ctx.FF + (28 - dtm) * DAY_MS;
-  const effective = candidate.grown_as ?? candidate.lifecycle;
-  if (effective !== 'annual') return null;
+  // Guards dtm: this branch dereferences it and previously sat above any null check.
+  if (season === 'cool' && dtm != null && HARDY_RE.test(notes)) return ctx.FF + (28 - dtm) * DAY_MS;
+  // Establishment does not consult dtm, so this must sit ABOVE the null guard or a null-dtm
+  // perennial keeps its missing clamp.
+  if (sowGoal(candidate, dtm) === 'establishment') {
+    return ctx.FF + (FALL_GROWTH_TAIL - ESTABLISH_DAYS - FALL_SLOWDOWN_DAYS) * DAY_MS;
+  }
+  if (dtm == null) return null; // genuinely unknown — must NOT be fabricated into a date
   if (season === 'warm') return ctx.FF - (dtm + 14) * DAY_MS;
   if (season === 'cool_warm') return ctx.FF - (dtm + 7) * DAY_MS;
   if (season === 'cool') return ctx.FF + (14 - dtm) * DAY_MS;
@@ -246,16 +299,23 @@ function buildDirectWindows(candidate, dtm, ctx, gated = false) {
   if (gated) kept = kept.filter((cl) => cl.cls === 'A');
 
   const latestSafe = latestSafeMs(candidate, dtm, ctx);
+  // Every establishment-class sow pays off next season, without exception — that is what makes it a
+  // class. Tag the horizon so these route to the existing sow_next_year bucket, which already
+  // labels them correctly, instead of sitting under a this-season heading.
+  const establishing = sowGoal(candidate, dtm) === 'establishment';
   const windows = [];
   let anyJ = false;
   let neverTooLate = false;
+  // Set when a clause was DROPPED because its season-length clamp is unknown (annual, no dtm).
+  // bucketOne uses it to say "I don't know" instead of "too late" — see the note at case 'B'.
+  let unknownClamp = false;
   const deferredD = [];
 
   for (const cl of kept) {
     let open = null;
     let close = null;
     let clamp = true;
-    let horizon = 'this_season';
+    let horizon = establishing ? 'next_year' : 'this_season';
     switch (cl.cls) {
       case 'A':
         open = ctx.LF - cl.weeksMax * 7 * DAY_MS;
@@ -263,11 +323,18 @@ function buildDirectWindows(candidate, dtm, ctx, gated = false) {
         break;
       case 'B':
         open = ctx.LF + (cl.weeksMin ?? 0) * 7 * DAY_MS;
-        close = latestSafe ?? ctx.FF;
+        // BUG-SOWNONANNUAL-001: was `latestSafe ?? ctx.FF`, which FABRICATED a close date out of
+        // the frost anchor whenever the clamp was unknown — that fallback, not the lifecycle
+        // check, is what actually printed "Direct sow through Sep 28". After the latestSafeMs
+        // rewrite, null here means an annual with no dtm: genuinely unknown, so emit no window
+        // rather than a confident wrong one.
+        if (latestSafe == null) { unknownClamp = true; continue; }
+        close = latestSafe;
         break;
       case 'C':
         open = ctx.LF - 42 * DAY_MS;
-        close = latestSafe ?? ctx.LF;
+        if (latestSafe == null) { unknownClamp = true; continue; }
+        close = latestSafe;
         break;
       case 'D':
         deferredD.push(cl);
@@ -321,7 +388,7 @@ function buildDirectWindows(candidate, dtm, ctx, gated = false) {
     pushDirect(windows, cl, open, latestSafe, latestSafe, true, ctx, 'this_season');
   }
 
-  return { windows, anyJ, neverTooLate };
+  return { windows, anyJ, neverTooLate, unknownClamp };
 }
 
 function pushDirect(windows, cl, open, close, latestSafe, clamp, ctx, horizon = 'this_season') {
@@ -391,9 +458,13 @@ function bucketOne(candidate, ctx) {
     ? { gated: true, gateReason: GATE_REASONS[candidate.crop_type_slug] ?? GATE_REASONS.onion }
     : null;
   const indoorWindows = buildIndoorWindows(candidate, dtm, ctx, gated);
-  const { windows: directWindows, anyJ, neverTooLate } =
+  const { windows: directWindows, anyJ, neverTooLate, unknownClamp } =
     buildDirectWindows(candidate, dtm, ctx, gated);
   const all = [...indoorWindows, ...directWindows];
+
+  // BUG-SOWNONANNUAL-001: `unknownClamp` is carried down to the too_late exit at the bottom of this
+  // function rather than being handled here, because a packet can have OTHER windows (a closed
+  // indoor pass) that make `all` non-empty while its DIRECT window is still unknown.
 
   const isOpen = (w) => w.open <= ctx.today && ctx.today <= w.close;
   // Horizon partition runs BEFORE any close/daysLeft/label math, so a next-year window can never
@@ -524,6 +595,22 @@ function bucketOne(candidate, ctx) {
         reopensOn: msToISO(open),
         windowLabel: `Opens ${labelDateAcrossYears(open, ctx.year)} · direct sow`,
       },
+    };
+  }
+
+  // BUG-SOWNONANNUAL-001. Do not trade one confident-wrong claim for another. These packets used to
+  // read "Direct sow through Sep 28" — a date fabricated from the frost anchor by `latestSafe ??
+  // ctx.FF`. Removing that fallback correctly stops the lie, but letting them fall through to
+  // too_late asserts "Sowing window passed for 2026", which we also do not know: their direct-sow
+  // clause was DROPPED for want of a days-to-maturity, so the window we cannot compute might well
+  // still be open. Five live packets hit this, four of them with a merely-closed INDOOR pass making
+  // `all` non-empty — French marigold among them, which direct-sown in late July still blooms
+  // before frost in 5b. NULL means UNKNOWN, and UNKNOWN must never fire as fact in EITHER
+  // direction. needs_profile is the bucket that says so and names the fix.
+  if (unknownClamp) {
+    return {
+      bucket: 'needs_profile',
+      entry: { candidate, action: null, windowLabel: 'Add days to maturity to place this' },
     };
   }
 

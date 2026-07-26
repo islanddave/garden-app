@@ -17,6 +17,7 @@ import {
   classifyClause,
   splitClauses,
   isSpringEstablishmentAllium,
+  sowGoal,
 } from '../lib/sowEngine.js';
 // Imported ONLY to pin the engine's local bunching predicate against the canonical derivation, so
 // the two cannot silently diverge. The engine itself never imports from lambda/.
@@ -431,9 +432,15 @@ describe('GOLDEN suite — real packets, today 2026-07-10', () => {
     expect(entry.action).toBe('direct_sow');
   });
 
-  it('Hollyhock The Watchman -> direct_sow_now (class H summer window open)', () => {
+  // REBASELINED BY BUG-SOWNONANNUAL-001, and this is the fix landing, not a golden being quietly
+  // moved to match new output. Previously direct_sow_now: hollyhock's class-B clause got NO
+  // season-length clamp (latestSafeMs returned null for every non-annual) and its close fell back
+  // to the raw ctx.FF, so the card read "Direct sow through Sep 28" — the reported bug. The Watchman
+  // is a biennial that will not flower until next June; a late-July sow is FOR NEXT YEAR, so
+  // sow_next_year is the honest bucket and the establishment clamp closes it Aug 24, not Sep 28.
+  it('Hollyhock The Watchman -> sow_next_year (biennial, establishment clamp)', () => {
     const { bucket, entry } = locate(golden(), 'The Watchman');
-    expect(bucket).toBe('direct_sow_now');
+    expect(bucket).toBe('sow_next_year');
     expect(entry.action).toBe('direct_sow');
   });
 
@@ -508,16 +515,21 @@ describe('GOLDEN suite — real packets, today 2026-07-10', () => {
     const counts = Object.fromEntries(
       Object.entries(buckets).map(([k, v]) => [k, v.length]),
     );
-    // V4-SOWNOW-PHOTOPERIOD-001 INTENDED DELTA vs the pre-gate golden, and the ONLY delta:
-    // onion Monastrell moved too_late -> hold (3->2 and 2->3), and the sow_next_year key appeared
-    // empty. Hollyhock deliberately does NOT move — it co-carries a class-B this-season clause that
-    // outranks its class-H next-year window, so it stays in direct_sow_now. Any other movement here
-    // is an unintended regression, not a rebaseline.
+    // BUG-SOWNONANNUAL-001 INTENDED DELTA, and the ONLY delta this round: hollyhock moved
+    // direct_sow_now -> sow_next_year (3->2 and 0->1).
+    // The previous note here said hollyhock "deliberately does NOT move" because its class-B
+    // this-season clause outranks its class-H next-year window. That reasoning held only because
+    // the class-B clause was UNCLAMPED — latestSafeMs returned null for every non-annual and the
+    // close fell back to the raw ctx.FF. The class-B window was the bug, so the thing that was
+    // outranking the next-year window was itself wrong. With the establishment clamp the same
+    // clause closes Aug 24 and carries horizon=next_year, and the bucket follows the horticulture.
+    // Prior delta, still standing: V4-SOWNOW-PHOTOPERIOD-001 moved onion Monastrell too_late -> hold.
+    // Any movement BEYOND hollyhock is an unintended regression, not a rebaseline.
     expect(counts).toEqual({
       start_indoors_now: 1, // broccoli
-      direct_sow_now: 3,    // spinach, lettuce, hollyhock (see deviations)
+      direct_sow_now: 2,    // spinach, lettuce
       sow_inside_anytime: 0,
-      sow_next_year: 0,     // no golden packet is pure class-H (hollyhock is B+H)
+      sow_next_year: 1,     // hollyhock (biennial: sown now, blooms next June)
       window_closing: 2,    // cucumber, pea
       hold: 3,              // columbine, radicchio, onion (gated bulber)
       too_late: 2,          // biquinho, black krim
@@ -916,5 +928,86 @@ describe('sow_next_year — window boundaries', () => {
       direct_sow_timing: 'sow in summer for next-year bloom', sow_season: 'cool_warm',
     }));
     expect(both.entry.windowLabel).toContain('also sowable now for next year');
+  });
+});
+
+// ── BUG-SOWNONANNUAL-001 — non-annual season-length clamp ───────────────────────
+// Horticulture call 2026-07-26 (horticulture-planning-analyst, V4 expert-dispatch rule).
+// The season-length question is NOT "is this an annual" but "is the payoff a harvest this season
+// or an overwintering crown". Fixtures use LIVE prod field values for the varieties Dave owns.
+describe('BUG-SOWNONANNUAL-001 — non-annuals get a season-length clamp', () => {
+  const TODAY = '2026-07-26'; // the day the bug was reported
+
+  it('classifies a year-2 bloomer as establishment, not harvest', () => {
+    // dtm=300 on a biennial is days-to-BLOOM across a winter, not days to a harvest.
+    expect(sowGoal({ lifecycle: 'biennial', grown_as: null }, 300)).toBe('establishment');
+    expect(sowGoal({ lifecycle: 'perennial', grown_as: null }, 110)).toBe('establishment');
+  });
+
+  it('classifies a biennial grown for a first-year harvest as harvest', () => {
+    // Long Island Improved (Brussels sprouts): biennial, but you eat it in year 1.
+    expect(sowGoal({ lifecycle: 'biennial', grown_as: null, crop_type_slug: 'brussels_sprouts' }, 90))
+      .toBe('harvest');
+    // ...and via the timing text, for a crop whose slug is not in the bridge set.
+    expect(sowGoal({ lifecycle: 'biennial', grown_as: null, crop_type_slug: 'zzz',
+      direct_sow_timing: 'sow in late spring for a fall harvest' }, 90)).toBe('harvest');
+  });
+
+  it('an annual is always harvest, whatever its dtm', () => {
+    expect(sowGoal({ lifecycle: 'annual', grown_as: null }, 300)).toBe('harvest');
+    expect(sowGoal({ lifecycle: 'tender_perennial', grown_as: 'annual' }, null)).toBe('harvest');
+  });
+
+  it('THE REPORTED BUG: a biennial no longer reads "direct sow through" the raw first frost', () => {
+    const r = run(viewRow({
+      variety_name: 'The Watchman', lifecycle: 'biennial', grown_as: null,
+      days_to_maturity_min: 300, sow_season: 'cool_warm',
+      direct_sow_timing: 'after last frost or in summer for next-year bloom',
+    }), TODAY);
+    // Sep 28 is ctx.FF verbatim — the fabricated close the ?? fallback used to produce.
+    expect(JSON.stringify(r)).not.toContain('Sep 28');
+    expect(r.bucket).toBe('sow_next_year');
+  });
+
+  it('THE NAIVE FIX HAZARD: the card must not vanish', () => {
+    // Deleting the `effective !== 'annual'` line instead of classifying would send hollyhock down
+    // the cool_warm branch to FF-307 = Nov 25 of the PREVIOUS year. open > close, and pushDirect's
+    // annihilation guard drops the window silently — the card disappears rather than being wrong.
+    // This asserts it is still PRESENT, which no bucket assertion alone guarantees.
+    const r = run(viewRow({
+      variety_name: 'The Watchman', lifecycle: 'biennial', grown_as: null,
+      days_to_maturity_min: 300, sow_season: 'cool_warm',
+      direct_sow_timing: 'after last frost or in summer for next-year bloom',
+    }), TODAY);
+    expect(r).toBeTruthy();
+    expect(r.bucket).toBeTruthy();
+    expect(r.bucket).not.toBe('needs_profile');
+  });
+
+  it('an unknown clamp says "I do not know", never "too late"', () => {
+    // The mirror of the reported bug. Removing the `latestSafe ?? ctx.FF` fabrication correctly
+    // stops "Direct sow through Sep 28", but falling through to too_late would assert "Sowing
+    // window passed for 2026" — equally unknown, and in 5b a French marigold direct-sown in late
+    // July still blooms before frost. Verified on live data: this change moves 5 packets off a
+    // fabricated date and leaves the too_late count at 162, exactly where it was.
+    const r = run(viewRow({
+      variety_name: 'Favourite Blend (French)', lifecycle: 'annual', grown_as: 'annual',
+      days_to_maturity_min: null, days_to_maturity_max: null, sow_season: 'warm',
+      start_method: 'both', start_indoor_weeks_min: 4, start_indoor_weeks_max: 6,
+      direct_sow_timing: '1-2 wks after last frost when soil is warm',
+    }), TODAY);
+    expect(r.bucket).toBe('needs_profile');
+    expect(r.entry.windowLabel).toMatch(/days to maturity/i);
+  });
+
+  it('a null-dtm annual emits NO window rather than a fabricated one', () => {
+    // `close = latestSafe ?? ctx.FF` invented a close date out of the frost anchor whenever the
+    // clamp was unknown. NULL means UNKNOWN and must never render as a confident date.
+    const r = run(viewRow({
+      variety_name: 'unknown-dtm', lifecycle: 'annual', grown_as: 'annual',
+      days_to_maturity_min: null, days_to_maturity_max: null, sow_season: 'warm',
+      direct_sow_timing: 'after last frost',
+    }), TODAY);
+    expect(JSON.stringify(r)).not.toContain('Sep 28');
   });
 });
