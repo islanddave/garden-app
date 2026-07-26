@@ -12,12 +12,15 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useOverlayLocation, useOverlayNavigate } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { PUTUP_SOURCE_LABELS } from '../lib/dropdownRegistry.js'
 
 const METHOD_LABELS = {
   roast_freeze: 'roasted & frozen', whole_freeze: 'frozen', blanch_freeze: 'blanched & frozen',
   dehydrate: 'dehydrated', powder: 'powder', passata: 'passata', can_water_bath: 'canned',
   can_pressure: 'pressure-canned', jam_preserve: 'jam', ferment: 'fermented',
-  cure_store: 'cured', cold_store: 'cold-stored', other: 'put up',
+  cure_store: 'cured', cold_store: 'cold-stored',
+  purchased_preserved: 'bought preserved',   // D6 (V4-PUTUPPROV-001) — keep in step with PutUp.jsx
+  other: 'put up',
 }
 
 function itemTitle(it) {
@@ -30,6 +33,11 @@ function itemDetail(it) {
   const m = METHOD_LABELS[it.method]
   if (m) parts.push(m)
   if (it.storage_label) parts.push(`in ${it.storage_label}`)
+  // V4-PUTUPPROV-001. Provenance where the stores are actually browsed, not only on the form.
+  // own_garden and NULL append nothing, so every existing row's detail line is byte-identical.
+  if (it.source_kind && it.source_kind !== 'own_garden') {
+    parts.push(`from ${it.source_label || PUTUP_SOURCE_LABELS[it.source_kind] || it.source_kind}`)
+  }
   return parts.join(' · ')
 }
 

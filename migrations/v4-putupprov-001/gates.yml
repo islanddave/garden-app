@@ -1,0 +1,260 @@
+# gates.yml
+# V4-PUTUPPROV-001 — preservation_log provenance (source_kind + source_label) + D6 method widen.
+#
+# Modelled on v4-harvattr-001 (ALTER on a POPULATED table with a NULL=UNKNOWN contract), NOT on
+# v4-putup-001 (create-from-nothing). That distinction is load-bearing: v4-putup-001's pre gates are
+# all "table absent" and its post gates are all "object present", a shape only valid for a fresh
+# create. Here the table is live with 1 row and the interesting assertions are about what did NOT
+# change.
+#
+# PROMOTE-TIME SEQUENCING (ORDERED — do not reorder, do not skip):
+#   1. STAGING: pre gates -> apply 0a-additive-ddl.sql -> post gates.
+#      (No 0b loader and no 0c-validate: both columns are NULLABLE with NO default and every CHECK is
+#       born-valid on the existing data, so there is nothing to backfill and nothing that can be
+#       invalid. Same conclusion as v4-putup-001, reached because of D1-b rather than because the
+#       table is empty.)
+#   2. STAGING: run 0r-rollback.sql, then re-apply 0a and re-run post gates. The rollback is
+#      REHEARSED, not assumed. Also proves 0a is re-runnable (every ADD CONSTRAINT is guarded —
+#      Postgres has no ADD CONSTRAINT IF NOT EXISTS, and a half-failed apply then re-run is a
+#      realistic path).
+#   3. Push code to dev. NOTE integration-test.yml runs against an ephemeral Neon branch off STAGING,
+#      so step 1 must precede the dev push or the suite reds for an unrelated reason.
+#   4. deploy-staging + full regression. build-and-test is the required promote gate; integration is
+#      ADVISORY by default (promote-gate.yml require_integration defaults to false) — READ the log,
+#      do not assume. Dispatch the promote with require_integration: true.
+#   5. PROD: pre gates -> apply 0a -> post gates. Dave-gated apply; confirm the DATABASE_URL host
+#      printed by the runner before applying. Quote the information_schema.columns result.
+#   6. ONLY THEN dispatch promote-gate.yml on ref: dev.
+#   7. Approve the deploy-lambda production gate BEFORE the promote-gate deploy job's gate.
+#
+# WHY 5 BEFORE 6, and why 7 is not optional:
+#   A promote produces THREE production approvals, not one. deploy-lambda.yml:21 declares
+#   environment: production, and promote-gate.yml's deploy job workflow_calls deploy.yml whose job at
+#   :34 ALSO declares environment: production. promote-gate.yml:273-277 says so itself: "deploy-
+#   lambda.yml is a SEPARATE push:main workflow under its OWN production-approval gate (L-141), so
+#   when this step runs the Lambda deploy may still be queued/awaiting approval."
+#   So the SPA deploy and the Lambda deploy are INDEPENDENT AND RACING, ordered by whichever gate is
+#   approved first. Two failure windows:
+#     - prod DDL missing when the new Lambda goes live -> 42703 on every POST and PUT, killing every
+#       existing "Mark used" tap and inline edit. Reads use SELECT p.* and keep working, so the app
+#       LOOKS HEALTHY WHILE ALL WRITES ARE DEAD. Prevented by 5-before-6.
+#     - new SPA + old Lambda -> the form POSTs source_kind/source_label to a Lambda that never
+#       references them: HTTP 201, provenance silently discarded, UI renders nothing back so it reads
+#       as a display bug. Prevented by 7 (Lambda gate first).
+#
+# ANY pre/post assertion failing is a HARD ABORT. There is no manual override.
+
+pre:
+  - name: pre_preservation_log_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='preservation_log'
+    expect: rowcount_eq
+    value: 1
+
+  # A name collision would mean this migration is silently adopting someone else's column with
+  # unknown semantics (v4-harvattr-001 precedent).
+  - name: pre_source_columns_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+         AND column_name IN ('source_kind','source_label')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_constraint_names_free
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_preservation_log_source_kind',
+                         'chk_preservation_log_source_other',
+                         'chk_preservation_log_source_label_nonblank',
+                         'chk_preservation_log_source_label_len',
+                         'chk_preservation_log_source_plant')
+    expect: rowcount_eq
+    value: 0
+
+  # This migration does NOT touch attribution. If its definition has drifted, stop — the provenance
+  # design assumes crop-OR-variety still holds.
+  - name: pre_attribution_check_intact
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_preservation_log_attribution'
+         AND pg_get_constraintdef(oid) LIKE '%crop_type_slug%'
+         AND pg_get_constraintdef(oid) LIKE '%variety_id%'
+    expect: rowcount_eq
+    value: 1
+
+  # D6 snapshot: the method CHECK we are about to DROP+ADD must be the known 13-value one, and must
+  # NOT already carry purchased_preserved. Guards against widening something that already drifted.
+  - name: pre_method_check_is_the_known_thirteen
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_preservation_log_method'
+         AND pg_get_constraintdef(oid) LIKE '%can_water_bath%'
+         AND pg_get_constraintdef(oid) LIKE '%can_pressure%'
+         AND pg_get_constraintdef(oid) NOT LIKE '%purchased_preserved%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_schema_version_not_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.15.0-putupprov-001'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_source_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+         AND column_name IN ('source_kind','source_label')
+    expect: rowcount_eq
+    value: 2
+
+  # THE HONESTY CONTRACT (D1-b), asserted structurally rather than trusted to the DDL text.
+  # A NOT NULL or a DEFAULT on either column would invent provenance for rows nobody recorded it for.
+  # Directly mirrors v4-harvattr-001's NULL=UNKNOWN gate.
+  - name: post_source_columns_nullable_and_defaultless
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+         AND column_name IN ('source_kind','source_label')
+         AND (is_nullable <> 'YES' OR column_default IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_source_columns_are_text
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+         AND column_name IN ('source_kind','source_label') AND data_type='text'
+    expect: rowcount_eq
+    value: 2
+
+  # Presence is not enough — a same-named constraint with a drifted vocab passes a conname check.
+  # Assert exact membership, and assert plant_swap is NOT in it so a future widening comes through a
+  # migration rather than an ad-hoc ALTER. (cf. post_method_no_generic_can.)
+  - name: post_source_kind_vocab_exact
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_preservation_log_source_kind'
+         AND pg_get_constraintdef(oid) LIKE '%''own_garden''%'
+         AND pg_get_constraintdef(oid) LIKE '%''u_pick''%'
+         AND pg_get_constraintdef(oid) LIKE '%''farm_stand''%'
+         AND pg_get_constraintdef(oid) LIKE '%''csa''%'
+         AND pg_get_constraintdef(oid) LIKE '%''store''%'
+         AND pg_get_constraintdef(oid) LIKE '%''gift''%'
+         AND pg_get_constraintdef(oid) LIKE '%''foraged''%'
+         AND pg_get_constraintdef(oid) LIKE '%''other''%'
+         AND pg_get_constraintdef(oid) NOT LIKE '%''plant_swap''%'
+    expect: rowcount_eq
+    value: 1
+
+  # THE assertion that matters most. The naive form of this constraint —
+  #   CHECK (source_kind <> 'other' OR btrim(source_label) <> '')
+  # evaluates FALSE OR NULL = NULL when the label is NULL, and Postgres ACCEPTS a CHECK that
+  # evaluates to NULL. Copying that shape ships a constraint that enforces NOTHING. Require the
+  # NULL-safe construction in the definition text, not merely the constraint's existence.
+  - name: post_source_other_is_null_safe
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_preservation_log_source_other'
+         AND pg_get_constraintdef(oid) ILIKE '%COALESCE%'
+         AND pg_get_constraintdef(oid) ILIKE '%DISTINCT FROM%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_source_label_guards_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_preservation_log_source_label_nonblank',
+                         'chk_preservation_log_source_label_len')
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_source_plant_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_preservation_log_source_plant'
+         AND pg_get_constraintdef(oid) LIKE '%plant_id%'
+    expect: rowcount_eq
+    value: 1
+
+  # Bare conname existence passes on a permanently-NOT VALID constraint. All five must be validated.
+  - name: post_all_five_source_checks_validated
+    sql: |
+      SELECT count(*) FROM pg_constraint
+       WHERE conname IN ('chk_preservation_log_source_kind',
+                         'chk_preservation_log_source_other',
+                         'chk_preservation_log_source_label_nonblank',
+                         'chk_preservation_log_source_label_len',
+                         'chk_preservation_log_source_plant')
+         AND convalidated
+    expect: scalar_eq
+    value: 5
+
+  # D6: the widen is a STRICT SUPERSET. All 13 originals survive, the new value is in, and the
+  # canning safety split is intact (a generic 'can' must never appear — botulism).
+  - name: post_method_widened_not_replaced
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_preservation_log_method'
+         AND pg_get_constraintdef(oid) LIKE '%''purchased_preserved''%'
+         AND pg_get_constraintdef(oid) LIKE '%''roast_freeze''%'
+         AND pg_get_constraintdef(oid) LIKE '%''whole_freeze''%'
+         AND pg_get_constraintdef(oid) LIKE '%''blanch_freeze''%'
+         AND pg_get_constraintdef(oid) LIKE '%''dehydrate''%'
+         AND pg_get_constraintdef(oid) LIKE '%''powder''%'
+         AND pg_get_constraintdef(oid) LIKE '%''passata''%'
+         AND pg_get_constraintdef(oid) LIKE '%''can_water_bath''%'
+         AND pg_get_constraintdef(oid) LIKE '%''can_pressure''%'
+         AND pg_get_constraintdef(oid) LIKE '%''jam_preserve''%'
+         AND pg_get_constraintdef(oid) LIKE '%''ferment''%'
+         AND pg_get_constraintdef(oid) LIKE '%''cure_store''%'
+         AND pg_get_constraintdef(oid) LIKE '%''cold_store''%'
+         AND pg_get_constraintdef(oid) LIKE '%''other''%'
+         AND pg_get_constraintdef(oid) NOT LIKE '%''can''%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_method_check_validated
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_preservation_log_method' AND convalidated
+    expect: rowcount_eq
+    value: 1
+
+  # NO INVENTED PROVENANCE. Rows that existed before this migration keep NULL. A non-zero count here
+  # means something wrote a default and fabricated where that food came from — the exact failure
+  # D1-b exists to prevent. (schema_version.applied_at confirmed present on live Neon.)
+  - name: post_no_invented_provenance
+    sql: |
+      SELECT 1 FROM public.preservation_log
+       WHERE created_at < (SELECT applied_at FROM public.schema_version
+                            WHERE version='4.15.0-putupprov-001')
+         AND source_kind IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  # This migration is additive. The attribution CHECK must be untouched — this is the gate that makes
+  # "relax attribution for non-garden sources" impossible to land here by accident.
+  - name: post_attribution_check_unchanged
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_preservation_log_attribution'
+         AND pg_get_constraintdef(oid) NOT ILIKE '%source_kind%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_column_count_is_23
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='preservation_log'
+    expect: scalar_eq
+    value: 23
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.15.0-putupprov-001'
+    expect: rowcount_eq
+    value: 1

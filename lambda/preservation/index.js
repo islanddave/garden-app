@@ -8,6 +8,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';
 import { reconcilePlantAttribution, plantingLabel } from './attribution.js';
+import { VALID_SOURCE_KINDS, validateProvenance, normalizeSourceLabel } from './provenance.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -33,7 +34,12 @@ function resp(statusCode, body) {
 // Mirrors chk_preservation_log_method — belt-and-suspenders over the DB CHECK (L5 vocab).
 const VALID_METHODS = [
   'roast_freeze', 'whole_freeze', 'blanch_freeze', 'dehydrate', 'powder', 'passata',
-  'can_water_bath', 'can_pressure', 'jam_preserve', 'ferment', 'cure_store', 'cold_store', 'other',
+  'can_water_bath', 'can_pressure', 'jam_preserve', 'ferment', 'cure_store', 'cold_store',
+  // D6 (V4-PUTUPPROV-001): bought already preserved. No method was performed here — every other
+  // value in this list asserts an action Dave took, so store-bought frozen fruit previously had to
+  // be logged as 'other', overloading that escape hatch until it meant two unrelated things.
+  'purchased_preserved',
+  'other',
 ];
 
 // ── Shelf-life defaults (L6): MONTHS from the put-up date, keyed by method × storage-kind. ──
@@ -57,6 +63,10 @@ const SHELF_LIFE_MONTHS = {
   ferment:        { fridge: 6, fridge_freezer: 6, cold_storage: 8, default: 6 }, // fridge ferment 4–8 mo
   cure_store:     { cold_storage: 4, pantry: 3, default: 4 },      // squash 3–6, garlic 6–8, potatoes 4–9 (crop-varying; conservative default)
   cold_store:     { cold_storage: 6, fridge: 4, default: 4 },
+  // D6: acquisition age is unknown, so there is no honest shelf-life anchor. NULL => no default
+  // expiry => excluded from "use soon" until the user sets one. Same reasoning as the non-garden
+  // suppression in the create path below.
+  purchased_preserved: { default: null },
   other:          { default: null },
 };
 
@@ -111,7 +121,7 @@ export function classifyUseBy(preservedAt, useByTarget, now = new Date()) {
   return nowMs >= threshold ? 'use_soon' : 'ok';
 }
 
-export function validateCreate(body) {
+function validateCommon(body) {
   if (!body || typeof body !== 'object') return 'body required';
   // L7: at least one of {crop_type_slug, variety_id, plant_id}. The DB CHECK only knows about the
   // first two (chk_preservation_log_attribution) — plant_id is accepted here because the handler
@@ -132,9 +142,23 @@ export function validateCreate(body) {
   return null;
 }
 
+export function validateCreate(body) {
+  return validateCommon(body) ?? validateProvenance(body);
+}
+
 // PUT is "replace editable fields" (frontend sends a complete payload) INCLUDING the minimal
-// decrement (remaining_count / consumed_at). Same core validation as create.
-export const validateUpdate = validateCreate;
+// decrement (remaining_count / consumed_at).
+//
+// validateUpdate is NO LONGER an alias for validateCreate (V4-PUTUPPROV-001). It was
+// `export const validateUpdate = validateCreate`, which meant every rule added to create became a
+// hard requirement on every PUT — including the one-tap "Mark used" decrement the user never
+// experiences as a form submit. A service-worker-cached bundle built before this ship omits
+// source_kind entirely, so aliasing would 400 every decrement for the length of the cache window.
+// Rule: a payload that never mentions provenance is not judged on it. Pairs with the
+// COALESCE-preserve UPDATE below — absent key means "unchanged", at both layers.
+export function validateUpdate(body) {
+  return validateCommon(body) ?? (body.source_kind === undefined ? null : validateProvenance(body));
+}
 
 export { reconcilePlantAttribution, plantingLabel };
 
@@ -194,6 +218,12 @@ function projectRow(r) {
     consumed_at: r.consumed_at,
     notes: r.notes,
     photo_id: r.photo_id,
+    // V4-PUTUPPROV-001. projectRow is an explicit whitelist and is the ONLY projection for all four
+    // GET routes, while POST/PUT return raw rows[0] from RETURNING *. So omitting these here is
+    // INVISIBLE to create-path smoke testing: the POST echoes them back correctly while every read
+    // surface renders blank. That asymmetry is why this line has a comment.
+    source_kind: r.source_kind ?? null,
+    source_label: r.source_label ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
     use_by_status: classifyUseBy(r.preserved_at, r.use_by_target),
@@ -409,6 +439,30 @@ export const handler = async (event) => {
             consumed_at         = ${consumedAt},
             notes               = ${body.notes ?? null},
             photo_id            = ${body.photo_id ?? null},
+            -- V4-PUTUPPROV-001 — DELIBERATE DEVIATION FROM THIS BLOCK'S HOUSE STYLE. Do not
+            -- "correct" these two back to the plain body-or-null interpolation every other column
+            -- above uses; that reopens a silent data-loss bug.
+            --
+            -- Every other column above is a total replace, which is correct: every client that can
+            -- issue a PUT builds all of them. It is WRONG for a column no already-deployed client
+            -- knows about. This is a PWA — after the promote, a loaded tab keeps its old bundle until
+            -- reload, and that bundle's buildFullPayload has never heard of these columns. Written
+            -- house-style, every "Mark used" tap from a stale client would rewrite a farm-stand
+            -- put-up as own_garden with the vendor erased, return 200, and look like a render glitch.
+            --
+            -- Contract: source_kind OWNS THE PAIR. Request carries it => it owns both columns and may
+            -- set the label to anything including null (so a mistyped vendor is still erasable).
+            -- Request omits it => both untouched. Explicit own_garden => label cleared, because the
+            -- label is vendor-only (D2-b, Dave-confirmed 2026-07-26).
+            -- NOTE the CASE keys on the REQUEST's source_kind, not COALESCE(request, stored): keying
+            -- on the stored value would null the label whenever the row was already own_garden,
+            -- which is the bug the boss pass caught in the first draft.
+            source_kind         = COALESCE(${body.source_kind ?? null}, source_kind),
+            source_label        = CASE
+                                    WHEN ${body.source_kind ?? null} IS NULL       THEN source_label
+                                    WHEN ${body.source_kind ?? null} = 'own_garden' THEN NULL
+                                    ELSE ${normalizeSourceLabel(body.source_label)}
+                                  END,
             updated_at          = NOW()
           WHERE id = ${rowId}
             AND user_id = ANY(${householdIds})
@@ -489,11 +543,13 @@ export const handler = async (event) => {
         INSERT INTO preservation_log (
           user_id, crop_type_slug, variety_id, plant_id, harvest_log_id,
           preserved_at, method, method_other_text, quantity_value, quantity_unit,
-          package_count, storage_location_id, use_by_target, remaining_count, notes, photo_id
+          package_count, storage_location_id, use_by_target, remaining_count, notes, photo_id,
+          source_kind, source_label
         ) VALUES (
           ${userId}, ${attr.crop_type_slug ?? null}, ${attr.variety_id ?? null}, ${body.plant_id ?? null}, ${body.harvest_log_id ?? null},
           ${body.preserved_at}, ${body.method}, ${body.method === 'other' ? (body.method_other_text ?? null) : null}, ${body.quantity_value}, ${body.quantity_unit},
-          ${packageCount}, ${body.storage_location_id ?? null}, ${useByTarget ?? null}, ${remaining}, ${body.notes ?? null}, ${body.photo_id ?? null}
+          ${packageCount}, ${body.storage_location_id ?? null}, ${useByTarget ?? null}, ${remaining}, ${body.notes ?? null}, ${body.photo_id ?? null},
+          ${body.source_kind ?? null}, ${body.source_kind === 'own_garden' ? null : normalizeSourceLabel(body.source_label)}
         ) RETURNING *
       `;
       return resp(201, rows[0]);
@@ -503,7 +559,20 @@ export const handler = async (event) => {
 
   } catch (err) {
     console.error('preservation lambda error', err);
+    // V4-PUTUPPROV-001: give the two provenance CHECKs human text. validateUpdate deliberately
+    // skips provenance when a PUT omits source_kind (it cannot see the STORED kind without a read),
+    // so these are genuinely reachable — and RecordRow.put() would otherwise swallow them into an
+    // undiagnosable "try again" retry loop.
+    if (err.code === '23514' && err.constraint === 'chk_preservation_log_source_plant') {
+      return resp(400, { error: 'This put-up is linked to a planting, so its source must be your own garden. Clear the planting first.' });
+    }
+    if (err.code === '23514' && String(err.constraint ?? '').startsWith('chk_preservation_log_source')) {
+      return resp(400, { error: `Source is not valid: ${err.constraint}` });
+    }
     if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
+    // 42703 = the Lambda shipped ahead of this environment's DDL. Without this the operator gets a
+    // bare "Internal server error" during exactly the window the migration sequencing creates.
+    if (err.code === '42703') return resp(500, { error: `Schema out of date for this deploy — column missing: ${err.column ?? err.message}` });
     if (err.code === '23502') return resp(400, { error: `Required field missing: ${err.column ?? err.message}` });
     if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
     return resp(500, { error: 'Internal server error' });

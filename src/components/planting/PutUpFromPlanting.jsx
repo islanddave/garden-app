@@ -16,11 +16,19 @@ import { Link } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
 import PutUpPhotoThumb from '../PutUpPhotoThumb.jsx'
 
+// V4-PUTUPPROV-001 — NO PROVENANCE LINE HERE, AND THAT IS DELIBERATE. This component fetches
+// whats-put-up?plant_id=<id>, so every row it can render has a non-null plant_id; the provenance
+// design's client clear and its chk_preservation_log_source_plant CHECK together guarantee those
+// rows are own_garden or NULL — both of which render nothing anyway. Adding the line here would be
+// dead code that manufactures confidence provenance is visible in three places when it is visible
+// in two (PutUp RecordRow and PutUpUseSoonBand). The D6 method label below IS needed.
 const METHOD_LABELS = {
   roast_freeze: 'Roast & freeze', whole_freeze: 'Freeze', blanch_freeze: 'Blanch & freeze',
   dehydrate: 'Dehydrate', powder: 'Powder', passata: 'Passata / sauce',
   can_water_bath: 'Water-bath can', can_pressure: 'Pressure can', jam_preserve: 'Jam / preserve',
-  ferment: 'Ferment', cure_store: 'Cure & store', cold_store: 'Cold store', other: 'Other',
+  ferment: 'Ferment', cure_store: 'Cure & store', cold_store: 'Cold store',
+  purchased_preserved: 'Bought already preserved',   // D6 (V4-PUTUPPROV-001)
+  other: 'Other',
 }
 
 // Local-time YYYY-MM-DD → friendly. The neon driver hands dates back as JS Date objects, so this

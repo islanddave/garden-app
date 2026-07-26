@@ -35,6 +35,40 @@ export const PLANT_SOURCE_LABELS = Object.fromEntries(
   PLANT_SOURCE_OPTIONS.filter(o => o.value !== '').map(o => [o.value, o.label])
 )
 
+// ── Put-Up PROVENANCE (V4-PUTUPPROV-001) — where preserved produce came from. ────────────────────
+// CO-LOCATED WITH PLANT_SOURCE_OPTIONS ABOVE, DELIBERATELY NOT MERGED WITH IT. Two "where did this
+// come from" vocabularies now live twenty lines apart so the divergence is visible at review time
+// instead of hidden in two files. They are genuinely different subjects: a PLANT's origin is a
+// lineage fact (plant_swap, saved_seed, volunteer, cutting_taken all describe how a plant came to
+// exist), a quantity of PRODUCE's origin is an acquisition fact. Do not unify them.
+//
+// UNLIKE PLANT_SOURCE_OPTIONS, this one IS backed by a DB CHECK
+// (chk_preservation_log_source_kind) and a Lambda allowlist (lambda/preservation/provenance.js
+// VALID_SOURCE_KINDS). Adding a value here alone is NOT enough — widen all three, and never drop the
+// CHECK to make this list free. plants.source_type went free-text on 2026-07-07 (v4-source-freetext)
+// and its vocabulary fragmented; source_kind avoids that because `other` + a free-text source_label
+// means an unforeseen source never blocks a save, so there is no pressure to drop the constraint.
+// A unit test asserts this list against VALID_SOURCE_KINDS, so a drift reds CI.
+//
+// ORDER IS FREQUENCY, NOT ALPHABETICAL — own_garden is the overwhelmingly common case and must lead.
+// (This is also why the source picker uses the plain Select primitive rather than EnumSelect, which
+// defaults to sort=true and would alphabetize own_garden into the middle of the list.)
+export const PUTUP_SOURCE_OPTIONS = [
+  { value: 'own_garden', label: 'My garden' },
+  { value: 'u_pick',     label: 'U-pick / picked it myself' },
+  { value: 'farm_stand', label: 'Farm stand' },
+  { value: 'csa',        label: 'CSA share' },
+  { value: 'store',      label: 'Store' },
+  { value: 'gift',       label: 'Gift' },
+  { value: 'foraged',    label: 'Foraged' },
+  { value: 'other',      label: 'Other…' },
+]
+
+// Display label lookup, derived from the options so it cannot drift.
+export const PUTUP_SOURCE_LABELS = Object.fromEntries(
+  PUTUP_SOURCE_OPTIONS.map(o => [o.value, o.label])
+)
+
 // Per-type metadata field definitions for Tier 2 enrichment (moved from EventNew.jsx).
 // Shape: { [event_type]: [{ key, label, type, options? }] }
 export const EVENT_METADATA_FIELDS = {

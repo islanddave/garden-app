@@ -45,6 +45,11 @@ const STORES_FIXTURE = {
       preserved_at: '2026-07-01', method: 'whole_freeze', method_other_text: null,
       quantity_value: 14, quantity_unit: 'bags', package_count: 3, storage_location_id: 'loc-1',
       use_by_target: null, remaining_count: 3, consumed_at: null, notes: null, photo_id: null, use_by_status: null,
+      // V4-PUTUPPROV-001 — DELIBERATELY NOT own_garden. If this fixture said own_garden, the
+      // decrement test below would pass whether buildFullPayload carries the field through OR drops
+      // it and something re-defaults it, because the observable value is identical either way. A
+      // non-default value is what makes the assertion able to fail.
+      source_kind: 'farm_stand', source_label: 'Warner Farms',
     }],
   }],
 }
@@ -311,6 +316,39 @@ describe('PutUp — "what\'s put up" read surface', () => {
     // Full replace carries the row's identity fields forward.
     expect(body.crop_type_slug).toBe('tomato')
     expect(body.quantity_value).toBe(14)
+    // V4-PUTUPPROV-001. THE REGRESSION THIS GUARDS: before buildFullPayload carried these, every
+    // one-tap "Mark used" rewrote a farm-stand put-up as own-garden with the vendor erased, returned
+    // 200, and looked like a render glitch. Worst on exactly the rows the feature exists for, since
+    // only non-own_garden rows have anything to lose.
+    expect(body.source_kind).toBe('farm_stand')
+    expect(body.source_label).toBe('Warner Farms')
+    // Assert the NEGATIVE too: catches a client- or server-side re-default even if the positive
+    // assertion were somehow satisfied.
+    expect(opts.body).not.toMatch(/own_garden/)
+  })
+
+  it('renders provenance on a bought row, and nothing at all on a garden row', async () => {
+    renderPutUp()
+    await screen.findByText('Garage freezer')
+    expect(screen.queryByText(/from Warner Farms/)).toBeTruthy()
+  })
+
+  it('renders NO provenance line for an own-garden row (existing rows look unchanged)', async () => {
+    const gardenFixture = { ...STORES_FIXTURE, groups: [{ ...STORES_FIXTURE.groups[0],
+      records: [{ ...STORES_FIXTURE.groups[0].records[0], source_kind: 'own_garden', source_label: null }] }] }
+    wire({ stores: gardenFixture })
+    renderPutUp()
+    await screen.findByText('Garage freezer')
+    expect(screen.queryByText(/^from /)).toBeNull()
+  })
+
+  it('renders NO provenance line when source_kind is NULL (unrecorded, pre-migration rows)', async () => {
+    const legacyFixture = { ...STORES_FIXTURE, groups: [{ ...STORES_FIXTURE.groups[0],
+      records: [{ ...STORES_FIXTURE.groups[0].records[0], source_kind: null, source_label: null }] }] }
+    wire({ stores: legacyFixture })
+    renderPutUp()
+    await screen.findByText('Garage freezer')
+    expect(screen.queryByText(/^from /)).toBeNull()
   })
 })
 

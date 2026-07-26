@@ -91,6 +91,14 @@ cols = [
     ('event_log','created_by'), ('event_log','project_id'),
     ('favorites','user_id'), ('favorites','entity_id'),
     ('photos','plant_id'), ('photos','created_by'),
+    # V4-PUTUPPROV-001. preservation_log had NEVER been covered by this gate — the job that runs it
+    # (db-schema-check in deploy-staging.yml) gates smoke-tests, which is what promote-gate actually
+    # blocks on, so the whole Put-Up surface was shipping unwatched. Columns only, deliberately NOT
+    # added to TABLES above: that list also drives the RLS assertions, and preservation_log has
+    # relrowsecurity=false by design (it is scoped in the Lambda via user_id/householdIds, not by
+    # RLS). Adding it there would fail a check for a property it is not supposed to have.
+    ('preservation_log','user_id'), ('preservation_log','crop_type_slug'),
+    ('preservation_log','source_kind'), ('preservation_log','source_label'),
 ]
 for tbl, col in cols:
     check_eq(f"col:{tbl}.{col}",

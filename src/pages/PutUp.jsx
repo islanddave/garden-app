@@ -26,6 +26,7 @@ import { Field, Input, Select, Textarea, Button, ErrorBanner, SegmentedControl }
 import VarietyPicker from '../components/VarietyPicker.jsx'
 import PutUpPhotoThumb from '../components/PutUpPhotoThumb.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
+import { PUTUP_SOURCE_OPTIONS, PUTUP_SOURCE_LABELS } from '../lib/dropdownRegistry.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -50,6 +51,10 @@ const METHOD_GROUPS = [
     { value: 'ferment',    label: 'Ferment' },
     { value: 'cure_store', label: 'Cure & store' },
     { value: 'cold_store', label: 'Cold store (root cellar)' },
+    // D6 (V4-PUTUPPROV-001): bought already preserved. Every other value names something you DID;
+    // this one records that you did nothing because it arrived preserved. Without it, store-bought
+    // frozen fruit could only be logged as 'other', which would make that value mean two things.
+    { value: 'purchased_preserved', label: 'Bought already preserved' },
     { value: 'other',      label: 'Other…' },
   ] },
 ]
@@ -106,7 +111,7 @@ export default function PutUp() {
       <div style={{ maxWidth: 620, margin: '0 auto', padding: '24px 18px 80px' }}>
         <h1 style={{ margin: '0 0 4px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Put-Up</h1>
         <p style={{ margin: '0 0 16px', fontSize: '0.84rem', color: P.light }}>
-          What you&rsquo;ve preserved from the garden — your freezer, pantry and stores.
+          What you&rsquo;ve preserved — your freezer, pantry and stores.
         </p>
 
         <div style={{ marginBottom: 18 }}>
@@ -173,7 +178,15 @@ function PutUpForm({ prefill, onLogged }) {
   // broke the seed → planting → harvest → put-up spine for anything not logged off a harvest.
   // Successions are the reason this matters — three waves of the same variety are three plantings.
   const [plantId, setPlantId] = useState(prefill.plant_id || null)
-  const harvestLogId = prefill.harvest_log_id || null
+  // V4-PUTUPPROV-001: was `const harvestLogId = ...`. Converted to state because D2-c must be able
+  // to CLEAR it: the harvest-triggered path arrives with both plant_id and harvest_log_id set, and a
+  // non-garden source must shed both or the row still asserts it came from a garden harvest. A
+  // version of this change that only cleared plant_id would be half-applied.
+  const [harvestLogId, setHarvestLogId] = useState(prefill.harvest_log_id || null)
+  const [sourceKind, setSourceKind] = useState('own_garden')
+  const [sourceLabel, setSourceLabel] = useState('')
+  // Restores the planting on flip-back so a mis-tap costs nothing (see applySourceKind).
+  const [stashedPlantId, setStashedPlantId] = useState(null)
   const prefillVarietyId = prefill.variety_id || null
   const effectiveVarietyId = variety?.id ?? prefillVarietyId ?? null
 
@@ -193,6 +206,7 @@ function PutUpForm({ prefill, onLogged }) {
     if (method === 'other' && !methodOther.trim()) return 'Describe the method when you choose "Other".'
     if (!preservedAt) return 'When did you put this up?'
     if (packageCount !== '' && Number(packageCount) < 1) return 'Number of containers must be at least 1.'
+    if (sourceKind === 'other' && !sourceLabel.trim()) return 'Name where it came from, or pick a different source.'
     if (useByMode === 'custom' && !useByDate) return 'Pick a use-by date, or switch to Auto / No expiry.'
     return null
   }
@@ -214,6 +228,10 @@ function PutUpForm({ prefill, onLogged }) {
       quantity_value: Number(qtyValue),
       quantity_unit: qtyUnit,
       package_count: packageCount === '' ? 1 : Number(packageCount),
+      // In the BASE literal, deliberately — source_kind always has a value, and routing it through
+      // the `if (x) body.x = ...` chain below would make "not set" and "empty" indistinguishable on
+      // the wire for a column whose whole point is recording what is known.
+      source_kind: prefillLocksSource ? 'own_garden' : sourceKind,
     }
     if (cropSlug) body.crop_type_slug = cropSlug
     if (effectiveVarietyId) body.variety_id = effectiveVarietyId
@@ -222,6 +240,8 @@ function PutUpForm({ prefill, onLogged }) {
     if (method === 'other') body.method_other_text = methodOther.trim()
     if (storageId) body.storage_location_id = storageId
     if (notes.trim()) body.notes = notes.trim()
+    // Vendor-only (D2-b): a label never rides along with own_garden.
+    if (body.source_kind !== 'own_garden' && sourceLabel.trim()) body.source_label = sourceLabel.trim()
     // use_by_target: OMIT the key for the shelf-life auto-default; null for "no expiry"; a date otherwise.
     if (useByMode === 'none') body.use_by_target = null
     else if (useByMode === 'custom') body.use_by_target = useByDate
@@ -247,8 +267,17 @@ function PutUpForm({ prefill, onLogged }) {
       // L10 cold-start competence payoff — reflect it straight back into the inventory, no celebration.
       const storeLabel = storageLocations.find(s => String(s.id) === String(storageId))?.label || 'your stores'
       const cropLabel = cropTypes.find(c => c.slug === cropSlug)?.display_name || variety?.name || 'harvest'
+      // V4-PUTUPPROV-001. Echo provenance back on save. This is what makes a below-the-fold default
+      // HONEST: a pre-selected control the user never looks at is an assumption, but one they are
+      // shown the result of once per save is a fact they can catch and correct. Built from the
+      // RETURNED ROW, not from local state — the server owns the label's fate (it nulls it on
+      // own_garden), so reporting what we typed could differ from what was actually stored.
+      const savedKind = row?.source_kind ?? null
+      const fromBit = savedKind && savedKind !== 'own_garden'
+        ? ` · from ${row.source_label || PUTUP_SOURCE_LABELS[savedKind] || savedKind}`
+        : ''
       setSuccess({
-        text: `Now in ${storeLabel}: ${Number(qtyValue)} ${qtyUnit} ${cropLabel} (${body.package_count} ${body.package_count === 1 ? 'container' : 'containers'}).`,
+        text: `Now in ${storeLabel}: ${Number(qtyValue)} ${qtyUnit} ${cropLabel} (${body.package_count} ${body.package_count === 1 ? 'container' : 'containers'})${fromBit}.`,
         row,
       })
     } catch (err) {
@@ -268,11 +297,38 @@ function PutUpForm({ prefill, onLogged }) {
   function clearPhoto() { selectPhoto(null) }
   useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview) }, [photoPreview])
 
+  // V4-PUTUPPROV-001 (D2-c). ONE helper owns the source->planting edge; the reverse edge lives in
+  // PlantingField's existing onDerive handler. Both directions route through mechanisms that already
+  // exist rather than a new useEffect watching sourceKind, which would race the derivation channel.
+  //
+  // Auto-clear rather than a confirm dialog: a modal fired mid-form at someone with wet hands gets
+  // dismissed, not considered. The clear is visible (the planting field empties, its help text says
+  // why) and reversible (stashedPlantId restores on flip-back), which is what makes skipping the
+  // confirm safe.
+  function applySourceKind(next) {
+    setSourceKind(next)
+    if (next !== 'own_garden') {
+      if (plantId) setStashedPlantId(plantId)
+      setPlantId(null)
+      setHarvestLogId(null)   // the harvest link is the same lie one FK over
+    } else {
+      setSourceLabel('')      // vendor-only (D2-b): screen state must never disagree with what stores
+      if (stashedPlantId) { setPlantId(stashedPlantId); setStashedPlantId(null) }
+    }
+  }
+
   function resetForNext() {
     // Crop is kept (you're usually processing one crop in a session); variety and planting are
     // cleared. Clearing the planting is deliberate: it is MORE specific than the variety being
     // cleared alongside it, so carrying it over would silently mis-attribute the next put-up.
+    // sourceKind + sourceLabel are DELIBERATELY CARRIED FORWARD, on the same rationale as crop: a
+    // farm-stand box is one box, four methods, four rows, and the "Log another" loop IS the
+    // bought-produce workflow. Resetting them to own_garden would make rows 2-4 silently wrong in
+    // the one direction the user cannot see (the default is below the fold).
+    // harvestLogId is CLEARED: a harvest link belongs to the single put-up that came from that
+    // harvest, not to the next four rows. (It used to survive resets only because it was a const.)
     setQtyValue(''); setNotes(''); setPackageCount('1'); setVariety(null); setPlantId(null)
+    setHarvestLogId(null); setStashedPlantId(null)
     clearPhoto()
     setSuccess(null); setError(null)
   }
@@ -302,6 +358,15 @@ function PutUpForm({ prefill, onLogged }) {
       </div>
     )
   }
+
+  // V4-PUTUPPROV-001 (D2-c + boss B5). A harvest-triggered put-up is definitionally own-garden — you
+  // cannot harvest a store peach — so the source control is suppressed on that path rather than
+  // offering a one-tap route into a contradiction for zero benefit.
+  // GATED ON THE LIVE plantId, not on the prefill alone: the parent's `hasPrefill` is derived once
+  // from location.state and is never cleared, so keying on it alone would leave the control
+  // suppressed for EVERY subsequent row in the "Log another" loop — which is precisely the
+  // bought-produce workflow. Once the prefilled planting is gone, the lock releases.
+  const prefillLocksSource = !!(prefill.plant_id || prefill.harvest_log_id) && !!plantId
 
   const offline = typeof navigator !== 'undefined' && navigator.onLine === false
 
@@ -353,6 +418,11 @@ function PutUpForm({ prefill, onLogged }) {
             onDerive={({ crop_type_slug, variety_id, variety }) => {
               if (crop_type_slug && !cropSlug) setCropSlug(crop_type_slug)
               if (variety_id && !effectiveVarietyId && variety) setVariety(variety)
+              // V4-PUTUPPROV-001 (D2-c, reverse edge). Picking a planting can never leave a
+              // contradictory source behind — otherwise a user could set 'store', then pick a wave,
+              // and ship a row asserting both. The server rejects that pair; this stops them
+              // reaching it.
+              setSourceKind('own_garden'); setSourceLabel('')
             }}
           />
         </div>
@@ -385,8 +455,61 @@ function PutUpForm({ prefill, onLogged }) {
         </div>
       </Card>
 
-      {/* ── Defaulted: method / storage / date / use-by ── */}
+      {/* ── Defaulted: source / method / storage / date / use-by ── */}
       <Card>
+        {/* V4-PUTUPPROV-001 (D2-a). Source lives HERE, not in the fast-path Card above, and not
+            behind "More".
+            - Not Card 1: that card is the crop+quantity fast path and already carries five controls.
+              A sixth costs a fixation on every one of the ~95% of saves that are own-garden.
+              Defaulting a value removes DECISION load; it does not remove ATTENTION load.
+            - Not "More": the field is defaulted-WRONG for the bought case rather than
+              defaulted-empty, and hiding that behind a disclosure the user must remember to open
+              makes prospective memory load-bearing.
+            - Not inferred from "no planting": a put-up drawn from several waves legitimately has no
+              planting (see the PlantingField comment above), so inferring would fabricate provenance
+              into a column the UI shows as fact.
+            Card 2's contract is exactly "correct by default, visible, occasionally changed" — which
+            is what method, storage, date and use-by all are. Source belongs here on that rule.
+            The two-state gate is what makes the zero-friction claim honest: the common path is one
+            glance at a preselected chip, no picker wheel, 44px target, wet hands. */}
+        {!prefillLocksSource && (
+          <div style={{ marginBottom: 16 }}>
+            <Field label="Where did it come from?" htmlFor="pu-source-gate">
+              <SegmentedControl
+                ariaLabel="Where did it come from?"
+                value={sourceKind === 'own_garden' ? 'own_garden' : 'bought'}
+                onChange={v => applySourceKind(v === 'own_garden' ? 'own_garden' : 'farm_stand')}
+                options={[
+                  { value: 'own_garden', label: 'My garden' },
+                  { value: 'bought', label: 'Somewhere else' },
+                ]}
+              />
+            </Field>
+            {sourceKind !== 'own_garden' && (
+              <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <Field label="Where from?" htmlFor="pu-source-kind">
+                  {/* Plain Select, NOT EnumSelect: that primitive defaults to sort=true and would
+                      alphabetize the list, burying the frequency ordering the vocab is built on. */}
+                  <Select id="pu-source-kind" value={sourceKind}
+                    onChange={e => applySourceKind(e.target.value)} aria-label="Source">
+                    {PUTUP_SOURCE_OPTIONS.filter(o => o.value !== 'own_garden').map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label={sourceKind === 'other' ? 'Where exactly? *' : 'Which one?'}
+                  htmlFor="pu-source-label"
+                  optional={sourceKind !== 'other'}
+                  help="e.g. Warner Farms, Clarkdale Fruit Farm.">
+                  <Input id="pu-source-label" type="text" value={sourceLabel}
+                    onChange={e => setSourceLabel(e.target.value)} aria-label="Source name"
+                    maxLength={120} placeholder="Name the place" />
+                </Field>
+              </div>
+            )}
+          </div>
+        )}
+
         <Field label="How did you put it up?" htmlFor="pu-method">
           <Select id="pu-method" value={method} onChange={e => setMethod(e.target.value)} aria-label="Method">
             {METHOD_GROUPS.map(g => (
@@ -796,6 +919,16 @@ function buildFullPayload(rec, overrides = {}) {
     consumed_at: rec.consumed_at ?? null,
     notes: rec.notes ?? null,
     photo_id: rec.photo_id ?? null,
+    // V4-PUTUPPROV-001 — THE HIGHEST-RISK LINE IN THIS CHANGE. This function is the single choke
+    // point for the one-tap "Mark used" decrement AND, via the overrides spread below, for
+    // RowEditor. Omitting a
+    // column here means every decrement tap sends a payload without it. Before the Lambda's
+    // COALESCE-preserve fix that silently rewrote a farm-stand put-up as own-garden with the vendor
+    // erased, returned 200, and looked like a render glitch. Both guards ship; keep both.
+    // src/__tests__/preservationColumnParity.test.js asserts this object's key set against
+    // PRESERVATION_EDITABLE_COLUMNS so the NEXT column cannot be half-added either.
+    source_kind: rec.source_kind ?? null,
+    source_label: rec.source_label ?? null,
     ...overrides,
   }
 }
@@ -875,6 +1008,14 @@ function RecordRow({ rec, onChanged, fetch }) {
           {rec.planting_sown_at ? ` · sown ${prettyDate(rec.planting_sown_at)}` : ''}
         </div>
       )}
+      {/* V4-PUTUPPROV-001. Gated exactly like the planting-provenance block above: own_garden and
+          NULL render NOTHING, so every row that exists today looks identical to today. Reuses that
+          block's style object rather than minting a new one. */}
+      {rec.source_kind && rec.source_kind !== 'own_garden' && (
+        <div style={{ fontSize: '0.76rem', color: P.mid, marginTop: 3 }}>
+          from {rec.source_label || PUTUP_SOURCE_LABELS[rec.source_kind] || rec.source_kind}
+        </div>
+      )}
       {rec.notes && <div style={{ fontSize: '0.8rem', color: P.mid, marginTop: 4 }}>{rec.notes}</div>}
       {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginTop: 6 }}>{err}</div>}
 
@@ -913,6 +1054,15 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   const [qtyUnit, setQtyUnit] = useState(rec.quantity_unit || 'lbs')
   const [packageCount, setPackageCount] = useState(String(rec.package_count ?? 1))
   const [method, setMethod] = useState(rec.method || 'whole_freeze')
+  // PRE-EXISTING BUG, fixed under V4-PUTUPPROV-001. This editor offered 'other' in the method list
+  // but had no method_other_text input, so switching a row TO 'other' sent method:'other' with
+  // method_other_text:null (buildFullPayload supplies the row's existing value, which is null for a
+  // row that was not already 'other'), tripping validateUpdate's required-text rule. The 400 was
+  // then swallowed by put()'s generic catch, so it read as "Couldn't update — try again." forever.
+  // THE INVARIANT THIS RESTORES: a field that is CONDITIONALLY REQUIRED BY ANOTHER FIELD must be
+  // editable everywhere that other field is editable, or the pair must be create-only. The new
+  // source_kind/source_label pair depends on the same invariant holding.
+  const [methodOther, setMethodOther] = useState(rec.method_other_text || '')
   const [notes, setNotes] = useState(rec.notes || '')
 
   function save() {
@@ -921,6 +1071,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
       quantity_unit: qtyUnit,
       package_count: packageCount === '' ? 1 : Number(packageCount),
       method,
+      method_other_text: method === 'other' ? (methodOther.trim() || null) : null,
       notes: notes.trim() || null,
     })
   }
@@ -964,6 +1115,17 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
           </Select>
         </Field>
       </div>
+      {/* Conditionally-required partner of the Method select above. Without this the 'other' option
+          is a trap: picking it makes the row un-saveable with an error the UI cannot explain. */}
+      {method === 'other' && (
+        <div style={{ marginTop: 10 }}>
+          <Field label="What method?" htmlFor={`ed-method-other-${rec.id}`}>
+            <Input id={`ed-method-other-${rec.id}`} type="text" value={methodOther}
+              onChange={e => setMethodOther(e.target.value)} aria-label="Method description"
+              placeholder="Describe how you put it up" />
+          </Field>
+        </div>
+      )}
       <div style={{ marginTop: 10 }}>
         <Field label="Notes" htmlFor={`ed-notes-${rec.id}`} optional>
           <Textarea id={`ed-notes-${rec.id}`} value={notes} onChange={e => setNotes(e.target.value)}
