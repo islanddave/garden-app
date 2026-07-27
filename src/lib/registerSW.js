@@ -12,6 +12,15 @@
 //      controller) does NOT reload, and the refreshing flag prevents a reload loop.
 //
 // Deps are injectable for unit testing (no real SW support needed in jsdom).
+//
+// BUG-STALECLIENT-001 addition: a waiting (installed-but-not-active) SW is announced via a
+// window CustomEvent so the UI can offer an explicit "Refresh" instead of waiting on an
+// activation that may never come (in-flight respondWith work pins the old SW on slow devices,
+// parking updates in `waiting` — clients then silently run a stale bundle indefinitely).
+// event.detail.apply() posts SKIP_WAITING to the waiting worker; the existing guarded
+// controllerchange→reload-once completes the swap.
+
+export const UPDATE_WAITING_EVENT = 'garden:sw-update-waiting'
 
 export function registerServiceWorker(opts = {}) {
   const {
@@ -48,10 +57,40 @@ export function registerServiceWorker(opts = {}) {
   const onVisibility = () => { if (!doc || doc.visibilityState === 'visible') checkForUpdate() }
   const onPageShow = () => checkForUpdate()
 
+  // Announce a waiting SW to the UI. Only meaningful on an UPDATE (page already controlled);
+  // a first install's waiting state resolves on its own and must not prompt a refresh.
+  const announceWaiting = () => {
+    if (!registration || !registration.waiting || !sw.controller) return
+    const apply = () => {
+      const w = registration && registration.waiting
+      if (w && typeof w.postMessage === 'function') {
+        try { w.postMessage({ type: 'SKIP_WAITING' }) } catch { /* noop */ }
+      }
+    }
+    if (win && typeof win.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+      try { win.dispatchEvent(new CustomEvent(UPDATE_WAITING_EVENT, { detail: { apply } })) } catch { /* noop */ }
+    }
+  }
+
+  const watchInstalling = () => {
+    const installing = registration && registration.installing
+    if (!installing || typeof installing.addEventListener !== 'function') return
+    installing.addEventListener('statechange', () => {
+      if (installing.state === 'installed') announceWaiting()
+    })
+  }
+
   const start = () => {
     Promise.resolve()
       .then(() => sw.register(swUrl))
-      .then((reg) => { registration = reg })
+      .then((reg) => {
+        registration = reg
+        // A waiting SW may already be parked from a previous visit — announce it now.
+        announceWaiting()
+        if (reg && typeof reg.addEventListener === 'function') {
+          reg.addEventListener('updatefound', watchInstalling)
+        }
+      })
       .catch(noop)
   }
 

@@ -43,6 +43,16 @@ self.addEventListener('activate', (event) => {
   )
 })
 
+// ---- Messages ----
+// BUG-STALECLIENT-001: lets the page force a waiting (installed) SW to activate on demand.
+// skipWaiting() at install time is not always sufficient — activation defers while the active
+// SW has in-flight respondWith work, and on slow devices the 12s-bounded requests can pin the
+// old SW so long that updates park in `waiting` indefinitely (clients then never reload and
+// keep running a stale bundle). The UpdateBanner posts SKIP_WAITING for a deterministic path.
+self.addEventListener('message', (event) => {
+  if (event && event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting()
+})
+
 // ---- Fetch ----
 self.addEventListener('fetch', (event) => {
   const { request } = event

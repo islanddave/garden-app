@@ -54,6 +54,7 @@ import AddSeeds from './pages/AddSeeds.jsx'
 import SowNow from './pages/SowNow.jsx'
 import PutUp from './pages/PutUp.jsx'
 import SplashScreen from './components/SplashScreen.jsx'
+import UpdateBanner from './components/UpdateBanner.jsx'
 import Sheet from './components/forms/Sheet.jsx'
 import { OverlayProvider, OverlaySurfaceProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
 import { OVERLAY_ROUTES_ENABLED } from './lib/featureFlags.js'
@@ -208,6 +209,9 @@ function AppShell({ user }) {
       {user && <TodayBand />}
       {user && <BottomNav />}
       {user && <CritterArrivalController />}
+      {/* BUG-STALECLIENT-001: update affordance renders regardless of auth — a stale shell
+          on the login screen needs the Refresh path too. */}
+      <UpdateBanner />
     </>
   )
 }
