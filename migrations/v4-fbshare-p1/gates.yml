@@ -1,0 +1,78 @@
+# gates.yml
+# V4-FBSHARE-001 P1 — share_log audit/idempotency table.
+#
+# BACKFILL MIGRATION. Authored with the feature, never applied, discovered 2026-07-26 by the L-081
+# audit (8 lambda column refs against a table absent from prod, while the ledger said the feature
+# shipped in v3.35.0). Pure CREATE TABLE IF NOT EXISTS + indexes; touches no existing surface.
+#
+# SEQUENCING: staging -> prod. No code change ships with it — garden-facebook-share is ALREADY
+# deployed, so applying the DDL strictly reduces breakage and needs no promote coordination.
+
+pre:
+  - name: pre_photos_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='photos'
+    expect: rowcount_eq
+    value: 1
+
+  # Scoped to the `extensions` schema because the DDL calls extensions.uuid_generate_v4()
+  # explicitly. An unscoped lookup returns 2 here — the function is installed in more than one
+  # schema — which is why this gate is written against the one the DDL actually resolves.
+  - name: pre_uuid_generate_available_in_extensions
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE p.proname='uuid_generate_v4' AND n.nspname='extensions'
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_share_log_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='share_log'
+    expect: rowcount_eq
+    value: 1
+
+  # The exact 8 columns the L-081 audit reported MISSING. This gate is the audit's own finding
+  # turned into an assertion, so a future drift reproduces as a migration failure, not a red CI job
+  # everyone has learned to scroll past.
+  - name: post_the_eight_audited_columns_present
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='share_log'
+         AND column_name IN ('post_group_id','photo_id','target','client_request_id',
+                             'fb_page_id','status','caption','requested_by')
+    expect: scalar_eq
+    value: 8
+
+  - name: post_status_check_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='share_log_status_valid'
+         AND pg_get_constraintdef(oid) LIKE '%orphan_cleaned%'
+    expect: rowcount_eq
+    value: 1
+
+  # ON DELETE CASCADE on photo_id: a purged photo takes its share log with it.
+  - name: post_photo_fk_cascade
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.share_log'::regclass AND contype='f'
+         AND confrelid='public.photos'::regclass AND confdeltype='c'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_three_indexes_present
+    sql: |
+      SELECT count(*) FROM pg_indexes
+       WHERE schemaname='public' AND tablename='share_log'
+         AND indexname IN ('share_log_photo_idx','share_log_group_idx','share_log_reqid_idx')
+    expect: scalar_eq
+    value: 3
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.9.0-fbshare-p1'
+    expect: rowcount_eq
+    value: 1

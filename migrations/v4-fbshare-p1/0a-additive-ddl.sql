@@ -44,3 +44,18 @@ CREATE INDEX IF NOT EXISTS share_log_photo_idx ON share_log (photo_id);
 CREATE INDEX IF NOT EXISTS share_log_group_idx ON share_log (post_group_id);
 -- Idempotency replay lookup: a completed post for a given client_request_id.
 CREATE INDEX IF NOT EXISTS share_log_reqid_idx ON share_log (client_request_id) WHERE client_request_id IS NOT NULL;
+
+-- ── Added 2026-07-26 while closing the L-081 audit ───────────────────────────────────────────────
+-- This migration was authored for V4-FBSHARE-001 and NEVER APPLIED TO ANY ENVIRONMENT, while the
+-- ledger recorded the feature as "Shipped prod v3.35.0" and deploy-lambda.yml kept shipping
+-- garden-facebook-share on every promote. So POST /api/share/facebook has been live in prod against
+-- a table that does not exist: the first real use would raise 42703 and 500. The L-081 schema audit
+-- has been failing on exactly these 8 columns and was correct every time — it was reported as
+-- "chronically red / pre-existing", which is how a true positive gets read as noise.
+--
+-- It also lacked the schema_version INSERT that every other migration in this tree records, which is
+-- why nothing downstream could tell applied from unapplied. Added below; the file stays idempotent
+-- (CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS, ON CONFLICT DO NOTHING).
+INSERT INTO public.schema_version (version, description)
+VALUES ('4.9.0-fbshare-p1','FBSHARE P1: share_log audit/idempotency table for Facebook Page posting (post_group_id groups the N photos of one post; client_request_id is the replay guard since the Graph API has no idempotency key; status CHECK pending|uploading|posted|failed|orphan_cleaned; photo_id FK photos ON DELETE CASCADE) + 3 indexes. Authored for V4-FBSHARE-001 but never applied — backfilled 2026-07-26 after the L-081 audit showed the lambda referencing 8 columns of a table absent from prod.')
+ON CONFLICT (version) DO NOTHING;
