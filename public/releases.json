@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.70.0",
+    "date": "2026-07-27",
+    "highlights": [
+      "The app now tells you when a new version is ready — a banner with a Refresh button appears instead of silently keeping you on an old version (this is why the app kept showing v3.66)",
+      "Release Notes no longer sits on Loading forever on a weak connection — it stops after 10 seconds and offers Try again",
+      "The About page now shows the service worker version next to the app version, so a stuck update is visible at a glance"
+    ]
+  },
+  {
     "version": "3.69.0",
     "date": "2026-07-27",
     "highlights": [
