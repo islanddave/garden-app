@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.68.0",
+    "date": "2026-07-27",
+    "highlights": [
+      "Fixed the Photos tab sitting blank and then filling all at once. The photos were never actually being requested \u2014 the browser's built-in lazy loading was silently not firing on that grid, so nothing downloaded until something else forced it",
+      "Photos now load a screenful at a time as you scroll, with a Show more button"
+    ]
+  },
+  {
     "version": "3.67.0",
     "date": "2026-07-27",
     "highlights": [

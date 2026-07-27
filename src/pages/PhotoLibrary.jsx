@@ -50,6 +50,30 @@ export default function PhotoLibrary() {
   const [shareOpen,   setShareOpen]   = useState(false)
   const [sharePhotos, setSharePhotos] = useState([])
 
+  // BUG-PHOTOTHUMB-001 — EXPLICIT windowing, because neither browser mechanism works here.
+  // Measured on the live page (2026-07-27): with loading="lazy", 0 of 120 images were ever
+  // REQUESTED — not slow, never fetched — which is why the tab sat blank and then filled all at
+  // once when something finally forced a layout recalc. Flipping the same elements to eager loaded
+  // them instantly, so the URLs and thumbs were always fine; native lazy simply never fires on this
+  // absolutely-positioned grid. Flipping ALL 120 to eager instead FROZE the renderer. So the count
+  // has to be bounded by us: render a window, grow it on scroll. Also gives the page the "more as
+  // you scroll" behavior it lacked when the server limit was cut to 30.
+  const PAGE = 24
+  const [shown, setShown] = useState(PAGE)
+  useEffect(() => { setShown(PAGE) }, [filterProject, filterMode])
+  useEffect(() => {
+    // Scroll listener rather than IntersectionObserver: IO is the same viewport-intersection
+    // machinery native lazy depends on, and that is precisely what is not firing on this layout.
+    function onScroll() {
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 800) {
+        setShown(s => (s < photos.length ? s + PAGE : s))
+      }
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    onScroll() // a short first page must still be able to grow without a scroll
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [photos.length])
+
   // ---- Initial data load ----
   useEffect(() => {
     Promise.all([
@@ -384,7 +408,7 @@ export default function PhotoLibrary() {
             fallback={(err, retry) => <PhotoGridErrorFallback retry={() => { retry(); loadPhotos() }} />}
           >
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-              {photos.map(photo => (
+              {photos.slice(0, shown).map(photo => (
                 <PhotoCard
                   key={photo.id}
                   photo={photo}
@@ -394,6 +418,15 @@ export default function PhotoLibrary() {
                 />
               ))}
             </div>
+            {shown < photos.length && (
+              <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                <button type="button" onClick={() => setShown(s => s + PAGE)}
+                  style={{ background: P.white, color: P.green, border: `1px solid ${P.green}`, borderRadius: 8,
+                           padding: '11px 20px', fontSize: '0.88rem', fontWeight: 700, cursor: 'pointer', minHeight: 44 }}>
+                  Show more ({photos.length - shown} left)
+                </button>
+              </div>
+            )}
           </ErrorBoundary>
         )}
       </div>
@@ -475,7 +508,9 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
             // onError swaps to the full image once, guarded so a failing view_url can't loop.
             src={photo.thumb_url || photo.view_url}
             alt={photo.caption ?? 'Garden photo'}
-            loading="lazy"
+            // NO loading="lazy": measured 0 of 120 images ever requested on this grid (see the
+            // windowing note above). The parent bounds how many cards exist instead, so every
+            // rendered card SHOULD load — deferring that decision to the browser is what broke.
             decoding="async"
             onError={(e) => {
               if (photo.view_url && e.currentTarget.src !== photo.view_url) {
