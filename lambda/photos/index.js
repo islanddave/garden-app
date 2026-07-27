@@ -193,6 +193,33 @@ export const handler = async (event) => {
       return resp(200, { upload_url, key });
     }
 
+    // GET /api/photos/thumb-upload-url — presign the PUT for a new photo's 800px thumbnail.
+    //
+    // WHY THIS EXISTS: the read path below derives thumb_url by CONVENTION (thumbs/<storage_path>)
+    // and 913 existing photos were backfilled with macOS `sips`, but nothing generated a thumb for
+    // a NEW upload — so every photo taken after the backfill fell back to its full-size original.
+    // The client makes the thumb (it has the decoded bitmap already) and PUTs it here.
+    //
+    // SECURITY — this does NOT widen the A0.1 closed grammar. The caller names the ORIGINAL key,
+    // which is validated by the very same isAllowedUploadKey it must already pass to upload the
+    // photo at all; the `thumbs/` prefix is applied SERVER-SIDE and is not caller-nameable. So the
+    // only object this can ever sign is the thumb OF a key the caller is already permitted to
+    // write. A caller-supplied `thumbs/...` key still 403s on the route above, unchanged.
+    // ContentType is pinned to image/jpeg because the thumb is always JPEG (matching the sips
+    // backfill) regardless of the original's type.
+    if (rawPath === '/api/photos/thumb-upload-url' && method === 'GET') {
+      const key = event.queryStringParameters?.key;
+      if (!key) return resp(400, { error: 'key is required' });
+      if (!isAllowedUploadKey(key)) return resp(403, { error: 'Forbidden' });
+      const cmd = new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: `thumbs/${key}`,
+        ContentType: 'image/jpeg',
+      });
+      const upload_url = await getSignedUrl(s3, cmd, { expiresIn: 300 });
+      return resp(200, { upload_url, key: `thumbs/${key}` });
+    }
+
     // POST /api/photos/batch — V4-PHOTOBULK-001. Presign-ONLY, up to MAX_BATCH at a time.
     // There is deliberately no /confirm: POST /api/photos already IS the confirm, and per-photo
     // confirms give the progress granularity the bulk UX wants. getSignedUrl is a local HMAC (no S3

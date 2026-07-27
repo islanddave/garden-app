@@ -4,7 +4,10 @@
 // canvas 2d context, so the "no canvas" fallback is exercised for free by the default env.
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { downscaleImage, MAX_EDGE_PX, JPEG_QUALITY, MIN_BYTES } from '../lib/imageDownscale.js';
+import {
+  downscaleImage, downscaleWithThumb,
+  MAX_EDGE_PX, JPEG_QUALITY, MIN_BYTES, THUMB_EDGE_PX, THUMB_QUALITY,
+} from '../lib/imageDownscale.js';
 
 function fakeFile(name, type, size) {
   const f = new File(['x'], name, { type });
@@ -116,5 +119,83 @@ describe('downscaleImage — re-encode path', () => {
     expect(MAX_EDGE_PX).toBe(2048);
     expect(JPEG_QUALITY).toBeGreaterThan(0.7);
     expect(JPEG_QUALITY).toBeLessThan(1);
+  });
+});
+
+// Thumbs for NEW uploads. Only the 913 backfilled photos had thumbs; every upload after the
+// backfill fell back to its full-size original because nothing generated one.
+describe('downscaleWithThumb', () => {
+  function stubPipeline({ width, height, outBytes, type = 'image/jpeg' }) {
+    const drawImage = vi.fn();
+    const close = vi.fn();
+    const sizes = [];
+    vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({ width, height, close }));
+    vi.stubGlobal('OffscreenCanvas', class {
+      constructor(w, h) { this.width = w; this.height = h; sizes.push([w, h]); }
+      getContext() { return { drawImage }; }
+      convertToBlob({ type: t } = {}) {
+        return Promise.resolve(new Blob([new Uint8Array(outBytes)], { type: t || type }));
+      }
+    });
+    return { drawImage, close, sizes };
+  }
+
+  it('fail-safe: returns the ORIGINAL file and a null thumb when it cannot decode', async () => {
+    const f = fakeFile('x.jpg', 'image/jpeg', 4_000_000);
+    const out = await downscaleWithThumb(f);            // jsdom: no createImageBitmap
+    expect(out.file).toBe(f);
+    expect(out.thumb).toBeNull();
+  });
+
+  it('fail-safe on a non-image and on nullish input', async () => {
+    const t = fakeFile('notes.txt', 'text/plain', 4_000_000);
+    expect(await downscaleWithThumb(t)).toEqual({ file: t, thumb: null });
+    expect(await downscaleWithThumb(null)).toEqual({ file: null, thumb: null });
+  });
+
+  it('produces BOTH the 2048px upload file and an 800px thumb from ONE decode', async () => {
+    const { sizes } = stubPipeline({ width: 4032, height: 3024, outBytes: 300_000 });
+    const out = await downscaleWithThumb(fakeFile('DSC.jpg', 'image/jpeg', 6_000_000));
+    // exactly one decode — a second would double peak native memory on mobile
+    expect(createImageBitmap).toHaveBeenCalledTimes(1);
+    expect(out.file.name).toBe('DSC.jpg');
+    expect(out.thumb).toBeInstanceOf(Blob);
+    // 4032x3024 -> main 2048x1536, thumb 800x600
+    expect(sizes).toEqual([[MAX_EDGE_PX, 1536], [THUMB_EDGE_PX, 600]]);
+  });
+
+  it('closes the ImageBitmap (native buffer the GC cannot see — the mobile OOM mechanism)', async () => {
+    const { close } = stubPipeline({ width: 4032, height: 3024, outBytes: 300_000 });
+    await downscaleWithThumb(fakeFile('DSC.jpg', 'image/jpeg', 6_000_000));
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('thumb is JPEG even for a PNG source, since thumbs/<key> keeps the original extension', async () => {
+    stubPipeline({ width: 3000, height: 3000, outBytes: 400_000, type: 'image/png' });
+    const out = await downscaleWithThumb(fakeFile('chart.png', 'image/png', 5_000_000));
+    expect(out.file.type).toBe('image/png');   // main keeps PNG (no flattened transparency)
+    expect(out.thumb.type).toBe('image/jpeg'); // thumb always JPEG, matching the sips backfill
+  });
+
+  it('skips the thumb when the image is already no larger than the thumb edge', async () => {
+    const { sizes } = stubPipeline({ width: 640, height: 480, outBytes: 90_000 });
+    const out = await downscaleWithThumb(fakeFile('small.jpg', 'image/jpeg', 4_000_000));
+    expect(out.thumb).toBeNull();
+    expect(sizes).toEqual([[640, 480]]); // main render only
+  });
+
+  it('still makes a thumb for a big-but-light image that skips the main re-encode', async () => {
+    // Under MIN_BYTES the full re-encode is not worth it, but a 3000px photo still owes a thumb.
+    const f = fakeFile('light.jpg', 'image/jpeg', MIN_BYTES - 1);
+    const { sizes } = stubPipeline({ width: 3000, height: 2000, outBytes: 40_000 });
+    const out = await downscaleWithThumb(f);
+    expect(out.file).toBe(f);                      // main untouched
+    expect(out.thumb).toBeInstanceOf(Blob);        // thumb still produced
+    expect(sizes).toEqual([[THUMB_EDGE_PX, 533]]); // only the thumb was rendered
+  });
+
+  it('thumb defaults match the sips backfill recipe (800px / q80)', () => {
+    expect(THUMB_EDGE_PX).toBe(800);
+    expect(THUMB_QUALITY).toBe(0.8);
   });
 });

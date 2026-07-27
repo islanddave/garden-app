@@ -2,6 +2,9 @@
 // V2-PHOTO-F1 — shared 3-step upload engine.
 //   1. GET  /api/photos/upload-url?key=...&content_type=...  -> { upload_url }
 //   2. PUT  upload_url  body=file  Content-Type=mime           (direct S3, no auth)
+//  2b. GET  /api/photos/thumb-upload-url?key=... -> PUT the 800px thumb at thumbs/<key>
+//      BEST-EFFORT: every failure swallowed. Closes the gap where only the 913 backfilled
+//      photos had thumbs and every new upload fell back to its full-size original.
 //   3. POST /api/photos { storage_path, linkage..., caption, is_public } -> photo row
 //
 // Owns URL.createObjectURL / revokeObjectURL lifecycle so callers can't leak blob URLs.
@@ -24,7 +27,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useApiFetch, apiFetch } from '../lib/api.js';
 import { buildPhotoKey, extFromFile, mimeFromFile } from '../lib/photoKeys.js';
-import { downscaleImage } from '../lib/imageDownscale.js';
+import { downscaleWithThumb } from '../lib/imageDownscale.js';
 
 // Lightweight UUID for the photo key segment. Doesn't need RFC4122 — the DB
 // generates its own UUID for photos.id. This is the S3-key per-upload token.
@@ -89,7 +92,9 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
     // can only reduce work, never block the upload. Runs first because ext/mime/key and the
     // preview must all describe the bytes we actually PUT (a HEIC normalized to JPEG changes
     // both extension and Content-Type).
-    const upFile = await downscaleImage(file);
+    // Also yields the 800px thumb off the SAME decode (see downscaleWithThumb: a second decode
+    // would double peak native memory on exactly the devices where uploads already hang).
+    const { file: upFile, thumb } = await downscaleWithThumb(file);
 
     // Set up preview eagerly — caller may want to render before upload completes.
     // Revoke any previous one first. Previews the DOWNSCALED bytes: same image, less memory.
@@ -117,6 +122,27 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
         headers: { 'Content-Type': mime },
       });
       if (!putRes.ok) throw new Error(`S3 upload failed: ${putRes.status} ${putRes.statusText}`);
+
+      // Step 2b: the 800px thumb, at the server-derived key thumbs/<key>.
+      //
+      // STRICTLY BEST-EFFORT — every failure here is swallowed. The grid presigns thumbs/<key> and
+      // falls back to view_url when the object is missing, which is precisely the pre-existing
+      // behavior for the photos that have no thumb today. So the worst case of this block failing
+      // is "no better than before", never a lost photo. It runs BEFORE the row is registered so a
+      // photo never appears in the grid without its thumb, and it is cheap (the thumb is ~50KB
+      // against a 2048px original).
+      if (thumb) {
+        try {
+          const tPresign = await fetch(`/api/photos/thumb-upload-url?key=${encodeURIComponent(key)}`);
+          if (tPresign?.upload_url) {
+            await window.fetch(tPresign.upload_url, {
+              method: 'PUT',
+              body: thumb,
+              headers: { 'Content-Type': 'image/jpeg' },
+            });
+          }
+        } catch { /* no thumb: read path falls back to view_url, exactly as it does today */ }
+      }
 
       // Step 3: register the photo row + linkage
       const registered = await fetch('/api/photos', {

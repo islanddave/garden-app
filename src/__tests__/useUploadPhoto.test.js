@@ -5,11 +5,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
-const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }));
+const { fetchSpy, thumbState } = vi.hoisted(() => ({
+  fetchSpy: vi.fn(),
+  // Controls what downscaleWithThumb hands back. Default { thumb: null } reproduces the real jsdom
+  // result (no createImageBitmap -> no thumb), so every pre-existing test is unaffected.
+  thumbState: { thumb: null },
+}));
 
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchSpy }),
   apiFetch: vi.fn(),
+}));
+
+vi.mock('../lib/imageDownscale.js', () => ({
+  downscaleWithThumb: vi.fn(async (f) => ({ file: f, thumb: thumbState.thumb })),
+  downscaleImage: vi.fn(async (f) => f),
 }));
 
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js';
@@ -18,6 +28,7 @@ import { useUploadPhoto } from '../hooks/useUploadPhoto.js';
 const createObjectURL  = vi.fn(() => 'blob:mock-url');
 const revokeObjectURL  = vi.fn();
 beforeEach(() => {
+  thumbState.thumb = null;
   fetchSpy.mockReset();
   createObjectURL.mockClear();
   revokeObjectURL.mockClear();
@@ -181,5 +192,78 @@ describe('useUploadPhoto — preview lifecycle', () => {
     revokeObjectURL.mockClear();
     unmount();
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+  });
+});
+
+// Step 2b — thumbs for NEW uploads. Before this, only the 913 backfilled photos had thumbs and
+// every new upload fell back to its full-size original.
+describe('useUploadPhoto — thumbnail upload (step 2b)', () => {
+  const THUMB = new Blob([new Uint8Array(1000)], { type: 'image/jpeg' });
+
+  it('presigns the thumb via the key-only route and PUTs it as image/jpeg', async () => {
+    thumbState.thumb = THUMB;
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });      // 1 presign
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/thumb' });     // 2b presign
+    fetchSpy.mockResolvedValueOnce({ id: 'p1', storage_path: 'standalone/u.jpg' }); // 3 POST
+    mockS3PutOk();
+
+    const { result } = renderHook(() => useUploadPhoto());
+    let res;
+    await act(async () => { res = await result.current.upload(fakeFile(), { keyPrefix: 'standalone' }); });
+
+    const thumbCall = fetchSpy.mock.calls.find(c => String(c[0]).includes('/api/photos/thumb-upload-url'));
+    expect(thumbCall).toBeTruthy();
+    // sends ONLY the original key — the thumbs/ prefix is the server's job
+    expect(String(thumbCall[0])).not.toContain('thumbs');
+
+    const puts = globalThis.fetch.mock.calls.filter(c => c[1]?.method === 'PUT');
+    expect(puts.length).toBe(2); // original + thumb
+    const thumbPut = puts.find(c => c[0] === 'https://s3.example/thumb');
+    expect(thumbPut[1].body).toBe(THUMB);
+    expect(thumbPut[1].headers['Content-Type']).toBe('image/jpeg');
+    expect(res.photo).toEqual({ id: 'p1', storage_path: 'standalone/u.jpg' });
+  });
+
+  it('skips step 2b entirely when no thumb could be produced', async () => {
+    thumbState.thumb = null;
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
+    fetchSpy.mockResolvedValueOnce({ id: 'p1' });
+    mockS3PutOk();
+
+    const { result } = renderHook(() => useUploadPhoto());
+    await act(async () => { await result.current.upload(fakeFile()); });
+
+    expect(fetchSpy.mock.calls.some(c => String(c[0]).includes('thumb-upload-url'))).toBe(false);
+    expect(globalThis.fetch.mock.calls.filter(c => c[1]?.method === 'PUT').length).toBe(1);
+  });
+
+  it('a FAILED thumb never costs the photo — the row is still registered and no error surfaces', async () => {
+    thumbState.thumb = THUMB;
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
+    fetchSpy.mockRejectedValueOnce(new Error('thumb presign exploded'));            // 2b blows up
+    fetchSpy.mockResolvedValueOnce({ id: 'p1', storage_path: 'standalone/u.jpg' });  // 3 still runs
+    mockS3PutOk();
+
+    const { result } = renderHook(() => useUploadPhoto());
+    let res;
+    await act(async () => { res = await result.current.upload(fakeFile()); });
+
+    expect(res.photo).toEqual({ id: 'p1', storage_path: 'standalone/u.jpg' });
+    expect(res.error).toBeUndefined();
+    expect(result.current.error).toBeNull();
+  });
+
+  it('a thumb presign returning no upload_url is a no-op, not a crash', async () => {
+    thumbState.thumb = THUMB;
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
+    fetchSpy.mockResolvedValueOnce({});                                             // no upload_url
+    fetchSpy.mockResolvedValueOnce({ id: 'p1' });
+    mockS3PutOk();
+
+    const { result } = renderHook(() => useUploadPhoto());
+    await act(async () => { await result.current.upload(fakeFile()); });
+
+    expect(globalThis.fetch.mock.calls.filter(c => c[1]?.method === 'PUT').length).toBe(1);
+    expect(result.current.photo).toEqual({ id: 'p1' });
   });
 });

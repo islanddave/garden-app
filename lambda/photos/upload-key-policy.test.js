@@ -80,9 +80,20 @@ describe('uploadKeyPolicy — rejects everything outside the grammar', () => {
   });
 });
 
-// Route-bounded window: from the upload-url route marker to the NEXT route marker (batch).
+// Route-bounded window: from the upload-url route marker to the NEXT route marker, which is now
+// thumb-upload-url (it was batch until the thumb route landed between them — leaving the old
+// boundary would silently widen this window to cover two routes and let a thumb-route regression
+// satisfy an upload-route assertion).
 function uploadUrlBlock(src) {
   const i = src.indexOf("rawPath === '/api/photos/upload-url'");
+  if (i === -1) return '';
+  const next = src.indexOf("rawPath === '/api/photos/thumb-upload-url'", i + 1);
+  return src.slice(i, next === -1 ? undefined : next);
+}
+
+// Route-bounded window for the thumb presign: thumb marker -> batch marker.
+function thumbUrlBlock(src) {
+  const i = src.indexOf("rawPath === '/api/photos/thumb-upload-url'");
   if (i === -1) return '';
   const next = src.indexOf("rawPath === '/api/photos/batch'", i + 1);
   return src.slice(i, next === -1 ? undefined : next);
@@ -108,5 +119,41 @@ describe('photos Lambda — upload-url route enforces the policy', () => {
   it('response shape and 5-min expiry unchanged', () => {
     expect(b).toMatch(/upload_url = await getSignedUrl\(s3, cmd, \{ expiresIn: 300 \}\)/);
     expect(b).toMatch(/return resp\(200, \{ upload_url, key \}\);/);
+  });
+  it('still refuses a caller-named thumbs/ key (the thumb route must not open this door)', () => {
+    expect(isAllowedUploadKey(`thumbs/plants/${ID}/${UUID}.jpg`)).toBe(false);
+    expect(isAllowedUploadKey(`thumbs/standalone/${UUID}.jpg`)).toBe(false);
+  });
+});
+
+// Thumbs for NEW uploads: only the 913 backfilled photos had thumbs, so every upload after the
+// backfill fell back to its full-size original. The read path derives thumb_url by CONVENTION
+// (thumbs/<storage_path>), so closing the gap needs the OBJECT to exist at that key — no schema
+// change, and no widening of the A0.1 caller-named-key grammar.
+describe('photos Lambda — thumb-upload-url derives the thumb key server-side', () => {
+  const t = thumbUrlBlock(SRC);
+  it('routes GET /api/photos/thumb-upload-url', () => {
+    expect(t).not.toBe('');
+    expect(SRC).toMatch(/rawPath === '\/api\/photos\/thumb-upload-url' && method === 'GET'/);
+  });
+  it('validates the ORIGINAL key against the same closed grammar, and 403s before presigning', () => {
+    expect(t).toMatch(/if \(!isAllowedUploadKey\(key\)\) return resp\(403/);
+    expect(t.indexOf('resp(403')).toBeLessThan(t.indexOf('getSignedUrl'));
+  });
+  it('applies the thumbs/ prefix ITSELF — the caller never names the thumb key', () => {
+    expect(t).toMatch(/Key: `thumbs\/\$\{key\}`/);
+    // and it must not simply sign whatever came in
+    expect(t).not.toMatch(/Key: key\b/);
+  });
+  it('pins ContentType to image/jpeg (thumbs are always JPEG, matching the sips backfill)', () => {
+    expect(t).toMatch(/ContentType: 'image\/jpeg'/);
+  });
+  it('missing key is a 400 and the expiry matches the sibling route', () => {
+    expect(t).toMatch(/if \(!key\) return resp\(400, \{ error: 'key is required' \}\);/);
+    expect(t).toMatch(/getSignedUrl\(s3, cmd, \{ expiresIn: 300 \}\)/);
+  });
+  it('the derived key is what a thumbs-prefixed read would presign (convention held in one place)', () => {
+    // read path: resolvePhotoViewUrl(`thumbs/${photo.storage_path}`) — same shape, both directions
+    expect(SRC).toMatch(/resolvePhotoViewUrl\(`thumbs\/\$\{photo\.storage_path\}`/);
   });
 });
