@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.67.0",
+    "date": "2026-07-27",
+    "highlights": [
+      "The Photos tab now loads small preview images instead of full-resolution originals. Every existing photo has had a preview generated, so the grid loads in seconds rather than sitting blank for minutes",
+      "Restored the full 120-photo view that was temporarily cut to 30"
+    ]
+  },
+  {
     "version": "3.66.0",
     "date": "2026-07-27",
     "highlights": [

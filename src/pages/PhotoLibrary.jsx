@@ -467,11 +467,21 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
       }}
     >
       <div style={{ position: 'relative', paddingBottom: '100%', backgroundColor: '#e8e2da' }}>
-        {photo.view_url && (
+        {(photo.thumb_url || photo.view_url) && (
           <img
-            src={photo.view_url}
+            // BUG-PHOTOBLANK-001: the GRID takes the ~200KB thumbnail, never the 4080x3072
+            // original (30 originals = ~90MB and the tab sat blank for minutes). thumb_url is a
+            // HINT — a photo uploaded before its thumb exists presigns to a missing object, so
+            // onError swaps to the full image once, guarded so a failing view_url can't loop.
+            src={photo.thumb_url || photo.view_url}
             alt={photo.caption ?? 'Garden photo'}
             loading="lazy"
+            decoding="async"
+            onError={(e) => {
+              if (photo.view_url && e.currentTarget.src !== photo.view_url) {
+                e.currentTarget.src = photo.view_url;
+              }
+            }}
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
           />
         )}

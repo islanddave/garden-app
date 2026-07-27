@@ -258,11 +258,10 @@ export const handler = async (event) => {
       // still appears (fixes the project-scoped ?project_id fetch that hid such photos). Distinct from
       // ?project_id (container gallery) — this does NOT overload it.
       const attachedTo = event.queryStringParameters?.attachedTo ?? null;
-      // BUG-PHOTOBLANK-001 stopgap: 120 originals averaged 369MB per load (measured 2026-07-27)
-      // because no thumbnail derivative exists — the grid serves full-resolution originals.
-      // 30/60 keeps a load in the tens of MB until the /t/* CDN variant lands, at which point
-      // these can go back up. Callers may still page via ?limit=.
-      const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '30', 10), 60);
+      // Restored to 120 now that the grid takes ~200KB thumbs instead of full originals:
+      // 120 thumbs is ~24MB where 120 originals was ~369MB (both measured 2026-07-27). The
+      // interim 30 was a stopgap that traded a blank tab for a hard cut with no pagination.
+      const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '120', 10), 200);
 
       let rows;
       if (attachedTo) {
@@ -312,15 +311,28 @@ export const handler = async (event) => {
           `;
       }
 
-      // Attach pre-signed view URLs to each photo record
+      // Attach pre-signed view URLs to each photo record.
+      //
+      // BUG-PHOTOBLANK-001 — thumb_url. The grid was serving 4080x3072 ORIGINALS: 30 of them is
+      // ~90MB, and because concurrent downloads progress in lockstep nothing rendered for minutes
+      // and then everything appeared at once. Thumbnails are ~200KB (11-23x smaller, measured).
+      //
+      // The thumb key is SERVER-DERIVED (thumbs/<storage_path>), never caller-supplied — that
+      // deliberately avoids widening the A0.1 closed upload-key grammar above. Backfilled for all
+      // 913 existing photos; a photo uploaded before its thumb exists simply presigns to a missing
+      // object, so the client treats thumb_url as a HINT and falls back to view_url on error.
       const withUrls = await Promise.all(
         rows.map(async (photo) => {
+          let view_url = null, thumb_url = null;
           try {
-            const view_url = await resolvePhotoViewUrl(photo.storage_path, { presign: getViewUrl, sm });
-            return { ...photo, view_url };
-          } catch {
-            return { ...photo, view_url: null };
-          }
+            view_url = await resolvePhotoViewUrl(photo.storage_path, { presign: getViewUrl, sm });
+          } catch { /* view_url stays null — same as pre-existing behavior */ }
+          try {
+            thumb_url = photo.storage_path
+              ? await resolvePhotoViewUrl(`thumbs/${photo.storage_path}`, { presign: getViewUrl, sm })
+              : null;
+          } catch { /* non-fatal: the client falls back to view_url */ }
+          return { ...photo, view_url, thumb_url };
         })
       );
 
