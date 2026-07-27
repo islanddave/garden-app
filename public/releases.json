@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.71.0",
+    "date": "2026-07-27",
+    "highlights": [
+      "Photo saves can no longer get stuck forever — if the connection stalls mid-upload, you now get a clear error and can simply try again",
+      "The save button now shows what it's doing: Preparing, then Uploading with a live percentage, then Saving"
+    ]
+  },
+  {
     "version": "3.70.0",
     "date": "2026-07-27",
     "highlights": [
