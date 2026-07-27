@@ -24,6 +24,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useApiFetch, apiFetch } from '../lib/api.js';
 import { buildPhotoKey, extFromFile, mimeFromFile } from '../lib/photoKeys.js';
+import { downscaleImage } from '../lib/imageDownscale.js';
 
 // Lightweight UUID for the photo key segment. Doesn't need RFC4122 — the DB
 // generates its own UUID for photos.id. This is the S3-key per-upload token.
@@ -82,17 +83,25 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
     setError(null);
     setPhoto(null);
 
+    // BUG-PHOTOBLANK-001: shrink BEFORE anything derives from the file. Raw camera originals
+    // (3-12MB) are what stall the S3 PUT on a mobile uplink. downscaleImage is fail-safe — it
+    // returns the ORIGINAL file on any error or when re-encoding wouldn't save bytes — so this
+    // can only reduce work, never block the upload. Runs first because ext/mime/key and the
+    // preview must all describe the bytes we actually PUT (a HEIC normalized to JPEG changes
+    // both extension and Content-Type).
+    const upFile = await downscaleImage(file);
+
     // Set up preview eagerly — caller may want to render before upload completes.
-    // Revoke any previous one first.
+    // Revoke any previous one first. Previews the DOWNSCALED bytes: same image, less memory.
     if (previewRef.current) URL.revokeObjectURL(previewRef.current);
-    const url = URL.createObjectURL(file);
+    const url = URL.createObjectURL(upFile);
     previewRef.current = url;
     setPreview(url);
 
     try {
       const uuid = genUuid();
-      const ext  = extFromFile(file, explicitExt);
-      const mime = mimeFromFile(file);
+      const ext  = extFromFile(upFile, explicitExt);
+      const mime = mimeFromFile(upFile);
       const key  = buildPhotoKey({ prefix: keyPrefix, id: parentId, uuid, ext });
 
       // Step 1: presign
@@ -104,7 +113,7 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       // Step 2: direct PUT to S3 (no auth header — URL is pre-signed)
       const putRes = await window.fetch(presign.upload_url, {
         method: 'PUT',
-        body: file,
+        body: upFile,
         headers: { 'Content-Type': mime },
       });
       if (!putRes.ok) throw new Error(`S3 upload failed: ${putRes.status} ${putRes.statusText}`);

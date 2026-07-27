@@ -258,7 +258,11 @@ export const handler = async (event) => {
       // still appears (fixes the project-scoped ?project_id fetch that hid such photos). Distinct from
       // ?project_id (container gallery) — this does NOT overload it.
       const attachedTo = event.queryStringParameters?.attachedTo ?? null;
-      const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '120', 10), 200);
+      // BUG-PHOTOBLANK-001 stopgap: 120 originals averaged 369MB per load (measured 2026-07-27)
+      // because no thumbnail derivative exists — the grid serves full-resolution originals.
+      // 30/60 keeps a load in the tens of MB until the /t/* CDN variant lands, at which point
+      // these can go back up. Callers may still page via ?limit=.
+      const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '30', 10), 60);
 
       let rows;
       if (attachedTo) {
