@@ -29,6 +29,10 @@ import { useApiFetch, apiFetch } from '../lib/api.js';
 import { buildPhotoKey, extFromFile, mimeFromFile } from '../lib/photoKeys.js';
 import { downscaleWithThumb } from '../lib/imageDownscale.js';
 
+// Step 2b only. The thumb is ~50KB; if it has not landed in 10s it is not going to, and it must
+// never be the reason a save hangs (see the bounded-PUT note at its call site).
+const THUMB_PUT_TIMEOUT_MS = 10_000;
+
 // Lightweight UUID for the photo key segment. Doesn't need RFC4122 — the DB
 // generates its own UUID for photos.id. This is the S3-key per-upload token.
 function genUuid() {
@@ -131,15 +135,27 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       // is "no better than before", never a lost photo. It runs BEFORE the row is registered so a
       // photo never appears in the grid without its thumb, and it is cheap (the thumb is ~50KB
       // against a 2048px original).
+      // BOUNDED (THUMB_PUT_TIMEOUT_MS): uploads deliberately bypass the WS-A6 apiFetch timeout
+      // because a large original legitimately takes a while — but this extra PUT sits on the user's
+      // save path, and "photo upload hangs" is an OPEN bug. An unbounded call here would add a new
+      // way for Save to stall forever. A thumb is ~50KB, so if it hasn't landed in 10s it is not
+      // going to; abandon it and let the read path fall back. Never applied to the original PUT.
       if (thumb) {
         try {
           const tPresign = await fetch(`/api/photos/thumb-upload-url?key=${encodeURIComponent(key)}`);
           if (tPresign?.upload_url) {
-            await window.fetch(tPresign.upload_url, {
-              method: 'PUT',
-              body: thumb,
-              headers: { 'Content-Type': 'image/jpeg' },
-            });
+            const ac = typeof AbortController === 'function' ? new AbortController() : null;
+            const timer = ac ? setTimeout(() => ac.abort(), THUMB_PUT_TIMEOUT_MS) : null;
+            try {
+              await window.fetch(tPresign.upload_url, {
+                method: 'PUT',
+                body: thumb,
+                headers: { 'Content-Type': 'image/jpeg' },
+                ...(ac ? { signal: ac.signal } : {}),
+              });
+            } finally {
+              if (timer) clearTimeout(timer);
+            }
           }
         } catch { /* no thumb: read path falls back to view_url, exactly as it does today */ }
       }

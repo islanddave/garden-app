@@ -253,6 +253,44 @@ describe('useUploadPhoto — thumbnail upload (step 2b)', () => {
     expect(result.current.error).toBeNull();
   });
 
+  it('BOUNDS the thumb PUT with an abort signal so it can never hang the save', async () => {
+    thumbState.thumb = THUMB;
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/thumb' });
+    fetchSpy.mockResolvedValueOnce({ id: 'p1' });
+    mockS3PutOk();
+
+    const { result } = renderHook(() => useUploadPhoto());
+    await act(async () => { await result.current.upload(fakeFile()); });
+
+    const puts = globalThis.fetch.mock.calls.filter(c => c[1]?.method === 'PUT');
+    const origPut = puts.find(c => c[0] === 'https://s3.example/orig');
+    const thumbPut = puts.find(c => c[0] === 'https://s3.example/thumb');
+    // the thumb is bounded...
+    expect(thumbPut[1].signal).toBeDefined();
+    expect(thumbPut[1].signal.aborted).toBe(false);
+    // ...and the ORIGINAL deliberately is NOT (a large upload legitimately takes a while)
+    expect(origPut[1].signal).toBeUndefined();
+  });
+
+  it('an ABORTED/hanging thumb PUT still leaves the photo registered', async () => {
+    thumbState.thumb = THUMB;
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/thumb' });
+    fetchSpy.mockResolvedValueOnce({ id: 'p1', storage_path: 'standalone/u.jpg' });
+    // original PUT ok; thumb PUT rejects the way an abort does
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK' })
+      .mockRejectedValueOnce(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' }));
+
+    const { result } = renderHook(() => useUploadPhoto());
+    let res;
+    await act(async () => { res = await result.current.upload(fakeFile()); });
+
+    expect(res.photo).toEqual({ id: 'p1', storage_path: 'standalone/u.jpg' });
+    expect(result.current.error).toBeNull();
+  });
+
   it('a thumb presign returning no upload_url is a no-op, not a crash', async () => {
     thumbState.thumb = THUMB;
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
