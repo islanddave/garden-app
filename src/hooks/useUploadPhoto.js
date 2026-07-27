@@ -28,10 +28,19 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useApiFetch, apiFetch } from '../lib/api.js';
 import { buildPhotoKey, extFromFile, mimeFromFile } from '../lib/photoKeys.js';
 import { downscaleWithThumb } from '../lib/imageDownscale.js';
+import { putWithProgress } from '../lib/uploadPut.js';
 
 // Step 2b only. The thumb is ~50KB; if it has not landed in 10s it is not going to, and it must
 // never be the reason a save hangs (see the bounded-PUT note at its call site).
 const THUMB_PUT_TIMEOUT_MS = 10_000;
+
+// BUG-PHOTOUPLOADHANG-001: downscaleWithThumb is throw-proof (returns the original on any error)
+// but ran unbounded BEFORE the try block — a decode/encode that never settles (mobile memory
+// pressure is a real toBlob failure mode) wedged the save forever with isUploading stuck true and
+// no error. A phone decodes a camera photo in 1-3s; if it has not settled in 15s it is not going
+// to. On deadline, proceed with the ORIGINAL file — exactly the module's own fail-safe contract,
+// enforced by clock instead of by catch.
+const DOWNSCALE_DEADLINE_MS = 15_000;
 
 // Lightweight UUID for the photo key segment. Doesn't need RFC4122 — the DB
 // generates its own UUID for photos.id. This is the S3-key per-upload token.
@@ -47,6 +56,11 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
   const [error, setError]             = useState(null);
   const [photo, setPhoto]             = useState(null);
   const [preview, setPreview]         = useState(null);
+  // BUG-PHOTOUPLOADHANG-001 instrumentation: which step the save is in ('preparing' | 'uploading'
+  // | 'saving' | null) and PUT progress 0-100 (null outside step 2). A future "stuck" report can
+  // then name the exact step + percentage instead of just "stuck".
+  const [stage, setStage]             = useState(null);
+  const [progress, setProgress]       = useState(null);
 
   // Hold the active object URL so we can revoke on unmount or reset.
   const previewRef = useRef(null);
@@ -67,6 +81,8 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
     setPhoto(null);
     setError(null);
     setIsUploading(false);
+    setStage(null);
+    setProgress(null);
   }, []);
 
   const upload = useCallback(async (file, opts = {}) => {
@@ -89,25 +105,39 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
     setIsUploading(true);
     setError(null);
     setPhoto(null);
-
-    // BUG-PHOTOBLANK-001: shrink BEFORE anything derives from the file. Raw camera originals
-    // (3-12MB) are what stall the S3 PUT on a mobile uplink. downscaleImage is fail-safe — it
-    // returns the ORIGINAL file on any error or when re-encoding wouldn't save bytes — so this
-    // can only reduce work, never block the upload. Runs first because ext/mime/key and the
-    // preview must all describe the bytes we actually PUT (a HEIC normalized to JPEG changes
-    // both extension and Content-Type).
-    // Also yields the 800px thumb off the SAME decode (see downscaleWithThumb: a second decode
-    // would double peak native memory on exactly the devices where uploads already hang).
-    const { file: upFile, thumb } = await downscaleWithThumb(file);
-
-    // Set up preview eagerly — caller may want to render before upload completes.
-    // Revoke any previous one first. Previews the DOWNSCALED bytes: same image, less memory.
-    if (previewRef.current) URL.revokeObjectURL(previewRef.current);
-    const url = URL.createObjectURL(upFile);
-    previewRef.current = url;
-    setPreview(url);
+    setStage('preparing');
+    setProgress(null);
 
     try {
+      // BUG-PHOTOBLANK-001: shrink BEFORE anything derives from the file. Raw camera originals
+      // (3-12MB) are what stall the S3 PUT on a mobile uplink. downscaleImage is fail-safe — it
+      // returns the ORIGINAL file on any error or when re-encoding wouldn't save bytes — so this
+      // can only reduce work, never block the upload. Runs first because ext/mime/key and the
+      // preview must all describe the bytes we actually PUT (a HEIC normalized to JPEG changes
+      // both extension and Content-Type).
+      // Also yields the 800px thumb off the SAME decode (see downscaleWithThumb: a second decode
+      // would double peak native memory on exactly the devices where uploads already hang).
+      // BUG-PHOTOUPLOADHANG-001: raced against DOWNSCALE_DEADLINE_MS — a decode that never
+      // settles must not wedge the save; the module's own fail-safe (original file, no thumb)
+      // is applied by deadline.
+      const { file: upFile, thumb } = await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          console.warn(`downscaleWithThumb did not settle in ${DOWNSCALE_DEADLINE_MS}ms — uploading the original`);
+          resolve({ file, thumb: null });
+        }, DOWNSCALE_DEADLINE_MS);
+        downscaleWithThumb(file).then(
+          (v) => { clearTimeout(timer); resolve(v && v.file ? v : { file, thumb: null }); },
+          () => { clearTimeout(timer); resolve({ file, thumb: null }); },
+        );
+      });
+
+      // Set up preview eagerly — caller may want to render before upload completes.
+      // Revoke any previous one first. Previews the DOWNSCALED bytes: same image, less memory.
+      if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+      const url = URL.createObjectURL(upFile);
+      previewRef.current = url;
+      setPreview(url);
+
       const uuid = genUuid();
       const ext  = extFromFile(upFile, explicitExt);
       const mime = mimeFromFile(upFile);
@@ -119,13 +149,14 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       );
       if (!presign?.upload_url) throw new Error('Presign response missing upload_url');
 
-      // Step 2: direct PUT to S3 (no auth header — URL is pre-signed)
-      const putRes = await window.fetch(presign.upload_url, {
-        method: 'PUT',
-        body: upFile,
-        headers: { 'Content-Type': mime },
-      });
-      if (!putRes.ok) throw new Error(`S3 upload failed: ${putRes.status} ${putRes.statusText}`);
+      // Step 2: direct PUT to S3 (no auth header — URL is pre-signed).
+      // BUG-PHOTOUPLOADHANG-001: was a bare window.fetch with NO bound — the traced hang site
+      // (presign logged, no S3 object, no register). Now progress-aware with a stall watchdog:
+      // aborts only when bytes stop moving, so a slow-but-moving fallback original still lands.
+      setStage('uploading');
+      await putWithProgress(presign.upload_url, upFile, mime, { onProgress: setProgress });
+      setStage('saving');
+      setProgress(null);
 
       // Step 2b: the 800px thumb, at the server-derived key thumbs/<key>.
       //
@@ -173,10 +204,13 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
 
       setPhoto(registered);
       setIsUploading(false);
+      setStage(null);
       return { photo: registered, previewUrl: url };
     } catch (err) {
       const msg = err?.message ?? String(err);
       setIsUploading(false);
+      setStage(null);
+      setProgress(null);
       if (errorMode === 'surface') {
         setError(msg);
         return { error: msg };
@@ -187,7 +221,7 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
     }
   }, [fetch, errorMode]);
 
-  return { upload, isUploading, error, photo, preview, reset };
+  return { upload, isUploading, error, photo, preview, reset, stage, progress };
 }
 
 // Test seam: lets unit tests inject a custom apiFetch reference without

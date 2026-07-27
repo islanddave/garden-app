@@ -20,6 +20,8 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
     photo: stateRef.current.photo,
     preview: stateRef.current.preview,
     reset: vi.fn(),
+    stage: stateRef.current.stage ?? null,
+    progress: stateRef.current.progress ?? null,
   }),
 }));
 
@@ -173,5 +175,26 @@ describe('PhotoUpload — visual state', () => {
   it('disables input when prop disabled=true', () => {
     render(<PhotoUpload disabled />);
     expect(screen.getByTestId('photo-upload-input').disabled).toBe(true);
+  });
+});
+
+// BUG-PHOTOUPLOADHANG-001 — step-labeled busy states so a stall report names its step.
+describe('PhotoUpload — stage labels', () => {
+  it('shows "Preparing…" during the downscale stage', () => {
+    stateRef.current = { isUploading: true, error: null, photo: null, preview: null, stage: 'preparing' };
+    render(<PhotoUpload />);
+    expect(screen.getByText('Preparing…')).toBeTruthy();
+  });
+
+  it('shows "Uploading… N%" once the PUT reports progress', () => {
+    stateRef.current = { isUploading: true, error: null, photo: null, preview: null, stage: 'uploading', progress: 43 };
+    render(<PhotoUpload />);
+    expect(screen.getByText('Uploading… 43%')).toBeTruthy();
+  });
+
+  it('shows "Saving…" during the register stage', () => {
+    stateRef.current = { isUploading: true, error: null, photo: null, preview: null, stage: 'saving' };
+    render(<PhotoUpload />);
+    expect(screen.getByText('Saving…')).toBeTruthy();
   });
 });

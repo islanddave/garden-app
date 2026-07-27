@@ -92,8 +92,16 @@ export function PhotoUpload({
   inputId,
   buttonStyle,
 }) {
-  const { upload, isUploading, error, photo, preview, reset } = useUploadPhoto({ errorMode });
+  const { upload, isUploading, error, photo, preview, reset, stage, progress } = useUploadPhoto({ errorMode });
   const inputRef = useRef(null);
+
+  // BUG-PHOTOUPLOADHANG-001: name the step, not just "Uploading…" — a stall report can then say
+  // WHERE it stuck ("Uploading… 43%" = the S3 PUT at 43%). stage/progress may be undefined when
+  // the hook is mocked; every branch falls back to the old label.
+  const busyLabel =
+    stage === 'preparing' ? 'Preparing…' :
+    stage === 'saving' ? 'Saving…' :
+    (typeof progress === 'number' ? `Uploading… ${progress}%` : 'Uploading…');
 
   const handleChange = useCallback(async (e) => {
     const file = e.target?.files?.[0];
@@ -174,7 +182,7 @@ export function PhotoUpload({
         </>
       ) : (
         <label htmlFor={resolvedId} style={labelStyle} aria-label={ariaLabel || undefined}>
-          {isUploading ? 'Uploading…' : buttonLabel}
+          {isUploading ? busyLabel : buttonLabel}
           <input
             ref={inputRef}
             id={resolvedId}

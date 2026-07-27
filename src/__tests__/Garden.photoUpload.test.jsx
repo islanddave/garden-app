@@ -29,6 +29,27 @@ vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => <span data-t
 
 import Garden from '../pages/Garden.jsx'
 
+// BUG-PHOTOUPLOADHANG-001: the ORIGINAL S3 PUT rides putWithProgress (XHR + stall watchdog),
+// not window.fetch — auto-200 double so the real useUploadPhoto completes step 2.
+class FakeXHR {
+  static instances = []
+  constructor() {
+    FakeXHR.instances.push(this)
+    this.status = 0
+    this.headers = {}
+    this._l = {}
+    this.upload = { addEventListener: () => {} }
+  }
+  addEventListener(ev, fn) { (this._l[ev] ||= []).push(fn) }
+  open(method, url) { this.method = method; this.url = url }
+  setRequestHeader(k, v) { this.headers[k] = v }
+  abort() { (this._l.abort || []).forEach(f => f({})) }
+  send(body) {
+    this.body = body
+    queueMicrotask(() => { this.status = 200; (this._l.load || []).forEach(f => f({})) })
+  }
+}
+
 const PROJECTS = [
   { id: 'a', name: 'Tomatoes', status: 'active', parent_project_id: null, is_public: true },
 ]
@@ -50,6 +71,8 @@ beforeEach(() => {
   globalThis.URL.createObjectURL = vi.fn(() => 'blob:mock-url')
   globalThis.URL.revokeObjectURL = vi.fn()
   globalThis.fetch = vi.fn(() => Promise.resolve({ ok: true, status: 200 }))
+  FakeXHR.instances = []
+  vi.stubGlobal('XMLHttpRequest', FakeXHR)
 })
 
 async function renderExpanded() {
@@ -99,9 +122,11 @@ describe('Garden — per-planting photo uploader (V3-IA restore)', () => {
     expect(presignCall).toBeDefined()
     expect(decodeURIComponent(presignCall[0])).toContain('key=plants/p1/')
 
-    // Step 2: direct S3 PUT of the file.
-    expect(globalThis.fetch).toHaveBeenCalledWith('https://s3.test/put',
-      expect.objectContaining({ method: 'PUT', body: file }))
+    // Step 2: direct S3 PUT of the file — via the watchdog XHR transport (BUG-PHOTOUPLOADHANG-001).
+    const put = FakeXHR.instances.find(x => x.url === 'https://s3.test/put')
+    expect(put).toBeDefined()
+    expect(put.method).toBe('PUT')
+    expect(put.body).toBe(file)
 
     // Step 3: POST /api/photos with linkage {plant_id, project_id} — featured/primary
     // semantics ride server-side auto-promote off this registration, same as old Plants page.

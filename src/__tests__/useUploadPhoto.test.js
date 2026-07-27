@@ -1,6 +1,8 @@
 // Unit tests for src/hooks/useUploadPhoto.js
-// Strategy: mock useApiFetch + window.fetch. Verify the 3-step dance
-// (presign -> S3 PUT -> POST /api/photos) plus error/lifecycle paths.
+// Strategy: mock useApiFetch + window.fetch (thumb PUT) + XMLHttpRequest (original PUT).
+// Verify the 3-step dance (presign -> S3 PUT -> POST /api/photos) plus error/lifecycle paths.
+// BUG-PHOTOUPLOADHANG-001: the ORIGINAL PUT goes through putWithProgress (XHR + stall watchdog)
+// — the bare-fetch, no-bound contract this file used to pin is exactly the traced hang site.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
@@ -8,8 +10,8 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 const { fetchSpy, thumbState } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
   // Controls what downscaleWithThumb hands back. Default { thumb: null } reproduces the real jsdom
-  // result (no createImageBitmap -> no thumb), so every pre-existing test is unaffected.
-  thumbState: { thumb: null },
+  // result (no createImageBitmap -> no thumb). hang:true = a decode that never settles.
+  thumbState: { thumb: null, hang: false },
 }));
 
 vi.mock('../lib/api.js', () => ({
@@ -18,32 +20,65 @@ vi.mock('../lib/api.js', () => ({
 }));
 
 vi.mock('../lib/imageDownscale.js', () => ({
-  downscaleWithThumb: vi.fn(async (f) => ({ file: f, thumb: thumbState.thumb })),
+  downscaleWithThumb: vi.fn((f) => thumbState.hang
+    ? new Promise(() => {})
+    : Promise.resolve({ file: f, thumb: thumbState.thumb })),
   downscaleImage: vi.fn(async (f) => f),
 }));
 
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js';
+
+// Original-PUT transport: controllable XHR double. behavior 'success' auto-200s on send,
+// 'status403' auto-fails, 'manual' waits for the test to drive events.
+class FakeXHR {
+  static instances = [];
+  static behavior = 'success';
+  constructor() {
+    FakeXHR.instances.push(this);
+    this.status = 0;
+    this.aborted = false;
+    this.headers = {};
+    this._l = {};
+    this._ul = {};
+    this.upload = { addEventListener: (ev, fn) => { (this._ul[ev] ||= []).push(fn); } };
+  }
+  addEventListener(ev, fn) { (this._l[ev] ||= []).push(fn); }
+  open(method, url) { this.method = method; this.url = url; }
+  setRequestHeader(k, v) { this.headers[k] = v; }
+  abort() { this.aborted = true; (this._l.abort || []).forEach(f => f({})); }
+  send(body) {
+    this.body = body;
+    if (FakeXHR.behavior === 'success') queueMicrotask(() => this.fireLoad(200));
+    else if (FakeXHR.behavior === 'status403') queueMicrotask(() => this.fireLoad(403));
+    // 'manual': the test drives fireProgress/fireLoad itself
+  }
+  fireProgress(loaded, total) { (this._ul.progress || []).forEach(f => f({ lengthComputable: true, loaded, total })); }
+  fireLoad(status) { this.status = status; (this._l.load || []).forEach(f => f({})); }
+}
 
 // Stub URL.createObjectURL / revokeObjectURL — jsdom doesn't provide these.
 const createObjectURL  = vi.fn(() => 'blob:mock-url');
 const revokeObjectURL  = vi.fn();
 beforeEach(() => {
   thumbState.thumb = null;
+  thumbState.hang = false;
   fetchSpy.mockReset();
   createObjectURL.mockClear();
   revokeObjectURL.mockClear();
   globalThis.URL.createObjectURL = createObjectURL;
   globalThis.URL.revokeObjectURL = revokeObjectURL;
+  FakeXHR.instances = [];
+  FakeXHR.behavior = 'success';
+  vi.stubGlobal('XMLHttpRequest', FakeXHR);
 });
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-function mockS3PutOk() {
+// Thumb PUT still rides window.fetch; give it a quiet default.
+function mockThumbPutOk() {
   globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, statusText: 'OK' });
-}
-function mockS3PutFail() {
-  globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 403, statusText: 'Forbidden' });
 }
 
 function fakeFile(name = 'photo.jpg', type = 'image/jpeg') {
@@ -51,34 +86,43 @@ function fakeFile(name = 'photo.jpg', type = 'image/jpeg') {
 }
 
 describe('useUploadPhoto — happy path', () => {
-  it('runs presign -> S3 PUT -> POST and returns photo', async () => {
+  it('runs presign -> S3 PUT (watchdog XHR) -> POST and returns photo', async () => {
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/upload', key: 'standalone/u.jpg' });
     fetchSpy.mockResolvedValueOnce({ id: 'photo-1', storage_path: 'standalone/u.jpg' });
-    mockS3PutOk();
+    mockThumbPutOk();
 
     const { result } = renderHook(() => useUploadPhoto());
     expect(result.current.isUploading).toBe(false);
+    expect(result.current.stage).toBeNull();
 
+    const file = fakeFile();
     let res;
     await act(async () => {
-      res = await result.current.upload(fakeFile(), { keyPrefix: 'standalone' });
+      res = await result.current.upload(file, { keyPrefix: 'standalone' });
     });
 
     expect(res.photo).toEqual({ id: 'photo-1', storage_path: 'standalone/u.jpg' });
     expect(result.current.isUploading).toBe(false);
+    expect(result.current.stage).toBeNull();
     expect(result.current.photo).toEqual(res.photo);
     expect(result.current.error).toBeNull();
     expect(result.current.preview).toBe('blob:mock-url');
 
-    // Three logical fetches: presign + S3 PUT + POST register
-    expect(fetchSpy).toHaveBeenCalledTimes(2); // useApiFetch.fetch (presign + POST)
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1); // window.fetch (S3 PUT)
+    // presign + POST via apiFetch; the ORIGINAL PUT via the watchdog XHR, not fetch
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(FakeXHR.instances.length).toBe(1);
+    expect(FakeXHR.instances[0].method).toBe('PUT');
+    expect(FakeXHR.instances[0].url).toBe('https://s3.example/upload');
+    expect(FakeXHR.instances[0].body).toBe(file);
+    expect(FakeXHR.instances[0].headers['Content-Type']).toBe('image/jpeg');
+    // no thumb -> window.fetch untouched
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it('forwards linkage to POST /api/photos body', async () => {
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/upload' });
     fetchSpy.mockResolvedValueOnce({ id: 'p2' });
-    mockS3PutOk();
+    mockThumbPutOk();
 
     const { result } = renderHook(() => useUploadPhoto());
     await act(async () => {
@@ -111,17 +155,19 @@ describe('useUploadPhoto — errors', () => {
     expect(res.error).toBe('presign down');
     expect(result.current.error).toBe('presign down');
     expect(result.current.isUploading).toBe(false);
+    expect(result.current.stage).toBeNull();
     expect(result.current.photo).toBeNull();
   });
 
   it('surface mode: S3 PUT non-OK propagates', async () => {
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/u' });
-    mockS3PutFail();
+    FakeXHR.behavior = 'status403';
     const { result } = renderHook(() => useUploadPhoto());
     let res;
     await act(async () => { res = await result.current.upload(fakeFile()); });
     expect(res.error).toMatch(/403/);
     expect(result.current.error).toMatch(/403/);
+    expect(result.current.stage).toBeNull();
   });
 
   it('swallow mode: errors do not set state.error but result has error', async () => {
@@ -139,6 +185,7 @@ describe('useUploadPhoto — errors', () => {
     await act(async () => { res = await result.current.upload(null); });
     expect(res.error).toMatch(/file is required/);
     expect(fetchSpy).not.toHaveBeenCalled();
+    expect(FakeXHR.instances.length).toBe(0);
   });
 
   it('missing upload_url in presign response throws', async () => {
@@ -150,11 +197,81 @@ describe('useUploadPhoto — errors', () => {
   });
 });
 
+// BUG-PHOTOUPLOADHANG-001 — the two hang guards + step instrumentation.
+describe('useUploadPhoto — hang guards & stages', () => {
+  it('a downscale that never settles is abandoned at the deadline and the ORIGINAL uploads', async () => {
+    vi.useFakeTimers();
+    thumbState.hang = true;
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/u' });
+    fetchSpy.mockResolvedValueOnce({ id: 'p1' });
+    mockThumbPutOk();
+
+    const file = fakeFile();
+    const { result } = renderHook(() => useUploadPhoto());
+    let res;
+    await act(async () => {
+      const p = result.current.upload(file);
+      await vi.advanceTimersByTimeAsync(15_100);
+      res = await p;
+    });
+    vi.useRealTimers();
+
+    expect(res.photo).toEqual({ id: 'p1' });
+    // the file that went up is the ORIGINAL, untouched
+    expect(FakeXHR.instances[0].body).toBe(file);
+    // and no thumb leg ran
+    expect(fetchSpy.mock.calls.some(c => String(c[0]).includes('thumb-upload-url'))).toBe(false);
+  });
+
+  it('a STALLED original PUT surfaces an error instead of hanging forever', async () => {
+    vi.useFakeTimers();
+    FakeXHR.behavior = 'manual';
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/u' });
+    const { result } = renderHook(() => useUploadPhoto());
+
+    let res;
+    await act(async () => {
+      const p = result.current.upload(fakeFile());
+      await vi.advanceTimersByTimeAsync(31_000); // > PUT_STALL_MS with zero progress
+      res = await p;
+    });
+    vi.useRealTimers();
+
+    expect(res.error).toMatch(/stalled/i);
+    expect(result.current.error).toMatch(/stalled/i);
+    expect(result.current.isUploading).toBe(false);
+    expect(result.current.stage).toBeNull();
+    expect(FakeXHR.instances[0].aborted).toBe(true);
+  });
+
+  it('exposes stage transitions and PUT progress percentages', async () => {
+    FakeXHR.behavior = 'manual';
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/u' });
+    fetchSpy.mockResolvedValueOnce({ id: 'p1' });
+    const { result } = renderHook(() => useUploadPhoto());
+
+    let done;
+    await act(async () => {
+      done = result.current.upload(fakeFile());
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.stage).toBe('uploading'));
+
+    await act(async () => { FakeXHR.instances[0].fireProgress(43, 100); });
+    expect(result.current.progress).toBe(43);
+
+    await act(async () => { FakeXHR.instances[0].fireLoad(200); await done; });
+    expect(result.current.stage).toBeNull();
+    expect(result.current.progress).toBeNull();
+    expect(result.current.photo).toEqual({ id: 'p1' });
+  });
+});
+
 describe('useUploadPhoto — preview lifecycle', () => {
   it('creates object URL on upload start and revokes prior on re-upload', async () => {
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/u' });
     fetchSpy.mockResolvedValueOnce({ id: 'p1' });
-    mockS3PutOk();
+    mockThumbPutOk();
 
     const { result } = renderHook(() => useUploadPhoto());
     await act(async () => { await result.current.upload(fakeFile()); });
@@ -162,16 +279,15 @@ describe('useUploadPhoto — preview lifecycle', () => {
 
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/u2' });
     fetchSpy.mockResolvedValueOnce({ id: 'p2' });
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true });
     await act(async () => { await result.current.upload(fakeFile('p2.jpg')); });
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
     expect(createObjectURL).toHaveBeenCalledTimes(2);
   });
 
-  it('reset clears preview + photo + error and revokes URL', async () => {
+  it('reset clears preview + photo + error + stage and revokes URL', async () => {
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/u' });
     fetchSpy.mockResolvedValueOnce({ id: 'p1' });
-    mockS3PutOk();
+    mockThumbPutOk();
     const { result } = renderHook(() => useUploadPhoto());
     await act(async () => { await result.current.upload(fakeFile()); });
     expect(result.current.photo).not.toBeNull();
@@ -180,13 +296,15 @@ describe('useUploadPhoto — preview lifecycle', () => {
     expect(result.current.photo).toBeNull();
     expect(result.current.preview).toBeNull();
     expect(result.current.error).toBeNull();
+    expect(result.current.stage).toBeNull();
+    expect(result.current.progress).toBeNull();
     expect(revokeObjectURL).toHaveBeenCalled();
   });
 
   it('revokes URL on unmount', async () => {
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/u' });
     fetchSpy.mockResolvedValueOnce({ id: 'p1' });
-    mockS3PutOk();
+    mockThumbPutOk();
     const { result, unmount } = renderHook(() => useUploadPhoto());
     await act(async () => { await result.current.upload(fakeFile()); });
     revokeObjectURL.mockClear();
@@ -205,7 +323,7 @@ describe('useUploadPhoto — thumbnail upload (step 2b)', () => {
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });      // 1 presign
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/thumb' });     // 2b presign
     fetchSpy.mockResolvedValueOnce({ id: 'p1', storage_path: 'standalone/u.jpg' }); // 3 POST
-    mockS3PutOk();
+    mockThumbPutOk();
 
     const { result } = renderHook(() => useUploadPhoto());
     let res;
@@ -216,11 +334,14 @@ describe('useUploadPhoto — thumbnail upload (step 2b)', () => {
     // sends ONLY the original key — the thumbs/ prefix is the server's job
     expect(String(thumbCall[0])).not.toContain('thumbs');
 
+    // original via watchdog XHR; thumb via bounded fetch
+    expect(FakeXHR.instances.length).toBe(1);
+    expect(FakeXHR.instances[0].url).toBe('https://s3.example/orig');
     const puts = globalThis.fetch.mock.calls.filter(c => c[1]?.method === 'PUT');
-    expect(puts.length).toBe(2); // original + thumb
-    const thumbPut = puts.find(c => c[0] === 'https://s3.example/thumb');
-    expect(thumbPut[1].body).toBe(THUMB);
-    expect(thumbPut[1].headers['Content-Type']).toBe('image/jpeg');
+    expect(puts.length).toBe(1);
+    expect(puts[0][0]).toBe('https://s3.example/thumb');
+    expect(puts[0][1].body).toBe(THUMB);
+    expect(puts[0][1].headers['Content-Type']).toBe('image/jpeg');
     expect(res.photo).toEqual({ id: 'p1', storage_path: 'standalone/u.jpg' });
   });
 
@@ -228,13 +349,13 @@ describe('useUploadPhoto — thumbnail upload (step 2b)', () => {
     thumbState.thumb = null;
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
     fetchSpy.mockResolvedValueOnce({ id: 'p1' });
-    mockS3PutOk();
+    mockThumbPutOk();
 
     const { result } = renderHook(() => useUploadPhoto());
     await act(async () => { await result.current.upload(fakeFile()); });
 
     expect(fetchSpy.mock.calls.some(c => String(c[0]).includes('thumb-upload-url'))).toBe(false);
-    expect(globalThis.fetch.mock.calls.filter(c => c[1]?.method === 'PUT').length).toBe(1);
+    expect(globalThis.fetch.mock.calls.filter(c => c[1]?.method === 'PUT').length).toBe(0);
   });
 
   it('a FAILED thumb never costs the photo — the row is still registered and no error surfaces', async () => {
@@ -242,7 +363,7 @@ describe('useUploadPhoto — thumbnail upload (step 2b)', () => {
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
     fetchSpy.mockRejectedValueOnce(new Error('thumb presign exploded'));            // 2b blows up
     fetchSpy.mockResolvedValueOnce({ id: 'p1', storage_path: 'standalone/u.jpg' });  // 3 still runs
-    mockS3PutOk();
+    mockThumbPutOk();
 
     const { result } = renderHook(() => useUploadPhoto());
     let res;
@@ -258,19 +379,19 @@ describe('useUploadPhoto — thumbnail upload (step 2b)', () => {
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/thumb' });
     fetchSpy.mockResolvedValueOnce({ id: 'p1' });
-    mockS3PutOk();
+    mockThumbPutOk();
 
     const { result } = renderHook(() => useUploadPhoto());
     await act(async () => { await result.current.upload(fakeFile()); });
 
     const puts = globalThis.fetch.mock.calls.filter(c => c[1]?.method === 'PUT');
-    const origPut = puts.find(c => c[0] === 'https://s3.example/orig');
     const thumbPut = puts.find(c => c[0] === 'https://s3.example/thumb');
-    // the thumb is bounded...
+    // the thumb is bounded by an abort signal...
     expect(thumbPut[1].signal).toBeDefined();
     expect(thumbPut[1].signal.aborted).toBe(false);
-    // ...and the ORIGINAL deliberately is NOT (a large upload legitimately takes a while)
-    expect(origPut[1].signal).toBeUndefined();
+    // ...and the ORIGINAL is bounded by the stall watchdog (XHR transport, not bare fetch)
+    expect(FakeXHR.instances.length).toBe(1);
+    expect(FakeXHR.instances[0].url).toBe('https://s3.example/orig');
   });
 
   it('an ABORTED/hanging thumb PUT still leaves the photo registered', async () => {
@@ -278,9 +399,8 @@ describe('useUploadPhoto — thumbnail upload (step 2b)', () => {
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/thumb' });
     fetchSpy.mockResolvedValueOnce({ id: 'p1', storage_path: 'standalone/u.jpg' });
-    // original PUT ok; thumb PUT rejects the way an abort does
+    // thumb PUT rejects the way an abort does (original PUT rides FakeXHR success)
     globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK' })
       .mockRejectedValueOnce(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' }));
 
     const { result } = renderHook(() => useUploadPhoto());
@@ -296,12 +416,12 @@ describe('useUploadPhoto — thumbnail upload (step 2b)', () => {
     fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
     fetchSpy.mockResolvedValueOnce({});                                             // no upload_url
     fetchSpy.mockResolvedValueOnce({ id: 'p1' });
-    mockS3PutOk();
+    mockThumbPutOk();
 
     const { result } = renderHook(() => useUploadPhoto());
     await act(async () => { await result.current.upload(fakeFile()); });
 
-    expect(globalThis.fetch.mock.calls.filter(c => c[1]?.method === 'PUT').length).toBe(1);
+    expect(globalThis.fetch.mock.calls.filter(c => c[1]?.method === 'PUT').length).toBe(0);
     expect(result.current.photo).toEqual({ id: 'p1' });
   });
 });
