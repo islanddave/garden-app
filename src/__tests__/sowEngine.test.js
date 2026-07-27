@@ -171,6 +171,12 @@ describe('classifyClause — classes A-L against real dataset strings', () => {
     ['again in Aug-Sep for fall', 'F'],
     ['fall sow for spring germination', 'G'],
     ['fall sow for early spring bloom', 'G'],
+    // Hyphenated separator: real Edelweiss copy. Matched nothing before the fall[-\s]sow widen.
+    ['Early spring outdoors, letting natural freeze-thaw cycles stratify the seed; or fall-sow for spring germination', 'G'],
+    // ...but the "for (early) spring germination|bloom" tail is still REQUIRED. Real Althaea copy
+    // offers fall-sowing only as an alternate to a spring primary, so it must NOT become class G
+    // (that would surface a spring-primary packet as a fall-only recommendation).
+    ['Direct sow in very early spring as soon as soil is workable, or fall-sow to let winter cold stratify the seed (a good Zone 5b option).', null],
     ['in summer for next-year bloom', 'H'],
     ['mid-summer for blooming next spring', 'H'], // H beats F
     ['grow indoors year-round', 'J'],

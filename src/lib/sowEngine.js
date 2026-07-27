@@ -164,7 +164,13 @@ export function classifyClause(clause) {
     info.cls = 'L';
   } else if (/(?:grow\s+)?indoors\s+year.?round/i.test(c)) {
     info.cls = 'J';
-  } else if (/fall\s+sow\s+for\s+(?:early\s+)?spring\s+(?:germination|bloom)/i.test(c)) {
+  // `fall[-\s]sow`: packet copy uses both "fall sow" and the hyphenated "fall-sow". Matching only
+  // the spaced form silently dropped Edelweiss, whose clause carries the class-G phrase verbatim
+  // ("...or fall-sow for spring germination") and differs by one character. Widening the SEPARATOR
+  // only — the required "for (early) spring germination|bloom" tail is deliberately unchanged, so a
+  // clause that merely mentions fall-sowing as an ALTERNATE to a spring primary (Althaea) still
+  // does not become a fall-only recommendation.
+  } else if (/fall[-\s]sow\s+for\s+(?:early\s+)?spring\s+(?:germination|bloom)/i.test(c)) {
     info.cls = 'G';
   } else if (/summer\s+for\s+next.?year\s+bloom|blooming\s+next\s+spring/i.test(c)) {
     info.cls = 'H';
