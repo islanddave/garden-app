@@ -15,6 +15,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import TileGrid from './forms/TileGrid.jsx'
 import Lightbox from './Lightbox.jsx'
+import useImageWindow from '../hooks/useImageWindow.js'
 
 // Month bucket key + human label from an ISO-ish timestamp. Falls back to an "Undated" bucket
 // (sorted last) when created_at is missing/garbage, so a malformed row never drops out silently.
@@ -71,12 +72,19 @@ export default function PhotosWall() {
     })
   }, [photos])
 
+  // BUG-PHOTOTHUMB-001 — window the FLAT list, then section it. Windowing each month's TileGrid
+  // instead would bound each month but not the page (12 months x 24 > the 120 the API returns), so
+  // the bound has to be applied before grouping. slice(0, shown) preserves indices, so flatIndex
+  // below is still the index into the FULL sorted array and the Lightbox mapping is unchanged.
+  const win = useImageWindow(sorted.length)
+  const windowedPhotos = useMemo(() => sorted.slice(0, win.shown), [sorted, win.shown])
+
   // Month sections, preserving the sorted (newest-first) order. Each photo carries its flatIndex
   // so a tile knows where it lands in the Lightbox without a second lookup.
   const sections = useMemo(() => {
     const out = []
     let cur = null
-    sorted.forEach((photo, flatIndex) => {
+    windowedPhotos.forEach((photo, flatIndex) => {
       const key = monthKey(photo?.created_at)
       if (!cur || cur.key !== key) {
         cur = { key, label: monthLabel(key), items: [] }
@@ -85,7 +93,7 @@ export default function PhotosWall() {
       cur.items.push({ ...photo, _flatIndex: flatIndex })
     })
     return out
-  }, [sorted])
+  }, [windowedPhotos])
 
   // Lightbox images derive from the SAME sorted order, so lbIndex (a flat index) is valid.
   const lbImages = useMemo(
@@ -152,6 +160,18 @@ export default function PhotosWall() {
         </section>
       ))}
 
+      {win.hasMore && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+          <button type="button" onClick={win.showMore}
+            style={{
+              minHeight: 44, padding: '8px 18px', fontSize: '0.85rem', borderRadius: 8,
+              border: `1px solid ${P.border}`, background: P.white, color: P.dark, cursor: 'pointer',
+            }}>
+            Show more ({win.remaining} left)
+          </button>
+        </div>
+      )}
+
       <Lightbox
         open={lbOpen}
         images={lbImages}
@@ -164,8 +184,9 @@ export default function PhotosWall() {
 }
 
 // Square photo tile. aspect-ratio 1/1 keeps the wall a true grid of squares; the image is
-// lazy + async-decoded so a long wall stays cheap without virtualization (a future enhancement
-// if libraries ever balloon past a few hundred photos). The whole tile is a ≥44px button.
+// async-decoded and the wall is bounded by useImageWindow above (NOT by loading="lazy", which was
+// measured to never fire here — 0 of 120 images requested, BUG-PHOTOTHUMB-001). The whole tile is
+// a ≥44px button.
 function PhotoTile({ photo, onOpen }) {
   // Open photo {n} — 1-based flat position, a stable accessible label across all months.
   const n = (photo._flatIndex ?? 0) + 1
@@ -184,7 +205,6 @@ function PhotoTile({ photo, onOpen }) {
         <img
           src={photo.view_url}
           alt={photo.caption || 'Garden photo'}
-          loading="lazy"
           decoding="async"
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
         />

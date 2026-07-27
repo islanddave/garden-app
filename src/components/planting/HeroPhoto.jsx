@@ -120,7 +120,7 @@ export default function HeroPhoto({ planting, src, alt, onOpenLightbox, onOpenDe
           aria-label={`View ${name} photo`}
           style={{ position: 'absolute', inset: 0, padding: 0, border: 'none', background: 'transparent',
             cursor: 'pointer', display: 'block' }}>
-          <img src={src} alt={alt || `${name} photo`} loading="lazy"
+          <img src={src} alt={alt || `${name} photo`}
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
         </button>
         <div style={topScrim} />

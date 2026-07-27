@@ -238,7 +238,6 @@ function CritterCard({ c, code, got, entry, initiallyBloomed, onBloomed, onOpenF
         <img
           src={artSrc}
           alt={got ? c.name : ''}
-          loading="lazy"
           draggable={false}
           className={blooming ? 'cc-art-bloom' : undefined}
           style={artStyle}

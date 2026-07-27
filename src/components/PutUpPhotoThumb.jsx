@@ -33,7 +33,6 @@ export default function PutUpPhotoThumb({ photoId, fetch, size = 44, alt = 'Put-
       alt={alt}
       width={size}
       height={size}
-      loading="lazy"
       style={{
         width: size, height: size, objectFit: 'cover', borderRadius: 6,
         border: `1px solid ${P.border}`, display: 'block', flexShrink: 0,

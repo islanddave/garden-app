@@ -91,7 +91,9 @@ export default function PlantingTile({
 
       {/* PHOTO (4:3) box. V4-TAPCARD-001: retagged from <Link> to a plain <div> -- the stretched
           card overlay above now owns navigation + the "Open {name}" name. aspect-ratio reserves
-          the box (no CLS). RES-4: single origin URL, loading=lazy + decoding=async. */}
+          the box (no CLS). RES-4: single origin URL, decoding=async. NO loading="lazy" — measured
+          0 of 120 images ever requested with it (BUG-PHOTOTHUMB-001); the tile count is instead
+          bounded by TileGrid's windowSize on the Garden grids. */}
       <div
         style={{
           position: 'relative',
@@ -109,7 +111,6 @@ export default function PlantingTile({
             src={pl.featured_photo_view_url}
             sizes="(max-width: 720px) 50vw, 360px"
             alt=""
-            loading="lazy"
             decoding="async"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
           />

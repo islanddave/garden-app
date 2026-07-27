@@ -573,7 +573,6 @@ export default function PlantingDetail() {
                       <img
                         src={ph.view_url}
                         alt={ph.caption || `${name} photo`}
-                        loading="lazy"
                         style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 8, border: `1px solid ${P.border}`, display: 'block' }}
                       />
                     </button>

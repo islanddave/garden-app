@@ -697,7 +697,9 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
       {isOpen && (
         <div role="group" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
           {plantings.length > 0 && (
-            <TileGrid items={plantings} columns={2} gap={12} ariaLabel="Plantings"
+            /* BUG-PHOTOTHUMB-001 windowSize: 211 of 255 live plantings carry a featured photo, so
+               an unbounded render is ~1.75x the 120 images that froze the renderer. */
+            <TileGrid items={plantings} columns={2} gap={12} ariaLabel="Plantings" windowSize={24}
               renderItem={(pl) => (
                 <PlantingTile planting={pl}
                   critters={crittersByPlantId?.get(pl.id) ?? []}
@@ -764,7 +766,7 @@ function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongP
               isUnsorted={g.isUnsorted} collapsed={isCollapsed} onToggle={() => toggle(g.slug)} />
             {!isCollapsed && (
               <div style={{ marginTop: 8 }}>
-                <TileGrid items={g.plantings} columns={2} gap={12} ariaLabel={g.label}
+                <TileGrid items={g.plantings} columns={2} gap={12} ariaLabel={g.label} windowSize={24}
                   renderItem={(pl) => (
                     <PlantingTile planting={pl}
                       critters={crittersByPlantId?.get(pl.id) ?? []}

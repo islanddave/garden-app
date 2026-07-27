@@ -79,7 +79,7 @@ export default function CritterOfDay({ collected }) {
         flexShrink: 0, width: 76, height: 76, borderRadius: 12, background: P.cream,
         display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
       }}>
-        <img src={critter.image_url} alt={critter.name} loading="lazy" draggable={false}
+        <img src={critter.image_url} alt={critter.name} draggable={false}
           style={{ width: '100%', height: '100%', objectFit: 'contain',
                    transform: `scale(${critter.view_scale || 1})`, transformOrigin: 'center' }} />
       </div>

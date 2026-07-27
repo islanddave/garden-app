@@ -38,8 +38,11 @@ describe('PhotosWall — Garden Photos sub-tab', () => {
     // One TileGrid per month → each is a role=list; every photo is a role=listitem with an img.
     const imgs = document.querySelectorAll('img[src^="https://s3.test/"]')
     expect(imgs.length).toBe(3)
-    // Lazy + async decode on every wall image (byte-cost discipline, no virtualization).
-    expect(imgs[0].getAttribute('loading')).toBe('lazy')
+    // BUG-PHOTOTHUMB-001 — this assertion used to require loading="lazy" and so ENSHRINED the bug.
+    // Measured live 2026-07-27: with lazy, 0 of 120 wall images were ever REQUESTED (never fetched,
+    // not slow). The wall is now bounded by useImageWindow instead, so lazy MUST be absent — if it
+    // comes back, the wall silently renders nothing again.
+    expect(imgs[0].getAttribute('loading')).toBeNull()
     expect(imgs[0].getAttribute('decoding')).toBe('async')
   })
 

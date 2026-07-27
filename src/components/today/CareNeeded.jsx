@@ -82,7 +82,7 @@ function Row({ row, pending, onLog, onSkip }) {
         padding: '10px 12px', textDecoration: 'none', color: P.dark, minHeight: 48,
       }}>
         {row.thumb && (
-          <img src={row.thumb} alt="" loading="lazy" style={{ width: 34, height: 34, borderRadius: 7, objectFit: 'cover', flexShrink: 0, border: '1px solid ' + P.border }} />
+          <img src={row.thumb} alt="" style={{ width: 34, height: 34, borderRadius: 7, objectFit: 'cover', flexShrink: 0, border: '1px solid ' + P.border }} />
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: '0.92rem', fontWeight: 600, color: P.dark, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

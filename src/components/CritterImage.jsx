@@ -104,7 +104,6 @@ export default function CritterImage({
       onClick={onClick}
       onError={() => setImgErr(true)}
       style={imgStyle(size, onClick)}
-      loading="lazy"
       draggable={false}
     />
   )

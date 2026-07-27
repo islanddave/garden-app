@@ -722,7 +722,6 @@ export default function ProjectDetail() {
                     ? <img
                         src={plant.featured_photo_view_url}
                         alt=""
-                        loading="lazy"
                         style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover',
                                  flexShrink: 0, border: `1px solid ${P.border}` }}
                       />
