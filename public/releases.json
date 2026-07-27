@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.65.2",
+    "date": "2026-07-27",
+    "highlights": [
+      "Edelweiss now appears in the fall-sowing list. Its packet says to fall-sow for spring germination, but the wording used a hyphen and Sow Now was only looking for the spaced form, so the packet quietly matched nothing"
+    ]
+  },
+  {
     "version": "3.65.1",
     "date": "2026-07-26",
     "highlights": [
