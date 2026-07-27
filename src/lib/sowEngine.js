@@ -225,11 +225,11 @@ const FALL_GROWTH_TAIL = 35;
 // a category error that produces close dates in the previous November.
 const DTM_NOT_A_MATURITY = 200;
 
-// Biennials/perennials that nonetheless yield a real FIRST-year harvest, so the ordinary dtm clamp
-// is the correct rule for them. BRIDGE, NOT A DESTINATION: the honest fix is a first_year_harvest
-// flag on the variety. The default (establishment) is the safe direction for an ornamental but the
-// WRONG direction for a vegetable, so a biennial veg whose slug is missing here and whose timing
-// text never says "harvest" gets told to wait a year. See BUG-SOWFIRSTYEAR-001.
+// FALLBACK ONLY as of BUG-SOWFIRSTYEAR-001. The authoritative answer now lives in
+// crop_types.first_year_harvest, exposed on v_sow_candidates, and sowGoal consults it FIRST. This
+// set survives for the rows where that column is still NULL (unknown) — most of the catalog, by
+// design, since only unambiguous slugs were seeded. Prefer fixing the DATA over extending this list:
+// a value here needs a deploy, a value in the column does not.
 const FIRST_YEAR_HARVEST_CROPS = new Set([
   'brussels_sprouts', 'carrot', 'beet', 'chard', 'parsley', 'parsnip', 'celery', 'celeriac',
   'kale', 'turnip', 'rutabaga', 'salsify', 'fennel', 'leek', 'onion', 'cabbage',
@@ -244,6 +244,15 @@ const HARVEST_TEXT_RE = /for\s+(?:a\s+)?(?:fall|summer|winter|spring)?\s*harvest
 export function sowGoal(candidate, dtm) {
   const effective = candidate.grown_as ?? candidate.lifecycle;
   if (effective === 'annual') return 'harvest';
+
+  // BUG-SOWFIRSTYEAR-001: crop_types.first_year_harvest is authoritative when it has an opinion.
+  // It sits ABOVE the dtm heuristic because it is a recorded fact and dtm is a proxy — a crop
+  // explicitly marked first-year should not be re-litigated by its maturity figure.
+  // Strict true/false checks, never truthiness: NULL means UNKNOWN and must fall through to the
+  // heuristics below, not be read as false.
+  if (candidate.first_year_harvest === true) return 'harvest';
+  if (candidate.first_year_harvest === false) return 'establishment';
+
   if (dtm == null || dtm > DTM_NOT_A_MATURITY) return 'establishment';
   if (FIRST_YEAR_HARVEST_CROPS.has(candidate.crop_type_slug)) return 'harvest';
   if (HARVEST_TEXT_RE.test(candidate.direct_sow_timing || '')) return 'harvest';

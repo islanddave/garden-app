@@ -984,6 +984,45 @@ describe('BUG-SOWNONANNUAL-001 — non-annuals get a season-length clamp', () =>
     expect(r.bucket).not.toBe('needs_profile');
   });
 
+  // BUG-SOWFIRSTYEAR-001 — the flag is authoritative; NULL still falls back.
+  it('crop_types.first_year_harvest overrides the dtm heuristic when set', () => {
+    // kohlrabi: a real biennial-lifecycle vegetable that is NOT in FIRST_YEAR_HARVEST_CROPS and
+    // whose timing text never says "harvest" — the exact false-negative the hardcoded set produces,
+    // and it would have told Dave to wait a year for a kohlrabi. The flag fixes it in DATA.
+    // (An earlier draft used 'salsify', which IS in the bridge set, so it proved nothing.)
+    const veg = { lifecycle: 'biennial', grown_as: null, crop_type_slug: 'kohlrabi',
+                  direct_sow_timing: 'sow in spring' };
+    expect(sowGoal(veg, 120)).toBe('establishment');                       // without the flag
+    expect(sowGoal({ ...veg, first_year_harvest: true }, 120)).toBe('harvest'); // with it
+  });
+
+  it('first_year_harvest=false wins even when the slug is in the bridge set', () => {
+    // Data beats the hardcoded list, so a wrong entry there can be corrected without a deploy.
+    expect(sowGoal({ lifecycle: 'biennial', grown_as: null, crop_type_slug: 'onion',
+                     first_year_harvest: false }, 90)).toBe('establishment');
+  });
+
+  it('NULL first_year_harvest is UNKNOWN, not false', () => {
+    // Truthiness would read null as false and send every unseeded crop to establishment — telling
+    // Dave to wait a year for most of the catalog. Strict === checks are load-bearing.
+    const brussels = { lifecycle: 'biennial', grown_as: null, crop_type_slug: 'brussels_sprouts',
+                       first_year_harvest: null };
+    expect(sowGoal(brussels, 90)).toBe('harvest');       // falls through to the bridge set
+    expect(sowGoal({ ...brussels, first_year_harvest: undefined }, 90)).toBe('harvest');
+  });
+
+  it('the orthogonality case: perennial AND first-year (bunching onion)', () => {
+    // Tokyo Long White is grown_as='perennial' in live data — correct, it clumps and overwinters —
+    // and you still cut scallions from it the first season. This is why grown_as could not carry
+    // the flag: asparagus has the same grown_as and the opposite answer.
+    const bunching = { lifecycle: 'perennial', grown_as: 'perennial', crop_type_slug: 'onion',
+                       first_year_harvest: true };
+    const asparagus = { lifecycle: 'perennial', grown_as: 'perennial', crop_type_slug: 'asparagus',
+                        first_year_harvest: false };
+    expect(sowGoal(bunching, 65)).toBe('harvest');
+    expect(sowGoal(asparagus, 65)).toBe('establishment');
+  });
+
   it('an unknown clamp says "I do not know", never "too late"', () => {
     // The mirror of the reported bug. Removing the `latestSafe ?? ctx.FF` fabrication correctly
     // stops "Direct sow through Sep 28", but falling through to too_late would assert "Sowing

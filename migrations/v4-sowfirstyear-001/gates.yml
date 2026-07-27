@@ -1,0 +1,147 @@
+# gates.yml
+# BUG-SOWFIRSTYEAR-001 — crop_types.first_year_harvest + v_sow_candidates exposure.
+#
+# SEQUENCING: staging -> rehearse 0r -> re-apply -> dev push -> prod -> promote.
+# The engine change ships WITH this, so unlike v4-fbshare-p1 the DDL must land in prod BEFORE the
+# promote: the new sowEngine reads first_year_harvest off the view, and a view without the column
+# yields undefined, which silently falls back to the heuristics rather than erroring. That is a
+# quiet wrong answer, not a loud one — hence the ordering.
+
+pre:
+  - name: pre_crop_types_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='crop_types'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_column_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='crop_types' AND column_name='first_year_harvest'
+    expect: rowcount_eq
+    value: 0
+
+  # The view must return EXACTLY its filtered base set. Written as a self-comparison rather than a
+  # hardcoded count because the count is environment-specific (prod 223, staging 66) — a literal
+  # would pass on one environment and fail on the other for no real reason.
+  - name: pre_view_equals_filtered_base
+    sql: |
+      SELECT 1 WHERE (SELECT count(*) FROM public.v_sow_candidates)
+                   = (SELECT count(*) FROM inventory_items i
+                        JOIN plant_varieties v ON v.id = i.variety_id
+                       WHERE i.category = 'seeds' AND i.deleted_at IS NULL
+                         AND i.status = 'active' AND v.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_column_present_and_nullable
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='crop_types'
+         AND column_name='first_year_harvest' AND data_type='boolean'
+         AND is_nullable='YES' AND column_default IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_view_exposes_the_column
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+         AND column_name='first_year_harvest'
+    expect: rowcount_eq
+    value: 1
+
+  # THE ONE THAT MATTERS. The view's WHERE clause is what makes it "active seed packets"; dropping it
+  # during the CREATE OR REPLACE would flood Sow Now with non-seed and soft-deleted inventory.
+  # Asserted twice, on the definition text AND on the row count, because either alone can be fooled.
+  - name: post_view_filter_intact
+    sql: |
+      SELECT 1 FROM pg_views
+       WHERE viewname='v_sow_candidates'
+         AND definition LIKE '%category = ''seeds''%'
+         AND definition LIKE '%i.deleted_at IS NULL%'
+         AND definition LIKE '%status = ''active''%'
+         AND definition LIKE '%v.deleted_at IS NULL%'
+    expect: rowcount_eq
+    value: 1
+
+  # Same self-comparison as the pre gate. If the CREATE OR REPLACE dropped the WHERE, the view
+  # balloons to every inventory row with a variety and this fails — which is the whole point, since
+  # CREATE OR REPLACE VIEW itself validates columns and is indifferent to predicates.
+  - name: post_view_equals_filtered_base
+    sql: |
+      SELECT 1 WHERE (SELECT count(*) FROM public.v_sow_candidates)
+                   = (SELECT count(*) FROM inventory_items i
+                        JOIN plant_varieties v ON v.id = i.variety_id
+                       WHERE i.category = 'seeds' AND i.deleted_at IS NULL
+                         AND i.status = 'active' AND v.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_view_column_count_30
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+    expect: scalar_eq
+    value: 30
+
+  # Asserted as ZERO MISMATCHES rather than as absolute counts, because crop_types is
+  # environment-specific (staging holds a subset of prod's slugs) — a literal count passes on one
+  # environment and fails on the other for no real reason. This form says what is actually meant:
+  # of the slugs that exist here, none carries the wrong value.
+  - name: post_no_true_slug_mismatched
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug IN ('brussels_sprouts','carrot','beet','chard','parsley','parsnip','celery','kale','leek','onion','cabbage','chives','broccoli','collard','kohlrabi','radicchio','sweet_potato','mint','oregano','sage','thyme','tarragon','lemongrass','culantro','vietnamese_coriander','eggplant','pepper','tomato')
+         AND first_year_harvest IS DISTINCT FROM true
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_false_slug_mismatched
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug IN ('hollyhock','money_plant','columbine','delphinium','foxglove','blackberry_lily','althaea','milkweed','edelweiss','asparagus','rhubarb','apple','pear','plum','cherry','sour_cherry','apricot','nectarine','peach','cranberry','grape','raspberry','black_raspberry','red_raspberry','blackberry','wineberry','elderberry','blueberry','strawberry')
+         AND first_year_harvest IS DISTINCT FROM false
+    expect: rowcount_eq
+    value: 0
+
+
+  - name: post_unknowns_left_unknown
+    sql: |
+      SELECT 1 FROM public.crop_types WHERE first_year_harvest IS NULL LIMIT 1
+    expect: rowcount_eq
+    value: 1
+
+  # The two the header calls out as deliberately unset — fall-planted alliums are neither
+  # "first year" nor "establishment" as this flag means them.
+  - name: post_garlic_and_shallot_left_null
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug IN ('garlic','shallot') AND first_year_harvest IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  # Brussels sprouts is the worked example from BUG-SOWNONANNUAL-001: biennial, eaten in year 1.
+  - name: post_brussels_is_first_year
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug='brussels_sprouts' AND default_lifecycle <> 'annual' AND first_year_harvest = true
+    expect: rowcount_eq
+    value: 1
+
+  # Asparagus is the counter-example: same non-annual lifecycle, opposite answer. If these two ever
+  # agree, the flag has stopped meaning anything.
+  - name: post_asparagus_is_not_first_year
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug='asparagus' AND first_year_harvest = false
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.16.0-sowfirstyear-001'
+    expect: rowcount_eq
+    value: 1

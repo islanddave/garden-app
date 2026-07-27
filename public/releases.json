@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.65.1",
+    "date": "2026-07-26",
+    "highlights": [
+      "Sow Now now reads whether a crop yields a harvest in its first season from the crop record instead of a hardcoded list, so a biennial vegetable can no longer be mistaken for a flower that blooms next year"
+    ]
+  },
+  {
     "version": "3.65.0",
     "date": "2026-07-26",
     "highlights": [
