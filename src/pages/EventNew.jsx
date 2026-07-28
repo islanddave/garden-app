@@ -43,6 +43,14 @@ function readLastHarvestUnit() {
 // LogMany's quicklog.lastScope pattern (module-const key + guarded localStorage,
 // validated against live projects on load). Stored as a bare project id string.
 const LAST_PROJECT_KEY = 'logone.lastProject'
+// V4-LOGTARGET-001 (Lane 2, sticky option b): sticky memory inverted to the PLANTING
+// level under a NEW key. The old logone.lastProject key is KEPT and still written on
+// every save — it is the project-level fallback for pre-migration devices and for
+// saves made deliberately without a planting (a plant-less save REMOVES lastPlant so
+// "remembered" is always literally the last save). LogMany's quicklog.* keys untouched.
+// INVARIANT (server exactly_one_parent CHECK): a remembered plant is only ever seeded
+// alongside its remembered parent project — plant_id present ⇒ project_id present.
+const LAST_PLANT_KEY = 'logone.lastPlant'
 
 // V4-OVERLAY-001 Slice 2 draft stash key + the form fields that survive a dismiss/re-open. Only the
 // `form` object is stashed: the type-specific panels (metadata/harvest/treatment/severity/container)
@@ -56,6 +64,12 @@ const DRAFT_FORM_FIELDS = ['event_type', 'notes', 'private_notes', 'quantity', '
 function readLastProjectId() {
   try {
     return localStorage.getItem(LAST_PROJECT_KEY) || ''
+  } catch { return '' }
+}
+
+function readLastPlantId() {
+  try {
+    return localStorage.getItem(LAST_PLANT_KEY) || ''
   } catch { return '' }
 }
 
@@ -260,6 +274,15 @@ export default function EventNew() {
   // live data in the load effect below). Read once (lazy init) so an in-session
   // save that rewrites localStorage never re-seeds this mount.
   const [rememberedProjectId] = useState(readLastProjectId)
+  // V4-LOGTARGET-001 (sticky option b): remembered PLANTING, seeded ONLY when its
+  // remembered parent project is also seeding — never with a deep-linked ?project=
+  // or ?plant= (explicit intent wins), and never without a remembered project (a
+  // plant with no parent project would violate the server's exactly_one_parent
+  // CHECK at submit). Validated against the project's live plants in the load
+  // effect below (archived/missing → cleared, same fallback as the project path).
+  const [rememberedPlantId] = useState(() =>
+    (!preselectedProjectId && !preselectedPlantId && rememberedProjectId) ? readLastPlantId() : ''
+  )
 
   const [form, setForm] = useState({
     event_type:    preselectedEventType,
@@ -269,7 +292,7 @@ export default function EventNew() {
     notes:         '',
     private_notes: '',
     quantity:      '',
-    plant_id:      preselectedPlantId,
+    plant_id:      preselectedPlantId || rememberedPlantId,
     is_public:     true,
   })
 
@@ -418,9 +441,15 @@ export default function EventNew() {
         if (preselectedPlantId && !live.some(p => p.id === preselectedPlantId)) {
           setForm(f => (f.plant_id === preselectedPlantId ? { ...f, plant_id: '' } : f))
         }
+        // V4-LOGTARGET-001: same stale-guard for the REMEMBERED planting — archived or
+        // no longer in this project's live plants → silently fall back to no planting
+        // (mirrors the remembered-project fallback; no notice, it isn't a deep link).
+        if (rememberedPlantId && !live.some(p => p.id === rememberedPlantId)) {
+          setForm(f => (f.plant_id === rememberedPlantId ? { ...f, plant_id: '' } : f))
+        }
       })
       .catch(() => setPlantsForProject([]))
-  }, [apiFetch, form.project_id, preselectedPlantId])
+  }, [apiFetch, form.project_id, preselectedPlantId, rememberedPlantId])
 
   // Load projects + locations
   useEffect(() => {
@@ -440,7 +469,9 @@ export default function EventNew() {
       } else if (!preselectedProjectId && rememberedProjectId && !loggable.some(p => p.id === rememberedProjectId)) {
         // V4-STICKY-001: a remembered project that no longer exists (archived / status
         // changed) must not stick — silently fall back to the current default (no notice).
-        setForm(f => (f.project_id === rememberedProjectId ? { ...f, project_id: '' } : f))
+        // V4-LOGTARGET-001: the remembered PLANT falls with its parent project — a plant
+        // seeded without a live project would violate plant_id ⇒ project_id at submit.
+        setForm(f => (f.project_id === rememberedProjectId ? { ...f, project_id: '', plant_id: '' } : f))
       }
     }).catch(() => {})
   }, [apiFetch, preselectedProjectId, rememberedProjectId])
@@ -529,6 +560,10 @@ export default function EventNew() {
     // event for THIS plant. mode 'type' -> keep event_type, clear plant_id: log the SAME
     // event for the next plant. project_id is preserved both ways so the (project-scoped)
     // plant picker stays populated.
+    // V4-LOGTARGET-001 DECISION (spec §6.3.2 "reconsider"): keepMode 'type' KEEPS clearing
+    // plant_id. The single Save is V4-EVENTSAVE-001's rapid next-plant flow (same event,
+    // next plant) and the next-of-type oracle test pins it; sticky planting covers the
+    // next COLD mount, not the in-session reset. Revisit only if Dave flags the clearing.
     setForm(f => ({
       event_type:    mode === 'type' ? f.event_type : '',
       project_id:    f.project_id,
@@ -556,6 +591,10 @@ export default function EventNew() {
     e.preventDefault()
     setPreserveCtx(null)
     if (!form.event_type)  { setError('Select an event type above.'); return }
+    // V4-LOGTARGET-001 invariant: this gate is also what enforces plant_id ⇒ project_id
+    // at submit — a POST can never leave here as {project_id:'', plant_id:X} (the server's
+    // exactly_one_parent CHECK would 500 on it). Sticky seeding preserves the same
+    // invariant at mount (a remembered plant only seeds alongside its remembered project).
     if (!form.project_id)  { setError('Select a project.'); return }
 
     // V1.2a-2 Wave 3: harvest panel gate — block the POST on invalid quantity,
@@ -648,6 +687,13 @@ export default function EventNew() {
     if (form.project_id) {
       try { localStorage.setItem(LAST_PROJECT_KEY, form.project_id) } catch { /* noop */ }
     }
+    // V4-LOGTARGET-001 (sticky option b): remember the exact PLANTING. A deliberate
+    // plant-less save clears the key so the next cold mount seeds project-level only —
+    // "remembered" is always literally the last save, never an older planting.
+    try {
+      if (form.plant_id) localStorage.setItem(LAST_PLANT_KEY, form.plant_id)
+      else localStorage.removeItem(LAST_PLANT_KEY)
+    } catch { /* noop */ }
 
     // V4-TREATLOG-001: DrG "Treated…" deep-link — mark the source finding resolved now that the
     // treatment is logged. Non-fatal: the treatment event is already saved.
@@ -773,10 +819,15 @@ export default function EventNew() {
         // Non-overlay (full page) DELIBERATELY keeps the global operational toast: outside the
         // aria-modal sheet the toast IS AT-reachable, and the full-page rapid-entry flow keeps the
         // form on screen — a body-replacing card here would add a tap to every sequential log.
+        // V4-LOGTARGET-001: the toast names the TARGET — the planting when one was attached,
+        // otherwise the project with the absence stated plainly.
+        const toastTarget = form.plant_id
+          ? `Logged event — ${plantName ?? 'planting'}`
+          : `Logged event for ${projName} — no planting attached`
         showUndo({
           message: photoError
-            ? `Logged event for ${projName} — but the photo didn't upload`
-            : `Logged event for ${projName}`,
+            ? `${toastTarget} — but the photo didn't upload`
+            : toastTarget,
           onUndo: () => { apiFetch('/api/events/' + eventId, { method: 'DELETE' }).catch(() => {}) },
         })
       }
@@ -816,8 +867,16 @@ export default function EventNew() {
               ) : (
                 <>
                   <div style={{ fontSize: '2rem', lineHeight: 1, marginBottom: 8 }} aria-hidden="true">{confirmation.eventEmoji}</div>
+                  {/* V4-LOGTARGET-001: the confirmation names the TARGET, not just the project.
+                      plantId is RESPONSE-sourced (the saved row's truth): planting attached → name
+                      it; none → say so plainly. Static text on the existing card (Reward-UX ambient;
+                      no new surface). plantName is the client-state label; if it didn't resolve the
+                      dash phrase is simply omitted rather than mislabeling the row. */}
                   <p style={{ margin: '0 0 4px', fontWeight: 700, color: P.green, fontSize: '1.05rem' }}>
                     ✓ Logged {confirmation.eventLabel}
+                    {confirmation.plantId
+                      ? (confirmation.plantName ? ` — ${confirmation.plantName}` : '')
+                      : ' — no planting attached'}
                   </p>
                   <p style={{ margin: 0, color: P.mid, fontSize: '0.85rem' }}>for {confirmation.projName}</p>
                 </>
@@ -1011,8 +1070,12 @@ export default function EventNew() {
             )}
           </Section>
 
-          {/* ── Plant / Group — V3-EVENT-005: ever-present, disabled until project chosen ── */}
-          <Section label="Plant / Group (optional)">
+          {/* ── Planting — V3-EVENT-005: ever-present, disabled until project chosen.
+               V4-LOGTARGET-001: relabeled from "Plant / Group (optional)" and the affirmative
+               "— All plants (project level) —" sentinel retired: the no-planting state must read
+               as UNSET (a neutral placeholder), never as a deliberate project-level choice.
+               No requiredness here — Lane 2 is defaulting + feedback only (Lane 3 owns gating). ── */}
+          <Section label="Planting">
             <Select
               value={form.plant_id}
               onChange={e => setForm(f => ({ ...f, plant_id: e.target.value }))}
@@ -1022,7 +1085,7 @@ export default function EventNew() {
             >
               {form.project_id ? (
                 <>
-                  <option value="">— All plants (project level) —</option>
+                  <option value="">— Choose a planting —</option>
                   {[...plantsForProject].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(pl => (
                     <option key={pl.id} value={pl.id}>
                       {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety_ref?.name ? ` — ${pl.variety_ref.name}` : ''}

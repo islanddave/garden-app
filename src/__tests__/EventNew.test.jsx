@@ -411,7 +411,11 @@ describe('EventNew — V4-EVENTSAVE-001 single Save = next-of-type', () => {
     expect(navigateSpy).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Project').value).toBe('proj-1')
     expect(screen.getByLabelText('Plant or group').value).toBe('')
-    await waitFor(() => { expect(screen.getByText('Logged event for Tomatoes 2026')).toBeTruthy() })
+    // V4-LOGTARGET-001: the toast now names the TARGET planting (was "Logged event for
+    // Tomatoes 2026" — the only assertion in this oracle block changed by Lane 2, because
+    // the copy it pinned is exactly the behavior Dave ratified changing). POST-shape and
+    // plant-clearing assertions are untouched.
+    await waitFor(() => { expect(screen.getByText('Logged event — Cayenne #1')).toBeTruthy() })
     expect(screen.getByText('Undo')).toBeTruthy()
 
     // log the SAME type against the next plant WITHOUT re-picking the type
