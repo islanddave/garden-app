@@ -1,5 +1,6 @@
 // useMembers — fetch hook for GET /api/members (PLANT-ASSIGN-001 caretaker roster).
-// Contract: { members, loading, error } where members = [{ id, display_name, email }].
+// Contract: { members, loading, error } where members = [{ id, display_name }].
+// (email dropped 0A.6 — no consumer rendered it; roster is household-scoped server-side.)
 // Clerk is the roster source (no DB table). Mirrors useDailyPlan's load-counter guard.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'

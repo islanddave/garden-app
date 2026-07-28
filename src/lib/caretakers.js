@@ -25,7 +25,7 @@ export function effectiveAssignee(planting, projectsById, systemSubs = null) {
   return sub
 }
 
-// members: [{ id, display_name, email }] (useMembers); meId = current user's clerk sub.
+// members: [{ id, display_name }] (useMembers; email dropped 0A.6 — never rendered here).
 // Returns Map<sub, { id, name, short, initial, color, isMe }>.
 export function buildCaretakerMap(members, meId) {
   const map = new Map()

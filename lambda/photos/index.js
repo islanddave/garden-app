@@ -148,6 +148,9 @@ async function autoPromoteFeatured(sql, photo, householdIds) {
 }
 
 export const handler = async (event) => {
+  // A-Pending-4 (T1-6, default-in): single method+path route log — makes CloudWatch invocation
+  // evidence per-route (3.9/0A.6 dead-surface sheets) instead of per-function. No payloads logged.
+  console.log('route', event.requestContext?.http?.method ?? 'GET', event.rawPath ?? '');
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return { statusCode: 204, headers: CORS, body: '' };
   }
@@ -324,6 +327,7 @@ export const handler = async (event) => {
         SELECT storage_path FROM photos
         WHERE id = ${photoId}
           AND created_by = ANY(${householdIds})
+          AND deleted_at IS NULL
       `;
       if (!rows.length) return resp(404, { error: 'Not found' });
       const viewUrl = await resolvePhotoViewUrl(rows[0].storage_path, { presign: getViewUrl, sm });
@@ -377,6 +381,7 @@ export const handler = async (event) => {
             LEFT JOIN public.container pp ON pp.id = p.project_id
             WHERE p.created_by = ANY(${householdIds})
               AND p.project_id = ${projectId}
+              AND p.deleted_at IS NULL
             ORDER BY p.created_at DESC
             LIMIT ${limit}
           `;
@@ -389,6 +394,7 @@ export const handler = async (event) => {
             FROM photos p
             LEFT JOIN public.container pp ON pp.id = p.project_id
             WHERE p.created_by = ANY(${householdIds})
+              AND p.deleted_at IS NULL
             ORDER BY p.created_at DESC
             LIMIT ${limit}
           `;

@@ -113,19 +113,22 @@ jobs:
       # already carries it (garden-events, canonical live) and READ-MERGE it onto garden-harvests.
       # READ-MERGE (get-function-configuration -> jq '. + {...}') is MANDATORY: the Lambda
       # --environment update is SET-not-MERGE, so a naive set would wipe every other env var.
-      - name: Ensure GARDEN_HOUSEHOLD_IDS env for harvests (household-scope; read-merge)
-        if: matrix.function == 'harvests'
+      # 0A.6: garden-members joined — the roster is now filtered by householdScope; without the
+      # env it fail-closes to [caller] and the AssigneePicker silently loses the other household
+      # member. Same read-merge mechanics as the original harvests step.
+      - name: Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped fns (read-merge)
+        if: matrix.function == 'harvests' || matrix.function == 'members'
         continue-on-error: true  # requires lambda:GetFunctionConfiguration + lambda:UpdateFunctionConfiguration on deploy role
         run: |
-          FN="garden-harvests"
+          FN="garden-${{ matrix.function }}"
           SRC="garden-events"  # canonical live source of GARDEN_HOUSEHOLD_IDS (household mode is live)
           HH=$(aws lambda get-function-configuration --function-name "$SRC" \
             --query 'Environment.Variables.GARDEN_HOUSEHOLD_IDS' --output text 2>/dev/null || echo "None")
           if [[ "$HH" == "None" || -z "$HH" ]]; then
-            echo "::warning::B1 UNRESOLVED — could not read GARDEN_HOUSEHOLD_IDS from $SRC. garden-harvests"
-            echo "::warning::will fall back to per-user scope (Dave and Jen see DISJOINT harvest lists) until"
-            echo "::warning::GARDEN_HOUSEHOLD_IDS is set on garden-harvests manually. DO NOT ship the Harvests UI"
-            echo "::warning::to prod until this is resolved."
+            echo "::warning::B1 UNRESOLVED — could not read GARDEN_HOUSEHOLD_IDS from $SRC. $FN"
+            echo "::warning::will fall back to per-user scope (harvests: Dave and Jen see DISJOINT lists;"
+            echo "::warning::members: the AssigneePicker roster collapses to the caller alone) until"
+            echo "::warning::GARDEN_HOUSEHOLD_IDS is set on $FN manually."
             exit 0
           fi
           CURRENT=$(aws lambda get-function-configuration --function-name "$FN" \
@@ -137,9 +140,9 @@ jobs:
             EXISTING=$(aws lambda get-function-configuration --function-name "$FN" \
               --query 'Environment.Variables' --output json 2>/dev/null || echo "{}")
             UPDATED=$(echo "$EXISTING" | jq --arg v "$HH" '. + {GARDEN_HOUSEHOLD_IDS: $v}')
-            echo "{\"Variables\": $UPDATED}" > /tmp/env-harvests-household.json
+            echo "{\"Variables\": $UPDATED}" > "/tmp/env-$FN-household.json"
             aws lambda update-function-configuration \
-              --function-name "$FN" --environment file:///tmp/env-harvests-household.json >/dev/null
+              --function-name "$FN" --environment "file:///tmp/env-$FN-household.json" >/dev/null
             aws lambda wait function-updated --function-name "$FN"
             echo "GARDEN_HOUSEHOLD_IDS set on $FN"
           fi

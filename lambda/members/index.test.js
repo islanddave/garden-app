@@ -31,4 +31,26 @@ describe('members lambda (GET /api/members)', () => {
     expect(SRC).toMatch(/islanddave\+clerk\+system@gmail\.com/);
     expect(SRC).not.toMatch(/user_3E2xA85kQhr1vSZhiv4W1GLudJV/);
   });
+
+  // 0A.6 (devops-review plan): /api/members previously returned EVERY Clerk user — email
+  // included — to ANY authenticated caller. With open signup treated as the conservative
+  // default (D5), that is a roster+email leak to strangers.
+  it('roster is scoped to the caller household via householdScope (0A.6)', () => {
+    expect(SRC).toMatch(/import \{ householdScope \} from '\.\/household\.js'/);
+    expect(SRC).toMatch(/householdScope\(userId\)/);
+    // The Clerk list is filtered to household members, not just de-botted.
+    expect(SRC).toMatch(/hh\.has\(u\.id\)/);
+  });
+
+  it('response drops email — no consumer renders it (0A.6 consumer grep 2026-07-28)', () => {
+    // AssigneePicker/Garden/Findings/Today consume { id, display_name } only.
+    // displayName() may still USE email server-side as a label fallback — that is fine;
+    // the response map itself must not carry an email field.
+    const i = SRC.indexOf('.map((u) => ({');
+    expect(i).toBeGreaterThan(-1);
+    const block = SRC.slice(i, SRC.indexOf('}))', i) + 3);
+    // No email FIELD in the response object (comments mentioning the drop are fine).
+    expect(block).not.toMatch(/email\s*:/);
+    expect(block).not.toMatch(/emailAddresses/);
+  });
 });
