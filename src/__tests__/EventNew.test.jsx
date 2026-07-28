@@ -14,12 +14,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 
 // ── Hoisted mock plumbing ───────────────────────────────────────────────
-const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef, uploadResultRef } = vi.hoisted(() => ({
+const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef, uploadResultRef, uploadUiRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
   navigateSpy: vi.fn(),
   postCalls: [],
   // BUG-PHOTOUPLOADHANG-001: per-test override for the swallow-mode photo upload result.
   uploadResultRef: { current: null },
+  // Save-button label instrumentation: stage/progress the mocked hook reports; hang=true makes
+  // the photo leg never settle so the mid-upload label is observable.
+  uploadUiRef: { current: { stage: null, progress: null, hang: false } },
   dataRef: {
     projects: [],
     locations: [],
@@ -36,10 +39,14 @@ vi.mock('../lib/api.js', () => ({
 
 vi.mock('../hooks/useUploadPhoto.js', () => ({
   useUploadPhoto: () => ({
-    upload: vi.fn(async () => uploadResultRef.current ?? { photo: { id: 'p1' } }),
+    upload: vi.fn(() => uploadUiRef.current.hang
+      ? new Promise(() => {})
+      : Promise.resolve(uploadResultRef.current ?? { photo: { id: 'p1' } })),
     isUploading: false,
     error: null,
     photo: null,
+    stage: uploadUiRef.current.stage,
+    progress: uploadUiRef.current.progress,
     preview: null,
     reset: vi.fn(),
   }),
@@ -91,6 +98,7 @@ beforeEach(() => {
   dataRef.postResult = { id: 'evt-1', updated_streak: 1, xp_gained: 10, newly_earned_achievements: [] }
   dataRef.postError = null
   uploadResultRef.current = null
+  uploadUiRef.current = { stage: null, progress: null, hang: false }
   try { localStorage.clear() } catch { /* noop */ }
   wireApiFetch()
 })
@@ -469,5 +477,44 @@ describe('EventNew — photo failure surfacing', () => {
     await attachPhotoAndSave()
     expect(postCalls.length).toBe(1)
     expect(screen.queryByText(/photo didn't upload/i)).toBeNull()
+  })
+})
+
+// BUG-PHOTOUPLOADHANG-001 — the Save button names the photo step + live % while the photo leg
+// runs (a minutes-long bare "Saving…" is how a dead upload hid inside the event save).
+describe('EventNew — Save button photo-stage labels', () => {
+  async function attachPhotoAndSubmit() {
+    globalThis.URL.createObjectURL = vi.fn(() => 'blob:mock')
+    globalThis.URL.revokeObjectURL = vi.fn()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    const fileInput = document.querySelector('input[type="file"]')
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [new File(['x'], 'begonia.jpg', { type: 'image/jpeg' })] } })
+    })
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
+  }
+
+  it('shows "Uploading photo… N%" while the PUT is in flight', async () => {
+    uploadUiRef.current = { stage: 'uploading', progress: 43, hang: true }
+    renderEventNew('event_type=watering')
+    await flushLoad()
+    await attachPhotoAndSubmit()
+    expect(screen.getByText('Uploading photo… 43%')).toBeTruthy()
+  })
+
+  it('shows "Preparing photo…" during the downscale stage', async () => {
+    uploadUiRef.current = { stage: 'preparing', progress: null, hang: true }
+    renderEventNew('event_type=watering')
+    await flushLoad()
+    await attachPhotoAndSubmit()
+    expect(screen.getByText('Preparing photo…')).toBeTruthy()
+  })
+
+  it('plain event save (no photo) still reads "Saving…" mid-flight and completes', async () => {
+    renderEventNew('event_type=watering')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
+    expect(postCalls.length).toBe(1)
   })
 })

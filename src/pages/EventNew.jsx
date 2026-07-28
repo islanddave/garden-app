@@ -1328,7 +1328,15 @@ export default function EventNew() {
               type="button"
               variant="primary"
               loading={saving}
-              loadingLabel="Saving…"
+              // BUG-PHOTOUPLOADHANG-001: while the photo leg runs, name the step + live % (same
+              // labels as PhotoUpload) — a minutes-long "Saving…" with no signal is how a dead
+              // upload hid inside the event save. Falls back to "Saving…" for the event POST.
+              loadingLabel={
+                photoUploader.stage === 'preparing' ? 'Preparing photo…' :
+                photoUploader.stage === 'uploading' ? (typeof photoUploader.progress === 'number' ? `Uploading photo… ${photoUploader.progress}%` : 'Uploading photo…') :
+                photoUploader.stage === 'saving' ? 'Saving photo…' :
+                'Saving…'
+              }
               onClick={e => handleSubmit(e, { keepMode: 'type' })}
               style={{
                 boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
