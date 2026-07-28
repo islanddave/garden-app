@@ -14,10 +14,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 
 // ── Hoisted mock plumbing ───────────────────────────────────────────────
-const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef } = vi.hoisted(() => ({
+const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef, uploadResultRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
   navigateSpy: vi.fn(),
   postCalls: [],
+  // BUG-PHOTOUPLOADHANG-001: per-test override for the swallow-mode photo upload result.
+  uploadResultRef: { current: null },
   dataRef: {
     projects: [],
     locations: [],
@@ -34,7 +36,7 @@ vi.mock('../lib/api.js', () => ({
 
 vi.mock('../hooks/useUploadPhoto.js', () => ({
   useUploadPhoto: () => ({
-    upload: vi.fn().mockResolvedValue({ photo: { id: 'p1' } }),
+    upload: vi.fn(async () => uploadResultRef.current ?? { photo: { id: 'p1' } }),
     isUploading: false,
     error: null,
     photo: null,
@@ -88,6 +90,7 @@ beforeEach(() => {
   dataRef.plants = []
   dataRef.postResult = { id: 'evt-1', updated_streak: 1, xp_gained: 10, newly_earned_achievements: [] }
   dataRef.postError = null
+  uploadResultRef.current = null
   try { localStorage.clear() } catch { /* noop */ }
   wireApiFetch()
 })
@@ -431,5 +434,40 @@ describe('EventNew — V4-EVENTSAVE-001 single Save = next-of-type', () => {
     await act(async () => { fireEvent.click(screen.getByText('Undo')) })
     const del = apiFetchSpy.mock.calls.find(([p, o]) => p === '/api/events/evt-1' && o && o.method === 'DELETE')
     expect(del).toBeTruthy()
+  })
+})
+
+// BUG-PHOTOUPLOADHANG-001 follow-up — a swallowed photo failure must still be VISIBLE.
+describe('EventNew — photo failure surfacing', () => {
+  function stubObjectUrls() {
+    globalThis.URL.createObjectURL = vi.fn(() => 'blob:mock')
+    globalThis.URL.revokeObjectURL = vi.fn()
+  }
+  async function attachPhotoAndSave() {
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    const fileInput = document.querySelector('input[type="file"]')
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [new File(['x'], 'begonia.jpg', { type: 'image/jpeg' })] } })
+    })
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
+  }
+
+  it('a failed photo upload surfaces "photo didn\'t upload" in the save toast', async () => {
+    stubObjectUrls()
+    uploadResultRef.current = { error: 'Upload stalled — the connection stopped sending. Check your signal and try again.' }
+    renderEventNew('event_type=watering')
+    await flushLoad()
+    await attachPhotoAndSave()
+    expect(postCalls.length).toBe(1) // the event itself still saves
+    expect(await screen.findByText(/photo didn't upload/i)).toBeTruthy()
+  })
+
+  it('a successful photo upload keeps the plain success toast', async () => {
+    stubObjectUrls()
+    renderEventNew('event_type=watering')
+    await flushLoad()
+    await attachPhotoAndSave()
+    expect(postCalls.length).toBe(1)
+    expect(screen.queryByText(/photo didn't upload/i)).toBeNull()
   })
 })

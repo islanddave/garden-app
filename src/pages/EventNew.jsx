@@ -689,8 +689,13 @@ export default function EventNew() {
     // The hook runs the same 3-step presign → S3 PUT → POST /api/photos dance.
     // We pass keyPrefix='events' + parentId=eventId so the key resolves to
     // events/{eventId}/{uuid}.{ext} — matching the prior inline behavior.
+    // BUG-PHOTOUPLOADHANG-001 follow-up: swallow mode keeps a photo failure non-fatal (the event
+    // is already saved), but fully-silent is how a stalled upload masqueraded as a successful save
+    // — the user watched "Saving…" for minutes and the photo just never existed. Capture the
+    // result so the confirmation surfaces the failure; the event success flow is untouched.
+    let photoError = null
     if (photoFile) {
-      await photoUploader.upload(photoFile, {
+      const photoRes = await photoUploader.upload(photoFile, {
         keyPrefix: 'events',
         parentId:  eventId,
         linkage: {
@@ -699,7 +704,7 @@ export default function EventNew() {
         },
         is_public: form.is_public,
       })
-      // Errors are already swallowed by the hook in 'swallow' mode — no try/catch needed.
+      if (photoRes?.error) photoError = photoRes.error
     }
 
     setSaving(false)
@@ -752,6 +757,7 @@ export default function EventNew() {
           eventEmoji: EVENT_TYPE_META[form.event_type]?.emoji ?? '✓',
           undone: false,
           error: null,
+          photoError,
         })
         // V4-HARVESTVIEW-001 S4a: post-save season-total line (design §2 loop-closer). Cleared first
         // so a prior harvest's total can never flash on this card; then a harvest-only aggregates GET
@@ -768,7 +774,9 @@ export default function EventNew() {
         // aria-modal sheet the toast IS AT-reachable, and the full-page rapid-entry flow keeps the
         // form on screen — a body-replacing card here would add a tap to every sequential log.
         showUndo({
-          message: `Logged event for ${projName}`,
+          message: photoError
+            ? `Logged event for ${projName} — but the photo didn't upload`
+            : `Logged event for ${projName}`,
           onUndo: () => { apiFetch('/api/events/' + eventId, { method: 'DELETE' }).catch(() => {}) },
         })
       }
@@ -825,6 +833,13 @@ export default function EventNew() {
             {confirmation.error && (
               <p role="alert" style={{ margin: '10px 0 0', color: P.terra, fontSize: '0.82rem', fontWeight: 600 }}>
                 {confirmation.error}
+              </p>
+            )}
+            {/* BUG-PHOTOUPLOADHANG-001: a swallowed photo failure must still be VISIBLE. Static
+                text, NO link — the card's link count is a pinned B5 invariant. */}
+            {confirmation.photoError && !confirmation.undone && (
+              <p role="alert" style={{ margin: '10px 0 0', color: P.terra, fontSize: '0.82rem', fontWeight: 600 }}>
+                ⚠️ The photo didn't upload: {confirmation.photoError}
               </p>
             )}
             {!confirmation.undone && (
