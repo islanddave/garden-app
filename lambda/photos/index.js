@@ -119,10 +119,15 @@ async function autoPromoteFeatured(sql, photo, householdIds) {
       `;
     }
     if (photo.location_id) {
+      // BUG-PHOTOLOCAUTHZ-001: ownership predicate added to match the 3 sibling arms. Was the
+      // only arm without it — any authenticated user POSTing a photo with another household's
+      // location_id could set that location's featured photo. No backfill gate: locations has
+      // 0 NULL created_by across all 29 live rows (W0.2-r1 locations-census).
       await sql`
         UPDATE locations
            SET featured_photo_id = ${photo.id}
          WHERE id = ${photo.location_id}
+           AND created_by = ANY(${householdIds})
            AND featured_photo_id IS NULL
            AND deleted_at IS NULL
       `;

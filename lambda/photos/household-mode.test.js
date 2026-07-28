@@ -29,17 +29,25 @@ describe('photos Lambda — Household Mode uploaded_by -> created_by switch', ()
   });
 
   it('scope filters + cross-entity featured-photo guards use created_by = ANY(${householdIds})', () => {
-    // 4 switched (view-url, 2 list, re-tag) + 3 cross-entity PATCH guards = 7.
+    // 10 = the 9 pre-existing (view-url, 3 list branches, re-tag, batch-tag entity walk,
+    // container/garden_node/inventory auto-promote arms) + 1: BUG-PHOTOLOCAUTHZ-001 added the
+    // predicate to the locations auto-promote arm, closing the one arm that lacked it.
+    // (The old "7" comment was stale — this regex also matches p./pp. qualified forms.)
     const matches = SRC.match(/created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(7);
+    expect(matches.length).toBeGreaterThanOrEqual(10);
   });
 
-  it('UPDATE locations auto-promote block left UNTOUCHED (backfill-gated, out of scope)', () => {
+  it('UPDATE locations auto-promote arm carries the ownership predicate (BUG-PHOTOLOCAUTHZ-001)', () => {
+    // INVERTED 2026-07-28. The old assertion pinned this arm OPEN ("backfill-gated, out of
+    // scope") — but locations has 0 NULL created_by across all 29 live rows (W0.2-r1
+    // locations-census), so there is no backfill gate and the missing predicate was a
+    // cross-tenant featured-photo write. The arm must now match its 3 siblings.
     const locIdx = SRC.indexOf('UPDATE locations');
     expect(locIdx).toBeGreaterThan(-1);
-    const block = SRC.slice(locIdx, locIdx + 320);
-    expect(block).not.toMatch(/created_by/);
-    expect(block).not.toMatch(/householdIds/);
+    const block = SRC.slice(locIdx, locIdx + 400);
+    expect(block).toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
+    expect(block).toMatch(/featured_photo_id IS NULL/);
+    expect(block).toMatch(/deleted_at IS NULL/);
   });
 
   it('INSERT still binds uploaded_by + created_by = ${userId}', () => {
@@ -54,5 +62,65 @@ describe('photos Lambda — Household Mode uploaded_by -> created_by switch', ()
 
   it('no array spread (42P18 guard)', () => {
     expect(SRC).not.toMatch(/\$\{\.\.\.householdIds\}/);
+  });
+});
+
+// BEHAVIOR-LEVEL guard (BUG-PHOTOLOCAUTHZ-001) — executes the REAL autoPromoteFeatured against a
+// recording fake of the Neon tagged-template `sql` (the lambda/events/critterAward.test.js pattern)
+// and asserts the SQL it actually EMITS, not just the source text. index.js cannot be imported here
+// (its @aws-sdk/@clerk/@neondatabase imports are per-Lambda deps, not installed at the repo root),
+// so the function source is extracted verbatim and instantiated — same executed code, zero deps.
+// The true end-to-end check (row actually protected in Postgres) is Wave-4 staging smoke.
+function extractFunction(src, header) {
+  const start = src.indexOf(header);
+  if (start === -1) return null;
+  let depth = 0;
+  for (let i = src.indexOf('{', start); i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(start, i + 1); }
+  }
+  return null;
+}
+
+function makeSql() {
+  const calls = [];
+  const sql = (strings, ...values) => {
+    calls.push({ text: strings.join('¶'), values });
+    return Promise.resolve([]);
+  };
+  sql.calls = calls;
+  return sql;
+}
+
+describe('autoPromoteFeatured — locations arm behavior (BUG-PHOTOLOCAUTHZ-001)', () => {
+  const fnSrc = extractFunction(SRC, 'async function autoPromoteFeatured');
+
+  it('function source extracted (guard for the extraction itself)', () => {
+    expect(fnSrc).toBeTruthy();
+    expect(fnSrc).toMatch(/UPDATE locations/);
+  });
+
+  it('a location-linked photo emits ONE locations UPDATE that carries the ownership predicate AND binds householdIds', async () => {
+    const autoPromoteFeatured = new Function(`return (${fnSrc});`)();
+    const sql = makeSql();
+    const householdIds = ['user_dave', 'user_jen'];
+    await autoPromoteFeatured(sql, { id: 'photo-1', location_id: 'loc-1' }, householdIds);
+    const locCalls = sql.calls.filter((c) => c.text.includes('UPDATE locations'));
+    expect(locCalls).toHaveLength(1);
+    // The emitted statement must guard ownership...
+    expect(locCalls[0].text).toMatch(/created_by = ANY\(/);
+    // ...and actually BIND the household ids as a parameter (not merely mention them).
+    expect(locCalls[0].values).toContainEqual(householdIds);
+    // Sibling invariants preserved on the same emitted statement.
+    expect(locCalls[0].text).toMatch(/featured_photo_id IS NULL/);
+    expect(locCalls[0].text).toMatch(/deleted_at IS NULL/);
+  });
+
+  it('location-only photo fires ONLY the locations arm (no cross-arm writes)', async () => {
+    const autoPromoteFeatured = new Function(`return (${fnSrc});`)();
+    const sql = makeSql();
+    await autoPromoteFeatured(sql, { id: 'photo-2', location_id: 'loc-9' }, ['user_dave']);
+    expect(sql.calls).toHaveLength(1);
+    expect(sql.calls[0].text).toContain('UPDATE locations');
   });
 });
