@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.72.0",
+    "date": "2026-07-28",
+    "highlights": [
+      "Logging an event with a photo now shows real progress on the Save button — Preparing, then Uploading with a live percentage, then Saving",
+      "If a photo fails to upload during an event save, the app now says so clearly instead of silently dropping it"
+    ]
+  },
+  {
     "version": "3.71.0",
     "date": "2026-07-27",
     "highlights": [
