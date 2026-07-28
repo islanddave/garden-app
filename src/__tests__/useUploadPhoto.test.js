@@ -50,8 +50,10 @@ class FakeXHR {
     this.body = body;
     if (FakeXHR.behavior === 'success') queueMicrotask(() => this.fireLoad(200));
     else if (FakeXHR.behavior === 'status403') queueMicrotask(() => this.fireLoad(403));
+    else if (FakeXHR.behavior === 'error') queueMicrotask(() => this.fireError());
     // 'manual': the test drives fireProgress/fireLoad itself
   }
+  fireError() { (this._l.error || []).forEach(f => f({})); }
   fireProgress(loaded, total) { (this._ul.progress || []).forEach(f => f({ lengthComputable: true, loaded, total })); }
   fireLoad(status) { this.status = status; (this._l.load || []).forEach(f => f({})); }
 }
@@ -423,5 +425,86 @@ describe('useUploadPhoto — thumbnail upload (step 2b)', () => {
 
     expect(globalThis.fetch.mock.calls.filter(c => c[1]?.method === 'PUT').length).toBe(0);
     expect(result.current.photo).toEqual({ id: 'p1' });
+  });
+});
+
+// BUG-PHOTOUPLOADRELAY-001 — when the direct S3 PUT dies, the bytes relay through the API.
+describe('useUploadPhoto — relay fallback', () => {
+  const THUMB = new Blob([new Uint8Array(1000)], { type: 'image/jpeg' });
+
+  it('a failed direct PUT relays through /api/photos/relay-upload and still registers the photo', async () => {
+    FakeXHR.behavior = 'error';
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });          // 1 presign
+    fetchSpy.mockResolvedValueOnce({ ok: true, key: 'k', thumb: false });               // relay
+    fetchSpy.mockResolvedValueOnce({ id: 'p1', storage_path: 'standalone/u.jpg' });     // 3 POST
+    mockThumbPutOk();
+
+    const { result } = renderHook(() => useUploadPhoto());
+    let res;
+    await act(async () => { res = await result.current.upload(fakeFile()); });
+
+    const relayCall = fetchSpy.mock.calls.find(c => c[0] === '/api/photos/relay-upload');
+    expect(relayCall).toBeTruthy();
+    expect(relayCall[1].method).toBe('POST');
+    expect(relayCall[1].timeoutMs).toBe(60000);
+    const body = JSON.parse(relayCall[1].body);
+    expect(body.key).toMatch(/^standalone\//);
+    expect(body.content_type).toBe('image/jpeg');
+    expect(typeof body.data_b64).toBe('string');
+    expect(body.data_b64.length).toBeGreaterThan(0);
+    expect(res.photo).toEqual({ id: 'p1', storage_path: 'standalone/u.jpg' });
+    expect(result.current.error).toBeNull();
+  });
+
+  it('relay carries the thumb and a thumb:true response SKIPS step 2b', async () => {
+    thumbState.thumb = THUMB;
+    FakeXHR.behavior = 'error';
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
+    fetchSpy.mockResolvedValueOnce({ ok: true, key: 'k', thumb: true });
+    fetchSpy.mockResolvedValueOnce({ id: 'p1' });
+    mockThumbPutOk();
+
+    const { result } = renderHook(() => useUploadPhoto());
+    await act(async () => { await result.current.upload(fakeFile()); });
+
+    const relayCall = fetchSpy.mock.calls.find(c => c[0] === '/api/photos/relay-upload');
+    expect(JSON.parse(relayCall[1].body).thumb_b64).toBeTruthy();
+    expect(fetchSpy.mock.calls.some(c => String(c[0]).includes('thumb-upload-url'))).toBe(false);
+  });
+
+  it('a thumb:false relay response still runs step 2b (thumb via presign)', async () => {
+    thumbState.thumb = THUMB;
+    FakeXHR.behavior = 'error';
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
+    fetchSpy.mockResolvedValueOnce({ ok: true, key: 'k', thumb: false });               // relay: no thumb stored
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/thumb' });         // 2b presign
+    fetchSpy.mockResolvedValueOnce({ id: 'p1' });                                       // 3 POST
+    mockThumbPutOk();
+
+    const { result } = renderHook(() => useUploadPhoto());
+    await act(async () => { await result.current.upload(fakeFile()); });
+    expect(fetchSpy.mock.calls.some(c => String(c[0]).includes('thumb-upload-url'))).toBe(true);
+  });
+
+  it('a failed relay surfaces the ORIGINAL direct-PUT error', async () => {
+    FakeXHR.behavior = 'error';
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
+    fetchSpy.mockRejectedValueOnce(new Error('relay down'));
+    const { result } = renderHook(() => useUploadPhoto());
+    let res;
+    await act(async () => { res = await result.current.upload(fakeFile()); });
+    expect(res.error).toMatch(/network error/);
+    expect(result.current.error).toMatch(/network error/);
+  });
+
+  it('an over-cap file skips the relay entirely and surfaces the direct-PUT error', async () => {
+    FakeXHR.behavior = 'error';
+    fetchSpy.mockResolvedValueOnce({ upload_url: 'https://s3.example/orig' });
+    const big = new File([new Uint8Array(4_000_000)], 'huge.jpg', { type: 'image/jpeg' });
+    const { result } = renderHook(() => useUploadPhoto());
+    let res;
+    await act(async () => { res = await result.current.upload(big); });
+    expect(res.error).toMatch(/network error/);
+    expect(fetchSpy.mock.calls.some(c => c[0] === '/api/photos/relay-upload')).toBe(false);
   });
 });

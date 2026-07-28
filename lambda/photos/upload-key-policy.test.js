@@ -157,3 +157,36 @@ describe('photos Lambda — thumb-upload-url derives the thumb key server-side',
     expect(SRC).toMatch(/resolvePhotoViewUrl\(`thumbs\/\$\{photo\.storage_path\}`/);
   });
 });
+
+// BUG-PHOTOUPLOADRELAY-001 — POST /api/photos/relay-upload route wiring. Same anchor discipline:
+// bounded by the NEXT route marker so an inserted route can't silently widen this window.
+function relayBlock() {
+  const i = SRC.indexOf("rawPath === '/api/photos/relay-upload'");
+  const next = SRC.indexOf('const viewMatch = rawPath.match', i + 1);
+  return SRC.slice(i, next === -1 ? undefined : next);
+}
+
+describe('route wiring — POST /api/photos/relay-upload (BUG-PHOTOUPLOADRELAY-001)', () => {
+  it('exists and sits AFTER the batch route (does not widen the thumb-upload-url window)', () => {
+    const iRelay = SRC.indexOf("rawPath === '/api/photos/relay-upload'");
+    expect(iRelay).toBeGreaterThan(-1);
+    expect(iRelay).toBeGreaterThan(SRC.indexOf("rawPath === '/api/photos/batch'"));
+  });
+  it('validates the caller key + content type with the closed grammar BEFORE any S3 write', () => {
+    const b = relayBlock();
+    expect(b.indexOf('isAllowedUploadKey(key)')).toBeGreaterThan(-1);
+    expect(b.indexOf('SAFE_CONTENT_TYPE.test')).toBeGreaterThan(-1);
+    expect(b.indexOf('resp(403')).toBeGreaterThan(-1);
+    expect(b.indexOf('resp(403')).toBeLessThan(b.indexOf('s3.send'));
+  });
+  it('caps both payloads (413) BEFORE decoding or writing', () => {
+    const b = relayBlock();
+    expect(b.indexOf('RELAY_MAX_B64_CHARS')).toBeGreaterThan(-1);
+    expect(b.indexOf('RELAY_THUMB_MAX_B64_CHARS')).toBeGreaterThan(-1);
+    expect(b.indexOf('resp(413')).toBeLessThan(b.indexOf('s3.send'));
+  });
+  it('derives the thumb key SERVER-side (thumbs/ prefix is not caller-nameable)', () => {
+    const b = relayBlock();
+    expect(b.indexOf('`thumbs/${key}`')).toBeGreaterThan(-1);
+  });
+});

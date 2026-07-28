@@ -41,6 +41,10 @@ const MAX_BATCH = 20;
 // the design (tagged / skipped) is DERIVED, so a third value here would be a bug, not a feature.
 const INTAKE_STATUSES = ['pending_tag', 'upload_failed'];
 const SAFE_KEY_SEGMENT = /^[A-Za-z0-9._-]+$/;  // Clerk subs look like user_3D2gM0hIl03gjW3JM2DjtPzm0jI
+// BUG-PHOTOUPLOADRELAY-001 caps. Lambda URLs cap request payloads at 6MB and base64 inflates 4/3:
+// these keep base64 + JSON envelope safely under it. A downscaled photo runs ~300-600KB decoded.
+const RELAY_MAX_B64_CHARS = 5_200_000;      // ≈3.9MB decoded
+const RELAY_THUMB_MAX_B64_CHARS = 700_000;  // ≈525KB decoded; thumbs run 80-260KB
 const SAFE_EXT = /^[a-z0-9]{1,8}$/;
 const SAFE_CONTENT_TYPE = /^image\/[a-zA-Z0-9.+-]{1,32}$/;
 
@@ -258,6 +262,53 @@ export const handler = async (event) => {
         });
       }
       return resp(200, { uploads, expires_in: 900 });
+    }
+
+    // POST /api/photos/relay-upload — BUG-PHOTOUPLOADRELAY-001. The photo bytes travel THROUGH
+    // the Lambda instead of direct-to-S3. Exists because a client's route to S3 can be dead while
+    // its route to Lambda stays healthy (observed live 2026-07-28: TCP to s3.us-east-1 blackholed
+    // inside the ISP — device- and app-independent — while lambda-url/CloudFront traffic was
+    // fine). The client calls this ONLY after the direct presigned PUT failed its stall watchdog.
+    //
+    // SECURITY — the same closed grammar as upload-url, not a widening: the caller names the
+    // ORIGINAL key only (isAllowedUploadKey; a caller-supplied thumbs/… key 403s), ContentType is
+    // allowlisted, and decoded sizes are hard-capped (Lambda URLs cap payloads at 6MB; these caps
+    // keep base64+JSON under it). The thumb key is derived SERVER-side, mirroring thumb-upload-url.
+    if (rawPath === '/api/photos/relay-upload' && method === 'POST') {
+      let relayBody;
+      try {
+        const raw = event.isBase64Encoded ? Buffer.from(event.body ?? '', 'base64').toString('utf8') : (event.body ?? '{}');
+        relayBody = JSON.parse(raw);
+      } catch {
+        return resp(400, { error: 'Invalid JSON body' });
+      }
+      const { key, content_type: relayType = 'image/jpeg', data_b64: dataB64, thumb_b64: thumbB64 = null } = relayBody ?? {};
+      if (!key || !dataB64) return resp(400, { error: 'key and data_b64 are required' });
+      if (!isAllowedUploadKey(key) || !SAFE_CONTENT_TYPE.test(relayType)) return resp(403, { error: 'Forbidden' });
+      if (typeof dataB64 !== 'string' || dataB64.length > RELAY_MAX_B64_CHARS) return resp(413, { error: 'Photo too large to relay' });
+      if (thumbB64 != null && (typeof thumbB64 !== 'string' || thumbB64.length > RELAY_THUMB_MAX_B64_CHARS)) return resp(413, { error: 'Thumb too large to relay' });
+      let bytes;
+      let thumbBytes = null;
+      try {
+        bytes = Buffer.from(dataB64, 'base64');
+        if (thumbB64) thumbBytes = Buffer.from(thumbB64, 'base64');
+      } catch {
+        return resp(400, { error: 'Invalid base64' });
+      }
+      if (!bytes.length) return resp(400, { error: 'Empty photo body' });
+      await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: bytes, ContentType: relayType }));
+      // Thumb is best-effort, same contract as step 2b: the read path falls back to view_url
+      // when thumbs/<key> is absent, so a thumb failure must never fail the relay.
+      let thumbStored = false;
+      if (thumbBytes && thumbBytes.length) {
+        try {
+          await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: `thumbs/${key}`, Body: thumbBytes, ContentType: 'image/jpeg' }));
+          thumbStored = true;
+        } catch (thumbErr) {
+          console.error('relay thumb PUT non-fatal failure', thumbErr?.message ?? thumbErr);
+        }
+      }
+      return resp(200, { ok: true, key, thumb: thumbStored });
     }
 
     // GET /api/photos/view-url/:id — returns pre-signed GET URL for a photo record

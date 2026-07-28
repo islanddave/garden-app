@@ -34,6 +34,36 @@ import { putWithProgress } from '../lib/uploadPut.js';
 // never be the reason a save hangs (see the bounded-PUT note at its call site).
 const THUMB_PUT_TIMEOUT_MS = 10_000;
 
+// BUG-PHOTOUPLOADRELAY-001: when the direct-to-S3 PUT fails (stall watchdog, dead socket), retry
+// THROUGH the API — a client's route to S3 can be dead while its route to Lambda is healthy
+// (observed live 2026-07-28: s3.us-east-1 TCP blackholed inside the ISP, Lambda traffic fine).
+// Caps mirror the server route; a fallback-to-original file larger than the cap skips the relay
+// and surfaces the direct-PUT error honestly. The relay call gets its own generous timeout —
+// the WS-A6 15s default is too tight for shipping the photo bytes in the request body.
+const RELAY_MAX_BYTES = 3_900_000;
+const RELAY_THUMB_MAX_BYTES = 500_000;
+const RELAY_TIMEOUT_MS = 60_000;
+
+// Blob -> base64. Prefers arrayBuffer (chunked btoa so a multi-MB buffer can't blow the arg
+// limit); falls back to FileReader for engines whose Blob lacks arrayBuffer (incl. jsdom).
+async function blobToBase64(blob) {
+  if (typeof blob.arrayBuffer === 'function') {
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    let bin = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < buf.length; i += CHUNK) {
+      bin += String.fromCharCode.apply(null, buf.subarray(i, i + CHUNK));
+    }
+    return btoa(bin);
+  }
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result).split(',')[1] ?? '');
+    fr.onerror = () => reject(fr.error ?? new Error('FileReader failed'));
+    fr.readAsDataURL(blob);
+  });
+}
+
 // BUG-PHOTOUPLOADHANG-001: downscaleWithThumb is throw-proof (returns the original on any error)
 // but ran unbounded BEFORE the try block — a decode/encode that never settles (mobile memory
 // pressure is a real toBlob failure mode) wedged the save forever with isUploading stuck true and
@@ -154,7 +184,29 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       // (presign logged, no S3 object, no register). Now progress-aware with a stall watchdog:
       // aborts only when bytes stop moving, so a slow-but-moving fallback original still lands.
       setStage('uploading');
-      await putWithProgress(presign.upload_url, upFile, mime, { onProgress: setProgress });
+      let relayedThumb = false;
+      try {
+        await putWithProgress(presign.upload_url, upFile, mime, { onProgress: setProgress });
+      } catch (putErr) {
+        // BUG-PHOTOUPLOADRELAY-001: direct path dead — relay the bytes through the API when they
+        // fit. On relay failure the ORIGINAL error surfaces (it names the real problem).
+        if (typeof upFile.size !== 'number' || upFile.size > RELAY_MAX_BYTES) throw putErr;
+        setProgress(null);
+        let relay;
+        try {
+          const data_b64 = await blobToBase64(upFile);
+          const thumb_b64 = thumb && thumb.size <= RELAY_THUMB_MAX_BYTES ? await blobToBase64(thumb) : null;
+          relay = await fetch('/api/photos/relay-upload', {
+            method: 'POST',
+            timeoutMs: RELAY_TIMEOUT_MS,
+            body: JSON.stringify({ key, content_type: mime, data_b64, thumb_b64 }),
+          });
+        } catch {
+          throw putErr;
+        }
+        if (!relay?.ok) throw putErr;
+        relayedThumb = !!relay.thumb;
+      }
       setStage('saving');
       setProgress(null);
 
@@ -171,7 +223,7 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       // save path, and "photo upload hangs" is an OPEN bug. An unbounded call here would add a new
       // way for Save to stall forever. A thumb is ~50KB, so if it hasn't landed in 10s it is not
       // going to; abandon it and let the read path fall back. Never applied to the original PUT.
-      if (thumb) {
+      if (thumb && !relayedThumb) {
         try {
           const tPresign = await fetch(`/api/photos/thumb-upload-url?key=${encodeURIComponent(key)}`);
           if (tPresign?.upload_url) {
