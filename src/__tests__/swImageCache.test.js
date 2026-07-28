@@ -34,3 +34,24 @@ describe('sw.js image cache (V4-PHOTOCDN-001 P2)', () => {
     expect(SRC).toMatch(/isImage\(url\)\) \{\s*\n\s*event\.respondWith\(imageCacheFirst\(request\)\)/)
   })
 })
+
+// BUG-BOOTSTALL-001 — navigations fail over to the cached shell FAST; APIs keep the long bound.
+// Pins the split so a refactor can't silently re-unify them (the 12s nav bound was the frozen
+// pre-splash screen on degraded routes).
+describe('sw.js navigation vs API timeout split', () => {
+  it('defines a short NAV_TIMEOUT_MS and keeps SW_TIMEOUT_MS for APIs', () => {
+    const nav = SRC.match(/const NAV_TIMEOUT_MS = (\d+)/);
+    const api = SRC.match(/const SW_TIMEOUT_MS = (\d+)/);
+    expect(nav).toBeTruthy();
+    expect(api).toBeTruthy();
+    expect(Number(nav[1])).toBeLessThanOrEqual(5000);
+    expect(Number(nav[1])).toBeLessThan(Number(api[1]));
+  });
+  it('navigationFallback uses the NAV bound; networkFirst keeps the API bound', () => {
+    const navFn = SRC.slice(SRC.indexOf('async function navigationFallback'), SRC.indexOf('async function networkFirst'));
+    expect(navFn.indexOf('fetchWithTimeout(networkReq, NAV_TIMEOUT_MS)')).toBeGreaterThan(-1);
+    expect(navFn.indexOf('fetchWithTimeout(networkReq, SW_TIMEOUT_MS)')).toBe(-1);
+    const apiFn = SRC.slice(SRC.indexOf('async function networkFirst'));
+    expect(apiFn.indexOf('fetchWithTimeout(networkReq, SW_TIMEOUT_MS)')).toBeGreaterThan(-1);
+  });
+});

@@ -94,6 +94,14 @@ self.addEventListener('fetch', (event) => {
 
 // WS-A6: bound the network leg so a hung Lambda can't hang a request forever.
 const SW_TIMEOUT_MS = 12000
+// BUG-BOOTSTALL-001: navigations get a much shorter leash than API calls. The 12s bound applied
+// to the SHELL fetch is exactly the frozen pre-splash screen Dave reported (onset matches WS-A6
+// shipping 2026-07-24): on a degraded route the user stares at a blank tab for the full 12s
+// before the cached-shell fallback fires. A navigation has a safe, instant fallback (the cached
+// shell renders ANY route, and the UpdateBanner's staleness probe heals a stale shell within
+// seconds of connectivity returning), so waiting longer than ~4s buys nothing. API calls keep
+// 12s — their fallback is an error, not a render, so patience still pays there.
+const NAV_TIMEOUT_MS = 4000
 async function fetchWithTimeout(request, ms) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ms)
@@ -175,7 +183,8 @@ async function navigationFallback(request) {
   try {
     const networkReq = new Request(request, { cache: 'no-store' })
     // WS-A6: bound the navigation fetch too; on timeout/offline the catch serves the presign-free '/' shell.
-    const response = await fetchWithTimeout(networkReq, SW_TIMEOUT_MS)
+    // BUG-BOOTSTALL-001: navigations use the SHORT bound — see NAV_TIMEOUT_MS.
+    const response = await fetchWithTimeout(networkReq, NAV_TIMEOUT_MS)
     if (response.ok) {
       const cache = await caches.open(STATIC_CACHE)
       cache.put(request, response.clone())
