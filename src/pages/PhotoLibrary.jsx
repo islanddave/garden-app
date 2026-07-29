@@ -13,7 +13,9 @@ import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
 // tag / un-tag photos against projects, locations, and plants.
 // Photos Lambda GET returns view_url (signed S3 URL) and project_name inline.
 // Filter modes 'standalone' and 'untagged' are applied client-side.
-// NOTE: project_id is required by photos Lambda POST — upload form requires it.
+// NOTE: photos Lambda POST requires only storage_path; the DB CHECK photos_must_have_parent
+// admits any one of project/location/plant/event. The upload form enforces one-of
+// project/space/planting (V4-PHOTOLOCFIND-001) — a bare parentless upload would violate the CHECK.
 //
 // V2-PHOTO-F1 Session 2 (2026-05-13): refactored to use shared <PhotoUpload>
 // component + useUploadPhoto hook. The component owns the 3-step presign/PUT/POST
@@ -30,8 +32,9 @@ export default function PhotoLibrary() {
   const [projects,      setProjects]      = useState([])
   const [locations,     setLocations]     = useState([])
 
-  const [filterProject, setFilterProject] = useState('')
-  const [filterMode,    setFilterMode]    = useState('all')
+  const [filterProject,  setFilterProject]  = useState('')
+  const [filterLocation, setFilterLocation] = useState('')  // V4-PHOTOLOCFIND-001: space filter (server-side subtree)
+  const [filterMode,     setFilterMode]     = useState('all')
 
   const [showUpload,     setShowUpload]     = useState(false)
   const [uploadForm,     setUploadForm]     = useState({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
@@ -60,7 +63,7 @@ export default function PhotoLibrary() {
   // you scroll" behavior it lacked when the server limit was cut to 30.
   const PAGE = 24
   const [shown, setShown] = useState(PAGE)
-  useEffect(() => { setShown(PAGE) }, [filterProject, filterMode])
+  useEffect(() => { setShown(PAGE) }, [filterProject, filterLocation, filterMode])
   useEffect(() => {
     // Scroll listener rather than IntersectionObserver: IO is the same viewport-intersection
     // machinery native lazy depends on, and that is precisely what is not firing on this layout.
@@ -105,18 +108,23 @@ export default function PhotoLibrary() {
   const loadPhotos = useCallback(async () => {
     setLoading(true)
     setError(null)
-    const qs = filterProject ? `?project_id=${filterProject}` : ''
+    const qs = filterProject ? `?project_id=${filterProject}`
+             : filterLocation ? `?location_id=${filterLocation}`
+             : ''
     try {
       let data = await apiFetch('/api/photos' + qs) ?? []
       if (filterMode === 'standalone') data = data.filter(p => !p.event_id)
-      if (filterMode === 'untagged')   data = data.filter(p => !p.event_id && !p.project_id)
+      // V4-PHOTOLOCFIND-001: a photo attached to ANY parent (event/project/space/planting) is a
+      // finished photo — untagged means attached to nothing (V002 E2: valid untagged photos must
+      // not read as unfinished work; the old predicate flagged every deliberate space photo).
+      if (filterMode === 'untagged')   data = data.filter(p => !p.event_id && !p.project_id && !p.location_id && !p.plant_id)
       setPhotos(data)
     } catch (err) {
       setPhotos([])
       setError(err)   // apiFetch throws with .status on non-2xx; surface instead of masking as empty
     }
     setLoading(false)
-  }, [apiFetch, filterProject, filterMode])
+  }, [apiFetch, filterProject, filterLocation, filterMode])
 
   useEffect(() => { loadPhotos() }, [loadPhotos])
 
@@ -144,7 +152,11 @@ export default function PhotoLibrary() {
     plant_id:    uploadForm.plant_id    || null,
   }
   const photoCaption = uploadForm.caption.trim() || null
-  const projectIdMissing = !uploadForm.project_id
+  // V4-PHOTOLOCFIND-001: one-of target gate, matching the photos_must_have_parent CHECK and the
+  // handleTag predicate below. Project is no longer singularly required — a space alone is a valid
+  // home (the meta-photo case). plant_id is in the predicate for completeness though this form only
+  // offers plants after a project is picked.
+  const targetMissing = !uploadForm.project_id && !uploadForm.location_id && !uploadForm.plant_id
 
   // ---- Modal / tag handlers ----
   function openModal(photo) {
@@ -264,7 +276,7 @@ export default function PhotoLibrary() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} data-testid="photo-library-upload-form">
 
               <div>
-                <label style={fieldLabelStyle}>Project  ·  required</label>
+                <label style={fieldLabelStyle}>Project  ·  or pick a space below</label>
                 <select
                   value={uploadForm.project_id}
                   onChange={e => setUploadForm(f => ({ ...f, project_id: e.target.value, plant_id: '' }))}
@@ -294,7 +306,7 @@ export default function PhotoLibrary() {
               )}
 
               <div>
-                <label style={fieldLabelStyle}>Location  ·  optional</label>
+                <label style={fieldLabelStyle}>Space  ·  or pick a project above</label>
                 <select
                   value={uploadForm.location_id}
                   onChange={e => setUploadForm(f => ({ ...f, location_id: e.target.value }))}
@@ -317,9 +329,9 @@ export default function PhotoLibrary() {
 
               {/* V4-PUBHIDE-001: is_public toggle removed. */}
 
-              {projectIdMissing && (
+              {targetMissing && (
                 <p style={{ margin: 0, fontSize: '0.8rem', color: P.light }}>
-                  Select a project before uploading.
+                  A standalone photo needs at least a project or space.
                 </p>
               )}
 
@@ -332,7 +344,7 @@ export default function PhotoLibrary() {
                 mode="both"
                 onUploadComplete={handleUploadComplete}
                 onUploadError={handleUploadError}
-                disabled={projectIdMissing}
+                disabled={targetMissing}
                 inputId="photolibrary-upload-input"
               />
             </div>
@@ -346,11 +358,11 @@ export default function PhotoLibrary() {
             { mode: 'standalone', label: 'No event' },
             { mode: 'untagged',   label: 'Untagged' },
           ].map(({ mode, label }) => {
-            const active = filterMode === mode && !filterProject
+            const active = filterMode === mode && !filterProject && !filterLocation
             return (
               <button
                 key={mode}
-                onClick={() => { setFilterMode(mode); setFilterProject('') }}
+                onClick={() => { setFilterMode(mode); setFilterProject(''); setFilterLocation('') }}
                 style={{
                   padding: '6px 14px', borderRadius: 20, fontSize: '0.82rem', fontWeight: 600,
                   cursor: 'pointer',
@@ -365,7 +377,7 @@ export default function PhotoLibrary() {
           })}
           <select
             value={filterProject}
-            onChange={e => { setFilterProject(e.target.value); setFilterMode('all') }}
+            onChange={e => { setFilterProject(e.target.value); setFilterLocation(''); setFilterMode('all') }}
             style={{
               ...selectStyle,
               fontSize: '0.82rem', padding: '6px 30px 6px 10px',
@@ -376,6 +388,22 @@ export default function PhotoLibrary() {
           >
             <option value="">Filter by project…</option>
             <ProjectOptions projects={projects} />
+          </select>
+          {/* V4-PHOTOLOCFIND-001: space chip — server-side subtree filter (a parent space shows its
+              descendants' photos). Mutually exclusive with the project filter, like the mode chips. */}
+          <select
+            value={filterLocation}
+            onChange={e => { setFilterLocation(e.target.value); setFilterProject(''); setFilterMode('all') }}
+            style={{
+              ...selectStyle,
+              fontSize: '0.82rem', padding: '6px 30px 6px 10px',
+              maxWidth: 200, flexShrink: 1,
+              border: filterLocation ? `1px solid ${P.green}` : `1px solid ${P.border}`,
+              backgroundColor: filterLocation ? P.greenPale : P.white,
+            }}
+          >
+            <option value="">Filter by space…</option>
+            {locations.map(l => <option key={l.id} value={l.id}>{l.full_path}</option>)}
           </select>
         </div>
 

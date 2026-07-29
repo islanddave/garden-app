@@ -345,6 +345,12 @@ export const handler = async (event) => {
       // still appears (fixes the project-scoped ?project_id fetch that hid such photos). Distinct from
       // ?project_id (container gallery) — this does NOT overload it.
       const attachedTo = event.queryStringParameters?.attachedTo ?? null;
+      // V4-PHOTOLOCFIND-001: space gallery. ?location_id=<spaceId> returns photos attached to that
+      // space OR any descendant space (same recursive parent_id walk as the events By-Space filter,
+      // V4-LOGMANYLOC-001 — a leaf resolves to just itself). This is a CONTAINER-style filter like
+      // ?project_id, NOT an attachment source for planting galleries — the Dave 2026-07-09 rule
+      // behind ?attachedTo is unchanged.
+      const locationId = event.queryStringParameters?.location_id ?? null;
       // Restored to 120 now that the grid takes ~200KB thumbs instead of full originals:
       // 120 thumbs is ~24MB where 120 originals was ~369MB (both measured 2026-07-27). The
       // interim 30 was a stopgap that traded a blank tab for a hard cut with no pagination.
@@ -367,6 +373,29 @@ export const handler = async (event) => {
                   SELECT e.id FROM public.event_log e
                   WHERE e.plant_id = ${attachedTo} AND e.deleted_at IS NULL
                 )
+              )
+            ORDER BY p.created_at DESC
+            LIMIT ${limit}
+          `;
+      } else if (locationId) {
+        rows = await sql`
+            SELECT
+              p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
+              p.storage_path, p.caption, p.is_public, p.created_at,
+              pp.display_name AS project_name
+            FROM photos p
+            LEFT JOIN public.container pp ON pp.id = p.project_id
+            WHERE p.created_by = ANY(${householdIds})
+              AND p.deleted_at IS NULL
+              AND p.location_id IN (
+                WITH RECURSIVE loc_subtree AS (
+                  SELECT id FROM locations WHERE id = ${locationId} AND deleted_at IS NULL
+                  UNION ALL
+                  SELECT l.id FROM locations l
+                    JOIN loc_subtree st ON l.parent_id = st.id
+                    WHERE l.deleted_at IS NULL
+                )
+                SELECT id FROM loc_subtree
               )
             ORDER BY p.created_at DESC
             LIMIT ${limit}

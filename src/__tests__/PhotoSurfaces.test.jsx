@@ -95,9 +95,19 @@ beforeEach(() => {
 })
 
 describe('LocationDetail — photo upload section', () => {
+  // V4-PHOTOLOCFIND-001: the page now ALSO fetches its gallery (/api/photos?location_id=), so the
+  // mock routes by URL instead of queuing a single resolved value.
+  function mockLocationFetches({ photos = [] } = {}) {
+    fetchSpy.mockImplementation((url) => {
+      if (String(url).startsWith('/api/locations/')) return Promise.resolve({ id: 'loc-1', name: 'Bed A', is_active: true })
+      if (String(url).startsWith('/api/photos')) return Promise.resolve(photos)
+      return Promise.resolve(null)
+    })
+  }
+
   it('mounts PhotoUpload with locations keyPrefix and location_id linkage', async () => {
     mockParams.current = { id: 'loc-1' }
-    fetchSpy.mockResolvedValueOnce({ id: 'loc-1', name: 'Bed A', is_active: true })
+    mockLocationFetches()
     render(<LocationDetail />)
     await waitFor(() => screen.getByTestId('photo-upload-locations-loc-1'))
     const node = screen.getByTestId('photo-upload-locations-loc-1')
@@ -105,6 +115,19 @@ describe('LocationDetail — photo upload section', () => {
     expect(node.dataset.errorMode).toBe('surface')
     const linkage = JSON.parse(node.dataset.linkage)
     expect(linkage.location_id).toBe('loc-1')
+  })
+
+  it('fetches and renders the space gallery via ?location_id= (V4-PHOTOLOCFIND-001)', async () => {
+    mockParams.current = { id: 'loc-1' }
+    mockLocationFetches({ photos: [
+      { id: 'ph-1', thumb_url: 'https://x/t1.jpg', view_url: 'https://x/v1.jpg', caption: 'Bed A wide shot' },
+      { id: 'ph-2', view_url: 'https://x/v2.jpg', caption: null },
+    ] })
+    render(<LocationDetail />)
+    await waitFor(() => screen.getByTestId('location-photo-grid'))
+    expect(fetchSpy).toHaveBeenCalledWith('/api/photos?location_id=loc-1')
+    const grid = screen.getByTestId('location-photo-grid')
+    expect(grid.querySelectorAll('img').length).toBe(2)
   })
 })
 

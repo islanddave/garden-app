@@ -161,6 +161,13 @@ export default function BottomNav() {
         <Link to="/photos" onClick={closeMore} style={menuRowStyle}>
           <Icon name="media.camera" size={22} decorative />Photos
         </Link>
+        {/* V4-PHOTOLOCFIND-001 — Spaces: /locations previously had ZERO nav entries (reachable only
+            from Search/Favorites/ProjectNew/ZonePicker), which is half of why only 5 of 913 photos
+            carried a location. Emoji glyph mirrors Harvests/Put-Up (avoids the icon-completeness
+            harness for a new row). */}
+        <Link to="/locations" onClick={closeMore} style={menuRowStyle}>
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📍</span>Spaces
+        </Link>
         <Link to="/inventory" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.inventory" size={22} decorative />Inventory
         </Link>

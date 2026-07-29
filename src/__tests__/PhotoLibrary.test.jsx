@@ -109,6 +109,48 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     expect(photoUploadProps.current.linkage.project_id).toBe('proj-1')
   })
 
+  // V4-PHOTOLOCFIND-001: one-of target gate — a space alone is a valid home (the meta-photo case);
+  // project is no longer singularly required.
+  it('enables PhotoUpload with a space alone (one-of gate)', async () => {
+    primeMount()
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
+    fireEvent.click(screen.getByText('+ Upload'))
+    expect(photoUploadProps.current.disabled).toBe(true)
+    const spaceSelect = screen.getByDisplayValue('— None —')
+    await act(async () => {
+      fireEvent.change(spaceSelect, { target: { value: 'loc-1' } })
+    })
+    await waitFor(() => expect(photoUploadProps.current.disabled).toBe(false))
+    expect(photoUploadProps.current.linkage).toEqual({ project_id: null, location_id: 'loc-1', plant_id: null })
+  })
+
+  it('space filter chip queries the server with ?location_id= (V4-PHOTOLOCFIND-001)', async () => {
+    primeMount()
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
+    fetchSpy.mockResolvedValueOnce([])  // the refetch the filter change triggers
+    const spaceFilter = screen.getByDisplayValue('Filter by space…')
+    await act(async () => {
+      fireEvent.change(spaceFilter, { target: { value: 'loc-1' } })
+    })
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos?location_id=loc-1'))
+  })
+
+  it('untagged filter treats a space-only photo as tagged (V002 E2: not unfinished work)', async () => {
+    const spaceOnly = { id: 'p-loc',  event_id: null, project_id: null, location_id: 'loc-1', plant_id: null, view_url: 'https://x/a.jpg', caption: 'space photo' }
+    const bare      = { id: 'p-bare', event_id: null, project_id: null, location_id: null,    plant_id: null, view_url: 'https://x/b.jpg', caption: 'bare photo' }
+    primeMount({ photos: [spaceOnly, bare] })
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
+    fetchSpy.mockResolvedValueOnce([spaceOnly, bare])  // refetch on mode change
+    await act(async () => {
+      fireEvent.click(screen.getByText('Untagged'))
+    })
+    await waitFor(() => expect(screen.getByAltText('bare photo')).toBeDefined())
+    expect(screen.queryByAltText('space photo')).toBeNull()
+  })
+
   it('handles upload completion: reloads photos and resets form', async () => {
     primeMount()
     render(<PhotoLibrary />)

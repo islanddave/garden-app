@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -26,6 +26,10 @@ export default function LocationDetail() {
   const [location, setLocation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  // V4-PHOTOLOCFIND-001: this space's gallery — ?location_id= walks the subtree server-side,
+  // so a parent space also shows its descendants' photos.
+  const [photos, setPhotos] = useState([])
+  const [photosLoading, setPhotosLoading] = useState(true)
 
   useEffect(() => {
     let mounted = true
@@ -42,6 +46,15 @@ export default function LocationDetail() {
       })
     return () => { mounted = false }
   }, [id, fetch])
+
+  const loadPhotos = useCallback(() => {
+    setPhotosLoading(true)
+    fetch(`/api/photos?location_id=${id}`)
+      .then(data => { setPhotos(Array.isArray(data) ? data : []); setPhotosLoading(false) })
+      .catch(() => { setPhotos([]); setPhotosLoading(false) })
+  }, [id, fetch])
+
+  useEffect(() => { loadPhotos() }, [loadPhotos])
 
   if (loading) return <Shell><Spinner block /></Shell>
   if (error) return (
@@ -115,9 +128,37 @@ export default function LocationDetail() {
             linkage={{ location_id: location.id }}
             errorMode="surface"
             mode="both"
+            onUploadComplete={loadPhotos}
             inputId={`location-photo-${location.id}`}
           />
         </div>
+
+        {/* Gallery (V4-PHOTOLOCFIND-001) — makes the upload promise above true: photos land here
+            and in the Photo Library's space filter. Includes descendant spaces via the server walk. */}
+        {photosLoading ? (
+          <p style={{ margin: '14px 0 0', fontSize: '0.85rem', color: P.light }}>Loading photos…</p>
+        ) : photos.length > 0 && (
+          <div data-testid="location-photo-grid"
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 14 }}>
+            {photos.map(photo => (
+              <div key={photo.id} style={{ position: 'relative', paddingBottom: '100%', backgroundColor: '#e8e2da', borderRadius: 8, overflow: 'hidden', border: `1px solid ${P.border}` }}>
+                {(photo.thumb_url || photo.view_url) && (
+                  <img
+                    src={photo.thumb_url || photo.view_url}
+                    alt={photo.caption ?? 'Space photo'}
+                    decoding="async"
+                    onError={(e) => {
+                      if (photo.view_url && e.currentTarget.src !== photo.view_url) {
+                        e.currentTarget.src = photo.view_url;
+                      }
+                    }}
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </Shell>
   )
