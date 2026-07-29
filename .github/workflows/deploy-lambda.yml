@@ -116,8 +116,11 @@ jobs:
       # 0A.6: garden-members joined — the roster is now filtered by householdScope; without the
       # env it fail-closes to [caller] and the AssigneePicker silently loses the other household
       # member. Same read-merge mechanics as the original harvests step.
+      # BUG-TAGENTOWN-001 (v3.75.0): garden-tags joined — entityExists now carries a household
+      # ownership predicate; without the env it fail-closes to [caller] and every cross-member
+      # tag attach 404s (pre-promote impact pass found the live fn had no GARDEN_HOUSEHOLD_IDS).
       - name: Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped fns (read-merge)
-        if: matrix.function == 'harvests' || matrix.function == 'members'
+        if: matrix.function == 'harvests' || matrix.function == 'members' || matrix.function == 'tags'
         continue-on-error: true  # requires lambda:GetFunctionConfiguration + lambda:UpdateFunctionConfiguration on deploy role
         run: |
           FN="garden-${{ matrix.function }}"
