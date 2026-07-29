@@ -1,5 +1,5 @@
 import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { FavoritesProvider } from './context/FavoritesContext.jsx'
 import { ZoneProvider } from './context/ZoneContext.jsx'
@@ -99,6 +99,23 @@ function Protected({ children }) {
   return user ? children : <Navigate to="/login" replace />
 }
 
+// V4-UNSCOPEDROUTES-001: detail routes are canonically UN-scoped (/plantings/:id, /events/:id) —
+// project-less plantings (CaptureFlow creates them) had no reachable detail page under the
+// /projects/:id/* forms, and PlantingDetail.jsx 404s a mismatched pair. The scoped forms live on
+// as redirects so every existing link/bookmark keeps working; query strings are preserved
+// (PlantingDetail reads ?edit= deep-links).
+function ScopedPlantingRedirect() {
+  const { plantingId } = useParams()
+  const location = useLocation()
+  return <Navigate to={{ pathname: `/plantings/${plantingId}`, search: location.search }} replace />
+}
+
+function ScopedEventRedirect() {
+  const { eventId } = useParams()
+  const location = useLocation()
+  return <Navigate to={{ pathname: `/events/${eventId}`, search: location.search }} replace />
+}
+
 // V4-OVERLAY-001 Slice 1 (design V102 §3) — OverlayHost is a pure Sheet wrapper. It renders ONLY
 // inside the overlay tree, which itself renders only when a background exists — so `open` is always
 // true here. It wraps AROUND route.element (which already carries <Protected> + route-level
@@ -153,8 +170,10 @@ export function renderRoutes({ overlay, user }) {
     { path: '/project-types', element: <Protected><ProjectTypes /></Protected> },
     { path: '/plants',        element: <PlantsRedirect /> },
     { path: '/plants/catch-up', element: <Protected><PlantsCatchUp /></Protected> },
-    { path: '/projects/:id/events/:eventId', element: <Protected><EventDetail /></Protected> },
-    { path: '/projects/:id/plantings/:plantingId', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected> },
+    { path: '/events/:eventId', element: <Protected><EventDetail /></Protected> },
+    { path: '/plantings/:plantingId', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected> },
+    { path: '/projects/:id/events/:eventId', element: <ScopedEventRedirect /> },
+    { path: '/projects/:id/plantings/:plantingId', element: <ScopedPlantingRedirect /> },
     { path: '/achievements',  element: <Protected><Achievements /></Protected> },
     { path: '/findings',      element: <Protected><Findings /></Protected> },
     { path: '/today',         element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Today /></ErrorBoundary></Protected> },

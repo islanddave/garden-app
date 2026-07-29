@@ -135,3 +135,34 @@ describe('EventDetail — edit event-type select sourced from dropdownRegistry (
     expect(opts.map(o => o.textContent)).toEqual(EVENT_TYPE_OPTIONS.map(o => o.label))
   })
 })
+
+// V4-UNSCOPEDROUTES-001 — /events/:eventId is the canonical route; the project is derived from
+// the event record, and a project-less event still renders (Home breadcrumb, no project fetch).
+describe('EventDetail — un-scoped route (V4-UNSCOPEDROUTES-001)', () => {
+  function renderUnscoped() {
+    return render(
+      <MemoryRouter initialEntries={['/events/e1']}>
+        <Routes>
+          <Route path="/events/:eventId" element={<EventDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('derives the project from the event record when the route has no project param', async () => {
+    renderUnscoped()
+    await flushLoad()
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects/p1'))
+    expect(screen.getByText('Tomatoes 2026')).toBeTruthy()
+    expect(screen.getByText(/Spider mites/)).toBeTruthy()
+  })
+
+  it('renders a project-less event with the Home breadcrumb and no project fetch', async () => {
+    dataRef.event = { ...FLAGGED_UNRESOLVED, project_id: null, project_name: null }
+    renderUnscoped()
+    await flushLoad()
+    expect(screen.getByText(/Spider mites/)).toBeTruthy()
+    expect(screen.getByText('Home')).toBeTruthy()
+    expect(apiFetchSpy).not.toHaveBeenCalledWith(expect.stringMatching(/^\/api\/projects\//))
+  })
+})

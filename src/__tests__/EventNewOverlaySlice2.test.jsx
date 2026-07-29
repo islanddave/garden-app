@@ -134,7 +134,7 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2)', () => {
     await flushLoad()
     await saveOnce()
     const view = screen.getByRole('link', { name: 'View event' })
-    expect(view.getAttribute('href')).toBe('/projects/proj-9/events/evt-7')
+    expect(view.getAttribute('href')).toBe('/events/evt-7')
   })
 
   it('Undo soft-deletes via the sanctioned DELETE path and flips to a durable undone state', async () => {
@@ -222,7 +222,7 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2)', () => {
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     // display name is the cheap client-state lookup; ids are the response's corresponding pair
     const link = screen.getByRole('link', { name: 'View Cayenne #1' })
-    expect(link.getAttribute('href')).toBe('/projects/proj-9/plantings/pl-42')
+    expect(link.getAttribute('href')).toBe('/plantings/pl-42')
     // sibling secondary — View event still present alongside
     expect(screen.getByRole('link', { name: 'View event' })).toBeTruthy()
   })
@@ -234,7 +234,7 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2)', () => {
     await flushLoad()
     await saveOnce()
     const link = screen.getByRole('link', { name: 'View planting' })
-    expect(link.getAttribute('href')).toBe('/projects/proj-1/plantings/pl-77')
+    expect(link.getAttribute('href')).toBe('/plantings/pl-77')
   })
 
   it('no plant_id in the response → card unchanged: View event is the only link', async () => {

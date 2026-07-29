@@ -246,7 +246,7 @@ export default function Search() {
             <div style={sectionHead}>Events</div>
             {srv.events.map(ev => (
               <Row key={ev.id}
-                to={ev.project_id ? `/projects/${ev.project_id}/events/${ev.id}` : null}
+                to={`/events/${ev.id}`}
                 name={ev.title || ev.event_type}
                 sub={[ev.project_name, ev.event_date ? String(ev.event_date).slice(0, 10) : null, ev.snippet].filter(Boolean).join(' · ') || null} />
             ))}
@@ -265,7 +265,8 @@ export default function Search() {
             <div style={sectionHead}>Photos</div>
             {srv.photos.map(ph => (
               <Row key={ph.id}
-                to={ph.project_id && ph.plant_id ? `/projects/${ph.project_id}/plantings/${ph.plant_id}` : (ph.project_id ? `/projects/${ph.project_id}` : '/photos')}
+                // V4-UNSCOPEDROUTES-001: planting link no longer needs a project pair.
+                to={ph.plant_id ? `/plantings/${ph.plant_id}` : (ph.project_id ? `/projects/${ph.project_id}` : '/photos')}
                 name={ph.caption} sub="Photo" />
             ))}
           </>

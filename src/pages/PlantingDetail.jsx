@@ -160,7 +160,11 @@ export default function PlantingDetail() {
     let cancelled = false
     setEventsLoading(true)
     setEventsError(null)
-    fetch(`/api/events?project_id=${planting.project_id}&plant_id=${planting.id}`)
+    // V4-UNSCOPEDROUTES-001: project_id omitted when the planting has none (CaptureFlow rows) —
+    // a literal "project_id=null" param would silently match nothing.
+    fetch(planting.project_id
+      ? `/api/events?project_id=${planting.project_id}&plant_id=${planting.id}`
+      : `/api/events?plant_id=${planting.id}`)
       .then(data => {
         if (cancelled) return
         setEvents(data ?? [])
@@ -363,7 +367,7 @@ export default function PlantingDetail() {
     ['Source ref', pl.source_ref],
     ['Generation', pl.source_generation],
     ['Source planting', pl.parent_plant_id && pl.parent_plant_name
-      ? <Link to={`/projects/${pl.parent_project_id}/plantings/${pl.parent_plant_id}`} style={{ color: P.green, textDecoration: 'none' }}>{pl.parent_plant_name} ›</Link>
+      ? <Link to={`/plantings/${pl.parent_plant_id}`} style={{ color: P.green, textDecoration: 'none' }}>{pl.parent_plant_name} ›</Link>
       : null],
     ['Lineage', pl.lineage_note],
     ['Notes', pl.notes],
@@ -422,7 +426,8 @@ export default function PlantingDetail() {
       <Breadcrumb
         path={[
           { label: 'Home', href: '/dashboard' },
-          { label: pl.project_name || 'Project', href: projectId ? `/projects/${projectId}` : null },
+          // V4-UNSCOPEDROUTES-001: record-sourced (the canonical route has no project param).
+          { label: pl.project_name || 'Project', href: pl.project_id ? `/projects/${pl.project_id}` : null },
           { label: name, href: null },
         ]}
       />
@@ -618,7 +623,7 @@ export default function PlantingDetail() {
             {events.map(ev => (
               <Link
                 key={ev.id}
-                to={`/projects/${pl.project_id}/events/${ev.id}`}
+                to={`/events/${ev.id}`}
                 style={{ textDecoration: 'none', color: 'inherit', display: 'flex', gap: 12, alignItems: 'flex-start' }}
               >
                 <span aria-hidden="true" style={{

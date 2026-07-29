@@ -67,9 +67,9 @@ describe('Search page server slice (V4-SEARCH-002)', () => {
     expect(screen.getAllByText('Cherokee Purple').length).toBe(1)
     // deep links
     expect(screen.getByText('Cherokee Bed Rebuild').closest('a').getAttribute('href')).toBe('/projects/pr7')
-    expect(screen.getByText('Cherokee staking').closest('a').getAttribute('href')).toBe('/projects/pr1/events/e1')
+    expect(screen.getByText('Cherokee staking').closest('a').getAttribute('href')).toBe('/events/e1')
     expect(screen.getByText('Cherokee seed packet').closest('a').getAttribute('href')).toBe('/inventory/i1')
-    expect(screen.getByText('Cherokee first fruit').closest('a').getAttribute('href')).toBe('/projects/pr1/plantings/p1')
+    expect(screen.getByText('Cherokee first fruit').closest('a').getAttribute('href')).toBe('/plantings/p1')
   })
 
   it('degrades gracefully when the server call fails — client results still render', async () => {

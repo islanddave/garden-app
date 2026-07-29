@@ -51,20 +51,28 @@ export default function EventDetail() {
   const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
+    // V4-UNSCOPEDROUTES-001: the event record is the source of truth for its project — the
+    // canonical route (/events/:eventId) carries no project param. The :id param survives only
+    // for the scoped-redirect window and as a fallback for legacy rows. A failed project fetch
+    // degrades the breadcrumb/back-nav, never the event itself.
     let isMounted = true
-    Promise.all([
-      fetch('/api/events/' + eventId),
-      fetch('/api/projects/' + projectId),
-    ]).then(([ev, proj]) => {
-      if (!isMounted) return
-      setEvent(ev)
-      setProject(proj)
-      setLoading(false)
-    }).catch(e => {
-      if (!isMounted) return
-      setError(e.message)
-      setLoading(false)
-    })
+    ;(async () => {
+      try {
+        const ev = await fetch('/api/events/' + eventId)
+        if (!isMounted) return
+        setEvent(ev)
+        const pid = ev?.project_id ?? projectId ?? null
+        if (pid) {
+          try {
+            const proj = await fetch('/api/projects/' + pid)
+            if (isMounted) setProject(proj)
+          } catch { /* breadcrumb degrades; the event still renders */ }
+        }
+      } catch (e) {
+        if (isMounted) setError(e.message)
+      }
+      if (isMounted) setLoading(false)
+    })()
     return () => { isMounted = false }
   }, [eventId, projectId, fetch])
 
@@ -113,7 +121,7 @@ export default function EventDetail() {
     setDeleting(true)
     try {
       await fetch('/api/events/' + eventId, { method: 'DELETE' })
-      navigate(`/projects/${projectId}`)
+      navigate(project ? `/projects/${project.id}` : '/today')
     } catch (e) {
       setError(e.message)
       setDeleting(false)
@@ -124,16 +132,22 @@ export default function EventDetail() {
   // Full-page error only when the page never loaded. Post-load errors (e.g. a failed
   // Delete) surface inline via ErrorBanner so the event content stays visible.
   if (error && !event) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{error}</div></Shell>
-  if (!event || !project) return null
+  if (!event) return null
 
   const icon = <Icon name={`event.${event.event_type}`} size={22} decorative style={{ color: P.green, verticalAlign: '-0.15em' }} />
 
   return (
     <Shell>
       <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 20 }}>
-        <Link to={`/projects/${projectId}`} style={{ color: P.green, textDecoration: 'none' }}>
-          {project.name}
-        </Link>
+        {project ? (
+          <Link to={`/projects/${project.id}`} style={{ color: P.green, textDecoration: 'none' }}>
+            {project.name}
+          </Link>
+        ) : (
+          <Link to="/today" style={{ color: P.green, textDecoration: 'none' }}>
+            Home
+          </Link>
+        )}
         {' › Event'}
       </div>
 
@@ -254,7 +268,7 @@ export default function EventDetail() {
           <PhotoUpload
             keyPrefix="events"
             parentId={event.id}
-            linkage={{ event_id: event.id, project_id: projectId }}
+            linkage={{ event_id: event.id, project_id: event.project_id ?? projectId ?? null }}
             errorMode="swallow"
             mode="both"
             inputId={`event-photo-${event.id}`}

@@ -846,15 +846,14 @@ export default function EventNew() {
   // color alone; ≥44pt). The action footer is sticky with env(safe-area-inset-bottom) ON the footer
   // and a visualViewport lift so the iOS keyboard can never occlude it.
   if (inOverlay && confirmation) {
-    const viewHref = (!confirmation.undone && confirmation.projectId && confirmation.eventId)
-      ? `/projects/${confirmation.projectId}/events/${confirmation.eventId}` : null
+    const viewHref = (!confirmation.undone && confirmation.eventId)
+      ? `/events/${confirmation.eventId}` : null
     // V4-VIEWPLANT-001: sibling secondary to View event, shown ONLY when the created event has a
-    // planting (response plant_id). Route: the project-scoped planting route is the ONLY registered
-    // PlantingDetail route (App.jsx `/projects/:id/plantings/:plantingId`; V3-NAV-001 added entry
-    // points, not an un-scoped route). Its ownership guard 404s a mismatched project/planting pair
-    // (PlantingDetail.jsx:126) — safe here because BOTH ids come from the same POST response row.
-    const viewPlantingHref = (!confirmation.undone && confirmation.projectId && confirmation.plantId)
-      ? `/projects/${confirmation.projectId}/plantings/${confirmation.plantId}` : null
+    // planting (response plant_id). V4-UNSCOPEDROUTES-001: both links use the canonical un-scoped
+    // routes, so they no longer require a projectId — the knock-on that made "View planting"
+    // silently disappear for project-less plantings is closed.
+    const viewPlantingHref = (!confirmation.undone && confirmation.plantId)
+      ? `/plantings/${confirmation.plantId}` : null
     return (
       <div style={{ backgroundColor: P.cream, display: 'flex', flexDirection: 'column', minHeight: '45dvh' }}>
         <div style={{ maxWidth: 600, width: '100%', margin: '0 auto', padding: '24px 16px 8px', flex: 1, boxSizing: 'border-box' }}>
