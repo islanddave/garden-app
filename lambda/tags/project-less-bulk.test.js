@@ -13,12 +13,12 @@ const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 describe('tags Lambda — bulk entity-tags include project-less plantings (V4-CAPTURE-002)', () => {
   it('both bulk queries LEFT JOIN the container', () => {
     const matches = SRC.match(/LEFT JOIN public\.container pp ON pp\.id = gn\.container_id/g) ?? [];
-    expect(matches.length).toBe(2); // directRows + projRows
+    expect(matches.length).toBe(3); // entityExists plant arm + directRows + projRows
   });
 
   it('rescopes null-container plantings by their own created_by', () => {
     const matches = SRC.match(/gn\.container_id IS NULL AND gn\.created_by = ANY\(\$\{household\}\)/g) ?? [];
-    expect(matches.length).toBe(2);
+    expect(matches.length).toBe(3); // entityExists plant arm + directRows + projRows
   });
 
   it('still scopes container-owned rows by the project owner', () => {

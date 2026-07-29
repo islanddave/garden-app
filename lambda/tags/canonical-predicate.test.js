@@ -32,3 +32,25 @@ describe('tags lambda visibility predicate is canonical and un-bypassed', () => 
     expect(src).toMatch(/if \(!isAdmin\(userId, process\.env\)\) return resp\(403/);
   });
 });
+
+describe('entityExists is household-scoped (BUG-TAGENTOWN-001)', () => {
+  it('caller passes the household scope', () => {
+    expect(src).toMatch(/entityExists\(sql, body\.entity_type, body\.entity_id, household\)/);
+  });
+
+  it('plant arm uses the container-first household predicate and excludes soft-deleted plantings', () => {
+    const plantArm = src.match(/if \(entityType === 'plant'\)[\s\S]*?entityType === 'cultivar'/)?.[0] ?? '';
+    expect(plantArm).toMatch(/gn\.deleted_at IS NULL/);
+    expect(plantArm).toMatch(/pp\.created_by = ANY\(\$\{household\}\)/);
+    expect(plantArm).toMatch(/gn\.container_id IS NULL AND gn\.created_by = ANY\(\$\{household\}\)/);
+  });
+
+  it('location and project arms carry created_by = ANY(household)', () => {
+    expect(src).toMatch(/public\.locations WHERE id = \$\{entityId\} AND deleted_at IS NULL AND created_by = ANY\(\$\{household\}\)/);
+    expect(src).toMatch(/public\.plant_projects WHERE id = \$\{entityId\} AND deleted_at IS NULL AND created_by = ANY\(\$\{household\}\)/);
+  });
+
+  it('cultivar arm stays globally readable by design (no ownership predicate)', () => {
+    expect(src).toMatch(/entityType === 'cultivar'.*plant_varieties WHERE id = \$\{entityId\} AND deleted_at IS NULL`/);
+  });
+});

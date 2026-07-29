@@ -48,13 +48,21 @@ async function checkRateLimit(sql, actor, bucketKey, limit) {
 }
 
 // Existence check for the polymorphic entity_tag target (D-ENTITY; entity_id has no FK). Literal per-type
-// query because the driver can't parameterize an identifier. Returns true if the target row exists.
-async function entityExists(sql, entityType, entityId) {
+// query because the driver can't parameterize an identifier. Household-scoped (BUG-TAGENTOWN-001): a
+// requester may only attach to entities their household owns — cross-household ids return false (404),
+// which also avoids confirming foreign ids exist. EXCEPTION: cultivar stays unscoped — plant_varieties
+// reads are globally readable by design (see lambda/varieties/index.js).
+async function entityExists(sql, entityType, entityId, household) {
   let rows = [];
-  if (entityType === 'plant') rows = await sql`SELECT 1 FROM public.garden_node WHERE id = ${entityId}`;
+  if (entityType === 'plant') rows = await sql`
+    SELECT 1 FROM public.garden_node gn
+    LEFT JOIN public.container pp ON pp.id = gn.container_id
+    WHERE gn.id = ${entityId} AND gn.deleted_at IS NULL
+      AND ( pp.created_by = ANY(${household})
+            OR (gn.container_id IS NULL AND gn.created_by = ANY(${household})) )`;
   else if (entityType === 'cultivar') rows = await sql`SELECT 1 FROM public.plant_varieties WHERE id = ${entityId} AND deleted_at IS NULL`;
-  else if (entityType === 'location') rows = await sql`SELECT 1 FROM public.locations WHERE id = ${entityId} AND deleted_at IS NULL`;
-  else if (entityType === 'project') rows = await sql`SELECT 1 FROM public.plant_projects WHERE id = ${entityId} AND deleted_at IS NULL`;
+  else if (entityType === 'location') rows = await sql`SELECT 1 FROM public.locations WHERE id = ${entityId} AND deleted_at IS NULL AND created_by = ANY(${household})`;
+  else if (entityType === 'project') rows = await sql`SELECT 1 FROM public.plant_projects WHERE id = ${entityId} AND deleted_at IS NULL AND created_by = ANY(${household})`;
   return rows.length > 0;
 }
 
@@ -293,7 +301,7 @@ export const handler = async (event) => {
         if (!tagRows.length) return resp(404, { error: 'tag not found' });
         if (tagRows[0].source !== 'user') return resp(403, { error: 'derived tags are system-managed and cannot be attached' });
         if (tagRows[0].owner_id !== userId) return resp(403, { error: 'not your tag' });
-        if (!(await entityExists(sql, body.entity_type, body.entity_id))) {
+        if (!(await entityExists(sql, body.entity_type, body.entity_id, household))) {
           return resp(404, { error: `${body.entity_type} ${body.entity_id} not found` });
         }
         const rows = await sql`
