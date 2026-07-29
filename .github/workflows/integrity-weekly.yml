@@ -1,0 +1,96 @@
+name: integrity-weekly (P0)
+
+# P0 weekly data-integrity job (data-audit plan V100 §P0; authored W3.D 2026-07-28, fourthread V102).
+# Repo home when it ships: garden-app/.github/workflows/integrity-weekly.yml
+#
+# ACTIVATION (honest): on.schedule fires ONLY from the repo default branch (main), so this
+# workflow is INERT until it rides a promote (dev -> promote-gate -> main FF). It ships to dev
+# with scripts/integrity-weekly-check.sh + scripts/integrity-baselines.json in one commit.
+# workflow_dispatch allows a manual proving run once the file reaches main (or via ref=dev
+# once it exists on main). No environment: production gate — this job must run unattended;
+# it therefore CANNOT use SNAP_AWS_ROLE_ARN (whose OIDC trust is scoped to that environment).
+#
+# Secrets/vars consumed (all pre-existing in this repo except the possible IAM grant):
+#   secrets.NEON_DATABASE_URL  — already present (schema-audit.yml consumes it, green history)
+#   vars.PHOTOS_BUCKET         — already present (snap-rehearsal/promote-gate consume it)
+#   vars.AWS_BACKUP_ROLE_ARN   — already present (backup.yml assumes it unattended daily).
+#     If this role lacks s3:ListBucket on the photos bucket, the S3<->DB class degrades to
+#     UNVERIFIED (loud warning, never a false alert). Console-hour fix: add one read-only
+#     statement (s3:ListBucket on the photos bucket) to the backup role policy.
+#
+# Run snapshots persist as workflow ARTIFACTS (90-day retention) — NO new tables (plan rule).
+# Baseline is the committed scripts/integrity-baselines.json; refresh it only in the same
+# commit as the repair that legitimately moves a number.
+#
+# ALERT SINK (morning-brief surface): an alert exits 1 -> run conclusion=failure. The
+# morning-brief collector needs ONE hookup step (documented in w3d/runtime-decision.md):
+#   gh run list --repo islanddave/garden-app --workflow integrity-weekly.yml -L1 \
+#     --json conclusion,updatedAt,databaseId
+# conclusion=failure -> download artifact integrity-report and surface report.alerts[] lines
+# verbatim in the brief (shape: {status, alerts[], improvements[], warnings[], metrics{}}).
+
+on:
+  schedule:
+    - cron: '0 10 * * 1'   # Mondays 10:00 UTC = 06:00 ET, before the morning brief
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC for the backup role (S3 census only)
+  contents: read
+
+concurrency:
+  group: integrity-weekly
+  cancel-in-progress: false
+
+jobs:
+  integrity:
+    name: Weekly data-integrity checks (5 classes, delta-vs-baseline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Configure AWS credentials (backup role, OIDC — S3 census only)
+        id: aws
+        continue-on-error: true   # S3 class fail-softs to UNVERIFIED inside the script
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_BACKUP_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Run integrity checks
+        id: checks
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          PHOTOS_BUCKET: ${{ steps.aws.outcome == 'success' && vars.PHOTOS_BUCKET || '' }}
+          BASELINE_FILE: scripts/integrity-baselines.json
+          OUT: integrity-report.json
+        run: bash scripts/integrity-weekly-check.sh
+
+      - name: Upload run snapshot artifact
+        if: ${{ always() }}
+        # upload-artifact major-pinned — advisory-tier workflow, not deploy-tier discipline
+        # (same posture as setup-python@v5 in schema-audit.yml).
+        uses: actions/upload-artifact@v4
+        with:
+          name: integrity-report
+          path: integrity-report.json
+          retention-days: 90
+
+      - name: Job summary
+        if: ${{ always() }}
+        run: |
+          if [ -f integrity-report.json ]; then
+            {
+              echo "## integrity-weekly: $(jq -r .status integrity-report.json)"
+              echo ""
+              jq -r '(.alerts[]? | "- ALERT: \(.)"),
+                     (.improvements[]? | "- improved: \(.)"),
+                     (.warnings[]? | "- warn: \(.)")' integrity-report.json
+              echo ""
+              echo '```json'
+              jq .metrics integrity-report.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## integrity-weekly: ERROR — no report produced" >> "$GITHUB_STEP_SUMMARY"
+          fi

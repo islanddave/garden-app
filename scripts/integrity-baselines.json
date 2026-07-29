@@ -1,0 +1,49 @@
+{
+  "seeded_at": "2026-07-28",
+  "seeded_by": "W3.D (fourthread V102) from fourthread-evidence-20260728.md W0.2-r1 rows + W3.D dry-run for checked-edge classes",
+  "repo_home_when_shipped": "garden-app/scripts/integrity-baselines.json",
+  "evidence_run_ids": {
+    "event_unattached_total": "W0.2-r1 orphans-by-type (53, breakdown matches by_type)",
+    "photos_parentless": "W0.2-r1 photos-counts (6; NOTE spec asserted 0 on 07-27 — invariant broke this week)",
+    "phantom_photo_events": "W0.2-r1 phantom-count (22; forensic verdict W0.2b-r1 = pre-fix debris)",
+    "care_dupe_groups": "W0.2-r1 care-dupe-groups (1314)",
+    "care_dupe_excess": "W0.2-r1 care-dupe-groups (1442)",
+    "harvest_multi_groups": "W0.2-r1 care-dupe-groups (37, legitimate/exempt — info only)",
+    "user_stats_drift": "W0.2-r1 user-stats-drift (1: user_3CxBE... 275 ledger XP, no user_stats row)",
+    "s3_not_in_db": "W0.2-r1 s3-db-mismatch (6)",
+    "db_not_in_s3": "W0.2-r1 s3-db-mismatch (0)",
+    "checked_edges": "W3.D-r1 dry-run 2026-07-28 (audit-plan V100 point-in-time values were 39/5/4/4/1/4; measured tonight 39/5/4/9/1/4 — critter_state=9 because the shipped definition covers BOTH edges: source_event_id->deleted-event OR plant_id->deleted-plant, broader than the audit's unspecified-edge 4)"
+  },
+  "alert_metrics": [
+    "event_unattached_total",
+    "events_to_deleted_plants",
+    "photos_to_deleted_events",
+    "harvest_log_to_deleted_events",
+    "critter_state_orphans",
+    "favorites_orphans",
+    "entity_memory_orphans",
+    "photos_parentless",
+    "care_dupe_excess",
+    "phantom_photo_events",
+    "user_stats_drift",
+    "s3_not_in_db",
+    "db_not_in_s3"
+  ],
+  "metrics": {
+    "event_unattached_total": 53,
+    "events_to_deleted_plants": 39,
+    "photos_to_deleted_events": 5,
+    "harvest_log_to_deleted_events": 4,
+    "critter_state_orphans": 9,
+    "favorites_orphans": 1,
+    "entity_memory_orphans": 4,
+    "photos_parentless": 6,
+    "care_dupe_groups": 1314,
+    "care_dupe_excess": 1442,
+    "harvest_multi_groups": 37,
+    "phantom_photo_events": 22,
+    "user_stats_drift": 1,
+    "s3_not_in_db": 6,
+    "db_not_in_s3": 0
+  }
+}
