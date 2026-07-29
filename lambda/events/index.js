@@ -745,11 +745,12 @@ export const handler = async (event) => {
                 RETURNING amount, source_id
               ),
               stats_xp AS (
-                UPDATE user_stats
-                  SET xp = user_stats.xp + COALESCE((SELECT SUM(amount) FROM xp_grants), 0),
-                      updated_at = NOW()
-                WHERE user_id = ${userId}
-                  AND EXISTS (SELECT 1 FROM xp_grants)
+                INSERT INTO user_stats (user_id, xp, level, current_streak, longest_streak, total_events, updated_at)
+                SELECT ${userId}, COALESCE((SELECT SUM(amount) FROM xp_grants), 0), 1, 0, 0, 0, NOW()
+                WHERE EXISTS (SELECT 1 FROM xp_grants)
+                ON CONFLICT (user_id) DO UPDATE SET
+                  xp = user_stats.xp + EXCLUDED.xp,
+                  updated_at = NOW()
                 RETURNING xp
               )
               SELECT
