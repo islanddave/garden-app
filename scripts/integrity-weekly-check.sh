@@ -46,7 +46,10 @@ SELECT json_build_object(
        (em.project_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plant_projects pp WHERE pp.id = em.project_id AND pp.deleted_at IS NULL))
     OR (em.plant_id   IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plants p          WHERE p.id  = em.plant_id   AND p.deleted_at  IS NULL))),
   'photos_parentless', (SELECT count(*) FROM photos WHERE deleted_at IS NULL
-     AND project_id IS NULL AND event_id IS NULL AND plant_id IS NULL AND location_id IS NULL),
+     AND project_id IS NULL AND event_id IS NULL AND plant_id IS NULL AND location_id IS NULL
+     AND inventory_item_id IS NULL),
+  'photos_to_deleted_inventory', (SELECT count(*) FROM photos ph LEFT JOIN inventory_items i ON i.id = ph.inventory_item_id
+     WHERE ph.deleted_at IS NULL AND ph.inventory_item_id IS NOT NULL AND (i.id IS NULL OR i.deleted_at IS NOT NULL)),
   'care_dupe_groups', (SELECT count(*) FROM (
      SELECT plant_id, (event_date AT TIME ZONE 'America/New_York')::date d, count(*) c
      FROM event_log WHERE deleted_at IS NULL AND event_type = 'watering' AND plant_id IS NOT NULL
