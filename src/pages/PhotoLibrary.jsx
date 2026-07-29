@@ -2,10 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import { formatQty } from '../lib/format.js'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
+import PlantingSelect from '../components/forms/PlantingSelect.jsx'
 import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
 
 // ---- Photo Library ----
@@ -289,19 +289,16 @@ export default function PhotoLibrary() {
 
               {plantsForUpload.length > 0 && (
                 <div>
-                  <label style={fieldLabelStyle}>Plant  ·  optional</label>
-                  <select
+                  <label style={fieldLabelStyle} htmlFor="pl-upload-plant">Plant  ·  optional</label>
+                  {/* V4-PLANTPICKER-001: shared picker. emptyMeaning='project-level' — blank here is
+                      a DELIBERATE project-level attach, not an unset field (spec §6.5 tri-state). */}
+                  <PlantingSelect
+                    id="pl-upload-plant"
+                    plants={plantsForUpload}
                     value={uploadForm.plant_id}
-                    onChange={e => setUploadForm(f => ({ ...f, plant_id: e.target.value }))}
-                    style={selectStyle}
-                  >
-                    <option value="">— All plants (project level) —</option>
-                    {plantsForUpload.map(pl => (
-                      <option key={pl.id} value={pl.id}>
-                        {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety_ref?.name ? ` — ${pl.variety_ref.name}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={id => setUploadForm(f => ({ ...f, plant_id: id }))}
+                    emptyMeaning="project-level"
+                  />
                 </div>
               )}
 
@@ -656,19 +653,17 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
 
               {plantsForModal.length > 0 && (
                 <div>
-                  <label style={fieldLabelStyle}>Plant  ·  optional</label>
-                  <select
+                  <label style={fieldLabelStyle} htmlFor="pl-modal-plant">Plant  ·  optional</label>
+                  {/* V4-PLANTPICKER-001: shared picker. NOTE the create-vs-edit contract split (spec
+                      §6.5 trap): the upload form is target-gated, this modal is NOT — clearing here
+                      must stay possible (un-tagging a photo is legitimate). */}
+                  <PlantingSelect
+                    id="pl-modal-plant"
+                    plants={plantsForModal}
                     value={tagForm.plant_id}
-                    onChange={e => setTagForm(f => ({ ...f, plant_id: e.target.value }))}
-                    style={selectStyle}
-                  >
-                    <option value="">— All plants (project level) —</option>
-                    {plantsForModal.map(pl => (
-                      <option key={pl.id} value={pl.id}>
-                        {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety_ref?.name ? ` — ${pl.variety_ref.name}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={id => setTagForm(f => ({ ...f, plant_id: id }))}
+                    emptyMeaning="project-level"
+                  />
                 </div>
               )}
 

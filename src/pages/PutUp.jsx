@@ -24,6 +24,7 @@ import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, SegmentedControl } from '../components/forms'
 import VarietyPicker from '../components/VarietyPicker.jsx'
+import PlantingSelect, { plantingWaveLabel } from '../components/forms/PlantingSelect.jsx'
 import PutUpPhotoThumb from '../components/PutUpPhotoThumb.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { PUTUP_SOURCE_OPTIONS, PUTUP_SOURCE_LABELS } from '../lib/dropdownRegistry.js'
@@ -432,7 +433,6 @@ function PutUpForm({ prefill, onLogged }) {
             onChange={setPlantId}
             cropSlug={cropSlug}
             varietyId={effectiveVarietyId}
-            fetch={fetch}
             onDerive={({ crop_type_slug, variety_id, variety }) => {
               if (crop_type_slug && !cropSlug) setCropSlug(crop_type_slug)
               if (variety_id && !effectiveVarietyId && variety) setVariety(variety)
@@ -642,69 +642,15 @@ function PutUpForm({ prefill, onLogged }) {
   )
 }
 
-// Which-planting field. A plain Select, not a combobox: once scoped to a crop the candidate set is
-// a handful of plantings, and the whole point is SEEING the waves side by side rather than
-// searching for one. Scoping is progressive — variety (tightest) > crop > everything.
-//
-// Wave disambiguation is the job here: three "Dark Green Zucchini" rows are indistinguishable by
-// name, so each option carries its succession ordinal and sown date. Sorted by sown date so the
-// list reads in planting order.
-export function plantingOptionLabel(p) {
-  const base = p.name || p.variety_ref?.name || 'Planting'
-  const bits = []
-  if (p.succession_order != null) bits.push(`wave ${p.succession_order}`)
-  if (p.sown_at) { const d = prettyDate(p.sown_at); if (d) bits.push(`sown ${d}`) }
-  return bits.length ? `${base} — ${bits.join(', ')}` : base
-}
+// Which-planting field — V4-PLANTPICKER-001: now the shared PlantingSelect combobox (its listbox
+// opens on focus in browse mode, so the waves still read side by side). This wrapper owns only
+// the PutUp framing: the Field label + the progressive-scope help copy. plantingOptionLabel moved
+// to PlantingSelect as plantingWaveLabel (dependency points page→component); re-exported here for
+// the provenance display below and any historical importers.
+export const plantingOptionLabel = plantingWaveLabel
 
-function PlantingField({ value, onChange, cropSlug, varietyId, fetch, onDerive }) {
-  const [plants, setPlants] = useState([])
-  const [loading, setLoading] = useState(true)
+function PlantingField({ value, onChange, cropSlug, varietyId, onDerive }) {
   const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    let live = true
-    fetch('/api/plants')
-      .then(rows => { if (live) setPlants(Array.isArray(rows) ? rows : []) })
-      .catch(() => { if (live) setFailed(true) })
-      .finally(() => { if (live) setLoading(false) })
-    return () => { live = false }
-  }, [fetch])
-
-  // Progressive scoping. A variety pins it exactly; a crop narrows to that crop's plantings; with
-  // neither we offer everything rather than an empty list the user can't explain.
-  const candidates = useMemo(() => {
-    let list = plants
-    if (varietyId) list = list.filter(p => String(p.variety_id ?? p.variety_ref?.id ?? '') === String(varietyId))
-    else if (cropSlug) list = list.filter(p => p.variety_ref?.crop_type_slug === cropSlug)
-    return [...list].sort((a, b) => {
-      const at = a.sown_at ? Date.parse(a.sown_at) : Infinity
-      const bt = b.sown_at ? Date.parse(b.sown_at) : Infinity
-      if (at !== bt) return (isNaN(at) ? Infinity : at) - (isNaN(bt) ? Infinity : bt)
-      return (a.name || '').localeCompare(b.name || '')
-    })
-  }, [plants, cropSlug, varietyId])
-
-  // The selected planting may sit OUTSIDE the current scope (prefilled from a harvest, or the user
-  // narrowed the crop afterwards). Keep it in the list regardless — silently dropping the current
-  // value would blank the field and quietly discard the link.
-  const selected = plants.find(p => String(p.id) === String(value)) || null
-  const options = selected && !candidates.some(p => String(p.id) === String(selected.id))
-    ? [selected, ...candidates]
-    : candidates
-
-  function handleChange(e) {
-    const id = e.target.value || null
-    onChange(id)
-    if (!id) return
-    const p = plants.find(x => String(x.id) === String(id))
-    if (!p) return
-    onDerive?.({
-      crop_type_slug: p.variety_ref?.crop_type_slug ?? null,
-      variety_id: p.variety_id ?? p.variety_ref?.id ?? null,
-      variety: p.variety_ref ?? null,
-    })
-  }
 
   const help = failed
     ? "Couldn't load your plantings — you can still save without one."
@@ -714,13 +660,21 @@ function PlantingField({ value, onChange, cropSlug, varietyId, fetch, onDerive }
 
   return (
     <Field label="From which planting?" htmlFor="pu-planting" optional help={help}>
-      <Select id="pu-planting" value={value || ''} onChange={handleChange}
-        disabled={loading || failed} aria-label="From which planting">
-        <option value="">{loading ? 'Loading plantings…' : '— Not tied to a planting —'}</option>
-        {options.map(p => (
-          <option key={p.id} value={p.id}>{plantingOptionLabel(p)}</option>
-        ))}
-      </Select>
+      <PlantingSelect
+        id="pu-planting"
+        value={value || ''}
+        onChange={(id) => onChange(id || null)}
+        cropSlug={cropSlug}
+        varietyId={varietyId}
+        retainOutOfScopeValue
+        sort="sown"
+        labelFormat="wave"
+        emptyMeaning="none"
+        onDerive={onDerive}
+        onLoadError={() => setFailed(true)}
+        aria-label="From which planting"
+        data-testid="pu-planting-select"
+      />
     </Field>
   )
 }

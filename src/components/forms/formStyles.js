@@ -63,6 +63,9 @@ export function inputChrome(hasError = false) {
 export function selectChrome(hasError = false) {
   return {
     ...inputChrome(hasError),
+    // V4-PLANTPICKER-001 (spec §6.5 nit): computed height was ≈39px, under the 44pt tap minimum
+    // that buttonMinHeight already froze for buttons — pages were patching it inline instead.
+    minHeight: 44,
     appearance: 'none',
     WebkitAppearance: 'none',
     MozAppearance: 'none',

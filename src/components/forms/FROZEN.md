@@ -30,6 +30,7 @@ Barrel: `src/components/forms/index.js`. Token layer: `formStyles.js` (`T`) + pa
 | **Button** | Action button (variants via prop). |
 | **Badge** | Display-only label chip (tone-colored). Not a reward surface. |
 | **EventTypePicker** | Composite: event-type taxonomy picker. |
+| **PlantingSelect** | Composite: searchable single-planting combobox (V4-PLANTPICKER-001 — union of the six former hand-rolled pickers; multi-target scope stays in ScopeChecklist). |
 | **ScopeChecklist** | Composite: multi-scope checkbox group. |
 | **PlantForm** | Composite: unified add/edit planting form (E1 union). |
 | **Spinner** | Loading indicator. |

@@ -21,6 +21,7 @@ import { P } from '../lib/constants.js'
 import Field from '../components/forms/Field.jsx'
 import Input from '../components/forms/Input.jsx'
 import Select from '../components/forms/Select.jsx'
+import PlantingSelect from '../components/forms/PlantingSelect.jsx'
 import Button from '../components/forms/Button.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
 
@@ -223,10 +224,9 @@ export default function CaptureFlow() {
             {mode === 'event' && (
               <>
                 <Field label="Planting">
-                  <Select data-testid="cap-evplant" value={evPlant} onChange={e => setEvPlant(e.target.value)}>
-                    <option value="">— pick a planting —</option>
-                    {plantings.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </Select>
+                  {/* V4-PLANTPICKER-001: shared searchable picker (unscoped list is garden-sized) */}
+                  <PlantingSelect data-testid="cap-evplant" plants={plantings} value={evPlant}
+                    onChange={id => setEvPlant(id)} labelFormat="bare" placeholder="— pick a planting —" />
                 </Field>
                 <Field label="Event">
                   <Select value={evType} onChange={e => setEvType(e.target.value)}>
@@ -241,10 +241,9 @@ export default function CaptureFlow() {
             {mode === 'replace' && (
               <>
                 <Field label="Planting to update">
-                  <Select data-testid="cap-rpplant" value={rpPlant} onChange={e => setRpPlant(e.target.value)}>
-                    <option value="">— pick a planting —</option>
-                    {plantings.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </Select>
+                  {/* V4-PLANTPICKER-001: shared searchable picker (unscoped list is garden-sized) */}
+                  <PlantingSelect data-testid="cap-rpplant" plants={plantings} value={rpPlant}
+                    onChange={id => setRpPlant(id)} labelFormat="bare" placeholder="— pick a planting —" />
                 </Field>
                 <Note>This photo becomes the planting’s featured picture.</Note>
               </>

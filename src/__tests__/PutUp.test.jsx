@@ -4,7 +4,7 @@
 // role+name (getByRole), not label-on-roleless (L-275).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const fetchMock = vi.fn()
@@ -151,20 +151,27 @@ describe('PutUp — log form (progressive disclosure)', () => {
 // The seed → planting → harvest → put-up spine. Before this, plant_id was prefill-only and
 // immutable, so a put-up logged from More → Put-Up could never be tied to a planting at all.
 describe('PutUp — planting attribution (succession spine)', () => {
+  // V4-PLANTPICKER-001: the field is now the shared PlantingSelect combobox — options live in a
+  // listbox that opens on focus (browse mode preserves the waves-side-by-side read); rows are
+  // picked by click on their ps-opt-<id> testid instead of a native select change.
   it('offers a planting picker on the direct entry path, not just off a harvest', async () => {
     renderPutUp()
     fireEvent.click(screen.getByRole('radio', { name: 'Log a put-up' }))
-    const sel = await screen.findByRole('combobox', { name: 'From which planting' })
+    const input = await screen.findByRole('combobox', { name: 'From which planting' })
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/plants'))
-    await waitFor(() => expect(sel.querySelectorAll('option').length).toBe(PLANTS_FIXTURE.length + 1))
+    fireEvent.focus(input)
+    const list = await screen.findByRole('listbox', { name: 'Plantings' })
+    await waitFor(() => expect(within(list).getAllByRole('option').length).toBe(PLANTS_FIXTURE.length))
   })
 
   it('distinguishes same-named successions by wave and sown date', async () => {
     renderPutUp()
     fireEvent.click(screen.getByRole('radio', { name: 'Log a put-up' }))
-    const sel = await screen.findByRole('combobox', { name: 'From which planting' })
-    await waitFor(() => expect(sel.querySelectorAll('option').length).toBeGreaterThan(1))
-    const labels = [...sel.querySelectorAll('option')].map(o => o.textContent)
+    const input = await screen.findByRole('combobox', { name: 'From which planting' })
+    fireEvent.focus(input)
+    const list = await screen.findByRole('listbox', { name: 'Plantings' })
+    await waitFor(() => expect(within(list).getAllByRole('option').length).toBeGreaterThan(1))
+    const labels = within(list).getAllByRole('option').map(o => o.textContent)
     expect(labels.some(l => /Dark Green Zucchini.*wave 1/.test(l))).toBe(true)
     expect(labels.some(l => /Dark Green Zucchini.*wave 2/.test(l))).toBe(true)
     expect(labels.some(l => /Dark Green Zucchini.*wave 3/.test(l))).toBe(true)
@@ -175,20 +182,25 @@ describe('PutUp — planting attribution (succession spine)', () => {
   it('scopes the planting list to the chosen crop', async () => {
     renderPutUp()
     fireEvent.click(screen.getByRole('radio', { name: 'Log a put-up' }))
-    const sel = await screen.findByRole('combobox', { name: 'From which planting' })
-    await waitFor(() => expect(sel.querySelectorAll('option').length).toBe(5))
+    const input = await screen.findByRole('combobox', { name: 'From which planting' })
+    fireEvent.focus(input)
+    const list = await screen.findByRole('listbox', { name: 'Plantings' })
+    await waitFor(() => expect(within(list).getAllByRole('option').length).toBe(4))
     fireEvent.change(screen.getByRole('combobox', { name: 'Crop' }), { target: { value: 'tomato' } })
-    // Only the tomato planting survives the scope (+ the "not tied" row).
-    await waitFor(() => expect(sel.querySelectorAll('option').length).toBe(2))
-    expect(sel.textContent).toMatch(/Cherokee Purple/)
+    // Only the tomato planting survives the scope.
+    fireEvent.focus(input)
+    await waitFor(() => expect(within(list).getAllByRole('option').length).toBe(1))
+    expect(within(list).getByRole('option', { name: /Cherokee Purple/ })).toBeTruthy()
   })
 
   it('submits plant_id and derives the crop from the selected planting', async () => {
     renderPutUp()
     fireEvent.click(screen.getByRole('radio', { name: 'Log a put-up' }))
-    const sel = await screen.findByRole('combobox', { name: 'From which planting' })
-    await waitFor(() => expect(sel.querySelectorAll('option').length).toBe(5))
-    fireEvent.change(sel, { target: { value: 'pl-w2' } })
+    const input = await screen.findByRole('combobox', { name: 'From which planting' })
+    fireEvent.focus(input)
+    const list = await screen.findByRole('listbox', { name: 'Plantings' })
+    await waitFor(() => expect(within(list).getAllByRole('option').length).toBe(4))
+    fireEvent.click(screen.getByTestId('ps-opt-pl-w2'))
     fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '6' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save put-up' }))
 
@@ -201,9 +213,11 @@ describe('PutUp — planting attribution (succession spine)', () => {
   it('accepts a planting alone as sufficient attribution (no crop picked)', async () => {
     renderPutUp()
     fireEvent.click(screen.getByRole('radio', { name: 'Log a put-up' }))
-    const sel = await screen.findByRole('combobox', { name: 'From which planting' })
-    await waitFor(() => expect(sel.querySelectorAll('option').length).toBe(5))
-    fireEvent.change(sel, { target: { value: 'pl-w1' } })
+    const input = await screen.findByRole('combobox', { name: 'From which planting' })
+    fireEvent.focus(input)
+    const list = await screen.findByRole('listbox', { name: 'Plantings' })
+    await waitFor(() => expect(within(list).getAllByRole('option').length).toBe(4))
+    fireEvent.click(screen.getByTestId('ps-opt-pl-w1'))
     fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '2' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save put-up' }))
     await waitFor(() => expect(lastPost()).not.toBeNull())
@@ -212,10 +226,10 @@ describe('PutUp — planting attribution (succession spine)', () => {
 
   it('keeps a harvest-prefilled planting selected even when it is outside the current scope', async () => {
     // Launched off a harvest for wave 3, but the crop filter says tomato — the link must survive.
+    // V4-PLANTPICKER-001: a made selection renders as the chip; retainOutOfScopeValue keeps it.
     renderPutUp({ crop_type_slug: 'tomato', plant_id: 'pl-w3' })
-    const sel = await screen.findByRole('combobox', { name: 'From which planting' })
-    await waitFor(() => expect(sel.value).toBe('pl-w3'))
-    expect(sel.textContent).toMatch(/wave 3/)
+    const chip = await screen.findByTestId('pu-planting-select-chip')
+    expect(chip.textContent).toMatch(/wave 3/)
   })
 })
 

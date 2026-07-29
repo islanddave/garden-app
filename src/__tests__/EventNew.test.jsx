@@ -109,6 +109,15 @@ async function flushLoad() {
   await act(async () => { await Promise.resolve() })
 }
 
+// V4-PLANTPICKER-001: the planting control is the shared PlantingSelect combobox — pick by
+// focusing the input (opens the listbox) and clicking the ps-opt-<id> row. findBy waits out the
+// async plants load, replacing the old waitFor(getByText(<plant name>)) option-wait. An empty
+// selection still renders the input, so `.value === ''` assertions remain valid.
+async function pickPlanting(id) {
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click(await screen.findByTestId(`ps-opt-${id}`))
+}
+
 describe('EventNew — harvest panel rendering', () => {
   it('renders the harvest panel when event_type is harvest', async () => {
     renderEventNew('event_type=harvest')
@@ -345,8 +354,7 @@ describe('EventNew — V3-EVENTCONTSIZE-001 container capture on potting_up/tran
     renderEventNew('event_type=potting_up')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    await waitFor(() => screen.getByText('Cayenne #1'))
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
+    await pickPlanting('pl-1')
     fireEvent.change(screen.getByLabelText(/Pot \/ bag type/i), { target: { value: 'fabric_bag' } })
     fireEvent.change(screen.getByLabelText(/Pot size/i), { target: { value: '5 gal' } })
 
@@ -368,8 +376,7 @@ describe('EventNew — V3-EVENTCONTSIZE-001 container capture on potting_up/tran
     renderEventNew('event_type=potting_up')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    await waitFor(() => screen.getByText('Cayenne #1'))
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
+    await pickPlanting('pl-1')
 
     await act(async () => {
       fireEvent.click(screen.getByText('Save'))
@@ -400,8 +407,7 @@ describe('EventNew — V4-EVENTSAVE-001 single Save = next-of-type', () => {
     renderEventNew('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    await waitFor(() => screen.getByText('Cayenne #1'))
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
+    await pickPlanting('pl-1')
 
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 
@@ -419,7 +425,7 @@ describe('EventNew — V4-EVENTSAVE-001 single Save = next-of-type', () => {
     expect(screen.getByText('Undo')).toBeTruthy()
 
     // log the SAME type against the next plant WITHOUT re-picking the type
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-2' } })
+    await pickPlanting('pl-2')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(postCalls.length).toBe(2)
     expect(postCalls[1].event_type).toBe('watering')

@@ -69,6 +69,13 @@ async function flushLoad() {
   await act(async () => { await Promise.resolve() })
 }
 
+// V4-PLANTPICKER-001: planting picks go through the shared PlantingSelect combobox (focus opens
+// the listbox, click the ps-opt-<id> row); findBy waits out the async plants load.
+async function pickPlanting(id) {
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click(await screen.findByTestId(`ps-opt-${id}`))
+}
+
 async function saveOnce() {
   fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
   await act(async () => { fireEvent.click(screen.getByText('Save')) })
@@ -176,8 +183,7 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2)', () => {
     renderInOverlay('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    await waitFor(() => screen.getByText('Cayenne #1'))
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
+    await pickPlanting('pl-1')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log another' })) })
     // form is back with rapid-entry scope: project kept, type kept, plant cleared
@@ -185,7 +191,7 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2)', () => {
     expect(screen.getByLabelText('Project').value).toBe('proj-1')
     expect(screen.getByLabelText('Plant or group').value).toBe('')
     // second save works end-to-end without re-picking the type
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-2' } })
+    await pickPlanting('pl-2')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(postCalls.length).toBe(2)
     expect(postCalls[1].event_type).toBe('watering')
@@ -217,8 +223,7 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2)', () => {
     renderInOverlay('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    await waitFor(() => screen.getByText('Cayenne #1'))
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
+    await pickPlanting('pl-1')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     // display name is the cheap client-state lookup; ids are the response's corresponding pair
     const link = screen.getByRole('link', { name: 'View Cayenne #1' })
@@ -283,8 +288,7 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2)', () => {
     renderInOverlay('event_type=harvest')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    await waitFor(() => screen.getByText('Blue #1'))
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-1' } })
+    await pickPlanting('pl-1')
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '2' } })
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 

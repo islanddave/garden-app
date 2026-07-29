@@ -7,13 +7,12 @@ import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES } from '../lib/constants.js'
 import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
-import { formatQty } from '../lib/format.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 import { seasonTotalPhrase } from '../lib/harvestSummary.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
-import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
+import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap, useOverlayDismiss } from '../context/OverlayContext.jsx'
@@ -1073,28 +1072,21 @@ export default function EventNew() {
                V4-LOGTARGET-001: relabeled from "Plant / Group (optional)" and the affirmative
                "— All plants (project level) —" sentinel retired: the no-planting state must read
                as UNSET (a neutral placeholder), never as a deliberate project-level choice.
-               No requiredness here — Lane 2 is defaulting + feedback only (Lane 3 owns gating). ── */}
+               No requiredness here — Lane 2 is defaulting + feedback only (Lane 3 owns gating).
+               V4-PLANTPICKER-001: the shared searchable PlantingSelect replaces the raw select.
+               Scope stays project-bound (plants fed from the load effect above, which owns the
+               deep-link/sticky validation); PROJHIDE/Lane 3 flips this to the unscoped source. ── */}
           <Section label="Planting">
-            <Select
+            <PlantingSelect
+              plants={plantsForProject}
               value={form.plant_id}
-              onChange={e => setForm(f => ({ ...f, plant_id: e.target.value }))}
-              aria-label="Plant or group"
+              onChange={id => setForm(f => ({ ...f, plant_id: id }))}
               disabled={!form.project_id}
-              style={{ opacity: form.project_id ? 1 : 0.5 }}
-            >
-              {form.project_id ? (
-                <>
-                  <option value="">— Choose a planting —</option>
-                  {[...plantsForProject].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(pl => (
-                    <option key={pl.id} value={pl.id}>
-                      {pl.name}{pl.quantity > 1 ? ` ×${formatQty(pl.quantity)}` : ''}{pl.variety_ref?.name ? ` — ${pl.variety_ref.name}` : ''}
-                    </option>
-                  ))}
-                </>
-              ) : (
-                <option value="">— select a project first —</option>
-              )}
-            </Select>
+              disabledHint="— select a project first —"
+              placeholder="— Choose a planting —"
+              aria-label="Plant or group"
+              data-testid="evtnew-planting"
+            />
           </Section>
 
           {/* ── V3-EVENTCONTSIZE-001: new-container capture for potting_up / transplant on a chosen planting ── */}

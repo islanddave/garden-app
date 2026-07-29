@@ -87,6 +87,16 @@ async function flushLoad() {
   await act(async () => { await Promise.resolve() })
 }
 
+// V4-PLANTPICKER-001: the planting control is the shared PlantingSelect combobox. Picking = focus
+// (opens the listbox) + click the ps-opt-<id> row; a made selection renders as the chip
+// (evtnew-planting-chip) showing the plant NAME — the raw select .value is gone. An EMPTY
+// selection still renders the combobox input, so `.value === ''` assertions remain valid.
+async function pickPlanting(id) {
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click(await screen.findByTestId(`ps-opt-${id}`))
+}
+const plantingChip = () => screen.getByTestId('evtnew-planting-chip')
+
 beforeEach(() => {
   apiFetchSpy.mockReset()
   navigateSpy.mockReset()
@@ -106,8 +116,7 @@ describe('EventNew — sticky planting (V4-LOGTARGET-001, supersedes V4-STICKY-0
     renderEventNew('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-2' } })
-    await waitFor(() => screen.getByText('Sungold #2'))
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-B' } })
+    await pickPlanting('pl-B')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 
     expect(postCalls.length).toBe(1)
@@ -122,8 +131,7 @@ describe('EventNew — sticky planting (V4-LOGTARGET-001, supersedes V4-STICKY-0
     const first = renderEventNew('event_type=watering')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-2' } })
-    await waitFor(() => screen.getByText('Sungold #2'))
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: 'pl-B' } })
+    await pickPlanting('pl-B')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(localStorage.getItem('logone.lastPlant')).toBe('pl-B')
     first.unmount()
@@ -133,7 +141,7 @@ describe('EventNew — sticky planting (V4-LOGTARGET-001, supersedes V4-STICKY-0
     await flushLoad()
     await waitFor(() => {
       expect(screen.getByLabelText('Project').value).toBe('proj-2')
-      expect(screen.getByLabelText('Plant or group').value).toBe('pl-B')
+      expect(plantingChip().textContent).toContain('Sungold #2')
     })
     expect(screen.queryByText('Project not found — pick one.')).toBeNull()
     expect(apiFetchSpy).toHaveBeenCalledWith('/api/plants?project_id=proj-2')
@@ -146,7 +154,7 @@ describe('EventNew — sticky planting (V4-LOGTARGET-001, supersedes V4-STICKY-0
     await flushLoad()
     expect(screen.getByLabelText('Project').value).toBe('proj-1')
     await waitFor(() => {
-      expect(screen.getByLabelText('Plant or group').value).toBe('pl-A')
+      expect(plantingChip().textContent).toContain('Sungold #1')
     })
   })
 
@@ -167,9 +175,9 @@ describe('EventNew — sticky planting (V4-LOGTARGET-001, supersedes V4-STICKY-0
     localStorage.setItem('logone.lastPlant', 'pl-A')
     renderEventNew('event_type=watering')
     await flushLoad()
-    await waitFor(() => expect(screen.getByLabelText('Plant or group').value).toBe('pl-A'))
+    await waitFor(() => expect(plantingChip().textContent).toContain('Sungold #1'))
     // Deliberately clear the planting, then save at project level.
-    fireEvent.change(screen.getByLabelText('Plant or group'), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Clear planting selection' }))
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(postCalls.length).toBe(1)
     expect(postCalls[0].plant_id).toBeNull()
@@ -235,7 +243,7 @@ describe('EventNew — sticky planting (V4-LOGTARGET-001, supersedes V4-STICKY-0
     localStorage.setItem('logone.lastPlant', 'pl-A')
     renderEventNew('event_type=watering')
     await flushLoad()
-    await waitFor(() => expect(screen.getByLabelText('Plant or group').value).toBe('pl-A'))
+    await waitFor(() => expect(plantingChip().textContent).toContain('Sungold #1'))
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(postCalls.length).toBe(1)
     // The seeded submit must NEVER be {project_id:'', plant_id:X} — that 500s server-side.

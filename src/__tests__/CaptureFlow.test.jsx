@@ -77,7 +77,9 @@ describe('CaptureFlow — V3-CAPTURE-001', () => {
     wireLists()
     await act(async () => { render(<CaptureFlow />) })
     await snapTo('mode-event')
-    await act(async () => { fireEvent.change(screen.getByTestId('cap-evplant'), { target: { value: 'pl-1' } }) })
+    // V4-PLANTPICKER-001: pick via the shared combobox — focus opens the listbox, click the row.
+    await act(async () => { fireEvent.focus(screen.getByTestId('cap-evplant')) })
+    await act(async () => { fireEvent.click(await screen.findByTestId('ps-opt-pl-1')) })
     await act(async () => { fireEvent.click(screen.getByTestId('cap-save')) })
     await waitFor(() => expect(screen.getByTestId('cap-result')).toBeDefined())
     const post = fetchSpy.mock.calls.find(c => c[0] === '/api/events' && c[1]?.method === 'POST')
