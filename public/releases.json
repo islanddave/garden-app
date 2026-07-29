@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.74.0",
+    "date": "2026-07-28",
+    "highlights": [
+      "Logging now remembers the exact planting you used last time — not just the project — and the picker starts from a clear 'Choose a planting' instead of quietly filing your log at the project level",
+      "The save confirmation now names exactly where your log went, and says so plainly when a log is not attached to any planting",
+      "Behind the scenes: a weekly data-health check now watches for orphaned records and photo hiccups, and several photo endpoints got tighter household protections"
+    ]
+  },
+  {
     "version": "3.73.0",
     "date": "2026-07-28",
     "highlights": [
