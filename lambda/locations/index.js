@@ -86,61 +86,13 @@ export const handler = async (event) => {
   const rawPath = event.rawPath ?? '/api/locations';
   const householdIds = householdScope(userId);
 
-  // entity-tags routes
-  if (rawPath === '/api/entity-tags') {
-    try {
-      if (method === 'GET') {
-        const { entity_type, entity_id } = event.queryStringParameters ?? {};
-        if (!entity_type || !entity_id) {
-          return resp(400, { error: 'entity_type and entity_id required' });
-        }
-        const tags = await sql`
-          SELECT * FROM entity_tags
-          WHERE entity_type = ${entity_type} AND entity_id = ${entity_id}
-          ORDER BY created_at DESC
-        `;
-        return resp(200, { tags });
-      }
-
-      if (method === 'POST') {
-        const body = JSON.parse(event.body ?? '{}');
-        const { entity_type, entity_id, tag_key, tag_value } = body;
-        if (!entity_type || !entity_id || !tag_key) {
-          return resp(400, { error: 'entity_type, entity_id, and tag_key required' });
-        }
-        const rows = await sql`
-          INSERT INTO entity_tags (entity_type, entity_id, tag_key, tag_value, created_by)
-          VALUES (${entity_type}, ${entity_id}, ${tag_key}, ${tag_value ?? null}, ${userId})
-          ON CONFLICT (entity_type, entity_id, tag_key)
-          DO UPDATE SET
-            tag_value  = EXCLUDED.tag_value,
-            created_by = EXCLUDED.created_by
-          RETURNING *
-        `;
-        return resp(200, { tag: rows[0] });
-      }
-
-      if (method === 'DELETE') {
-        const { entity_type, entity_id, tag_key } = event.queryStringParameters ?? {};
-        if (!entity_type || !entity_id || !tag_key) {
-          return resp(400, { error: 'entity_type, entity_id, and tag_key required' });
-        }
-        await sql`
-          DELETE FROM entity_tags
-          WHERE entity_type = ${entity_type}
-            AND entity_id   = ${entity_id}
-            AND tag_key     = ${tag_key}
-            AND created_by  = ${userId}
-        `;
-        return resp(200, { deleted: true });
-      }
-
-      return resp(405, { error: 'Method not allowed' });
-    } catch (err) {
-      console.error('entity-tags error', err);
-      return resp(500, { error: 'Internal server error' });
-    }
-  }
+  // Plural entity-tags debris route REMOVED 2026-07-28 (data-audit P1-code, evidence W0.6-r1:
+  // CONFIRMED-DEAD — this block was the sole consumer of the plural debris table; the frontend
+  // routes all /api/entity-tags traffic to the tags Lambda (src/lib/api.js -> VITE_API_TAGS,
+  // locked by src/__tests__/api.test.js), which uses singular entity_tag exclusively).
+  // Explicit 404 tombstone: without it the trailing unguarded GET list route would answer this
+  // path with the locations list (200), silently resurrecting a route contract.
+  if (rawPath === '/api/entity-tags') return resp(404, { error: 'Not found' });
 
   const idMatch = rawPath !== '/api/locations/with-path' && rawPath.match(/^\/api\/locations\/([^/]+)$/);
 
