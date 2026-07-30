@@ -8,6 +8,7 @@ import { directSql } from './_harness.js'
 import { describeAuthzMatrix } from './_authz.js'
 import { handler as plantsHandler } from '../../lambda/plants/index.js'
 import { handler as eventsHandler } from '../../lambda/events/index.js'
+import { handler as locationsHandler } from '../../lambda/locations/index.js'
 
 // ── plants /api/plants/:id — full matrix (read + write via PUT + deleted_at) ──────────────────
 describeAuthzMatrix({
@@ -66,5 +67,31 @@ describeAuthzMatrix({
   cleanup: async (ctx) => {
     await directSql`DELETE FROM event_log WHERE created_by = ${ctx.__owner}`
     await directSql`DELETE FROM plant_projects WHERE created_by = ${ctx.__owner}`
+  },
+})
+
+// ── locations /api/locations/:id — full matrix (Phase-1 sweep; PHOTOLOCAUTHZ arm) ─────────────
+// Locations are household-scoped directly (created_by = ANY(householdScope)); no project fixture.
+// NB: read MUST be GET /:id (single object) — GET /api/locations returns an object, not an array.
+// write MUST be PUT (DELETE returns 200 unconditionally — no RETURNING gate — so it can't signal denial).
+describeAuthzMatrix({
+  name: 'locations /api/locations/:id',
+  handler: locationsHandler,
+  seedResource: async (owner) => {
+    const r = await directSql`
+      INSERT INTO locations (name, slug, level, created_by)
+      VALUES (${'authz-loc-' + owner}, ${'authz-loc-' + owner}, ${0}, ${owner}) RETURNING id
+    `
+    return r[0].id
+  },
+  read: (id) => ({ method: 'GET', path: `/api/locations/${id}` }),
+  write: (id) => ({ method: 'PUT', path: `/api/locations/${id}`, body: { name: 'authz-mutated' } }),
+  softDelete: async (id) => { await directSql`UPDATE locations SET deleted_at = NOW() WHERE id = ${id}` },
+  readBack: async (id) => {
+    const r = await directSql`SELECT name FROM locations WHERE id = ${id}`
+    return r[0] ?? null
+  },
+  cleanup: async (ctx) => {
+    await directSql`DELETE FROM locations WHERE created_by = ${ctx.__owner}`
   },
 })
