@@ -42,6 +42,7 @@ import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
 import { formatBotanical } from '../lib/keyFact.js'
 import { buildLifeStory } from '../lib/lifeStory.js'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 
 
@@ -427,7 +428,9 @@ export default function PlantingDetail() {
         path={[
           { label: 'Home', href: '/dashboard' },
           // V4-UNSCOPEDROUTES-001: record-sourced (the canonical route has no project param).
-          { label: pl.project_name || 'Project', href: pl.project_id ? `/projects/${pl.project_id}` : null },
+          // V4-PROJHIDE-001: drop the project crumb entirely when projects aren't user-facing. Flag OFF
+          // spreads the one-element array back in, so the path is byte-identical.
+          ...(PROJECTS_HIDDEN ? [] : [{ label: pl.project_name || 'Project', href: pl.project_id ? `/projects/${pl.project_id}` : null }]),
           { label: name, href: null },
         ]}
       />
@@ -667,7 +670,9 @@ export default function PlantingDetail() {
           SectionHeader gives the flat layout a jump-anchor so it stays discoverable below a long log. */}
       <SectionHeader>Caretaker</SectionHeader>
       <div style={cardStyle}>
-        <AssigneePicker entityType="plant" entityId={pl.id} value={pl.assignee_user_id ?? null} onChanged={(v) => setPlanting(prev => ({ ...prev, assignee_user_id: v }))} inheritLabel={pl.project_name ? `Inherits project: ${pl.project_name}` : 'Inherits the project caretaker'} />
+        {/* V4-PROJHIDE-001: the inherit label references the project — use a project-neutral label when
+            projects aren't user-facing (the underlying inheritance is unchanged). Flag OFF is unchanged. */}
+        <AssigneePicker entityType="plant" entityId={pl.id} value={pl.assignee_user_id ?? null} onChanged={(v) => setPlanting(prev => ({ ...prev, assignee_user_id: v }))} inheritLabel={PROJECTS_HIDDEN ? 'Inherits the default caretaker' : (pl.project_name ? `Inherits project: ${pl.project_name}` : 'Inherits the project caretaker')} />
       </div>
 
       {/* ── V200 Slice 5b — tabbed Details fly-up (Basics / Care / More). The Sheet owns the

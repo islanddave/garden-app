@@ -9,6 +9,7 @@ import { EVENT_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 
 // Shared metadata field label map — mirrors EVENT_METADATA_FIELDS keys from EventNew
@@ -139,7 +140,9 @@ export default function EventDetail() {
   return (
     <Shell>
       <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 20 }}>
-        {project ? (
+        {/* V4-PROJHIDE-001: the project crumb is not a user-facing link when projects are hidden —
+            fall back to the already-present Home → /today crumb. Flag OFF keeps the project link. */}
+        {project && !PROJECTS_HIDDEN ? (
           <Link to={`/projects/${project.id}`} style={{ color: P.green, textDecoration: 'none' }}>
             {project.name}
           </Link>

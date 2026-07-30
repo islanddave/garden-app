@@ -2,6 +2,7 @@ import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import SeverityBadge from '../components/SeverityBadge.jsx'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 // ─── Dashboard Tile: Heads Up ────────────────────────────────────────────────
 // Surfaces stale projects from the dashboard Lambda's `heads_up` payload.
@@ -90,7 +91,8 @@ export default function HeadsUpTile({ headsUp, onDataRefresh }) {
     // reason === 'stale' — navigate to the project page, no query param.
     // NOTE: the heads_up payload has no event_id, so we cannot deeplink to a
     // specific event — project page only.
-    navigate(`/projects/${row.project_id}`)
+    // V4-PROJHIDE-001: the /projects page is not user-facing when hidden — route to Garden instead.
+    navigate(PROJECTS_HIDDEN ? '/garden' : `/projects/${row.project_id}`)
   }
 
   return (

@@ -57,7 +57,7 @@ import SplashScreen from './components/SplashScreen.jsx'
 import UpdateBanner from './components/UpdateBanner.jsx'
 import Sheet from './components/forms/Sheet.jsx'
 import { OverlayProvider, OverlaySurfaceProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
-import { OVERLAY_ROUTES_ENABLED } from './lib/featureFlags.js'
+import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN } from './lib/featureFlags.js'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -151,7 +151,10 @@ export function renderRoutes({ overlay, user }) {
     { path: '/locations/:id', element: <Protected><LocationDetail /></Protected> },
     { path: '/tasks',         element: <Navigate to="/today" replace /> },
     { path: '/zone',          element: <Protected><ZonePicker /></Protected> },
-    { path: '/projects',      element: <Protected><ProjectList /></Protected> },
+    // V4-PROJHIDE-001: the /projects tree is no longer a user-facing view — redirect its index to
+    // /garden when hidden. Every other project route (new/:id/inactive/project-types/scoped shims/
+    // admin classify) stays reachable-but-unlinked. Flag OFF renders the exact prior ProjectList.
+    { path: '/projects',      element: PROJECTS_HIDDEN ? <Navigate to="/garden" replace /> : <Protected><ProjectList /></Protected> },
     { path: '/projects/new',  element: <Protected><ProjectNew /></Protected> },
     { path: '/projects/:id',  element: <Protected><ProjectDetail /></Protected> },
     { path: '/inactive',      element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><InactiveProjects /></ErrorBoundary></Protected> },

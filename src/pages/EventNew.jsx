@@ -6,7 +6,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES } from '../lib/constants.js'
 import { EVENT_TYPE_META, requiresPlanting } from '../lib/eventTypes.js'
-import { PLANTING_REQUIRED_ENABLED } from '../lib/featureFlags.js'
+import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
@@ -430,8 +430,9 @@ export default function EventNew() {
     writeDraft(EVENTNEW_DRAFT_KEY, { form: snap, showPrivate, showAddDetails })
   }, [inOverlay, form, showPrivate, showAddDetails])
 
-  // Load plants when project selection changes
+  // Load plants when project selection changes (project-scoped mode — the default).
   useEffect(() => {
+    if (PROJECTS_HIDDEN) return // V4-PROJHIDE-001: unscoped mode loads ALL plantings in the effect below
     if (!form.project_id) { setPlantsForProject([]); return }
     apiFetch('/api/plants?project_id=' + form.project_id)
       .then(data => {
@@ -450,6 +451,16 @@ export default function EventNew() {
       })
       .catch(() => setPlantsForProject([]))
   }, [apiFetch, form.project_id, preselectedPlantId, rememberedPlantId])
+
+  // V4-PROJHIDE-001: unscoped planting source. With the project chooser hidden, the picker lists
+  // EVERY live planting and project_id is DERIVED from the chosen planting (see PlantingSelect
+  // onChange) — preserving the plant_id ⇒ project_id invariant without a user-visible project step.
+  useEffect(() => {
+    if (!PROJECTS_HIDDEN) return
+    apiFetch('/api/plants')
+      .then(data => setPlantsForProject((data ?? []).filter(p => !p.archived_at)))
+      .catch(() => setPlantsForProject([]))
+  }, [apiFetch])
 
   // Load projects + locations
   useEffect(() => {
@@ -472,6 +483,12 @@ export default function EventNew() {
         // V4-LOGTARGET-001: the remembered PLANT falls with its parent project — a plant
         // seeded without a live project would violate plant_id ⇒ project_id at submit.
         setForm(f => (f.project_id === rememberedProjectId ? { ...f, project_id: '', plant_id: '' } : f))
+      }
+      // V4-PROJHIDE-001: the project chooser is hidden, but exempt (planting-less) events still need
+      // a project_id (server exactly_one_parent). Default to the first loggable project as invisible
+      // plumbing; a chosen planting overrides it via derivation. Runs last so it fills any clear above.
+      if (PROJECTS_HIDDEN) {
+        setForm(f => (f.project_id ? f : { ...f, project_id: loggable[0]?.id || '' }))
       }
     }).catch(() => {})
   }, [apiFetch, preselectedProjectId, rememberedProjectId])
@@ -600,7 +617,10 @@ export default function EventNew() {
     // V4-PLANTREQUIRED-001 (Lane 3, flag-gated): per-type required-planting gate (D2 matrix).
     // Inert unless PLANTING_REQUIRED_ENABLED — the planting field is otherwise optional (Lane 2).
     // flag_issue keeps its own plant_id gate below and is not in the vocabulary, so it is unaffected.
-    if (PLANTING_REQUIRED_ENABLED && requiresPlanting(form.event_type) && !form.plant_id) {
+    // V4-PROJHIDE-001: when projects are hidden a predicated event has no project step to ride, so the
+    // planting is structurally required for those types — implied HERE, independent of the telemetry-
+    // gated PLANTING_REQUIRED_ENABLED (the two gates stay decoupled by design).
+    if ((PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) && !form.plant_id) {
       setError('Choose a planting for this event.'); return
     }
 
@@ -1059,7 +1079,9 @@ export default function EventNew() {
             </div>
           </Section>
 
-          {/* ── Project ── */}
+          {/* ── Project ── V4-PROJHIDE-001: hidden when projects are not a user-facing concept; the
+               project_id is then derived from the chosen planting (or the default) instead of picked. ── */}
+          {!PROJECTS_HIDDEN && (
           <Section label="Project *">
             <Select
               value={form.project_id}
@@ -1075,6 +1097,7 @@ export default function EventNew() {
               </small>
             )}
           </Section>
+          )}
 
           {/* ── Planting — V3-EVENT-005: ever-present, disabled until project chosen.
                V4-LOGTARGET-001: relabeled from "Plant / Group (optional)" and the affirmative
@@ -1084,13 +1107,19 @@ export default function EventNew() {
                V4-PLANTPICKER-001: the shared searchable PlantingSelect replaces the raw select.
                Scope stays project-bound (plants fed from the load effect above, which owns the
                deep-link/sticky validation); PROJHIDE/Lane 3 flips this to the unscoped source. ── */}
-          <Section label={PLANTING_REQUIRED_ENABLED && requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
+          <Section label={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
             <PlantingSelect
               plants={plantsForProject}
               value={form.plant_id}
-              onChange={id => setForm(f => ({ ...f, plant_id: id }))}
-              required={PLANTING_REQUIRED_ENABLED && requiresPlanting(form.event_type)}
-              disabled={!form.project_id}
+              onChange={id => setForm(f => {
+                // V4-PROJHIDE-001: derive the hidden project from the chosen planting (plant_id ⇒
+                // project_id). Clearing the planting keeps the current/default project_id.
+                if (!PROJECTS_HIDDEN) return { ...f, plant_id: id }
+                const derived = id ? (plantsForProject.find(p => p.id === id)?.project_id ?? f.project_id) : f.project_id
+                return { ...f, plant_id: id, project_id: derived }
+              })}
+              required={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type)}
+              disabled={PROJECTS_HIDDEN ? false : !form.project_id}
               disabledHint="— select a project first —"
               placeholder="— Choose a planting —"
               aria-label="Plant or group"

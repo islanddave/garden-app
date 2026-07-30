@@ -51,3 +51,16 @@ export const OVERLAY_ROUTES_ENABLED = true
 // Lane 2 telemetry shows new orphans for REQUIRED types approach zero (D1 falsifier). Criteria-gated,
 // never date-gated. Rollback = flip back to false (one client revert, no data to unwind).
 export const PLANTING_REQUIRED_ENABLED = false
+
+// V4-PROJHIDE-001 (types-forward): hide "project" as a USER-FACING concept — project choosers,
+// labels, breadcrumbs, nav entries, the /projects tree default, and required-project gates all
+// disappear when TRUE, WHILE project_id stays intact in schema/FKs/authz/API read-shapes (projects
+// become invisible plumbing). Mirrors the PUBHIDE "hide the concept, server keeps the data" pattern.
+// When FALSE (default) every gated surface renders exactly as today — the existing suite is
+// unaffected. When TRUE: Garden defaults to a type facet (project tree hidden); EventNew derives
+// project_id from the chosen planting (predicated types require a planting — implied HERE, NOT by
+// flipping the telemetry-gated PLANTING_REQUIRED_ENABLED above; exempt types fall back to a default
+// project_id); project routes stay reachable-but-unlinked; public /garden/:slug sharing is untouched.
+// Preview by flipping this const on dev. Criteria-gated, never date-gated. Rollback = flip back to
+// false (one client revert, no data to unwind).
+export const PROJECTS_HIDDEN = false

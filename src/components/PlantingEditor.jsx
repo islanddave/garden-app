@@ -10,6 +10,7 @@ import { P } from '../lib/constants.js'
 import { formatQty } from '../lib/format.js'
 import ProjectOptions from './ProjectOptions.jsx'
 import { PlantForm } from './forms'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '', parent_plant_id: '', container_type: '', container_size: '', location_id: '' }
 
@@ -240,8 +241,11 @@ export default function PlantingEditor({
         submitLabel={isEdit ? 'Save' : 'Add planting'}
         submittingLabel={isEdit ? 'Saving…' : 'Adding…'}
         onCancel={onClose}
-        showProjectSelect={!isEdit}
-        projectOptions={!isEdit ? <>{projects.length === 0 && <option value="">No projects yet</option>}<ProjectOptions projects={projects} /></> : null}
+        /* V4-PROJHIDE-001: hide the project chooser when projects aren't user-facing. project_id still
+           defaults to projects[0]?.id (see initial form state) so the add POST satisfies the FK with no
+           visible project step. Flag OFF passes the exact prior !isEdit values (byte-identical). */
+        showProjectSelect={PROJECTS_HIDDEN ? false : !isEdit}
+        projectOptions={PROJECTS_HIDDEN ? null : (!isEdit ? <>{projects.length === 0 && <option value="">No projects yet</option>}<ProjectOptions projects={projects} /></> : null)}
         plantingOptions={(isEdit ? plants.filter(p => p.id !== plant?.id) : plants).map(p => ({ id: p.id, name: p.name }))}
         detailsDefaultOpen={!isEdit}
         idPrefix={isEdit ? `edit-${plant?.id}` : 'add-plant'}

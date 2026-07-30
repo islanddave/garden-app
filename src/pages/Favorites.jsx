@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 const TYPE_META = {
   // V3-FAV-001: plantings lead (plantings-first as projects deprecate to buckets). The plant list
@@ -54,7 +55,9 @@ export default function Favorites() {
       }
 
       // Projects — cross-reference with Lambda result
-      if (byType.project) {
+      // V4-PROJHIDE-001: the Projects favorites section (header + rows) is suppressed when projects
+      // aren't user-facing — the section is simply never added. Flag OFF is byte-identical.
+      if (!PROJECTS_HIDDEN && byType.project) {
         const items = (allProjects ?? []).filter(p => byType.project.includes(p.id))
         if (items.length) resolvedSections.push({ type: 'project', items })
       }

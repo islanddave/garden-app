@@ -13,7 +13,7 @@ import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismisse
 import CritterCoachmark from '../components/CritterCoachmark.jsx'
 import CritterOptInPrompt from '../components/CritterOptInPrompt.jsx'
 import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
-import { SYSTEM_NOTIFICATIONS_ENABLED } from '../lib/featureFlags.js'
+import { SYSTEM_NOTIFICATIONS_ENABLED, PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA } from '../lib/projectTree.js'
 import GroupByControl from '../components/forms/GroupByControl.jsx'
@@ -108,7 +108,9 @@ export default function Garden() {
     }
     const ORDER = ['type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform']
     const LABELS = { type: 'Type', lifecycle: 'Lifespan', heat: 'Heat', determinacy: 'Determinacy', day_length: 'Day Length', allium_type: 'Allium', basil_use: 'Basil', bean_type: 'Bean Type', bean_habit: 'Bean Habit', bean_use: 'Bean Use', location: 'Location', group: 'Group', freeform: 'Tags' }
-    const opts = [{ value: 'none', label: 'Projects' }]
+    // V4-PROJHIDE-001: when projects are hidden, drop the "Projects" (none) grouping entirely — the
+    // by-project tree is no longer a user-facing view. Every tag facet + Lifecycle remain selectable.
+    const opts = PROJECTS_HIDDEN ? [] : [{ value: 'none', label: 'Projects' }]
     for (const fct of ORDER) if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
     // 'status' groups by the planting's LIFECYCLE stage (seed->...->ended). Always available
     // (every planting has a status), so appended unconditionally — it is NOT a tag facet.
@@ -478,7 +480,13 @@ export default function Garden() {
   if (loading) return <Shell><Spinner block /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
-  const effectiveGroupBy = facetOptions.some(o => o.value === groupBy) ? groupBy : 'none'
+  // V4-PROJHIDE-001: 'none' (the by-project tree) is not a valid view when projects are hidden, so a
+  // stale/absent group-by resolves to a facet instead — 'type' (types-forward) when tags are wired,
+  // else 'status' (Lifecycle, always present). Flag OFF keeps the exact prior behavior ('none' tree).
+  const projhideDefaultFacet = facetOptions.some(o => o.value === 'type') ? 'type' : 'status'
+  const effectiveGroupBy = facetOptions.some(o => o.value === groupBy)
+    ? groupBy
+    : (PROJECTS_HIDDEN ? projhideDefaultFacet : 'none')
   const tree = buildGardenTree(projects, visiblePlants, SORT_ALPHA)
   // V4-ASSIGNLENS-002 active-filter cue: when a caretaker lens is on, the by-project AND by-type
   // views are narrowed. Surface that explicitly (label + how many rows are hidden) with a one-tap
@@ -790,6 +798,23 @@ function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongP
 function ErrMsg({ msg }) { return <div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{msg}</div> }
 
 function EmptyState() {
+  // V4-PROJHIDE-001: when projects are hidden the empty state is planting-forward (no "create a
+  // project" CTA). The {search:'?add=1'} link keeps the current pathname and opens the add-planting
+  // editor via Garden's existing ?add handler. Flag OFF keeps the original project-forward version.
+  if (PROJECTS_HIDDEN) {
+    return (
+      <div style={{ textAlign: 'center', padding: '48px 24px', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8 }}>
+        <div style={{ marginBottom: 12, color: P.greenLight, display: 'flex', justifyContent: 'center' }}>
+          <Icon name="nav.garden" size={48} decorative />
+        </div>
+        <p style={{ margin: '0 0 6px', fontWeight: 700, color: P.dark, fontSize: '1rem' }}>Nothing growing yet</p>
+        <p style={{ margin: '0 0 24px', color: P.light, fontSize: '0.875rem' }}>
+          Add your first planting — everything you grow lives here.
+        </p>
+        <Link to={{ search: '?add=1' }} style={btnLink}>Add your first planting</Link>
+      </div>
+    )
+  }
   return (
     <div style={{ textAlign: 'center', padding: '48px 24px', backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 8 }}>
       <div style={{ marginBottom: 12, color: P.greenLight, display: 'flex', justifyContent: 'center' }}>

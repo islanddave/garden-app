@@ -5,6 +5,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { todayBand } from '../lib/todayBand.js'
 import { SEVERITY_STYLES } from '../lib/waterDue.js'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 // Today bar — DRG-TODAY-003. The persistent, color-coded "what needs me today?" entry docked
 // directly ABOVE the bottom nav, on every authenticated screen EXCEPT /today itself (redundant
@@ -70,14 +71,20 @@ export default function TodayBand() {
 
   const st = barState(visible, total)
   const label = st.tier === 'urgent' ? st.top.label : 'Today'
+  // V4-PROJHIDE-001: the urgent callout's leading name is already planting-forward (V3-ATTN-001:
+  // st.top.projectName holds the single actionable planting's name; it only falls back to the project/
+  // container name for GROUPED rows, where st.top.plantId is null). When projects aren't user-facing,
+  // keep the planting name but drop the project/container name from grouped rows (detail stands alone).
+  // Flag OFF always renders the leading "{name} — " / ", {name}" exactly as before (byte-identical).
+  const hideUrgentName = PROJECTS_HIDDEN && st.tier === 'urgent' && !st.top.plantId
   const detail =
     st.tier === 'urgent'
-      ? `${st.top.projectName} — ${st.top.detail}${total > 1 ? ` (+${total - 1} more)` : ''}`
+      ? `${hideUrgentName ? '' : `${st.top.projectName} — `}${st.top.detail}${total > 1 ? ` (+${total - 1} more)` : ''}`
       : st.tier === 'waiting'
         ? `${total} ${total === 1 ? 'thing needs' : 'things need'} a look`
         : "You're all caught up"
   const ariaState =
-    st.tier === 'urgent' ? `${st.top.label}, ${st.top.projectName}, ${st.top.detail}`
+    st.tier === 'urgent' ? `${st.top.label}${hideUrgentName ? '' : `, ${st.top.projectName}`}, ${st.top.detail}`
     : st.tier === 'waiting' ? `${total} ${total === 1 ? 'item needs' : 'items need'} attention`
     : 'all caught up'
 

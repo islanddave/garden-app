@@ -24,6 +24,7 @@ import { useApiFetch } from '../../lib/api.js'
 import { P } from '../../lib/constants.js'
 import { T, inputChrome } from './formStyles.js'
 import { formatQty } from '../../lib/format.js'
+import { PROJECTS_HIDDEN } from '../../lib/featureFlags.js'
 
 // Max rows rendered in the listbox — VarietyPicker precedent: cap VISIBLY (footer row), never
 // truncate silently. Unscoped garden lists run to the hundreds; 200 keeps the DOM sane.
@@ -226,7 +227,9 @@ export default function PlantingSelect({
           <span style={{ fontSize: '0.88rem', fontWeight: 600, color: P.green }}>
             {label(selected)}
           </span>
-          {selected.project_name && labelFormat !== 'wave' && (
+          {/* V4-PROJHIDE-001: the secondary project_name tag is hidden when projects aren't user-facing
+              (extends the existing labelFormat!=='wave' suppression). Flag OFF renders it as before. */}
+          {selected.project_name && labelFormat !== 'wave' && !PROJECTS_HIDDEN && (
             <span style={{ fontSize: '0.74rem', color: P.light, marginLeft: 6 }}>
               {selected.project_name}
             </span>
@@ -310,7 +313,8 @@ export default function PlantingSelect({
               style={rowStyle(i === highlight)}
             >
               <span>{label(p)}</span>
-              {p.project_name && labelFormat !== 'wave' && (
+              {/* V4-PROJHIDE-001: option project_name tag hidden when projects aren't user-facing. */}
+              {p.project_name && labelFormat !== 'wave' && !PROJECTS_HIDDEN && (
                 <span style={{ fontSize: '0.74rem', color: P.light, marginLeft: 8 }}>{p.project_name}</span>
               )}
             </li>

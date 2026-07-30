@@ -14,6 +14,7 @@ import { useInOverlaySurface } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { startLiveTranscription, isTranscriptionSupported } from '../lib/transcribe.js'
 import { P } from '../lib/constants.js'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 const norm = s => (s || '').toString().toLowerCase()
 const asArray = (d, key) => (Array.isArray(d) ? d : (d?.[key] ?? []))
@@ -138,7 +139,10 @@ export default function Search() {
 
   const total = results.plants.length + results.locations.length + results.varieties.length
     + extraPlantings.length + extraLocations.length + extraVarieties.length
-    + srv.projects.length + srv.events.length + srv.inventory.length + srv.photos.length
+    // V4-PROJHIDE-001: the Projects results group is hidden below when projects aren't user-facing, so
+    // it must not count toward `total` (else a project-only match suppresses the "No matches" state
+    // while rendering nothing). Flag OFF keeps srv.projects.length in the sum (byte-identical).
+    + (PROJECTS_HIDDEN ? 0 : srv.projects.length) + srv.events.length + srv.inventory.length + srv.photos.length
 
   const rowStyle = { display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, textDecoration: 'none', marginBottom: 8 }
   const nameStyle = { fontWeight: 700, color: P.dark, fontSize: '0.92rem' }
@@ -153,8 +157,12 @@ export default function Search() {
 
   const plantingRow = p => {
     const to = p.project_id && p.id ? `/projects/${p.project_id}/plantings/${p.id}` : null
+    // V4-PROJHIDE-001: drop the project_name fallback term from the planting subtitle when projects
+    // aren't user-facing (variety/group/snippet still shown). Flag OFF keeps the exact prior chain.
     const sub = p.variety_ref?.name && p.variety_ref.name !== p.name ? p.variety_ref.name
-      : (p.variety_ref?.group ?? p.project_name ?? p.snippet ?? null)
+      : (PROJECTS_HIDDEN
+          ? (p.variety_ref?.group ?? p.snippet ?? null)
+          : (p.variety_ref?.group ?? p.project_name ?? p.snippet ?? null))
     return <Row key={p.id} to={to} name={p.name || 'Planting'} sub={sub} />
   }
 
@@ -234,7 +242,9 @@ export default function Search() {
           </>
         )}
 
-        {!loading && query && srv.projects.length > 0 && (
+        {/* V4-PROJHIDE-001: the whole Projects results group is hidden when projects aren't user-facing
+            (Plantings / Events / Inventory / Photos groups remain). Flag OFF renders it exactly as before. */}
+        {!loading && query && !PROJECTS_HIDDEN && srv.projects.length > 0 && (
           <>
             <div style={sectionHead}>Projects</div>
             {srv.projects.map(pr => <Row key={pr.id} to={`/projects/${pr.id}`} name={pr.name} sub={pr.species || pr.snippet || pr.status || null} />)}
@@ -248,7 +258,9 @@ export default function Search() {
               <Row key={ev.id}
                 to={`/events/${ev.id}`}
                 name={ev.title || ev.event_type}
-                sub={[ev.project_name, ev.event_date ? String(ev.event_date).slice(0, 10) : null, ev.snippet].filter(Boolean).join(' · ') || null} />
+                // V4-PROJHIDE-001: drop the project_name term from the event subtitle when projects
+                // aren't user-facing (date + snippet remain). Flag OFF keeps project_name first.
+                sub={[PROJECTS_HIDDEN ? null : ev.project_name, ev.event_date ? String(ev.event_date).slice(0, 10) : null, ev.snippet].filter(Boolean).join(' · ') || null} />
             ))}
           </>
         )}

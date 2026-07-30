@@ -11,6 +11,7 @@ import { useOverlayNavigate } from '../context/OverlayContext.jsx'
 import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
 import HeadsUpTile from '../components/HeadsUpTile.jsx'
 import NotifyButton from '../components/NotifyButton.jsx'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 // First-name extraction (I10-greeting fix, L-063, 2026-05-18). profile.display_name may be a full
 // name like "Dave Nichols"; we render greetings with first name only.
@@ -244,7 +245,9 @@ export default function Dashboard() {
           <NotifyButton eventCount={userStats.total_events ?? 0} />
 
           {/* Footer link to inactive projects surface (V1.2a-2 S3) */}
-          {inactiveCount > 0 && (
+          {/* V4-PROJHIDE-001: the inactive-projects entry is a project surface — hidden when projects
+              aren't user-facing. Flag OFF keeps the exact prior inactiveCount>0 gate (byte-identical). */}
+          {!PROJECTS_HIDDEN && inactiveCount > 0 && (
             <div style={{ textAlign: 'center', marginBottom: 20 }}>
               <Link to="/inactive" style={{
                 display: 'inline-block',
@@ -316,7 +319,12 @@ export default function Dashboard() {
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                       }}>
-                        {single ? (ev.plant_name || ev.project_name || '—') : `${ev.batch_count} plantings`}
+                        {/* V4-PROJHIDE-001: drop the bare project_name fallback when projects aren't
+                            user-facing — prefer the planting name, else a neutral em dash. Flag OFF
+                            keeps the plant_name || project_name || '—' chain (byte-identical). */}
+                        {single
+                          ? (PROJECTS_HIDDEN ? (ev.plant_name || '—') : (ev.plant_name || ev.project_name || '—'))
+                          : `${ev.batch_count} plantings`}
                       </div>
                     </div>
                   </div>
@@ -538,7 +546,9 @@ function GiveAttentionTile({ nextAttention, hasProjects }) {
             <div style={{ fontWeight: 700, color: P.green, fontSize: '0.95rem' }}>
               {nextAttention.plant_name}
             </div>
-            {nextAttention.project_name && (
+            {/* V4-PROJHIDE-001: the secondary project_name line is dropped when projects aren't
+                user-facing (the plant_name above stands alone). Flag OFF renders it exactly as before. */}
+            {!PROJECTS_HIDDEN && nextAttention.project_name && (
               <div style={{ fontSize: '0.72rem', color: P.light, marginTop: 1 }}>
                 {nextAttention.project_name}
               </div>
@@ -593,7 +603,10 @@ function WaterMeTile({ waterDue, hasProjects }) {
           💧 WATER ME
         </div>
         <div style={{ fontWeight: 700, color: s.text, fontSize: '0.95rem', marginBottom: '2px' }}>
-          {w.project_name}
+          {/* V4-PROJHIDE-001: the WATER ME subject is a project/container name (queryWaterDueFromPlan
+              selects only project_name — no planting scalar). When projects aren't user-facing, prefer a
+              planting name if one is ever added, else a neutral subject. Flag OFF keeps w.project_name. */}
+          {PROJECTS_HIDDEN ? (w.plant_name || 'Water due') : w.project_name}
         </div>
         <div style={{ fontSize: '0.78rem', color: P.mid }}>
           {w.last_watered_at
@@ -630,7 +643,11 @@ function WaterMeTile({ waterDue, hasProjects }) {
           💧 WATER ME
         </div>
         <div style={{ fontWeight: 700, color: s.text, fontSize: '0.95rem', marginBottom: '2px' }}>
-          Water {top.project_name} + {waterDue.length - 1} more
+          {/* V4-PROJHIDE-001: the summary names the top project — replaced with a project-free count
+              when projects aren't user-facing (this branch is the >1 case). Flag OFF is unchanged. */}
+          {PROJECTS_HIDDEN
+            ? `${waterDue.length} plantings need water`
+            : `Water ${top.project_name} + ${waterDue.length - 1} more`}
         </div>
         <div style={{ fontSize: '0.78rem', color: P.mid }}>
           {expanded ? 'Tap row to log · ▾' : 'Tap to see all · ▸'}
@@ -662,7 +679,10 @@ function WaterMeTile({ waterDue, hasProjects }) {
                     fontWeight: 600, color: ts.text, fontSize: '0.88rem',
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                   }}>
-                    {w.project_name}
+                    {/* V4-PROJHIDE-001: per-row subject is a project/container name (no planting scalar
+                        in the water_due payload) — prefer a planting name if added, else neutral. Flag
+                        OFF keeps w.project_name (byte-identical). */}
+                    {PROJECTS_HIDDEN ? (w.plant_name || 'Water due') : w.project_name}
                   </div>
                   <div style={{ fontSize: '0.72rem', color: P.light, marginTop: 1 }}>
                     {w.last_watered_at

@@ -11,6 +11,7 @@ import Breadcrumb from '../components/Breadcrumb.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { collapseFeed, dedupeById, relativeTime, prettyEventType } from '../lib/feed.js'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 const PAGE = 30
 
@@ -89,10 +90,15 @@ export default function FeedPage() {
 
         {/* Filters */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+          {/* V4-PROJHIDE-001: the project filter is hidden when projects aren't user-facing (event-type +
+              date filters remain). filters.project_id stays '' so no project filter is applied. Flag OFF
+              renders the select exactly as before. */}
+          {!PROJECTS_HIDDEN && (
           <select aria-label="Filter by project" value={filters.project_id} onChange={set('project_id')} style={selStyle}>
             <option value="">All projects</option>
             <ProjectOptions projects={projects} />
           </select>
+          )}
           <select aria-label="Filter by event type" value={filters.event_type} onChange={set('event_type')} style={selStyle}>
             <option value="">All event types</option>
             {EVENT_TYPES.map(t => <option key={t} value={t}>{prettyEventType(t)}</option>)}
@@ -124,7 +130,12 @@ export default function FeedPage() {
               {items.map((ev, i) => {
                 const isBatch = (ev.batch_count ?? 1) > 1
                 const species = ev.critter_species_id ? SPECIES_BY_ID[ev.critter_species_id] : null
-                const target = isBatch ? `${ev.batch_count} plantings` : (ev.project_name ?? '—')
+                // V4-PROJHIDE-001: drop the project_name row label when projects aren't user-facing —
+                // prefer a planting name (forward-compatible if the feed adds one), else a neutral em
+                // dash. Flag OFF keeps the exact prior project_name label.
+                const target = isBatch
+                  ? `${ev.batch_count} plantings`
+                  : (PROJECTS_HIDDEN ? (ev.plant_name ?? '—') : (ev.project_name ?? '—'))
                 const inner = (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 16px', borderBottom: i < items.length - 1 ? `1px solid ${P.border}` : 'none', gap: 12 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>

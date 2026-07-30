@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import WhatsNewDot from './WhatsNewDot.jsx'
 import { P } from '../lib/constants.js'
 import CatchUpBadge from './CatchUpBadge.jsx'
-import { CATCH_UP_EDITOR_SHIPPED } from '../lib/featureFlags.js'
+import { CATCH_UP_EDITOR_SHIPPED, PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { useApiFetch } from '../lib/api.js'
 import BottomNavDot from './BottomNavDot.jsx'
 import { useMode } from '../lib/mode.js'
@@ -40,7 +40,9 @@ const TABS = [
 const CREATE_ACTIONS = [
   { to: '/log',          iconName: 'event.other',      label: 'Log an event',   sub: 'Watering, harvest, a note…' },
   { to: '/log/many',     iconName: 'action.logmany',   label: 'Log many',        sub: 'One event across many plants' },
-  { to: '/garden?add=1', iconName: 'lifecycle.sprout', label: 'Add a planting', sub: 'A plant growing in a project' },
+  // V4-PROJHIDE-001: project-neutral sub-label when "project" is not a user-facing concept. Flag OFF
+  // keeps the original copy — module-const evaluated once at load, so behavior is byte-identical.
+  { to: '/garden?add=1', iconName: 'lifecycle.sprout', label: 'Add a planting', sub: PROJECTS_HIDDEN ? "Something you're growing" : 'A plant growing in a project' },
   { to: '/sow',          iconName: 'lifecycle.sprout', label: 'Sow from seed',  sub: 'Start something from your seed inventory' },
 ]
 

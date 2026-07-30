@@ -7,6 +7,7 @@ import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import PlantingSelect from '../components/forms/PlantingSelect.jsx'
 import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 // ---- Photo Library ----
 // Browse all photos, upload standalone photos (event_id = null),
@@ -275,6 +276,10 @@ export default function PhotoLibrary() {
             {uploadErr && <ErrBanner msg={uploadErr} />}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} data-testid="photo-library-upload-form">
 
+              {/* V4-PROJHIDE-001: upload project chooser hidden when projects aren't user-facing. Flag
+                  OFF renders it exactly as before. (project_id stays '' when hidden — see report note re:
+                  the plant picker below, which is project-scoped.) */}
+              {!PROJECTS_HIDDEN && (
               <div>
                 <label style={fieldLabelStyle}>Project  ·  or pick a space below</label>
                 <select
@@ -286,6 +291,7 @@ export default function PhotoLibrary() {
                   <ProjectOptions projects={projects} />
                 </select>
               </div>
+              )}
 
               {plantsForUpload.length > 0 && (
                 <div>
@@ -372,6 +378,10 @@ export default function PhotoLibrary() {
               </button>
             )
           })}
+          {/* V4-PROJHIDE-001: project filter hidden when projects aren't user-facing (mode chips +
+              space filter remain; filterProject stays '' so no project filter applies). Flag OFF is
+              byte-identical. */}
+          {!PROJECTS_HIDDEN && (
           <select
             value={filterProject}
             onChange={e => { setFilterProject(e.target.value); setFilterLocation(''); setFilterMode('all') }}
@@ -386,6 +396,7 @@ export default function PhotoLibrary() {
             <option value="">Filter by project…</option>
             <ProjectOptions projects={projects} />
           </select>
+          )}
           {/* V4-PHOTOLOCFIND-001: space chip — server-side subtree filter (a parent space shows its
               descendants' photos). Mutually exclusive with the project filter, like the mode chips. */}
           <select
@@ -512,7 +523,9 @@ export default function PhotoLibrary() {
 // ---- Photo card ----
 // Uses photo.view_url (signed S3 URL from Lambda) and photo.project_name (inline JOIN)
 function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
-  const project = photo.project_name
+  // V4-PROJHIDE-001: drop the project caption strip when projects aren't user-facing (null → the
+  // {project && (...)} strip below renders nothing). Flag OFF keeps photo.project_name.
+  const project = PROJECTS_HIDDEN ? null : photo.project_name
 
   return (
     <button
@@ -639,6 +652,10 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
               </p>
               {tagErr && <ErrBanner msg={tagErr} />}
 
+              {/* V4-PROJHIDE-001: reassign project chooser hidden when projects aren't user-facing. Flag
+                  OFF renders it exactly as before. (project_id stays '' when hidden — the plant picker
+                  below is project-scoped; see report note.) */}
+              {!PROJECTS_HIDDEN && (
               <div>
                 <label style={fieldLabelStyle}>Project</label>
                 <select
@@ -650,6 +667,7 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
                   <ProjectOptions projects={projects} />
                 </select>
               </div>
+              )}
 
               {plantsForModal.length > 0 && (
                 <div>

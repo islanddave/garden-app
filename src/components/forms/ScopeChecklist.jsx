@@ -22,6 +22,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { P } from '../../lib/constants.js'
 import ProjectOptions from '../ProjectOptions.jsx'
 import SelectChip from './SelectChip.jsx'
+import { PROJECTS_HIDDEN } from '../../lib/featureFlags.js'
 
 // FIX-3: per-DEVICE default selection (true=start all selected [Dave], false=start none [Jen]).
 // Device-local expedient; server-side per-user migration tracked as V4-LOGMANY-001.
@@ -136,10 +137,15 @@ export default function ScopeChecklist({
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
           <SelectChip active={scope.type === 'all'} onClick={() => onScopeChange({ type: 'all' })}>All active</SelectChip>
-          <SelectChip active={scope.type === 'project'} onClick={() => onScopeChange(scope.type === 'project' ? scope : { type: 'project', project_id: projects[0]?.id })}>By project</SelectChip>
+          {/* V4-PROJHIDE-001: the "By project" scope chip is hidden when projects aren't user-facing
+              (All active / By space remain). Flag OFF renders the chip exactly as before. */}
+          {!PROJECTS_HIDDEN && (
+            <SelectChip active={scope.type === 'project'} onClick={() => onScopeChange(scope.type === 'project' ? scope : { type: 'project', project_id: projects[0]?.id })}>By project</SelectChip>
+          )}
           <SelectChip active={scope.type === 'space'} onClick={() => onScopeChange(scope.type === 'space' ? scope : { type: 'space', location_id: zones[0]?.id })}>By space</SelectChip>
         </div>
-        {scope.type === 'project' && (
+        {/* V4-PROJHIDE-001: the project <select> follows its chip — hidden when projects aren't user-facing. */}
+        {!PROJECTS_HIDDEN && scope.type === 'project' && (
           <select value={scope.project_id ?? ''} onChange={e => onScopeChange({ type: 'project', project_id: e.target.value })} style={selectStyle} aria-label="Project">
             <ProjectOptions projects={projects} />
           </select>

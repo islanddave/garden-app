@@ -40,6 +40,9 @@ vi.mock('../components/CatchUpBadge.jsx', () => ({
 vi.mock('../lib/featureFlags.js', () => ({
   CATCH_UP_EDITOR_SHIPPED: false,
   OVERLAY_ROUTES_ENABLED: true,
+  // V4-PROJHIDE-001: BottomNav now reads PROJECTS_HIDDEN for the "Add a planting" sub-label; the
+  // partial mock must export it (vitest throws on an undefined mocked export). Prod default is false.
+  PROJECTS_HIDDEN: false,
 }))
 
 import BottomNav from '../components/BottomNav.jsx'

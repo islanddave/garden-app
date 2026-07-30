@@ -10,6 +10,7 @@ import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
 import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
 import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
 import { fmtQuantity, unitLabel, formatEntry, etDay } from '../lib/harvestSummary.js'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 // Harvests — V4-HARVESTVIEW-001 S2a/S2b. Route + snapshot strip + Log feed + minimal Totals, reading
 // the shipped GET /api/harvests. Retrospective/reflective: never prompts, counts down, or scores
@@ -338,7 +339,9 @@ function HarvestEntry({ entry: e }) {
       </div>
       {(unassigned || removed) && (
         <div style={{ fontSize: '0.76rem', color: P.light, marginTop: 3 }}>
-          {removed ? 'planting removed' : `Logged to ${e.project_name || 'a project'}`}
+          {/* V4-PROJHIDE-001: this row shows for project-level (plantless) harvests — neutral wording
+              when projects aren't user-facing. Flag OFF keeps the "Logged to {project}" copy. */}
+          {removed ? 'planting removed' : (PROJECTS_HIDDEN ? 'Logged without a planting' : `Logged to ${e.project_name || 'a project'}`)}
         </div>
       )}
       {e.note_excerpt && (
@@ -409,7 +412,9 @@ function TotalsView({ aggregates, onSeeInLog }) {
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: P.mid, marginBottom: 4 }}>Unassigned</div>
           {other.map((o) => (
             <div key={o.project_id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.84rem', color: P.mid, padding: '2px 0' }}>
-              <span>{o.project_name || 'A project'}</span>
+              {/* V4-PROJHIDE-001: the Unassigned breakdown is grouped by project — neutral row label
+                  when projects aren't user-facing. Flag OFF keeps the project name. */}
+              <span>{PROJECTS_HIDDEN ? 'Unattributed' : (o.project_name || 'A project')}</span>
               <span style={{ fontWeight: 600 }}>{unitsLine(o.units, null) || `+${o.unquantified} unrecorded`}</span>
             </div>
           ))}
