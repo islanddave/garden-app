@@ -10,6 +10,9 @@ import {
   BATCH_EVENT_TYPES,
   buildSecondaryGroups,
   CATEGORY_ORDER,
+  PLANTING_REQUIRED_TYPES,
+  PLANTING_EXEMPT_TYPES,
+  requiresPlanting,
 } from '../lib/eventTypes.js';
 
 const isRaw = (s) => /^[a-z_]+$/.test(s);
@@ -176,4 +179,31 @@ describe('V4-EVENTSEL-001 — Dave-approved taxonomy taste-calls', () => {
   it('weeded is Environmental (moved off the lone Care More-panel row, Dave 2026-07-07)', () => expect(EVENT_TYPE_META.weeded.category).toBe('Environmental'));
   it('caged is Growth & Training', () => expect(EVENT_TYPE_META.caged.category).toBe('Growth & Training'));
   it('animal_damage is Environmental', () => expect(EVENT_TYPE_META.animal_damage.category).toBe('Environmental'));
+});
+
+describe('V4-PLANTREQUIRED-001 — planting-requirement partition (D2 matrix)', () => {
+  it('REQUIRED and EXEMPT are disjoint', () => {
+    const overlap = [...PLANTING_REQUIRED_TYPES].filter((t) => PLANTING_EXEMPT_TYPES.includes(t));
+    expect(overlap).toEqual([]);
+  });
+  it('REQUIRED ∪ EXEMPT covers exactly EVENT_TYPES (nothing unclassified, nothing invented)', () => {
+    const union = new Set([...PLANTING_REQUIRED_TYPES, ...PLANTING_EXEMPT_TYPES]);
+    expect(union.size).toBe(EVENT_TYPES.length);
+    for (const t of EVENT_TYPES) expect(union.has(t), `${t} unclassified`).toBe(true);
+  });
+  it('every REQUIRED type is a real EVENT_TYPES value (no stale entry)', () => {
+    for (const t of PLANTING_REQUIRED_TYPES) expect(EVENT_TYPES, `${t} not in EVENT_TYPES`).toContain(t);
+  });
+  it('requiresPlanting matches the REQUIRED set; false for exempt + unknown types', () => {
+    expect(requiresPlanting('harvest')).toBe(true);
+    expect(requiresPlanting('watering')).toBe(true);
+    expect(requiresPlanting('observation')).toBe(false);
+    expect(requiresPlanting('weeded')).toBe(false);
+    expect(requiresPlanting('flag_issue')).toBe(false); // not in the vocabulary — has its own gate
+    expect(requiresPlanting('')).toBe(false);
+  });
+  it('classifies the spec §3 D2 anchor cases (data-validated: weeded/uncover zero-planting; harvest/watering predicate on a plant)', () => {
+    expect(PLANTING_EXEMPT_TYPES).toEqual(expect.arrayContaining(['rain', 'weeded', 'uncover', 'observation', 'photo', 'other']));
+    expect([...PLANTING_REQUIRED_TYPES]).toEqual(expect.arrayContaining(['harvest', 'first_harvest', 'watering', 'transplant', 'flowering']));
+  });
 });

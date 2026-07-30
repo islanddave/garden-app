@@ -240,3 +240,32 @@ export function buildSecondaryGroups(primaryValues, values = EVENT_TYPES) {
   return Object.entries(cats).sort(([a], [b]) => rank(a) - rank(b))
 }
 
+// ── V4-PLANTREQUIRED-001 (Lane 3, Ask 2): per-event-type planting-requirement partition ──
+// D2 "predication test" (spec v4-metaphoto-plantingtarget §3): REQUIRE a planting where the event
+// predicates on a specific plant; the rest take a space/garden target instead (never nothing). This
+// map is the CANONICAL home (spec §6.4) so the client and any future Lambda copy share ONE source —
+// do NOT re-list the partition anywhere else. Enforcement is CLIENT-side and feature-flagged
+// (featureFlags.PLANTING_REQUIRED_ENABLED); the server validator is deliberately NOT flipped in
+// lockstep — a PWA service-worker running a stale bundle would 400 every log mid-season (spec D7).
+export const PLANTING_REQUIRED_TYPES = new Set([
+  'sowing', 'seed_soak', 'germination', 'thinning', 'potting_up', 'transplant', 'hardening_off',
+  'watering', 'fertilizing', 'pest_treatment', 'doctored', 'pruning',
+  'brought_inside', 'brought_outside', 'caged', 'staked', 'trellised', 'pinched', 'suckered',
+  'deadheaded', 'hand_pollinated', 'divided', 'cutting_taken', 'rooting', 'relocated',
+  'flowering', 'fruit_set', 'first_harvest', 'harvest', 'scape_cut', 'cured', 'seed_saved',
+  'cloves_saved', 'overwinter_survived',
+])
+
+// EXEMPT (a space/garden target, never nothing): rain, cover, uncover, mulched, mesh_netting,
+// weeded, animal_damage, heat_damage, frost_damage, soil_amended, hilled, observation, photo, other.
+// DERIVED from EVENT_TYPES so the two lists can never silently drift (mirrors BATCH_EVENT_TYPES).
+// The completeness + disjointness invariant is asserted in eventTypes.test.js.
+export const PLANTING_EXEMPT_TYPES = EVENT_TYPES.filter((t) => !PLANTING_REQUIRED_TYPES.has(t))
+
+// Single predicate both call sites use (EventNew.handleSubmit, ProjectDetail.handleLogEvent). Free
+// text / non-vocabulary types (e.g. the V4-FLAG-001 'flag_issue' mode, which is NOT in EVENT_TYPES
+// and carries its own plant_id gate) return false here — they are governed by their own rules.
+export function requiresPlanting(eventType) {
+  return PLANTING_REQUIRED_TYPES.has(eventType)
+}
+

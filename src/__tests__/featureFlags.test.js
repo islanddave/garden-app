@@ -7,6 +7,7 @@ import {
   VARIETY_REF_UI_SHIPPED,
   CATCH_UP_EDITOR_SHIPPED,
   SYSTEM_NOTIFICATIONS_ENABLED,
+  PLANTING_REQUIRED_ENABLED,
 } from '../lib/featureFlags.js'
 
 describe('featureFlags', () => {
@@ -26,5 +27,12 @@ describe('featureFlags', () => {
     // Per revision §6 deferred note: literal const in featureFlags.js, NOT an env var.
     // Future activation = code change + ship, not runtime config flip.
     expect(typeof SYSTEM_NOTIFICATIONS_ENABLED).toBe('boolean')
+  })
+
+  it('PLANTING_REQUIRED_ENABLED is a literal false in Lane 3 (client gate stays off until Lane 2 telemetry clears)', () => {
+    // V4-PLANTREQUIRED-001: literal const, NOT an env var. Flip = code change + ship, criteria-gated
+    // (spec D1 falsifier + D7 PWA-staleness). The server validator is deliberately never flipped in lockstep.
+    expect(PLANTING_REQUIRED_ENABLED).toBe(false)
+    expect(typeof PLANTING_REQUIRED_ENABLED).toBe('boolean')
   })
 })

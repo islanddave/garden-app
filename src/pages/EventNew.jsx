@@ -5,7 +5,8 @@ import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES } from '../lib/constants.js'
-import { EVENT_TYPE_META } from '../lib/eventTypes.js'
+import { EVENT_TYPE_META, requiresPlanting } from '../lib/eventTypes.js'
+import { PLANTING_REQUIRED_ENABLED } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
@@ -596,6 +597,13 @@ export default function EventNew() {
     // invariant at mount (a remembered plant only seeds alongside its remembered project).
     if (!form.project_id)  { setError('Select a project.'); return }
 
+    // V4-PLANTREQUIRED-001 (Lane 3, flag-gated): per-type required-planting gate (D2 matrix).
+    // Inert unless PLANTING_REQUIRED_ENABLED — the planting field is otherwise optional (Lane 2).
+    // flag_issue keeps its own plant_id gate below and is not in the vocabulary, so it is unaffected.
+    if (PLANTING_REQUIRED_ENABLED && requiresPlanting(form.event_type) && !form.plant_id) {
+      setError('Choose a planting for this event.'); return
+    }
+
     // V1.2a-2 Wave 3: harvest panel gate — block the POST on invalid quantity,
     // surface an inline error near the quantity field.
     if (form.event_type === 'harvest') {
@@ -1076,11 +1084,12 @@ export default function EventNew() {
                V4-PLANTPICKER-001: the shared searchable PlantingSelect replaces the raw select.
                Scope stays project-bound (plants fed from the load effect above, which owns the
                deep-link/sticky validation); PROJHIDE/Lane 3 flips this to the unscoped source. ── */}
-          <Section label="Planting">
+          <Section label={PLANTING_REQUIRED_ENABLED && requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
             <PlantingSelect
               plants={plantsForProject}
               value={form.plant_id}
               onChange={id => setForm(f => ({ ...f, plant_id: id }))}
+              required={PLANTING_REQUIRED_ENABLED && requiresPlanting(form.event_type)}
               disabled={!form.project_id}
               disabledHint="— select a project first —"
               placeholder="— Choose a planting —"

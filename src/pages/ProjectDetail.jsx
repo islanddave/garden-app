@@ -3,7 +3,8 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P, PROJECT_STATUSES, EVENT_TYPES, APP_URL } from '../lib/constants.js'
-import { EVENT_TYPE_META } from '../lib/eventTypes.js'
+import { EVENT_TYPE_META, requiresPlanting } from '../lib/eventTypes.js'
+import { PLANTING_REQUIRED_ENABLED } from '../lib/featureFlags.js'
 import Icon from '../components/Icon.jsx'
 import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import { formatQty } from '../lib/format.js'
@@ -17,7 +18,7 @@ import { loadSortOrder, saveSortOrder, applyNameSort } from '../lib/projectTree.
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
-import { PlantForm, Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
+import { PlantForm, Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
 
 
@@ -29,6 +30,7 @@ function todayLocal() {
 function emptyEventForm() {
   return {
     event_type:    'observation',
+    plant_id:      '',
     event_date:    todayLocal(),
     title:         '',
     notes:         '',
@@ -232,6 +234,11 @@ export default function ProjectDetail() {
 
   async function handleLogEvent(e) {
     e.preventDefault()
+    // V4-PLANTREQUIRED-001 (Lane 3, flag-gated, O4): the mini-logger was the app's biggest orphan
+    // source — a project-level POST with no plant_id. Inert unless PLANTING_REQUIRED_ENABLED.
+    if (PLANTING_REQUIRED_ENABLED && requiresPlanting(eventForm.event_type) && !eventForm.plant_id) {
+      setLogErr('Choose a planting for this event.'); return
+    }
     setLoggingEvent(true)
     setLogErr(null)
     try {
@@ -240,6 +247,7 @@ export default function ProjectDetail() {
         body: JSON.stringify({
           project_id:    id,
           event_type:    eventForm.event_type,
+          plant_id:      eventForm.plant_id || null,
           event_date:    eventForm.event_date,
           title:         eventForm.title.trim()         || null,
           notes:         eventForm.notes.trim()         || null,
@@ -847,6 +855,24 @@ export default function ProjectDetail() {
                 />
               </Field>
             </div>
+
+            {/* V4-PLANTREQUIRED-001 (O4): the mini-logger gains a planting picker so a project-page
+                log can carry a planting. Optional by default; required only when the flag is on and
+                the type predicates on a plant (D2). Controlled by the already-loaded project plants. */}
+            <Field
+              label={PLANTING_REQUIRED_ENABLED && requiresPlanting(eventForm.event_type) ? 'Planting *' : 'Planting (optional)'}
+              style={{ marginBottom: 14 }}
+            >
+              <PlantingSelect
+                plants={plants}
+                value={eventForm.plant_id}
+                onChange={pid => setEventForm(f => ({ ...f, plant_id: pid }))}
+                required={PLANTING_REQUIRED_ENABLED && requiresPlanting(eventForm.event_type)}
+                placeholder="— Choose a planting —"
+                aria-label="Planting"
+                data-testid="projdetail-mini-planting"
+              />
+            </Field>
 
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
               <Field label="Title (optional)" style={{ marginBottom: 14 }}>

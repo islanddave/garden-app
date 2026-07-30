@@ -40,3 +40,14 @@ export const CARE_RAIN_CREDIT_ENABLED = false
 // Flip TRUE only after Slice-1 CI-green on pinned node 20.19.0. NOTE (design §9): this flag is a
 // true safety net for Slice 1 ONLY — Slices 2-3 mutate full-page rendering outside its guard.
 export const OVERLAY_ROUTES_ENABLED = true
+
+// V4-PLANTREQUIRED-001 (Lane 3, Ask 2): per-event-type required-planting gate on EventNew + the
+// ProjectDetail mini-logger. When FALSE (default) the D2 matrix is INERT — the planting field stays
+// optional exactly as today and no POST is blocked, so the existing suite is unaffected. When TRUE,
+// event types that predicate on a plant (PLANTING_REQUIRED_TYPES in eventTypes.js) require a plant_id
+// client-side before submit. CLIENT-side + flagged ONLY: the server validator (events/validators.js)
+// is deliberately NOT flipped in lockstep — this is a PWA with a service worker, so a one-step server
+// flip would 400 every log from stale cached bundles mid-season (spec D7). Flip TRUE only after
+// Lane 2 telemetry shows new orphans for REQUIRED types approach zero (D1 falsifier). Criteria-gated,
+// never date-gated. Rollback = flip back to false (one client revert, no data to unwind).
+export const PLANTING_REQUIRED_ENABLED = false
