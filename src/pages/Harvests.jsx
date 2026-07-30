@@ -106,6 +106,8 @@ export default function Harvests() {
         options={cropOptions.map((c) => ({ value: c.crop_type_slug, label: c.display_name }))}
         onSelect={(value, label) => { setCrop(value); setCropLabel(label); setCropSheetOpen(false) }}
       />
+      {/* V4-PROJHIDE-001: no project picker sheet when the Project filter is hidden. Flag OFF mounts it as before. */}
+      {!PROJECTS_HIDDEN && (
       <PickerSheet
         open={projectSheetOpen}
         onClose={() => setProjectSheetOpen(false)}
@@ -116,6 +118,7 @@ export default function Harvests() {
         options={projectOptions.map((p) => ({ value: p.id, label: p.name }))}
         onSelect={(value, label) => { setProject(value); setProjectLabel(label); setProjectSheetOpen(false) }}
       />
+      )}
     </div>
   )
 }
@@ -129,7 +132,9 @@ function SnapshotStrip({ snapshot, onOpenLog, onOpenTotals }) {
   const lhName = lh ? (lh.variety_name || lh.crop_name || lh.planting_name || 'Harvest') : null
   const lhQty = lh && lh.harvest_log_id != null && lh.quantity != null ? formatEntry({ quantity: lh.quantity, unit: lh.unit }, lh.crop_name) : null
   const lhTo = lh
-    ? (lh.plant_id && !lh.planting_removed && lh.project_id ? `/projects/${lh.project_id}/plantings/${lh.plant_id}` : (lh.project_id ? `/projects/${lh.project_id}` : null))
+    // V4-PROJHIDE-001: keep the planting deep-link (shim → /plantings/:id); drop the bare-project
+    // fallback when projects are hidden (tile becomes non-navigable). Flag OFF unchanged.
+    ? (lh.plant_id && !lh.planting_removed && lh.project_id ? `/projects/${lh.project_id}/plantings/${lh.plant_id}` : (!PROJECTS_HIDDEN && lh.project_id ? `/projects/${lh.project_id}` : null))
     : null
 
   return (
@@ -198,9 +203,12 @@ function TimeframeChips({ value, onChange }) {
 // ── Crop/project filters (design §3b): picker sheets rendering dismissible pills, Log-scoped ────────
 function FilterControls({ cropValue, onOpenCrop, onClearCrop, projectValue, onOpenProject, onClearProject }) {
   return (
-    <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }} role="group" aria-label="Filter by crop or project">
+    <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }} role="group" aria-label={PROJECTS_HIDDEN ? 'Filter by crop' : 'Filter by crop or project'}>
       <FilterPill placeholder="Crop" value={cropValue} onOpen={onOpenCrop} onClear={onClearCrop} />
-      <FilterPill placeholder="Project" value={projectValue} onOpen={onOpenProject} onClear={onClearProject} />
+      {/* V4-PROJHIDE-001: the Project filter is hidden when projects aren't user-facing — crop is the axis. Flag OFF renders both pills. */}
+      {!PROJECTS_HIDDEN && (
+        <FilterPill placeholder="Project" value={projectValue} onOpen={onOpenProject} onClear={onClearProject} />
+      )}
     </div>
   )
 }
@@ -319,7 +327,9 @@ function HarvestEntry({ entry: e }) {
 
   const mainTo = !removed && !unassigned && e.project_id && e.plant_id
     ? `/projects/${e.project_id}/plantings/${e.plant_id}`
-    : (unassigned && e.project_id ? `/projects/${e.project_id}` : null)
+    // V4-PROJHIDE-001: an unassigned (plantless) harvest has no planting to open; don't fall back to
+    // the hidden project page. Flag OFF keeps the project link.
+    : (unassigned && !PROJECTS_HIDDEN && e.project_id ? `/projects/${e.project_id}` : null)
   const editTo = e.project_id && e.event_id ? `/projects/${e.project_id}/events/${e.event_id}` : null
 
   const body = (

@@ -122,7 +122,9 @@ export default function EventDetail() {
     setDeleting(true)
     try {
       await fetch('/api/events/' + eventId, { method: 'DELETE' })
-      navigate(project ? `/projects/${project.id}` : '/today')
+      // V4-PROJHIDE-001: don't land on the hidden project page post-delete — Home (/today) is the
+      // neutral destination when projects aren't user-facing. Flag OFF keeps the project redirect.
+      navigate(project && !PROJECTS_HIDDEN ? `/projects/${project.id}` : '/today')
     } catch (e) {
       setError(e.message)
       setDeleting(false)

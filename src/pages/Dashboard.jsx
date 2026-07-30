@@ -284,7 +284,9 @@ export default function Dashboard() {
                 const single = (ev.batch_count ?? 1) <= 1
                 const to = single && ev.plant_id
                   ? `/projects/${ev.project_id}/plantings/${ev.plant_id}`
-                  : `/projects/${ev.project_id}`
+                  // V4-PROJHIDE-001: no bare project link when projects are hidden — the activity
+                  // feed is the neutral destination. Flag OFF keeps the project link.
+                  : (PROJECTS_HIDDEN ? '/feed' : `/projects/${ev.project_id}`)
                 return (
                 <Link key={ev.id} to={to} style={{
                   display: 'flex',

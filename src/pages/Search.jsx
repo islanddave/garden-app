@@ -278,7 +278,8 @@ export default function Search() {
             {srv.photos.map(ph => (
               <Row key={ph.id}
                 // V4-UNSCOPEDROUTES-001: planting link no longer needs a project pair.
-                to={ph.plant_id ? `/plantings/${ph.plant_id}` : (ph.project_id ? `/projects/${ph.project_id}` : '/photos')}
+                // V4-PROJHIDE-001: a project-scoped photo (no planting) falls back to /photos, not the hidden project page. Flag OFF unchanged.
+                to={ph.plant_id ? `/plantings/${ph.plant_id}` : (!PROJECTS_HIDDEN && ph.project_id ? `/projects/${ph.project_id}` : '/photos')}
                 name={ph.caption} sub="Photo" />
             ))}
           </>

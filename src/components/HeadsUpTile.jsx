@@ -79,7 +79,8 @@ export default function HeadsUpTile({ headsUp, onDataRefresh }) {
             HEADS UP
           </div>
           <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>
-            All clear — no stale projects
+            {/* V4-PROJHIDE-001: neutral wording when projects aren't user-facing. Flag OFF keeps the original. */}
+            {PROJECTS_HIDDEN ? 'All clear — nothing needs attention' : 'All clear — no stale projects'}
           </div>
         </div>
       </div>
