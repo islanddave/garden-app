@@ -3,7 +3,7 @@ import {
   buildDisplayList, groupPlantingsByProjectId, buildGardenTree, nodeHasChildren,
   loadExpanded, saveExpanded,
   byName, applyNameSort, loadSortOrder, saveSortOrder, SORT_RECENCY, SORT_ALPHA, buildTagGroupedList,
-  NO_PROJECT_ID,
+  NO_PROJECT_ID, cropTypeLabel,
 } from '../lib/projectTree.js'
 
 const PROJECTS = [
@@ -274,5 +274,44 @@ describe('buildTagGroupedList — Lifecycle (status) grouping', () => {
     expect(seedling.count).toBe(2)
     expect(seedling.facet).toBe('status')
     expect(seedling.plantings.map(p => p.name)).toEqual(['B-plant', 'C-plant'].sort((a, b) => a.localeCompare(b)))
+  })
+})
+
+describe('buildTagGroupedList — crop_type grouping (V4-PROJHIDE-001)', () => {
+  const CT = [
+    { id: 'p1', name: 'Sungold',  variety_ref: { crop_type_slug: 'tomato' } },
+    { id: 'p2', name: 'Roma',     variety_ref: { crop_type_slug: 'tomato' } },
+    { id: 'p3', name: 'Jalapeño', variety_ref: { crop_type_slug: 'pepper' } },
+    { id: 'p4', name: 'Mystery',  variety_ref: null },  // variety but no crop type
+    { id: 'p5', name: 'Novar' },                          // no variety_ref at all
+  ]
+  it('groups by variety_ref.crop_type_slug, single-membership', () => {
+    const byLabel = Object.fromEntries(buildTagGroupedList(CT, null, 'crop_type').map(g => [g.label, g]))
+    expect(byLabel.Tomato.count).toBe(2)
+    expect(byLabel.Pepper.count).toBe(1)
+    expect(byLabel.Tomato.plantings.map(p => p.id).sort()).toEqual(['p1', 'p2'])
+  })
+  it('sorts crop groups alpha by label with "Other" last', () => {
+    expect(buildTagGroupedList(CT, null, 'crop_type').map(g => g.label)).toEqual(['Pepper', 'Tomato', 'Other'])
+  })
+  it('collects crop-type-less plantings into a trailing "Other" (isUnsorted) group', () => {
+    const other = buildTagGroupedList(CT, null, 'crop_type').find(g => g.isUnsorted)
+    expect(other.label).toBe('Other')
+    expect(other.plantings.map(p => p.id).sort()).toEqual(['p4', 'p5'])
+  })
+  it('tags every group with facet:"crop_type" (header coloring) and needs no tagMap', () => {
+    expect(buildTagGroupedList(CT, null, 'crop_type').every(g => g.facet === 'crop_type')).toBe(true)
+  })
+})
+
+describe('cropTypeLabel (V4-PROJHIDE-001)', () => {
+  it('title-cases single and multi-word slugs', () => {
+    expect(cropTypeLabel('pepper')).toBe('Pepper')
+    expect(cropTypeLabel('sweet-potato')).toBe('Sweet Potato')
+    expect(cropTypeLabel('brussels_sprouts')).toBe('Brussels Sprouts')
+  })
+  it('is null/empty-safe', () => {
+    expect(cropTypeLabel(null)).toBe('')
+    expect(cropTypeLabel('')).toBe('')
   })
 })

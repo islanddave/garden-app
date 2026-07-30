@@ -108,10 +108,15 @@ export default function Garden() {
     }
     const ORDER = ['type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform']
     const LABELS = { type: 'Type', lifecycle: 'Lifespan', heat: 'Heat', determinacy: 'Determinacy', day_length: 'Day Length', allium_type: 'Allium', basil_use: 'Basil', bean_type: 'Bean Type', bean_habit: 'Bean Habit', bean_use: 'Bean Use', location: 'Location', group: 'Group', freeform: 'Tags' }
-    // V4-PROJHIDE-001: when projects are hidden, drop the "Projects" (none) grouping entirely — the
-    // by-project tree is no longer a user-facing view. Every tag facet + Lifecycle remain selectable.
-    const opts = PROJECTS_HIDDEN ? [] : [{ value: 'none', label: 'Projects' }]
-    for (const fct of ORDER) if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
+    // V4-PROJHIDE-001: when projects are hidden, the "Projects" (none) grouping is gone and CROP TYPE
+    // leads — a real crop_type_slug grouping (tomato/pepper/...) from the cultivar join, since the
+    // entity-tags 'type' facet is unpopulated in prod. The tag 'type' facet is skipped so it can't
+    // shadow the crop-type option. Flag OFF keeps the exact prior options (Projects + tag facets).
+    const opts = PROJECTS_HIDDEN ? [{ value: 'crop_type', label: 'Type' }] : [{ value: 'none', label: 'Projects' }]
+    for (const fct of ORDER) {
+      if (fct === 'type' && PROJECTS_HIDDEN) continue // crop_type (cultivar join) replaces the tag 'type' facet
+      if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
+    }
     // 'status' groups by the planting's LIFECYCLE stage (seed->...->ended). Always available
     // (every planting has a status), so appended unconditionally — it is NOT a tag facet.
     opts.push({ value: 'status', label: 'Lifecycle' })
@@ -481,9 +486,9 @@ export default function Garden() {
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
   // V4-PROJHIDE-001: 'none' (the by-project tree) is not a valid view when projects are hidden, so a
-  // stale/absent group-by resolves to a facet instead — 'type' (types-forward) when tags are wired,
-  // else 'status' (Lifecycle, always present). Flag OFF keeps the exact prior behavior ('none' tree).
-  const projhideDefaultFacet = facetOptions.some(o => o.value === 'type') ? 'type' : 'status'
+  // stale/absent group-by resolves to CROP TYPE — the types-forward default (tomato/pepper/...) from
+  // the cultivar join, always present under the flag. Flag OFF keeps the exact prior behavior ('none').
+  const projhideDefaultFacet = 'crop_type'
   const effectiveGroupBy = facetOptions.some(o => o.value === groupBy)
     ? groupBy
     : (PROJECTS_HIDDEN ? projhideDefaultFacet : 'none')

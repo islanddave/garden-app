@@ -206,6 +206,7 @@ export function buildTagGroupedList(plantings, tagMap, facet, order = SORT_ALPHA
   if (!facet) return null
   const live = (plantings || []).filter(p => p && !p.archived_at)
   if (facet === 'status') return buildStatusGroupedList(live, order)
+  if (facet === 'crop_type') return buildCropTypeGroupedList(live, order)
   const groups = new Map()
   const unsorted = []
   live.forEach(p => {
@@ -331,6 +332,41 @@ function buildStatusGroupedList(live, order) {
   if (unsorted.length) {
     out.push({ slug: UNSORTED_SLUG, label: 'Unstaged', facet: 'status', isUnsorted: true,
       plantings: applyNameSort(unsorted, order), count: unsorted.length })
+  }
+  return out
+}
+
+// V4-PROJHIDE-001: title-case a crop_type_slug for display ('sweet-potato' -> 'Sweet Potato',
+// 'pepper' -> 'Pepper'). The /api/plants variety_ref carries only the slug (no display name), so the
+// label is derived here. Split on -/_/space so multi-word slugs read naturally.
+export function cropTypeLabel(slug) {
+  return String(slug || '').split(/[-_ ]+/).filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+}
+
+// V4-PROJHIDE-001: group plantings by CROP TYPE (tomato, pepper, tomatillo...) — the user-facing
+// organizing axis once projects are hidden. Crop type comes from the planting's cultivar join
+// (variety_ref.crop_type_slug on /api/plants), NOT the entity-tags 'type' facet, which is unpopulated
+// in prod (2 smoke rows). A planting belongs to exactly ONE crop type (single-membership, unlike tag
+// facets); those with no resolved crop type fall into a trailing "Other" group. Groups sort alpha by
+// label (no semantic order for crops); "Other" is always last. Dispatched from buildTagGroupedList
+// when facet === 'crop_type'.
+function buildCropTypeGroupedList(live, order) {
+  const groups = new Map()
+  const other = []
+  live.forEach(p => {
+    const slug = p.variety_ref?.crop_type_slug
+    if (!slug) { other.push(p); return }
+    let g = groups.get(slug)
+    if (!g) { g = { slug, label: cropTypeLabel(slug), facet: 'crop_type', plantings: [] }; groups.set(slug, g) }
+    g.plantings.push(p)
+  })
+  const out = [...groups.values()]
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }))
+    .map(g => ({ ...g, plantings: applyNameSort(g.plantings, order), count: g.plantings.length }))
+  if (other.length) {
+    out.push({ slug: UNSORTED_SLUG, label: 'Other', facet: 'crop_type', isUnsorted: true,
+      plantings: applyNameSort(other, order), count: other.length })
   }
   return out
 }

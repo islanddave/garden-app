@@ -89,21 +89,36 @@ export default function PhotoLibrary() {
     }).catch(() => {})
   }, [apiFetch])
 
-  // ---- Load plants when upload project changes ----
+  // ---- Load plants when upload project changes (project-scoped mode — the default). ----
   useEffect(() => {
+    if (PROJECTS_HIDDEN) return // V4-PROJHIDE-001: unscoped fetch below
     if (!uploadForm.project_id) { setPlantsForUpload([]); return }
     apiFetch('/api/plants?project_id=' + uploadForm.project_id)
       .then(data => setPlantsForUpload(data ?? []))
       .catch(() => setPlantsForUpload([]))
   }, [apiFetch, uploadForm.project_id])
 
-  // ---- Load plants when modal project changes ----
+  // ---- Load plants when modal project changes (project-scoped mode — the default). ----
   useEffect(() => {
+    if (PROJECTS_HIDDEN) return // V4-PROJHIDE-001: unscoped fetch below
     if (!tagForm.project_id) { setPlantsForModal([]); return }
     apiFetch('/api/plants?project_id=' + tagForm.project_id)
       .then(data => setPlantsForModal(data ?? []))
       .catch(() => setPlantsForModal([]))
   }, [apiFetch, tagForm.project_id])
+
+  // V4-PROJHIDE-001: with the project chooser hidden, both photo pickers (upload + tag modal) list
+  // EVERY live planting from the UNSCOPED source — there is no project step to scope them. project_id
+  // is then DERIVED from the chosen plant at onChange (see the pickers below). Fetched once; unarchived.
+  useEffect(() => {
+    if (!PROJECTS_HIDDEN) return
+    apiFetch('/api/plants')
+      .then(data => {
+        const live = (data ?? []).filter(p => !p.archived_at)
+        setPlantsForUpload(live); setPlantsForModal(live)
+      })
+      .catch(() => { setPlantsForUpload([]); setPlantsForModal([]) })
+  }, [apiFetch])
 
   // ---- Photos query ----
   const loadPhotos = useCallback(async () => {
@@ -302,14 +317,16 @@ export default function PhotoLibrary() {
                     id="pl-upload-plant"
                     plants={plantsForUpload}
                     value={uploadForm.plant_id}
-                    onChange={id => setUploadForm(f => ({ ...f, plant_id: id }))}
-                    emptyMeaning="project-level"
+                    onChange={id => setUploadForm(f => PROJECTS_HIDDEN
+                      ? { ...f, plant_id: id, project_id: id ? (plantsForUpload.find(p => p.id === id)?.project_id ?? f.project_id) : f.project_id }
+                      : { ...f, plant_id: id })}
+                    emptyMeaning={PROJECTS_HIDDEN ? 'none' : 'project-level'}
                   />
                 </div>
               )}
 
               <div>
-                <label style={fieldLabelStyle}>Space  ·  or pick a project above</label>
+                <label style={fieldLabelStyle}>{PROJECTS_HIDDEN ? 'Space  ·  optional' : 'Space  ·  or pick a project above'}</label>
                 <select
                   value={uploadForm.location_id}
                   onChange={e => setUploadForm(f => ({ ...f, location_id: e.target.value }))}
@@ -679,7 +696,9 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
                     id="pl-modal-plant"
                     plants={plantsForModal}
                     value={tagForm.plant_id}
-                    onChange={id => setTagForm(f => ({ ...f, plant_id: id }))}
+                    onChange={id => setTagForm(f => PROJECTS_HIDDEN
+                      ? { ...f, plant_id: id, project_id: id ? (plantsForModal.find(p => p.id === id)?.project_id ?? f.project_id) : f.project_id }
+                      : { ...f, plant_id: id })}
                     emptyMeaning="project-level"
                   />
                 </div>
