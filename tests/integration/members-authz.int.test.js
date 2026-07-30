@@ -1,9 +1,10 @@
-// members-authz.test.js — 0A.5 Phase-1 leak-lock for GET /api/members (household scope + email drop, 0A.6/v3.74).
-// /api/members reads from the LIVE Clerk API, not Postgres — so this is a handler UNIT test with
-// @clerk/backend + SecretsManager fully mocked (no DB). It deliberately does NOT use the integration
-// _harness (whose Clerk mock omits createClerkClient). Runs in the unit suite (locally + CI Build&Unit).
+// members-authz.int.test.js — 0A.5 Phase-1 leak-lock: GET /api/members (household scope + email drop, 0A.6/v3.74).
+// /api/members reads the LIVE Clerk API, not Postgres — so this is a handler test with @clerk/backend +
+// SecretsManager fully MOCKED (no DB; it does not use _harness). It lives under tests/integration/ ONLY
+// because @clerk/backend is a lambda-level dep resolved solely in the integration CI job (root has just
+// @clerk/react); the build/unit job can't resolve the lambda/members import. The Neon branch is unused here.
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
-import { handler } from './index.js'
+import { handler } from '../../lambda/members/index.js'
 
 const OWNER = 'user_hh_owner', MATE = 'user_hh_mate', STRANGER = 'user_stranger_outside'
 
@@ -31,7 +32,7 @@ const call = (sub) => {
 }
 
 // householdScope reads GARDEN_HOUSEHOLD_IDS at call time; make OWNER+MATE one household, STRANGER outside.
-// Save/restore so this file does not pollute the shared worker env (household-mode.test.js depends on it).
+// Save/restore so this file does not pollute the shared worker env.
 let _hhEnv
 beforeAll(() => { _hhEnv = process.env.GARDEN_HOUSEHOLD_IDS; process.env.GARDEN_HOUSEHOLD_IDS = `${OWNER},${MATE}` })
 afterAll(() => { if (_hhEnv === undefined) delete process.env.GARDEN_HOUSEHOLD_IDS; else process.env.GARDEN_HOUSEHOLD_IDS = _hhEnv })
