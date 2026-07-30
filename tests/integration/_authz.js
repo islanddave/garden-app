@@ -27,14 +27,13 @@
 // VERIFY IT BITES: temporarily delete a `created_by = ANY(${householdIds})` predicate from a
 // handler and run the matrix — the corresponding non-owner arm must go red. (Do NOT commit that.)
 //
-// COVERAGE (0A.5 is a boss-sized workstream, Phase 0→1). Landed here: plants (full), events
-// (read + deleted_at). NEXT SWEEP (each needs its own seed fixture; ride 0A.6 for the fixes):
-//   - events write axis (PATCH resolve on a flagged event; DELETE undo ownership pre-check)
-//   - the 4 known-leak endpoints locked in v3.74 — entity-tags (garden-tags upsert scope),
-//     locations (PHOTOLOCAUTHZ arm), public share page (is_public gate), /api/members (household
-//     scope + email drop)
+// COVERAGE (0A.5 is a boss-sized workstream, Phase 0→1). Landed: plants (full), events (read +
+// deleted_at + write-axis PATCH-resolve/DELETE-undo), locations (full, PHOTOLOCAUTHZ arm), plus
+// public-share, /api/members, and entity-tags (own *.int.test.js files). NEXT SWEEP (each needs its
+// own seed fixture; ride 0A.6 for the fixes):
 //   - photos read paths (lambda/photos/index.js project_id :366-377 / unfiltered :379-389 /
 //     view-url :318-322) deleted_at filters
+//   - remaining write handlers (inventory-items, harvests, storage-location, preservation, favorites)
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { callHandler, setTestUserId, testRunId } from './_harness.js'
 
