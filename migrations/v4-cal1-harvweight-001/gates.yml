@@ -1,0 +1,116 @@
+# gates.yml
+# V4-CAL1-HARVWEIGHT-001 — harvest weight capture + unit->gram conversion.
+#
+# PROMOTE-TIME SEQUENCING (ORDERED — do not reorder, do not skip):
+#   1. STAGING (Neon branch br-damp-frog-amdfxwrr): pre gates -> 0a -> 0b -> 0c -> post gates.
+#      0c AFTER 0b on purpose (VALIDATE is then a real assertion over the seeded default_unit).
+#      Applying to STAGING is what lets integration-test.yml (which branches off staging) see the
+#      columns, so the CAL-1 harvest-weight integration tests can pass.
+#   2. deploy-staging + full regression on staging (build-and-test remains the promote gate).
+#      Nothing user-facing reads the columns yet; risk is confined to `SELECT *` consumers of
+#      crop_types / harvest_log receiving extra NULL keys.
+#   3. PROD: pre gates -> 0a -> 0b -> 0c -> post gates. Dave-gated apply; confirm the DATABASE_URL host
+#      printed by the runner before applying. REQUIRED before promoting any Lambda code that references
+#      weight_grams (schema-audit.yml L-081 gate). Take CTAS snapshots after 0a, before 0b.
+#   4. Promote (version bump at ship, L-171).
+#
+# Pre:  crop_types + harvest_log exist; NONE of the four new columns exist; the four CHECK names free.
+# Post: four columns exist, NULLABLE, no default; four CHECKs exist AND convalidated; default_unit
+#       only ever holds an in-vocab unit; the weight pairing invariant holds; grams_per_unit positive;
+#       both schema_version rows recorded.
+
+pre:
+  - name: pre_tables_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name IN ('crop_types','harvest_log')
+    expect: rowcount_eq
+    value: 2
+
+  # None of the four columns may pre-exist — a name collision would mean this migration is silently
+  # adopting someone else's column with unknown semantics.
+  - name: pre_new_columns_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public'
+         AND ( (table_name='crop_types'  AND column_name IN ('default_unit','grams_per_unit'))
+            OR (table_name='harvest_log' AND column_name IN ('weight_grams','weight_estimated')) )
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_check_constraint_names_free
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_crop_types_default_unit','chk_crop_types_grams_per_unit',
+                         'chk_harvest_log_weight_grams','chk_harvest_log_weight_pairing')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_four_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public'
+         AND ( (table_name='crop_types'  AND column_name IN ('default_unit','grams_per_unit'))
+            OR (table_name='harvest_log' AND column_name IN ('weight_grams','weight_estimated')) )
+    expect: rowcount_eq
+    value: 4
+
+  # NULL = UNKNOWN is the design's central contract. A NOT NULL or a DEFAULT on any of these four
+  # would break it structurally, so assert their ABSENCE rather than trusting the DDL text.
+  - name: post_columns_nullable_and_defaultless
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public'
+         AND ( (table_name='crop_types'  AND column_name IN ('default_unit','grams_per_unit'))
+            OR (table_name='harvest_log' AND column_name IN ('weight_grams','weight_estimated')) )
+         AND (is_nullable <> 'YES' OR column_default IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_four_checks_present_and_validated
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_crop_types_default_unit','chk_crop_types_grams_per_unit',
+                         'chk_harvest_log_weight_grams','chk_harvest_log_weight_pairing')
+         AND convalidated
+    expect: rowcount_eq
+    value: 4
+
+  # default_unit may only ever hold a unit in the harvest_log.unit vocabulary.
+  - name: post_default_unit_in_vocab_only
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE default_unit IS NOT NULL
+         AND default_unit NOT IN ('lb','oz','kg','g','count','bunch','cup','head')
+    expect: rowcount_eq
+    value: 0
+
+  # The provenance pairing invariant: no row may carry a weight without its estimated/measured flag
+  # or vice-versa. Trivially true at apply (all NULL) but locked in for every later write/backfill.
+  - name: post_weight_pairing_holds
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE (weight_grams IS NULL) <> (weight_estimated IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # A non-positive conversion factor would zero out or negate a yield.
+  - name: post_grams_per_unit_all_positive
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE grams_per_unit IS NOT NULL AND grams_per_unit <= 0
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_schema_version_ddl_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.17.0-cal1-harvweight-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_schema_version_seed_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.17.1-cal1-seed-001'
+    expect: rowcount_eq
+    value: 1

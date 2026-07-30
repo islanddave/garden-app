@@ -1,0 +1,29 @@
+{
+  "schema": "garden.harvest_weights.v1",
+  "version": "1.0.0-STUB",
+  "authored": "2026-07-30",
+  "zone": "5b western Massachusetts, ~518ft",
+  "status": "STUB — every grams_per_unit is null pending Dave's kitchen-scale measurement. This file is the authoring source of record for migrations/v4-cal1-harvweight-001 (generate 0d-seed-grams.sql from it once filled). NULL grams_per_unit = UNKNOWN = the harvest-weight derivation produces NO estimate for that crop. Never substitute a default or a guess — a wrong conversion factor silently corrupts every 2026-vs-2027 yield comparison. The MEASURED path (harvests logged directly in g/kg/lb/oz) needs no seed and works without this file.",
+  "note": "Per-CROP-TYPE unit->gram conversion, keyed by crop_types.slug. default_unit = the unit grams_per_unit converts FROM (also auto-derived data-driven in 0b-data.sql = each crop's modal harvest_log.unit; the value here is the proposed default for Dave to confirm/override). grams_per_unit = grams for ONE default_unit of a typical picked specimen.",
+  "field_contract": {
+    "default_unit": "lb | oz | kg | g | count | bunch | cup | head — the unit grams_per_unit is measured against. Should match how the crop is actually logged.",
+    "grams_per_unit": "grams for ONE default_unit, kitchen-scale measured. null = UNKNOWN = no estimate. Must be a positive number if set.",
+    "confidence": "high | medium | low — 'low' = provisional / not yet measured. Flagged in the coverage report.",
+    "notes": "measurement guidance + caveats. Ranges shown are orientation only — they are NOT seeded values (grams_per_unit stays null until Dave weighs)."
+  },
+  "seed_worklist_note": "The 12 crops below are ~95% of all logged harvest rows (row counts in each note). Seed these first; the long tail can be added later (optionally reference-seeded as confidence:low provisional, clearly flagged). Slugs are from the live join harvest_log->event_log->garden_node->cultivar->crop_types (2026-07-30). The 0d generator fail-opens on any slug absent from crop_types, so a slug mismatch just skips that crop (caught by the coverage report) — it never corrupts. Confirm each default_unit and slug when filling.",
+  "by_crop_type": {
+    "tomato": { "default_unit": "count", "grams_per_unit": null, "confidence": "low", "notes": "76 rows (largest). Grams per 1 fruit varies HUGELY by type — cherry ~15-20g, slicer ~150g, beefsteak ~300g+. Dave's plantings are mixed cherry/slicer/beefsteak/paste; consider whether one crop-level number is meaningful or whether tomato needs variety-level grams in a later pass. Weigh a representative pick." },
+    "squash": { "default_unit": "count", "grams_per_unit": null, "confidence": "low", "notes": "30 rows. Summer squash/zucchini ~200-250g per fruit at pick size; winter squash much heavier. Weigh a typical picked fruit." },
+    "blueberry": { "default_unit": "cup", "grams_per_unit": null, "confidence": "low", "notes": "23 rows. A standard cup of blueberries is ~140-150g; weigh Dave's actual cup measure." },
+    "tomatillo": { "default_unit": "count", "grams_per_unit": null, "confidence": "low", "notes": "21 rows. ~30-50g per husked fruit. Weigh a representative pick." },
+    "red_raspberry": { "default_unit": "cup", "grams_per_unit": null, "confidence": "low", "notes": "16 rows. A cup of raspberries ~120-130g. Weigh the actual cup measure." },
+    "cucumber": { "default_unit": "count", "grams_per_unit": null, "confidence": "low", "notes": "14 rows. Slicing cucumber ~250-300g; pickling much less. Weigh at Dave's typical pick size." },
+    "pepper": { "default_unit": "count", "grams_per_unit": null, "confidence": "low", "notes": "13 rows. Bell ~120-150g; small hot peppers a few grams each. Slug covers sweet+hot together; may need variety-level later. Weigh representative." },
+    "wineberry": { "default_unit": "cup", "grams_per_unit": null, "confidence": "low", "notes": "9 rows. Similar to raspberry, ~120g/cup. Weigh the actual cup measure." },
+    "basil": { "default_unit": "cup", "grams_per_unit": null, "confidence": "low", "notes": "7 rows. A cup of loosely-packed basil leaves is very light (~20-25g); packed differs a lot. Define the pack density, then weigh." },
+    "lettuce": { "default_unit": "cup", "grams_per_unit": null, "confidence": "low", "notes": "3 rows. A cup of chopped/loose leaf ~40-55g. Weigh." },
+    "shallot": { "default_unit": "count", "grams_per_unit": null, "confidence": "low", "notes": "3 rows. ~30-50g per bulb. Weigh a typical bulb." },
+    "broccoli": { "default_unit": "head", "grams_per_unit": null, "confidence": "low", "notes": "2 rows. A head ~300-500g. Weigh a typical head." }
+  }
+}
