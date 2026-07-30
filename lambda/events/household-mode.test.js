@@ -16,7 +16,7 @@ describe('events Lambda — Household Mode surgical widening', () => {
     expect(SRC).toMatch(/const householdIds = householdScope\(userId\)/);
   });
 
-  it('exactly 12 event-entity sites widened to pp.created_by = ANY(${householdIds})', () => {
+  it('exactly 14 event-entity sites widened to pp.created_by = ANY(${householdIds})', () => {
     // UPDATE event_log guard + 3 event LIST/GET reads + Unit A bulk Quick Log batch
     // plant-resolution (2026-05-24) + HS-2 planting-scoped LIST read (2026-06-04, V3-NAV-001)
     // + DELETE /:id single-event-undo ownership pre-check (2026-06-10, V3-LOGMANY undo fix).
@@ -24,10 +24,13 @@ describe('events Lambda — Household Mode surgical widening', () => {
     // + fruit_set->fruiting planting status-transition WRITE (2026-06-18, V3-FRUITSET-001):
     //   garden_node has no RLS, so the UPDATE scopes ownership via container.created_by; a
     //   household member logging fruit_set on a shared planting may advance it (matches plants PUT).
+    // + germination->germinated_at lifecycle-date WRITE, single + batch paths (2026-07-30, CAL-2):
+    //   same no-RLS garden_node scope as fruit_set/flowering; a household member logging a
+    //   germination on a shared planting may stamp its germinated_at (set-once).
     // Each is an event-entity op, so household-widening is correct per the surgical-widening
-    // invariant. Count was 4 pre-Unit-A, 5 post-Unit-A, 6 post-HS-2, 7 post-undo-fix, 8 post-feed, 9 post-fruit_set, 10 post-flowering (V3-FLOWERING-001), 12 post-batch-flowering+fruit_set (V4-EVENTSEL-002: the two batch-path status UPDATEs) (L-099 drift class).
+    // invariant. Count was 4 pre-Unit-A, 5 post-Unit-A, 6 post-HS-2, 7 post-undo-fix, 8 post-feed, 9 post-fruit_set, 10 post-flowering (V3-FLOWERING-001), 12 post-batch-flowering+fruit_set (V4-EVENTSEL-002: the two batch-path status UPDATEs), 14 post-germination (CAL-2: single + batch germinated_at set-once writes) (L-099 drift class).
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(12);
+    expect(matches.length).toBe(14);
   });
 
   it('achievement resolved-set query NOT widened (per-user isolation invariant)', () => {

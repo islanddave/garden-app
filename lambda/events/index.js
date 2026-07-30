@@ -340,6 +340,26 @@ export const handler = async (event) => {
              AND p.deleted_at IS NULL
              AND p.status = ANY(${FLOWERING_SOURCE_STATUSES})
         `,
+        // CAL-2 germination capture — logging a `germination` event stamps the planting's
+        // germinated_at (the event date) the FIRST time only. Batch trigger-parity with the
+        // single-event path below. Set-once idempotency via `germinated_at IS NULL` (a planting
+        // already germinated is simply not matched → re-logs are no-ops). Scoped to the
+        // already-resolved owner-scoped plantIds + explicit household ownership (garden_node has
+        // no RLS, L-087). No-op for every other event_type via the ${eventType} gate.
+        // germinated_at_approx=false → this is a real captured date, not an estimate.
+        sql`
+          UPDATE public.garden_node p
+             SET germinated_at = ${eventDate}::timestamptz,
+                 germinated_at_approx = false,
+                 updated_at = NOW()
+            FROM public.container pp
+           WHERE ${eventType}::text = 'germination'
+             AND p.id = ANY(${plantIds})
+             AND p.container_id = pp.id
+             AND pp.created_by = ANY(${householdIds})
+             AND p.deleted_at IS NULL
+             AND p.germinated_at IS NULL
+        `,
       ]);
       // MVP-Critter server-side hook (Phase B++ refactor 2026-05-30) — fetch inserted events
       // with plant_id + created_at, then call awardCrittersForBatch which awards critters
@@ -1146,6 +1166,24 @@ export const handler = async (event) => {
              AND pp.created_by = ANY(${householdIds})
              AND p.deleted_at IS NULL
              AND p.status = ANY(${FLOWERING_SOURCE_STATUSES})
+        `,
+        // CAL-2 germination capture — logging a `germination` event on a specific planting stamps
+        // germinated_at (the event date) the FIRST time only (set-once via `germinated_at IS NULL`).
+        // Same explicit household ownership scope + no-RLS caveat as the flowering/fruit_set
+        // UPDATEs above (L-087). No-op on every non-germination event (the ${eventType} gate) and
+        // when plant_id is null / the planting is already germinated. germinated_at_approx=false.
+        sql`
+          UPDATE public.garden_node p
+             SET germinated_at = ${eventDate}::timestamptz,
+                 germinated_at_approx = false,
+                 updated_at = NOW()
+            FROM public.container pp
+           WHERE ${eventType}::text = 'germination'
+             AND p.id = ${body.plant_id ?? null}
+             AND p.container_id = pp.id
+             AND pp.created_by = ANY(${householdIds})
+             AND p.deleted_at IS NULL
+             AND p.germinated_at IS NULL
         `,
       ]);
 

@@ -57,6 +57,11 @@ afterAll(async () => {
   await directSql`DELETE FROM app_events WHERE user_clerk_sub IN (${USER}, ${FOREIGN_USER})`
   await directSql`DELETE FROM entity_memory WHERE project_id IN (${projectId}, ${foreignProjectId})`
   await directSql`DELETE FROM event_log WHERE created_by IN (${USER}, ${FOREIGN_USER})`
+  // CAL-2: the germination describe seeds real plantings. Clear their auto-created entity-registry
+  // rows (FK planting_ref_id ON DELETE RESTRICT) + plant-level entity_memory BEFORE deleting plants.
+  await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (SELECT id FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
+  await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
+  await directSql`DELETE FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER})`
   await directSql`DELETE FROM plant_projects WHERE created_by IN (${USER}, ${FOREIGN_USER})`
 })
 
@@ -386,5 +391,86 @@ describe('POST /api/events — rain advances water memory (Alert-bar split-path 
     // No surviving watering/rain events → memory recomputed to NULL.
     expect(after[0].last_watered_at).toBeNull()
     expect(after[0].next_water_at).toBeNull()
+  })
+})
+
+// CAL-2 — logging a `germination` event stamps the planting's germinated_at (event date),
+// the FIRST time only, mirroring the shipped flowering/fruit_set status-advance UPDATEs.
+// First integration coverage of an event-driven lifecycle-date write. germinated_at_approx=false
+// (a real captured date). Ownership scoped via container.created_by = ANY(householdIds); with
+// GARDEN_HOUSEHOLD_IDS unset in test, householdScope fails closed to [USER] (household.js:16).
+describe('POST /api/events — germination stamps germinated_at, set-once (CAL-2)', () => {
+  let plantingId
+  let foreignPlantingId
+
+  beforeAll(async () => {
+    const p = await directSql`
+      INSERT INTO plants (project_id, name, created_by)
+      VALUES (${projectId}, ${'germ-' + RUN}, ${USER}) RETURNING id
+    `
+    plantingId = p[0].id
+    const fp = await directSql`
+      INSERT INTO plants (project_id, name, created_by)
+      VALUES (${foreignProjectId}, ${'germ-foreign-' + RUN}, ${FOREIGN_USER}) RETURNING id
+    `
+    foreignPlantingId = fp[0].id
+  })
+
+  it('germination on own planting → germinated_at = event date, germinated_at_approx=false', async () => {
+    setTestUserId(USER)
+    const bareDate = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString().slice(0, 10)
+    const { status } = await callHandler(handler, {
+      method: 'POST', path: '/api/events',
+      body: { project_id: projectId, plant_id: plantingId, event_type: 'germination', event_date: bareDate },
+    })
+    expect(status).toBe(201)
+    const rows = await directSql`SELECT germinated_at, germinated_at_approx FROM plants WHERE id = ${plantingId}`
+    expect(rows[0].germinated_at).toBeTruthy()
+    // Date-component assert (robust whether germinated_at is date or timestamptz — column type
+    // is a manual ALTER not in repo migrations, L-085).
+    expect(new Date(rows[0].germinated_at).toISOString().slice(0, 10)).toBe(bareDate)
+    expect(rows[0].germinated_at_approx).toBe(false)
+  })
+
+  it('a second germination with a later date does NOT overwrite (set-once via germinated_at IS NULL)', async () => {
+    setTestUserId(USER)
+    const before = await directSql`SELECT germinated_at FROM plants WHERE id = ${plantingId}`
+    const firstStamp = new Date(before[0].germinated_at).toISOString()
+    const laterDate = new Date().toISOString().slice(0, 10)
+    const { status } = await callHandler(handler, {
+      method: 'POST', path: '/api/events',
+      body: { project_id: projectId, plant_id: plantingId, event_type: 'germination', event_date: laterDate },
+    })
+    expect(status).toBe(201) // the event row is still created; only the date-stamp is guarded
+    const after = await directSql`SELECT germinated_at FROM plants WHERE id = ${plantingId}`
+    expect(new Date(after[0].germinated_at).toISOString()).toBe(firstStamp)
+  })
+
+  it('project-level germination (no plant_id) advances no planting', async () => {
+    setTestUserId(USER)
+    const fresh = await directSql`
+      INSERT INTO plants (project_id, name, created_by)
+      VALUES (${projectId}, ${'germ-noplant-' + RUN}, ${USER}) RETURNING id
+    `
+    const { status } = await callHandler(handler, {
+      method: 'POST', path: '/api/events',
+      body: { project_id: projectId, event_type: 'germination', event_date: new Date().toISOString().slice(0, 10) },
+    })
+    expect(status).toBe(201)
+    const rows = await directSql`SELECT germinated_at FROM plants WHERE id = ${fresh[0].id}`
+    expect(rows[0].germinated_at).toBeNull() // p.id = null matches nothing
+  })
+
+  it('germination targeting a FOREIGN-owned planting leaves it NULL (household scope, L-087)', async () => {
+    setTestUserId(USER)
+    // As USER against FOREIGN_USER's planting. Whether the create handler accepts or rejects the
+    // foreign plant_id, the UPDATE's pp.created_by = ANY(householdIds) guard (householdIds=[USER])
+    // must leave the foreign planting's germinated_at NULL. Defense-in-depth invariant.
+    await callHandler(handler, {
+      method: 'POST', path: '/api/events',
+      body: { project_id: foreignProjectId, plant_id: foreignPlantingId, event_type: 'germination', event_date: new Date().toISOString().slice(0, 10) },
+    })
+    const rows = await directSql`SELECT germinated_at FROM plants WHERE id = ${foreignPlantingId}`
+    expect(rows[0].germinated_at).toBeNull()
   })
 })

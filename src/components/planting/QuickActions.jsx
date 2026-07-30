@@ -24,6 +24,7 @@ export default function QuickActions({ planting, onLogged }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
   const [watering, setWatering] = useState(false)
+  const [sprouting, setSprouting] = useState(false)
   const navigate = useOverlayNavigate()
   const photoInputRef = useRef(null)
 
@@ -48,6 +49,26 @@ export default function QuickActions({ planting, onLogged }) {
     }
   }
 
+  // CAL-2 germination one-tap — Reward-UX: a one-time celebratory "It sprouted!" action that
+  // vanishes once germinated_at is set (rendered only when !planting.germinated_at). Posts a
+  // germination event; the server stamps germinated_at set-once (event-driven). Mirrors handleWater.
+  async function handleSprout() {
+    if (sprouting) return
+    setSprouting(true)
+    try {
+      const ev = await fetch('/api/events', {
+        method: 'POST',
+        body: JSON.stringify({ project_id: projectId, plant_id: plantId, event_type: 'germination' }),
+      })
+      toast.show({ message: 'Sprouted! 🌱', tone: 'success' })
+      if (onLogged) onLogged(ev)
+    } catch (err) {
+      toast.show({ message: "Couldn't log germination", tone: 'error' })
+    } finally {
+      setSprouting(false)
+    }
+  }
+
   // V4-PHOTOQUICK-001: open the picker synchronously in THIS tap (a trusted gesture — iOS
   // suppresses a picker opened after navigation), then park the File and jump into the log form
   // pre-seeded to a photo event. No 'capture' attr so iOS offers Take Photo OR Choose.
@@ -65,6 +86,13 @@ export default function QuickActions({ planting, onLogged }) {
 
   return (
     <div style={{ display: 'flex', gap: 8, margin: '0 0 20px' }}>
+      {!planting.germinated_at && (
+        <button type="button" onClick={handleSprout} disabled={sprouting}
+          aria-label="Mark this planting as sprouted"
+          style={btn({ opacity: sprouting ? 0.6 : 1, backgroundColor: P.green, color: P.white, borderColor: P.green })}>
+          {sprouting ? 'Logging…' : 'It sprouted! 🌱'}
+        </button>
+      )}
       <button type="button" onClick={handleWater} disabled={watering}
         aria-label="Log watering for this planting" style={btn({ opacity: watering ? 0.6 : 1 })}>
         <Icon name="care.drop" size={18} decorative style={{ color: P.green }} />

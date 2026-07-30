@@ -60,4 +60,22 @@ describe('QuickActions', () => {
     expect(toArg).toBe('/log?project=proj1&plant=pl1&event_type=photo&fromquick=1')
     expect(optsArg?.state?.background).toBeTruthy()
   })
+
+  it('It sprouted! POSTs a germination event and calls onLogged (CAL-2)', async () => {
+    apiFetchSpy.mockResolvedValue({ id: 'ev2', event_type: 'germination', event_date: '2026-07-30' })
+    const onLogged = vi.fn()
+    renderQA({ onLogged })
+    fireEvent.click(screen.getByRole('button', { name: /sprouted/i }))
+    await waitFor(() => expect(apiFetchSpy).toHaveBeenCalled())
+    const [path, opts] = apiFetchSpy.mock.calls[0]
+    expect(path).toBe('/api/events')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual({ project_id: 'proj1', plant_id: 'pl1', event_type: 'germination' })
+    await waitFor(() => expect(onLogged).toHaveBeenCalled())
+  })
+
+  it('hides the "It sprouted!" action once the planting has germinated_at (CAL-2)', () => {
+    renderQA({ planting: { ...PL, germinated_at: '2026-07-01' } })
+    expect(screen.queryByRole('button', { name: /sprouted/i })).toBeNull()
+  })
 })

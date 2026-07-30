@@ -485,12 +485,24 @@ export default function PlantingDetail() {
           moved to the hero StatusPicker.) */}
       <QuickActions
         planting={pl}
-        onLogged={() => {
+        onLogged={(ev) => {
           setRefreshKey(k => k + 1)
-          // The engine recomputes next_water_at after a watering log. Optimistically clear it so
-          // the care band goes calm immediately (avoids a refetch race); the next full load of the
-          // record restores the engine-computed schedule. Preserves all other fields.
-          setPlanting(prev => (prev ? { ...prev, next_water_at: null } : prev))
+          // Optimistic field updates so the UI reacts before the next full record load; the reload
+          // then restores engine-computed values. Preserves all other fields.
+          //  • watering/rain → clear next_water_at (care band goes calm; avoids a refetch race)
+          //  • germination (CAL-2) → stamp germinated_at so the "It sprouted!" quick-action hides
+          //    and the Life-story 🌱 milestone lights up immediately.
+          setPlanting(prev => {
+            if (!prev) return prev
+            const type = ev?.event_type
+            const next = { ...prev }
+            if (type === 'watering' || type === 'rain') next.next_water_at = null
+            if (type === 'germination' && !prev.germinated_at) {
+              next.germinated_at = ev?.event_date ?? new Date().toISOString()
+              next.germinated_at_approx = false
+            }
+            return next
+          })
         }}
       />
 
