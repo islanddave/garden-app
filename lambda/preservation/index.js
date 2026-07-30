@@ -192,6 +192,37 @@ async function loadPlanting(sql, plantId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
+// Verify a storage_location_id belongs to the caller's household. Returns { id, kind } (kind feeds
+// the L6 shelf-life default) or null when the id is out-of-household / absent / soft-deleted — the
+// same "no existence oracle → null" contract as loadPlanting. The storage_location_id FK enforces
+// EXISTENCE, not ownership; this predicate is the ownership half. Mirrors storage_location's own
+// scope (lambda/storage-location/index.js): user_id = ANY(householdIds) AND deleted_at IS NULL.
+async function loadStorageLocation(sql, storageLocationId, householdIds) {
+  const rows = await sql`
+    SELECT id, kind FROM storage_location
+    WHERE id = ${storageLocationId}
+      AND user_id = ANY(${householdIds})
+      AND deleted_at IS NULL
+  `;
+  return rows.length ? rows[0] : null;
+}
+
+// Verify a harvest_log_id belongs to the caller's household. Returns { id } or null.
+// Anchored on harvest_log.created_by (TEXT NOT NULL — always populated) rather than the project
+// owner: care-rekey-001 made harvest_log.project_id NULLABLE (projectless plantings), so a
+// project-owner anchor would wrongly reject an owner's OWN projectless harvest_log. No read surface
+// JOINs harvest_log today, so this is defense-in-depth — it stops a cross-household harvest_log_id
+// from being stored before any future read can leak it (the storage_location_id class, pre-empted).
+async function loadHarvestLog(sql, harvestLogId, householdIds) {
+  const rows = await sql`
+    SELECT id FROM harvest_log
+    WHERE id = ${harvestLogId}
+      AND created_by = ANY(${householdIds})
+      AND deleted_at IS NULL
+  `;
+  return rows.length ? rows[0] : null;
+}
+
 // Shared row projection for the read surfaces (single source of columns).
 function projectRow(r) {
   return {
@@ -415,6 +446,17 @@ export const handler = async (event) => {
           attr = rec;
         }
 
+        // AUTHZ (0A.5): a PUT can set/replace these FKs too, so it needs the same ownership gate as
+        // POST — otherwise the edit path reopens exactly what the create path closes. Mirrors POST.
+        if (body.storage_location_id) {
+          const sl = await loadStorageLocation(sql, body.storage_location_id, householdIds);
+          if (!sl) return resp(400, { error: 'storage_location_id does not match a storage location you can use' });
+        }
+        if (body.harvest_log_id) {
+          const hl = await loadHarvestLog(sql, body.harvest_log_id, householdIds);
+          if (!hl) return resp(400, { error: 'harvest_log_id does not match a harvest you can log against' });
+        }
+
         const packageCount = body.package_count ?? 1;
         const remaining = body.remaining_count ?? null;
         // Server convenience for the "used up" case: stamp consumed_at when count hits 0 and the
@@ -528,21 +570,36 @@ export const handler = async (event) => {
         return resp(400, { error: 'that planting has no variety — pick a crop as well' });
       }
 
+      // AUTHZ (0A.5): validate the two nullable, owner-scoped FKs BEFORE insert. The FK enforces
+      // EXISTENCE, not ownership — without these an authed user could attach another household's
+      // storage_location_id (leaked straight back as storage_label + storage_kind through the four
+      // read surfaces that LEFT JOIN storage_location) or harvest_log_id (no read JOINs it TODAY, so
+      // that arm is defense-in-depth against a future Finding-1-class leak). Same "no existence
+      // oracle" reject shape as the planting path. storageKind is reused for the L6 default below so
+      // the ownership check runs UNCONDITIONALLY — not only when use_by_target is omitted (the old
+      // bypass: an explicit use_by_target skipped the kind lookup and stored the id unchecked).
+      let storageKind = null;
+      if (body.storage_location_id) {
+        const sl = await loadStorageLocation(sql, body.storage_location_id, householdIds);
+        if (!sl) return resp(400, { error: 'storage_location_id does not match a storage location you can use' });
+        storageKind = sl.kind;
+      }
+      if (body.harvest_log_id) {
+        const hl = await loadHarvestLog(sql, body.harvest_log_id, householdIds);
+        if (!hl) return resp(400, { error: 'harvest_log_id does not match a harvest you can log against' });
+      }
+
       const packageCount = body.package_count ?? 1;
       // Fresh put-up: initialize remaining_count so the decrement/"used up" flow + fully-consumed
       // filter are meaningful from the first row (L4). Client may override.
       const remaining = body.remaining_count ?? packageCount;
 
       // L6: auto-apply the shelf-life default use_by_target when the client did not send one.
-      // Explicit null => "no expiry" (kept null, excluded from use-soon). Needs the storage kind.
+      // Explicit null => "no expiry" (kept null, excluded from use-soon). storageKind was resolved
+      // (and ownership-validated) above — no second lookup.
       let useByTarget = body.use_by_target;
       if (useByTarget === undefined) {
-        let kind = null;
-        if (body.storage_location_id) {
-          const sk = await sql`SELECT kind FROM storage_location WHERE id = ${body.storage_location_id} AND user_id = ANY(${householdIds}) AND deleted_at IS NULL`;
-          kind = sk.length ? sk[0].kind : null;
-        }
-        useByTarget = defaultUseByTarget(body.method, kind, body.preserved_at);
+        useByTarget = defaultUseByTarget(body.method, storageKind, body.preserved_at);
       }
 
       const rows = await sql`

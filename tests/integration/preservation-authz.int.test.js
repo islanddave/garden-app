@@ -110,3 +110,119 @@ describe('AUTHZ preservation cross-tenant plant_id /api/preservation — attribu
     expect(rows.length).toBe(0) // cross-household attribution / existence-oracle regression guard
   })
 })
+
+// ── cross-tenant storage_location_id + harvest_log_id — write-FK household gate (0A.5) ───────────
+// Two MORE ownership surfaces on the SAME write paths: a put-up may cite storage_location_id (owner
+// column user_id) and harvest_log_id (owner column created_by). The FK enforces existence, NOT
+// ownership — before loadStorageLocation/loadHarvestLog (index.js), an authed user could POST/PUT
+// their OWN row carrying ANOTHER household's storage_location_id and read its label + kind back
+// through the four read surfaces that LEFT JOIN storage_location (empirically POST 201 → GET returns
+// the foreign label/kind). The explicit-use_by_target arm is the exact bypass that reached it: it
+// skipped the only pre-existing storage lookup (the L6 shelf-life kind read), which was itself
+// non-rejecting. harvest_log has no read JOIN today → its arm is defense-in-depth against the same
+// leak class. Dropping either `= ANY(householdIds)` predicate flips the reject arms (201 + a row
+// carrying the foreign id), so this bites — same contract as the plant_id block above.
+describe('AUTHZ preservation cross-tenant storage_location_id + harvest_log_id — write-FK household gate (0A.5)', () => {
+  const RUN = testRunId()
+  const OWNER = `authz_presv_wfk_owner_${RUN}`
+  const FOREIGN = `authz_presv_wfk_foreign_${RUN}`
+  let ownerStorageId, foreignStorageId, ownerHarvestId, foreignHarvestId
+
+  beforeAll(async () => {
+    // Owner + foreign storage locations (owner column is user_id).
+    ownerStorageId = (await directSql`
+      INSERT INTO storage_location (user_id, label, kind)
+      VALUES (${OWNER}, ${'authz-wfk-own-' + RUN}, ${'deep_freezer'}) RETURNING id`)[0].id
+    foreignStorageId = (await directSql`
+      INSERT INTO storage_location (user_id, label, kind)
+      VALUES (${FOREIGN}, ${'FOREIGN-SECRET-FREEZER-' + RUN}, ${'deep_freezer'}) RETURNING id`)[0].id
+
+    // Owner harvest_log chain (project → event → harvest_log; created_by is loadHarvestLog's anchor).
+    const op = (await directSql`INSERT INTO plant_projects (name, slug, created_by) VALUES (${'authz-wfk-op-' + RUN}, ${'authz-wfk-op-' + RUN}, ${OWNER}) RETURNING id`)[0].id
+    const oe = (await directSql`INSERT INTO event_log (project_id, event_type, event_date, is_public, logged_by, created_by) VALUES (${op}, 'harvest', NOW(), false, ${OWNER}, ${OWNER}) RETURNING id`)[0].id
+    ownerHarvestId = (await directSql`INSERT INTO harvest_log (event_id, project_id, quantity, unit, created_by) VALUES (${oe}, ${op}, ${3}, ${'lb'}, ${OWNER}) RETURNING id`)[0].id
+
+    // Foreign harvest_log chain (another household).
+    const fp = (await directSql`INSERT INTO plant_projects (name, slug, created_by) VALUES (${'authz-wfk-fp-' + RUN}, ${'authz-wfk-fp-' + RUN}, ${FOREIGN}) RETURNING id`)[0].id
+    const fe = (await directSql`INSERT INTO event_log (project_id, event_type, event_date, is_public, logged_by, created_by) VALUES (${fp}, 'harvest', NOW(), false, ${FOREIGN}, ${FOREIGN}) RETURNING id`)[0].id
+    foreignHarvestId = (await directSql`INSERT INTO harvest_log (event_id, project_id, quantity, unit, created_by) VALUES (${fe}, ${fp}, ${3}, ${'lb'}, ${FOREIGN}) RETURNING id`)[0].id
+  })
+
+  afterAll(async () => {
+    // FK order: preservation_log (SET NULL FKs, so safe first) → harvest_log → event_log →
+    // plant_projects (ON DELETE RESTRICT up the chain) → storage_location.
+    await directSql`DELETE FROM preservation_log WHERE user_id IN (${OWNER}, ${FOREIGN})`
+    await directSql`DELETE FROM harvest_log WHERE created_by IN (${OWNER}, ${FOREIGN})`
+    await directSql`DELETE FROM event_log WHERE created_by IN (${OWNER}, ${FOREIGN})`
+    await directSql`DELETE FROM plant_projects WHERE created_by IN (${OWNER}, ${FOREIGN})`
+    await directSql`DELETE FROM storage_location WHERE user_id IN (${OWNER}, ${FOREIGN})`
+  })
+
+  // whole_freeze needs no method_other_text; crop_type_slug satisfies attribution so plant_id stays
+  // out of it — the FK under test is storage_location_id / harvest_log_id, nothing else.
+  const putUp = (extra) => ({
+    crop_type_slug: CROP, method: 'whole_freeze', quantity_value: 1, quantity_unit: 'pint',
+    preserved_at: '2026-07-01', ...extra,
+  })
+
+  it('owner POST citing OWN storage_location + OWN harvest_log → 201 (positive control)', async () => {
+    setTestUserId(OWNER)
+    const { status, body } = await callHandler(preservationHandler, {
+      method: 'POST', path: '/api/preservation',
+      body: putUp({ storage_location_id: ownerStorageId, harvest_log_id: ownerHarvestId }),
+    })
+    expect(status).toBe(201)
+    expect(body.storage_location_id).toBe(ownerStorageId)
+    expect(body.harvest_log_id).toBe(ownerHarvestId)
+  })
+
+  it('owner POST citing a FOREIGN storage_location — WITH an explicit use_by_target (the bypass) → 400, no row', async () => {
+    setTestUserId(OWNER)
+    const { status, body } = await callHandler(preservationHandler, {
+      method: 'POST', path: '/api/preservation',
+      body: putUp({ storage_location_id: foreignStorageId, use_by_target: '2026-12-01' }),
+    })
+    expect(status).toBe(400)
+    // No existence oracle — the error must not confirm the foreign row exists or echo its label.
+    expect(body.error).not.toMatch(/household|permission|exists|freezer/i)
+    const rows = await directSql`SELECT 1 FROM preservation_log WHERE storage_location_id = ${foreignStorageId}`
+    expect(rows.length).toBe(0) // the confirmed exploit is closed: nothing stored carrying the foreign id
+  })
+
+  it('owner POST citing a FOREIGN storage_location — without use_by_target → 400', async () => {
+    setTestUserId(OWNER)
+    const { status } = await callHandler(preservationHandler, {
+      method: 'POST', path: '/api/preservation',
+      body: putUp({ storage_location_id: foreignStorageId }),
+    })
+    expect(status).toBe(400)
+  })
+
+  it('owner POST citing a FOREIGN harvest_log → 400, no row (defense-in-depth)', async () => {
+    setTestUserId(OWNER)
+    const { status } = await callHandler(preservationHandler, {
+      method: 'POST', path: '/api/preservation',
+      body: putUp({ harvest_log_id: foreignHarvestId }),
+    })
+    expect(status).toBe(400)
+    const rows = await directSql`SELECT 1 FROM preservation_log WHERE harvest_log_id = ${foreignHarvestId}`
+    expect(rows.length).toBe(0)
+  })
+
+  it('owner PUT cannot drift an own put-up onto a FOREIGN storage_location → 400, row UNCHANGED', async () => {
+    setTestUserId(OWNER)
+    const created = await callHandler(preservationHandler, {
+      method: 'POST', path: '/api/preservation',
+      body: putUp({ storage_location_id: ownerStorageId }),
+    })
+    expect(created.status).toBe(201)
+    const { status } = await callHandler(preservationHandler, {
+      method: 'PUT', path: `/api/preservation/${created.body.id}`,
+      body: putUp({ storage_location_id: foreignStorageId }),
+    })
+    expect(status).toBe(400)
+    // The denied write must not have mutated the FK — still the OWN storage location.
+    const rows = await directSql`SELECT storage_location_id FROM preservation_log WHERE id = ${created.body.id}`
+    expect(rows[0].storage_location_id).toBe(ownerStorageId)
+  })
+})
