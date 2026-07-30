@@ -1,5 +1,15 @@
 [
   {
+    "version": "3.76.0",
+    "date": "2026-07-30",
+    "highlights": [
+      "Choosing a planting is now the same quick, searchable picker everywhere you log — adding an event, uploading a photo, putting up a harvest, or a quick capture",
+      "One tap to mark a seed sprouted: the new \"It sprouted!\" action on a planting stamps the germination date for you (recorded once)",
+      "Harvests now capture an estimated weight in grams when possible — measured directly when you log in grams, kg, lb or oz, and estimated from a per-crop weight you set — so yields can be compared over time",
+      "Behind the scenes: broader ownership safeguards across tags, locations, events, and members keep shared-garden data correctly scoped"
+    ]
+  },
+  {
     "version": "3.75.0",
     "date": "2026-07-29",
     "highlights": [
