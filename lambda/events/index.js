@@ -57,9 +57,6 @@ function resp(statusCode, body) {
 // V4-HARVESTQTY-001 reporting zone. The harvest summary's "this year" and "last 14 days" windows
 // are CALENDAR windows anchored at 00:00 in this zone, not UTC days.
 const HARVEST_TZ = 'America/New_York';
-// V4-CAL1-HARVWEIGHT-001: grams per ONE unit for the four weight units. count/cup/bunch/head are NOT
-// here — those convert only via a Dave-curated crop_types.grams_per_unit (NULL = UNKNOWN = no estimate).
-const GRAMS_PER_WEIGHT_UNIT = { g: 1, kg: 1000, lb: 453.592, oz: 28.3495 };
 
 const DAILY_FLAT_XP_CAP = 30;
 const FLAT_XP_PER_EVENT = 10;
@@ -993,11 +990,6 @@ export const handler = async (event) => {
       const harvestUnit = isHarvest ? body.harvest.unit : null;
       const harvestQuality = isHarvest ? (body.harvest.quality_rating ?? null) : null;
       const harvestNotes = isHarvest ? (body.harvest.notes ?? null) : null;
-      // CAL-1: MEASURED grams when the harvest unit is itself a weight (g/kg/lb/oz). Otherwise null
-      // here — an ESTIMATE may still be derived in-SQL from the crop's grams_per_unit (see new_harvest).
-      const measuredGrams = isHarvest && GRAMS_PER_WEIGHT_UNIT[harvestUnit] != null
-        ? Number(harvestQty) * GRAMS_PER_WEIGHT_UNIT[harvestUnit]
-        : null;
 
       // ── Step 1: pre-fetch user_timezone (COALESCE to America/New_York) ───────────────────────
       const tzRows = await sql`
@@ -1066,15 +1058,27 @@ export const handler = async (event) => {
               ${harvestQuality}::smallint,
               ${harvestNotes},
               ${userId},
-              -- CAL-1 (V4-CAL1-HARVWEIGHT-001): grams = MEASURED (weight unit) else ESTIMATED
-              -- (qty * crop grams_per_unit, only when the crop's default_unit matches this unit),
-              -- else NULL. NULL grams_per_unit = UNKNOWN = no estimate (never guessed). The
-              -- ct.default_unit = ${harvestUnit} join gate makes grams_per_unit present ONLY for a
-              -- valid estimate, so the both-or-neither pairing CHECK always holds.
-              COALESCE(${measuredGrams}::numeric, ct.grams_per_unit * ${harvestQty}::numeric),
-              CASE WHEN ${measuredGrams}::numeric IS NOT NULL THEN false
-                   WHEN ct.grams_per_unit IS NOT NULL         THEN true
-                   ELSE NULL END
+              -- CAL-1 (V4-CAL1-HARVWEIGHT-001): grams = MEASURED when the unit is itself a weight
+              -- (g/kg/lb/oz), else ESTIMATED (qty * crop grams_per_unit, only when the crop's
+              -- default_unit matches this unit), else NULL — NULL grams_per_unit = UNKNOWN = no
+              -- estimate, never guessed. Computed fully in SQL (a nullable JS param can't be typed by
+              -- the neon HTTP driver even with a ::cast); the ct.default_unit = unit join gate makes
+              -- grams_per_unit present ONLY for a valid estimate, so the both-or-neither CHECK holds.
+              COALESCE(
+                ${harvestQty}::numeric * CASE ${harvestUnit}::text
+                  WHEN 'g'  THEN 1
+                  WHEN 'kg' THEN 1000
+                  WHEN 'lb' THEN 453.592
+                  WHEN 'oz' THEN 28.3495
+                  ELSE NULL
+                END,
+                ct.grams_per_unit * ${harvestQty}::numeric
+              ),
+              CASE
+                WHEN ${harvestUnit}::text IN ('g','kg','lb','oz') THEN false
+                WHEN ct.grams_per_unit IS NOT NULL               THEN true
+                ELSE NULL
+              END
             FROM new_event ne
             LEFT JOIN garden_node gn ON gn.id = ne.plant_id      AND gn.deleted_at IS NULL
             LEFT JOIN cultivar    cv ON cv.id = gn.cultivar_id   AND cv.deleted_at IS NULL

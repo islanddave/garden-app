@@ -72,6 +72,8 @@ describe.skipIf(!HAS_CAL1)('CAL-1 harvest weight derivation — POST /api/events
     await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (SELECT id FROM plants WHERE created_by = ${USER})`
     await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by = ${USER})`
     await directSql`DELETE FROM plants WHERE created_by = ${USER}`
+    // entity also carries a cultivar_ref_id -> plant_varieties FK (RESTRICT); clear before varieties.
+    await directSql`DELETE FROM entity WHERE cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ${USER})`
     await directSql`DELETE FROM plant_varieties WHERE created_by = ${USER}`
     await directSql`DELETE FROM crop_types WHERE slug IN (${CROP}, ${CROP_UNSEEDED})`
     await directSql`DELETE FROM plant_projects WHERE created_by = ${USER}`
