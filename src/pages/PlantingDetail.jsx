@@ -17,9 +17,10 @@
 // A11y: status is multi-channel (icon + label + color via PlantStatusBadge, never color alone);
 // sticky section headers give a jump anchor for the flat single-column layout; scroll-to-top on
 // mount (BrowserRouter doesn't reset scroll on push); breadcrumb is arbitrary-depth.
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
+import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { resolvePager, resolveSwipe } from '../lib/plantingSequence.js'
 import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P } from '../lib/constants.js'
@@ -79,6 +80,7 @@ export default function PlantingDetail() {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [tab, setTab] = useState('basics')
   const [lightboxIndex, setLightboxIndex] = useState(null)  // null = closed
+  const [lbFrozen, setLbFrozen] = useState(null)            // slide snapshot at open (regression I4)
 
   // Event log has its OWN lifecycle (DoD: don't conflate filtered-empty with failed-load).
   const [events, setEvents] = useState([])
@@ -88,8 +90,17 @@ export default function PlantingDetail() {
   // V3-PHOTOMULTI-001 (V1, display-only): every photo linked to THIS planting — uploaded directly
   // (plant_id) or attached to one of its events (event_id). No backend/migration: read the
   // project's photos (same source as the Photo Library) and filter client-side.
-  const [photos, setPhotos] = useState([])
-  const [photosLoading, setPhotosLoading] = useState(true)
+  // V4-IMGCACHE-001 D-1: the planting's attached photos through the SWR cache (?attachedTo resolves the
+  // plant_id∪event_id union server-side). The de-dup + sort stays a client useMemo over the cached RAW
+  // list so the store snapshot ref stays stable (a no-op revalidate doesn't re-derive / remount).
+  const attachedKey = planting ? `/api/photos?attachedTo=${planting.id}` : null
+  const { data: rawPhotos, loading: photosLoading, refetch: refetchPhotos } = useCachedFetch(attachedKey)
+  const photos = useMemo(() => {
+    const seen = new Set()
+    const mine = (rawPhotos ?? []).filter(p => (seen.has(p.id) ? false : seen.add(p.id)))
+    mine.sort((a, b) => String(b.created_at || b.taken_at || '').localeCompare(String(a.created_at || a.taken_at || '')))
+    return mine
+  }, [rawPhotos])
 
   // Scroll-to-top on open AND on every paging change. PlantingDetail does NOT remount when only
   // the :plantingId param changes (same <Route element>), so this MUST key on plantingId — a
@@ -188,23 +199,14 @@ export default function PlantingDetail() {
   // old ?project_id fetch only saw photos in the planting's OWN container and hid the rest. Exclusion of
   // other plantings' photos is now the server's job (WHERE-scoped), so the client just de-dups + sorts.
   // `events` stays in deps as a freshness trigger: logging a new event-photo re-fetches the attached set.
+  // events-change freshness trigger: logging a new event-photo bumps `events`, which revalidates the
+  // attached-photo set. Skip the initial mount run — the first fetch is already covered by
+  // useCachedFetch's own mount-revalidate; only a genuine later `events` change needs to refresh.
+  const eventsSettledRef = useRef(false)
   useEffect(() => {
-    if (!planting) return
-    let cancelled = false
-    setPhotosLoading(true)
-    Promise.resolve(fetch(`/api/photos?attachedTo=${planting.id}`))
-      .then(data => {
-        if (cancelled) return
-        const seen = new Set()
-        const mine = (data ?? [])
-          .filter(p => (seen.has(p.id) ? false : seen.add(p.id)))
-        mine.sort((a, b) => String(b.created_at || b.taken_at || '').localeCompare(String(a.created_at || a.taken_at || '')))
-        setPhotos(mine)
-        setPhotosLoading(false)
-      })
-      .catch(() => { if (!cancelled) { setPhotos([]); setPhotosLoading(false) } })
-    return () => { cancelled = true }
-  }, [planting, events, fetch])
+    if (!eventsSettledRef.current) { eventsSettledRef.current = true; return }
+    refetchPhotos()
+  }, [events, refetchPhotos]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Planting pager (group-bounded prev/next) ───────────────────────────────────────────────
   // Sequence is captured on tap in Garden and read here from a module singleton. null when there
@@ -327,6 +329,11 @@ export default function PlantingDetail() {
   const galleryImages = featuredUrl && !featuredInSet
     ? [{ src: featuredUrl, view_url: featuredUrl, id: pl.featured_photo_id, alt: `${name} photo`, caption: null }, ...galleryFromPhotos]
     : galleryFromPhotos
+  // Freeze the slide array at open (regression I4): a background revalidate that prepends/reorders
+  // photos must not shift the controlled index onto a different photo mid-view. `openLb` snapshots
+  // galleryImages then sets the index; onClose clears the snapshot. (Inlined at the call sites rather
+  // than an effect/useCallback — galleryImages is computed below the page's early returns.)
+  const openLb = (i) => { setLbFrozen(galleryImages); setLightboxIndex(i) }
   // Map a `photos[]` entry to its index inside galleryImages (offset by the unshifted hero).
   const photoIndexOffset = (featuredUrl && !featuredInSet) ? 1 : 0
   // GrowthStrip wants OLDEST-first; photos[] is newest-first, so reverse a shallow copy and
@@ -442,7 +449,7 @@ export default function PlantingDetail() {
         src={pl.featured_photo_view_url}
         photoId={pl.featured_photo_id}
         alt={`${name} photo`}
-        onOpenLightbox={(i) => setLightboxIndex(i ?? 0)}
+        onOpenLightbox={(i) => openLb(i ?? 0)}
         onOpenDetails={() => { setTab('basics'); setDetailsOpen(true) }}
         onStatusChanged={(status) => setPlanting(prev => ({ ...prev, status }))}
       />
@@ -534,7 +541,7 @@ export default function PlantingDetail() {
             ) : (
               <GrowthStrip
                 photos={growthPhotos}
-                onOpen={(idx) => setLightboxIndex(idx)}
+                onOpen={(idx) => openLb(idx)}
                 indexBase={growthPhotos[0]?.galleryIndex ?? 0}
               />
             )}
@@ -588,7 +595,7 @@ export default function PlantingDetail() {
                   <figure key={ph.id} style={{ margin: 0 }}>
                     <button
                       type="button"
-                      onClick={() => setLightboxIndex(i + photoIndexOffset)}
+                      onClick={() => openLb(i + photoIndexOffset)}
                       aria-label={`Open ${ph.caption || `${name} photo`}`}
                       style={{ display: 'block', width: '100%', padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
                     >
@@ -716,10 +723,10 @@ export default function PlantingDetail() {
       {/* V4-THEME-001 — shared Lightbox gallery (hero + Photos grid + GrowthStrip thumbs feed it). */}
       <Lightbox
         open={lightboxIndex != null}
-        images={galleryImages}
+        images={lbFrozen ?? galleryImages}
         index={lightboxIndex ?? 0}
         onIndexChange={setLightboxIndex}
-        onClose={() => setLightboxIndex(null)}
+        onClose={() => { setLbFrozen(null); setLightboxIndex(null) }}
         onSetFeatured={setFeatured}
         featuredId={pl.featured_photo_id}
       />

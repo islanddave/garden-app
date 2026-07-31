@@ -1,5 +1,6 @@
-import { createContext, useContext } from 'react'
+import { createContext, useContext, useEffect } from 'react'
 import { useUser, useClerk } from '@clerk/react'
+import { invalidateAll as invalidateDataCache } from '../lib/dataCache.js'
 
 const AuthContext = createContext(null)
 
@@ -15,6 +16,13 @@ export function AuthProvider({ children }) {
     display_name: clerkUser.fullName || clerkUser.firstName || clerkUser.emailAddresses?.[0]?.emailAddress || '',
     avatar_url: clerkUser.imageUrl || null,
   } : null
+
+  // V4-IMGCACHE-001 D-1: on any identity change, evict the whole in-heap data cache so a soft
+  // sign-out (no page reload) or an in-place sub switch can never leave one identity's cached lists
+  // resident for the next. The identity-scoped key already prevents cross-read; this is the eviction
+  // half (memory + retention hygiene). A boot transition (null → sub) is a no-op on an empty cache.
+  const userId = user?.id ?? null
+  useEffect(() => { invalidateDataCache() }, [userId])
 
   async function signInWithGoogle() {
     try {

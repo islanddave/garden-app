@@ -64,3 +64,11 @@ export const PLANTING_REQUIRED_ENABLED = false
 // Preview by flipping this const on dev. Criteria-gated, never date-gated. Rollback = flip back to
 // false (one client revert, no data to unwind).
 export const PROJECTS_HIDDEN = false
+
+// V4-IMGCACHE-001 D-1 (design V102 §B / §5.4): the subscribable image-LIST SWR cache ("slow-tab win").
+// When TRUE (default), the photo-list read sites (PhotosWall / PlantingDetail attached-photos /
+// LocationDetail) render from a household-scoped in-heap cache and revalidate on every mount; when
+// FALSE, useCachedFetch degrades to a plain fetch-on-mount (no cache read/write) so those sites are
+// byte-identical to pre-D1. One-toggle rollback lever (module const → "rollback" = flip false +
+// redeploy). Heap-only: no service-worker change. Criteria-gated, never date-gated.
+export const IMAGE_LIST_CACHE_ENABLED = true

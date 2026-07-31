@@ -10,13 +10,15 @@
 // Grouping/sort is by created_at — the ONLY timestamp /api/photos exposes. Capture-time (EXIF
 // DateTimeOriginal) would be the ideal grouping key but is not surfaced by the photos Lambda;
 // we do NOT parse EXIF client-side. Swap the key here if/when the API adds a captured_at field.
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { useApiFetch } from '../lib/api.js'
+import React, { useState, useCallback, useMemo } from 'react'
+import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { P } from '../lib/constants.js'
 import TileGrid from './forms/TileGrid.jsx'
 import Lightbox from './Lightbox.jsx'
 import PhotoImg from './PhotoImg.jsx'
 import useImageWindow from '../hooks/useImageWindow.js'
+
+const EMPTY_PHOTOS = []   // stable ref so the sort/section memos don't re-run while data is undefined
 
 // Month bucket key + human label from an ISO-ish timestamp. Falls back to an "Undated" bucket
 // (sorted last) when created_at is missing/garbage, so a malformed row never drops out silently.
@@ -37,28 +39,16 @@ function monthLabel(key) {
 }
 
 export default function PhotosWall() {
-  const { fetch } = useApiFetch()
-  const [photos, setPhotos] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  // Lightbox state: lbIndex is the FLAT index across all months into the sorted full list.
+  // V4-IMGCACHE-001 D-1: read the photo list through the SWR cache — a revisit paints from cache
+  // instead of a refetch-and-re-presign every mount; `refetch` (Retry) force-revalidates.
+  const { data, loading, error, refetch } = useCachedFetch('/api/photos')
+  const photos = data ?? EMPTY_PHOTOS
+  // Lightbox state: lbIndex is the FLAT index across all months into the sorted full list. lbFrozen
+  // snapshots the slide array at open (regression I4) so a background revalidate can't reorder it and
+  // jump the open slide to a different photo.
   const [lbOpen, setLbOpen] = useState(false)
   const [lbIndex, setLbIndex] = useState(0)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await fetch('/api/photos') ?? []
-      setPhotos(Array.isArray(data) ? data : [])
-    } catch (err) {
-      setPhotos([])
-      setError(err)
-    }
-    setLoading(false)
-  }, [fetch])
-
-  useEffect(() => { load() }, [load])
+  const [lbFrozen, setLbFrozen] = useState(null)
 
   // Stable flat order = full list sorted by created_at DESC (newest first). The Lightbox `images`
   // array and every tile's flat index both derive from THIS order, so a tapped tile maps 1:1 to
@@ -103,9 +93,10 @@ export default function PhotosWall() {
   )
 
   const openAt = useCallback((flatIndex) => {
+    setLbFrozen(lbImages)   // freeze the slides at open so a revalidate can't reorder them under the open Lightbox
     setLbIndex(flatIndex)
     setLbOpen(true)
-  }, [])
+  }, [lbImages])
 
   if (loading) {
     return <p style={{ color: P.light, fontSize: '0.9rem', padding: '8px 0' }}>Loading photos…</p>
@@ -121,7 +112,7 @@ export default function PhotosWall() {
             ? 'The photo service had a problem — usually temporary. Please retry.'
             : 'Something went wrong loading your photos.'}
         </p>
-        <button type="button" onClick={load} style={{ minHeight: 44, padding: '8px 18px', fontSize: '0.85rem', borderRadius: 8, border: `1px solid ${P.alertBorder}`, background: P.white, color: P.dark, cursor: 'pointer' }}>Retry</button>
+        <button type="button" onClick={refetch} style={{ minHeight: 44, padding: '8px 18px', fontSize: '0.85rem', borderRadius: 8, border: `1px solid ${P.alertBorder}`, background: P.white, color: P.dark, cursor: 'pointer' }}>Retry</button>
       </div>
     )
   }
@@ -175,10 +166,10 @@ export default function PhotosWall() {
 
       <Lightbox
         open={lbOpen}
-        images={lbImages}
+        images={lbFrozen ?? lbImages}
         index={lbIndex}
         onIndexChange={setLbIndex}
-        onClose={() => setLbOpen(false)}
+        onClose={() => { setLbOpen(false); setLbFrozen(null) }}
       />
     </div>
   )

@@ -16,6 +16,7 @@
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { __resetDataCache } from '../lib/dataCache.js'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 const { fetchSpy, capturedPhotoProps, uploadSpy } = vi.hoisted(() => ({
@@ -74,6 +75,7 @@ vi.mock('../components/VarietyPicker.jsx', () => ({
 }))
 vi.mock('../context/AuthContext.jsx', () => ({
   useAuth: () => ({ user: { id: 'u1' } }),
+  useAuthOptional: () => ({ user: { id: 'u1' }, profile: null, loading: false }),   // D-1: LocationDetail's cache hook reads this
 }))
 vi.mock('../hooks/useInventory.js', () => ({
   useInventory: () => ({
@@ -92,6 +94,7 @@ beforeEach(() => {
   uploadSpy.mockReset()
   capturedPhotoProps.current = []
   mockParams.current = {}
+  __resetDataCache()   // D-1: the SWR store is a module singleton — clear it between cases
 })
 
 describe('LocationDetail — photo upload section', () => {

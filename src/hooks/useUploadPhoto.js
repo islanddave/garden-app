@@ -26,6 +26,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useApiFetch, apiFetch } from '../lib/api.js';
+import { invalidatePrefix as invalidatePhotoLists } from '../lib/dataCache.js';
 import { buildPhotoKey, extFromFile, mimeFromFile } from '../lib/photoKeys.js';
 import { downscaleWithThumb } from '../lib/imageDownscale.js';
 import { putWithProgress } from '../lib/uploadPut.js';
@@ -255,6 +256,11 @@ export function useUploadPhoto({ errorMode = 'surface' } = {}) {
       });
 
       setPhoto(registered);
+      // V4-IMGCACHE-001 D-1: a new photo can land in ANY cached photo list — the /api/photos wall, a
+      // ?attachedTo= gallery (via the server-side event→plant union), a ?location_id= grid. The client
+      // can't compute which, so invalidate every /api/photos* key: subscribed surfaces refresh without a
+      // remount; unmounted ones refetch on next mount. No-op when the cache is empty (flag off / tests).
+      invalidatePhotoLists('/api/photos');
       setIsUploading(false);
       setStage(null);
       return { photo: registered, previewUrl: url };

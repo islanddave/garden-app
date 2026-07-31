@@ -4,6 +4,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
+import { invalidatePrefix as invalidatePhotoLists } from '../lib/dataCache.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import PlantingSelect from '../components/forms/PlantingSelect.jsx'
@@ -210,6 +211,11 @@ export default function PhotoLibrary() {
           tags:        modal.tags    ?? null,
         }),
       })
+
+      // V4-IMGCACHE-001 D-1: a re-link moves the photo between location/project/plant buckets, so every
+      // cached photo list (?location_id=, ?attachedTo=, the wall) may be stale. PhotoLibrary itself is
+      // NOT cached (its grid is a bare <img>, per BUG-PHOTOBLANK-001), but the routed surfaces are.
+      invalidatePhotoLists('/api/photos')
 
       const updatedProjectName = projects.find(p => p.id === newProject)?.name ?? null
 

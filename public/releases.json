@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.80.0",
+    "date": "2026-07-31",
+    "highlights": [
+      "Revisiting your photos is faster — the Garden photo wall, a planting's photos, and a location's photos now appear instantly from memory when you tab back to them and refresh quietly in the background, instead of fully reloading every time"
+    ]
+  },
+  {
     "version": "3.79.0",
     "date": "2026-07-31",
     "highlights": [

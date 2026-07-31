@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
+import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -6,6 +7,8 @@ import Breadcrumb from '../components/Breadcrumb.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
+
+const EMPTY_LOC_PHOTOS = []   // stable ref while the cache is empty
 
 // DEFERRED:
 //   - Sub-location list (children of this location) → V2
@@ -29,8 +32,10 @@ export default function LocationDetail() {
   const [error, setError] = useState(null)
   // V4-PHOTOLOCFIND-001: this space's gallery — ?location_id= walks the subtree server-side,
   // so a parent space also shows its descendants' photos.
-  const [photos, setPhotos] = useState([])
-  const [photosLoading, setPhotosLoading] = useState(true)
+  // V4-IMGCACHE-001 D-1: location photos through the SWR cache. `loadPhotos` (refetch) also fires from
+  // onUploadComplete so the grid refreshes after an upload without a remount.
+  const { data: locPhotos, loading: photosLoading, refetch: loadPhotos } = useCachedFetch(id ? `/api/photos?location_id=${id}` : null)
+  const photos = locPhotos ?? EMPTY_LOC_PHOTOS
 
   useEffect(() => {
     let mounted = true
@@ -48,14 +53,6 @@ export default function LocationDetail() {
     return () => { mounted = false }
   }, [id, fetch])
 
-  const loadPhotos = useCallback(() => {
-    setPhotosLoading(true)
-    fetch(`/api/photos?location_id=${id}`)
-      .then(data => { setPhotos(Array.isArray(data) ? data : []); setPhotosLoading(false) })
-      .catch(() => { setPhotos([]); setPhotosLoading(false) })
-  }, [id, fetch])
-
-  useEffect(() => { loadPhotos() }, [loadPhotos])
 
   if (loading) return <Shell><Spinner block /></Shell>
   if (error) return (
