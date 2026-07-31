@@ -150,3 +150,69 @@ export function invalidateAll() {
   for (const e of _store.values()) { e.gen += 1; e.inFlight = null }
   _store.clear()
 }
+
+// ── V4-IMGCACHE-002 D-2 — boot-warm / resume-revalidate / refresh ────────────────────────────────
+
+// THE canonical key builder. Both useCachedFetch and boot-warm MUST go through this: a warm that
+// builds its key even slightly differently writes an entry no hook will ever read (V102 §B1), which
+// looks like a working warm and costs a wasted request on every boot.
+export function keyFor(sub, path) { return `${sub}|${path}` }
+
+// B3 boot-warm. Seeds a key BEFORE any component mounts, so the first visit to a photo surface paints
+// from cache instead of a cold fetch. No-ops when the key already holds data or has a fetch in flight
+// (never duplicates a real mount's work).
+//
+// A FAILED warm must leave NO trace (V102 §B3: "failed warms write nothing"). revalidate() commits
+// status:'error' on a cold failure, which would make the first real mount render an error state
+// instead of a clean loading→fetch. So on a data-less error we reset the entry to 'empty' — the
+// entry OBJECT is kept (not deleted) because any subscriber that arrived mid-warm holds a reference
+// to it, and replacing it would orphan their callback.
+export function warm(key, fetcher) {
+  const e = _entry(key)
+  if (e.data !== undefined || e.inFlight) return null
+  e.fetcher = fetcher
+  const p = revalidate(key)
+  if (!p) return null
+  p.catch(() => {}).finally(() => {
+    const cur = _store.get(key)
+    if (cur && cur.status === 'error' && cur.data === undefined) _commit(cur, { status: 'empty', error: null })
+  })
+  return p
+}
+
+// B5 resume revalidation. Revalidates keys that something is actually WATCHING — an unsubscribed
+// entry has no viewer, so refetching it on every foreground would burn bandwidth for nobody.
+//
+// `minAgeMs` is the elapsed gate, and it is the whole reason this isn't chatty: a 3-second
+// app-switch fires visibilitychange too, and refetching every photo list on every glance would be
+// strictly worse than the problem being solved. Mirrors PhotoImg's proactive elapsed gate (NEW-4).
+// Returns the number of keys kicked (test seam + a caller-visible signal that the gate held).
+export function revalidateLive(minAgeMs = 0) {
+  const now = _now()
+  let n = 0
+  for (const [k, e] of _store) {
+    if (!e.subs.size || e.inFlight || typeof e.fetcher !== 'function') continue
+    if (minAgeMs > 0 && e.at && now - e.at < minAgeMs) continue
+    if (revalidate(k)) n++
+  }
+  return n
+}
+
+// B4 pull-to-refresh primitive: force every watched key to the network while KEEPING its cached value
+// on screen (SWR), and drop unwatched entries so a refresh genuinely clears the app's memory.
+//
+// NOT invalidateAll(): that clears watched entries too, blanking every mounted list mid-view — the
+// opposite of what a refresh gesture should feel like.
+//
+// V102 §B4 also asks that keys with a pending in-flight MUTATION be exempted so a refresh can't wipe
+// an unconfirmed optimistic write. That exemption is vacuous today and deliberately not built: no
+// mutation writes through this cache — photo mutations go through useUploadPhoto and then
+// invalidatePrefix — so there is no optimistic cache state to protect. Build the exemption together
+// with the first optimistic writer (the useInventory adjustQuantity path, per V102 §B2), not before.
+export function refreshAll() {
+  let n = 0
+  for (const [k, e] of [..._store]) {
+    if (e.subs.size) { invalidate(k); n++ } else { _store.delete(k) }
+  }
+  return n
+}

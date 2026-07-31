@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect } from 'react'
 import { useUser, useClerk } from '@clerk/react'
 import { invalidateAll as invalidateDataCache } from '../lib/dataCache.js'
+import { useCacheLifecycle } from '../hooks/useCacheLifecycle.js'
 
 const AuthContext = createContext(null)
 
@@ -23,6 +24,11 @@ export function AuthProvider({ children }) {
   // half (memory + retention hygiene). A boot transition (null → sub) is a no-op on an empty cache.
   const userId = user?.id ?? null
   useEffect(() => { invalidateDataCache() }, [userId])
+
+  // V4-IMGCACHE-002 D-2: boot-warm + foreground revalidate. Called AFTER the eviction effect above so
+  // the hook ordering guarantees eviction runs first on an identity change — a warm that ran before it
+  // would have its freshly-written entry immediately cleared.
+  useCacheLifecycle(userId)
 
   async function signInWithGoogle() {
     try {

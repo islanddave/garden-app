@@ -30,7 +30,7 @@ export function useCachedFetch(path) {
   const flagOn = IMAGE_LIST_CACHE_ENABLED
   const cached = flagOn && !!path && !!sub
   const usePlain = !cached && !!path            // flag OFF, or flag ON but no sub yet — plain fetch, no cache
-  const key = cached ? `${sub}|${path}` : null
+  const key = cached ? cache.keyFor(sub, path) : null   // D-2: shared builder, or boot-warm misses
 
   // Latest fetch fn behind a ref so the fetcher identity stays stable across token refreshes.
   const fetchRef = useRef(fetch); fetchRef.current = fetch
