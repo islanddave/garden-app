@@ -1,0 +1,35 @@
+# gates.yml
+# VALIDATE-only sibling of v4-staging-reconcile-002. Split because the runner executes the sweep
+# list both before and after 0b, so a "zero violating rows" predicate cannot pass in the same
+# migration that creates that condition.
+#
+# sweep: L-058 — the real gate. VALIDATE scans EVERY row including soft-deleted ones, so this
+#        predicate carries NO deleted_at filter and mirrors the full CHECK exactly. If 002 has not
+#        run, this fails here rather than blowing up inside ALTER TABLE.
+# post:  convalidated = true, not merely "the constraint exists". Checking existence would pass
+#        while leaving precisely the drift this migration exists to close.
+
+pre:
+  - name: constraint_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'plant_projects_kind_not_null_unless_deleted'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  - name: no_row_violates_kind_predicate
+    sql: |
+      SELECT count(*) FROM public.plant_projects
+       WHERE NOT ((kind IS NOT NULL) OR (deleted_at IS NOT NULL))
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: constraint_is_validated_not_merely_present
+    sql: |
+      SELECT count(*) FROM pg_constraint
+       WHERE conname = 'plant_projects_kind_not_null_unless_deleted'
+         AND convalidated = true
+    expect: scalar_eq
+    value: 1

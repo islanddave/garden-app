@@ -1,0 +1,37 @@
+# gates.yml
+# DML-only: backfill kind on the grandfathered staging rows. No 0c here, so no VALIDATE and
+# therefore nothing for an L-058 sweep to guard — the sweep list is EMPTY BY DESIGN, not by
+# omission. The runner executes the sweep list BOTH before and after 0b, so a predicate asserting
+# the post-0b state would fail on the pre-0b pass; that is why the VALIDATE lives in the sibling
+# migration v4-staging-reconcile-003 rather than here.
+#
+# pre:  prove there is something to fix AND that reconcile-001 already ran (the constraint exists).
+# post: prove the backfill is complete and that it wrote the intended value — a post-gate counting
+#       only rows would pass even if the UPDATE had written the wrong kind.
+
+pre:
+  - name: constraint_present_from_reconcile_001
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'plant_projects_kind_not_null_unless_deleted'
+    expect: rowcount_eq
+    value: 1
+
+sweep: []
+
+post:
+  - name: no_alive_project_left_without_a_kind
+    sql: |
+      SELECT count(*) FROM public.plant_projects
+       WHERE NOT ((kind IS NOT NULL) OR (deleted_at IS NOT NULL))
+    expect: scalar_eq
+    value: 0
+
+  - name: the_four_backfilled_rows_are_campaign
+    sql: |
+      SELECT count(*) FROM public.plant_projects
+       WHERE deleted_at IS NULL
+         AND name IN ('Build Out','Basil','Chilis','Peppers')
+         AND kind = 'campaign'
+    expect: scalar_eq
+    value: 4
