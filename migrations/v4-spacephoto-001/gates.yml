@@ -1,0 +1,89 @@
+# gates.yml
+# V4-SPACEPHOTO-001 — photos.space_id + spaces.featured_photo_id + widened parent constraint.
+#
+# pre:   prove the target columns are ABSENT and the prerequisite backfill is DONE. The
+#        v4-spaceowner check is the important one — loadOwnedSpace() rejects a NULL-owner
+#        space, so applying this against an un-backfilled DB yields a feature that 400s on
+#        every write while looking structurally correct.
+# sweep: L-058 — prove no existing row would violate the WIDENED predicate before VALIDATE
+#        runs. Widening an OR-constraint cannot orphan a row, so this is expected 0 and is
+#        here as a falsifiable assertion, not a formality. Deliberately NO deleted_at filter:
+#        the CHECK applies to every row including soft-deleted ones.
+# post:  prove both columns exist AND that the surviving constraint actually carries the
+#        space_id arm. A post-gate that only counted columns would pass even if 0c had
+#        failed to swap the constraint, leaving space-only inserts rejected at runtime.
+
+pre:
+  - name: photos_space_id_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='photos' AND column_name='space_id'
+    expect: rowcount_eq
+    value: 0
+
+  - name: spaces_featured_photo_id_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='spaces' AND column_name='featured_photo_id'
+    expect: rowcount_eq
+    value: 0
+
+  - name: spaceowner_backfill_already_applied
+    sql: |
+      SELECT count(*) FROM public.spaces WHERE created_by IS NULL
+    expect: scalar_eq
+    value: 0
+
+sweep:
+  - name: no_row_violates_widened_parent_predicate
+    sql: |
+      SELECT count(*) FROM public.photos
+       WHERE NOT (
+             (event_id IS NOT NULL)
+          OR (project_id IS NOT NULL)
+          OR (location_id IS NOT NULL)
+          OR (plant_id IS NOT NULL)
+          OR (inventory_item_id IS NOT NULL)
+          OR COALESCE((intake_status = 'pending_tag'::text), false)
+       )
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: photos_space_id_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='photos' AND column_name='space_id'
+    expect: rowcount_eq
+    value: 1
+
+  - name: spaces_featured_photo_id_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='spaces' AND column_name='featured_photo_id'
+    expect: rowcount_eq
+    value: 1
+
+  - name: parent_constraint_carries_space_arm
+    sql: |
+      SELECT count(*) FROM pg_constraint
+       WHERE conrelid='public.photos'::regclass
+         AND conname='photos_must_have_parent'
+         AND pg_get_constraintdef(oid) LIKE '%space_id%'
+    expect: scalar_eq
+    value: 1
+
+  - name: no_orphan_v2_constraint_left_behind
+    sql: |
+      SELECT count(*) FROM pg_constraint
+       WHERE conrelid='public.photos'::regclass
+         AND conname='photos_must_have_parent_v2'
+    expect: scalar_eq
+    value: 0
+
+  - name: space_id_index_present
+    sql: |
+      SELECT count(*) FROM pg_indexes
+       WHERE schemaname='public' AND tablename='photos' AND indexname='idx_photos_space_id'
+    expect: scalar_eq
+    value: 1
