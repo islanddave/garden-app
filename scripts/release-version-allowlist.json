@@ -1,0 +1,10 @@
+{
+  "_meta": {
+    "purpose": "Versions whose Tier-1.C TAG-COLLISION check is waived in scripts/check-release-version.py (CI job build-and-test). Nothing else in the guard consults this file: shape, releases.json integrity and version-regression are unwaivable, and there is deliberately no env-var or commit-trailer bypass.",
+    "when_a_waiver_is_legitimate": "Essentially never. A tag collision means the version has already been promoted, and the `release-tag-integrity` ruleset (id 20140435) forbids deleting or re-pointing v* / promote-v* tags — so the correct response is almost always to bump to the next free version with `node scripts/add-release.mjs <next> \"<highlight>\"`. Reach for a waiver only when a tag exists that provably never shipped (e.g. created by a dry run) and cannot be removed.",
+    "entry_shape": "{ version: '3.81.0', reason: 'why this collision is safe', date: 'YYYY-MM-DD', waived_by: 'name' }",
+    "note": "`version` is the bare package.json version WITHOUT the leading 'v'.",
+    "source": "Release-version guard, added 2026-07-31 after the v3.81.0 tag burn (package.json un-bumped at 3.80.0 on the promoted SHA 00558fe, forcing a second promote as v3.81.1)."
+  },
+  "waived_versions": []
+}

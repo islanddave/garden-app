@@ -25,6 +25,45 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      # --- Release-version guard (v3.81.0 tag-burn regression) ---------------
+      # Placed BEFORE setup-node/npm ci on purpose: it fails in seconds and
+      # needs no node toolchain. Cheap fail-fast on a cheap-to-detect defect.
+      - name: Fetch origin/main for the release-version guard
+        # The checkout above has no `with:` block, so it is fetch-depth:1 and
+        # single-branch — origin/main is otherwise unreachable. Do NOT switch it
+        # to fetch-depth: 0; 112 releases of history on every CI run is real cost
+        # for data this guard does not need. It reads exactly one blob
+        # (main:package.json) plus a tree diff, both of which a depth-1 fetch
+        # satisfies. Tag NAMES come from `git ls-remote` inside the script (one
+        # network call, no objects downloaded) rather than a --tags fetch.
+        # actions/checkout leaves a credential helper configured, so the job's
+        # GITHUB_TOKEN authenticates; `permissions: contents: read` suffices.
+        run: git fetch --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Release-version guard
+        # Hard-fails (exit 1) on: non-semver package.json version, a version that
+        # promote-gate's snap_version regex would reject, releases.json that is
+        # malformed / mis-ordered / duplicated / head-mismatched, a version
+        # BELOW main, or a bump onto an already-consumed v* tag. Advisory-only
+        # (::warning::) when dev carries unreleased release-relevant work with no
+        # bump. Exit 2 = origin/main or the tag list was unreadable — never a
+        # silent pass. Waivers: scripts/release-version-allowlist.json.
+        # NOTE: the keystone check lives in promote-gate.yml (snap_version vs
+        # package.json@dev_sha) — this job cannot see the dispatch input.
+        run: python3 scripts/check-release-version.py
+
+      - name: Python script tests (pytest)
+        # Retroactively covers the previously-unrun scripts/test_*.py suites
+        # (snap, revert-to, restore-verify, verify-deploy) as well as the guard's
+        # own tests. requests+boto3 are import-time deps of snap.py/revert-to.py.
+        run: |
+          set -euo pipefail
+          # Plain form is proven on these runners (promote-gate.yml "Install python
+          # deps"); the fallback covers a PEP-668 externally-managed image.
+          python3 -m pip install --quiet pytest requests boto3 \
+            || python3 -m pip install --quiet --break-system-packages pytest requests boto3
+          python3 -m pytest -q scripts/test_*.py
+
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20.19.0'

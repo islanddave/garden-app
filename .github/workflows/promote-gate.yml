@@ -157,6 +157,65 @@ jobs:
             echo "preflight ok: dev==$DEV_SHA, build-and-test=success (integration advisory=$INT)"
           fi
 
+      - name: Version/tag skew gate — snap_version must equal package.json@dev_sha
+        # THE KEYSTONE of the v3.81.0 tag-burn fix. 00558fe carried package.json
+        # 3.80.0 AND releases.json[0] 3.80.0 — internally consistent, so every
+        # check that runs INSIDE a CI job on dev (including the vitest
+        # releases.json[0]==package.json assertion and scripts/check-release-version.py)
+        # passed. The skew existed only between the promoted code and this
+        # workflow's human-typed snap_version, which is invisible from dev. Tag
+        # v3.81.0 was consumed on content calling itself 3.80.0, forcing a second
+        # promote as v3.81.1 — and the release-tag-integrity ruleset (id 20140435)
+        # now forbids deleting or re-pointing v* tags, so the burn is permanent.
+        #
+        # PLACEMENT IS LOAD-BEARING: after Preflight, BEFORE the ~28-minute
+        # staging-smoke gate and BEFORE "Fast-forward main". Failing here costs
+        # nothing — main is untouched, no tag exists, no Neon branch, no dump.
+        # scripts/snap.py does enforce version uniqueness (its ensure_tag /
+        # manifest guards), but it runs AFTER the FF, so its abort reds a promote
+        # whose irreversible half already happened.
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          REPO: ${{ github.repository }}
+          DEV_SHA: ${{ needs.resolve.outputs.dev_sha }}
+          SNAP: ${{ needs.resolve.outputs.snap_version }}
+        run: |
+          set -euo pipefail
+          PKG=$(curl -sS -f -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/$REPO/contents/package.json?ref=$DEV_SHA" | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])")
+          if [ -z "$PKG" ]; then
+            echo "::error::could not read package.json version at $DEV_SHA — refusing to promote"; exit 1
+          fi
+          echo "package.json@$DEV_SHA = $PKG"
+          echo "snap_version         = $SNAP"
+          if [ "$SNAP" != "v$PKG" ]; then
+            echo "::error::version/tag skew — snap_version '$SNAP' does not match the promoted code, which calls itself '$PKG' (expected 'v$PKG'). Either re-dispatch with snap_version=v$PKG, or land a bump on dev first with: node scripts/add-release.mjs <version> \"<highlight>\" — main has NOT been touched."
+            exit 1
+          fi
+          # Matching alone is NOT enough. Promoting an UNBUMPED dev (dev==main==3.81.1,
+          # snap_version=v3.81.1) satisfies the equality above, then dies in snap.py's
+          # ensure_tag/manifest reuse guard AFTER main has been fast-forwarded. Pull that
+          # exact check forward. Idempotency is preserved deliberately, mirroring
+          # snap.py: an existing tag ALREADY pointing at this DEV_SHA is a clean re-run.
+          CODE=$(curl -sS -o /tmp/tagref.json -w "%{http_code}" -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/git/ref/tags/$SNAP")
+          if [ "$CODE" = "200" ]; then
+            TAG_TYPE=$(python3 -c "import json;print(json.load(open('/tmp/tagref.json'))['object']['type'])")
+            TAG_SHA=$(python3 -c "import json;print(json.load(open('/tmp/tagref.json'))['object']['sha'])")
+            if [ "$TAG_TYPE" = "tag" ]; then
+              TAG_SHA=$(curl -sS -f -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/git/tags/$TAG_SHA" | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])")
+            fi
+            if [ "$TAG_SHA" != "$DEV_SHA" ]; then
+              echo "::error::tag $SNAP already exists at $TAG_SHA (!= $DEV_SHA) — that version has already shipped. Bump dev first: node scripts/add-release.mjs <next> \"<highlight>\", then re-dispatch. main has NOT been touched (snap.py would have caught this only AFTER the fast-forward)."
+              exit 1
+            fi
+            echo "::notice::tag $SNAP already exists and points at $DEV_SHA — idempotent re-promote of the same SHA"
+          elif [ "$CODE" != "404" ]; then
+            echo "::error::tag lookup for $SNAP failed (HTTP $CODE) — cannot rule out a tag collision, refusing to promote"
+            exit 1
+          else
+            echo "tag $SNAP is free"
+          fi
+          echo "version/tag skew gate ok: $SNAP == v$PKG, tag not previously consumed"
+
       - name: Write-path staging smoke gate (PHASE2-CI-001 / L-145)
         env:
           BOT_TOKEN: ${{ steps.bot.outputs.token }}

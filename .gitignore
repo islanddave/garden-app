@@ -12,3 +12,8 @@ node_modules
 # changes in git status.
 vitest.config.ts.timestamp-*.mjs
 vite.config.ts.timestamp-*.mjs
+
+# python bytecode from the scripts/ guards (check-coverage-ratchet, check-release-version, snap,
+# verify-deploy). Running their pytest suites leaves __pycache__ behind; same burial problem as above.
+__pycache__/
+*.py[cod]
