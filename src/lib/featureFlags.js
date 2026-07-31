@@ -33,6 +33,12 @@ export const EVENTNEW_ADD_DETAILS_EXPANDED = false
 // import this ESM module, so the server reads process.env.CARE_RAIN_CREDIT_ENABLED and this is the client copy.
 export const CARE_RAIN_CREDIT_ENABLED = false
 
+// DRG-WXFLAGSPLIT-001 F1 (2026-07-31): client mirror of the server CARE_RAIN_MAXDAYS_ENABLED env flag, split
+// out of CARE_RAIN_CREDIT_ENABLED so the tiered rain CREDIT and the max-days interval CEILING can be flipped
+// independently. Default OFF and inert. Same separate-mechanism caveat as above: flip this in lockstep with
+// the Lambda env var, or the client rain trace diverges from the plan the server actually computed.
+export const CARE_RAIN_MAXDAYS_ENABLED = false
+
 // V4-OVERLAY-001 (design V102): route-backed overlays — forms/search open as flyovers over the
 // current tab instead of navigating away. Slice 1 = infra + /search consumer. When FALSE, every
 // overlay helper degrades to plain navigate/Link, no `background` is ever set, the overlay tree

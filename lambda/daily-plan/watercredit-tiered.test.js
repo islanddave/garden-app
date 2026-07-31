@@ -32,11 +32,15 @@ const wx = { tonightLow: 60, highToday: 75 };
 const SEED = (o) => ({ _seeded: true, crop: 'tomato', water_interval_days_container: 3, water_interval_days_inground: 5, water_method: 'soak', soil_moisture_target: 'moist', drought_tolerance: 'medium', ...o });
 
 // Run one planting through the engine at a given flag state; return DUE|SKIP|NOHIST|NONE + the plan.
-function bucket(ov, hy, flag, weather = wx) {
+// DRG-WXFLAGSPLIT-001 F1: the max-days ceiling moved to its OWN flag (5th param), default OFF. Everything in
+// this file except the two explicitly ceiling-dependent cases below characterizes the tiered CREDIT alone —
+// which is exactly the state F2 will flip prod into (credit ON, ceiling still OFF). Independence of the two
+// flags is proven in watercredit-flagsplit.test.js.
+function bucket(ov, hy, flag, weather = wx, maxdays = false) {
   const p = { id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp',
     container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81),
     transplant_at: ago(400), db_cadence: SEED({}), ...ov };
-  const out = generatePlanForUser([p], cad, fm, TODAY, weather, hy, flag);
+  const out = generatePlanForUser([p], cad, fm, TODAY, weather, hy, flag, maxdays);
   const b = out.tasks.water_due.some((w) => w.id === 't') ? 'DUE'
     : out.tasks.rain_skipped.some((w) => w.id === 't') ? 'SKIP'
     : out.tasks.no_history.some((w) => w.id === 't') ? 'NOHIST' : 'NONE';
@@ -139,14 +143,18 @@ describe('WXWATER flag-ON behavior — directional divergence from flag-OFF', ()
     const ov = { container_type: 'fabric_bag', container_size: '5 gal', status: 'fruiting', last_water: ago(3), db_cadence: SEED({ crop: 'pepper' }) };
     // flag-OFF: outdoor IA 0.25, 0.5" clears, dW==wi(3) -> SKIP
     expect(bucket(ov, H(0.5), false, wx).b).toBe('SKIP');
-    // flag-ON: small_fast ceiling for fruiting Solanaceae = 1 -> wi clamps to 1, dW=3 -> DUE
-    expect(bucket(ov, H(0.5), true, wx).b).toBe('DUE');
+    // credit ON, ceiling OFF (the F2 target state): IA rises to 0.35 but 0.5" still clears it, small_fast hold=1
+    // credits 1 day against wi=3 -> effDays 2 < 3 -> still SKIP. The IA alone is NOT what flips this case.
+    expect(bucket(ov, H(0.5), true, wx, false).b).toBe('SKIP');
+    // both ON: small_fast ceiling for fruiting Solanaceae = 1 -> wi clamps to 1, dW=3 -> DUE. The CEILING is the
+    // operative half of "stricter" here, which is precisely why F1 split it onto its own flag.
+    expect(bucket(ov, H(0.5), true, wx, true).b).toBe('DUE');
   });
   it('max-days ceiling clamps a long cadence so the plant re-surfaces (anti suppression-inversion)', () => {
-    // in_ground, mature, cadence 5, big rain: flag-OFF holds 1 day (SKIP at dW==5). flag-ON ceiling(mature in_ground)=5,
-    // hold 3 -> still credits, but a plant last watered 9d ago (> ceiling+hold) is DUE.
+    // in_ground, mature, cadence 5, big rain: flag-OFF holds 1 day (SKIP at dW==5). ceiling(mature in_ground)=5,
+    // hold 3 -> still credits, but a plant last watered 9d ago (> ceiling+hold) is DUE. Needs the ceiling flag.
     const ov = { container_type: 'in_ground', status: 'active', last_water: ago(9), db_cadence: SEED({ crop: 'kale' }) };
-    expect(bucket(ov, H(0.8), true).b).toBe('DUE');
+    expect(bucket(ov, H(0.8), true, wx, true).b).toBe('DUE');
   });
 });
 

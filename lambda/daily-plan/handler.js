@@ -55,12 +55,15 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   const t0 = Date.now();
   // active plantings + last water/fert + caretaker + the planting's Space (workspace_id -> spaces).
   const { rows: plantings } = await pg.query(`
-    select p.id, p.name, p.project_id, p.status, p.container_type, p.container_size,
+    select p.id, p.name, p.project_id, p.status, p.container_type, p.container_size, p.rain_exposed,
            pv.name as variety, pv.genus, pj.name as project, pj.status as project_status, p.workspace_id,
            -- DRG-WATERCREDIT-001 V1: 'covered' (under cover -> no rain credit) is location-derived from Dave's
            -- classification (2026-06-21): the Stable potting shed + the House + indoor shelves/racks/trays are
            -- covered; all other locations (and no-location) are outdoor. V1.1 replaces this with an editable
            -- locations.covered flag so new indoor spots are Dave-settable, not name-matched here.
+           -- DRG-WXCOVERLOC-001: resolved from the PLANTING's own location (see the join below), NOT the
+           -- project's — 78/250 active plantings sit in a location different from their project's, so the
+           -- project-derived flag mis-credited both directions (11 wrongly covered, 15 wrongly outdoor).
            coalesce(l.type_label in ('shelf','rack','tray') or l.name in ('Stable','House'), false) as covered,
            coalesce(p.assignee_user_id, pj.assignee_user_id) as assignee_user_id,
            vrc.resolved_profile as db_cadence,  -- CARE-CADENCE-001: system||cultivar||leaf merged cadence (NULL/_seeded-absent -> engine bundled fallback)
@@ -86,7 +89,10 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     from plants p
     left join plant_varieties pv on pv.id=p.variety_id
     left join plant_projects  pj on pj.id=p.project_id
-    left join locations       l  on l.id=pj.location_id
+    -- DRG-WXCOVERLOC-001: the planting's own location wins; fall back to the project's location only when the
+    -- planting has none (0/250 active rows today, but plants.location_id is NULLABLE — coalesce keeps an
+    -- un-located planting on its pre-fix classification instead of silently reclassifying it as outdoor).
+    left join locations       l  on l.id=coalesce(p.location_id, pj.location_id)
     left join v_resolved_care vrc on vrc.leaf_id = p.id
     where p.deleted_at is null and p.archived_at is null
       and (p.status is null or p.status not in ('ended','failed','dead','archived'))
@@ -141,11 +147,16 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // the stored plan, so one flag here is inherently consistent). Default OFF; the 3-substrate-tier rain model is
   // inert (byte-identical plan) until CARE_RAIN_CREDIT_ENABLED=true is set after shadow-soak.
   const rainCreditEnabled = process.env.CARE_RAIN_CREDIT_ENABLED === 'true';
+  // DRG-WXFLAGSPLIT-001 F1: the max-days CEILING gets its own flag, split out of CARE_RAIN_CREDIT_ENABLED.
+  // Both default OFF, so this ship is inert (byte-identical plan). The split exists so F2 can flip the tiered
+  // CREDIT on by itself, with the interval ceiling still off, instead of the two behaviours moving together.
+  // Mirror any flip in src/lib/featureFlags.js — the CJS Lambda cannot import that ESM module.
+  const rainMaxDaysEnabled = process.env.CARE_RAIN_MAXDAYS_ENABLED === 'true';
   const plans = [];
   const bySpace = {};
   for (const p of plantings) (bySpace[p.workspace_id] ||= []).push(p);
   for (const [spaceId, rows] of Object.entries(bySpace)) {
-    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled });
+    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled });
     for (const [user_id, userPlan] of Object.entries(plan.users)) {
       plans.push({ space_id: spaceId, user_id, plan: userPlan, weather: plan.weather });
       if (!dryRun) {

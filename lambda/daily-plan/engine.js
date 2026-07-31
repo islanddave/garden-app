@@ -229,7 +229,10 @@ function coldFor(p, cad, low){
   return null;
 }
 
-function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false){
+// DRG-WXFLAGSPLIT-001 F1: rainMaxDaysEnabled gates the max-days CEILING independently of rainCreditEnabled
+// (which gates the tiered credit). Trailing param, default false -> every existing caller keeps flag-OFF
+// behaviour and the plan stays byte-identical until an env flip.
+function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false){
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[];
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
@@ -251,8 +254,11 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     if(hot && c.drought_tolerance==='low' && wi>1) wi=wi-1;
     // DRG-WXWATER-001 coarse-v1 (flag-ON only): clamp the interval to the substrate x stage ceiling so a
     // rain-credited planting still re-surfaces for a moisture check. Flag-OFF leaves wi exactly as computed above.
-    const _rainTier = rainCreditEnabled ? rainTierFor(p.container_type) : null;
-    if(rainCreditEnabled){ const _cap=rainMaxDays(_rainTier, p.status, c.crop); if(_cap!=null && wi>_cap) wi=_cap; }
+    // DRG-WXFLAGSPLIT-001 F1: the tier is needed by EITHER flag (credit uses it for IA/hold, the ceiling for the
+    // clamp), so derive it when either is on; the clamp itself is now gated on rainMaxDaysEnabled ALONE. With both
+    // OFF the tier stays null and wi is untouched -> byte-identical to pre-split.
+    const _rainTier = (rainCreditEnabled || rainMaxDaysEnabled) ? rainTierFor(p.container_type) : null;
+    if(rainMaxDaysEnabled){ const _cap=rainMaxDays(_rainTier, p.status, c.crop); if(_cap!=null && wi>_cap) wi=_cap; }
     const dW=daysBetween(today,p.last_water);
     // DRG-WATERCREDIT-001 Path B-plus: credit qualifying window rain against the cadence (per class), with a
     // fresh-transplant carve-out. A credited planting drops OUT of water_due (so counts.water_due is correct —
@@ -370,13 +376,13 @@ function hydrologyStatus(hy){
   return {ok:true, uncertainty: reason ? {flag:true, reason} : {flag:false}};
 }
 
-function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false}){
+function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false}){
   const byUser=new Map();
   for(const p of plantings){ const c=resolveCadence(p,cadence); const u=ownerFor(p,c,ownerFallback)||'__UNASSIGNED__'; if(!byUser.has(u))byUser.set(u,[]); byUser.get(u).push(p); }
   const hy=hydrology||null; const callout=computeCallout(weather,hy); const hs=hydrologyStatus(hy);
   const rainComing = !!(hy && hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null||hy.tomorrow_pop>=50));
   const users={};
-  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled);
+  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled);
     users[u]=up; }
   return {date:today,
     weather: weather? {tonightLow:weather.tonightLow, highToday:weather.highToday, code:weather.code, short:weather.short, unit:weather.unit||'F', callout} : null,
