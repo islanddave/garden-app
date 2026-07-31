@@ -60,7 +60,14 @@ jobs:
         # shell/bundle (e.g. footer version) is served. Tie it to version + short SHA for uniqueness.
         # Runs after Bump (NEW_VERSION set) and before Build (vite copies public/ verbatim to dist/).
         run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
+          # SHORT_SHA must label the BUILT commit, not github.sha. Under workflow_call from
+          # promote-gate the github context is the CALLER's, so github.sha is the ref promote-gate
+          # was dispatched on (can be the PRE-PROMOTE main SHA) — NOT the promoted dev SHA the
+          # checkout above built (inputs.ref). Derive it from the checked-out HEAD so CACHE_VERSION's
+          # SHA matches the built code on EVERY trigger path (workflow_call w/ ref, or direct dispatch),
+          # regardless of whether ref was a SHA or a branch name. (2026-07-31: promoting v3.79.0 at
+          # dev 66dce43 shipped sw.js v3.79.0-6f26679 (old main) instead of -66dce43.)
+          SHORT_SHA="$(git rev-parse HEAD | cut -c1-7)"
           NEWVER="${NEW_VERSION:-$(node -p "require('./package.json').version")}"
           CV="v${NEWVER}-${SHORT_SHA}"
           sed -i -E "s/const CACHE_VERSION = '[^']*'/const CACHE_VERSION = '${CV}'/" public/sw.js
