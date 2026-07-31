@@ -1,0 +1,94 @@
+# gates.yml
+# Staging→prod shape reconcile.
+#
+# pre:   deliberately NOT "the columns are absent" — this migration is idempotent by design and
+#        must be re-runnable and prod-safe. The pre-gates instead assert the two tables the
+#        reconcile touches structurally are actually present, so a wrong-database connection fails
+#        loudly here rather than silently ALTERing something unexpected.
+# sweep: L-058 — every predicate about to be enforced must already hold, checked with NO
+#        deleted_at filter (a CHECK applies to every row, soft-deleted included). The
+#        plant_projects predicate is NOT swept: it is knowingly violated by 4 grandfathered rows
+#        and stays NOT VALID.
+# post:  prove the columns landed, prove the VIEW actually gained them (the failure this migration
+#        exists to prevent — ALTER TABLE plants does NOT propagate into an explicit-column-list
+#        view), and prove the staging-only container_type restriction is gone.
+
+pre:
+  - name: spaces_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='spaces'
+    expect: rowcount_eq
+    value: 1
+
+  - name: garden_node_is_a_view
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='garden_node' AND table_type='VIEW'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  - name: no_row_violates_rain_exposed_source_check
+    sql: |
+      SELECT count(*) FROM public.plants
+       WHERE rain_exposed_source IS NOT NULL
+         AND rain_exposed_source NOT IN ('derived','user','system')
+    expect: scalar_eq
+    value: 0
+
+  - name: no_row_violates_dtm_basis_check
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE dtm_basis IS NOT NULL
+         AND dtm_basis NOT IN ('from-sow','from-transplant')
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: spaces_has_all_three_weather_columns
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='spaces'
+         AND column_name IN ('postal_code','weather_lat','weather_lng')
+    expect: rowcount_eq
+    value: 3
+
+  - name: crop_types_has_dtm_basis
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='crop_types' AND column_name='dtm_basis'
+    expect: rowcount_eq
+    value: 1
+
+  - name: plants_has_rain_exposed_trio
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plants'
+         AND column_name IN ('rain_exposed','rain_exposed_source','rain_exposed_set_at')
+    expect: rowcount_eq
+    value: 3
+
+  - name: garden_node_view_exposes_rain_exposed_trio
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='garden_node'
+         AND column_name IN ('rain_exposed','rain_exposed_source','rain_exposed_set_at')
+    expect: rowcount_eq
+    value: 3
+
+  - name: staging_only_container_type_constraint_removed
+    sql: |
+      SELECT count(*) FROM pg_constraint
+       WHERE conname='plants_container_type_domain'
+    expect: scalar_eq
+    value: 0
+
+  - name: three_prod_constraints_present
+    sql: |
+      SELECT count(*) FROM pg_constraint
+       WHERE connamespace='public'::regnamespace
+         AND conname IN ('crop_types_dtm_basis_chk','chk_plants_rain_exposed_source',
+                         'plant_projects_kind_not_null_unless_deleted')
+    expect: scalar_eq
+    value: 3
