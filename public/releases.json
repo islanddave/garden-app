@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.81.0",
+    "date": "2026-07-31",
+    "highlights": [
+      "Watering advice now follows each planting's OWN location instead of its project's — seed trays on Shelf 4 and cuttings in the Stable are no longer told to skip watering because it rained outside, and plants actually out on the Drive or in the Bag Area are now correctly held back after a soak",
+      "Your photos stay fresh when you come back to the app — photo lists warm up at sign-in and quietly refresh when you return after a while, so pictures load instantly instead of briefly appearing blank"
+    ]
+  },
+  {
     "version": "3.80.0",
     "date": "2026-07-31",
     "highlights": [
