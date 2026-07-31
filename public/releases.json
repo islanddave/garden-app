@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.78.0",
+    "date": "2026-07-31",
+    "highlights": [
+      "Watering advice now recognizes a saturated garden: after a heavy multi-day soak it says \"skip — let it drain\" instead of recommending water, so your fabric grow-bags aren't over-watered while they're still soaked",
+      "Planting photos heal themselves — the main photo on a planting now re-loads automatically instead of occasionally showing a blank box after the app has been open a while"
+    ]
+  },
+  {
     "version": "3.77.0",
     "date": "2026-07-30",
     "highlights": [
