@@ -169,6 +169,30 @@ function rainCreditDaysTiered(tier, wi, hy){
   if(eff<=0) return null;
   return { credit_days: Math.min(hold, wi), wp: Math.round(wp*100)/100, eff: Math.round(eff*100)/100, tier }; }
 
+// ── DRG-WXSATCAP-001 heavy-soak saturation cap (FLAG-INDEPENDENT; Dave-approved constants 2026-07-30) ──
+// Over-watering already-saturated media (esp. fabric bags with no drying window) drives anoxia / root rot =
+// NON-recoverable, so in the heavy-soak regime the safe error inverts to "skip". Applies to ALL outdoor vessels
+// UNIFORMLY: rain depth saturates media regardless of vessel, and container_type is ~unpopulated so a
+// vessel-agnostic gate is the only design robust to the dominant NULL case (NULL is outdoor -> suppressed ->
+// fails safe). covered/indoor never got the rain -> exempt. Independent of CARE_RAIN_CREDIT_ENABLED so the
+// eventual credit-ON flip cannot bypass it. Recovery is automatic as the 72h windowPrecip decays (no counter).
+const SOAK_CAP_IN = 1.0;         // >= this over the 72h windowPrecip -> suppress outdoor watering
+const SOAK_WET_FLOOR_IN = 0.5;   // "already moist" prerequisite for the incoming-rain trigger
+const SOAK_FCST_QPF_IN = 0.5;    // incoming 24h amount that counts
+const SOAK_FCST_POP_PCT = 60;    // min PoP for an incoming-rain skip
+// Returns { wp, kind:'soak'|'incoming', fq?, pop? } when an outdoor planting must NOT be watered (media
+// saturated, or wet with more rain imminent = no drying window), else null. Pure fn of hydrology + exposure.
+function saturationSuppressed(rcls, hy){
+  if(rcls!=='outdoor') return null;                                 // covered/indoor never got the rain
+  const wp = windowPrecip(hy); if(wp==null) return null;
+  const wpR = Math.round(wp*100)/100;
+  if(wp >= SOAK_CAP_IN) return { wp: wpR, kind: 'soak' };
+  const fq = hy && hy.tomorrow_precip_in, pop = hy && hy.tomorrow_pop;
+  if(wp >= SOAK_WET_FLOOR_IN && fq!=null && fq >= SOAK_FCST_QPF_IN && (pop==null || pop >= SOAK_FCST_POP_PCT))
+    return { wp: wpR, fq, pop, kind: 'incoming' };
+  return null;
+}
+
 // Returns a fertilize recommendation object IF one is warranted now, else null. Substrate-aware.
 function fertilizeRec(p, c, fm, today){
   const wk=weeksSince(today, p.substrate_start);
@@ -234,6 +258,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // fresh-transplant carve-out. A credited planting drops OUT of water_due (so counts.water_due is correct —
     // fixes the legacy defer-count bug) and lands on rain_skipped with a one-line reason string.
     const rcls=rainClass(p);
+    const _sat=saturationSuppressed(rcls, hydrology);   // DRG-WXSATCAP-001: flag-independent heavy-soak cap (outer gate)
     // DRG-WXWATER-001 coarse-v1 (flag-ON only): exposure eligibility. Flag-OFF uses the location-derived class
     // (rcls==='outdoor'); flag-ON derives exposed = !covered when rain_exposed is unset, honoring a stored
     // rain_exposed boolean as an explicit override. _creditClass/_iaShown collapse to the flag-OFF values when OFF.
@@ -253,7 +278,14 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
           ? (_exposed ? rainCreditDaysTiered(_rainTier, wi, hydrology) : null)
           : rainCreditDays(rcls, wi, hydrology));
     const effDays=(dW!=null&&rc)?dW-rc.credit_days:dW;
-    if(dW!=null && dW>=wi && rc && effDays<wi){
+    if(dW!=null && dW>=wi && _sat){
+      // DRG-WXSATCAP-001: heavy-soak saturation cap OUTRANKS the tier decay + fast-dry discount + heat-gate.
+      rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
+        days_since:dW,interval:wi,saturated:true,
+        reason: _sat.kind==='soak'
+          ? `Skip — saturated (heavy soak, ${_sat.wp}" over the last few days; let it drain)`
+          : `Skip — rain incoming on already-wet media (${_sat.fq}" forecast${_sat.pop==null?'':' @ '+_sat.pop+'%'}); let it drain`});
+    } else if(dW!=null && dW>=wi && rc && effDays<wi){
       rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
         days_since:dW,interval:wi,credited_days:rc.credit_days,
         reason:`Skip — ${rc.wp}" rain over the last few days counts as watering`});
