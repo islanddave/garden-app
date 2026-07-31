@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.77.0",
+    "date": "2026-07-30",
+    "highlights": [
+      "Behind the scenes: put-up (preservation) records now carry tighter household ownership safeguards, so shared-garden data stays correctly scoped",
+      "Groundwork landed for upcoming per-variety harvest weights and a streamlined garden view — staged now, switching on in a later update"
+    ]
+  },
+  {
     "version": "3.76.0",
     "date": "2026-07-30",
     "highlights": [
