@@ -198,21 +198,39 @@ export function revalidateLive(minAgeMs = 0) {
   return n
 }
 
-// B4 pull-to-refresh primitive: force every watched key to the network while KEEPING its cached value
-// on screen (SWR), and drop unwatched entries so a refresh genuinely clears the app's memory.
+// B4 refresh primitive: force every watched key to the network while KEEPING its cached value on
+// screen (SWR). Unwatched entries are LEFT ALONE.
 //
 // NOT invalidateAll(): that clears watched entries too, blanking every mounted list mid-view — the
 // opposite of what a refresh gesture should feel like.
+//
+// ⚠ 2026-07-31 (crucible, 6 panels + boss): this used to `_store.delete(k)` every unwatched entry,
+// on the stated intent that "a refresh genuinely clears the app's memory". That was a latent
+// regression of the B3 boot-warm win. warm() registers NO subscriber, and the boot-warm effect is
+// deps-`[sub]` so it never re-seeds within a session — so calling refreshAll() from any surface
+// that isn't PhotosWall DELETED the boot-warmed /api/photos entry, making the next Photos visit a
+// cold fetch-and-re-presign. A control reached for to make things fresher made the app slower.
+// The delete was also redundant with _evict()'s LRU cap (which already skips subscribed keys), and
+// didn't even reliably shrink the store — getSnapshot() calls _entry(), which recreates entries on
+// read. Latent, not live: refreshAll has no non-test callers. Fixed now so the next session wiring
+// this documented "B4 hook-point" doesn't step on it. See the PTR re-open gate in
+// useCacheLifecycle.js before building any affordance on top of this.
 //
 // V102 §B4 also asks that keys with a pending in-flight MUTATION be exempted so a refresh can't wipe
 // an unconfirmed optimistic write. That exemption is vacuous today and deliberately not built: no
 // mutation writes through this cache — photo mutations go through useUploadPhoto and then
 // invalidatePrefix — so there is no optimistic cache state to protect. Build the exemption together
 // with the first optimistic writer (the useInventory adjustQuantity path, per V102 §B2), not before.
+// The count gates on the SAME condition invalidate() re-kicks on (subs + a registered fetcher).
+// It previously counted on subs.size alone, so a subscribed-but-fetcher-less key incremented n
+// while issuing zero requests — an over-report that made the return value unsafe as UI copy.
 export function refreshAll() {
   let n = 0
-  for (const [k, e] of [..._store]) {
-    if (e.subs.size) { invalidate(k); n++ } else { _store.delete(k) }
+  for (const k of [..._store.keys()]) {
+    const e = _store.get(k)
+    if (!e || !e.subs.size || typeof e.fetcher !== 'function') continue
+    invalidate(k)
+    n++
   }
   return n
 }

@@ -148,7 +148,7 @@ describe('D-2 B5: revalidateLive()', () => {
 
 // ── B4 refresh primitive ────────────────────────────────────────────────────────────────────────
 describe('D-2 B4: refreshAll()', () => {
-  it('keeps watched data on screen while forcing the network, and drops unwatched entries', async () => {
+  it('keeps watched data on screen while forcing the network, and leaves unwatched entries intact', async () => {
     let n = 0
     cache.subscribe('w', () => {})
     cache.register('w', () => { n++; return Promise.resolve([{ id: 'a' }]) })
@@ -163,7 +163,44 @@ describe('D-2 B4: refreshAll()', () => {
     expect(cache.peek('w').data).toEqual([{ id: 'a' }])
     await flush()
     expect(n).toBe(before + 1)
-    expect(cache.peek('o')).toBeNull()               // unwatched entry genuinely cleared
+    // REVERSED 2026-07-31: this used to assert peek('o') === null, pinning the unwatched-delete as
+    // intended. It was the boot-warm regression (see dataCache.js refreshAll). An unwatched warm
+    // entry must SURVIVE a refresh.
+    expect(cache.peek('o').data).toEqual([{ id: 'b' }])
+  })
+
+  it('does not evict the boot-warmed key when invoked with no subscribers (the off-surface case)', async () => {
+    // The regression this guards: warm() registers no subscriber, so from any surface that isn't
+    // PhotosWall the boot-warm entry is unwatched. Deleting it here made the next Photos visit a
+    // cold fetch — the exact slow-tab cost V4-IMGCACHE-001 exists to remove.
+    cache.register('warm-key', () => Promise.resolve([{ id: 'p' }]))
+    cache.revalidate('warm-key'); await flush()
+
+    expect(cache.refreshAll()).toBe(0)               // nothing watched → nothing refetched
+    expect(cache.peek('warm-key').data).toEqual([{ id: 'p' }])   // …and nothing destroyed
+  })
+
+  it('does not count a subscribed key that has no registered fetcher', async () => {
+    // invalidate() only re-kicks when subs AND a fetcher are present; counting on subs alone
+    // over-reported and made the return value unsafe to display.
+    cache.subscribe('nofetch', () => {})
+    expect(cache.refreshAll()).toBe(0)
+  })
+
+  it('leaves a warm entry serving when a refresh fails (offline no-clobber)', async () => {
+    let call = 0
+    cache.subscribe('w2', () => {})
+    cache.register('w2', () => {
+      call++
+      return call === 1 ? Promise.resolve([{ id: 'a' }]) : Promise.reject(new Error('offline'))
+    })
+    cache.revalidate('w2'); await flush()
+
+    cache.refreshAll(); await flush()
+    const snap = cache.peek('w2')
+    expect(snap.data).toEqual([{ id: 'a' }])   // still serving
+    expect(snap.error).toBeNull()              // SWR keeps-serving: no error surfaced over good data
+    expect(snap.isValidating).toBe(false)      // …and the cycle completed
   })
 })
 
@@ -217,6 +254,37 @@ describe('D-2 wiring: useCacheLifecycle', () => {
     await flush()
     expect(apiCalls.length).toBe(1)               // backgrounding is not a reason to fetch
     spy.mockRestore(); Date.now.mockRestore()
+  })
+
+  it('B6: a reconnect revalidates a key the age gate would have skipped', async () => {
+    // The regression this pins: reusing the B5 wake handler would inherit RESUME_MIN_AGE_MS, and a
+    // failed revalidate never writes `at` — so after a short outage the entry still carries its last
+    // SUCCESSFUL timestamp and the 5-minute gate skips exactly the keys that just failed. B6 must
+    // pass minAgeMs 0. Here the entry is only ~0ms old, so a gated call would refetch nothing.
+    render(<Harness sub="user_1" />)
+    cache.subscribe('r1', () => {})
+    let calls = 0
+    cache.register('r1', () => { calls++; return Promise.resolve([{ id: 'a' }]) })
+    cache.revalidate('r1'); await flush()
+    const before = calls
+
+    // Sanity: the gated path really would skip this fresh entry.
+    cache.revalidateLive(RESUME_MIN_AGE_MS); await flush()
+    expect(calls).toBe(before)
+
+    await act(async () => { window.dispatchEvent(new Event('online')) })
+    await flush()
+    expect(calls).toBe(before + 1)
+  })
+
+  it('B6: the reconnect listener is removed on unmount', async () => {
+    const add = vi.spyOn(window, 'addEventListener')
+    const remove = vi.spyOn(window, 'removeEventListener')
+    const { unmount } = render(<Harness sub="user_1" />)
+    expect(add.mock.calls.some(([e]) => e === 'online')).toBe(true)
+    unmount()
+    expect(remove.mock.calls.some(([e]) => e === 'online')).toBe(true)
+    add.mockRestore(); remove.mockRestore()
   })
 
   it('useRefreshAll returns a callable that reports how many keys it refreshed', async () => {
