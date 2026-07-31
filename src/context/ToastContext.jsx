@@ -12,6 +12,9 @@
 import React, { createContext, useContext, useState, useCallback, useMemo } from 'react'
 import { P } from '../lib/constants.js'
 import { Toast } from '../components/forms'
+// Direct import, NOT via the forms barrel: formsPrimitivesFreeze.test.js pins the barrel's export
+// set exactly, and these offset helpers are layout plumbing rather than a frozen primitive.
+import { toastStackBottom } from '../components/forms/Toast.jsx'
 
 const ToastCtx = createContext(null)
 
@@ -54,7 +57,7 @@ export function ToastProvider({ children }) {
             onUndo={() => { try { t.onUndo && t.onUndo() } finally { dismiss(t.id) } }}
             onDismiss={() => dismiss(t.id)} />
         : <Toast key={t.id} message={t.message} tone={t.tone} duration={t.duration}
-            onDone={() => dismiss(t.id)} style={{ bottom: 24 + i * 56 }} />
+            onDone={() => dismiss(t.id)} style={{ bottom: toastStackBottom(i) }} />
       )}
     </ToastCtx.Provider>
   )
@@ -69,7 +72,9 @@ function UndoToast({ toast, offset, onUndo, onDismiss }) {
   }, [toast.duration, onDismiss])
   return (
     <div role="status" style={{
-      position: 'fixed', bottom: 70 + offset * 56, left: '50%', transform: 'translateX(-50%)',
+      // 70px cleared the 56px nav by luck rather than by construction, and ignored the safe-area
+      // inset. Same nav-aware base as Toast/UpdateBanner, +14px so undo sits above a plain toast.
+      position: 'fixed', bottom: toastStackBottom(offset + 0.25), left: '50%', transform: 'translateX(-50%)',
       backgroundColor: P.dark, color: P.white, borderRadius: 10, padding: '10px 14px 10px 18px',
       boxShadow: '0 6px 18px rgba(0,0,0,0.3)', fontSize: '0.88rem', zIndex: 1200,
       display: 'flex', alignItems: 'center', gap: 14, maxWidth: 'calc(100% - 32px)',
