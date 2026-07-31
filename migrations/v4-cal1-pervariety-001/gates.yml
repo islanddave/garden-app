@@ -1,0 +1,138 @@
+# gates.yml
+# V4-CAL1-PERVARIETY-001 — per-variety harvest-weight substrate (sequel to v4-cal1-harvweight-001).
+#
+# PROMOTE-TIME SEQUENCING (ORDERED — do not reorder, do not skip):
+#   0. PRECONDITION: v4-cal1-harvweight-001 (0a) already applied on the target instance — the
+#      weight_basis CHECKs reference harvest_log.weight_estimated. pre_dep_harvweight_applied enforces it.
+#   1. STAGING (Neon branch br-damp-frog-amdfxwrr): pre -> 0a -> 0b -> 0c -> post. Applying to STAGING is
+#      what lets integration-test.yml (branches off staging) see the objects so CAL-1 tests can run.
+#   2. deploy-staging + full regression on staging.
+#   3. PROD: pre -> 0a -> 0b -> 0c -> post. Dave-gated; confirm the DATABASE_URL host before applying.
+#      REQUIRED before promoting any Lambda/read code that references weight_basis or the derived view
+#      (schema-audit.yml L-081 gate). CTAS-snapshot crop_types + harvest_log after 0a, before 0b.
+#   4. Seed samples (0d, GENERATED from src/data/harvest-weights-v2.json) is a SEPARATE gated step — run
+#      after 0a on the target; it is fail-closed + batch-idempotent. NO weight_grams backfill needed
+#      (estimates are on-read).
+#
+# Pre:  harvweight-001 applied; NONE of the new tables/columns/view exist; the six CHECK names free.
+# Post: two tables + two columns + view + immutability trigger exist; six CHECKs validated; low-variance
+#       crops flagged false while the default (tomato) stays true; the weight_basis pairing holds; both
+#       schema_version rows recorded.
+
+pre:
+  - name: pre_dep_harvweight_applied
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='harvest_log' AND column_name='weight_estimated'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_new_tables_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name IN ('cultivar_weight_sample','cultivar_weight_void')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_new_columns_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public'
+         AND ( (table_name='crop_types'  AND column_name='variety_grams_required')
+            OR (table_name='harvest_log' AND column_name='weight_basis') )
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_view_absent
+    sql: |
+      SELECT 1 FROM information_schema.views
+       WHERE table_schema='public' AND table_name='cultivar_weight_derived'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_check_names_free
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_cws_unit_vocab','chk_cws_total_grams_pos','chk_cws_unit_count_pos',
+                         'chk_harvest_log_weight_basis','chk_harvest_log_weight_basis_pairing',
+                         'chk_harvest_log_weight_basis_estimated')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_new_tables_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name IN ('cultivar_weight_sample','cultivar_weight_void')
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_new_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public'
+         AND ( (table_name='crop_types'  AND column_name='variety_grams_required')
+            OR (table_name='harvest_log' AND column_name='weight_basis') )
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_six_checks_validated
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_cws_unit_vocab','chk_cws_total_grams_pos','chk_cws_unit_count_pos',
+                         'chk_harvest_log_weight_basis','chk_harvest_log_weight_basis_pairing',
+                         'chk_harvest_log_weight_basis_estimated')
+         AND convalidated
+    expect: rowcount_eq
+    value: 6
+
+  - name: post_view_present
+    sql: |
+      SELECT 1 FROM information_schema.views
+       WHERE table_schema='public' AND table_name='cultivar_weight_derived'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_immutability_trigger_present
+    sql: |
+      SELECT 1 FROM pg_trigger
+       WHERE tgname='trg_cws_immutable' AND NOT tgisinternal
+    expect: rowcount_eq
+    value: 1
+
+  # Low-variance crops must be flagged fallback-OK (false); none may still be at the default true.
+  - name: post_lowvariance_flagged_false
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug IN ('blueberry','red_raspberry','wineberry','basil','lettuce','broccoli')
+         AND variety_grams_required = true
+    expect: rowcount_eq
+    value: 0
+
+  # The safe default must hold for high-variance crops (tomato is the canary).
+  - name: post_highvariance_default_true
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug='tomato' AND variety_grams_required = false
+    expect: rowcount_eq
+    value: 0
+
+  # The provenance triple: no row carries a weight_basis without a weight_grams or vice-versa.
+  - name: post_weight_basis_pairing_holds
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE (weight_grams IS NULL) <> (weight_basis IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_schema_version_ddl_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.18.0-cal1-pervariety-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_schema_version_seed_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.18.1-cal1-pervariety-seed-001'
+    expect: rowcount_eq
+    value: 1
