@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.82.0",
+    "date": "2026-07-31",
+    "highlights": [
+      "Today now tells you when its care list was worked out — the plan is put together overnight, so a 6pm watering suggestion was decided from last night's weather, and the screen now says so instead of letting the live weather stamp above it speak for the whole page",
+      "Toast messages no longer sit on top of the bottom navigation bar, and longer messages wrap instead of running off the side of the screen"
+    ]
+  },
+  {
     "version": "3.81.1",
     "date": "2026-07-31",
     "highlights": [
