@@ -14,7 +14,10 @@ const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
 describe('projects Lambda — Household Mode scope widening', () => {
   it('imports householdScope from ../household.js', () => {
-    expect(SRC).toMatch(/import \{ householdScope \} from '\.\/household\.js'/);
+    // V4-AUTHZSWEEP-001: match householdScope among a NAMED-IMPORT LIST, not as the sole import —
+    // this handler now also pulls the write-FK ownership loaders from the same module. Mirrors the
+    // IMPORT_RE pattern already used by household-isolation.test.js.
+    expect(SRC).toMatch(/import \{[^}]*\bhouseholdScope\b[^}]*\} from '\.\/household\.js'/);
   });
 
   it('computes householdIds after the neon() client', () => {

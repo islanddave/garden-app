@@ -16,7 +16,10 @@ const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
 describe('locations Lambda — Household Mode scope widening', () => {
   it('imports householdScope + computes householdIds', () => {
-    expect(SRC).toMatch(/import \{ householdScope \} from '\.\/household\.js'/);
+    // V4-AUTHZSWEEP-001: match householdScope among a NAMED-IMPORT LIST, not as the sole import —
+    // these handlers now also pull the write-FK ownership loaders from the same module. Mirrors the
+    // IMPORT_RE pattern already used by household-isolation.test.js.
+    expect(SRC).toMatch(/import \{[^}]*\bhouseholdScope\b[^}]*\} from '\.\/household\.js'/);
     expect(SRC).toMatch(/const householdIds = householdScope\(userId\)/);
   });
 
@@ -30,9 +33,15 @@ describe('locations Lambda — Household Mode scope widening', () => {
     expect(SRC).toMatch(/locations_with_path[\s\S]*?id IN \(SELECT id FROM locations WHERE deleted_at IS NULL AND created_by = ANY\(\$\{householdIds\}\)\)/);
   });
 
-  it('featured-photo linkage switched uploaded_by -> household (no uploaded_by = ${userId} remains)', () => {
+  it('featured-photo linkage is household-scoped on created_by (no uploaded_by anchor remains)', () => {
+    // V4-AUTHZSWEEP-001 (V-C1): the household widening originally kept photos' legacy uploaded_by
+    // column here, while inventory-items/projects/plants all anchor featured-photo checks on
+    // created_by. Both columns agree on all 977 live photo rows, so this was consistency hardening —
+    // but it left locations as the one surface that could accept a photo the others rejected.
     expect(SRC).not.toMatch(/uploaded_by = \$\{userId\}/);
-    expect(SRC).toMatch(/uploaded_by = ANY\(\$\{householdIds\}\)/);
+    // Predicate form only — the word still appears in the explanatory comment at the call site.
+    expect(SRC).not.toMatch(/uploaded_by\s*=/);
+    expect(SRC).toMatch(/location_id = \$\{actualLocationId\}[\s\S]*?created_by = ANY\(\$\{householdIds\}\)/);
   });
 
   it('INSERT now binds created_by = ${userId} (was missing pre-household)', () => {

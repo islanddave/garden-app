@@ -3,7 +3,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { householdScope } from './household.js';
+import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
 
@@ -526,6 +526,15 @@ export const handler = async (event) => {
           }
         }
 
+        // AUTHZ (V4-AUTHZSWEEP-001): the PUT can set location_id too, so it needs the same gate as
+        // the create path — otherwise the edit path reopens exactly what the create path closes.
+        if (body.location_id != null) {
+          if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
+            warnRejectedFk(userId, 'container', 'location_id', body.location_id);
+            return resp(400, { error: 'location_id does not match a location you can use' });
+          }
+        }
+
         // V1.2a-4 S1: when kind transitions NULL -> non-NULL, stamp kind_set_at = NOW().
         // Otherwise leave kind_set_at alone. Handled inline in the UPDATE using CASE.
         const cur = await sql`
@@ -731,6 +740,29 @@ export const handler = async (event) => {
       // null). Coalesce a missing kind to 'campaign' (dominant new-project type);
       // /admin/classify can reclassify later. Server-side backstop for ALL callers.
       const effectiveKind = body.kind ?? 'campaign';
+      // AUTHZ (V4-AUTHZSWEEP-001): location_id and parent_project_id are cross-entity FKs taken
+      // straight from the body. The reparent path (reparentCore) already proves ownership of a new
+      // parent; the CREATE path did not, so a project could be born parented to another household's
+      // container — inheriting its position in that household's tree. Generic 400s, no existence
+      // oracle. A container is the projects table's own row type, so its owner column is created_by.
+      if (body.location_id != null) {
+        if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
+          warnRejectedFk(userId, 'container', 'location_id', body.location_id);
+          return resp(400, { error: 'location_id does not match a location you can use' });
+        }
+      }
+      if (body.parent_project_id != null) {
+        const parentRows = await sql`
+          SELECT /* authz-parent-check */ id FROM public.container
+           WHERE id = ${body.parent_project_id}
+             AND created_by = ANY(${householdIds})
+             AND deleted_at IS NULL
+        `;
+        if (!parentRows.length) {
+          warnRejectedFk(userId, 'container', 'parent_id', body.parent_project_id);
+          return resp(400, { error: 'parent_project_id does not match a project you can use' });
+        }
+      }
       // Validate parent_project_id is not self-referential (can't know id yet, but guard against explicit self-reference attempts via name matching — full guard at PUT)
       const rows = await sql`
         INSERT INTO public.container

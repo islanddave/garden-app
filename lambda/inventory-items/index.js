@@ -3,7 +3,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { householdScope } from './household.js';
+import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { validateExtractRequest, buildAnthropicRequest, parseExtractResponse } from './extract.js';
 
@@ -217,6 +217,17 @@ export const handler = async (event) => {
           }
         }
 
+        // AUTHZ (V4-AUTHZSWEEP-001): location_id is a cross-entity FK set straight from the body.
+        // The DB FK proves existence, not ownership — gate it before the write. Generic 400, no
+        // existence oracle. NOTE the PUT below assigns location_id unconditionally (not COALESCE),
+        // so a null clears it; only a non-null value needs validating.
+        if (body.location_id != null) {
+          if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
+            warnRejectedFk(userId, 'inventory_items', 'location_id', body.location_id);
+            return resp(400, { error: 'location_id does not match a location you can use' });
+          }
+        }
+
         const isConsumable = body.type === 'consumable';
         const isDurable = body.type === 'durable';
         const tags = Array.isArray(body.tags) ? body.tags : [];
@@ -310,6 +321,15 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       const verr = validateCreate(body);
       if (verr) return resp(400, { error: verr });
+
+      // AUTHZ (V4-AUTHZSWEEP-001): same gate as the PUT path — the create path must not be the
+      // hole the edit path closes.
+      if (body.location_id != null) {
+        if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
+          warnRejectedFk(userId, 'inventory_items', 'location_id', body.location_id);
+          return resp(400, { error: 'location_id does not match a location you can use' });
+        }
+      }
 
       const isConsumable = body.type === 'consumable';
       const isDurable = body.type === 'durable';

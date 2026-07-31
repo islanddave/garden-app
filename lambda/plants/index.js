@@ -9,7 +9,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { householdScope } from './household.js';
+import { householdScope, loadOwnedLocation, loadOwnedPlanting, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
@@ -278,6 +278,31 @@ export const handler = async (event) => {
           `;
           if (!linkRows.length) {
             return resp(400, { error: 'featured_photo_id must be a photo linked to this plant' });
+          }
+        }
+
+        // AUTHZ (V4-AUTHZSWEEP-001): location_id / parent_plant_id / source_inventory_item_id are
+        // cross-entity FKs settable straight from the body. The DB FK proves the row EXISTS, not that
+        // the caller owns it — without these gates an authenticated user could pin their planting to
+        // another household's location or lineage parent, writing a cross-household FK and leaking the
+        // referenced row's fields through every read surface that JOINs it. Generic 400s only (no
+        // existence oracle), matching the featured_photo_id check above and preservation's loaders.
+        if (hasLocation && body.location_id != null) {
+          if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
+            warnRejectedFk(userId, 'plants', 'location_id', body.location_id);
+            return resp(400, { error: 'location_id does not match a location you can use' });
+          }
+        }
+        if (body.parent_plant_id != null) {
+          if (!await loadOwnedPlanting(sql, body.parent_plant_id, householdIds)) {
+            warnRejectedFk(userId, 'plants', 'parent_plant_id', body.parent_plant_id);
+            return resp(400, { error: 'parent_plant_id does not match a planting you can use' });
+          }
+        }
+        if (body.source_inventory_item_id != null) {
+          if (!await loadOwnedInventoryItem(sql, body.source_inventory_item_id, householdIds)) {
+            warnRejectedFk(userId, 'plants', 'source_inventory_item_id', body.source_inventory_item_id);
+            return resp(400, { error: 'source_inventory_item_id does not match an inventory item you can use' });
           }
         }
 

@@ -53,6 +53,10 @@ function extractSelectBlocks(src) {
     // public projection that intentionally OMITS kind/target_end_date/kind_set_at (they are
     // not public fields). Same skip precedent as reparent-internal above.
     if (/public-slug/.test(m[1])) continue;
+    // V4-AUTHZSWEEP-001: skip the create-path parent ownership check — an existence/ownership
+    // probe (SELECT id … created_by = ANY(householdIds)), not a client GET read, so it has no
+    // business exposing the PROJ-RESCOPE columns. Same skip precedent as reparent-internal above.
+    if (/authz-parent-check/.test(m[1])) continue;
     blocks.push(m[1]);
   }
   return blocks;

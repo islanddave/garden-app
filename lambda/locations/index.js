@@ -130,11 +130,16 @@ export const handler = async (event) => {
           if (!idRows.length) return resp(404, { error: 'Not found' });
           actualLocationId = idRows[0].id;
           if (body.featured_photo_id != null) {
+            // V4-AUTHZSWEEP-001: anchor on created_by, not uploaded_by. photos carries BOTH columns
+            // and every other featured-photo validator (inventory-items, projects, plants) uses
+            // created_by; this one was the odd surface out. They agree on all 977 live photo rows
+            // today, so this is consistency hardening rather than a live bug — but a divergence would
+            // have made this the one surface that accepted a photo the others rejected.
             const linkRows = await sql`
               SELECT 1 FROM photos
                WHERE id = ${body.featured_photo_id}
                  AND location_id = ${actualLocationId}
-                 AND uploaded_by = ANY(${householdIds})
+                 AND created_by = ANY(${householdIds})
             `;
             if (!linkRows.length) {
               return resp(400, { error: 'featured_photo_id must be a photo linked to this location' });
