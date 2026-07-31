@@ -1,0 +1,32 @@
+# gates.yml
+# V4-SPACEPHOTO-001 prerequisite — spaces.created_by backfill.
+#
+# L-058 SWEEP: empty by design — a pure data UPDATE, no DDL, no CHECK / NOT VALID / VALIDATE step.
+# Pre-gate proves the column exists before we write it (a missing column would otherwise fail the
+# UPDATE with a bare 42703). Post-gates prove the backfill is COMPLETE (zero NULL owners remain)
+# and that the owner we wrote is the one intended — a post-gate that only counted rows would pass
+# even if the UPDATE had written the wrong sub.
+
+pre:
+  - name: spaces_created_by_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='spaces' AND column_name='created_by'
+    expect: rowcount_eq
+    value: 1
+
+sweep: []
+
+post:
+  - name: no_space_left_without_an_owner
+    sql: |
+      SELECT count(*) FROM public.spaces WHERE created_by IS NULL
+    expect: scalar_eq
+    value: 0
+
+  - name: sentinel_space_owned_by_expected_sub
+    sql: |
+      SELECT created_by FROM public.spaces
+       WHERE id = '00000000-0000-0000-0000-000000000001'
+    expect: scalar_eq
+    value: user_3D2gM0hIl03gjW3JM2DjtPzm0jI
