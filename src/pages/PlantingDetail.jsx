@@ -439,6 +439,7 @@ export default function PlantingDetail() {
       <HeroPhoto
         planting={pl}
         src={pl.featured_photo_view_url}
+        photoId={pl.featured_photo_id}
         alt={`${name} photo`}
         onOpenLightbox={(i) => setLightboxIndex(i ?? 0)}
         onOpenDetails={() => { setTab('basics'); setDetailsOpen(true) }}

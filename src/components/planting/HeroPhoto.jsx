@@ -16,6 +16,7 @@ import Icon from '../Icon.jsx'
 import FavoriteToggle from '../FavoriteToggle.jsx'
 import StatusPicker from './StatusPicker.jsx'
 import { selectKeyFact, selectCropType, cropFamilyGlyph } from '../../lib/keyFact.js'
+import PhotoImg from '../PhotoImg.jsx'
 
 const TOP_PAD = 'calc(8px + env(safe-area-inset-top, 0px))'
 
@@ -91,7 +92,7 @@ function BottomOverlay({ name, planting, keyFact, cropType, onOpenDetails, onSta
   )
 }
 
-export default function HeroPhoto({ planting, src, alt, onOpenLightbox, onOpenDetails, onStatusChanged }) {
+export default function HeroPhoto({ planting, src, photoId, alt, onOpenLightbox, onOpenDetails, onStatusChanged }) {
   const pl = planting || {}
   const name = pl.name || 'Planting'
   const keyFact = selectKeyFact(pl)
@@ -120,7 +121,7 @@ export default function HeroPhoto({ planting, src, alt, onOpenLightbox, onOpenDe
           aria-label={`View ${name} photo`}
           style={{ position: 'absolute', inset: 0, padding: 0, border: 'none', background: 'transparent',
             cursor: 'pointer', display: 'block' }}>
-          <img src={src} alt={alt || `${name} photo`}
+          <PhotoImg photoId={photoId} initialUrl={src} alt={alt || `${name} photo`}
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
         </button>
         <div style={topScrim} />
