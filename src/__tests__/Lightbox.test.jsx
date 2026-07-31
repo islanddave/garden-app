@@ -12,6 +12,12 @@ import Lightbox, {
   MIN_SCALE, MAX_SCALE,
 } from '../components/Lightbox.jsx'
 
+// The main image is now a <PhotoImg>, which calls useApiFetch()/useAuth(); stub it so the Lightbox
+// renders outside a ClerkProvider (fixtures supply src, so no mint fires).
+vi.mock('../lib/api.js', () => ({
+  useApiFetch: () => ({ fetch: vi.fn(() => Promise.resolve({ view_url: 'https://img/fresh.jpg' })), getToken: () => Promise.resolve('t') }),
+}))
+
 const IMAGES = [
   { src: 'a.jpg', alt: 'Alpha', caption: 'First photo' },
   { src: 'b.jpg', alt: 'Bravo', caption: 'Second photo' },

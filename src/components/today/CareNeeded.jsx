@@ -7,6 +7,7 @@ import { useOptionalToast } from '../../context/ToastContext.jsx'
 import GroupByControl from '../forms/GroupByControl.jsx'
 import Sheet from '../forms/Sheet.jsx'
 import Icon from '../Icon.jsx'
+import PhotoImg from '../PhotoImg.jsx'
 import {
   buildCareNeeded, groupRows, bedWaitActive,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ALL_THRESHOLD, splitContainersBeds,
@@ -82,7 +83,7 @@ function Row({ row, pending, onLog, onSkip }) {
         padding: '10px 12px', textDecoration: 'none', color: P.dark, minHeight: 48,
       }}>
         {row.thumb && (
-          <img src={row.thumb} alt="" style={{ width: 34, height: 34, borderRadius: 7, objectFit: 'cover', flexShrink: 0, border: '1px solid ' + P.border }} />
+          <PhotoImg photoId={row.photoId} initialUrl={row.thumb} alt="" style={{ width: 34, height: 34, borderRadius: 7, objectFit: 'cover', flexShrink: 0, border: '1px solid ' + P.border }} />
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: '0.92rem', fontWeight: 600, color: P.dark, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -189,6 +190,7 @@ export default function CareNeeded({ plan }) {
           locationName: (pl.location_id && nameById.get(pl.location_id)) || null,
           containerType: pl.container_type || null,
           thumb: pl.featured_photo_view_url || null,
+          photoId: pl.featured_photo_id || null,
         }
       }
       if (Object.keys(map).length) setEnrichById(map)

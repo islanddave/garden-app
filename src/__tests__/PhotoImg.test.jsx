@@ -1,6 +1,8 @@
-// PhotoImg — §A5 deterministic tests (garden-perf-image-plan V102). Verifies the re-mint self-heal
-// mechanism without a real network: mock useApiFetch, drive <img> onError / lifecycle events, assert
-// exactly-one-remint / swap / failure-class handling / storm dedup / forced re-decode / elapsed gate.
+// PhotoImg — deterministic tests (garden-perf-image-plan V102 §A1 + A2b). Verifies the re-mint
+// self-heal mechanism without a real network: mock useApiFetch, drive <img> onError / lifecycle
+// events, assert exactly-one-remint / swap / failure-class handling / storm dedup / forced re-decode /
+// elapsed gate, PLUS A2b: fetch-on-mount (id-only), pending render, terminal a11y semantics,
+// stale-heal identity guard (P4), and the viewport-gated proactive path (P5).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, waitFor, fireEvent, act } from '@testing-library/react'
 import React from 'react'
@@ -10,11 +12,13 @@ vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchSpy, getToken: () => Promise.resolve('t') }),
 }))
 
-import PhotoImg, { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
+import PhotoImg, { __resetPhotoImgCache, __seedPhotoImgUrl, PRESIGN_TTL_MS } from '../components/PhotoImg.jsx'
 
 beforeEach(() => { fetchSpy.mockReset(); __resetPhotoImgCache() })
 
 const img = (c) => c.querySelector('img')
+// Stub the <img> box so the P5 viewport gate can be exercised (jsdom's default rect is 0×0 = off-screen).
+const onScreen = (el) => { if (el) el.getBoundingClientRect = () => ({ top: 10, left: 10, bottom: 110, right: 110, width: 100, height: 100, x: 10, y: 10, toJSON() {} }) }
 
 describe('PhotoImg — render contract', () => {
   it('renders initialUrl and forwards className/alt to the inner img', () => {
@@ -121,22 +125,151 @@ describe('PhotoImg — storm control + StrictMode', () => {
   })
 })
 
-describe('PhotoImg — proactive elapsed gate (NEW-4)', () => {
-  it('a visibilitychange within the presign TTL of the last mint does NOT re-mint', async () => {
+describe('PhotoImg — proactive elapsed + viewport gate (NEW-4 + A2b P5)', () => {
+  it('a visibilitychange within the presign TTL does NOT re-mint (even for an in-viewport img)', async () => {
     fetchSpy.mockResolvedValue({ view_url: 'https://s3/fresh.jpg' })
-    render(<PhotoImg photoId="p8" initialUrl="https://s3/stale.jpg" alt="x" />)   // mount seeds lastMintedAt=now
+    const { container } = render(<PhotoImg photoId="p8" initialUrl="https://s3/stale.jpg" alt="x" />)   // mount seeds at=now
+    onScreen(img(container))                                      // pass the viewport gate so the TTL gate is what's under test
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
     act(() => { document.dispatchEvent(new Event('visibilitychange')) })
     await Promise.resolve()
     expect(fetchSpy).not.toHaveBeenCalled()                      // within TTL → gated, no flash-on-foreground
   })
 
-  it('a foreground with no prior mint (past-TTL path) DOES re-mint and adopts the fresh URL', async () => {
+  it('a past-TTL foreground re-mints an IN-VIEWPORT photo and adopts the fresh URL', async () => {
     fetchSpy.mockResolvedValue({ view_url: 'https://s3/fresh.jpg' })
-    const { container } = render(<PhotoImg photoId="p9" initialUrl={null} alt="x" />)   // no seed → gate open
+    __seedPhotoImgUrl('p9', 'https://s3/stale.jpg', Date.now() - PRESIGN_TTL_MS - 1)   // aged so the elapsed gate opens; _seed won't overwrite
+    const { container } = render(<PhotoImg photoId="p9" initialUrl="https://s3/stale.jpg" alt="x" />)
+    onScreen(img(container))
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
     act(() => { document.dispatchEvent(new Event('visibilitychange')) })
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(img(container)?.getAttribute('src')).toBe('https://s3/fresh.jpg'))
+  })
+
+  it('a past-TTL foreground does NOT re-mint an OFF-SCREEN photo (P5 viewport gate bounds the grid storm)', async () => {
+    fetchSpy.mockResolvedValue({ view_url: 'https://s3/fresh.jpg' })
+    __seedPhotoImgUrl('p9b', 'https://s3/stale.jpg', Date.now() - PRESIGN_TTL_MS - 1)   // elapsed gate open
+    const { container } = render(<PhotoImg photoId="p9b" initialUrl="https://s3/stale.jpg" alt="x" />)
+    // do NOT call onScreen() → jsdom default 0×0 rect = off-screen
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    await Promise.resolve()
+    expect(fetchSpy).not.toHaveBeenCalled()                      // off-screen → skipped (heals reactively on scroll-in)
+  })
+})
+
+describe('PhotoImg — fetch-on-mount, id-only (A2b P1/P2)', () => {
+  it('N1 photoId with no initialUrl mints once on mount and adopts', async () => {
+    fetchSpy.mockResolvedValue({ view_url: 'https://s3/m1.jpg' })
+    const { container } = render(<PhotoImg photoId="m1" alt="x" />)
+    await waitFor(() => expect(img(container)?.getAttribute('src')).toBe('https://s3/m1.jpg'))
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(fetchSpy).toHaveBeenCalledWith('/api/photos/view-url/m1', { cache: 'no-store' })
+  })
+
+  it('N2 id-only mount under StrictMode mints exactly once and still adopts', async () => {
+    fetchSpy.mockResolvedValue({ view_url: 'https://s3/m2.jpg' })
+    const { container } = render(<React.StrictMode><PhotoImg photoId="m2" alt="x" /></React.StrictMode>)
+    await waitFor(() => expect(img(container)?.getAttribute('src')).toBe('https://s3/m2.jpg'))
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('N3 two id-only instances of one photoId share a single mount-mint (dedup)', async () => {
+    let resolve
+    fetchSpy.mockReturnValue(new Promise((r) => { resolve = r }))
+    const { container } = render(<div><PhotoImg photoId="m3" alt="a" /><PhotoImg photoId="m3" alt="b" /></div>)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    await act(async () => { resolve({ view_url: 'https://s3/m3.jpg' }) })
+    await waitFor(() => expect(container.querySelectorAll('img').length).toBe(2))
+    container.querySelectorAll('img').forEach((i) => expect(i.getAttribute('src')).toBe('https://s3/m3.jpg'))
+  })
+
+  it('N4 id-only mount with a warm (within-TTL) cache adopts with ZERO network', async () => {
+    __seedPhotoImgUrl('m4', 'https://s3/warm.jpg')               // at defaults to now (fresh)
+    const { container } = render(<PhotoImg photoId="m4" alt="x" />)
+    await waitFor(() => expect(img(container)?.getAttribute('src')).toBe('https://s3/warm.jpg'))
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('N5 does NOT mount-mint when initialUrl is present', async () => {
+    fetchSpy.mockResolvedValue({ view_url: 'https://s3/never.jpg' })
+    render(<PhotoImg photoId="m5" initialUrl="https://s3/have.jpg" alt="x" />)
+    await Promise.resolve(); await Promise.resolve()
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('N6 id-only + fallback="none" renders nothing while pending, then the img', async () => {
+    let resolve
+    fetchSpy.mockReturnValue(new Promise((r) => { resolve = r }))
+    const { container } = render(<PhotoImg photoId="m6" fallback="none" alt="x" />)
+    expect(container.firstChild).toBeNull()                       // pending + none → nothing (no <img src=null>)
+    await act(async () => { resolve({ view_url: 'https://s3/m6.jpg' }) })
+    await waitFor(() => expect(img(container)?.getAttribute('src')).toBe('https://s3/m6.jpg'))
+  })
+
+  it('N7 id-only + fallback="placeholder" reserves a box while pending (never <img src=null>)', async () => {
+    let resolve
+    fetchSpy.mockReturnValue(new Promise((r) => { resolve = r }))
+    const { container } = render(<PhotoImg photoId="m7" alt="x" />)
+    expect(img(container)).toBeNull()                             // NO <img> while pending
+    expect(container.querySelector('div')).toBeTruthy()          // placeholder box reserves layout
+    await act(async () => { resolve({ view_url: 'https://s3/m7.jpg' }) })
+    await waitFor(() => expect(img(container)?.getAttribute('src')).toBe('https://s3/m7.jpg'))
+  })
+
+  it('N8 id-only mount 404 => terminal + onError(deleted)', async () => {
+    const err = new Error('gone'); err.status = 404; fetchSpy.mockRejectedValue(err)
+    const onError = vi.fn()
+    const { container } = render(<PhotoImg photoId="m8" alt="x" onError={onError} />)
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({ type: 'deleted', photoId: 'm8' })))
+    expect(img(container)).toBeNull()
+  })
+
+  it('N10 id-only mount transient network failure stays non-terminal (recoverable)', async () => {
+    fetchSpy.mockRejectedValueOnce(new Error('network'))
+    const { container } = render(<PhotoImg photoId="m10" alt="x" />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
+    const box = container.querySelector('div')
+    expect(box).toBeTruthy()                                      // pending box, not an img
+    expect(box.getAttribute('role')).toBeNull()                  // NOT terminal (no announced role)
+  })
+})
+
+describe('PhotoImg — terminal a11y semantics (A2b P3)', () => {
+  it('a DECORATIVE (alt="") image that goes terminal stays aria-hidden with no role/label; ...rest survives', async () => {
+    const err = new Error('gone'); err.status = 404; fetchSpy.mockRejectedValue(err)
+    const { container } = render(<PhotoImg photoId="a1" initialUrl="https://s3/x.jpg" alt="" data-testid="tt" aria-hidden="true" />)
+    fireEvent.error(img(container))
+    await waitFor(() => expect(img(container)).toBeNull())
+    const box = container.querySelector('div')
+    expect(box.getAttribute('aria-hidden')).toBe('true')         // decorative stays silent
+    expect(box.getAttribute('role')).toBeNull()
+    expect(box.getAttribute('aria-label')).toBeNull()
+    expect(box.getAttribute('data-testid')).toBe('tt')           // ...rest preserved through terminal
+  })
+
+  it('a MEANINGFUL (alt set) image that goes terminal exposes role=img + aria-label=alt', async () => {
+    const err = new Error('gone'); err.status = 404; fetchSpy.mockRejectedValue(err)
+    const { container } = render(<PhotoImg photoId="a2" initialUrl="https://s3/x.jpg" alt="Tomato" />)
+    fireEvent.error(img(container))
+    await waitFor(() => expect(img(container)).toBeNull())
+    const box = container.querySelector('div')
+    expect(box.getAttribute('role')).toBe('img')
+    expect(box.getAttribute('aria-label')).toBe('Tomato')
+    expect(box.getAttribute('aria-hidden')).toBeNull()
+  })
+})
+
+describe('PhotoImg — stale-heal identity guard (A2b P4)', () => {
+  it('a heal that resolves AFTER the consumer paged to a new photoId does not set the stale URL', async () => {
+    let resolveA
+    fetchSpy.mockReturnValueOnce(new Promise((r) => { resolveA = r }))
+    const { container, rerender } = render(<PhotoImg photoId="A" initialUrl="https://s3/staleA.jpg" alt="x" />)
+    fireEvent.error(img(container))                              // starts mintUrl(A), in-flight
+    rerender(<PhotoImg photoId="B" initialUrl="https://s3/urlB.jpg" alt="x" />)   // consumer paged to B
+    expect(img(container).getAttribute('src')).toBe('https://s3/urlB.jpg')
+    await act(async () => { resolveA({ view_url: 'https://s3/freshA.jpg' }) })     // A's heal resolves late
+    expect(img(container).getAttribute('src')).toBe('https://s3/urlB.jpg')         // guard: never freshA on B
   })
 })

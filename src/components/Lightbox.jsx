@@ -19,6 +19,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import PhotoImg from './PhotoImg.jsx'
 
 // -- Pure, dependency-free math helpers (named exports -> directly unit-testable; jsdom can't
 //    exercise real pointer gestures, so the gesture math is covered here instead). ----------
@@ -485,12 +486,14 @@ export default function Lightbox({
           minHeight: 0,
         }}
       >
-        <img
-          src={current.src}
+        <PhotoImg
+          photoId={current.photoId ?? current.id}
+          initialUrl={current.src}
           alt={current.alt || ''}
           onLoad={onImgLoad}
           draggable={false}
           data-testid="lightbox-image"
+          fallback="none"
           style={{
             maxWidth: '94vw', maxHeight: '100%', objectFit: 'contain',
             transform: stageTransform,

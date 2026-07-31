@@ -15,6 +15,7 @@ import FavoriteToggle from './FavoriteToggle.jsx'
 import PlantStatusBadge from './PlantStatusBadge.jsx'
 import CritterSprite from './CritterSprite.jsx'
 import PhotoUpload from './PhotoUpload.jsx'
+import PhotoImg from './PhotoImg.jsx'
 import CaretakerBadge from './CaretakerBadge.jsx'
 
 // No-photo fallback (RES-2): neutral cream 4:3 swatch + a generic seedling SVG (shape, not
@@ -107,8 +108,9 @@ export default function PlantingTile({
         }}
       >
         {hasPhoto ? (
-          <img
-            src={pl.featured_photo_view_url}
+          <PhotoImg
+            photoId={pl.featured_photo_id}
+            initialUrl={pl.featured_photo_view_url}
             sizes="(max-width: 720px) 50vw, 360px"
             alt=""
             decoding="async"

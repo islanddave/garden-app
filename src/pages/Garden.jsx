@@ -26,6 +26,7 @@ import { useEntityTagsBulk } from '../hooks/useTags.js'
 import PlantingEditor from '../components/PlantingEditor.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import PhotosWall from '../components/PhotosWall.jsx'
+import PhotoImg from '../components/PhotoImg.jsx'
 import { useMembers } from '../hooks/useMembers.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
 import { buildProjectsById, effectiveAssignee, buildCaretakerMap, lensOptions, hasMixedCaretakers } from '../lib/caretakers.js'
@@ -676,7 +677,7 @@ function TreeNode({ node, expanded, onToggle, level, crittersByPlantId, onSprite
         ) : (
           <Link to={`/projects/${p.id}`} aria-label={`Open ${p.name}`} style={thumbWrap}>
             {p.featured_photo_view_url
-              ? <img src={p.featured_photo_view_url} alt="" style={thumbImg} />
+              ? <PhotoImg photoId={p.featured_photo_id} initialUrl={p.featured_photo_view_url} alt="" style={thumbImg} />
               : <Icon name="nav.garden" size={24} decorative style={{ color: P.green }} />}
           </Link>
         )}

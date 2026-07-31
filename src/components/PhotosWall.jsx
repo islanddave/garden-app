@@ -15,6 +15,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import TileGrid from './forms/TileGrid.jsx'
 import Lightbox from './Lightbox.jsx'
+import PhotoImg from './PhotoImg.jsx'
 import useImageWindow from '../hooks/useImageWindow.js'
 
 // Month bucket key + human label from an ISO-ish timestamp. Falls back to an "Undated" bucket
@@ -97,7 +98,7 @@ export default function PhotosWall() {
 
   // Lightbox images derive from the SAME sorted order, so lbIndex (a flat index) is valid.
   const lbImages = useMemo(
-    () => sorted.map(p => ({ src: p?.view_url, alt: p?.caption || 'Garden photo', caption: p?.caption || '' })),
+    () => sorted.map(p => ({ src: p?.view_url, photoId: p?.id, alt: p?.caption || 'Garden photo', caption: p?.caption || '' })),
     [sorted]
   )
 
@@ -202,8 +203,9 @@ function PhotoTile({ photo, onOpen }) {
       }}
     >
       {photo.view_url && (
-        <img
-          src={photo.view_url}
+        <PhotoImg
+          photoId={photo.id}
+          initialUrl={photo.view_url}
           alt={photo.caption || 'Garden photo'}
           decoding="async"
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}

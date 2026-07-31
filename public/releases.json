@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.79.0",
+    "date": "2026-07-31",
+    "highlights": [
+      "Photos across the whole app now heal themselves — the photo wall, plant and project thumbnails, the growth-compare and full-screen photo viewers, and put-up photos all quietly re-load a fresh image instead of occasionally showing a blank box after the app has been open a while"
+    ]
+  },
+  {
     "version": "3.78.0",
     "date": "2026-07-31",
     "highlights": [

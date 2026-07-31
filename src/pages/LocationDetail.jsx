@@ -4,6 +4,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
+import PhotoImg from '../components/PhotoImg.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 
 // DEFERRED:
@@ -143,15 +144,12 @@ export default function LocationDetail() {
             {photos.map(photo => (
               <div key={photo.id} style={{ position: 'relative', paddingBottom: '100%', backgroundColor: '#e8e2da', borderRadius: 8, overflow: 'hidden', border: `1px solid ${P.border}` }}>
                 {(photo.thumb_url || photo.view_url) && (
-                  <img
-                    src={photo.thumb_url || photo.view_url}
+                  <PhotoImg
+                    photoId={photo.id}
+                    initialUrl={photo.thumb_url || photo.view_url}
+                    fallback="none"
                     alt={photo.caption ?? 'Space photo'}
                     decoding="async"
-                    onError={(e) => {
-                      if (photo.view_url && e.currentTarget.src !== photo.view_url) {
-                        e.currentTarget.src = photo.view_url;
-                      }
-                    }}
                     style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                   />
                 )}

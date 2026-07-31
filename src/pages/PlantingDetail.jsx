@@ -38,6 +38,7 @@ import LifeStoryTimeline from '../components/planting/LifeStoryTimeline.jsx'
 import CropCard from '../components/planting/CropCard.jsx'
 import CareStatus from '../components/CareStatus.jsx'
 import GrowthStrip from '../components/planting/GrowthStrip.jsx'
+import PhotoImg from '../components/PhotoImg.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
 import { formatBotanical } from '../lib/keyFact.js'
@@ -591,8 +592,9 @@ export default function PlantingDetail() {
                       aria-label={`Open ${ph.caption || `${name} photo`}`}
                       style={{ display: 'block', width: '100%', padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
                     >
-                      <img
-                        src={ph.view_url}
+                      <PhotoImg
+                        photoId={ph.id}
+                        initialUrl={ph.view_url}
                         alt={ph.caption || `${name} photo`}
                         style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 8, border: `1px solid ${P.border}`, display: 'block' }}
                       />

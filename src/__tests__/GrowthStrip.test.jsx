@@ -9,6 +9,11 @@ const motionState = { reduced: false }
 vi.mock('../lib/critterArt.js', () => ({
   prefersReducedMotion: () => motionState.reduced,
 }))
+// GrowthStrip now composes <PhotoImg>, which calls useApiFetch()/useAuth(); stub it so the strip
+// renders outside a ClerkProvider (the fixtures supply initialUrl, so no mint actually fires).
+vi.mock('../lib/api.js', () => ({
+  useApiFetch: () => ({ fetch: vi.fn(() => Promise.resolve({ view_url: 'https://img/fresh.jpg' })), getToken: () => Promise.resolve('t') }),
+}))
 
 import GrowthStrip from '../components/planting/GrowthStrip.jsx'
 

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import PhotoUpload from '../components/PhotoUpload.jsx'
+import PhotoImg from '../components/PhotoImg.jsx'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import PlantingSelect from '../components/forms/PlantingSelect.jsx'
@@ -627,8 +628,9 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
 
         <div style={{ position: 'relative' }}>
           {photo.view_url && (
-            <img
-              src={photo.view_url} alt={photo.caption ?? 'Photo'}
+            <PhotoImg
+              photoId={photo.id}
+              initialUrl={photo.view_url} alt={photo.caption ?? 'Photo'}
               style={{ width: '100%', borderRadius: '12px 12px 0 0', display: 'block', maxHeight: 300, objectFit: 'cover' }}
             />
           )}

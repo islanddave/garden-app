@@ -18,6 +18,7 @@ import { loadSortOrder, saveSortOrder, applyNameSort } from '../lib/projectTree.
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
+import PhotoImg from '../components/PhotoImg.jsx'
 import { PlantForm, Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
 
@@ -727,8 +728,9 @@ export default function ProjectDetail() {
                   {/* V1.2a-3 Increment A (I2a-display): the plant's featured photo.
                       Read-back surface for the photo→plant linkage that already worked. */}
                   {plant.featured_photo_view_url
-                    ? <img
-                        src={plant.featured_photo_view_url}
+                    ? <PhotoImg
+                        photoId={plant.featured_photo_id}
+                        initialUrl={plant.featured_photo_view_url}
                         alt=""
                         style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover',
                                  flexShrink: 0, border: `1px solid ${P.border}` }}

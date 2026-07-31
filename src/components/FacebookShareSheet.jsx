@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { P } from '../lib/constants.js'
+import PhotoImg from './PhotoImg.jsx'
 import { useShareToFacebook } from '../hooks/useShareToFacebook.js'
 
 // V4-FBSHARE-001 — compose + post sheet for sharing photos to the "Gardens at Mathews" FB Page.
@@ -72,7 +73,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
             <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
               {photos.map((p) => (
                 <div key={p.id} style={{ flex: '0 0 auto', width: 64, height: 64, borderRadius: 8, overflow: 'hidden', background: '#e8e2da', border: `1px solid ${P.border}` }}>
-                  {p.view_url && <img src={p.view_url} alt={p.caption ?? 'Selected photo'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                  {p.view_url && <PhotoImg photoId={p.id} initialUrl={p.view_url} fallback="none" alt={p.caption ?? 'Selected photo'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                 </div>
               ))}
             </div>

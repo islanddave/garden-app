@@ -14,6 +14,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
+import PhotoImg from '../PhotoImg.jsx'
 import { prefersReducedMotion } from '../../lib/critterArt.js'
 
 function fmtShort(value) {
@@ -132,15 +133,15 @@ function GrowthCompare({ list, onOpen, indexBase, reduceMotion }) {
         border: `1px solid ${P.border}` }}>
         {playing ? (
           // Playback: show the current frame full-bleed.
-          <img src={list[frame]?.view_url} alt={list[frame]?.caption || 'Growth photo'}
+          <PhotoImg photoId={list[frame]?.id} initialUrl={list[frame]?.view_url} alt={list[frame]?.caption || 'Growth photo'}
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
         ) : (
           <>
             {/* AFTER fills the box; BEFORE is clipped to the divider position on top. */}
-            <img src={after?.view_url} alt={after?.caption || 'Latest photo'}
+            <PhotoImg photoId={after?.id} initialUrl={after?.view_url} alt={after?.caption || 'Latest photo'}
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
             <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', width: `${pos}%` }}>
-              <img src={before?.view_url} alt={before?.caption || 'First photo'}
+              <PhotoImg photoId={before?.id} initialUrl={before?.view_url} alt={before?.caption || 'First photo'}
                 style={{ position: 'absolute', top: 0, left: 0, height: '100%', width: 'auto',
                   minWidth: '100%', objectFit: 'cover' }} />
             </div>
@@ -214,7 +215,7 @@ function GrowthCompare({ list, onOpen, indexBase, reduceMotion }) {
             aria-label={`Open growth photo ${i + 1}${photoDate(p) ? ` from ${fmtShort(photoDate(p))}` : ''}`}
             style={{ flex: '0 0 auto', width: 64, padding: 0, border: 'none', background: 'transparent',
               cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center' }}>
-            <img src={p.view_url} alt="" aria-hidden="true"
+            <PhotoImg photoId={p.id} initialUrl={p.view_url} alt="" aria-hidden="true"
               style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8,
                 border: `1px solid ${P.border}`, display: 'block' }} />
             <span style={{ fontSize: '0.62rem', color: P.light, lineHeight: 1.1, textAlign: 'center' }}>
