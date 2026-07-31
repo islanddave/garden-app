@@ -7,13 +7,24 @@
 //   assumption that URL "came from a recent list fetch" (PhotoImg.jsx _seed). D-1 made that assumption
 //   false — a cache-served list can be arbitrarily old, so a photo can mount with an already-expired
 //   presign stamped as fresh, skip the proactive re-mint, render the dead URL, 403, and only then heal
-//   reactively. Visible as a flash. Revalidating watched keys on foreground pushes fresh URLs into
-//   already-mounted <img>s through PhotoImg's initialUrl-change adoption path (NEW-1), which also
-//   resets its retry budget — so the heal happens before the stale URL is ever painted.
+//   reactively. Visible as a flash. The wake revalidate re-dates the entry so a LATER mount is seeded
+//   from a recent fetch instead of an arbitrarily old cached list.
+//
+//   ⚠ CORRECTION (2026-07-31, crucible): an earlier version of this comment claimed the wake revalidate
+//   "pushes fresh URLs into already-mounted <img>s through PhotoImg's initialUrl-change adoption path."
+//   That is FALSE, and the falsehood was seeding wrong impact analyses. revalidate() does
+//   `data = _sameExceptUrls(cur.data, list) ? cur.data : list` (dataCache.js), so a response that
+//   differs ONLY in presigned URLs keeps the PRIOR data reference — the fresh URLs are discarded, the
+//   snapshot stays Object.is-equal, nothing re-renders, and initialUrl never changes. That is
+//   deliberate and correct (it is what stops a foreground refresh re-downloading the visible
+//   screenful) and is pinned by cacheLifecycle.test.jsx "a revalidate returning the same rows with
+//   fresh presigns keeps the data ref". Already-mounted images are healed by PhotoImg's OWN wake
+//   listener, not by this one. What a list revalidate actually delivers is MEMBERSHIP change plus a
+//   refreshed `at` — do not build a value case on URL propagation.
 //
 // Deliberately NOT done here: threading the cache entry's real age into PhotoImg as an `initialUrlAt`
 // prop. That is the correct root fix but it reopens the frozen A1 prop contract across ~13 adopted
-// sites; the wake revalidate closes the same window without touching it.
+// sites.
 //
 // Everything below is a no-op when IMAGE_LIST_CACHE_ENABLED is off — D-2 must degrade exactly like
 // D-1 does, back to plain per-mount fetches.
@@ -21,6 +32,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import * as cache from '../lib/dataCache.js'
 import { IMAGE_LIST_CACHE_ENABLED } from '../lib/featureFlags.js'
+import { onReconnect } from '../lib/reconnect.js'
 
 // Paths worth warming at boot. ONLY globally-knowable keys belong here: per-planting and per-location
 // photo paths depend on a route param nobody has navigated to yet, so warming them would be guesswork
@@ -67,11 +79,67 @@ export function useCacheLifecycle(sub) {
       document.removeEventListener('resume', onWake)
     }
   }, [])
+
+  // B6 — revalidate on reconnect, with the age gate DELIBERATELY BYPASSED (minAgeMs 0).
+  //
+  // The asymmetry vs B5 is the whole point. visibilitychange is effectively level-triggered — it
+  // fires on every alt-tab — so it needs the 5-minute gate or it refetches constantly. `online` is
+  // edge-triggered and rare, so gating it re-creates the exact no-op it exists to fix: a failed
+  // revalidate never writes `at` (dataCache.js commits `at` only on the SUCCESS branch), so after a
+  // 30s outage the entry still carries its last SUCCESSFUL timestamp — age 90s < 300000ms — and
+  // RESUME_MIN_AGE_MS would skip precisely the keys that just failed. The data isn't old; the fetch
+  // failed. Reusing onWake here would have shipped 3 lines of placebo.
+  //
+  // No visibilityState guard either: a reconnect while hidden should still refetch, and the cost is
+  // bounded at ≤3 requests (the cache holds only photo-list keys).
+  //
+  // Uses onReconnect() rather than a raw addEventListener('online') — it is the repo's reconnect
+  // contract (already shipped in FieldCapture) and carries the SSR + throw guards.
+  //
+  // KNOWN LIMIT, accepted not fixed: revalidateLive skips any key with a live inFlight, and apiFetch
+  // bounds requests at 15s. If `online` fires while a request from the dying connection is still
+  // hanging, that key is skipped and not retried until the next wake. Fixing it means cancelling
+  // stalled in-flights, which is a dataCache change with its own blast radius.
+  useEffect(() => {
+    if (!IMAGE_LIST_CACHE_ENABLED) return
+    return onReconnect(() => cache.revalidateLive(0))
+  }, [])
 }
 
-// B4 hook-point for a pull-to-refresh gesture. The cache half is done and tested; the app has no
-// pull-to-refresh affordance today, so nothing calls this yet — wiring it is a UI decision, not a
-// cache one. Returns the number of watched keys refreshed.
+// B4 hook-point. Returns the number of watched keys refreshed. Still has no non-test callers.
+//
+// ⛔ PULL-TO-REFRESH IS DECIDED — DO NOT BUILD IT. (2026-07-31, 6-panel crucible + boss-technical.)
+// Global PTR, photo-scoped PTR, and a "Refresh" row in the BottomNav More menu were all REJECTED.
+// The reasons, so this is not re-litigated from zero:
+//   · Chrome-on-Android's NATIVE pull-to-refresh is live today (the app sets no global
+//     overscroll-behavior) and does a full network-first shell reload. A custom PTR must SUPPRESS
+//     it, i.e. consume the one gesture that performs a full recovery and replace it with a 3-key
+//     partial refresh. The user cannot then get the full reload back.
+//   · This cache covers exactly 3 photo-list keys. Today / Garden / Dashboard / Harvests /
+//     Inventory / Findings / Collection / Feed each run their own per-mount fetch and are
+//     untouched — a global-looking gesture would change nothing visible on the screens users pull.
+//   · A "Refresh" row would collide with UpdateBanner's existing global control of the same name
+//     and different meaning (apply the waiting SW + reload).
+//   · Suppressing native PTR inline on <body> is silently undone by Sheet's scroll-lock restore,
+//     which writes the SHORTHAND overscrollBehavior — open+close any sheet and both gestures are
+//     live at once.
+//
+// RE-OPEN GATE — reconsider ONLY if ALL FIVE hold. Each is one command. If any is false, stop.
+//   G1 coverage:    `grep -rl useCachedFetch src/pages src/components | grep -v __tests__` ≥ 8 (today 3)
+//   G2 testability: playwright or puppeteer in devDependencies AND ≥1 touch-gesture spec in CI.
+//                   jsdom cannot compute overscroll-behavior/touch-action, stubs scrollTo, and has
+//                   no touch pipeline — PTR's defining behavior is unassertable today.
+//   G3 host frame:  `grep -rl PageShell src/pages | wc -l` ≥ 35 of 44 (today 0)
+//   G4 primitive:   refreshAll contains no _store.delete (done) AND an outcome-reporting variant
+//                   exists whose result distinguishes all-success from all-failure.
+//   G5 demand:      Dave asked, or a reach-for-refresh behavior is documented. G1–G4 are necessary,
+//                   never sufficient.
+//
+// Also rejected: making this promise-returning. revalidate()'s exec attaches both handlers inline so
+// it ALWAYS fulfills — a Promise.all over those resolves identically whether every fetch succeeded or
+// every one failed, so a spinner timed on it would report success 100% of the time. An honest version
+// is a NEW refreshAllSettled() over promises that actually reject; do not change invalidate()'s
+// contract to get there (it reaches invalidatePrefix → useUploadPhoto + PhotoLibrary).
 export function useRefreshAll() {
   return useCallback(() => (IMAGE_LIST_CACHE_ENABLED ? cache.refreshAll() : 0), [])
 }
