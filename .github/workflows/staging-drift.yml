@@ -1,0 +1,81 @@
+name: Staging schema drift (advisory)
+
+# OPS-STAGINGDRIFT-001. Nothing keeps the staging Neon branch in sync with prod:
+# integration-test.yml creates an ephemeral branch off staging and runs the real
+# Lambda handlers against it WITHOUT applying migrations, so drift accumulates
+# silently. Measured 2026-07-31 while unblocking Lane C: 10 prod-only columns,
+# 3 prod-only constraints, and 1 staging-ONLY CHECK that made staging reject
+# container_type values prod accepts.
+#
+# The failure mode is not a broken deploy — it is integration tests failing for
+# reasons unrelated to the change under test, which trains everyone to read a red
+# integration run as noise.
+#
+# ADVISORY BY DESIGN — never fails the build. Migrations are applied staging-first,
+# so staging legitimately LEADS prod for the whole window between the two applies;
+# hard-failing would red the build for that entire window. The script reports
+# prod-only drift (staging behind — the dangerous direction) as a finding and
+# staging-only columns/indexes as informational. A staging-only CHECK constraint
+# IS reported, because an extra CHECK rejects writes prod accepts.
+#
+# Runs weekly rather than per-push: drift is a slow accumulation, not a per-commit
+# event, and each run costs two Neon connections. Also fires on any migrations/**
+# push, which is the one commit-shaped signal that the shapes may have moved.
+
+on:
+  schedule:
+    # Mondays 13:00 UTC — early in the week, so a drift finding has the week to be acted on.
+    - cron: '0 13 * * 1'
+  push:
+    branches: [dev]
+    paths:
+      - 'migrations/**'
+      - 'scripts/check-staging-drift.py'
+      - '.github/workflows/staging-drift.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    name: Compare staging Neon schema against prod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout garden-app
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install psycopg
+        run: pip install 'psycopg[binary]'
+
+      - name: Compare schemas
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
+        run: |
+          set -uo pipefail
+          if [[ -z "${NEON_DATABASE_URL:-}" || -z "${NEON_STAGING_URL:-}" ]]; then
+            echo "::warning title=Staging drift UNVERIFIED::UNVERIFIED — a Neon URL secret is not set; the comparison did NOT run. Green here verifies nothing."
+            {
+              echo "### UNVERIFIED — staging drift check did not run"
+              echo "NEON_DATABASE_URL and/or NEON_STAGING_URL are not configured. No schemas were compared this run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 scripts/check-staging-drift.py
+          RC=$?
+          if [[ "$RC" -eq 2 ]]; then
+            echo "::warning title=Staging drift UNKNOWN::A database was unreachable — drift is UNKNOWN, not absent."
+            exit 0
+          fi
+          exit 0
