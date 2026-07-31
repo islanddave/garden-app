@@ -109,3 +109,39 @@ describe('Today surface', () => {
     expect(screen.queryByText('Habanero')).toBeNull()
   })
 })
+
+// V4-TODAYBASIS-001 — the care list is computed from the overnight batch but renders directly under
+// WeatherWidget's live "Updated …" stamp, which reads as covering the whole screen. These pin the
+// basis stamp on the actionable content.
+describe('V4-TODAYBASIS-001: care-list basis time', () => {
+  const planWith = (extra) => ({
+    data: {
+      has_plan: true, plan_date: '2026-06-17', ...extra,
+      plan: {
+        weather: { tonightLow: 50, highToday: 78, code: 3, hot: false },
+        hydrology: { recent_precip_in: 0.05, tomorrow_precip_in: 0.1, tomorrow_pop: 10, rain_coming: false },
+        water_due: [{ id: 'pl1', name: 'Bhut Jolokia', project: 'Peppers', project_id: 'pr1', overdue_by: 2, in_ground: false }],
+        no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
+      },
+    },
+    loading: false, error: null,
+  })
+
+  it('stamps the overnight basis time above the care list', () => {
+    planState.current = planWith({ generated_at: '2026-06-17T06:00:00Z' })
+    render(<Today />)
+    expect(screen.getByText(/Plan from overnight/i)).toBeTruthy()
+  })
+
+  it('renders no stamp when the plan carries no generated_at (never invents a time)', () => {
+    planState.current = planWith({})
+    render(<Today />)
+    expect(screen.queryByText(/Plan from overnight/i)).toBeNull()
+  })
+
+  it('renders no stamp for an unparseable generated_at', () => {
+    planState.current = planWith({ generated_at: 'not-a-date' })
+    render(<Today />)
+    expect(screen.queryByText(/Plan from overnight/i)).toBeNull()
+  })
+})

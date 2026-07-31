@@ -133,7 +133,9 @@ function ConditionIcon({ code = 3 }) {
 }
 
 // V3-WXFRESH-001 — honest presentation (unchanged). Frozen nightly snapshot, NOT a live reading.
-function asOfLabel(generatedAt) {
+// EXPORTED 2026-07-31 so Today's care list can stamp its basis time in the SAME copy grammar. A
+// second vocabulary for "how old is this" would add cognitive load rather than remove it.
+export function asOfLabel(generatedAt) {
   if (!generatedAt) return null
   const d = new Date(generatedAt)
   if (isNaN(d.getTime())) return null

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
-import WeatherWidget from '../components/today/WeatherWidget.jsx'
+import WeatherWidget, { asOfLabel } from '../components/today/WeatherWidget.jsx'
 import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'
@@ -92,6 +92,18 @@ export default function Today() {
               background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: '10px 12px',
             }}>
               <Icon name="lifecycle.sprout" size={15} decorative style={{ marginRight: 6, verticalAlign: '-0.15em' }} />{plan.substrate.msg}
+            </div>
+          )}
+
+          {/* V4-TODAYBASIS-001 — the care list is computed from the OVERNIGHT batch, but it sits
+              directly under WeatherWidget's "Updated {liveAt} · live" stamp, so that live stamp
+              reads as covering the whole screen. It doesn't: a 6pm watering call here was decided
+              from last night's snapshot. Stamping the basis time on the actionable content is the
+              honest presentation V3-WXFRESH-001 established for the weather card, applied to the
+              part whose staleness actually has consequences. Reuses asOfLabel for one vocabulary. */}
+          {asOfLabel(data?.generated_at) && (
+            <div style={{ fontSize: '0.75rem', color: P.light, marginBottom: -6 }}>
+              Plan from overnight &middot; as of {asOfLabel(data.generated_at)}
             </div>
           )}
 
