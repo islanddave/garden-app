@@ -1,6 +1,6 @@
 [
   {
-    "version": "3.81.0",
+    "version": "3.81.1",
     "date": "2026-07-31",
     "highlights": [
       "Watering advice now follows each planting's OWN location instead of its project's — seed trays on Shelf 4 and cuttings in the Stable are no longer told to skip watering because it rained outside, and plants actually out on the Drive or in the Bag Area are now correctly held back after a soak",
