@@ -58,7 +58,8 @@ vi.mock('../lib/mode.js', () => ({
   MODE: { FIELD: 'field', DESK: 'desk' },
 }))
 
-import BottomNav from '../components/BottomNav.jsx'
+import BottomNav, { BOTTOM_NAV_HEIGHT_PX } from '../components/BottomNav.jsx'
+import { TOAST_BOTTOM } from '../components/forms/Toast.jsx'
 
 beforeEach(() => {
   signOutSpy.mockClear()
@@ -331,5 +332,36 @@ describe('Settings entry in More menu', () => {
     fireEvent.click(screen.getByText('Settings'))
     // Sign out vanishes when menu closes (deterministic signal the menu collapsed).
     expect(screen.queryByText('Sign out')).toBeNull()
+  })
+})
+
+// The nav owns --bottom-nav-height. Hardcoding 56px at :root reserved space for a nav that only
+// renders when signed in, so on the sign-in and public-share screens a toast — and UpdateBanner,
+// which renders regardless of auth by design — floated ~56px above the bottom edge over nothing.
+describe('--bottom-nav-height ownership', () => {
+  const navVar = () => document.documentElement.style.getPropertyValue('--bottom-nav-height')
+
+  it('sets the variable to the nav height while mounted, and clears it to 0px on unmount', () => {
+    document.documentElement.style.removeProperty('--bottom-nav-height')
+    const { unmount } = render(<BottomNav />)
+    expect(navVar()).toBe(`${BOTTOM_NAV_HEIGHT_PX}px`)
+    unmount()
+    expect(navVar()).toBe('0px')          // signed-out surfaces reserve nothing
+  })
+
+  it('renders its own height from the constant, not from the variable it sets', () => {
+    // Reading the var it owns would make the first frame lay out against 0px.
+    render(<BottomNav />)
+    const nav = screen.getByRole('navigation', { name: /main navigation/i })
+    expect(nav.style.height).toBe(`${BOTTOM_NAV_HEIGHT_PX}px`)
+    expect(nav.style.height).not.toContain('var(')
+  })
+
+  it('TOAST_BOTTOM resolves to a bare safe-area offset once the nav is gone', () => {
+    // The property that actually regressed: with no nav, the toast must not reserve 56px.
+    const { unmount } = render(<BottomNav />)
+    unmount()
+    expect(navVar()).toBe('0px')
+    expect(TOAST_BOTTOM).toContain('var(--bottom-nav-height, 0px)')
   })
 })

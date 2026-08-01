@@ -11,8 +11,10 @@
 import React from 'react'
 import { P } from '../../lib/constants.js'
 
-// Nav-aware bottom offset, matching UpdateBanner.jsx. --bottom-nav-height is defined in main.jsx's
-// global style block (56px); the 0px fallback keeps this correct on surfaces that render no nav.
+// Nav-aware bottom offset, matching UpdateBanner.jsx. --bottom-nav-height is OWNED BY BottomNav,
+// which sets it to its real height on mount and back to 0px on unmount — so this expression is
+// correct on both signed-in surfaces (nav present) and signed-out ones (no nav, so no reservation).
+// The 0px fallback covers the pre-mount frame and any surface that never renders a nav at all.
 // Exported so the stacking offset in ToastContext builds on the same base rather than re-hardcoding.
 export const TOAST_BOTTOM = 'calc(var(--bottom-nav-height, 0px) + env(safe-area-inset-bottom) + 12px)'
 export const toastStackBottom = (i) =>

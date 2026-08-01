@@ -11,7 +11,12 @@ globalStyle.textContent = `
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
   a { color: inherit; }
   input, button, textarea, select { font: inherit; }
-  :root { --bottom-nav-height: 56px; }
+  /* 0px is the HONEST default: there is no bottom nav until BottomNav mounts, and it only mounts
+     when signed in (App.jsx). BottomNav owns this variable and sets it to its real height in a
+     layout effect — see BOTTOM_NAV_HEIGHT_PX there. Hardcoding 56px here made every bottom-anchored
+     surface reserve space for a nav that wasn't rendered: on the sign-in and public-share screens a
+     toast or the update banner floated ~56px above the bottom edge. */
+  :root { --bottom-nav-height: 0px; }
   ${iconCssVars()}
 `
 document.head.appendChild(globalStyle)

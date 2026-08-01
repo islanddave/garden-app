@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useLayoutEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useOverlayLocation, OverlayLink } from '../context/OverlayContext.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
@@ -72,8 +72,27 @@ function SectionLabel({ children }) {
   )
 }
 
+// The nav's real height, and the single source of truth for --bottom-nav-height.
+//
+// The VARIABLE IS OWNED HERE rather than hardcoded at :root, because the nav is conditional —
+// App.jsx renders it only when signed in. A constant 56px at :root meant every bottom-anchored
+// surface reserved space for a nav that wasn't there: on the sign-in and public-share screens a
+// toast, and the UpdateBanner (which renders regardless of auth, by design — BUG-STALECLIENT-001),
+// floated ~56px above the bottom edge over nothing.
+//
+// Owning it here keeps the two in sync automatically: if the nav's render condition ever changes,
+// the variable follows, whereas driving it from App.jsx's `user` check would silently desync.
+// useLayoutEffect (not useEffect) so the value is committed BEFORE paint — otherwise the first
+// frame lays content out against 0px and visibly shifts.
+export const BOTTOM_NAV_HEIGHT_PX = 56
+
 export default function BottomNav() {
   const location = useOverlayLocation()
+  useLayoutEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--bottom-nav-height', `${BOTTOM_NAV_HEIGHT_PX}px`)
+    return () => { root.style.setProperty('--bottom-nav-height', '0px') }
+  }, [])
   const navigate = useNavigate()
   const { profile, signOut } = useAuth()
   const { getToken } = useApiFetch()
@@ -288,7 +307,7 @@ export default function BottomNav() {
 
       <nav aria-label="Main navigation" style={{
         position: 'fixed', bottom: 0, left: 0, right: 0,
-        height: 'var(--bottom-nav-height)',
+        height: `${BOTTOM_NAV_HEIGHT_PX}px`,
         paddingBottom: 'env(safe-area-inset-bottom)',
         backgroundColor: P.white,
         borderTop: `1px solid ${P.border}`,

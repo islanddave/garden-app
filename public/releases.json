@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.82.1",
+    "date": "2026-07-31",
+    "highlights": [
+      "Pop-up confirmation messages and the update banner no longer float in mid-air above the bottom of the sign-in screen — they only leave room for the navigation bar on screens that actually have one"
+    ]
+  },
+  {
     "version": "3.82.0",
     "date": "2026-07-31",
     "highlights": [
