@@ -102,3 +102,42 @@ describe('useCachedFetch — flag OFF (rollback passthrough)', () => {
     expect(peek('userA|/api/photos')).toBe(null)              // store untouched
   })
 })
+
+// SW-STALEAPI-001 — `stale` must reach the UI layer. The correctness half (never advancing the
+// freshness clock) lives in dataCache and is tested there; this pins that the flag is READABLE by a
+// surface, which is what makes "you're looking at offline data" renderable at all.
+function StaleProbe({ path }) {
+  const { stale, loading } = useCachedFetch(path)
+  return (
+    <div>
+      <span data-testid="stale">{String(stale)}</span>
+      <span data-testid="sloading">{String(loading)}</span>
+    </div>
+  )
+}
+const staleOf = (c) => c.querySelector('[data-testid="stale"]').textContent
+
+describe('SW-STALEAPI-001: stale reaches the consumer', () => {
+  it('is false on a normal network-served read', async () => {
+    fetchSpy.mockResolvedValue([{ id: 'a' }])
+    const { container } = render(<StaleProbe path="/api/photos" />)
+    await waitFor(() => expect(container.querySelector('[data-testid="sloading"]').textContent).toBe('false'))
+    expect(staleOf(container)).toBe('false')
+  })
+
+  it('turns true once a cache-served response is committed', async () => {
+    const marked = [{ id: 'a' }]
+    Object.defineProperty(marked, Symbol.for('garden-app.fromCache'), { value: true, enumerable: false })
+    fetchSpy.mockResolvedValue(marked)
+    const { container } = render(<StaleProbe path="/api/photos" />)
+    await waitFor(() => expect(staleOf(container)).toBe('true'))
+  })
+
+  it('is false in the flag-OFF plain-fetch passthrough', async () => {
+    flagState.on = false
+    fetchSpy.mockResolvedValue([{ id: 'a' }])
+    const { container } = render(<StaleProbe path="/api/photos" />)
+    await waitFor(() => expect(container.querySelector('[data-testid="sloading"]').textContent).toBe('false'))
+    expect(staleOf(container)).toBe('false')
+  })
+})

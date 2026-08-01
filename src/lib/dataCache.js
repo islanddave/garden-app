@@ -16,9 +16,14 @@
 //   if the gen still matches at SETTLE — discards an older-gen revalidate resolving AFTER an invalidate.
 // - MERGE-BY-ID / URL PRESERVATION (boss RES-004): a revalidate that returns the same rows with only
 //   fresh presigned URLs keeps the PRIOR `data` ref (URLs are just presigns of the same S3 object;
-//   PhotoImg owns URL freshness + heals expiry). So an unchanged list yields an Object.is-equal
-//   snapshot → no re-render, no re-download of the visible screenful. A real membership/field change
-//   adopts the fresh list.
+//   PhotoImg owns URL freshness + heals expiry). So an unchanged list does not re-download the
+//   visible screenful. A real membership/field change adopts the fresh list.
+//   ⚠ CORRECTION (2026-07-31): this used to claim an unchanged list "yields an Object.is-equal
+//   snapshot → no re-render". FALSE. _commit unconditionally nulls e.snap, so getSnapshot builds a
+//   NEW object after every settle and useSyncExternalStore re-renders on every revalidate. What is
+//   actually stable is the `data` REF — which is what stops the re-download, via consumers' useMemo.
+//   The win is real; the stated mechanism was not. (Same class as the false claim corrected in
+//   useCacheLifecycle.js — a wrong comment here seeds wrong impact analyses later.)
 // - ERROR ONLY WHEN NO DATA: a revalidate failure with a cached value keeps serving the value
 //   (error:null); only a COLD failure surfaces `error`.
 // - FRESHNESS CLOCK IS NETWORK-ONLY (SW-STALEAPI-001): `at` records the last time the network actually

@@ -20,7 +20,10 @@ import { useAuthOptional } from '../context/AuthContext.jsx'
 import * as cache from '../lib/dataCache.js'
 import { IMAGE_LIST_CACHE_ENABLED } from '../lib/featureFlags.js'
 
-const EMPTY_SNAP = { status: 'empty', data: undefined, error: null, isValidating: false }
+// `stale` (SW-STALEAPI-001): the last commit came from the service worker's offline cache rather
+// than the network. Carried through so a surface can say so; the correctness half — never
+// advancing the freshness clock — lives in dataCache and does not depend on anyone reading this.
+const EMPTY_SNAP = { status: 'empty', data: undefined, error: null, isValidating: false, stale: false }
 const _noopUnsub = () => () => {}
 
 export function useCachedFetch(path) {
@@ -69,8 +72,8 @@ export function useCachedFetch(path) {
 
   if (cached) {
     const loading = snap.data === undefined && snap.status !== 'error'
-    return { data: snap.data, loading, error: snap.error, isValidating: snap.isValidating, refetch }
+    return { data: snap.data, loading, error: snap.error, isValidating: snap.isValidating, stale: !!snap.stale, refetch }
   }
-  if (usePlain) return { data: local.data, loading: local.loading, error: local.error, isValidating: false, refetch }
-  return { data: undefined, loading: false, error: null, isValidating: false, refetch }   // IDLE (no path)
+  if (usePlain) return { data: local.data, loading: local.loading, error: local.error, isValidating: false, stale: false, refetch }
+  return { data: undefined, loading: false, error: null, isValidating: false, stale: false, refetch }   // IDLE (no path)
 }
