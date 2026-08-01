@@ -102,6 +102,9 @@ const SITES = [
   ['plants/index.js', 'source_inventory_item_id', 'loadOwnedInventoryItem'],
   ['inventory-items/index.js', 'location_id', 'loadOwnedLocation'],
   ['projects/index.js', 'location_id', 'loadOwnedLocation'],
+  // V4-SPACEPHOTO-001: photos.space_id is attachable from the POST body, and the ?space_id gallery
+  // reads back by it — an ungated attach is a live cross-household READ, not just a bad FK.
+  ['photos/index.js', 'space_id', 'loadOwnedSpace'],
 ];
 
 describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a loader', () => {

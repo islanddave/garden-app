@@ -13,7 +13,11 @@ const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
 describe('photos Lambda — Household Mode uploaded_by -> created_by switch', () => {
   it('imports householdScope + computes householdIds', () => {
-    expect(SRC).toMatch(/import \{ householdScope \} from '\.\/household\.js'/);
+    // V4-SPACEPHOTO-001: match householdScope among a NAMED-IMPORT LIST, not as the sole import —
+    // the handler now also pulls loadOwnedSpace/warnRejectedFk (same loosening as plants/
+    // inventory-items did at V4-AUTHZSWEEP-001). The invariant is that householdScope is imported
+    // from the per-dir copy, not that it is alone in the braces.
+    expect(SRC).toMatch(/import \{[^}]*\bhouseholdScope\b[^}]*\} from '\.\/household\.js'/);
     expect(SRC).toMatch(/const householdIds = householdScope\(userId\)/);
   });
 

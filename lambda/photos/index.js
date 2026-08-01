@@ -4,7 +4,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { householdScope } from './household.js';
+import { householdScope, loadOwnedSpace, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isAllowedUploadKey } from './uploadKeyPolicy.js';
 
@@ -47,6 +47,10 @@ const RELAY_MAX_B64_CHARS = 5_200_000;      // ≈3.9MB decoded
 const RELAY_THUMB_MAX_B64_CHARS = 700_000;  // ≈525KB decoded; thumbs run 80-260KB
 const SAFE_EXT = /^[a-z0-9]{1,8}$/;
 const SAFE_CONTENT_TYPE = /^image\/[a-zA-Z0-9.+-]{1,32}$/;
+// V4-SPACEPHOTO-001: space/photo ids reach uuid-typed columns. An unparseable value raises 22P02,
+// which isUpstream() does not classify — it would surface as an opaque 500 on what is really a bad
+// request. Shape-check first so every rejection is a 400 with the same generic body.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function resp(statusCode, body) {
   return {
@@ -94,7 +98,12 @@ async function getViewUrl(storagePath) {
 //                     photo's POST had no parent, so the TAG is its first deposit; without this the
 //                     plant silently stays photo-less. A re-tag of an already-tagged photo is still
 //                     a correction, not a deposit, and still does NOT promote.
-async function autoPromoteFeatured(sql, photo, householdIds) {
+//
+// V4-SPACEPHOTO-001 adds a FIFTH arm (spaces), gated on opts.spaceEnabled. The gate is a prod-safety
+// control, not a feature toggle: prod has no spaces.featured_photo_id column, so an ungated arm would
+// 42703 straight into the swallowed catch below and nothing would ever be visibly wrong — the space
+// would just silently never get a hero. `opts` is optional so existing 3-arg call sites are unchanged.
+async function autoPromoteFeatured(sql, photo, householdIds, opts) {
   try {
     if (photo.project_id) {
       await sql`
@@ -142,10 +151,195 @@ async function autoPromoteFeatured(sql, photo, householdIds) {
            AND deleted_at IS NULL
       `;
     }
+    // V4-SPACEPHOTO-001. Mirrors the inventory_items arm, MINUS the deleted_at predicate: `spaces`
+    // has no deleted_at column (verified live). Asserting one would 42703 into the catch below, so
+    // a space photo would silently never auto-feature — the exact failure this arm exists to avoid.
+    if (opts?.spaceEnabled && photo.space_id) {
+      await sql`
+        UPDATE spaces
+           SET featured_photo_id = ${photo.id}
+         WHERE id = ${photo.space_id}
+           AND created_by = ANY(${householdIds})
+           AND featured_photo_id IS NULL
+      `;
+    }
   } catch (promoteErr) {
     console.error('auto-promote non-fatal failure', promoteErr?.message ?? promoteErr);
   }
 }
+
+// V4-SPACEPHOTO-001 — the photos upsert exists in TWO literal variants and that duplication is a
+// deliberate prod-safety control, not an oversight. A neon tagged template's SQL text is STATIC: a
+// JS `if` inside one template cannot keep `space_id` out of the emitted statement. Prod has no
+// photos.space_id column, so a single widened template would 42703 EVERY upload the moment this
+// lands — regardless of the flag. The flag-OFF branch below is byte-identical to the pre-V4
+// statement; the widened branch is only ever constructed when SPACE_PHOTOS_ENABLED=true.
+//
+// ADD-PARENT on conflict (widened branch only): the dedupe returns the EXISTING row, which today
+// silently drops the parent the caller asked for. A "grand photo" is by definition an image already
+// attached to a planting, so a plain INSERT would never attach it to the space. COALESCE keeps an
+// existing space_id (re-attaching elsewhere is a re-tag, not an upload) and fills a NULL one.
+function buildPhotoInsert(sql, body, userId, spaceEnabled) {
+  if (spaceEnabled) {
+    return sql`
+      INSERT INTO photos
+        (project_id, event_id, location_id, plant_id, inventory_item_id, space_id,
+         storage_path, caption, is_public, uploaded_by, created_by,
+         taken_at, content_hash, file_size_bytes, mime_type, original_filename,
+         gps_lat, gps_lon, intake_status)
+      VALUES (
+        ${body.project_id ?? null},
+        ${body.event_id ?? null},
+        ${body.location_id ?? null},
+        ${body.plant_id ?? null},
+        ${body.inventory_item_id ?? null},
+        ${body.space_id ?? null},
+        ${body.storage_path},
+        ${body.caption ?? null},
+        ${body.is_public ?? true},
+        ${userId},
+        ${userId},
+        ${body.taken_at ?? null},
+        ${body.content_hash ?? null},
+        ${body.file_size_bytes ?? null},
+        ${body.mime_type ?? null},
+        ${body.original_filename ?? null},
+        ${body.gps_lat ?? null},
+        ${body.gps_lon ?? null},
+        ${body.intake_status ?? null}
+      )
+      ON CONFLICT (created_by, content_hash)
+        WHERE content_hash IS NOT NULL AND deleted_at IS NULL
+        DO UPDATE SET updated_at = now(),
+                      space_id = COALESCE(photos.space_id, EXCLUDED.space_id)
+      RETURNING *, (xmax = 0) AS was_inserted
+    `;
+  }
+  return sql`
+    INSERT INTO photos
+      (project_id, event_id, location_id, plant_id, inventory_item_id,
+       storage_path, caption, is_public, uploaded_by, created_by,
+       taken_at, content_hash, file_size_bytes, mime_type, original_filename,
+       gps_lat, gps_lon, intake_status)
+    VALUES (
+      ${body.project_id ?? null},
+      ${body.event_id ?? null},
+      ${body.location_id ?? null},
+      ${body.plant_id ?? null},
+      ${body.inventory_item_id ?? null},
+      ${body.storage_path},
+      ${body.caption ?? null},
+      ${body.is_public ?? true},
+      ${userId},
+      ${userId},
+      ${body.taken_at ?? null},
+      ${body.content_hash ?? null},
+      ${body.file_size_bytes ?? null},
+      ${body.mime_type ?? null},
+      ${body.original_filename ?? null},
+      ${body.gps_lat ?? null},
+      ${body.gps_lon ?? null},
+      ${body.intake_status ?? null}
+    )
+    ON CONFLICT (created_by, content_hash)
+      WHERE content_hash IS NOT NULL AND deleted_at IS NULL
+      DO UPDATE SET updated_at = now()
+    RETURNING *, (xmax = 0) AS was_inserted
+  `;
+}
+
+// ── V4-SPACEPHOTO-001 space-hero reads ────────────────────────────────────────────────────────────
+// Both helpers below take `spaceEnabled` and return EARLY when it is false. That is the same
+// prod-safety property buildPhotoInsert's two-template split buys, obtained the cheaper way: a neon
+// tagged template's SQL text comes into existence only when the tagged expression is EVALUATED, so a
+// function that returns before its template is never a statement at all. Prod has neither
+// photos.space_id nor spaces.featured_photo_id, so with the flag off nothing here can 42703.
+// The guard lives INSIDE the helpers (rather than only at the two call sites) so that a future
+// caller cannot reintroduce the hazard by forgetting the outer `if`.
+
+// Resolve the caller's OWN household space with no id supplied — the discovery path. Without this
+// every space route needs a :spaceId the client has no way to obtain: there is no /api/spaces, and
+// no shipped read shape leaks workspace_id.
+//
+// OWNERSHIP RULE = spaces.created_by, deliberately the SAME predicate loadOwnedSpace() and every
+// other space route uses. The tempting alternative — walking the de-facto garden_node.workspace_id
+// -> spaces.id link (verified live: every garden_node/container row carries the single space's id,
+// but there is NO declared FK either way) — describes ASSOCIATION, not ownership, and would hand the
+// client a space that the very next PUT /space-featured then 400s as unowned. One resolution rule,
+// one authz predicate, no route can disagree with another.
+//
+// MULTI-SPACE: deterministic oldest-first, never an error. created_at never changes, so the pick is
+// stable across calls; id breaks a same-instant tie. Erroring on >1 would take a household's hero
+// down the moment it gained a second space — a regression triggered by unrelated data. COUNT(*)
+// OVER () is evaluated before LIMIT, so one round trip yields both the pick and the true total, and
+// the total is returned to the caller so the day the one-space assumption breaks is VISIBLE instead
+// of silently arbitrary.
+async function resolveHouseholdSpace(sql, householdIds, spaceEnabled) {
+  if (!spaceEnabled) return [];
+  return sql`
+    SELECT id, COUNT(*) OVER () AS household_space_count
+      FROM spaces
+     WHERE created_by = ANY(${householdIds})
+     ORDER BY created_at ASC, id ASC
+     LIMIT 1
+  `;
+}
+
+// The space-hero read itself, shared verbatim by the /:spaceId form and the no-id form so the two
+// can never drift.
+//
+// SOFT-DELETE FALLBACK (the reason this is not a one-line lookup): photos are soft-deleted, and
+// spaces.featured_photo_id -> photos(id) is ON DELETE SET NULL, which only fires on a HARD delete.
+// So a soft-deleted hero leaves the FK intact and pointing at a row whose S3 object the gallery no
+// longer shows — presigning it yields a dead URL. The stored hero is therefore joined WITH the
+// deleted_at filter, and falls back to the space's newest surviving photo.
+//
+// featured_photo_id is the EFFECTIVE hero, not the raw column, so the id and the url can never
+// disagree — but that alone makes the response AMBIGUOUS, and the ambiguity had a real cost: the
+// client's set-featured control has an identity no-op guard, so tapping "set as feature photo" on
+// the photo that merely HAPPENS to be the fallback matched the returned id, no-oped, and never
+// persisted the designation — the hero silently reverted on the next upload.
+// featured_is_explicit closes that: TRUE iff the returned id came from spaces.featured_photo_id
+// (alive + household-owned), FALSE whenever it came from the fallback or there is no hero at all.
+async function fetchSpaceHero(sql, spaceId, householdIds, spaceEnabled) {
+  if (!spaceEnabled) return [];
+  return sql`
+    SELECT s.id AS space_id,
+           s.name,
+           COALESCE(fp.id, fb.id) AS featured_photo_id,
+           (fp.id IS NOT NULL) AS featured_is_explicit,
+           COALESCE(fp.storage_path, fb.storage_path) AS hero_storage_path
+      FROM spaces s
+      LEFT JOIN photos fp
+             ON fp.id = s.featured_photo_id
+            AND fp.deleted_at IS NULL
+            AND fp.created_by = ANY(${householdIds})
+      LEFT JOIN LATERAL (
+             SELECT p.id, p.storage_path
+               FROM photos p
+              WHERE p.space_id = s.id
+                AND p.deleted_at IS NULL
+                AND p.created_by = ANY(${householdIds})
+              ORDER BY p.created_at DESC
+              LIMIT 1
+           ) fb ON true
+     WHERE s.id = ${spaceId}
+       AND s.created_by = ANY(${householdIds})
+  `;
+}
+
+// The shape a hero response takes when there is nothing to show. Used for the no-id form ONLY —
+// the /:spaceId form still 404s an unknown/foreign space, because there the caller named an id and
+// a 200 would confirm nothing either way. With no id there is nothing to probe FOR, so "your
+// household has no space" is an empty state, not an error: a 404 here is indistinguishable from a
+// broken scope and would force the client to treat a normal condition as a failure.
+const EMPTY_SPACE_HERO = {
+  space_id: null,
+  name: null,
+  featured_photo_id: null,
+  featured_is_explicit: false,
+  featured_photo_view_url: null,
+};
 
 export const handler = async (event) => {
   // A-Pending-4 (T1-6, default-in): single method+path route log — makes CloudWatch invocation
@@ -185,6 +379,14 @@ export const handler = async (event) => {
   const householdIds = householdScope(userId);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/photos';
+  // V4-SPACEPHOTO-001 kill-flag, default OFF (absent env == disabled). Read per-invocation, matching
+  // the CARE_RAIN_CREDIT_ENABLED / CARE_RAIN_MAXDAYS_ENABLED house pattern in lambda/daily-plan.
+  // PROMOTE SAFETY: photos.space_id and spaces.featured_photo_id exist on the staging Neon branch
+  // ONLY. With the flag off, no statement this handler emits may NAME either column — every surface
+  // below is gated by SELECTING A DIFFERENT SQL TEMPLATE, never by a runtime `if` inside one
+  // template, because a tagged template's text is fixed at construction. Flag OFF == byte-identical
+  // to the pre-V4-SPACEPHOTO handler, including the two new routes, which do not exist at all.
+  const spacePhotosEnabled = process.env.SPACE_PHOTOS_ENABLED === 'true';
 
   try {
     // GET /api/photos/upload-url — returns pre-signed S3 PUT URL for browser upload
@@ -334,6 +536,110 @@ export const handler = async (event) => {
       return resp(200, { view_url: viewUrl, expires_in: 900 });
     }
 
+    // ── V4-SPACEPHOTO-001 space routes (all inert unless SPACE_PHOTOS_ENABLED=true) ───────────────
+    // There is deliberately NO /api/spaces Lambda. A new function would need a Function URL, CORS,
+    // a repo variable, entries in three deploy matrices and an Infrastructure-Sync doc update —
+    // disproportionate for a ONE-ROW table. The cost is the smell noted on space-hero below.
+    // The id-free space-hero form below is what makes that affordable: it is the DISCOVERY path, so
+    // the client never needs a spaces list just to learn its own space id.
+
+    // Turns hero rows into the response body: strips the internal storage path and presigns.
+    // A presign failure leaves the url null rather than 500ing the hero read.
+    const heroBody = async (rows) => {
+      if (!rows.length) return null;
+      const { hero_storage_path: heroPath, ...hero } = rows[0];
+      let featured_photo_view_url = null;
+      try {
+        featured_photo_view_url = heroPath
+          ? await resolvePhotoViewUrl(heroPath, { presign: getViewUrl, sm })
+          : null;
+      } catch { /* stays null — a presign failure must not 500 the hero read */ }
+      return { ...hero, featured_photo_view_url };
+    };
+
+    // GET /api/photos/space-hero — the id-free form. THE DISCOVERY FIX: every other space route
+    // needs a :spaceId, and before this there was no shipped surface from which a client could
+    // obtain one (no /api/spaces; the plants list SELECT omits workspace_id; the daily-plan read
+    // model drops it). The frontend's stopgap was a VITE_SPACE_ID build variable that is unset in
+    // every environment, i.e. the feature was unreachable even with the flag on.
+    //
+    // Resolution rule, zero-space and multi-space behaviour: see resolveHouseholdSpace above.
+    // The response carries space_id, which is exactly what the client then feeds to
+    // ?space_id / space-featured / space-hero/:spaceId — one round trip bootstraps all of them.
+    if (spacePhotosEnabled && rawPath === '/api/photos/space-hero' && method === 'GET') {
+      const owned = await resolveHouseholdSpace(sql, householdIds, spacePhotosEnabled);
+      const household_space_count = owned.length ? Number(owned[0].household_space_count) : 0;
+      if (household_space_count > 1) {
+        // Not an error, but the one-space assumption this app was built on has just stopped
+        // holding — the pick is deterministic, yet arbitrary from the user's point of view.
+        console.warn(JSON.stringify({ msg: 'space-hero-multi-space', userId, household_space_count }));
+      }
+      if (!owned.length) return resp(200, { ...EMPTY_SPACE_HERO, household_space_count });
+      const body = await heroBody(await fetchSpaceHero(sql, owned[0].id, householdIds, spacePhotosEnabled));
+      return resp(200, { ...(body ?? EMPTY_SPACE_HERO), household_space_count });
+    }
+
+    // GET /api/photos/space-hero/:spaceId — the explicit form. Unchanged contract apart from the
+    // additive featured_is_explicit field; still 404s an unknown or out-of-household space.
+    // SMELL, acknowledged and priced in: this returns spaces.name, which is not photos-domain data.
+    // It is here only because standing up a spaces Lambda costs more than the smell. If `spaces`
+    // ever grows real CRUD, this route moves.
+    const spaceHeroMatch = rawPath.match(/^\/api\/photos\/space-hero\/([^/]+)$/);
+    if (spacePhotosEnabled && spaceHeroMatch && method === 'GET') {
+      const spaceId = spaceHeroMatch[1];
+      if (!UUID_RE.test(spaceId)) return resp(404, { error: 'Not found' });
+      const body = await heroBody(await fetchSpaceHero(sql, spaceId, householdIds, spacePhotosEnabled));
+      if (!body) return resp(404, { error: 'Not found' });
+      return resp(200, body);
+    }
+
+    // PUT /api/photos/space-featured/:spaceId — body { photo_id } designates the Space hero;
+    // { photo_id: null } clears it. RE-DESIGNATION is the point: unlike autoPromoteFeatured (which
+    // only fills a NULL), this is an explicit choice and overwrites whatever is there, so the
+    // first-uploaded photo is never permanently locked in.
+    //
+    // AUTHZ: two independent gates, both anchored on created_by — the space must be household-owned
+    // (loadOwnedSpace) AND the photo must already carry space_id = :spaceId and be household-owned.
+    // NOT uploaded_by: that is the stale pattern (V-C1); every other featured-photo validator in the
+    // repo uses created_by. Every rejection returns the SAME generic 400 — a distinct "not found"
+    // would itself be an existence oracle for another household's ids.
+    const spaceFeaturedMatch = rawPath.match(/^\/api\/photos\/space-featured\/([^/]+)$/);
+    if (spacePhotosEnabled && spaceFeaturedMatch && method === 'PUT') {
+      const spaceId = spaceFeaturedMatch[1];
+      const body = JSON.parse(event.body ?? '{}');
+      const photoId = body.photo_id ?? null;
+      const REJECT = { error: 'photo_id must be a photo attached to a space you can use' };
+
+      if (!UUID_RE.test(spaceId)) return resp(400, REJECT);
+      if (!await loadOwnedSpace(sql, spaceId, householdIds)) {
+        warnRejectedFk(userId, 'spaces', 'id', spaceId);
+        return resp(400, REJECT);
+      }
+      if (photoId != null) {
+        if (!UUID_RE.test(String(photoId))) return resp(400, REJECT);
+        const linkRows = await sql`
+          SELECT 1 FROM photos
+           WHERE id = ${photoId}
+             AND space_id = ${spaceId}
+             AND created_by = ANY(${householdIds})
+             AND deleted_at IS NULL
+        `;
+        if (!linkRows.length) {
+          warnRejectedFk(userId, 'spaces', 'featured_photo_id', photoId);
+          return resp(400, REJECT);
+        }
+      }
+      const updated = await sql`
+        UPDATE spaces
+           SET featured_photo_id = ${photoId}, updated_at = now()
+         WHERE id = ${spaceId}
+           AND created_by = ANY(${householdIds})
+        RETURNING id AS space_id, featured_photo_id
+      `;
+      if (!updated.length) return resp(400, REJECT);
+      return resp(200, updated[0]);
+    }
+
     // GET /api/photos — list user's photos with optional filters
     if (rawPath === '/api/photos' && method === 'GET') {
       const projectId = event.queryStringParameters?.project_id ?? null;
@@ -351,6 +657,14 @@ export const handler = async (event) => {
       // ?project_id, NOT an attachment source for planting galleries — the Dave 2026-07-09 rule
       // behind ?attachedTo is unchanged.
       const locationId = event.queryStringParameters?.location_id ?? null;
+      // V4-SPACEPHOTO-001: the SPACE gallery (photos.space_id), which is NOT ?location_id above.
+      // ?location_id walks a WITH RECURSIVE loc_subtree — reusing that walk here is the original
+      // bug: a Space gallery would also show every descendant LOCATION's photos. This is an EXACT
+      // match on the space, nothing else. Parsed only when the flag is on, so with the flag off
+      // spaceId is unconditionally null, its branch is unreachable, and an unknown ?space_id param
+      // is ignored exactly as it is today.
+      const spaceId = spacePhotosEnabled ? (event.queryStringParameters?.space_id ?? null) : null;
+      if (spaceId !== null && !UUID_RE.test(spaceId)) return resp(400, { error: 'space_id must be a uuid' });
       // Restored to 120 now that the grid takes ~200KB thumbs instead of full originals:
       // 120 thumbs is ~24MB where 120 originals was ~369MB (both measured 2026-07-27). The
       // interim 30 was a stopgap that traded a blank tab for a hard cut with no pagination.
@@ -411,6 +725,23 @@ export const handler = async (event) => {
             WHERE p.created_by = ANY(${householdIds})
               AND p.project_id = ${projectId}
               AND p.deleted_at IS NULL
+            ORDER BY p.created_at DESC
+            LIMIT ${limit}
+          `;
+      } else if (spaceId) {
+        // EXACT match. The created_by conjunct is load-bearing and must never be dropped as
+        // "redundant with the space check": space_id is attachable, so without it an attach to a
+        // space the caller can see would expose every OTHER household's photos on that space.
+        rows = await sql`
+            SELECT
+              p.id, p.project_id, p.event_id, p.location_id, p.plant_id, p.space_id,
+              p.storage_path, p.caption, p.is_public, p.created_at,
+              pp.display_name AS project_name
+            FROM photos p
+            LEFT JOIN public.container pp ON pp.id = p.project_id
+            WHERE p.created_by = ANY(${householdIds})
+              AND p.deleted_at IS NULL
+              AND p.space_id = ${spaceId}
             ORDER BY p.created_at DESC
             LIMIT ${limit}
           `;
@@ -479,9 +810,24 @@ export const handler = async (event) => {
       }
       // photos_must_have_parent admits a parentless row ONLY for 'pending_tag'. An 'upload_failed'
       // row with no parent is therefore a guaranteed constraint violation; 400 it explicitly.
+      // V4-SPACEPHOTO-001: the CHECK is now 7-clause and counts space_id as a parent — but ONLY on
+      // the staging branch, so this guard counts it only when the flag is on. Flag off, spaceParent
+      // is null and the expression is byte-identical to the pre-V4 one.
+      const spaceParent = spacePhotosEnabled ? (body.space_id ?? null) : null;
       if (body.intake_status === 'upload_failed'
-          && !(body.project_id || body.event_id || body.location_id || body.plant_id || body.inventory_item_id)) {
+          && !(body.project_id || body.event_id || body.location_id || body.plant_id || body.inventory_item_id || spaceParent)) {
         return resp(400, { error: "intake_status 'upload_failed' requires a parent" });
+      }
+
+      // AUTHZ (V4-AUTHZSWEEP-001 class): space_id is a cross-entity FK set straight from the body.
+      // The DB FK proves the space EXISTS, not that the caller owns it — an ungated attach both
+      // writes a cross-household FK and, via the ?space_id gallery above, turns into a live
+      // cross-household READ. Generic 400, no existence oracle.
+      if (spacePhotosEnabled && body.space_id != null) {
+        if (!UUID_RE.test(String(body.space_id)) || !await loadOwnedSpace(sql, body.space_id, householdIds)) {
+          warnRejectedFk(userId, 'photos', 'space_id', body.space_id);
+          return resp(400, { error: 'space_id does not match a space you can use' });
+        }
       }
 
       // neon serverless driver: tagged-template calls are auto-committed individually.
@@ -498,37 +844,15 @@ export const handler = async (event) => {
       // DO UPDATE, never DO NOTHING: DO NOTHING returns ZERO rows, so insertedRows[0] is undefined
       // and the very next line TypeErrors into the same 500 it was meant to fix.
       // (xmax = 0) distinguishes a real insert from a conflict-update in the same round trip.
-      const insertQuery = sql`
-        INSERT INTO photos
-          (project_id, event_id, location_id, plant_id, inventory_item_id,
-           storage_path, caption, is_public, uploaded_by, created_by,
-           taken_at, content_hash, file_size_bytes, mime_type, original_filename,
-           gps_lat, gps_lon, intake_status)
-        VALUES (
-          ${body.project_id ?? null},
-          ${body.event_id ?? null},
-          ${body.location_id ?? null},
-          ${body.plant_id ?? null},
-          ${body.inventory_item_id ?? null},
-          ${body.storage_path},
-          ${body.caption ?? null},
-          ${body.is_public ?? true},
-          ${userId},
-          ${userId},
-          ${body.taken_at ?? null},
-          ${body.content_hash ?? null},
-          ${body.file_size_bytes ?? null},
-          ${body.mime_type ?? null},
-          ${body.original_filename ?? null},
-          ${body.gps_lat ?? null},
-          ${body.gps_lon ?? null},
-          ${body.intake_status ?? null}
-        )
-        ON CONFLICT (created_by, content_hash)
-          WHERE content_hash IS NOT NULL AND deleted_at IS NULL
-          DO UPDATE SET updated_at = now()
-        RETURNING *, (xmax = 0) AS was_inserted
-      `;
+      //
+      // NOT wrapped in sql.transaction with the auto-promote below, and that is deliberate — see
+      // buildPhotoInsert. neon's HTTP transaction is NON-INTERACTIVE: every statement must be built
+      // before any of them runs, so the promote arms (which need the RETURNING id) could only join
+      // the transaction with a client-generated id — and on the ON CONFLICT dedupe path that id is
+      // never inserted, so `SET featured_photo_id = <that id>` FK-violates and rolls back the whole
+      // upsert, turning today's 200-duplicate into a 500 on exactly the grand-photo flow add-parent
+      // exists to serve. It would also invert the documented NON-FATAL promote contract above.
+      const insertQuery = buildPhotoInsert(sql, body, userId, spacePhotosEnabled);
 
       const insertedRows = await insertQuery;
       const { was_inserted: wasInserted, ...inserted } = insertedRows[0];
@@ -540,7 +864,7 @@ export const handler = async (event) => {
         return resp(200, { ...inserted, duplicate: true });
       }
 
-      await autoPromoteFeatured(sql, inserted, householdIds);
+      await autoPromoteFeatured(sql, inserted, householdIds, { spaceEnabled: spacePhotosEnabled });
 
       // DRG-ENGINE-003 V1.1 — auto-capture on photo log (Dave 2026-06-21): a photo logged against a
       // planting is first-party observational evidence. Resolve the canonical entity_id (entity registry,

@@ -76,11 +76,11 @@ export async function loadOwnedPlanting(sql, plantId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
-// Verify a space_id. Built for V4-SPACEPHOTO-001 (Lane C) to consume; nothing wires it yet.
+// Verify a space_id. Consumed by V4-SPACEPHOTO-001 in lambda/photos (attach + set-featured).
 // NO deleted_at predicate — the spaces table has no such column (verified live, V-P2).
-// ⚠ PREREQUISITE: spaces.created_by is NULLABLE and is NULL on the only live space row, so this
-// predicate currently rejects EVERY space. Lane C must backfill spaces.created_by before wiring
-// this in, or its attach path will reject all writes. Deliberately strict rather than adding an
+// spaces.created_by is still NULLABLE, but the one live space row IS populated on BOTH prod and
+// the staging branch (re-verified 2026-07-31), so this predicate no longer rejects every space —
+// the earlier backfill prerequisite is discharged. Deliberately strict rather than adding an
 // `OR created_by IS NULL` escape, which would make an unowned space writable by any household.
 export async function loadOwnedSpace(sql, spaceId, householdIds) {
   const rows = await sql`
