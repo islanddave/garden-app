@@ -1,0 +1,13 @@
+{
+  "_README": "Column refs waived from the L-081 schema audit (scripts/dev-main-schema-audit.py, workflow 'L-081 Schema Audit (dev)'). A waiver is ONLY legitimate for a ref that is unreachable in prod at runtime — i.e. gated behind a feature flag that is OFF in prod — where the code has deliberately landed on dev ahead of the prod DDL. It is NOT a way to silence a real L-081 miss: an ungated ref to a column prod lacks 500s every request on the handler and must never be waived. Waivers are SELF-EXPIRING: once the column exists in prod, a lingering waiver becomes a hard FAIL telling you to delete it, so this file cannot rot into permanent noise.",
+  "_entry_shape": "\"table.column\": { reason, flag, date, waived_by, remove_when }",
+  "waived_refs": {
+    "photos.space_id": {
+      "reason": "V4-SPACEPHOTO-001 Lane C landed on dev ahead of the prod DDL. The ref at lambda/photos/index.js is inside buildPhotoInsert's WIDENED template, which is only ever constructed when SPACE_PHOTOS_ENABLED=true. That variable is unset in prod, so the OFF template — byte-identical to the pre-V4 statement — is the only one that can be emitted there. Proven by execution, not assertion: lambda/photos/space-photos.test.js runs the builder against a recording fake sql with the flag off and asserts the emitted SQL text contains no space_id, and an enumeration test pins how many templates may name it so a future ungated one reds the build.",
+      "flag": "SPACE_PHOTOS_ENABLED",
+      "date": "2026-07-31",
+      "waived_by": "frontroadmap-postship-20260731",
+      "remove_when": "migrations/v4-spacephoto-001 is applied to prod. Deleting this entry is not optional cleanup — the audit hard-FAILS on a waiver whose column now exists."
+    }
+  }
+}

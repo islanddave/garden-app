@@ -50,6 +50,7 @@ Canonical home: garden-app/scripts/ (CI + local invocation against garden-app).
 """
 import argparse
 import glob
+import json
 import os
 import re
 import sys
@@ -212,6 +213,11 @@ def main() -> int:
         help="env file with NEON_DATABASE_URL (default: {repo-root}/.env.local)",
     )
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--allowlist",
+        default=None,
+        help="waived column refs (default: {repo-root}/scripts/schema-audit-allowlist.json)",
+    )
     args = parser.parse_args()
 
     repo = Path(args.repo_root).resolve()
@@ -347,6 +353,46 @@ def main() -> int:
         p1_summary += f" -- UNAUDITED: {', '.join(p1_skipped)}"
         print(f"WARN: {p1_summary}", file=sys.stderr)
     print(p1_summary)
+
+    # ── Flag-gated waivers (see scripts/schema-audit-allowlist.json) ──────────────────────────
+    # A ref may be waived ONLY when it is unreachable in prod at runtime — gated behind a flag
+    # that is off there — so the code can land on dev ahead of the prod DDL without the audit
+    # going permanently red and eroding its own signal. Two properties keep this honest:
+    #   1. a waiver suppresses a MISS, never a real ungated one (that is on the author to assert,
+    #      and the flag-gate proof lives in the handler's own tests);
+    #   2. it SELF-EXPIRES — once prod actually has the column the waiver is stale, and a stale
+    #      waiver is a hard FAIL demanding its deletion. That is what stops this file rotting
+    #      into a permanent silencer, which is how allowlists usually die.
+    allow_path = Path(args.allowlist) if args.allowlist else repo / "scripts" / "schema-audit-allowlist.json"
+    waived: dict = {}
+    if allow_path.exists():
+        try:
+            waived = (json.loads(allow_path.read_text()) or {}).get("waived_refs", {}) or {}
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"FAIL: could not read {allow_path}: {exc}", file=sys.stderr)
+            return 2
+
+    stale = [
+        key for key in waived
+        if "." in key
+        and key.split(".", 1)[1] in table_cache.get(key.split(".", 1)[0], set())
+    ]
+    if stale:
+        print(f"FAIL: {len(stale)} STALE waiver(s) in {allow_path.name} — the column now exists in prod:")
+        for key in sorted(stale):
+            print(f"    - {key}  (remove this entry; the audit should be enforcing it again)")
+        print()
+        print("A waiver that outlives its need silently disables a real guard. Delete it.")
+        return 1
+
+    if waived:
+        kept = [m for m in missing if f"{m[2]}.{m[3]}" not in waived]
+        for phase, ref, table, col in missing:
+            if f"{table}.{col}" in waived:
+                entry = waived[f"{table}.{col}"]
+                flag = entry.get("flag", "?") if isinstance(entry, dict) else "?"
+                print(f"WAIVED [{phase}] {table}.{col}  ({ref}) — gated behind {flag}, absent in prod")
+        missing = kept
 
     total = len(asserted)
     if missing:
