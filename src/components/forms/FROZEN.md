@@ -15,7 +15,7 @@ Barrel: `src/components/forms/index.js`. Token layer: `formStyles.js` (`T`) + pa
 | Primitive | Role |
 |---|---|
 | **Card** | Bounded content container (the surface block). |
-| **AsyncRegion** | Async-state content region: error → loading → empty → children. NOT a titled section — compose a local titled `<section>` for headings. |
+| **AsyncRegion** | Async-state content region: error → loading → empty → children. NOT a titled section — compose a local titled `<section>` for headings. The error branch is an inline `ErrorBanner` by default; pass `onRetry` (+ optional `errorTitle` / `retryLabel`) to get the recoverable-error CARD instead — glyph + title + message + `Button variant="secondary"`. Pages must not hand-roll that card. |
 | **PageShell** | Page-level frame (safe-area + max-width + heading slot). |
 | **Field** | Label + control + error wrapper (the form-row unit). |
 | **Input** | Text/number/date input. |

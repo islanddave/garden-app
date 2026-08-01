@@ -72,6 +72,10 @@ describe('Harvests page', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
     expect(screen.getByText(/harvest service had a problem/i)).toBeTruthy()
     expect(screen.getByText('Retry')).toBeTruthy()
+    // Card now comes from AsyncRegion: the ~34px tap target is gone, the aria-hidden glyph stays.
+    const retry = screen.getByRole('button', { name: 'Retry' })
+    expect(parseInt(retry.style.minHeight, 10)).toBeGreaterThanOrEqual(44)
+    expect(screen.getByRole('alert').firstChild.getAttribute('aria-hidden')).toBe('true')
   })
 
   it('filters the log by crop via the picker and shows a dismissible pill', async () => {

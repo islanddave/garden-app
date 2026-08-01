@@ -19,11 +19,22 @@ import React, { useState, useCallback, useMemo } from 'react'
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { P } from '../lib/constants.js'
 import TileGrid from './forms/TileGrid.jsx'
+import AsyncRegion from './forms/AsyncRegion.jsx'
 import Lightbox from './Lightbox.jsx'
 import PhotoImg from './PhotoImg.jsx'
 import useImageWindow from '../hooks/useImageWindow.js'
 
 const EMPTY_PHOTOS = []   // stable ref so the sort/section memos don't re-run while data is undefined
+
+// Canonical photo-load failure copy, shared with PhotoLibrary's grid. Both surfaces branch on the
+// same condition (no status / 5xx ⇒ service-side and worth retrying) and had drifted to two
+// near-identical sentences; this is the one string. `subject` names what failed to load, which is
+// the only genuinely surface-specific part.
+export function photoLoadErrorMessage(error, subject) {
+  return (error?.status == null || error.status >= 500)
+    ? 'The photo service had a problem. This is usually temporary — please retry.'
+    : `Something went wrong loading ${subject}.`
+}
 
 // Month bucket key + human label from an ISO-ish timestamp. Falls back to an "Undated" bucket
 // (sorted last) when created_at is missing/garbage, so a malformed row never drops out silently.
@@ -116,16 +127,11 @@ export default function PhotosWall({
 
   if (error) {
     return (
-      <div role="alert" style={{ textAlign: 'center', padding: '40px 16px', background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 10 }}>
-        <div style={{ fontSize: '2.2rem', marginBottom: 10 }}>⚠️</div>
-        <p style={{ margin: 0, fontSize: '0.92rem', color: P.dark, fontWeight: 600 }}>Couldn’t load your photos</p>
-        <p style={{ margin: '6px 0 14px', fontSize: '0.82rem', color: P.mid }}>
-          {(error?.status == null || error.status >= 500)
-            ? 'The photo service had a problem — usually temporary. Please retry.'
-            : 'Something went wrong loading your photos.'}
-        </p>
-        <button type="button" onClick={refetch} style={{ minHeight: 44, padding: '8px 18px', fontSize: '0.85rem', borderRadius: 8, border: `1px solid ${P.alertBorder}`, background: P.white, color: P.dark, cursor: 'pointer' }}>Retry</button>
-      </div>
+      <AsyncRegion
+        error={photoLoadErrorMessage(error, 'your photos')}
+        errorTitle="Couldn’t load your photos"
+        onRetry={refetch}
+      />
     )
   }
 

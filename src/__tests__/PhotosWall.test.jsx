@@ -90,6 +90,10 @@ describe('PhotosWall — Garden Photos sub-tab', () => {
     expect(screen.getByText(/Couldn’t load your photos/)).toBeTruthy()
     // Retry control is present and a ≥44px tap target.
     expect(screen.getByText('Retry')).toBeTruthy()
+    const retry = screen.getByRole('button', { name: 'Retry' })
+    expect(parseInt(retry.style.minHeight, 10)).toBeGreaterThanOrEqual(44)
+    // The card comes from the AsyncRegion primitive now — decorative glyph hidden from AT.
+    expect(screen.getByRole('alert').firstChild.getAttribute('aria-hidden')).toBe('true')
   })
 })
 

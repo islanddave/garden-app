@@ -251,6 +251,10 @@ describe('PhotoLibrary — V3-PHOTODBG-001 visible load-failure state', () => {
     expect(screen.queryByText(/No photos yet/i)).toBeNull()
     const retry = screen.getByText('Retry')
     expect(retry).toBeDefined()
+    // Card now comes from AsyncRegion: ≥44px tap target + glyph hidden from AT (previously
+    // this surface had neither — the tap target computed to ~34px).
+    expect(parseInt(retry.style.minHeight, 10)).toBeGreaterThanOrEqual(44)
+    expect(alert.firstChild.getAttribute('aria-hidden')).toBe('true')
     // retry calls loadPhotos ONLY (one fetch: /api/photos) — not the projects/locations effects
     fetchSpy.mockResolvedValueOnce([])
     fireEvent.click(retry)
@@ -269,8 +273,9 @@ describe('PhotoLibrary — V3-PHOTODBG-001 visible load-failure state', () => {
     render(<PhotoLibrary />)
     // Fallback copy appears…
     await waitFor(() => expect(screen.getByText(/Couldn.t display your photos/i)).toBeDefined())
-    // …with a Retry affordance…
-    expect(screen.getByText('Retry')).toBeDefined()
+    // …with a Retry affordance that clears the tap-target floor…
+    const retry = screen.getByRole('button', { name: 'Retry' })
+    expect(parseInt(retry.style.minHeight, 10)).toBeGreaterThanOrEqual(44)
     // …and the page chrome (header) is NOT taken down by the fault (boundary contained it).
     expect(screen.getByRole('heading', { name: 'Photos' })).toBeDefined()
     errSpy.mockRestore()

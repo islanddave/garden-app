@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import Sheet from '../components/forms/Sheet.jsx'
+import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import QualityDots from '../components/QualityDots.jsx'
 import StatTile from '../components/StatTile.jsx'
 import { useHarvests } from '../hooks/useHarvests.js'
@@ -508,14 +509,7 @@ function EmptyState({ emoji, title, body }) {
 }
 
 function ErrorState({ message, onRetry }) {
-  return (
-    <div role="alert" style={{ textAlign: 'center', padding: '40px 16px', background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 10 }}>
-      <div style={{ fontSize: '2.2rem', marginBottom: 10 }} aria-hidden="true">⚠️</div>
-      <p style={{ margin: 0, fontSize: '0.92rem', color: P.dark, fontWeight: 600 }}>Couldn’t load your harvests</p>
-      <p style={{ margin: '6px 0 14px', fontSize: '0.82rem', color: P.mid }}>{message}</p>
-      <button type="button" onClick={onRetry} style={{ padding: '8px 18px', fontSize: '0.85rem', borderRadius: 8, border: `1px solid ${P.alertBorder}`, background: P.white, color: P.dark, cursor: 'pointer' }}>Retry</button>
-    </div>
-  )
+  return <AsyncRegion error={message} errorTitle="Couldn’t load your harvests" onRetry={onRetry} />
 }
 
 function LoadingSkeleton() {

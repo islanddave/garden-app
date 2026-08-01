@@ -148,6 +148,56 @@ describe('Shell primitives — AsyncRegion / PageShell / ErrorBanner / Spinner /
     expect(screen.getByText('kids')).toBeDefined()
   })
 
+  // The error branch grew a second shape (the recoverable-error card) so pages stop hand-rolling
+  // one. These pin BOTH the backward-compatible default and the union the card canonicalizes.
+  it('AsyncRegion error branch stays the bare ErrorBanner when no onRetry is given', () => {
+    const { container } = render(<AsyncRegion error="boom" />)
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toBe('boom')
+    expect(alert.style.padding).toBe(formStyles.bannerChrome.padding)
+    expect(container.querySelector('button')).toBeNull()
+    expect(container.querySelector('[aria-hidden="true"]')).toBeNull()
+  })
+
+  it('AsyncRegion renders the recoverable-error card when onRetry is supplied', () => {
+    const onRetry = vi.fn()
+    render(<AsyncRegion error="Service had a problem." errorTitle="Couldn’t load your photos" onRetry={onRetry} />)
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain('Couldn’t load your photos')
+    expect(alert.textContent).toContain('Service had a problem.')
+    expect(alert.style.textAlign).toBe('center')
+    expect(alert.style.borderRadius).toBe(`${formStyles.T.radiusCard}px`)
+    const btn = screen.getByRole('button', { name: 'Retry' })
+    fireEvent.click(btn)
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+
+  // Union property 1 — the tap target. Only PhotosWall carried a minHeight before; the other three
+  // computed to ~34px. Routing through Button inherits the frozen 48px floor for every adopter.
+  it('AsyncRegion retry control routes through Button and clears the tap-target floor', () => {
+    render(<AsyncRegion error="x" onRetry={() => {}} />)
+    const btn = screen.getByRole('button', { name: 'Retry' })
+    expect(parseInt(btn.style.minHeight, 10)).toBeGreaterThanOrEqual(44)
+    expect(btn.style.minHeight).toBe(`${formStyles.T.buttonMinHeight}px`)
+    expect(btn.style.borderRadius).toBe(`${formStyles.T.radiusButton}px`)
+    expect(btn.getAttribute('type')).toBe('button')
+  })
+
+  // Union property 2 — the decorative glyph is hidden from AT. Only Harvests did this before;
+  // elsewhere a screen reader announced the warning emoji inside role="alert".
+  it('AsyncRegion error card hides the decorative glyph from assistive tech', () => {
+    render(<AsyncRegion error="x" errorTitle="t" onRetry={() => {}} />)
+    const glyph = screen.getByRole('alert').firstChild
+    expect(glyph.getAttribute('aria-hidden')).toBe('true')
+    expect(glyph.textContent).not.toBe('')
+  })
+
+  it('AsyncRegion error card takes a custom retryLabel and tolerates a missing title', () => {
+    render(<AsyncRegion error="only a message" onRetry={() => {}} retryLabel="Try again" />)
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeDefined()
+    expect(screen.getByRole('alert').querySelectorAll('p')).toHaveLength(1)
+  })
+
   it('PageShell renders title + breadcrumb and forwards async states', () => {
     render(<PageShell title="Add item" breadcrumb="Inventory › Add" error="nope">body</PageShell>)
     expect(screen.getByRole('heading', { name: 'Add item' })).toBeDefined()
