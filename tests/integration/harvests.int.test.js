@@ -20,7 +20,7 @@
 // free of the plants+plant_varieties+crop_types setup while still exercising the full join chain.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js';
+import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js';
 import { handler } from '../../lambda/harvests/index.js';
 
 const RUN = testRunId();
@@ -33,10 +33,8 @@ const ENV_KEY = 'GARDEN_HOUSEHOLD_IDS';
 let savedEnv;
 
 async function mkProject(user, tag) {
-  const r = await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'int-harv-' + tag + '-' + RUN}, ${'int-harv-' + tag + '-' + RUN}, ${user}) RETURNING id`;
-  return r[0].id;
+  const r = await insertProject({ name: 'int-harv-' + tag + '-' + RUN, createdBy: user });
+  return r.id;
 }
 // Insert a harvest event; opts.quantity=null => ORPHAN (no harvest_log row).
 async function mkHarvest(user, projectId, { date, type = 'harvest', quantity = null, unit = 'count', quality = null } = {}) {

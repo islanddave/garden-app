@@ -37,8 +37,8 @@ let projectId, photoId
 beforeAll(async () => {
   setTestUserId(OWNER)
   const p = await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'authz-photo-' + RUN}, ${'authz-photo-' + RUN}, ${OWNER}) RETURNING id`
+    INSERT INTO plant_projects (name, slug, kind, created_by)
+    VALUES (${'authz-photo-' + RUN}, ${'authz-photo-' + RUN}, 'campaign', ${OWNER}) RETURNING id`
   projectId = p[0].id
   // project_id parent satisfies photos_must_have_parent. Seeded via directSql (not POST) so
   // auto-promote never runs and the project's featured_photo_id stays null.

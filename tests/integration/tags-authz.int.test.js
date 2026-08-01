@@ -3,7 +3,7 @@
 // can't express its { direct, projected } read, its create-not-update write, or its 404-vs-403 axis
 // fork). The /api/tags CRUD sub-surface DOES fit the generic matrix (bonus coverage, same Lambda).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
+import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { describeAuthzMatrix } from './_authz.js'
 import { handler as tagsHandler } from '../../lambda/tags/index.js'
 
@@ -20,10 +20,7 @@ describe.skipIf(!HAS_TAGS)('AUTHZ entity-tags /api/entity-tags — attach househ
   let projectId, ownerTagId, foreignTagId, ownerLinkId
 
   beforeAll(async () => {
-    const p = await directSql`
-      INSERT INTO plant_projects (name, slug, created_by)
-      VALUES (${'authz-et-' + OWNER}, ${'authz-et-' + OWNER}, ${OWNER}) RETURNING id`
-    projectId = p[0].id
+    projectId = (await insertProject({ name: 'authz-et-' + OWNER, createdBy: OWNER })).id
     const ot = await directSql`
       INSERT INTO public.tag (facet, label, slug, owner_id, created_by, visibility)
       VALUES ('group', ${'authz-owner-tag-' + RUN}, ${'authz-owner-tag-' + RUN}, ${OWNER}, ${OWNER}, 'shared') RETURNING id`

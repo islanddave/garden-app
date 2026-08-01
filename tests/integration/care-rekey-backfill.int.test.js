@@ -13,7 +13,7 @@
 // test's own plantings so it never scans the shared branch's other data.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { directSql, testRunId } from './_harness.js'
+import { directSql, testRunId, insertProject } from './_harness.js'
 
 const RUN = testRunId()
 const USER = `user_int_rekey_${RUN}`
@@ -22,10 +22,7 @@ let plantA
 let plantB
 
 beforeAll(async () => {
-  const proj = await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'int-rekey-' + RUN}, ${'int-rekey-' + RUN}, ${USER}) RETURNING id`
-  projectId = proj[0].id
+  projectId = (await insertProject({ name: 'int-rekey-' + RUN, createdBy: USER })).id
 
   const a = await directSql`
     INSERT INTO plants (project_id, name, created_by)

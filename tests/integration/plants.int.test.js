@@ -12,7 +12,7 @@
 // S3 mock); featured_photo_view_url signing.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
+import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { handler } from '../../lambda/plants/index.js'
 
 const RUN = testRunId()
@@ -24,17 +24,8 @@ let foreignPlantId
 
 beforeAll(async () => {
   setTestUserId(USER)
-  const own = await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'int-plt-' + RUN}, ${'int-plt-' + RUN}, ${USER}) RETURNING id
-  `
-  projectId = own[0].id
-
-  const foreign = await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'int-plt-foreign-' + RUN}, ${'int-plt-foreign-' + RUN}, ${FOREIGN_USER}) RETURNING id
-  `
-  foreignProjectId = foreign[0].id
+  projectId = (await insertProject({ name: 'int-plt-' + RUN, createdBy: USER })).id
+  foreignProjectId = (await insertProject({ name: 'int-plt-foreign-' + RUN, createdBy: FOREIGN_USER })).id
   const fp = await directSql`
     INSERT INTO plants (project_id, name, created_by)
     VALUES (${foreignProjectId}, ${'foreign-plant-' + RUN}, ${FOREIGN_USER}) RETURNING id

@@ -65,8 +65,8 @@ beforeAll(async () => {
   setTestUserId(USER)
 
   const proj = await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'int-photos-proj-' + RUN}, ${'int-photos-proj-' + RUN}, ${USER})
+    INSERT INTO plant_projects (name, slug, kind, created_by)
+    VALUES (${'int-photos-proj-' + RUN}, ${'int-photos-proj-' + RUN}, 'campaign', ${USER})
     RETURNING id
   `
   projectId = proj[0].id

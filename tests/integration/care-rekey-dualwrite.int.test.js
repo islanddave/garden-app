@@ -10,7 +10,7 @@
 // the WRITE side only (single-event path: sites 2 + 4 in the design's §1.3 map).
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
+import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { handler } from '../../lambda/events/index.js'
 
 const RUN = testRunId()
@@ -24,10 +24,7 @@ const postEvent = (body) => callHandler(handler, { method: 'POST', path: '/api/e
 
 beforeAll(async () => {
   setTestUserId(USER)
-  const proj = await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'int-rkdw-' + RUN}, ${'int-rkdw-' + RUN}, ${USER}) RETURNING id`
-  projectId = proj[0].id
+  projectId = (await insertProject({ name: 'int-rkdw-' + RUN, createdBy: USER })).id
   const mk = async (n) =>
     (await directSql`INSERT INTO plants (project_id, name, created_by)
        VALUES (${projectId}, ${n + '-' + RUN}, ${USER}) RETURNING id`)[0].id
@@ -35,9 +32,7 @@ beforeAll(async () => {
   plantB = await mk('rkdw-B')
   plantC = await mk('rkdw-C')
   // Isolated project for the batch (scope=project) path so scope resolves ONLY D + E.
-  projectBatch = (await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'int-rkdwb-' + RUN}, ${'int-rkdwb-' + RUN}, ${USER}) RETURNING id`)[0].id
+  projectBatch = (await insertProject({ name: 'int-rkdwb-' + RUN, createdBy: USER })).id
   const mkb = async (n) =>
     (await directSql`INSERT INTO plants (project_id, name, created_by)
        VALUES (${projectBatch}, ${n + '-' + RUN}, ${USER}) RETURNING id`)[0].id
@@ -46,6 +41,13 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  // Gamification side-effects of POST /api/events — same four tables cal1-harvweight and
+  // events.int.test.js clear. This file never reached them before (its beforeAll died on the
+  // plant_projects kind CHECK), so the gap only surfaces now that the fixtures are valid.
+  await directSql`DELETE FROM xp_events WHERE user_id = ${USER}`
+  await directSql`DELETE FROM user_achievements WHERE user_id = ${USER}`
+  await directSql`DELETE FROM user_stats WHERE user_id = ${USER}`
+  await directSql`DELETE FROM app_events WHERE user_clerk_sub = ${USER}`
   // entity_memory.plant_id FK is ON DELETE RESTRICT — clear plant-keyed rows BEFORE plants.
   await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by = ${USER})`
   await directSql`DELETE FROM entity_memory WHERE project_id IN (SELECT id FROM plant_projects WHERE created_by = ${USER})`
@@ -97,11 +99,18 @@ describe('care re-key Step B — plant-keyed dual-write (events Lambda)', () => 
   })
 
   it('project-level event (plant_id NULL) writes NO plant-keyed row (self-guard)', async () => {
-    const before = (await directSql`SELECT count(*)::int AS n FROM entity_memory WHERE plant_id IS NOT NULL`)[0].n
+    // Scoped to THIS run's plantings, not a branch-wide `plant_id IS NOT NULL` count: vitest runs
+    // the integration files in parallel against one shared branch, and every sibling file that
+    // seeds a plant-keyed care row moves a global counter mid-test (fails as `expected N+1 to be N`).
+    // Own-user scope still catches the regression under test — a leaked plant-keyed row here would
+    // be keyed to one of this fixture's plantings.
+    const ownPlantKeyed = async () =>
+      (await directSql`SELECT count(*)::int AS n FROM entity_memory
+         WHERE plant_id IN (SELECT id FROM plants WHERE created_by = ${USER})`)[0].n
+    const before = await ownPlantKeyed()
     const res = await postEvent({ project_id: projectId, event_type: 'observation', event_date: '2026-07-19' })
     expect([200, 201]).toContain(res.status)
-    const after = (await directSql`SELECT count(*)::int AS n FROM entity_memory WHERE plant_id IS NOT NULL`)[0].n
-    expect(after).toBe(before)
+    expect(await ownPlantKeyed()).toBe(before)
   })
 
   it('single undo recomputes the plant-keyed last_watered_at from surviving events', async () => {

@@ -15,7 +15,7 @@
 // follow-up bite — they need plants-schema setup and a clean blast radius.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
+import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { handler } from '../../lambda/events/index.js'
 
 const RUN = testRunId()
@@ -27,18 +27,10 @@ let foreignEventId
 
 beforeAll(async () => {
   setTestUserId(USER)
-  const own = await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'int-evt-' + RUN}, ${'int-evt-' + RUN}, ${USER}) RETURNING id
-  `
-  projectId = own[0].id
+  projectId = (await insertProject({ name: 'int-evt-' + RUN, createdBy: USER })).id
 
   // Foreign-owner fixture for 404 / scope tests.
-  const foreign = await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'int-evt-foreign-' + RUN}, ${'int-evt-foreign-' + RUN}, ${FOREIGN_USER}) RETURNING id
-  `
-  foreignProjectId = foreign[0].id
+  foreignProjectId = (await insertProject({ name: 'int-evt-foreign-' + RUN, createdBy: FOREIGN_USER })).id
   // Insert a foreign event directly so the scope test has something to NOT see.
   const fe = await directSql`
     INSERT INTO event_log

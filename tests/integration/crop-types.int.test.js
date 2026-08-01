@@ -25,6 +25,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (MINE.length) {
+    // The handler mirrors each new crop type into the tag vocabulary (facet 'type', owner 'system')
+    // and links it to the cultivar via entity_tag. Both outlive the crop_types row, so the fixture
+    // has to clear them or every run leaves a system-owned tag + a dangling link behind.
+    // entity_tag.tag_id -> tag(id) is ON DELETE RESTRICT: links first, then tags.
+    await directSql`DELETE FROM public.entity_tag WHERE tag_id IN (SELECT id FROM public.tag WHERE slug = ANY(${MINE}))`
+    await directSql`DELETE FROM public.tag WHERE slug = ANY(${MINE})`
     await directSql`DELETE FROM crop_types WHERE slug = ANY(${MINE})`
   }
   await directSql`DELETE FROM crop_types WHERE created_by = ${USER}`

@@ -6,7 +6,7 @@
 // enumerated in _authz.js §COVERAGE (Phase-1 sweep).
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { directSql, callHandler, setTestUserId, testRunId } from './_harness.js'
+import { directSql, callHandler, setTestUserId, testRunId, insertProject } from './_harness.js'
 import { describeAuthzMatrix } from './_authz.js'
 import { handler as plantsHandler } from '../../lambda/plants/index.js'
 import { handler as eventsHandler } from '../../lambda/events/index.js'
@@ -17,11 +17,8 @@ describeAuthzMatrix({
   name: 'plants /api/plants/:id',
   handler: plantsHandler,
   setupOwner: async (owner) => {
-    const p = await directSql`
-      INSERT INTO plant_projects (name, slug, created_by)
-      VALUES (${'authz-plt-' + owner}, ${'authz-plt-' + owner}, ${owner}) RETURNING id
-    `
-    return { projectId: p[0].id }
+    const p = await insertProject({ name: 'authz-plt-' + owner, createdBy: owner })
+    return { projectId: p.id }
   },
   seedResource: async (owner, ctx) => {
     const r = await directSql`
@@ -51,11 +48,8 @@ describeAuthzMatrix({
   name: 'events /api/events/:id',
   handler: eventsHandler,
   setupOwner: async (owner) => {
-    const p = await directSql`
-      INSERT INTO plant_projects (name, slug, created_by)
-      VALUES (${'authz-evt-' + owner}, ${'authz-evt-' + owner}, ${owner}) RETURNING id
-    `
-    return { projectId: p[0].id }
+    const p = await insertProject({ name: 'authz-evt-' + owner, createdBy: owner })
+    return { projectId: p.id }
   },
   seedResource: async (owner, ctx) => {
     const e = await directSql`
@@ -112,13 +106,12 @@ describe('AUTHZ events write-axis /api/events/:id — PATCH-resolve + DELETE-und
   let projectId
 
   beforeAll(async () => {
-    const p = await directSql`
-      INSERT INTO plant_projects (name, slug, created_by)
-      VALUES (${'authz-evtw-' + OWNER}, ${'authz-evtw-' + OWNER}, ${OWNER}) RETURNING id`
-    projectId = p[0].id
+    projectId = (await insertProject({ name: 'authz-evtw-' + OWNER, createdBy: OWNER })).id
   })
 
   afterAll(async () => {
+    // The write-axis arms go through the events handler, which emits an app_events telemetry row.
+    await directSql`DELETE FROM app_events WHERE user_clerk_sub IN (${OWNER}, ${FOREIGN})`
     await directSql`DELETE FROM event_log WHERE created_by = ${OWNER}`
     await directSql`DELETE FROM plant_projects WHERE created_by = ${OWNER}`
   })

@@ -8,7 +8,7 @@
 // boundary — no sensitive column leaks + project visibility gates — NOT an is_public filter (asserting
 // which would contradict the locked decision). See handoff note re: the superseded audit item.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { directSql, callHandler, testRunId } from './_harness.js'
+import { directSql, callHandler, testRunId, insertProject } from './_harness.js'
 import { handler } from '../../lambda/projects/index.js'
 
 const RUN = testRunId()
@@ -20,10 +20,7 @@ const ALLOWED_TOP = ['name', 'slug', 'status', 'species', 'variety', 'descriptio
 const ALLOWED_EVENT = ['id', 'event_type', 'event_date', 'notes', 'quantity'].sort()
 
 beforeAll(async () => {
-  const proj = await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'pub-share-' + RUN}, ${SLUG}, ${OWNER}) RETURNING id`
-  projectId = proj[0].id
+  projectId = (await insertProject({ name: 'pub-share-' + RUN, slug: SLUG, createdBy: OWNER })).id
   // Seed an event carrying SENSITIVE fields — private_notes, flagged_as_issue, is_public=false. The public
   // projection must expose NONE of them (the deny-by-default column allowlist is the boundary under test).
   await directSql`

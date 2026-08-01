@@ -10,7 +10,7 @@
 // attributed to another household's plant_id (which would leak that planting's name/variety back
 // through the read surfaces, and write a cross-household FK).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { directSql, callHandler, setTestUserId, testRunId } from './_harness.js'
+import { directSql, callHandler, setTestUserId, testRunId, insertProject } from './_harness.js'
 import { describeAuthzMatrix } from './_authz.js'
 import { handler as preservationHandler } from '../../lambda/preservation/index.js'
 
@@ -61,14 +61,8 @@ describe('AUTHZ preservation cross-tenant plant_id /api/preservation — attribu
   let ownerProj, foreignProj, ownerPlantId, foreignPlantId
 
   beforeAll(async () => {
-    const op = await directSql`
-      INSERT INTO plant_projects (name, slug, created_by)
-      VALUES (${'authz-presv-op-' + RUN}, ${'authz-presv-op-' + RUN}, ${OWNER}) RETURNING id`
-    ownerProj = op[0].id
-    const fp = await directSql`
-      INSERT INTO plant_projects (name, slug, created_by)
-      VALUES (${'authz-presv-fp-' + RUN}, ${'authz-presv-fp-' + RUN}, ${FOREIGN}) RETURNING id`
-    foreignProj = fp[0].id
+    ownerProj = (await insertProject({ name: 'authz-presv-op-' + RUN, createdBy: OWNER })).id
+    foreignProj = (await insertProject({ name: 'authz-presv-fp-' + RUN, createdBy: FOREIGN })).id
     const opl = await directSql`
       INSERT INTO plants (project_id, name, created_by)
       VALUES (${ownerProj}, ${'authz-presv-oplant-' + RUN}, ${OWNER}) RETURNING id`
@@ -138,12 +132,12 @@ describe('AUTHZ preservation cross-tenant storage_location_id + harvest_log_id �
       VALUES (${FOREIGN}, ${'FOREIGN-SECRET-FREEZER-' + RUN}, ${'deep_freezer'}) RETURNING id`)[0].id
 
     // Owner harvest_log chain (project → event → harvest_log; created_by is loadHarvestLog's anchor).
-    const op = (await directSql`INSERT INTO plant_projects (name, slug, created_by) VALUES (${'authz-wfk-op-' + RUN}, ${'authz-wfk-op-' + RUN}, ${OWNER}) RETURNING id`)[0].id
+    const op = (await insertProject({ name: 'authz-wfk-op-' + RUN, createdBy: OWNER })).id
     const oe = (await directSql`INSERT INTO event_log (project_id, event_type, event_date, is_public, logged_by, created_by) VALUES (${op}, 'harvest', NOW(), false, ${OWNER}, ${OWNER}) RETURNING id`)[0].id
     ownerHarvestId = (await directSql`INSERT INTO harvest_log (event_id, project_id, quantity, unit, created_by) VALUES (${oe}, ${op}, ${3}, ${'lb'}, ${OWNER}) RETURNING id`)[0].id
 
     // Foreign harvest_log chain (another household).
-    const fp = (await directSql`INSERT INTO plant_projects (name, slug, created_by) VALUES (${'authz-wfk-fp-' + RUN}, ${'authz-wfk-fp-' + RUN}, ${FOREIGN}) RETURNING id`)[0].id
+    const fp = (await insertProject({ name: 'authz-wfk-fp-' + RUN, createdBy: FOREIGN })).id
     const fe = (await directSql`INSERT INTO event_log (project_id, event_type, event_date, is_public, logged_by, created_by) VALUES (${fp}, 'harvest', NOW(), false, ${FOREIGN}, ${FOREIGN}) RETURNING id`)[0].id
     foreignHarvestId = (await directSql`INSERT INTO harvest_log (event_id, project_id, quantity, unit, created_by) VALUES (${fe}, ${fp}, ${3}, ${'lb'}, ${FOREIGN}) RETURNING id`)[0].id
   })

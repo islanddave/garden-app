@@ -13,7 +13,7 @@
 // quantity_value is NUMERIC -> the driver returns it as a JS string; readbacks coerce via Number().
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
+import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { handler } from '../../lambda/preservation/index.js'
 
 const RUN = testRunId()
@@ -52,11 +52,7 @@ beforeAll(async () => {
   plantId = pl[0].id
 
   // Harvest-log provenance chain (plant_projects -> event_log -> harvest_log) for ON DELETE SET NULL.
-  const proj = await directSql`
-    INSERT INTO plant_projects (name, slug, created_by)
-    VALUES (${'pres-proj-' + RUN}, ${'pres-proj-' + RUN}, ${USER}) RETURNING id
-  `
-  projectId = proj[0].id
+  projectId = (await insertProject({ name: 'pres-proj-' + RUN, createdBy: USER })).id
   const ev = await directSql`
     INSERT INTO event_log (project_id, event_type, event_date, is_public, logged_by, created_by)
     VALUES (${projectId}, 'harvest', NOW(), false, ${USER}, ${USER}) RETURNING id

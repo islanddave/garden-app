@@ -15,7 +15,7 @@
 // 2026-07-30 to br-damp-frog-amdfxwrr, which integration-test.yml branches its ephemeral DB from);
 // skips cleanly if a branch lacks them.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { directSql, callHandler, setTestUserId, testRunId } from './_harness.js'
+import { directSql, callHandler, setTestUserId, testRunId, insertProject } from './_harness.js'
 import { handler as eventsHandler } from '../../lambda/events/index.js'
 
 const HAS_CAL1 = (await directSql`
@@ -32,10 +32,7 @@ describe.skipIf(!HAS_CAL1)('CAL-1 harvest weight derivation — POST /api/events
 
   beforeAll(async () => {
     setTestUserId(USER)
-    const p = await directSql`
-      INSERT INTO plant_projects (name, slug, created_by)
-      VALUES (${'cal1-' + RUN}, ${'cal1-' + RUN}, ${USER}) RETURNING id`
-    projectId = p[0].id
+    projectId = (await insertProject({ name: 'cal1-' + RUN, createdBy: USER })).id
 
     await directSql`
       INSERT INTO crop_types (slug, display_name, default_unit, grams_per_unit)
