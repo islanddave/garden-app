@@ -151,6 +151,23 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     expect(screen.queryByAltText('space photo')).toBeNull()
   })
 
+  // V4-SPACEPHOTO-001 Lane C (AC-3). The case above still calls a location_id photo "space-only" —
+  // the pre-Lane-C vocabulary. This is the TRUE space tier: a photo whose only parent is space_id.
+  // The predicate arm is unconditional, so this holds regardless of SPACE_PHOTOS_ENABLED.
+  it('untagged filter treats a space_id-only photo as tagged (V4-SPACEPHOTO-001 AC-3)', async () => {
+    const spaceOnly = { id: 'p-space', event_id: null, project_id: null, location_id: null, plant_id: null, space_id: 'space-1', view_url: 'https://x/s.jpg', caption: 'the whole place' }
+    const bare      = { id: 'p-bare',  event_id: null, project_id: null, location_id: null, plant_id: null, space_id: null,      view_url: 'https://x/b.jpg', caption: 'bare photo' }
+    primeMount({ photos: [spaceOnly, bare] })
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
+    fetchSpy.mockResolvedValueOnce([spaceOnly, bare])
+    await act(async () => {
+      fireEvent.click(screen.getByText('Untagged'))
+    })
+    await waitFor(() => expect(screen.getByAltText('bare photo')).toBeDefined())
+    expect(screen.queryByAltText('the whole place')).toBeNull()
+  })
+
   it('handles upload completion: reloads photos and resets form', async () => {
     primeMount()
     render(<PhotoLibrary />)

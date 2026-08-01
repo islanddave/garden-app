@@ -92,3 +92,42 @@ describe('PhotosWall — Garden Photos sub-tab', () => {
     expect(screen.getByText('Retry')).toBeTruthy()
   })
 })
+
+// V4-SPACEPHOTO-001 Lane C — this component is the CANONICAL month-grouped gallery. The Space
+// gallery configures it by props instead of becoming a fourth hand-rolled renderer, so these pin
+// the config surface AND prove the propless default (the Garden Photos sub-tab) is unchanged.
+describe('PhotosWall — prop-config surface (canonical renderer, not a fourth copy)', () => {
+  it('scopes the read to `path` and the wrapper to `testId`', async () => {
+    fetchMock.mockResolvedValue(PHOTOS)
+    await act(async () => { render(<PhotosWall path="/api/photos?space_id=s1" testId="space-photo-wall" />) })
+    expect(fetchMock).toHaveBeenCalledWith('/api/photos?space_id=s1')
+    expect(screen.getByTestId('space-photo-wall')).toBeTruthy()
+    expect(screen.queryByTestId('photos-wall')).toBeNull()
+  })
+
+  it('renders a caller-supplied empty state instead of the default', async () => {
+    fetchMock.mockResolvedValue([])
+    await act(async () => { render(<PhotosWall empty={<p>Nothing here yet</p>} />) })
+    expect(screen.getByText('Nothing here yet')).toBeTruthy()
+    expect(screen.queryByText('No photos yet')).toBeNull()
+  })
+
+  it('renders renderTileFooter OUTSIDE the tile button (nested buttons would be invalid markup)', async () => {
+    fetchMock.mockResolvedValue(PHOTOS)
+    await act(async () => {
+      render(<PhotosWall renderTileFooter={(p) => <button type="button">pick {p.id}</button>} />)
+    })
+    const footer = screen.getByText('pick ph1')
+    expect(footer.closest('button').textContent).toBe('pick ph1')   // it is its own button…
+    expect(screen.getByLabelText('Open photo 1').contains(footer)).toBe(false)  // …not inside the tile
+  })
+
+  it('with NO props the wrapper, read and markup are the shipped defaults', async () => {
+    await renderWall()
+    expect(fetchMock).toHaveBeenCalledWith('/api/photos')
+    expect(screen.getByTestId('photos-wall')).toBeTruthy()
+    // No footer node is introduced when renderTileFooter is absent.
+    const tile = screen.getByLabelText('Open photo 1')
+    expect(tile.parentElement.childElementCount).toBe(1)
+  })
+})

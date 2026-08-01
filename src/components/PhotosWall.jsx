@@ -10,6 +10,11 @@
 // Grouping/sort is by created_at — the ONLY timestamp /api/photos exposes. Capture-time (EXIF
 // DateTimeOriginal) would be the ideal grouping key but is not surfaced by the photos Lambda;
 // we do NOT parse EXIF client-side. Swap the key here if/when the API adds a captured_at field.
+//
+// V4-SPACEPHOTO-001 Lane C — this is the CANONICAL month-grouped gallery renderer. The Space
+// gallery is a PROP-CONFIG of it (`path` + `empty` + `renderTileFooter` + `testId`), NOT a fourth
+// copy alongside PhotoLibrary's and LocationDetail's grids. Every prop defaults to the shipped
+// behavior, so the Garden Photos sub-tab (<PhotosWall /> with no props) is byte-unchanged.
 import React, { useState, useCallback, useMemo } from 'react'
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { P } from '../lib/constants.js'
@@ -38,10 +43,17 @@ function monthLabel(key) {
   return `${MONTH_NAMES[mi] ?? m} ${y}`
 }
 
-export default function PhotosWall() {
+export default function PhotosWall({
+  path = '/api/photos',        // any /api/photos read (e.g. `?space_id=<uuid>`); scopes the wall
+  empty = null,                // node rendered instead of the default zero-photos state
+  renderTileFooter = null,     // (photo) => node, rendered UNDER each tile (outside its button)
+  testId = 'photos-wall',
+  ariaLabelPrefix = 'Photos from',
+} = {}) {
   // V4-IMGCACHE-001 D-1: read the photo list through the SWR cache — a revisit paints from cache
-  // instead of a refetch-and-re-presign every mount; `refetch` (Retry) force-revalidates.
-  const { data, loading, error, refetch } = useCachedFetch('/api/photos')
+  // instead of a refetch-and-re-presign every mount; `refetch` (Retry) force-revalidates. The cache
+  // key is identity-scoped AND path-scoped, so a scoped wall never reads the garden-wide bucket.
+  const { data, loading, error, refetch } = useCachedFetch(path)
   const photos = data ?? EMPTY_PHOTOS
   // Lightbox state: lbIndex is the FLAT index across all months into the sorted full list. lbFrozen
   // snapshots the slide array at open (regression I4) so a background revalidate can't reorder it and
@@ -118,6 +130,7 @@ export default function PhotosWall() {
   }
 
   if (photos.length === 0) {
+    if (empty != null) return empty
     return (
       <div style={{ textAlign: 'center', padding: '48px 16px', color: P.light }}>
         <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📷</div>
@@ -128,7 +141,7 @@ export default function PhotosWall() {
   }
 
   return (
-    <div data-testid="photos-wall">
+    <div data-testid={testId}>
       {sections.map(section => (
         <section key={section.key} aria-label={section.label} style={{ marginBottom: 20 }}>
           {/* Sticky month header. top:0 pins it under the scroll viewport as the user scrolls a
@@ -144,9 +157,10 @@ export default function PhotosWall() {
             items={section.items}
             columns={3}
             gap={6}
-            ariaLabel={`Photos from ${section.label}`}
+            ariaLabel={`${ariaLabelPrefix} ${section.label}`}
             renderItem={(photo) => (
-              <PhotoTile photo={photo} onOpen={() => openAt(photo._flatIndex)} />
+              <PhotoTile photo={photo} onOpen={() => openAt(photo._flatIndex)}
+                footer={renderTileFooter ? renderTileFooter(photo) : null} />
             )}
           />
         </section>
@@ -179,10 +193,10 @@ export default function PhotosWall() {
 // async-decoded and the wall is bounded by useImageWindow above (NOT by loading="lazy", which was
 // measured to never fire here — 0 of 120 images requested, BUG-PHOTOTHUMB-001). The whole tile is
 // a ≥44px button.
-function PhotoTile({ photo, onOpen }) {
+function PhotoTile({ photo, onOpen, footer }) {
   // Open photo {n} — 1-based flat position, a stable accessible label across all months.
   const n = (photo._flatIndex ?? 0) + 1
-  return (
+  const tile = (
     <button
       type="button"
       onClick={onOpen}
@@ -203,5 +217,15 @@ function PhotoTile({ photo, onOpen }) {
         />
       )}
     </button>
+  )
+  // No footer (the shipped Garden wall) → the tile IS the rendered node, byte-unchanged. A footer
+  // renders as a SIBLING of the tile, never inside it: the tile is a <button>, and a nested
+  // interactive control there would be invalid markup and unreachable by keyboard.
+  if (!footer) return tile
+  return (
+    <>
+      {tile}
+      <div style={{ marginTop: 4 }}>{footer}</div>
+    </>
   )
 }

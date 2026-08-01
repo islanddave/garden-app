@@ -78,3 +78,24 @@ export const PROJECTS_HIDDEN = false
 // byte-identical to pre-D1. One-toggle rollback lever (module const → "rollback" = flip false +
 // redeploy). Heap-only: no service-worker change. Criteria-gated, never date-gated.
 export const IMAGE_LIST_CACHE_ENABLED = true
+
+// V4-SPACEPHOTO-001 Lane C (crucible plan V100 §3 / §12a): the Space tier's user-facing photo
+// surface — the /space route + page, the More-sheet nav rows, the space hero, and the space
+// gallery. The Space ("Gardens at Mathews Ridge") is the property itself, ABOVE the six level-0
+// location ZONES; it is the tenant/geo anchor plants.workspace_id points at, and until now it has
+// had no identity surface at all. When FALSE (default) the /space routes are NOT registered, the
+// nav rows are NOT rendered, and no space request is ever issued — the app is byte-identical to
+// today (App.routes.test.jsx's exact 48-route pin is the mechanical proof). This flag is what
+// makes the code promote-safe AHEAD of its schema: photos.space_id and spaces.featured_photo_id
+// do NOT exist in prod yet (migrations/v4-spacephoto-001 is authored but UNAPPLIED), so flipping
+// this before that migration lands would 500 every space read. One-toggle rollback lever (module
+// const -> "rollback" = flip false + redeploy). Criteria-gated, never date-gated.
+// FLIP ORDER (binding — this flag is CLIENT-side and the photos Lambda carries its OWN server-side
+// space gate): apply migrations/v4-spacephoto-001 -> deploy + enable the photos Lambda space gate
+// (SPACE_PHOTOS_ENABLED=true) -> flip this true. There is no build variable to set: the space id is
+// discovered at runtime from the id-free GET /api/photos/space-hero (see lib/spaceId.js).
+// Client-before-server is the unsafe skew: with the server gate off, `GET /api/photos?space_id=`
+// ignores the param and returns the UNFILTERED garden-wide list, so the space gallery would
+// silently show every photo in the garden — and the id-free space-hero route is not registered at
+// all, so discovery falls through to the handler's 405 and the page shows its error state.
+export const SPACE_PHOTOS_ENABLED = false

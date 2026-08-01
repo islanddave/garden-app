@@ -132,10 +132,15 @@ export default function PhotoLibrary() {
     try {
       let data = await apiFetch('/api/photos' + qs) ?? []
       if (filterMode === 'standalone') data = data.filter(p => !p.event_id)
-      // V4-PHOTOLOCFIND-001: a photo attached to ANY parent (event/project/space/planting) is a
+      // V4-PHOTOLOCFIND-001: a photo attached to ANY parent (event/project/zone/planting) is a
       // finished photo — untagged means attached to nothing (V002 E2: valid untagged photos must
-      // not read as unfinished work; the old predicate flagged every deliberate space photo).
-      if (filterMode === 'untagged')   data = data.filter(p => !p.event_id && !p.project_id && !p.location_id && !p.plant_id)
+      // not read as unfinished work; the old predicate flagged every deliberate location photo).
+      // V4-SPACEPHOTO-001: the space arm is UNCONDITIONAL, deliberately NOT behind
+      // SPACE_PHOTOS_ENABLED. space_id becomes non-null the moment the migration + Lambda land,
+      // which is independent of this client flag — and this is a PWA, so a stale cached bundle
+      // would keep flagging every deliberate space photo as unfinished work. Provably inert until
+      // then: no photo row carries space_id today, so the extra conjunct is always true.
+      if (filterMode === 'untagged')   data = data.filter(p => !p.event_id && !p.project_id && !p.location_id && !p.plant_id && !p.space_id)
       setPhotos(data)
     } catch (err) {
       setPhotos([])

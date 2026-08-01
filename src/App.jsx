@@ -53,11 +53,12 @@ import CaptureFlow from './pages/CaptureFlow.jsx'
 import AddSeeds from './pages/AddSeeds.jsx'
 import SowNow from './pages/SowNow.jsx'
 import PutUp from './pages/PutUp.jsx'
+import SpaceDetail from './pages/SpaceDetail.jsx'
 import SplashScreen from './components/SplashScreen.jsx'
 import UpdateBanner from './components/UpdateBanner.jsx'
 import Sheet from './components/forms/Sheet.jsx'
 import { OverlayProvider, OverlaySurfaceProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
-import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN } from './lib/featureFlags.js'
+import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED } from './lib/featureFlags.js'
 
 function AppFallback({ error, retry } = {}) {
   return (
@@ -149,6 +150,14 @@ export function renderRoutes({ overlay, user }) {
     { path: '/dashboard',     element: <Protected><Dashboard /></Protected> },
     { path: '/locations',     element: <Protected><Locations /></Protected> },
     { path: '/locations/:id', element: <Protected><LocationDetail /></Protected> },
+    // V4-SPACEPHOTO-001 Lane C. Spread-in, NOT a `flag ? A : B` element swap: with the flag off the
+    // paths are ABSENT from the table entirely (so /space falls through to the '*' catch-all exactly
+    // as it does today, and App.routes.test.jsx's exact route-count pin is the mechanical proof of
+    // inertness). /space is the single-space entry point; /space/:spaceId is the multi-space form.
+    ...(SPACE_PHOTOS_ENABLED ? [
+      { path: '/space',           element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SpaceDetail /></ErrorBoundary></Protected> },
+      { path: '/space/:spaceId',  element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SpaceDetail /></ErrorBoundary></Protected> },
+    ] : []),
     { path: '/tasks',         element: <Navigate to="/today" replace /> },
     { path: '/zone',          element: <Protected><ZonePicker /></Protected> },
     // V4-PROJHIDE-001: the /projects tree is no longer a user-facing view — redirect its index to

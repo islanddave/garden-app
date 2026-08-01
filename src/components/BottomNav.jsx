@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import WhatsNewDot from './WhatsNewDot.jsx'
 import { P } from '../lib/constants.js'
 import CatchUpBadge from './CatchUpBadge.jsx'
-import { CATCH_UP_EDITOR_SHIPPED, PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { CATCH_UP_EDITOR_SHIPPED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED } from '../lib/featureFlags.js'
 import { useApiFetch } from '../lib/api.js'
 import BottomNavDot from './BottomNavDot.jsx'
 import { useMode } from '../lib/mode.js'
@@ -163,12 +163,29 @@ export default function BottomNav() {
         <Link to="/photos" onClick={closeMore} style={menuRowStyle}>
           <Icon name="media.camera" size={22} decorative />Photos
         </Link>
-        {/* V4-PHOTOLOCFIND-001 — Spaces: /locations previously had ZERO nav entries (reachable only
+        {/* V4-SPACEPHOTO-001 Lane C — a NEW row, above the zones row, because the two are different
+            tiers and neither can stand in for the other: "Space" (singular) is the property itself
+            (the one `spaces` row), while /locations is the tree of six level-0 ZONES beneath it
+            (Deck/Drive/House/Pasture/Stable/Yard, measured live). Re-pointing the existing row would
+            have silently stolen /locations' ONLY nav entry — the exact gap V4-PHOTOLOCFIND-001 added
+            it to close (only 5 of 913 photos carried a location). Flag-gated, so flag-off renders the
+            shipped single row unchanged. Emoji glyph mirrors Harvests/Put-Up (a new row would
+            otherwise need an iconRegistry entry + the icon-completeness harness). */}
+        {SPACE_PHOTOS_ENABLED && (
+          <Link to="/space" onClick={closeMore} style={menuRowStyle}>
+            <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏡</span>Space
+          </Link>
+        )}
+        {/* V4-PHOTOLOCFIND-001 — /locations previously had ZERO nav entries (reachable only
             from Search/Favorites/ProjectNew/ZonePicker), which is half of why only 5 of 913 photos
             carried a location. Emoji glyph mirrors Harvests/Put-Up (avoids the icon-completeness
-            harness for a new row). */}
+            harness for a new row).
+            V4-SPACEPHOTO-001: the label becomes "Zones" once the Space row exists — two rows both
+            reading "Space(s)" pointing at different tiers is the §6.8 four-noun drift made worse,
+            and the level-0 rows this page is rooted in ARE zones. Label change only; the route,
+            the page and the flag-off label are untouched. */}
         <Link to="/locations" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📍</span>Spaces
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📍</span>{SPACE_PHOTOS_ENABLED ? 'Zones' : 'Spaces'}
         </Link>
         <Link to="/inventory" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.inventory" size={22} decorative />Inventory

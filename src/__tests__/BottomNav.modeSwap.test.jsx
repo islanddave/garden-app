@@ -43,6 +43,8 @@ vi.mock('../lib/featureFlags.js', () => ({
   // V4-PROJHIDE-001: BottomNav now reads PROJECTS_HIDDEN for the "Add a planting" sub-label; the
   // partial mock must export it (vitest throws on an undefined mocked export). Prod default is false.
   PROJECTS_HIDDEN: false,
+  // V4-SPACEPHOTO-001: same reason — BottomNav reads it for the Space row. Prod default is false.
+  SPACE_PHOTOS_ENABLED: false,
 }))
 
 import BottomNav from '../components/BottomNav.jsx'
