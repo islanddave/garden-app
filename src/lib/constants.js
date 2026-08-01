@@ -40,6 +40,11 @@ export const P = {
   severityStaleInk:    '#7a5e24',  // V4-A11Y-001: darker gold for stale/sev-1 badge text+border+icon (AA >=4.5 on cream+white; was #d4b556 @1.99:1 / #8a6e2a @4.44:1)
   preparingFill:       '#f0e9e0',  // status.js preparing stage bg
   badgeInfoBg:         '#e8f0fa',  // forms/Badge info tone bg
+  // ── Pass A follow-up (2026-08-01): the last un-promoted drift literal in the photo surfaces.
+  // Warm stone that fills a photo tile's aspect-ratio box BEFORE the image paints (and stays
+  // visible behind transparent PNGs). Was authored verbatim at 3 sites — PhotoLibrary's grid
+  // tile, LocationDetail's attached-photo tile, FacebookShareSheet's 64px thumb. Parity-preserving.
+  photoPlaceholder:    '#e8e2da',  // photo tile fill before/behind the image
   // ── FACET token set (contract §4) — additive, unused until TAGSUB. AA-checked draft. ──
   fTypeBg:     '#e6f0e8', fTypeText:     '#1f5138', fTypeBorder:     '#bcd7c4',
   fGroupBg:    '#eef0fa', fGroupText:    '#3a3f6b', fGroupBorder:    '#c9cdec',

@@ -139,7 +139,7 @@ export default function LocationDetail() {
           <div data-testid="location-photo-grid"
             style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 14 }}>
             {photos.map(photo => (
-              <div key={photo.id} style={{ position: 'relative', paddingBottom: '100%', backgroundColor: '#e8e2da', borderRadius: 8, overflow: 'hidden', border: `1px solid ${P.border}` }}>
+              <div key={photo.id} style={{ position: 'relative', paddingBottom: '100%', backgroundColor: P.photoPlaceholder, borderRadius: 8, overflow: 'hidden', border: `1px solid ${P.border}` }}>
                 {(photo.thumb_url || photo.view_url) && (
                   <PhotoImg
                     photoId={photo.id}

@@ -170,10 +170,15 @@ async function autoPromoteFeatured(sql, photo, householdIds, opts) {
 
 // V4-SPACEPHOTO-001 — the photos upsert exists in TWO literal variants and that duplication is a
 // deliberate prod-safety control, not an oversight. A neon tagged template's SQL text is STATIC: a
-// JS `if` inside one template cannot keep `space_id` out of the emitted statement. Prod has no
-// photos.space_id column, so a single widened template would 42703 EVERY upload the moment this
-// lands — regardless of the flag. The flag-OFF branch below is byte-identical to the pre-V4
-// statement; the widened branch is only ever constructed when SPACE_PHOTOS_ENABLED=true.
+// JS `if` inside one template cannot keep `space_id` out of the emitted statement. When this code
+// promoted, prod had no photos.space_id column, so a single widened template would have 42703'd
+// EVERY upload the moment it landed — regardless of the flag. The flag-OFF branch below is
+// byte-identical to the pre-V4 statement; the widened branch is only ever constructed when
+// SPACE_PHOTOS_ENABLED=true.
+// STATUS 2026-08-01: the columns ARE now in prod (migrations/v4-spacephoto-001 applied), so this
+// split no longer guards against a live 42703. KEEP IT ANYWAY: it is what makes flag-OFF a true
+// byte-identical rollback lever, and it is the pattern any FUTURE additive space column must reuse
+// (code may promote ahead of its DDL again). Do not collapse the two templates into one.
 //
 // ADD-PARENT on conflict (widened branch only): the dedupe returns the EXISTING row, which today
 // silently drops the parent the caller asked for. A "grand photo" is by definition an image already
@@ -252,8 +257,10 @@ function buildPhotoInsert(sql, body, userId, spaceEnabled) {
 // Both helpers below take `spaceEnabled` and return EARLY when it is false. That is the same
 // prod-safety property buildPhotoInsert's two-template split buys, obtained the cheaper way: a neon
 // tagged template's SQL text comes into existence only when the tagged expression is EVALUATED, so a
-// function that returns before its template is never a statement at all. Prod has neither
-// photos.space_id nor spaces.featured_photo_id, so with the flag off nothing here can 42703.
+// function that returns before its template is never a statement at all. At promote time prod had
+// neither photos.space_id nor spaces.featured_photo_id, so with the flag off nothing here could
+// 42703. (Both columns landed in prod 2026-07-31; the early return is retained as the rollback
+// lever and as the pattern for the next code-ahead-of-DDL column.)
 // The guard lives INSIDE the helpers (rather than only at the two call sites) so that a future
 // caller cannot reintroduce the hazard by forgetting the outer `if`.
 
@@ -381,11 +388,13 @@ export const handler = async (event) => {
   const rawPath = event.rawPath ?? '/api/photos';
   // V4-SPACEPHOTO-001 kill-flag, default OFF (absent env == disabled). Read per-invocation, matching
   // the CARE_RAIN_CREDIT_ENABLED / CARE_RAIN_MAXDAYS_ENABLED house pattern in lambda/daily-plan.
-  // PROMOTE SAFETY: photos.space_id and spaces.featured_photo_id exist on the staging Neon branch
-  // ONLY. With the flag off, no statement this handler emits may NAME either column — every surface
-  // below is gated by SELECTING A DIFFERENT SQL TEMPLATE, never by a runtime `if` inside one
-  // template, because a tagged template's text is fixed at construction. Flag OFF == byte-identical
-  // to the pre-V4-SPACEPHOTO handler, including the two new routes, which do not exist at all.
+  // PROMOTE SAFETY: photos.space_id and spaces.featured_photo_id now exist in BOTH prod and staging
+  // (migrations/v4-spacephoto-001 applied to prod 2026-07-31). They did not when this handler
+  // promoted, which is why every surface below is gated by SELECTING A DIFFERENT SQL TEMPLATE, never
+  // by a runtime `if` inside one template — a tagged template's text is fixed at construction. That
+  // invariant STILL HOLDS and must be preserved: it is what makes flag OFF byte-identical to the
+  // pre-V4-SPACEPHOTO handler (including the two new routes, which do not exist at all), i.e. a real
+  // rollback lever rather than a code path that merely returns early.
   const spacePhotosEnabled = process.env.SPACE_PHOTOS_ENABLED === 'true';
 
   try {
@@ -810,9 +819,10 @@ export const handler = async (event) => {
       }
       // photos_must_have_parent admits a parentless row ONLY for 'pending_tag'. An 'upload_failed'
       // row with no parent is therefore a guaranteed constraint violation; 400 it explicitly.
-      // V4-SPACEPHOTO-001: the CHECK is now 7-clause and counts space_id as a parent — but ONLY on
-      // the staging branch, so this guard counts it only when the flag is on. Flag off, spaceParent
-      // is null and the expression is byte-identical to the pre-V4 one.
+      // V4-SPACEPHOTO-001: the CHECK is 7-clause and counts space_id as a parent in BOTH prod and
+      // staging (convalidated 2026-07-31). This guard still counts it only when the flag is on, so
+      // that flag-off stays byte-identical to the pre-V4 expression — the client cannot send a
+      // space_id the server would honour while the gate is closed.
       const spaceParent = spacePhotosEnabled ? (body.space_id ?? null) : null;
       if (body.intake_status === 'upload_failed'
           && !(body.project_id || body.event_id || body.location_id || body.plant_id || body.inventory_item_id || spaceParent)) {

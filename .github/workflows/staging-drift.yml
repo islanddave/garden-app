@@ -64,13 +64,23 @@ jobs:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
         run: |
           set -uo pipefail
+          # SELF-EXPIRING TOLERANCE (2026-08-01): this branch used to `exit 0`, which made a
+          # missing secret indistinguishable from "no drift" — a green run that verified nothing.
+          # Both secrets HAVE been configured on this repo since 2026-05, so reaching this branch is
+          # now a MISCONFIGURATION (a rotated-away or renamed secret), not a not-yet-set-up state.
+          # It therefore fails LOUD. This is the same shape as the schema-audit waiver that
+          # hard-fails once its precondition lapses: the escape hatch demands its own removal.
+          # Note this is the only hard failure here — the drift REPORT stays advisory by design
+          # (staging legitimately leads prod between a staging apply and its prod apply).
           if [[ -z "${NEON_DATABASE_URL:-}" || -z "${NEON_STAGING_URL:-}" ]]; then
-            echo "::warning title=Staging drift UNVERIFIED::UNVERIFIED — a Neon URL secret is not set; the comparison did NOT run. Green here verifies nothing."
+            echo "::error title=Staging drift UNVERIFIED::A Neon URL secret is missing; the comparison did NOT run. Both secrets have existed since 2026-05, so this is a misconfiguration, not first-time setup."
             {
-              echo "### UNVERIFIED — staging drift check did not run"
-              echo "NEON_DATABASE_URL and/or NEON_STAGING_URL are not configured. No schemas were compared this run."
+              echo "### FAILED — staging drift check could not run"
+              echo "NEON_DATABASE_URL and/or NEON_STAGING_URL are not readable by this job."
+              echo "Both were configured as repo secrets in 2026-05; check for a rotation, rename,"
+              echo "or an environment-scoped override shadowing the repo-scoped secret."
             } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            exit 1
           fi
           python3 scripts/check-staging-drift.py
           RC=$?

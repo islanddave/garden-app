@@ -22,6 +22,7 @@ describe('P — promoted drift literals (exact hexes)', () => {
   it('pins the additional scoped-file promotions', () => {
     expect(P.preparingFill).toBe('#f0e9e0')
     expect(P.badgeInfoBg).toBe('#e8f0fa')
+    expect(P.photoPlaceholder).toBe('#e8e2da')
   })
   it('pins the 4 facet token triples (bg/text/border)', () => {
     expect([P.fTypeBg, P.fTypeText, P.fTypeBorder]).toEqual(['#e6f0e8', '#1f5138', '#bcd7c4'])

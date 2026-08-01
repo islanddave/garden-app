@@ -137,6 +137,6 @@ const errorBannerStyle = {
   padding: '10px 14px',
   marginBottom: '18px',
   fontSize: '0.875rem',
-  color: '#7a2a10',
+  color: P.bannerInk,
 }
 

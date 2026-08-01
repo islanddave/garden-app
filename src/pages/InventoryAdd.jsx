@@ -227,7 +227,7 @@ export default function InventoryAdd() {
           <div role="alert" style={{
             backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`,
             borderRadius: 8, padding: '12px 16px', marginBottom: 20,
-            fontSize: '0.875rem', color: '#7a2a10',
+            fontSize: '0.875rem', color: P.bannerInk,
           }}>
             {errors._form}
           </div>

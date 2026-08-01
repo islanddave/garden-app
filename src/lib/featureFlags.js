@@ -85,15 +85,19 @@ export const IMAGE_LIST_CACHE_ENABLED = true
 // location ZONES; it is the tenant/geo anchor plants.workspace_id points at, and until now it has
 // had no identity surface at all. When FALSE (default) the /space routes are NOT registered, the
 // nav rows are NOT rendered, and no space request is ever issued — the app is byte-identical to
-// today (App.routes.test.jsx's exact 48-route pin is the mechanical proof). This flag is what
-// makes the code promote-safe AHEAD of its schema: photos.space_id and spaces.featured_photo_id
-// do NOT exist in prod yet (migrations/v4-spacephoto-001 is authored but UNAPPLIED), so flipping
-// this before that migration lands would 500 every space read. One-toggle rollback lever (module
-// const -> "rollback" = flip false + redeploy). Criteria-gated, never date-gated.
+// today (App.routes.test.jsx's exact 48-route pin is the mechanical proof). This flag is what made
+// the code promote-safe AHEAD of its schema: photos.space_id and spaces.featured_photo_id did not
+// exist in prod when it shipped, so flipping this then would have 500'd every space read.
+// SCHEMA STATUS 2026-08-01: migrations/v4-spacephoto-001 IS APPLIED to prod (and staging) — both
+// columns and the 7-clause photos_must_have_parent CHECK are live and convalidated. The schema no
+// longer blocks this flip; only the SERVER GATE below does. One-toggle rollback lever (module const
+// -> "rollback" = flip false + redeploy). Criteria-gated, never date-gated.
 // FLIP ORDER (binding — this flag is CLIENT-side and the photos Lambda carries its OWN server-side
-// space gate): apply migrations/v4-spacephoto-001 -> deploy + enable the photos Lambda space gate
-// (SPACE_PHOTOS_ENABLED=true) -> flip this true. There is no build variable to set: the space id is
-// discovered at runtime from the id-free GET /api/photos/space-hero (see lib/spaceId.js).
+// space gate): [DONE] apply migrations/v4-spacephoto-001 -> [TODO] set the garden-photos Lambda env
+// var SPACE_PHOTOS_ENABLED=true -> [TODO] flip this true. There is no build variable to set: the
+// space id is discovered at runtime from the id-free GET /api/photos/space-hero (see lib/spaceId.js).
+// WARNING: `aws lambda update-function-configuration` REPLACES the entire env block — restate all
+// seven existing vars or PHOTO_CDN_SIGNING_SECRET and GARDEN_HOUSEHOLD_IDS are wiped.
 // Client-before-server is the unsafe skew: with the server gate off, `GET /api/photos?space_id=`
 // ignores the param and returns the UNFILTERED garden-wide list, so the space gallery would
 // silently show every photo in the garden — and the id-free space-hero route is not registered at

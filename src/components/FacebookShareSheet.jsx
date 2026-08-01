@@ -72,7 +72,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
             {/* Thumbnails */}
             <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
               {photos.map((p) => (
-                <div key={p.id} style={{ flex: '0 0 auto', width: 64, height: 64, borderRadius: 8, overflow: 'hidden', background: '#e8e2da', border: `1px solid ${P.border}` }}>
+                <div key={p.id} style={{ flex: '0 0 auto', width: 64, height: 64, borderRadius: 8, overflow: 'hidden', background: P.photoPlaceholder, border: `1px solid ${P.border}` }}>
                   {p.view_url && <PhotoImg photoId={p.id} initialUrl={p.view_url} fallback="none" alt={p.caption ?? 'Selected photo'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                 </div>
               ))}
@@ -94,7 +94,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
             </div>
 
             {state === 'error' && (
-              <div role="alert" style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 8, padding: '10px 14px', fontSize: '0.82rem', color: '#7a2a10' }}>
+              <div role="alert" style={{ background: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 8, padding: '10px 14px', fontSize: '0.82rem', color: P.bannerInk }}>
                 {error}
               </div>
             )}

@@ -563,7 +563,7 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
         borderRadius: 8, overflow: 'hidden', cursor: 'pointer', padding: 0, textAlign: 'left',
       }}
     >
-      <div style={{ position: 'relative', paddingBottom: '100%', backgroundColor: '#e8e2da' }}>
+      <div style={{ position: 'relative', paddingBottom: '100%', backgroundColor: P.photoPlaceholder }}>
         {(photo.thumb_url || photo.view_url) && (
           <img
             // BUG-PHOTOBLANK-001: the GRID takes the ~200KB thumbnail, never the 4080x3072
@@ -595,7 +595,7 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
         {!photo.event_id && (
           <span style={{
             position: 'absolute', top: 4, right: 4,
-            backgroundColor: 'rgba(0,0,0,0.5)', color: '#fff',
+            backgroundColor: 'rgba(0,0,0,0.5)', color: P.onPhotoFg,
             fontSize: '0.6rem', fontWeight: 700, borderRadius: 4, padding: '2px 5px',
           }}>
             standalone
@@ -646,7 +646,7 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
             onClick={onClose}
             style={{
               position: 'absolute', top: 10, right: 10,
-              background: 'rgba(0,0,0,0.55)', color: '#fff',
+              background: 'rgba(0,0,0,0.55)', color: P.onPhotoFg,
               border: 'none', borderRadius: '50%', width: 30, height: 30,
               cursor: 'pointer', fontSize: '0.9rem',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -742,7 +742,7 @@ function ErrBanner({ msg }) {
     <div style={{
       backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`,
       borderRadius: 8, padding: '10px 14px', marginBottom: 8,
-      fontSize: '0.82rem', color: '#7a2a10',
+      fontSize: '0.82rem', color: P.bannerInk,
     }}>
       {msg}
     </div>
@@ -807,7 +807,7 @@ const inputStyle = {
   width: '100%', padding: '10px 12px',
   border: `1px solid ${P.border}`,
   borderRadius: 7, fontSize: '0.9rem',
-  backgroundColor: '#fff', boxSizing: 'border-box', fontFamily: 'inherit',
+  backgroundColor: P.white, boxSizing: 'border-box', fontFamily: 'inherit',
 }
 
 const selectStyle = {
@@ -824,7 +824,7 @@ const selectStyle = {
 
 const primaryBtn = (disabled) => ({
   backgroundColor: disabled ? P.light : P.green,
-  color: '#fff', border: 'none', borderRadius: 8,
+  color: P.white, border: 'none', borderRadius: 8,
   padding: '11px 24px', fontSize: '0.9rem', fontWeight: 700,
   cursor: disabled ? 'not-allowed' : 'pointer',
 })

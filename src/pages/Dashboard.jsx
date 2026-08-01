@@ -35,7 +35,7 @@ function DashboardFallback({ error, retry } = {}) {
       backgroundColor: '#fde8e0',
       border: '1px solid #b7532a',
       borderRadius: 10,
-      color: '#7a2a10',
+      color: P.bannerInk,
       fontSize: '0.88rem',
     }}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>Couldn't load dashboard at {ts}.</div>
@@ -49,7 +49,7 @@ function DashboardFallback({ error, retry } = {}) {
           background: 'transparent',
           border: '1px solid #b7532a',
           borderRadius: 6,
-          color: '#7a2a10',
+          color: P.bannerInk,
           fontWeight: 600,
           cursor: 'pointer',
         }}>Try again</button>

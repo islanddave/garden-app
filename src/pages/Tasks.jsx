@@ -111,7 +111,7 @@ function CreateFormV2({ form, setForm, locations, projects, saving, formError, o
   return (
     <form onSubmit={onSubmit} style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 24, marginBottom: 24 }}>
       <h2 style={{ margin: '0 0 18px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>New task</h2>
-      {formError && <div role="alert" style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: '0.875rem', color: '#7a2a10' }}>{formError}</div>}
+      {formError && <div role="alert" style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: '0.875rem', color: P.bannerInk }}>{formError}</div>}
       <div style={{ marginBottom: 14 }}>
         <label htmlFor="task-title" style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: P.mid, marginBottom: 5 }}>Title *</label>
         <input id="task-title" required value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={{ width: '100%', padding: '8px 11px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: '0.88rem', backgroundColor: P.white, boxSizing: 'border-box' }} placeholder="e.g. Water pepper seedlings" />

@@ -7,7 +7,7 @@ export const SEVERITY_STYLES = {
   green:        { bg: P.greenPale, border: P.greenLight, text: P.green },
   gold:         { bg: P.warn,      border: P.warnBorder, text: '#7a5c00' },
   terra:        { bg: '#fde8e0',   border: P.terra,      text: P.terra },
-  'terra-bold': { bg: '#fcd7c4',   border: P.terra,      text: '#7a2a10' },
+  'terra-bold': { bg: '#fcd7c4',   border: P.terra,      text: P.bannerInk },
 }
 
 export function severityTier(nextWaterAtIso, locationType) {

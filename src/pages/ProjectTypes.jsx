@@ -167,9 +167,9 @@ function TypeRow({ type: t, userId, onDelete }) {
 
 function ErrBanner({ msg, onClose }) {
   return (
-    <div style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: '0.875rem', color: '#7a2a10', display: 'flex', justifyContent: 'space-between' }}>
+    <div style={{ backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`, borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: '0.875rem', color: P.bannerInk, display: 'flex', justifyContent: 'space-between' }}>
       {msg}
-      <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#7a2a10', cursor: 'pointer', fontWeight: 700 }}>✕</button>
+      <button onClick={onClose} style={{ background: 'none', border: 'none', color: P.bannerInk, cursor: 'pointer', fontWeight: 700 }}>✕</button>
     </div>
   )
 }
