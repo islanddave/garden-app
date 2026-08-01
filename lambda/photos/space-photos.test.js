@@ -1,12 +1,19 @@
 // V4-SPACEPHOTO-001 — Space photos on the photos Lambda (static-source + executed-fragment guard).
 //
-// THE RISK THIS FILE EXISTS FOR (AC-5): photos.space_id and spaces.featured_photo_id exist on the
-// STAGING Neon branch only. Prod does not have them. So the promote-safety invariant is not "the
-// feature is off", it is the strictly stronger "with SPACE_PHOTOS_ENABLED unset, no statement this
-// handler can emit NAMES either column" — a JS `if` inside a tagged template cannot satisfy that,
+// THE RISK THIS FILE EXISTS FOR (AC-5): when this code promoted, photos.space_id and
+// spaces.featured_photo_id existed on the STAGING Neon branch only — prod did not have them. So the
+// promote-safety invariant was not "the feature is off", it was the strictly stronger "with
+// SPACE_PHOTOS_ENABLED unset, no statement this handler can emit NAMES either column" — a JS `if`
+// inside a tagged template cannot satisfy that,
 // because a neon template's SQL text is fixed at construction. The tests below prove the gating is
 // done by SELECTING A DIFFERENT TEMPLATE, and prove it by EXECUTING the real functions against a
 // recording fake `sql` rather than by reading the source and hoping.
+//
+// SCHEMA STATUS 2026-08-01: both columns are now APPLIED in prod (and staging), so the 42703 these
+// tests originally guarded is no longer live. THE TESTS STILL EARN THEIR KEEP, and for a reason that
+// outlives the migration: they are what makes SPACE_PHOTOS_ENABLED=false a genuine byte-identical
+// rollback lever rather than a flag that merely returns early, and they are the executable statement
+// of the pattern the next code-ahead-of-DDL column must follow. Do not delete them as "obsolete".
 //
 // index.js is not importable from repo root (its @aws-sdk/@clerk/@neondatabase deps are per-Lambda,
 // not installed here), so the two functions under test are extracted verbatim from source and
