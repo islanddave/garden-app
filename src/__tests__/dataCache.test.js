@@ -152,3 +152,107 @@ describe('dataCache — invalidation', () => {
     expect(cache.peek(K)).toBe(null)                          // entry gone
   })
 })
+
+// ── SW-STALEAPI-001 — the freshness clock must be NETWORK-ONLY ───────────────────────────────────────
+//
+// public/sw.js answers an offline /api/* fetch out of API_CACHE with a plain 200, so the fetcher here
+// RESOLVES on a failed refresh. Before this fix that resolution committed `at: Date.now()`, and
+// revalidateLive(RESUME_MIN_AGE_MS) then skipped the next real wake revalidate — the app stopped trying
+// to refetch precisely because it had just failed to fetch.
+//
+// FROM_CACHE is imported from api.js on purpose: dataCache.js reads the symbol via Symbol.for() rather
+// than importing api.js (to stay dependency-free), so this import is what pins the two definitions
+// together. If either side renames its symbol, these tests go red instead of the marker going silently
+// dead in production.
+import { FROM_CACHE } from '../lib/api.js'
+
+const fromCache = (rows) => {
+  Object.defineProperty(rows, FROM_CACHE, { value: true, enumerable: false, configurable: true })
+  return rows
+}
+
+describe('dataCache — cache-served responses do not advance the freshness clock', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('a cache-served refresh keeps serving data, flags stale, and leaves `at` at the last NETWORK time', async () => {
+    const K = 'u1|/api/photos'
+    let now = 1_700_000_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+
+    let payload = [{ id: 'a', view_url: 'u1' }]
+    cache.subscribe(K, () => {})
+    cache.register(K, () => Promise.resolve(payload))
+
+    cache.revalidate(K); await flush()                       // live success → at = t0
+    expect(cache.getSnapshot(K).stale).toBe(false)
+
+    now += 6 * 60 * 1000                                     // 6 min later, offline
+    payload = fromCache([{ id: 'a', view_url: 'u1' }])
+    cache.revalidate(K); await flush()
+
+    const snap = cache.getSnapshot(K)
+    expect(snap.status).toBe('value')                        // data still served (SWR keeps the list)
+    expect(snap.data).toEqual([{ id: 'a', view_url: 'u1' }])
+    expect(snap.error).toBeNull()
+    expect(snap.stale).toBe(true)                            // …but knowably stale
+    expect(snap.isValidating).toBe(false)                    // and the in-flight settled
+
+    // THE POISONING FIX: `at` is still t0, so the entry reads as 6 min old and the wake gate FIRES.
+    // With the old behaviour `at` was t0+6min, age 0, and this returned 0.
+    expect(cache.revalidateLive(5 * 60 * 1000)).toBe(1)
+    await flush()
+  })
+
+  it('control: a LIVE refresh does advance `at` and correctly suppresses the wake gate', async () => {
+    const K = 'u1|/api/photos'
+    let now = 1_700_000_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+
+    cache.subscribe(K, () => {})
+    cache.register(K, () => Promise.resolve([{ id: 'a', view_url: 'u1' }]))
+    cache.revalidate(K); await flush()
+
+    now += 6 * 60 * 1000
+    cache.revalidate(K); await flush()                       // live, unmarked → at = t0+6min
+
+    expect(cache.getSnapshot(K).stale).toBe(false)
+    expect(cache.revalidateLive(5 * 60 * 1000)).toBe(0)      // genuinely fresh → correctly skipped
+  })
+
+  it('a COLD cache-served mount leaves at:0, so the very next wake revalidates it', async () => {
+    const K = 'u1|/api/photos'
+    cache.subscribe(K, () => {})
+    cache.register(K, () => Promise.resolve(fromCache([{ id: 'a' }])))
+    cache.revalidate(K); await flush()
+
+    expect(cache.getSnapshot(K).data).toEqual([{ id: 'a' }])
+    expect(cache.getSnapshot(K).stale).toBe(true)
+    expect(cache.revalidateLive(5 * 60 * 1000)).toBe(1)      // at:0 is never "recent enough" to skip
+    await flush()
+  })
+
+  it('stale clears once the network answers again', async () => {
+    const K = 'u1|/api/photos'
+    let payload = fromCache([{ id: 'a', view_url: 'u1' }])
+    cache.register(K, () => Promise.resolve(payload))
+    cache.revalidate(K); await flush()
+    expect(cache.getSnapshot(K).stale).toBe(true)
+
+    payload = [{ id: 'a', view_url: 'u1' }, { id: 'b' }]
+    cache.revalidate(K); await flush()
+    expect(cache.getSnapshot(K).stale).toBe(false)
+    expect(cache.getSnapshot(K).data).toHaveLength(2)
+  })
+
+  it('a boot warm served from cache survives (it is not a failed warm) and stays revalidatable', async () => {
+    const K = 'u1|/api/photos'
+    cache.warm(K, () => Promise.resolve(fromCache([{ id: 'a' }])))
+    await flush()
+    const snap = cache.getSnapshot(K)
+    expect(snap.status).toBe('value')                        // NOT reset to 'empty' — real rows arrived
+    expect(snap.stale).toBe(true)
+    cache.subscribe(K, () => {})
+    expect(cache.revalidateLive(5 * 60 * 1000)).toBe(1)
+    await flush()
+  })
+})

@@ -73,6 +73,29 @@ export function resolveUrl(path, urls = FUNCTION_URLS) {
 // txn; a caller can override via options.timeoutMs and still pass its own options.signal.
 export const API_TIMEOUT_MS = 15000
 
+// SW-STALEAPI-001 — carry the service worker's offline-cache marker across the parse boundary.
+//
+// public/sw.js stamps X-From-Cache on an API response it served from cache because the network was
+// unavailable. It stays HTTP 200 on purpose (the body is the user's real data and SWR should keep
+// serving it offline), so the header is the ONLY signal — and it dies here unless carried forward,
+// because apiFetch returns parsed JSON, not the Response.
+//
+// Carried as a NON-ENUMERABLE Symbol property on the returned value rather than by wrapping it: every
+// existing caller destructures / spreads / Array.isArray()s this return value, and a wrapper would
+// break all of them. Non-enumerable + symbol ⇒ invisible to Object.keys, object spread,
+// JSON.stringify, and dataCache's _sameExceptUrls field walk, so nothing downstream changes shape.
+// Symbol.for() (global registry) rather than a shared import so the dependency-free dataCache store
+// does not have to import this module (Clerk + the whole routing table) just to read one bit.
+//
+// DO NOT remove this: without it, a failed offline refresh is indistinguishable from a successful one
+// at every layer above the service worker, and dataCache resets its freshness clock on the failure.
+export const FROM_CACHE_HEADER = 'X-From-Cache'
+export const FROM_CACHE = Symbol.for('garden-app.fromCache')
+
+export function isFromCache(value) {
+  return !!value && typeof value === 'object' && value[FROM_CACHE] === true
+}
+
 export async function apiFetch(path, options = {}, token) {
   const url = resolveUrl(path)
   const { timeoutMs = API_TIMEOUT_MS, signal: callerSignal, headers: optHeaders, ...fetchOpts } = options
@@ -111,7 +134,15 @@ export async function apiFetch(path, options = {}, token) {
     throw e
   }
   if (res.status === 204) return null
-  return res.json()
+  const data = await res.json()
+  // Optional chaining is load-bearing: many component tests stub fetch with a bare { ok, json } object
+  // that has no headers. A missing header surface means "not from cache", never a throw.
+  if (res.headers?.get?.(FROM_CACHE_HEADER) && data !== null && typeof data === 'object') {
+    try {
+      Object.defineProperty(data, FROM_CACHE, { value: true, enumerable: false, configurable: true })
+    } catch { /* frozen/sealed body — marking is best-effort, never fatal to the request */ }
+  }
+  return data
 }
 
 export function useApiFetch() {

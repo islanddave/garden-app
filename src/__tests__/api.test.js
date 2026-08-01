@@ -3,7 +3,7 @@
 // Pass an explicit urls map to resolveUrl so tests are env-decoupled.
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { resolveUrl, apiFetch, API_TIMEOUT_MS } from '../lib/api.js'
+import { resolveUrl, apiFetch, API_TIMEOUT_MS, isFromCache, FROM_CACHE, FROM_CACHE_HEADER } from '../lib/api.js'
 
 // Mirror of FUNCTION_URLS insertion order from src/lib/api.js. Order matters:
 // /api/projects/inactive MUST precede /api/projects so the longer prefix wins.
@@ -113,5 +113,56 @@ describe('apiFetch — timeout + abort (WS-A6)', () => {
     const assertion = expect(p).rejects.toMatchObject({ name: 'AbortError' })
     ac.abort()
     await assertion
+  })
+})
+
+// SW-STALEAPI-001 — the header→value marker. public/sw.js answers an offline /api/* fetch from its
+// cache with a plain 200; without this marker that failure is indistinguishable from a success at every
+// layer above the SW, and dataCache resets its freshness clock on it.
+describe('apiFetch — SW offline-cache marker (SW-STALEAPI-001)', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
+
+  const res = (body, headers) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json', ...headers } })
+
+  it('marks the parsed value when the SW served it from cache', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => res([{ id: 'a' }], { [FROM_CACHE_HEADER]: '1' })))
+    const data = await apiFetch('/api/events', {}, 't')
+    expect(data).toEqual([{ id: 'a' }])
+    expect(isFromCache(data)).toBe(true)
+  })
+
+  it('does NOT mark a live network response', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => res([{ id: 'a' }])))
+    expect(isFromCache(await apiFetch('/api/events', {}, 't'))).toBe(false)
+  })
+
+  it('the marker is invisible to Object.keys / spread / JSON — no caller sees a shape change', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => res({ id: 'a', n: 1 }, { [FROM_CACHE_HEADER]: '1' })))
+    const data = await apiFetch('/api/events', {}, 't')
+    expect(Object.keys(data)).toEqual(['id', 'n'])
+    expect(JSON.parse(JSON.stringify(data))).toEqual({ id: 'a', n: 1 })
+    expect(isFromCache({ ...data })).toBe(false)          // a copy is not the cached object
+    expect(Object.getOwnPropertyDescriptor(data, FROM_CACHE).enumerable).toBe(false)
+  })
+
+  it('survives an array payload (the shape every list route returns)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => res([{ id: 'a' }, { id: 'b' }], { [FROM_CACHE_HEADER]: '1' })))
+    const data = await apiFetch('/api/photos', {}, 't')
+    expect(Array.isArray(data)).toBe(true)
+    expect(isFromCache(data)).toBe(true)
+  })
+
+  it('tolerates a header-less stubbed response (the shape most component tests mock)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: 1 }) })))
+    const data = await apiFetch('/api/events', {}, 't')
+    expect(data).toEqual({ ok: 1 })
+    expect(isFromCache(data)).toBe(false)
+  })
+
+  it('isFromCache is false for primitives and null', () => {
+    expect(isFromCache(null)).toBe(false)
+    expect(isFromCache(undefined)).toBe(false)
+    expect(isFromCache('x')).toBe(false)
   })
 })

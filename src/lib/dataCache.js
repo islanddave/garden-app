@@ -21,16 +21,30 @@
 //   adopts the fresh list.
 // - ERROR ONLY WHEN NO DATA: a revalidate failure with a cached value keeps serving the value
 //   (error:null); only a COLD failure surfaces `error`.
+// - FRESHNESS CLOCK IS NETWORK-ONLY (SW-STALEAPI-001): `at` records the last time the network actually
+//   answered. A response the service worker served from its offline cache commits its data but must NOT
+//   advance `at` — see _isFromCache below.
 
 const _store = new Map()
 const _now = () => Date.now()
 const LRU_CAP = 60
 
+// SW-STALEAPI-001. public/sw.js answers an offline /api/* fetch from API_CACHE with a plain 200, and
+// src/lib/api.js stamps that parsed value with this symbol. Read via Symbol.for rather than importing
+// api.js so this store stays dependency-free — importing api.js would drag Clerk and the routing table
+// into every consumer of the cache. The symbol's canonical definition and rationale live in api.js.
+//
+// Why the store has to care: without this, a cache-served refresh committed `at: _now()`, and
+// revalidateLive(RESUME_MIN_AGE_MS) then skipped the next real wake revalidation for 5 minutes —
+// the app stopped trying to refetch precisely because it had just failed to fetch.
+const FROM_CACHE = Symbol.for('garden-app.fromCache')
+function _isFromCache(v) { return !!v && typeof v === 'object' && v[FROM_CACHE] === true }
+
 // Test seam — clear all module state between cases (mirror PhotoImg's __resetPhotoImgCache).
 export function __resetDataCache() { _store.clear() }
 
 function _mk() {
-  return { status: 'empty', data: undefined, error: null, gen: 0, at: 0, inFlight: null, fetcher: null, subs: new Set(), snap: null }
+  return { status: 'empty', data: undefined, error: null, gen: 0, at: 0, stale: false, inFlight: null, fetcher: null, subs: new Set(), snap: null }
 }
 
 function _entry(key) {
@@ -53,7 +67,9 @@ function _evict(keep) {
 }
 
 function _snap(e) {
-  if (!e.snap) e.snap = { status: e.status, data: e.data, error: e.error, loading: e.status === 'pending', isValidating: !!e.inFlight }
+  // `stale` = the last commit came from the SW's offline cache, not the network. Exposed so a consumer
+  // can say so; the correctness half (never advancing `at`) does not depend on anyone reading it.
+  if (!e.snap) e.snap = { status: e.status, data: e.data, error: e.error, loading: e.status === 'pending', isValidating: !!e.inFlight, stale: !!e.stale }
   return e.snap
 }
 
@@ -108,7 +124,17 @@ export function revalidate(key) {
       if (!cur || cur.gen !== gen) return                 // gen-guard: invalidated mid-flight → discard
       const list = Array.isArray(fresh) ? fresh : (fresh ?? [])
       const data = _sameExceptUrls(cur.data, list) ? cur.data : list   // preserve unchanged rows' URLs
-      _commit(cur, { status: 'value', data, error: null, at: _now() })
+      // SW-STALEAPI-001. A cache-served response still yields usable data (status stays 'value' — an
+      // offline user keeps their list), but it is NOT evidence of freshness, so `at` is left untouched:
+      // it keeps pointing at the last time the NETWORK answered. That is what lets revalidateLive's age
+      // gate still fire on the next wake instead of being suppressed by the failure itself.
+      // Checked on `fresh` AND `list` because the marker rides on the object identity api.js returned;
+      // a fetcher that substitutes a fallback (`d ?? []` on a null body) legitimately loses it, which
+      // degrades to today's behaviour rather than to a wrong answer.
+      const fromCache = _isFromCache(fresh) || _isFromCache(list)
+      _commit(cur, fromCache
+        ? { status: 'value', data, error: null, stale: true }
+        : { status: 'value', data, error: null, stale: false, at: _now() })
     },
     (err) => {
       const cur = _store.get(key)
@@ -167,6 +193,10 @@ export function keyFor(sub, path) { return `${sub}|${path}` }
 // instead of a clean loading→fetch. So on a data-less error we reset the entry to 'empty' — the
 // entry OBJECT is kept (not deleted) because any subscriber that arrived mid-warm holds a reference
 // to it, and replacing it would orphan their callback.
+//
+// SW-STALEAPI-001: an OFFLINE warm is not a failed warm — the SW hands back real cached rows, so the
+// entry legitimately reaches status 'value' (stale:true) and survives this cleanup. It carries at:0,
+// so the first mount and the first wake both revalidate it rather than treating it as fresh.
 export function warm(key, fetcher) {
   const e = _entry(key)
   if (e.data !== undefined || e.inFlight) return null
@@ -182,6 +212,10 @@ export function warm(key, fetcher) {
 
 // B5 resume revalidation. Revalidates keys that something is actually WATCHING — an unsubscribed
 // entry has no viewer, so refetching it on every foreground would burn bandwidth for nobody.
+//
+// `minAgeMs` is measured against `at`, which SW-STALEAPI-001 keeps NETWORK-ONLY. An offline
+// cache-served commit leaves `at` alone, so the gate below measures "how long since real data" rather
+// than "how long since the last attempt" — the distinction the SW's silent 200 used to erase.
 //
 // `minAgeMs` is the elapsed gate, and it is the whole reason this isn't chatty: a 3-second
 // app-switch fires visibilitychange too, and refetching every photo list on every glance would be

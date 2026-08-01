@@ -90,6 +90,17 @@ export function useCacheLifecycle(sub) {
   // RESUME_MIN_AGE_MS would skip precisely the keys that just failed. The data isn't old; the fetch
   // failed. Reusing onWake here would have shipped 3 lines of placebo.
   //
+  // ⚠ THAT PREMISE WAS ONLY HALF TRUE UNTIL SW-STALEAPI-001 (2026-07-31, crucible + boss-technical).
+  // An offline API fetch does not reject: every /api/* route lives on the Lambda origin and is in the
+  // SW's API_CACHE, so public/sw.js answered it from cache as a plain 200. dataCache took the SUCCESS
+  // branch and DID write `at` — so an offline failure looked like a fresh fetch, and the B5 gate above
+  // then suppressed the next real wake revalidate for a full 5 minutes. B6 masked how bad this was
+  // (reconnect ignores the gate), but a wake without an `online` edge — the common outdoor case, where
+  // the radio never formally dropped — got nothing. The SW now stamps X-From-Cache, api.js marks the
+  // parsed value, and dataCache commits such a response WITHOUT touching `at`. The paragraph above is
+  // true again for both flavours of failure; do not re-derive it from the code without that marker in
+  // place.
+  //
   // No visibilityState guard either: a reconnect while hidden should still refetch, and the cost is
   // bounded at ≤3 requests (the cache holds only photo-list keys).
   //

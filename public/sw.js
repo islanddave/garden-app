@@ -15,6 +15,33 @@ const MAX_IMAGE_ENTRIES = 150
 
 const LAMBDA_ORIGIN = 'lambda-url.us-east-1.on.aws'
 
+// SW-STALEAPI-001. Header stamped on an API response served from the offline cache instead of the
+// network. Read by src/lib/api.js, which turns it into a marker on the parsed value; src/lib/dataCache.js
+// then commits the data WITHOUT advancing its freshness clock.
+//
+// WHY THIS EXISTS — do not "simplify" it away. Every /api/* route resolves to the Lambda origin and is
+// therefore in API_CACHE, so an offline API fetch does NOT surface as an error anywhere: networkFirst's
+// catch returned the cached body verbatim as a plain 200. That 200 passed api.js's `!res.ok` guard,
+// reached dataCache's success branch, and committed `at: Date.now()`. Two failures followed: a failed
+// refresh was indistinguishable from a successful one at every layer above this file, and the refreshed
+// `at` made revalidateLive(RESUME_MIN_AGE_MS) SKIP the next legitimate wake revalidation — the app
+// avoided refetching for 5 minutes precisely because it had just failed to fetch.
+const FROM_CACHE_HEADER = 'X-From-Cache'
+
+// Re-emit a cached response carrying FROM_CACHE_HEADER. Headers on a Response handed back by the Cache
+// API are immutable, so the response must be rebuilt rather than mutated. Null-body statuses (204/205/304)
+// cannot legally carry a body through the Response constructor.
+function markFromCache(cached) {
+  const headers = new Headers(cached.headers)
+  headers.set(FROM_CACHE_HEADER, '1')
+  const nullBody = cached.status === 204 || cached.status === 205 || cached.status === 304
+  return new Response(nullBody ? null : cached.body, {
+    status: cached.status,
+    statusText: cached.statusText,
+    headers,
+  })
+}
+
 // Assets to precache on install
 const PRECACHE_URLS = [
   '/',
@@ -208,14 +235,32 @@ async function networkFirst(request, cacheName) {
     }
     return response
   } catch (e) {
-    // WS-A6: a TIMEOUT must NOT serve a possibly-stale cached API body — stale JSON can carry
-    // expired presigned photo URLs (→ 403 broken images). Return a synthetic 504 so the client
-    // surfaces an error/retry. A real offline reject still falls back to cache (unchanged).
+    // The two failure branches deliberately differ. The governing rule is STALE IS A LAST RESORT:
+    // serve a cached API body only when there is no possibility of getting a fresh one right now.
+    //
+    // TIMEOUT (WS-A6) — the radio is up; the request merely lost a race against SW_TIMEOUT_MS. A retry
+    // can succeed immediately, and stale JSON is actively harmful on a live network because its
+    // presigned photo URLs (900s TTL) may already be dead: the user gets a working-looking screen with
+    // 403 images, which reads as data corruption rather than as a network problem. Synthetic 504 →
+    // the client surfaces an error/retry.
     if (e && e.name === 'TimeoutError') {
       return new Response('Gateway Timeout', { status: 504 })
     }
-    const cached = await caches.match(request)
-    return cached || new Response('Offline', { status: 503 })
+    // OFFLINE (fetch rejected outright) — no fresher answer exists, so it is cache-or-blank, and the
+    // cached list beats a blank screen (rural dead zones are this app's normal operating condition,
+    // not an edge case). The WS-A6 presign hazard genuinely does not bite the same way here: with no
+    // network, an <img> pointing at a VALID presign fails exactly as hard as one pointing at an expired
+    // presign, so serving the cached body costs no image that being offline had not already cost.
+    // The residual risk is presigns going stale in memory across the offline→online edge; that is
+    // covered by useCacheLifecycle's B6 onReconnect revalidate (age gate deliberately bypassed) plus
+    // PhotoImg's own 403 heal — and the FROM_CACHE marker is what keeps B5/B6 from being suppressed by
+    // a poisoned `at` in the first place.
+    //
+    // Scoped to `cacheName` rather than the global caches.match(): an API request must only ever be
+    // answered from the API cache, never from a same-URL entry in the static or image cache.
+    const cache = await caches.open(cacheName)
+    const cached = await cache.match(request)
+    return cached ? markFromCache(cached) : new Response('Offline', { status: 503 })
   }
 }
 
