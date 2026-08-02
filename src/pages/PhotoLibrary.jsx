@@ -757,12 +757,19 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
         padding: 'env(safe-area-inset-top) 16px env(safe-area-inset-bottom) 16px',
       }}
     >
+      {/* V4-KBVIEWPORT-001: `overflow: hidden` here is for the rounded corners, and until now it was
+          also silently clipping. Once interactive-widget shrinks the layout viewport, 90dvh
+          re-resolves ~731px -> ~460px with the keyboard up -- and the tag form below owns a
+          PlantingSelect with a text input, so the keyboard IS up on this surface. Photo (300) +
+          caption + tag form + "Save tags" exceeds 460, and with no scrollable descendant the Save
+          button was clipped away unreachably. Flex column: photo pinned, body scrolls. */}
       <div style={{
         backgroundColor: P.white, borderRadius: 12,
         maxWidth: 480, width: '100%', maxHeight: '90dvh', overflow: 'hidden',
+        display: 'flex', flexDirection: 'column',
       }}>
 
-        <div style={{ position: 'relative' }}>
+        <div style={{ position: 'relative', flexShrink: 0 }}>
           {photo.view_url && (
             <PhotoImg
               photoId={photo.id}
@@ -782,7 +789,9 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
           >✕</button>
         </div>
 
-        <div style={{ padding: '16px 20px 20px' }}>
+        {/* minHeight:0 is load-bearing: a flex child's default min-height:auto refuses to shrink
+            below its content, which would defeat overflowY on a shrunken viewport. */}
+        <div style={{ padding: '16px 20px 20px', overflowY: 'auto', minHeight: 0 }}>
           {photo.caption && (
             <p style={{ margin: '0 0 12px', fontSize: '0.88rem', color: P.mid }}>{photo.caption}</p>
           )}

@@ -885,6 +885,14 @@ const modalCard = {
   boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
   // Mobile-sheet feel: full-width, bottom-anchored on small screens
   marginBottom: 'env(safe-area-inset-bottom, 0)',
+  // V4-KBVIEWPORT-001: the backdrop is `fixed; inset:0; align-items:flex-end` with 16px padding, so
+  // once interactive-widget shrinks the layout viewport this card's content overflows the flex
+  // START edge -- upward, off-screen, with no scroll container anywhere in the chain. The card owns
+  // a text search input, so the keyboard is guaranteed to be open here; without a cap the very
+  // field that opened it becomes unreachable. Cap + scroll, not a bottom-anchor change: keeping
+  // flex-end is what gives this its sheet feel above the keyboard.
+  maxHeight: 'calc(100dvh - 32px)',
+  overflowY: 'auto',
 }
 
 const existingCard = {
