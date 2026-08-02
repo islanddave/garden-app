@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.85.0",
+    "date": "2026-08-02",
+    "highlights": [
+      "You can now correct a harvest after logging it. Open the harvest, tap Edit, and change the amount or the unit \u2014 previously the amount was locked in the moment you saved it, and a typo stayed wrong in your harvest totals forever.",
+      "Editing an event now works at all. The Edit form has always been there, but Save was quietly failing for every kind of event."
+    ]
+  },
+  {
     "version": "3.84.0",
     "date": "2026-08-02",
     "highlights": [

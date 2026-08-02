@@ -48,6 +48,10 @@ afterAll(async () => {
   await directSql`DELETE FROM user_stats WHERE user_id IN (${USER}, ${FOREIGN_USER})`
   await directSql`DELETE FROM app_events WHERE user_clerk_sub IN (${USER}, ${FOREIGN_USER})`
   await directSql`DELETE FROM entity_memory WHERE project_id IN (${projectId}, ${foreignProjectId})`
+  // BUG-HARVESTEDIT-001: harvest_log BEFORE event_log — harvest_log_event_id_fkey is a hard FK, so
+  // deleting the parent first fails outright. Ordering matters here the same way the space-photos
+  // teardown orders photos before spaces.
+  await directSql`DELETE FROM harvest_log WHERE created_by IN (${USER}, ${FOREIGN_USER})`
   await directSql`DELETE FROM event_log WHERE created_by IN (${USER}, ${FOREIGN_USER})`
   // CAL-2: the germination describe seeds real plantings. Clear their auto-created entity-registry
   // rows (FK planting_ref_id ON DELETE RESTRICT) + plant-level entity_memory BEFORE deleting plants.
@@ -55,6 +59,191 @@ afterAll(async () => {
   await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
   await directSql`DELETE FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER})`
   await directSql`DELETE FROM plant_projects WHERE created_by IN (${USER}, ${FOREIGN_USER})`
+})
+
+// BUG-HARVESTEDIT-001 — PUT /api/events/:id.
+//
+// This route did not exist: EventDetail's Save has always PUT here and fallen through to a 405, so
+// editing ANY event was silently broken in prod. The harvest half is the one with data
+// consequences — harvest_log had a single INSERT and no UPDATE, making quantity/unit/quality and
+// the CAL-1 weight columns write-once, with the Harvests totals reading those columns.
+//
+// Integration and not source-text assertions because every risk here is database-shaped: a real
+// UPDATE against the live CHECKs (chk_harvest_log_weight_pairing is the one that turns a partial
+// write into a 23514), the weight recompute joining through garden_node -> cultivar -> crop_types,
+// and cross-household scoping via the container join.
+describe('PUT /api/events/:id — BUG-HARVESTEDIT-001', () => {
+  // ISOLATED project. Sibling describes reset state with a broad
+  // `DELETE FROM event_log WHERE project_id = ...`, which a harvest_log child row blocks outright
+  // (harvest_log_event_id_fkey). Sharing the main project made two unrelated rain tests fail — the
+  // fixtures, not the code. Own project + own teardown keeps that blast radius at zero.
+  let hProjectId
+  beforeAll(async () => {
+    hProjectId = (await insertProject({ name: 'int-evt-harvest-' + RUN, createdBy: USER })).id
+  })
+  afterAll(async () => {
+    await directSql`DELETE FROM harvest_log WHERE event_id IN (SELECT id FROM event_log WHERE project_id = ${hProjectId})`
+    await directSql`DELETE FROM entity_memory WHERE project_id = ${hProjectId}`
+    await directSql`DELETE FROM event_log WHERE project_id = ${hProjectId}`
+  })
+
+  const put = (id, body) => callHandler(handler, { method: 'PUT', path: `/api/events/${id}`, body, userId: USER })
+
+  async function makeHarvest({ quantity = 5, unit = 'count' } = {}) {
+    const res = await callHandler(handler, {
+      method: 'POST', path: '/api/events', userId: USER,
+      body: {
+        project_id: hProjectId, event_type: 'harvest', event_date: new Date().toISOString(),
+        harvest: { quantity, unit, quality_rating: 4 },
+      },
+    })
+    expect(res.status, `harvest create failed: ${JSON.stringify(res.body)}`).toBe(201)
+    return res.body.id ?? res.body.eventId
+  }
+  const harvestRow = async (eventId) =>
+    (await directSql`SELECT quantity, unit, quality_rating, weight_grams, weight_estimated
+                       FROM harvest_log WHERE event_id = ${eventId} AND deleted_at IS NULL`)[0]
+
+  it('edits the harvest amount — the number the Harvests totals actually read', async () => {
+    // The headline fix. Mutation: drop the harvest_log UPDATE and the row keeps its original 5.
+    const id = await makeHarvest({ quantity: 5, unit: 'count' })
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(), notes: 'corrected',
+      harvest: { quantity: 12, unit: 'count', quality_rating: 4 },
+    })
+    expect(res.status).toBe(200)
+    const row = await harvestRow(id)
+    expect(Number(row.quantity)).toBe(12)
+    expect(row.unit).toBe('count')
+  })
+
+  it('recomputes weight to MEASURED when the unit becomes a weight', async () => {
+    // All 306 prod rows are count/cup/head/bunch, so weight_grams is NULL everywhere today. An edit
+    // to a weight unit is the first thing that will ever populate it — and it must, or CAL-1 keeps
+    // reading NULL for a harvest the user has now told it the weight of.
+    const id = await makeHarvest({ quantity: 5, unit: 'count' })
+    expect((await harvestRow(id)).weight_grams).toBeNull()
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 2, unit: 'lb', quality_rating: null },
+    })
+    expect(res.status).toBe(200)
+    const row = await harvestRow(id)
+    expect(Number(row.weight_grams)).toBeCloseTo(907.184, 2)   // 2 lb
+    expect(row.weight_estimated).toBe(false)                    // measured, not estimated
+  })
+
+  it('CLEARS a stale weight when the unit goes back to a non-weight — both columns move together', async () => {
+    // The both-or-neither CHECK (chk_harvest_log_weight_pairing) makes a half-update a hard 23514,
+    // and a stale weight left behind would silently inflate the totals. Mutation: leave weight_grams
+    // out of the UPDATE and this either reds on the value or 500s on the constraint.
+    const id = await makeHarvest({ quantity: 3, unit: 'lb' })
+    expect(Number((await harvestRow(id)).weight_grams)).toBeGreaterThan(0)
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 3, unit: 'count', quality_rating: null },
+    })
+    expect(res.status).toBe(200)
+    const row = await harvestRow(id)
+    expect(row.weight_grams).toBeNull()
+    expect(row.weight_estimated).toBeNull()
+  })
+
+  it('preserves quality_rating when the client omits it from the sub-object as null', async () => {
+    // BD-006 hides Quality from the form, so the edit form does not offer it. It must not be
+    // silently destroyed by every save — the client re-sends the seeded value.
+    const id = await makeHarvest({ quantity: 5, unit: 'count' })
+    await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 6, unit: 'count', quality_rating: 4 },
+    })
+    expect((await harvestRow(id)).quality_rating).toBe(4)
+  })
+
+  it('edits a NON-harvest event and leaves harvest_log entirely alone', async () => {
+    // The absent-`harvest` path: every existing caller sends no harvest key, and that must remain
+    // behaviourally identical to a plain event_log update.
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/events', userId: USER,
+      body: { project_id: hProjectId, event_type: 'observation', event_date: new Date().toISOString(), notes: 'before' },
+    })
+    const id = created.body.id ?? created.body.eventId
+    const res = await put(id, {
+      event_type: 'observation', event_date: new Date().toISOString(), notes: 'after', quantity: '6 plants',
+    })
+    expect(res.status).toBe(200)
+    expect(res.body.notes).toBe('after')
+    expect(res.body.harvest).toBeNull()
+    const [row] = await directSql`SELECT notes, quantity FROM event_log WHERE id = ${id}`
+    expect(row.notes).toBe('after')
+    expect(row.quantity).toBe('6 plants')
+  })
+
+  it('refuses to change a harvest event to another type while harvest details exist', async () => {
+    // Explicit 400 rather than silently orphaning a harvest_log row, which would vanish from the
+    // totals with no record of why. Mutation: drop the pairing guard and the row is orphaned.
+    const id = await makeHarvest()
+    const res = await put(id, { event_type: 'observation', event_date: new Date().toISOString() })
+    expect(res.status).toBe(400)
+    expect(await harvestRow(id)).toBeTruthy()
+    const [row] = await directSql`SELECT event_type FROM event_log WHERE id = ${id}`
+    expect(row.event_type).toBe('harvest')
+  })
+
+  it('refuses to convert a plain event INTO a harvest', async () => {
+    // The other direction: there is no harvest_log row to update, and inventing one here would
+    // duplicate the create path's CTE badly.
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/events', userId: USER,
+      body: { project_id: hProjectId, event_type: 'observation', event_date: new Date().toISOString() },
+    })
+    const id = created.body.id ?? created.body.eventId
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 2, unit: 'count', quality_rating: null },
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('rejects an implausible quantity with the SAME rule the create path uses', async () => {
+    // validateHarvestFields is shared between create and edit precisely so they cannot drift.
+    const id = await makeHarvest()
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 99999, unit: 'lb', quality_rating: null },
+    })
+    expect(res.status).toBe(400)
+    expect(Number((await harvestRow(id)).quantity)).toBe(5)
+  })
+
+  it("refuses another household's event with a 404, no existence oracle", async () => {
+    const res = await put(foreignEventId, { event_type: 'observation', event_date: new Date().toISOString() })
+    expect(res.status).toBe(404)
+    const [row] = await directSql`SELECT event_type FROM event_log WHERE id = ${foreignEventId}`
+    expect(row.event_type).toBe('observation')
+  })
+
+  it('GET returns the harvest row so the edit form can seed itself', async () => {
+    // Without this the client cannot render the real amount at all — it only ever saw
+    // event_log.quantity, a different field entirely.
+    const id = await makeHarvest({ quantity: 7, unit: 'cup' })
+    const res = await callHandler(handler, { method: 'GET', path: `/api/events/${id}`, userId: USER })
+    expect(res.status).toBe(200)
+    expect(res.body.harvest).toBeTruthy()
+    expect(Number(res.body.harvest.quantity)).toBe(7)
+    expect(res.body.harvest.unit).toBe('cup')
+  })
+
+  it('GET on a non-harvest event returns harvest null, not an error', async () => {
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/events', userId: USER,
+      body: { project_id: hProjectId, event_type: 'observation', event_date: new Date().toISOString() },
+    })
+    const id = created.body.id ?? created.body.eventId
+    const res = await callHandler(handler, { method: 'GET', path: `/api/events/${id}`, userId: USER })
+    expect(res.status).toBe(200)
+    expect(res.body.harvest).toBeNull()
+  })
 })
 
 describe('POST /api/events — validation + create', () => {

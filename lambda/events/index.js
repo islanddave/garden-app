@@ -24,7 +24,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate } from './validators.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope } from './household.js';
 import { FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES } from './statusTransitions.js';
@@ -817,15 +817,170 @@ export const handler = async (event) => {
         });
       }
 
+      // PUT /api/events/:id — edit an existing event. BUG-HARVESTEDIT-001.
+      //
+      // THIS ROUTE DID NOT EXIST. EventDetail has shipped a full edit form with a Save button since
+      // its introduction, and that Save has always PUT to this path and fallen through to the 405
+      // below — so editing ANY event has been silently broken in prod, for every event type, not
+      // just harvests. `git log -S` finds no PUT handler ever present here and no test covered one.
+      //
+      // The harvest half is the part with data consequences. harvest_log had exactly ONE write (the
+      // INSERT in the create CTE) and no UPDATE anywhere, so quantity/unit/quality_rating and the
+      // CAL-1 weight columns were write-once: a mistyped harvest could never be corrected, and the
+      // Harvests page totals — which read harvest_log, not event_log.quantity — stayed wrong
+      // permanently. Prod carries 306 harvest_log rows against 297 harvest events.
+      //
+      // Full-replace on the named event fields (the tag-modal grammar used elsewhere in this repo:
+      // the client submits the whole set every save, so an omitted key means "cleared"). `harvest`
+      // is a SEPARATE opt-in sub-object: absent means "don't touch harvest_log", which is what lets
+      // a non-harvest edit — and every existing caller — stay byte-identical in behaviour.
+      if (method === 'PUT') {
+        const body = JSON.parse(event.body ?? '{}');
+
+        if (!body.event_type) return resp(400, { error: 'event_type is required' });
+        // Same reservation as the POST path: status_change is server-emitted only, so it can be
+        // neither logged nor edited INTO by a client.
+        if (body.event_type === 'status_change') {
+          return resp(400, { error: 'status_change is set automatically and cannot be set directly' });
+        }
+        const eventDate = normalizeEventDate(body.event_date);
+        if (body.event_date != null && eventDate === null) {
+          return resp(400, { error: 'event_date invalid' });
+        }
+        if (body.harvest != null) {
+          const harvestErr = validateHarvestFields(body.harvest);
+          if (harvestErr) return resp(harvestErr.status, { error: harvestErr.error });
+        }
+
+        // Authz + existence in one read, matching the DELETE/GET pattern exactly (container
+        // ownership via project_id). Verified safe against live data: 0 of 11,583 undeleted events
+        // carry a NULL project_id, so the inner join excludes nothing real. Deliberately NOT a
+        // looser rule invented for this fix — a bug fix is the wrong place to widen authz.
+        const owned = await sql`
+          SELECT el.id, el.event_type, el.plant_id,
+                 (SELECT h.id FROM harvest_log h
+                   WHERE h.event_id = el.id AND h.deleted_at IS NULL LIMIT 1) AS harvest_log_id
+            FROM event_log el
+            JOIN public.container pp ON pp.id = el.project_id
+           WHERE el.id = ${eventId}
+             AND el.deleted_at IS NULL
+             AND pp.created_by = ANY(${householdIds})
+             AND pp.deleted_at IS NULL
+        `;
+        if (!owned.length) return resp(404, { error: 'Not found' });
+        const existing = owned[0];
+        const hasHarvestRow = existing.harvest_log_id != null;
+
+        // Pairing guard. harvest_log rows belong to harvest events; an event_type edit that breaks
+        // that pairing is refused EXPLICITLY rather than silently orphaning a harvest row (which
+        // would vanish from the Harvests totals with no record of why) or silently inventing one.
+        // Both directions are stated so the message tells the user what to do instead.
+        if (hasHarvestRow && body.event_type !== 'harvest') {
+          return resp(400, {
+            error: 'cannot change a harvest event to another type while it has harvest details — delete the event and log a new one',
+          });
+        }
+        if (!hasHarvestRow && body.event_type === 'harvest') {
+          return resp(400, {
+            error: 'cannot convert an existing event into a harvest — log a new harvest instead',
+          });
+        }
+
+        const updatedRows = await sql`
+          UPDATE event_log el
+             SET event_type    = ${body.event_type},
+                 event_date    = COALESCE(${eventDate}::timestamptz, el.event_date),
+                 title         = ${body.title ?? null},
+                 notes         = ${body.notes ?? null},
+                 private_notes = ${body.private_notes ?? null},
+                 quantity      = ${body.quantity ?? null},
+                 is_public     = COALESCE(${body.is_public ?? null}::boolean, el.is_public),
+                 updated_at    = NOW()
+            FROM public.container pp
+           WHERE el.id = ${eventId}
+             AND el.deleted_at IS NULL
+             AND pp.id = el.project_id
+             AND pp.created_by = ANY(${householdIds})
+             AND pp.deleted_at IS NULL
+          RETURNING el.id, el.project_id, el.location_id, el.plant_id, el.event_type,
+                    el.event_date, el.title, el.notes, el.private_notes, el.quantity,
+                    el.is_public, el.logged_by, el.created_at, el.updated_at,
+                    el.flagged_as_issue, el.severity, el.resolved_at
+        `;
+        if (!updatedRows.length) return resp(404, { error: 'Not found' });
+
+        let harvestRow = null;
+        if (body.harvest != null && hasHarvestRow) {
+          const hq = body.harvest.quantity;
+          const hu = body.harvest.unit;
+          const hqual = body.harvest.quality_rating ?? null;
+          // Weight recompute uses the SAME expression as the create CTE — measured when the unit is
+          // itself a weight, else estimated from the crop's grams_per_unit, else NULL. It must be
+          // recomputed on every edit: changing 3 lb -> 3 count has to CLEAR a measured weight, not
+          // leave a stale one behind, and chk_harvest_log_weight_pairing
+          // ((weight_grams IS NULL) = (weight_estimated IS NULL)) makes a half-update a hard 23514.
+          // The ct.default_unit = unit join gate is what keeps grams_per_unit present only for a
+          // valid estimate, so both columns move together by construction.
+          // NOTE on live data: all 306 prod harvest rows use count/cup/head/bunch, so today this
+          // resolves to NULL/NULL for every one of them. That is CAL-1's own coverage gap
+          // (V4-CAL1HARV-001), not this route's — but it does mean an edit to a weight unit is the
+          // first thing that will ever populate these columns.
+          const updatedHarvest = await sql`
+            UPDATE harvest_log h
+               SET quantity       = ${hq}::numeric,
+                   unit           = ${hu},
+                   quality_rating = ${hqual}::smallint,
+                   weight_grams   = COALESCE(
+                     ${hq}::numeric * CASE ${hu}::text
+                       WHEN 'g'  THEN 1
+                       WHEN 'kg' THEN 1000
+                       WHEN 'lb' THEN 453.592
+                       WHEN 'oz' THEN 28.3495
+                       ELSE NULL
+                     END,
+                     ct.grams_per_unit * ${hq}::numeric
+                   ),
+                   weight_estimated = CASE
+                     WHEN ${hu}::text IN ('g','kg','lb','oz') THEN false
+                     WHEN ct.grams_per_unit IS NOT NULL       THEN true
+                     ELSE NULL
+                   END,
+                   updated_at = NOW()
+              FROM event_log ne
+              LEFT JOIN garden_node gn ON gn.id = ne.plant_id      AND gn.deleted_at IS NULL
+              LEFT JOIN cultivar    cv ON cv.id = gn.cultivar_id   AND cv.deleted_at IS NULL
+              LEFT JOIN crop_types  ct ON ct.slug = cv.crop_type_slug AND ct.deleted_at IS NULL
+                                      AND ct.default_unit = ${hu}
+             WHERE h.event_id = ${eventId}
+               AND h.deleted_at IS NULL
+               AND ne.id = h.event_id
+            RETURNING h.id, h.quantity, h.unit, h.quality_rating, h.weight_grams, h.weight_estimated
+          `;
+          harvestRow = updatedHarvest[0] ?? null;
+        }
+
+        return resp(200, { ...updatedRows[0], harvest: harvestRow });
+      }
+
       if (method === 'GET') {
         const rows = await sql`
           SELECT
             e.id, e.project_id, e.location_id, e.plant_id,
-            e.event_type, e.event_date, e.notes, e.private_notes,
+            e.event_type, e.event_date, e.title, e.notes, e.private_notes,
             e.quantity, e.is_public, e.logged_by, e.created_at,
             e.metadata,
             e.flagged_as_issue, e.severity, e.resolved_at,
-            pp.display_name AS project_name
+            pp.display_name AS project_name,
+            -- BUG-HARVESTEDIT-001: the harvest detail row, so the edit form can SEED itself. Without
+            -- this the client cannot render the real quantity/unit at all — it only ever saw
+            -- event_log.quantity, a free-text field that is not what the Harvests totals read.
+            -- LEFT JOIN, not INNER: a non-harvest event must still return, with harvest null.
+            (SELECT row_to_json(x) FROM (
+               SELECT h.id, h.quantity, h.unit, h.quality_rating, h.weight_grams, h.weight_estimated
+                 FROM harvest_log h
+                WHERE h.event_id = e.id AND h.deleted_at IS NULL
+                LIMIT 1
+             ) x) AS harvest
           FROM event_log e
           JOIN public.container pp ON pp.id = e.project_id
           WHERE e.id = ${eventId}

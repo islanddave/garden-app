@@ -10,6 +10,9 @@ import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+// BUG-HARVESTEDIT-001: the SAME constants the create form uses. The unit list also mirrors
+// harvest_log_unit_check in the database, so an option here that Postgres would reject cannot exist.
+import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
 
 
 // Shared metadata field label map — mirrors EVENT_METADATA_FIELDS keys from EventNew
@@ -86,13 +89,41 @@ export default function EventDetail() {
       private_notes: event.private_notes ?? '',
       quantity:      event.quantity ?? '',
       is_public:     event.is_public,
+      // BUG-HARVESTEDIT-001: seeded from the harvest_log row the GET now returns. These are the
+      // values the Harvests page actually totals — event_log.quantity above is a separate free-text
+      // field and editing it never touched them.
+      harvest_quantity: event.harvest?.quantity != null ? String(event.harvest.quantity) : '',
+      harvest_unit:     event.harvest?.unit ?? 'count',
+      harvest_quality:  event.harvest?.quality_rating ?? null,
     })
     setSaveErr(null)
     setEditing(true)
   }
 
+  // BUG-HARVESTEDIT-001: the edit form's harvest section keys off the event's PERSISTED type, not
+  // the dropdown's current value. The server refuses an event_type change that would break the
+  // harvest_log pairing in either direction, so showing/hiding these fields as the user scrolls the
+  // type dropdown would promise an edit the server will reject.
+  const isHarvest = event?.event_type === 'harvest' && event?.harvest != null
+
+  // Mirrors the create form's client-side guard (EventNew validateHarvest) and the server's
+  // validateHarvestFields, so the user is told before the round trip rather than by a 400.
+  function harvestError() {
+    if (!isHarvest) return null
+    const qty = Number(form.harvest_quantity)
+    if (form.harvest_quantity === '' || !Number.isFinite(qty) || qty <= 0) {
+      return 'Enter a harvest amount greater than zero.'
+    }
+    if (qty > MAX_PLAUSIBLE[form.harvest_unit]) {
+      return `That's higher than expected for ${form.harvest_unit} — double-check the amount.`
+    }
+    return null
+  }
+
   async function handleSave(e) {
     e.preventDefault()
+    const hErr = harvestError()
+    if (hErr) { setSaveErr(hErr); return }
     setSaving(true)
     setSaveErr(null)
     try {
@@ -107,6 +138,13 @@ export default function EventDetail() {
           private_notes: form.private_notes.trim() || null,
           quantity:      form.quantity.trim()       || null,
           is_public:     form.is_public,
+          // Sent ONLY for a harvest event. Absent means "don't touch harvest_log", which is what
+          // keeps every non-harvest edit behaviourally identical to before this route existed.
+          ...(isHarvest ? { harvest: {
+            quantity:       Number(form.harvest_quantity),
+            unit:           form.harvest_unit,
+            quality_rating: form.harvest_quality,
+          } } : {}),
         }),
       })
       setEvent(updated)
@@ -220,6 +258,43 @@ export default function EventDetail() {
               placeholder="e.g. 6 plants"
             />
           </Field>
+
+          {/* BUG-HARVESTEDIT-001 — the harvest amount that actually counts. Distinct from the free-text
+              "Quantity" above, which is a note on the event: THIS pair is the harvest_log row the
+              Harvests page totals and the CAL-1 weight derivation reads. Until now it had no UPDATE
+              path at all, so a mistyped harvest was permanent. Rendered only for a harvest event that
+              has a harvest row — the server refuses type changes that would break that pairing. */}
+          {isHarvest && (
+            <div data-testid="harvest-edit-fields" style={{ marginBottom: 14, padding: '14px 14px 2px', border: `1px solid ${P.sage}`, borderRadius: 10 }}>
+              <p style={{ margin: '0 0 12px', fontSize: '0.82rem', fontWeight: 700, color: P.dark }}>
+                Harvest amount
+              </p>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <Field label="Amount *" htmlFor="ev-harvest-qty" style={{ marginBottom: 14, flex: 1 }}>
+                  <Input
+                    id="ev-harvest-qty"
+                    type="number"
+                    min="0"
+                    step="any"
+                    inputMode="decimal"
+                    value={form.harvest_quantity}
+                    onChange={e => setForm(f => ({ ...f, harvest_quantity: e.target.value }))}
+                  />
+                </Field>
+                <Field label="Unit *" htmlFor="ev-harvest-unit" style={{ marginBottom: 14, flex: 1 }}>
+                  <Select
+                    id="ev-harvest-unit"
+                    value={form.harvest_unit}
+                    onChange={e => setForm(f => ({ ...f, harvest_unit: e.target.value }))}
+                  >
+                    {[...HARVEST_UNITS].sort((a, b) => a.localeCompare(b)).map(u => (
+                      <option key={u} value={u}>{u}</option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+            </div>
+          )}
 
           <Field label="Notes (public)" htmlFor="ev-notes" style={{ marginBottom: 14 }}>
             <Textarea

@@ -52,25 +52,10 @@ export function validatePostBody(body) {
 
   // Harvest validators
   if (body.event_type === 'harvest') {
-    if (!body.harvest || typeof body.harvest !== 'object') {
-      return { status: 400, error: 'harvest fields required for event_type=harvest' };
-    }
-    if (typeof body.harvest.quantity !== 'number'
-      || !Number.isFinite(body.harvest.quantity)
-      || body.harvest.quantity <= 0) {
-      return { status: 400, error: 'harvest.quantity must be a positive finite number' };
-    }
-    if (!HARVEST_UNITS.includes(body.harvest.unit)) {
-      return { status: 400, error: 'harvest.unit invalid' };
-    }
-    // F18 per-unit upper bound
-    if (body.harvest.quantity > MAX_PLAUSIBLE[body.harvest.unit]) {
-      return { status: 400, error: `harvest.quantity exceeds max for unit ${body.harvest.unit}` };
-    }
-    if (body.harvest.quality_rating != null
-      && ![1, 2, 3, 4, 5].includes(body.harvest.quality_rating)) {
-      return { status: 400, error: 'harvest.quality_rating must be 1-5' };
-    }
+    // BUG-HARVESTEDIT-001: delegated to validateHarvestFields so the create and edit paths share
+    // one rule set. Behaviour here is unchanged — same checks, same messages, same order.
+    const harvestErr = validateHarvestFields(body.harvest);
+    if (harvestErr) return harvestErr;
   }
 
   // Forbid harvest fields on non-harvest events
@@ -84,6 +69,33 @@ export function validatePostBody(body) {
     return { status: 400, error: 'treatment_category must be fertilizer, amendment, pest_control, or other' };
   }
 
+  return null;
+}
+
+// BUG-HARVESTEDIT-001 — the harvest-field rules, extracted VERBATIM from validatePostBody so the
+// edit path cannot drift from the create path. That drift is the whole reason this bug exists:
+// harvest_log had one INSERT and no UPDATE, so nothing was keeping two write paths in agreement
+// because there was only ever one. Now there are two, and they share this function.
+//
+// Mirrors harvest_log's live CHECKs: harvest_log_unit_check (the 8-value enum),
+// harvest_log_quality_rating_check (NULL or 1-5), plus the app-level per-unit plausibility cap.
+// Returns null on success, or { status, error }.
+export function validateHarvestFields(h) {
+  if (!h || typeof h !== 'object') {
+    return { status: 400, error: 'harvest fields required for event_type=harvest' };
+  }
+  if (typeof h.quantity !== 'number' || !Number.isFinite(h.quantity) || h.quantity <= 0) {
+    return { status: 400, error: 'harvest.quantity must be a positive finite number' };
+  }
+  if (!HARVEST_UNITS.includes(h.unit)) {
+    return { status: 400, error: 'harvest.unit invalid' };
+  }
+  if (h.quantity > MAX_PLAUSIBLE[h.unit]) {
+    return { status: 400, error: `harvest.quantity exceeds max for unit ${h.unit}` };
+  }
+  if (h.quality_rating != null && ![1, 2, 3, 4, 5].includes(h.quality_rating)) {
+    return { status: 400, error: 'harvest.quality_rating must be 1-5' };
+  }
   return null;
 }
 

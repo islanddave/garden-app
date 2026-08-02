@@ -27,10 +27,17 @@ describe('events Lambda — Household Mode surgical widening', () => {
     // + germination->germinated_at lifecycle-date WRITE, single + batch paths (2026-07-30, CAL-2):
     //   same no-RLS garden_node scope as fruit_set/flowering; a household member logging a
     //   germination on a shared planting may stamp its germinated_at (set-once).
+    // + PUT /api/events/:id edit path, TWO sites (2026-08-02, BUG-HARVESTEDIT-001): the ownership
+    //   pre-check that also reads whether a harvest_log row exists, and the event_log UPDATE itself.
+    //   Both are event-entity ops scoped exactly like the DELETE and GET on the same route, so
+    //   household-widening is correct and deliberately identical — this route was ADDED, not
+    //   widened: editing any event previously fell through to a 405, so the form's Save had never
+    //   worked for any event type. Matching the sibling routes' scope rather than inventing a
+    //   looser rule is the point; a bug fix is the wrong place to widen authz.
     // Each is an event-entity op, so household-widening is correct per the surgical-widening
-    // invariant. Count was 4 pre-Unit-A, 5 post-Unit-A, 6 post-HS-2, 7 post-undo-fix, 8 post-feed, 9 post-fruit_set, 10 post-flowering (V3-FLOWERING-001), 12 post-batch-flowering+fruit_set (V4-EVENTSEL-002: the two batch-path status UPDATEs), 14 post-germination (CAL-2: single + batch germinated_at set-once writes) (L-099 drift class).
+    // invariant. Count was 4 pre-Unit-A, 5 post-Unit-A, 6 post-HS-2, 7 post-undo-fix, 8 post-feed, 9 post-fruit_set, 10 post-flowering (V3-FLOWERING-001), 12 post-batch-flowering+fruit_set (V4-EVENTSEL-002: the two batch-path status UPDATEs), 14 post-germination (CAL-2: single + batch germinated_at set-once writes), 16 post-event-edit (BUG-HARVESTEDIT-001: PUT pre-check + UPDATE) (L-099 drift class).
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(14);
+    expect(matches.length).toBe(16);
   });
 
   it('achievement resolved-set query NOT widened (per-user isolation invariant)', () => {
