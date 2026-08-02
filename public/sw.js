@@ -49,10 +49,24 @@ const PRECACHE_URLS = [
 ]
 
 // ---- Install ----
+// V4-KBVIEWPORT-001: precache with cache:'no-store', NOT cache.addAll(). addAll() issues plain
+// fetches that the browser's own HTTP cache may satisfy from the PREVIOUS build — so a correctly
+// versioned new SW, whose activate purge ran correctly, could still install a stale '/' shell.
+// That shell is what every offline/timeout navigation falls back to (see navigationFallback), and
+// index.html carries the viewport meta, so a stale one silently runs the OLD viewport model. The
+// result is a per-launch coin flip between viewport modes on the same build — and a device test
+// that passes without revealing which model it exercised. navigationFallback already goes to this
+// trouble (`new Request(request, { cache: 'no-store' })`); install did not. Per-URL so one failure
+// cannot void the whole precache, which is what addAll().catch(()=>{}) silently did.
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => {
-      return cache.addAll(PRECACHE_URLS).catch(() => {})
+    caches.open(STATIC_CACHE).then(async (cache) => {
+      await Promise.all(PRECACHE_URLS.map(async (url) => {
+        try {
+          const res = await fetch(new Request(url, { cache: 'no-store' }))
+          if (res.ok) await cache.put(url, res)
+        } catch { /* offline install: navigationFallback still handles the miss */ }
+      }))
     }).then(() => self.skipWaiting())
   )
 })
