@@ -759,10 +759,15 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
     >
       {/* V4-KBVIEWPORT-001: `overflow: hidden` here is for the rounded corners, and until now it was
           also silently clipping. Once interactive-widget shrinks the layout viewport, 90dvh
-          re-resolves ~731px -> ~460px with the keyboard up -- and the tag form below owns a
-          PlantingSelect with a text input, so the keyboard IS up on this surface. Photo (300) +
-          caption + tag form + "Save tags" exceeds 460, and with no scrollable descendant the Save
-          button was clipped away unreachably. Flex column: photo pinned, body scrolls. */}
+          re-resolves ~731px -> ~460px with the keyboard up -- and the tag form's "Plant · optional"
+          field is a PlantingSelect text input, so the keyboard IS up on this surface. Photo (300) +
+          the optional caption line + Project/Plant/Location + "Save tags" exceeds 460, and with no
+          scrollable descendant the Save button was clipped away unreachably. Flex column: photo
+          pinned, body scrolls.
+          NOTE the two conditions for reproducing it: the tag form renders only when the photo is
+          NOT attached to an event (the hasEvent branch replaces it with a pointer to the event
+          log), and the caption line renders only when the photo HAS a caption -- captions are set
+          at upload time and are not editable here, so a caption-less photo is the shorter case. */}
       <div style={{
         backgroundColor: P.white, borderRadius: 12,
         maxWidth: 480, width: '100%', maxHeight: '90dvh', overflow: 'hidden',
