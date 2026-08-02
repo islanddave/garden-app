@@ -124,7 +124,10 @@ describe('EventNew — harvest panel rendering', () => {
     await flushLoad()
     expect(screen.getByLabelText('Harvest quantity')).toBeTruthy()
     expect(screen.getByLabelText('Harvest unit')).toBeTruthy()
-    expect(screen.getByRole('radiogroup', { name: 'Harvest quality' })).toBeTruthy()
+    // V4-HIDEQUALITY-001: quality is HIDDEN at the shipped flag value — the rest of the harvest
+    // panel is untouched. The flag-OFF (rollback) path re-renders it and is covered by
+    // HarvestQuality.flagOff.test.jsx; the pin on the shipped value lives in flagOn.test.jsx.
+    expect(screen.queryByRole('radiogroup', { name: 'Harvest quality' })).toBeNull()
   })
 
   it('does NOT render the harvest panel for non-harvest event types', async () => {
@@ -154,12 +157,15 @@ describe('EventNew — harvest panel rendering', () => {
     expect(screen.getByLabelText('Quantity')).toBeTruthy()
   })
 
-  it('renders anchored quality labels (not a star widget)', async () => {
+  // V4-HIDEQUALITY-001: the anchored-label assertions moved to HarvestQuality.flagOff.test.jsx —
+  // they describe the rollback path, which is where that widget still renders. What belongs HERE is
+  // the shipped-surface claim: none of the quality copy reaches the user.
+  it('renders no quality labels at the shipped flag value', async () => {
     renderEventNew('event_type=harvest')
     await flushLoad()
-    expect(screen.getByText('1 = inedible')).toBeTruthy()
-    expect(screen.getByText('3 = acceptable')).toBeTruthy()
-    expect(screen.getByText('5 = excellent')).toBeTruthy()
+    expect(screen.queryByText('1 = inedible')).toBeNull()
+    expect(screen.queryByText('3 = acceptable')).toBeNull()
+    expect(screen.queryByText('5 = excellent')).toBeNull()
   })
 })
 
@@ -242,8 +248,9 @@ describe('EventNew — valid harvest submit', () => {
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
     fireEvent.change(screen.getByLabelText('Harvest unit'), { target: { value: 'lb' } })
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '2.5' } })
-    // pick a quality rating
-    fireEvent.click(screen.getByLabelText('4 = good'))
+    // V4-HIDEQUALITY-001: no rating is picked because there is no control to pick one with. The KEY
+    // is still present and explicitly null — hiding the input must not change the request SHAPE the
+    // server validates. The rating-carrying variant of this case lives in the flagOff file.
 
     await act(async () => {
       fireEvent.click(screen.getByText('Save'))
@@ -252,7 +259,7 @@ describe('EventNew — valid harvest submit', () => {
     expect(postCalls.length).toBe(1)
     const body = postCalls[0]
     expect(body.event_type).toBe('harvest')
-    expect(body.harvest).toEqual({ quantity: 2.5, unit: 'lb', quality_rating: 4 })
+    expect(body.harvest).toEqual({ quantity: 2.5, unit: 'lb', quality_rating: null })
     // generic freetext quantity nulled for harvest events
     expect(body.quantity).toBeNull()
     expect(localStorage.getItem('lastHarvestUnit')).toBe('lb')

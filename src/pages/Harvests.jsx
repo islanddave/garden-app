@@ -11,7 +11,7 @@ import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
 import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
 import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
 import { fmtQuantity, unitLabel, formatEntry, etDay } from '../lib/harvestSummary.js'
-import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
 
 // Harvests — V4-HARVESTVIEW-001 S2a/S2b. Route + snapshot strip + Log feed + minimal Totals, reading
 // the shipped GET /api/harvests. Retrospective/reflective: never prompts, counts down, or scores
@@ -343,7 +343,9 @@ function HarvestEntry({ entry: e }) {
         {e.event_type === 'first_harvest' && (
           <span style={{ fontSize: '0.74rem', fontWeight: 700, color: P.green }}>First harvest 🌱</span>
         )}
-        <QualityDots value={e.quality_rating} />
+        {/* V4-HIDEQUALITY-001: output side of the same hide. The row still CARRIES quality_rating
+            from the API — only the rendering is gated, so a rollback needs no data backfill. */}
+        {!HARVEST_QUALITY_HIDDEN && <QualityDots value={e.quality_rating} />}
         {Array.isArray(e.photos) && e.photos.length > 0 && (
           <span style={{ fontSize: '0.74rem', color: P.light }} aria-label={`${e.photos.length} photo${e.photos.length === 1 ? '' : 's'}`}>📷 {e.photos.length}</span>
         )}

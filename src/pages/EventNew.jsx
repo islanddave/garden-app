@@ -6,7 +6,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES } from '../lib/constants.js'
 import { EVENT_TYPE_META, requiresPlanting } from '../lib/eventTypes.js'
-import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
@@ -1193,6 +1193,10 @@ export default function EventNew() {
                 <div role="alert" style={{ marginTop: 6, fontSize: '0.78rem', color: P.terra, fontWeight: 600 }}>{harvestError}</div>
               )}
 
+              {/* V4-HIDEQUALITY-001: hidden by flag, not deleted — see featureFlags.js. With the
+                  control gone, harvest.quality_rating stays at its null default and the POST body
+                  still carries the key, so the server contract is unchanged. */}
+              {!HARVEST_QUALITY_HIDDEN && (
               <div style={{ marginTop: 16 }}>
                 <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: P.light, marginBottom: 6, letterSpacing: '0.3px', textTransform: 'uppercase' }}>
                   Quality  ·  optional
@@ -1222,6 +1226,7 @@ export default function EventNew() {
                   </button>
                 )}
               </div>
+              )}
             </Section>
           )}
 

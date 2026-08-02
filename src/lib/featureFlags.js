@@ -110,3 +110,19 @@ export const IMAGE_LIST_CACHE_ENABLED = true
 // + redeploy. The flag-OFF path is not dead code — it is that lever, and it is covered by
 // SpacePhotos.flagOff.test.jsx, which mocks this false and re-pins the exact 48-route table.
 export const SPACE_PHOTOS_ENABLED = true
+
+// V4-HIDEQUALITY-001 (BD-006, Dave 2026-07-31): hide the harvest Quality rating from the CAPTURE form
+// (EventNew) and the harvest OUTPUT (Harvests list). HIDE, NOT REMOVE — this is the whole ask. The
+// harvest_log.quality_rating column, its 1-5 CHECK, the validator in lambda/events/validators.js, the
+// create+edit write paths, and every already-logged rating all stay exactly as they are. Dave doesn't
+// use the field today; he did not ask to lose the data, and dropping it would not be reversible on
+// prod rows.
+// Consequence of hiding the capture control: new harvests submit quality_rating: null (the state
+// default). That is the correct read of "hide" — no UI to set it means nothing sets it. EventDetail's
+// edit path already carries the existing value through untouched (V4-HIDEQUALITY sibling, shipped
+// v3.85.0), so editing an OLD harvest PRESERVES its rating rather than nulling it.
+// Rollback is one const: flip false + redeploy — both surfaces come straight back. That flag-OFF path
+// is NOT dead code, it is the lever, and it is covered by HarvestQuality.flagOff.test.jsx. The single
+// pin on this flag's SHIPPED value lives once, in HarvestQuality.flagOn.test.jsx via importActual, so
+// a future flip is a deliberate decision rather than a test that quietly needs fixing.
+export const HARVEST_QUALITY_HIDDEN = true

@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.86.0",
+    "date": "2026-08-02",
+    "highlights": [
+      "Harvest Quality is now hidden. The 1-5 quality rating no longer appears when you log a harvest, or on the Harvests list. Nothing you already rated was deleted \u2014 the ratings are still stored, just out of the way."
+    ]
+  },
+  {
     "version": "3.85.0",
     "date": "2026-08-02",
     "highlights": [
