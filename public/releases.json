@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.90.0",
+    "date": "2026-08-02",
+    "highlights": [
+      "The soft keyboard no longer shoves the page around. The app now tells Chrome to shrink the page when the keyboard opens, so buttons anchored to the bottom sit just above it instead of hiding behind it. This retires a workaround that was lifting the Save button roughly 500px up the screen \u2014 straight into the planting list you were trying to tap.",
+      "Two dialogs could put their own buttons out of reach on a short screen. The photo detail dialog could clip its Save button away with no way to scroll to it, and the variety picker could push its search box off the top of the screen. Both now scroll.",
+      "The planting list now knows the bottom nav is there. It sizes itself to the space actually free above the nav bar, and shows the room it really has instead of overflowing off-screen."
+    ]
+  },
+  {
     "version": "3.89.0",
     "date": "2026-08-02",
     "highlights": [

@@ -4,7 +4,7 @@ import { saveFileToDevice } from '../lib/saveFileToDevice.js'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
-import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES } from '../lib/constants.js'
+import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 import { EVENT_TYPE_META, requiresPlanting } from '../lib/eventTypes.js'
 import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
@@ -142,23 +142,27 @@ function useVoiceInput() {
   return { start, stop, listening, fieldKey, supported }
 }
 
-// V4-LOGCONF-001 (C1): the iOS keyboard shrinks the VISUAL viewport but neither dvh nor the layout
-// viewport tracks it, so a bottom-anchored sticky footer inside the overlay Sheet can sit under the
-// keyboard. Track the occluded inset via visualViewport (0 where unsupported, incl. jsdom) and lift
-// bottom-stuck elements by it.
-function useVisualViewportInset() {
-  const [inset, setInset] = useState(0)
-  useEffect(() => {
-    const vv = typeof window !== 'undefined' ? window.visualViewport : null
-    if (!vv) return
-    const update = () => setInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop))
-    update()
-    vv.addEventListener('resize', update)
-    vv.addEventListener('scroll', update)
-    return () => { vv.removeEventListener('resize', update); vv.removeEventListener('scroll', update) }
-  }, [])
-  return inset
-}
+// V4-KBVIEWPORT-001 — `useVisualViewportInset` WAS HERE AND IS DELETED. Do not reintroduce it.
+//
+// It computed `innerHeight - vv.height - vv.offsetTop` and lifted bottom-stuck elements by the
+// result. Under Chrome Android's default `resizes-visual` that result is the ENTIRE keyboard height
+// (~300-430px), because the layout viewport does not shrink while the visual one does — so the
+// sticky Save CTA was hoisted ~500px off the bottom, directly into the band where the planting
+// picker's listbox opens. That lift was the ROOT CAUSE of V4-PICKERUX-001; v3.87.0 shipped a
+// z-index + placement mitigation over the top of it without removing it.
+//
+// It was also the exact artifact overlay-architecture-design-V102 §8.1 ruled NOT BUILT
+// ("`visualViewport` fallback -> NOT built"), shipped by V4-LOGCONF-001 in place of the fix §8.1
+// actually ratified. index.html now carries `interactive-widget=resizes-content`, so the layout
+// viewport shrinks with the keyboard and bottom-anchored elements need no JS lift at all.
+//
+// Three reasons it is DELETED rather than left to self-neutralize: (1) the service worker can serve
+// a stale precached shell carrying the old viewport meta, which would make the inset ~0 on some
+// launches and ~430px on others -- same build, same device, no user-visible cause; (2) it fired
+// `setInset` on every compositor-frame visualViewport `scroll` event with no coalescing, re-
+// rendering this whole tree per frame during the keyboard animation; (3) a live inset computation
+// sitting next to correctly-positioned layout is how the next reader re-derives the wrong model.
+// Guarded by src/__tests__/noViewportInsetArithmetic.static.test.js.
 
 function MicBtn({ fieldKey, onResult, voice, top = '50%', transform = 'translateY(-50%)' }) {
   if (!voice.supported) return null
@@ -320,7 +324,6 @@ export default function EventNew() {
   const [seasonLine, setSeasonLine] = useState(null)
   const closeBtnRef = useRef(null)
   const dismissOverlay = useOverlayDismiss()
-  const kbInset = useVisualViewportInset()
   const [metadataState, setMetadataState] = useState({})
   // V4-TREATLOG-001: dedicated treatment capture (pest_treatment / doctored).
   const [treatment, setTreatment] = useState({ pest_target: '', product_id: '', product_text: '', category: '', amount: '' })
@@ -359,8 +362,10 @@ export default function EventNew() {
   // Default collapsed unless the feature flag flips it open. Fields stay reachable.
   const [showAddDetails, setShowAddDetails] = useState(EVENTNEW_ADD_DETAILS_EXPANDED)
   const [plantsForProject, setPlantsForProject] = useState([])
-  // V4-PICKERUX-001: the planting picker's listbox opens directly into the band the sticky Save
-  // occupies once the keyboard lifts it. Save was painting over result rows 2-3 AND taking their
+  // V4-PICKERUX-001: the planting picker's listbox opens into the band the sticky Save occupies.
+  // (The keyboard lift that used to hoist Save ~500px INTO that band is gone as of
+  // V4-KBVIEWPORT-001 — the causal mechanism changed, the overlap did not become impossible.)
+  // Save was painting over result rows 2-3 AND taking their
   // taps — and because the planting gate at the top of handleSubmit is inert while
   // PLANTING_REQUIRED_ENABLED and PROJECTS_HIDDEN are both false, that mis-tap SAVED the event with
   // plant_id: null and then cleared LAST_PLANT_KEY. A wrong write, not a cosmetic overlap.
@@ -900,7 +905,9 @@ export default function EventNew() {
   // one renders only when the event has a plant_id — V4-VIEWPLANT-001), Log another (rapid entry,
   // V3-EVENT-001 — the form is already reset underneath), Undo (tertiary: separated placement + icon + lighter weight, not
   // color alone; ≥44pt). The action footer is sticky with env(safe-area-inset-bottom) ON the footer
-  // and a visualViewport lift so the iOS keyboard can never occlude it.
+  // ON the footer. (The visualViewport lift that used to be here went with V4-KBVIEWPORT-001:
+  // interactive-widget=resizes-content puts the layout viewport above the keyboard, so a sticky
+  // bottom:0 footer is already clear of it.)
   if (inOverlay && confirmation) {
     const viewHref = (!confirmation.undone && confirmation.eventId)
       ? `/events/${confirmation.eventId}` : null
@@ -977,7 +984,10 @@ export default function EventNew() {
           )}
         </div>
         <div style={{
-          position: 'sticky', bottom: kbInset, zIndex: 200, backgroundColor: P.cream,
+          // V4-KBVIEWPORT-001: bottom:0, not a keyboard inset. This footer is sticky inside the
+          // Sheet's own scrollport, and the Sheet already reserves
+          // `calc(12px + env(safe-area-inset-bottom))` (Sheet.jsx) at its foot.
+          position: 'sticky', bottom: 0, zIndex: 200, backgroundColor: P.cream,
           borderTop: `1px solid ${P.border}`, padding: '10px 16px',
           paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
           display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap',
@@ -1434,11 +1444,21 @@ export default function EventNew() {
               against the viewport, so inside a Sheet (which sets no transform/containing block) the
               CTA escaped the panel's scroll region and painted over the sheet at the same z200. sticky
               keeps it inside its scroll container — the Sheet when overlaid, the document when full
-              page. bottom:68 still clears the fixed BottomNav on the full-page path. right:20 is dropped
-              (a sticky block spans the content column; justify-content:flex-end right-aligns the button,
-              and the form's own right padding gives the gap) so the inset can't shift it off-panel. */}
-          {/* V4-LOGCONF-001 (C1): + kbInset — visualViewport lift so the iOS keyboard (untracked by
-              dvh) can never occlude the Save CTA inside the overlay Sheet. 0 when no keyboard. */}
+              page. right:20 is dropped (a sticky block spans the content column; justify-content:
+              flex-end right-aligns the button, and the form's own right padding gives the gap) so
+              the inset can't shift it off-panel. */}
+          {/* V4-KBVIEWPORT-001 — RESOLVES the deferral that used to sit in this comment block. The
+              two scroll containers need two different insets, and conflating them cost real space:
+                full page -> the sticky container is the document, the fixed BottomNav is genuinely
+                            there, so clear it. BOTTOM_NAV_HEIGHT_PX + 12, imported rather than the
+                            old magic `68` — which was 56+12 hardcoded and free to silently desync.
+                overlay   -> the sticky container is the Sheet's own scrollport, and the Sheet paints
+                            OVER the nav (z200 > z100), so nav clearance is dead space. The Sheet
+                            already reserves `calc(12px + env(safe-area-inset-bottom))` at its foot,
+                            so 0 is both correct and safe-area-complete — no double count.
+              The `+ kbInset` visualViewport lift is GONE with the hook (see the note at the top of
+              this file); index.html's interactive-widget shrinks the layout viewport instead, so
+              there is nothing left for JS to compensate for. */}
           {/* V4-PICKERUX-001: hidden — NOT unmounted — while the planting picker's listbox is open.
               visibility+pointerEvents keeps the node (EventNew.test.jsx pins exactly one "Save", and
               the picker's 150ms blur-close would make an unmounting footer flicker back under a
@@ -1447,16 +1467,17 @@ export default function EventNew() {
               still puts it in the positive-z layer above every z-auto positioned sibling, so nothing
               moves visually — but the listbox (z30) now wins if onOpenChange ever regresses. Belt
               and braces, because the failure mode here is a wrong write, not a cosmetic overlap.
-              `bottom` is deliberately UNCHANGED: the dead 68px of BottomNav clearance inside the
-              Sheet, and the kbInset lift that causes the collision in the first place, both belong
-              to V4-KBVIEWPORT-001 where the keyboard model is being re-decided as a whole. */}
+              This suppression STAYS after V4-KBVIEWPORT-001: removing the lift makes a Save/listbox
+              overlap less likely, not impossible — a listbox opening downward from a mid-form input
+              can still reach a footer sitting at the bottom of the scrollport. */}
           {/* No aria-hidden: `visibility: hidden` already removes the subtree from the a11y tree AND
               from the tab order, so adding it would only create the aria-hidden-with-focusable-
               descendant anti-pattern axe flags. */}
           <div
+            data-testid="save-sticky"
             style={{
               position: 'sticky',
-              bottom: 68 + kbInset,
+              bottom: inOverlay ? 0 : BOTTOM_NAV_HEIGHT_PX + 12,
               zIndex: 1,
               display: 'flex',
               justifyContent: 'flex-end',

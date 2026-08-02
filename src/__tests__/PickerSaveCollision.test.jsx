@@ -43,6 +43,8 @@ vi.mock('react-router-dom', () => ({
 
 import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
+import { OverlaySurfaceProvider } from '../context/OverlayContext.jsx'
+import { BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 
 const PROJECT = { id: 'proj-1', name: 'Herb Plants', status: 'growing' }
 const PLANTS = [
@@ -68,9 +70,15 @@ beforeEach(() => {
   })
 })
 
-async function renderForm() {
+// V4-KBVIEWPORT-001: `inOverlay` renders the same component inside the real OverlaySurfaceProvider
+// rather than mocking the context, so the branch is exercised through the actual mechanism the app
+// uses. This file previously only ever rendered the full-page branch.
+async function renderForm({ inOverlay = false } = {}) {
   searchParamsRef.current = new URLSearchParams('event_type=watering')
-  const utils = render(<ToastProvider><EventNew /></ToastProvider>)
+  const tree = <ToastProvider><EventNew /></ToastProvider>
+  const utils = render(
+    inOverlay ? <OverlaySurfaceProvider>{tree}</OverlaySurfaceProvider> : tree
+  )
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
   await act(async () => { await Promise.resolve() })
   fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
@@ -78,7 +86,12 @@ async function renderForm() {
   return utils
 }
 
-const saveWrapper = () => screen.getByText('Save').closest('div[style*="sticky"]')
+// V4-KBVIEWPORT-001: query the wrapper by testid, not `closest('div[style*="sticky"]')`. The old
+// selector silently re-targeted if any sticky ancestor were introduced between Save and its
+// wrapper — and several assertions below would still have PASSED against the wrong node
+// (`.style.position` on an outer sticky reads 'sticky' either way). Fragile-selector tripwire on
+// this change's own edit site.
+const saveWrapper = () => screen.getByTestId('save-sticky')
 
 describe('V4-PICKERUX-001 — Save is inert while the planting listbox is open', () => {
   it('leaves Save interactive when the picker is closed', async () => {
@@ -155,6 +168,35 @@ describe('V4-PICKERUX-001 — Save is inert while the planting listbox is open',
     fireEvent.focus(screen.getByLabelText('Plant or group'))
     const list = await screen.findByRole('listbox')
     expect(Number(saveWrapper().style.zIndex)).toBeLessThan(Number(list.style.zIndex))
+  })
+})
+
+// V4-KBVIEWPORT-001 — the Save CTA's bottom inset is path-aware, and until now had NO coverage at
+// all: no test in the repo asserted `style.bottom` on this wrapper, and this file only ever
+// rendered the full-page branch. The declared style value is a structural invariant jsdom CAN
+// prove — unlike anything about where the button actually lands, which is the device pass.
+describe('V4-KBVIEWPORT-001 — Save clears the nav on the page, nothing in the Sheet', () => {
+  it('full page: clears the fixed BottomNav', async () => {
+    await renderForm()
+    // BOTTOM_NAV_HEIGHT_PX (56) + 12 breathing room. Asserted against the derived expression, not
+    // the literal, so a nav-height change cannot silently desync this the way the old magic 68 did.
+    expect(saveWrapper().style.bottom).toBe(`${BOTTOM_NAV_HEIGHT_PX + 12}px`)
+  })
+
+  it('in the Sheet: no nav clearance, because the Sheet paints over the nav', async () => {
+    await renderForm({ inOverlay: true })
+    // The sticky container here is the Sheet's own scrollport, and Sheet already reserves
+    // calc(12px + env(safe-area-inset-bottom)) at its foot. 68px of nav clearance was dead space at
+    // the bottom of a form the keyboard has already shortened.
+    expect(saveWrapper().style.bottom).toBe('0px')
+  })
+
+  it('the two paths genuinely differ — guards against the branch collapsing to one value', async () => {
+    const page = await renderForm()
+    const pageBottom = saveWrapper().style.bottom
+    page.unmount()
+    await renderForm({ inOverlay: true })
+    expect(saveWrapper().style.bottom).not.toBe(pageBottom)
   })
 })
 
