@@ -50,8 +50,23 @@ export function plantingWaveLabel(p) {
 }
 
 // 'qtyVariety' label — the EventNew/PhotoLibrary majority format.
+// V4-PICKERUX-001: the em-dash promises distinguishing information. When a planting is named after
+// its cultivar — the common case for herbs and perennials — it delivered "Lemon Thyme — Lemon
+// Thyme", forcing a second read to discover the second half is empty, on the highest-frequency
+// label shape and at the width that pushes later rows into an ellipsis.
+// The rule is deliberately ASYMMETRIC. Equal-after-normalization drops, and name-contains-variety
+// drops (the name is the more specific string, so the variety adds nothing) — but NOT
+// variety-contains-name: "Jalapeño — Early Jalapeño" must keep its variety, because "Early" is the
+// whole point. A symmetric containment test reads as the tidier rule and silently destroys that.
+const normLabel = s => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
+
 export function plantingQtyVarietyLabel(p) {
-  return `${p.name ?? ''}${p.quantity > 1 ? ` ×${formatQty(p.quantity)}` : ''}${p.variety_ref?.name ? ` — ${p.variety_ref.name}` : ''}`
+  const name = p.name ?? ''
+  const variety = p.variety_ref?.name ?? ''
+  const n = normLabel(name)
+  const v = normLabel(variety)
+  const redundant = !!v && (v === n || (!!n && n.includes(v)))
+  return `${name}${p.quantity > 1 ? ` ×${formatQty(p.quantity)}` : ''}${variety && !redundant ? ` — ${variety}` : ''}`
 }
 
 const LABELERS = {
@@ -97,6 +112,14 @@ export default function PlantingSelect({
   id,
   onDerive,     // PutUp back-propagation: ({ crop_type_slug, variety_id, variety }) on selection
   onLoadError,  // PutUp graceful-failure contract: surface load failure, stay non-fatal
+  // V4-PICKERUX-001 — onOpenChange(open: boolean). OPTIONAL, no-op default: the other six call
+  // sites are untouched. It exists because a host page cannot otherwise know not to render a
+  // competing control over the open listbox — EventNew's sticky Save was painting over rows 2-3
+  // AND taking their taps, saving events detached from the planting being chosen.
+  // Deliberately NOT threaded through the eight setOpen() sites: one effect on `open` below
+  // covers every path (focus, type, arrow, escape, blur-timeout, select, chip "Change") and
+  // cannot drift when a ninth is added.
+  onOpenChange,
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
   'data-testid': dataTestId,
@@ -114,6 +137,18 @@ export default function PlantingSelect({
 
   const controlled = plants != null
   const rows = controlled ? plants : fetched
+
+  // V4-PICKERUX-001 — the single notification point for `open`. Keyed on `open` ONLY: keying it on
+  // the callback identity would re-fire on every parent render (callers pass inline closures), and
+  // an effect keyed on a per-render identity is exactly the BUG-SOWFOCUS-001 shape. Read through a
+  // ref so a non-memoized handler still cannot retrigger it.
+  const onOpenChangeRef = useRef(onOpenChange)
+  onOpenChangeRef.current = onOpenChange
+  useEffect(() => { onOpenChangeRef.current?.(open) }, [open])
+  // The listbox unmounts with the component while still open (route change, sheet dismiss, the
+  // chip-mode swap). Without this the host is left believing a picker is open forever — for
+  // EventNew that means a permanently hidden Save button.
+  useEffect(() => () => { onOpenChangeRef.current?.(false) }, [])
 
   useEffect(() => {
     if (controlled) return
@@ -167,6 +202,16 @@ export default function PlantingSelect({
 
   const visible = useMemo(() => listed.slice(0, MAX_RESULTS), [listed])
   const hiddenCount = listed.length - visible.length
+
+  // V4-PICKERUX-001: the project tag discriminates nothing when every visible row carries the same
+  // project — which is the norm, because EventNew/PhotoLibrary feed a list already scoped by
+  // project. It cost horizontal width on every row, and width is what pushes later rows into an
+  // ellipsis. Suppressed on CARDINALITY rather than on the PROJECTS_HIDDEN flag beside it, so it
+  // self-corrects whichever way the list is later fed.
+  const showProjectTag = useMemo(
+    () => new Set(visible.map(p => p.project_name).filter(Boolean)).size > 1,
+    [visible],
+  )
 
   useEffect(() => { setHighlight(0) }, [query, rows])
 
@@ -313,8 +358,9 @@ export default function PlantingSelect({
               style={rowStyle(i === highlight)}
             >
               <span>{label(p)}</span>
-              {/* V4-PROJHIDE-001: option project_name tag hidden when projects aren't user-facing. */}
-              {p.project_name && labelFormat !== 'wave' && !PROJECTS_HIDDEN && (
+              {/* V4-PROJHIDE-001: option project_name tag hidden when projects aren't user-facing.
+                  V4-PICKERUX-001: also hidden when every visible row shares one project. */}
+              {p.project_name && labelFormat !== 'wave' && !PROJECTS_HIDDEN && showProjectTag && (
                 <span style={{ fontSize: '0.74rem', color: P.light, marginLeft: 8 }}>{p.project_name}</span>
               )}
             </li>

@@ -359,6 +359,18 @@ export default function EventNew() {
   // Default collapsed unless the feature flag flips it open. Fields stay reachable.
   const [showAddDetails, setShowAddDetails] = useState(EVENTNEW_ADD_DETAILS_EXPANDED)
   const [plantsForProject, setPlantsForProject] = useState([])
+  // V4-PICKERUX-001: the planting picker's listbox opens directly into the band the sticky Save
+  // occupies once the keyboard lifts it. Save was painting over result rows 2-3 AND taking their
+  // taps — and because the planting gate at the top of handleSubmit is inert while
+  // PLANTING_REQUIRED_ENABLED and PROJECTS_HIDDEN are both false, that mis-tap SAVED the event with
+  // plant_id: null and then cleared LAST_PLANT_KEY. A wrong write, not a cosmetic overlap.
+  // Save is never the next action while a picker is open, so hiding it costs the user nothing and
+  // makes the mis-tap structurally impossible rather than merely unlikely.
+  const [pickerOpen, setPickerOpen] = useState(false)
+  // Stable identity: PlantingSelect reads this through a ref and its effect keys on `open` alone,
+  // but keeping the handler stable costs nothing and keeps the BUG-SOWFOCUS-001 rule intact for any
+  // future consumer that does key on the callback.
+  const handlePickerOpenChange = useCallback(open => setPickerOpen(open), [])
   // the user explicitly started — never a reward/celebration channel).
 
   // Reset metadata when event type changes
@@ -1124,6 +1136,7 @@ export default function EventNew() {
               placeholder="— Choose a planting —"
               aria-label="Plant or group"
               data-testid="evtnew-planting"
+              onOpenChange={handlePickerOpenChange}
             />
           </Section>
 
@@ -1409,13 +1422,29 @@ export default function EventNew() {
               and the form's own right padding gives the gap) so the inset can't shift it off-panel. */}
           {/* V4-LOGCONF-001 (C1): + kbInset — visualViewport lift so the iOS keyboard (untracked by
               dvh) can never occlude the Save CTA inside the overlay Sheet. 0 when no keyboard. */}
+          {/* V4-PICKERUX-001: hidden — NOT unmounted — while the planting picker's listbox is open.
+              visibility+pointerEvents keeps the node (EventNew.test.jsx pins exactly one "Save", and
+              the picker's 150ms blur-close would make an unmounting footer flicker back under a
+              finger mid-gesture). zIndex drops 200 -> 1: the 200 was to beat the Sheet panel back
+              when this was `position: fixed`, and the sticky conversion dissolved that need. z1
+              still puts it in the positive-z layer above every z-auto positioned sibling, so nothing
+              moves visually — but the listbox (z30) now wins if onOpenChange ever regresses. Belt
+              and braces, because the failure mode here is a wrong write, not a cosmetic overlap.
+              `bottom` is deliberately UNCHANGED: the dead 68px of BottomNav clearance inside the
+              Sheet, and the kbInset lift that causes the collision in the first place, both belong
+              to V4-KBVIEWPORT-001 where the keyboard model is being re-decided as a whole. */}
+          {/* No aria-hidden: `visibility: hidden` already removes the subtree from the a11y tree AND
+              from the tab order, so adding it would only create the aria-hidden-with-focusable-
+              descendant anti-pattern axe flags. */}
           <div
             style={{
               position: 'sticky',
               bottom: 68 + kbInset,
-              zIndex: 200,
+              zIndex: 1,
               display: 'flex',
               justifyContent: 'flex-end',
+              visibility: pickerOpen ? 'hidden' : 'visible',
+              pointerEvents: pickerOpen ? 'none' : 'auto',
             }}
           >
             {/* V4-EVENTSAVE-001 (Dave): one Save = the former "Next of Type" behavior
