@@ -91,6 +91,34 @@ describe('candidate set', () => {
   })
 })
 
+describe('the 200-row cap', () => {
+  it('says so when the list comes back full — silent truncation reads as "my photo is gone"', async () => {
+    // GET /api/photos caps at 200 with no offset/cursor, and prod carries ~981 photos. Presenting
+    // a partial library as the whole thing is the failure mode this notice exists to prevent.
+    const full = Array.from({ length: 200 }, (_, i) => ({
+      id: `f${i}`, caption: `photo ${i}`, thumb_url: 'https://x/f.jpg', space_id: null,
+    }))
+    wireFetch({ list: full })
+    mount()
+    const note = await screen.findByTestId('space-attach-truncated')
+    expect(note.textContent).toContain('200 most recent')
+  })
+
+  it('stays quiet on a short list, where nothing is being hidden', async () => {
+    wireFetch()
+    mount()
+    await screen.findByRole('list', { name: 'Photos you can add' })
+    expect(screen.queryByTestId('space-attach-truncated')).toBeNull()
+  })
+
+  it('requests the full page size', async () => {
+    wireFetch()
+    mount()
+    await screen.findByRole('list', { name: 'Photos you can add' })
+    expect(fetchSpy.mock.calls[0][0]).toBe('/api/photos?limit=200')
+  })
+})
+
 describe('attaching', () => {
   it('PUTs the space sub-resource once per selected photo and reports the count', async () => {
     // The route is single-photo by design, so a batch is N requests. Asserting the exact path and

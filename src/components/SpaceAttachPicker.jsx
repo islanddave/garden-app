@@ -31,6 +31,14 @@ import Spinner from './forms/Spinner.jsx'
 // Four keeps the wall-clock reasonable while staying inside a warm container's comfort.
 const ATTACH_CONCURRENCY = 4
 
+// GET /api/photos caps at 200 and has NO offset/cursor — there is no pagination to page through.
+// Prod carries ~981 photos, so this picker can only ever offer the most recent PAGE_LIMIT of them.
+// That is a real limit, not a rounding error, so the sheet SAYS SO when the list comes back full
+// (see the truncation notice) rather than quietly presenting a partial library as the whole thing.
+// Paginating the endpoint properly means touching all four list SELECTs, each of which is
+// flag-off byte-identity-sensitive — deliberately out of scope for the flip commit.
+const PAGE_LIMIT = 200
+
 // Run `worker` over `items` with at most `limit` in flight. Resolves to a result array in INPUT
 // order — order matters because the failure list is rendered back against the original selection.
 async function mapWithLimit(items, limit, worker) {
@@ -60,12 +68,12 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
   // Garden-wide read, then filter client-side to what is ATTACHABLE. There is no server-side
   // "?space_id=null" filter and this deliberately does not add one: the candidate set is "every
   // photo not already on this space", which is a negation the list endpoint has no vocabulary for,
-  // and the wall is already capped at the endpoint's 120-row limit.
+  // and the wall is already capped at the endpoint's row limit (see PAGE_LIMIT above).
   useEffect(() => {
     const ac = new AbortController()
     setLoadError(null)
     setPhotos(null)
-    fetch('/api/photos?limit=120', { signal: ac.signal })
+    fetch(`/api/photos?limit=${PAGE_LIMIT}`, { signal: ac.signal })
       .then((d) => {
         if (ac.signal.aborted) return
         setPhotos(Array.isArray(d) ? d : [])
@@ -195,6 +203,16 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
               : 'Every photo you have is already on this space.'}
           </p>
         ) : (
+          <>
+          {/* Honest about the cap. A full page back means there are almost certainly older photos
+              this sheet cannot reach, and silently showing 200 of 981 as if it were the library is
+              the kind of quiet truncation that reads as "my photo is gone". */}
+          {(photos ?? []).length >= PAGE_LIMIT && (
+            <p data-testid="space-attach-truncated" style={{ margin: '0 0 10px', fontSize: '0.76rem', color: P.mid }}>
+              Showing your {PAGE_LIMIT} most recent photos. Older ones aren’t listed here yet — you
+              can still add them from the photo itself.
+            </p>
+          )}
           <div role="list" aria-label="Photos you can add"
             style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
             {candidates.map((photo) => {
@@ -236,6 +254,7 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
               )
             })}
           </div>
+          </>
         )}
       </div>
 
