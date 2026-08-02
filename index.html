@@ -7,7 +7,13 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- V4-KBVIEWPORT-001 / overlay-architecture-design-V102 §8.1 (LOCKED): interactive-widget
+         shrinks the LAYOUT viewport when the soft keyboard opens, so `position: fixed; bottom: 0`
+         lands above the keyboard instead of behind it. Chromium 108+; Safari/Firefox drop the
+         unknown key individually, so viewport-fit=cover survives untouched. Guarded by
+         src/__tests__/viewportMeta.static.test.js and by a dist/index.html grep in the deploy
+         workflows -- this one line is the whole fix and nothing else in CI can see it. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#2d6a4f" />
     <meta name="description" content="Dave &amp; Jen's garden journal -- Conway, Massachusetts" />
     <meta name="mobile-web-app-capable" content="yes" />

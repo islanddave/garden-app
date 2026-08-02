@@ -170,6 +170,12 @@ jobs:
       - name: Verify build output
         run: |
           test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+          # V4-KBVIEWPORT-001: the viewport meta is the entire keyboard fix and nothing in the
+          # jsdom suite can observe it. viewportMeta.static.test.js guards the SOURCE; this guards
+          # the BUILT artifact, which is what Chrome actually parses, against an html-transform
+          # plugin or a Vite upgrade silently dropping the key.
+          grep -q 'interactive-widget=resizes-content' dist/index.html || {
+            echo 'ERROR: viewport interactive-widget lost in build (V4-KBVIEWPORT-001)'; exit 1; }
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0

@@ -346,6 +346,11 @@ jobs:
       - name: Verify build output
         run: |
           test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+          # V4-KBVIEWPORT-001: guards the BUILT artifact (viewportMeta.static.test.js guards the
+          # source). This is the staging leg, so it is also the gate that makes Dave's device pass
+          # meaningful — if the key is missing here, nothing he observes on staging is valid.
+          grep -q 'interactive-widget=resizes-content' dist/index.html || {
+            echo 'ERROR: viewport interactive-widget lost in build (V4-KBVIEWPORT-001)'; exit 1; }
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
