@@ -711,7 +711,7 @@ export const handler = async (event) => {
       // an honest 400. deleted_at IS NULL here is load-bearing: without it a soft-deleted row could
       // be attached and then designated hero.
       const owned = await sql`
-        SELECT id, project_id, event_id, location_id, plant_id, inventory_item_id
+        SELECT id, project_id, event_id, location_id, plant_id, inventory_item_id, intake_status
           FROM photos
          WHERE id = ${photoId}
            AND created_by = ANY(${householdIds})
@@ -727,16 +727,34 @@ export const handler = async (event) => {
         return resp(400, { error: 'cannot detach the only parent — attach it elsewhere first' });
       }
 
+      // V4-SPACECLIENTGAP-001 — DRAIN THE INBOX on attach. Same rule the general PUT applies (see
+      // its comment block: clear intake_status only when a parent is actually being SET), extended
+      // to the parent this route owns. Without it a bulk-uploaded photo whose only tag is the Space
+      // keeps intake_status='pending_tag' forever: idx_photos_intake_pending keeps matching, so the
+      // quick-tag carousel re-serves a photo the user already filed and the inbox cannot drain.
+      //
+      // Guarded three ways, deliberately:
+      //   - ONLY on attach (nextSpaceId !== null). Detach is the "un-tag" case, and the general PUT
+      //     already establishes that an un-tagged pending row must STAY pending — clearing there
+      //     would mark a row filed that nobody has filed.
+      //   - ONLY from 'pending_tag'. 'upload_failed' is a different state with its own recovery
+      //     path (and its own CHECK clause at the POST validator); attaching a space does not mean
+      //     the failed upload succeeded.
+      //   - Computed in JS from the row we ALREADY read, so no extra round trip and no widening of
+      //     any shared template.
+      const drainsInbox = nextSpaceId !== null && p.intake_status === 'pending_tag';
+
       // No cast on the bound value: in an UPDATE assignment the column supplies the type, so a bare
       // null binds cleanly. (A `::uuid` cast inside a CASE expression does NOT — the neon serverless
       // driver cannot type a null parameter there. Same trap, different context.)
       const attached = await sql`
         UPDATE photos
-           SET space_id = ${nextSpaceId}
+           SET space_id = ${nextSpaceId},
+               intake_status = CASE WHEN ${drainsInbox}::boolean THEN NULL ELSE intake_status END
          WHERE id = ${photoId}
            AND created_by = ANY(${householdIds})
            AND deleted_at IS NULL
-        RETURNING id, space_id
+        RETURNING id, space_id, intake_status
       `;
       if (!attached.length) return resp(400, REJECT);
       return resp(200, attached[0]);
@@ -1081,7 +1099,32 @@ export const handler = async (event) => {
       // Only the parents this route can actually set. event_id / inventory_item_id are untouched
       // here, so a legacy row parented by one of those keeps satisfying the CHECK on its own.
       // `||` not `??`: an empty-string id must read as "no parent", not as a present value.
-      const setsParent = Boolean(body.project_id || body.location_id || body.plant_id);
+      //
+      // V4-SPACECLIENTGAP-001 adds the space tier — via a SEPARATE gated pre-read, NOT by naming
+      // space_id in the UPDATE below. That template is NOT flag-gated: it executes flag-off, so a
+      // space_id reference in it would 42703 in any environment lacking the column and would break
+      // the byte-identical-rollback invariant this feature is built on (the same reasoning that
+      // produced buildPhotoInsert's two-template split and the dedicated attach route). The pre-read
+      // costs one indexed PK lookup, flag-ON only, on a route that is already doing a write.
+      //
+      // Why it belongs in setsParent at all: this route has full-replace semantics, so a save from
+      // the tag modal with every field cleared is an "un-tag". For a row whose surviving parent is
+      // the SPACE, that un-tag still leaves a properly parented photo — so it must drain the inbox
+      // exactly like any other parented row. Without this, a space-attached photo re-tagged through
+      // the modal silently falls back into the quick-tag carousel. Note space_id is read from the
+      // ROW, not the body: this route neither accepts nor SETs space_id, so the persisted value is
+      // what the photos_must_have_parent CHECK will see after the UPDATE.
+      let spaceParented = false;
+      if (spacePhotosEnabled) {
+        const spaceRow = await sql`
+          SELECT space_id FROM photos
+           WHERE id = ${photoId}
+             AND created_by = ANY(${householdIds})
+             AND deleted_at IS NULL
+        `;
+        spaceParented = Boolean(spaceRow[0]?.space_id);
+      }
+      const setsParent = Boolean(body.project_id || body.location_id || body.plant_id) || spaceParented;
       const updatedRows = await sql`
         WITH prev AS (
           SELECT id, intake_status

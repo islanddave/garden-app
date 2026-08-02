@@ -1,24 +1,41 @@
-// SpacePhotos.flagOff.test.jsx — V4-SPACEPHOTO-001 Lane C INERTNESS proof.
+// SpacePhotos.flagOff.test.jsx — V4-SPACEPHOTO-001 Lane C. THE ROLLBACK-LEVER PROOF.
 //
-// ⚠ THE ORIGINAL RATIONALE HERE IS NOW FALSE, AND THE TESTS ARE STILL CORRECT. Read both parts.
+// RETARGETED 2026-08-02 with the client flip (V4-SPACECLIENTGAP-001). Read what changed and why,
+// because the file's PURPOSE changed, not just its assertions.
 //
-// It said: "the backing columns do not exist in prod — migrations/v4-spacephoto-001 is authored but
-// UNAPPLIED — so SPACE_PHOTOS_ENABLED=false is the only thing that makes this code promote-safe."
-// That migration APPLIED to prod and staging on 2026-07-31 (schema_version 4.18.0-spacephoto-001);
-// photos.space_id, spaces.featured_photo_id, both FKs and the 7-clause convalidated CHECK are live,
-// and the SERVER gate has been true in prod since 2026-08-01. Schema no longer gates anything.
+// It used to assert the SHIPPED VALUE of the constant (`expect(SPACE_PHOTOS_ENABLED).toBe(false)`)
+// and derive everything else from that. That made it a pin on a value that was always going to
+// change — the flip turned it RED by construction, exactly as its own header warned. Worse, it
+// meant the moment the flag went true there was NO test left covering the flag-off path at all.
 //
-// What these tests actually prove, and why they still earn their place: the CLIENT flag is false, so
-// the /space routes must not be registered and the nav rows must not render. That is a real,
-// currently-true inertness property. But note the trap for whoever flips the flag — these assertions
-// are written against the SHIPPED VALUE of the constant, not against a mock, so the flip turns them
-// RED by construction (this file plus App.routes.test.jsx's exact route-count pin). They must be
-// retargeted in the SAME commit as the flip; they are not a bug to route around at that point.
+// The flag-off path is not dead code after the flip: it is the ROLLBACK LEVER. "Rollback = flip
+// false + redeploy" is the entire safety story this feature was architected around (byte-identical
+// insert templates, a flag-gated attach route, a gated list decoration). A rollback nobody tests is
+// a rollback nobody knows works. So this file now MOCKS the flag false and proves the lever still
+// lands: no /space routes, the 48-route table restored exactly, no space request reachable.
+//
+// Its counterpart SpacePhotos.flagOn.test.jsx mocks true and owns the shipped-value pin. Between
+// them both edges are covered and neither breaks on a future flip.
 //
 // Every assertion is mechanical (route table, rendered nav rows), not a screenshot claim.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
+
+// The lever, held OFF. Other values mirror the shipped defaults so nothing else changes shape.
+vi.mock('../lib/featureFlags.js', () => ({
+  SPACE_PHOTOS_ENABLED: false,
+  OVERLAY_ROUTES_ENABLED: true,
+  PROJECTS_HIDDEN: false,
+  CATCH_UP_EDITOR_SHIPPED: false,
+  IMAGE_LIST_CACHE_ENABLED: true,
+  PLANTING_REQUIRED_ENABLED: false,
+  SYSTEM_NOTIFICATIONS_ENABLED: false,
+  EVENTNEW_ADD_DETAILS_EXPANDED: false,
+  CARE_RAIN_CREDIT_ENABLED: false,
+  CARE_RAIN_MAXDAYS_ENABLED: false,
+  VARIETY_REF_UI_SHIPPED: false,
+}))
 
 const { navigateSpy, locationRef } = vi.hoisted(() => ({
   navigateSpy: vi.fn(),
@@ -54,8 +71,8 @@ import { resolveSpaceId, spaceHeroPath, isPinnedFeatured } from '../lib/spaceId.
 
 beforeEach(() => { document.body.innerHTML = '' })
 
-describe('SPACE_PHOTOS_ENABLED — the flag itself', () => {
-  it('ships FALSE (the columns it depends on are not in prod yet)', () => {
+describe('SPACE_PHOTOS_ENABLED — the lever, held off', () => {
+  it('is false under this file’s mock (the rollback configuration under test)', () => {
     expect(SPACE_PHOTOS_ENABLED).toBe(false)
   })
 })
@@ -68,6 +85,16 @@ describe('flag OFF — the /space routes are ABSENT from the table, not merely r
     expect(paths).not.toContain('/space/:spaceId')
     // A visit to /space therefore falls through to the pre-existing '*' catch-all, exactly as today.
     expect(paths).toContain('*')
+  })
+
+  // The rollback is EXACT, not merely "smaller". A lever that drops the two space routes but also
+  // perturbs the other 48 is not a rollback, and a bare not-to-contain check could not tell the
+  // difference. This is the flag-OFF counterpart to App.routes.test.jsx's flag-ON 50.
+  it('restores the shipped 48-route table exactly, with no duplicates', async () => {
+    const { renderRoutes } = await import('../App.jsx')
+    const paths = renderRoutes({ overlay: false, user: true }).map(r => r.props.path)
+    expect(paths).toHaveLength(48)
+    expect(new Set(paths).size).toBe(48)
   })
 
   it('adds NO route to the overlay tree either', async () => {
@@ -89,11 +116,16 @@ describe('flag OFF — the More sheet is byte-identical to today', () => {
     expect(document.querySelector('a[href="/space"]')).toBeNull()
   })
 
-  it('keeps the shipped "Spaces" row pointing at /locations, un-relabelled', () => {
+  // V4-SPACECLIENTGAP-001 (Dave 2026-08-02): the /locations row now reads "Zones" UNCONDITIONALLY.
+  // Previously it was flag-conditional ("Spaces" off / "Zones" on), which meant a rollback would
+  // silently RENAME a nav row under the user. The naming is a product decision about what the
+  // location tier is called; it is orthogonal to whether the Space surface is switched on, so the
+  // rollback lever must NOT move it. That invariant is what this test now guards.
+  it('keeps the /locations row labelled "Zones" — a rollback does not rename it back', () => {
     openMore()
-    const row = screen.getByText('Spaces')
+    const row = screen.getByText('Zones')
     expect(row.closest('a').getAttribute('href')).toBe('/locations')
-    expect(screen.queryByText('Zones')).toBeNull()
+    expect(screen.queryByText('Spaces')).toBeNull()
   })
 })
 

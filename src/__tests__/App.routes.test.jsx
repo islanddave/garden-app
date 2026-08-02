@@ -4,19 +4,44 @@
 // silently drop/duplicate a route or lose the overlay set. Closes the regression-impact IMPORTANT #3
 // gap (the 44-route transcription had no automated backstop). No jest-dom (L-182); no render — we
 // inspect the returned <Route> element props directly.
-import { describe, it, expect } from 'vitest'
+//
+// V4-SPACECLIENTGAP-001: the flag surface is now MOCKED rather than read from the shipped module.
+// Before this, the count pin silently doubled as a pin on SPACE_PHOTOS_ENABLED's shipped value —
+// flipping that flag turned this file RED for a reason that has nothing to do with what it guards
+// (route-table integrity). Mocking makes the two independent: this file asserts the table for a
+// KNOWN flag configuration, and the flag's shipped value is pinned once, deliberately, in
+// SpacePhotos.flagOn.test.jsx. Values mirror the shipped defaults so nothing else changes shape.
+import { describe, it, expect, vi } from 'vitest'
+
+vi.mock('../lib/featureFlags.js', () => ({
+  SPACE_PHOTOS_ENABLED: true,
+  OVERLAY_ROUTES_ENABLED: true,
+  PROJECTS_HIDDEN: false,
+  CATCH_UP_EDITOR_SHIPPED: false,
+  IMAGE_LIST_CACHE_ENABLED: true,
+  PLANTING_REQUIRED_ENABLED: false,
+  SYSTEM_NOTIFICATIONS_ENABLED: false,
+  EVENTNEW_ADD_DETAILS_EXPANDED: false,
+  CARE_RAIN_CREDIT_ENABLED: false,
+  CARE_RAIN_MAXDAYS_ENABLED: false,
+  VARIETY_REF_UI_SHIPPED: false,
+}))
+
 import { renderRoutes } from '../App.jsx'
 
 const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => r.props.path)
 const overlayPaths = () => renderRoutes({ overlay: true, user: true }).map((r) => r.props.path)
 
 describe('App route table (single source of truth)', () => {
-  it('the page tree has the full 48-route set with no duplicates', () => {
+  it('the page tree has the full 50-route set with no duplicates', () => {
     // 46 → 48: V4-UNSCOPEDROUTES-001 added the canonical un-scoped /plantings/:plantingId and
     // /events/:eventId (the /projects/:id/* forms remain as redirects, still counted).
+    // 48 → 50: V4-SPACEPHOTO-001 Lane C adds /space and /space/:spaceId. Counted here because the
+    // mock above pins SPACE_PHOTOS_ENABLED true; the flag-OFF table is pinned at 48 in
+    // SpacePhotos.flagOff.test.jsx, which mocks it false.
     const paths = pagePaths()
-    expect(paths).toHaveLength(48)
-    expect(new Set(paths).size).toBe(48)
+    expect(paths).toHaveLength(50)
+    expect(new Set(paths).size).toBe(50)
   })
 
   it('includes the catch-all, index redirect, and every key route', () => {

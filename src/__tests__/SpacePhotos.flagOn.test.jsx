@@ -50,6 +50,19 @@ import BottomNav from '../components/BottomNav.jsx'
 
 beforeEach(() => { document.body.innerHTML = '' })
 
+// V4-SPACECLIENTGAP-001: THE shipped-value pin, and the only one in the suite. Both flag files now
+// mock the constant, so without this nothing would notice the flag being flipped back by accident —
+// every test would keep passing against its own mock while the app shipped dark. `importActual`
+// deliberately bypasses this file's own mock to read the real module.
+// If a rollback is INTENTIONAL, this line is the one to change, and changing it should feel like a
+// decision rather than a test fix.
+describe('the shipped flag value', () => {
+  it('is TRUE in src/lib/featureFlags.js — the space surface ships live', async () => {
+    const actual = await vi.importActual('../lib/featureFlags.js')
+    expect(actual.SPACE_PHOTOS_ENABLED).toBe(true)
+  })
+})
+
 describe('flag ON — the /space routes appear', () => {
   it('registers both the single-space and the :spaceId form, and only those two', async () => {
     const { renderRoutes } = await import('../App.jsx')

@@ -1,0 +1,913 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/lib/critterSpecies.js</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/lib</a> critterSpecies.js</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">97.76% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>262/268</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">72.41% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>21/29</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>3/3</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">97.76% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>262/268</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">85712x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">85712x</span>
+<span class="cline-any cline-yes">85712x</span>
+<span class="cline-any cline-yes">14399112x</span>
+<span class="cline-any cline-yes">14399112x</span>
+<span class="cline-any cline-yes">14399112x</span>
+<span class="cline-any cline-yes">14399112x</span>
+<span class="cline-any cline-yes">14399112x</span>
+<span class="cline-any cline-yes">14399112x</span>
+<span class="cline-any cline-yes">14399112x</span>
+<span class="cline-any cline-yes">14399112x</span>
+<span class="cline-any cline-yes">85712x</span>
+<span class="cline-any cline-yes">85712x</span>
+<span class="cline-any cline-yes">85712x</span>
+<span class="cline-any cline-yes">85712x</span>
+<span class="cline-any cline-yes">85712x</span>
+<span class="cline-any cline-yes">38692x</span>
+<span class="cline-any cline-yes">85712x</span>
+<span class="cline-any cline-yes">3085932x</span>
+<span class="cline-any cline-yes">3085932x</span>
+<span class="cline-any cline-yes">3085932x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">307x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">307x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">307x</span>
+<span class="cline-any cline-yes">307x</span>
+<span class="cline-any cline-yes">307x</span>
+<span class="cline-any cline-yes">307x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">86016x</span>
+<span class="cline-any cline-yes">86016x</span>
+<span class="cline-any cline-yes">86016x</span>
+<span class="cline-any cline-yes">1155751x</span>
+<span class="cline-any cline-yes">1155751x</span>
+<span class="cline-any cline-yes">1155751x</span>
+<span class="cline-any cline-yes">86016x</span>
+<span class="cline-any cline-yes">86016x</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Critter species pool — full earnable catalog (V102, 2026-06-01).
+// Owner-override (L-102, Dave directive): ALL ~168 defined critters are earnable. The prior
+// MVP namespace contract (ids 1-8 = MVP pool, 100+ = V3 roster) is RETIRED — there is now ONE
+// unified pool keyed by integer species_id 1-168 (255 still reserved as the smoke sentinel,
+// out of pool range). species_id 1-8 PRESERVE their original MVP meaning (robin=1 … hummingbird=8)
+// so existing critter_state rows keep their critter.
+//
+// Source of truth: src/data/critters-roster.json (168 entries; this pool is GENERATED from it and
+// kept identical in BOTH src/lib/critterSpecies.js and lambda/events/critterSpecies.js — a parity
+// test enforces equality). To regenerate after roster changes, re-run the V102 generator
+// (preserves the 8 MVP ids by sprite, assigns 9.. in roster order). The species_id -&gt; roster id
+// bridge is sprite_filename -&gt; "C0NN"/"L0NN"/"Y0NN" (src/lib/critterCollection.js); roster.json is
+// unchanged and carries no species_id.
+//
+// Reward model (V102, reward-ux-guideline-V102): VARIABLE-RATIO kept — pickSpecies returns null for
+// ~52.5% of seeds (no critter this event), preserving the ~0.475 overall award rate. LIGHT TIERS by
+// roster group: wild=common (weight 3), legacy=uncommon (weight 2), cryptid=rare (weight 1). All
+// fully earnable; exotics stay rarer-but-reachable. base_probability per entry = base_weight /
+// 469 (sum of weights) * 0.475 (target award rate). NO rarity UI (invisible mechanism).
+// base_weight retained for back-compat callers; pickSpecies reads base_probability.
+&nbsp;
+export const SPECIES_POOL = Object.freeze([
+  Object.freeze({ species_id: 1, name: "American Robin", slug: "american-robin", group: "wild", tier: "common", sprite_filename: "C013-american-robin.svg", aria_announce_name: "an American robin", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 2, name: "Honeybee", slug: "honeybee", group: "wild", tier: "common", sprite_filename: "C001-honeybee.svg", aria_announce_name: "a honeybee", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 3, name: "Blue Jay", slug: "blue-jay", group: "wild", tier: "common", sprite_filename: "C050-blue-jay.svg", aria_announce_name: "a blue jay", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 4, name: "American Goldfinch", slug: "american-goldfinch", group: "wild", tier: "common", sprite_filename: "C029-american-goldfinch.svg", aria_announce_name: "an American goldfinch", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 5, name: "Mourning Dove", slug: "mourning-dove", group: "wild", tier: "common", sprite_filename: "C049-mourning-dove.svg", aria_announce_name: "a mourning dove", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 6, name: "Black Capped Chickadee", slug: "black-capped-chickadee", group: "wild", tier: "common", sprite_filename: "C012-black-capped-chickadee.svg", aria_announce_name: "a chickadee", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 7, name: "Northern Cardinal", slug: "northern-cardinal", group: "wild", tier: "common", sprite_filename: "C011-northern-cardinal.svg", aria_announce_name: "a cardinal", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 8, name: "Ruby Throated Hummingbird", slug: "ruby-throated-hummingbird", group: "wild", tier: "common", sprite_filename: "C007-ruby-throated-hummingbird.svg", aria_announce_name: "a hummingbird", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 9, name: "Monarch Butterfly", slug: "monarch-butterfly", group: "wild", tier: "common", sprite_filename: "C002-monarch-butterfly.svg", aria_announce_name: "a monarch butterfly", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 10, name: "Convergent Ladybug", slug: "convergent-ladybug", group: "wild", tier: "common", sprite_filename: "C003-convergent-ladybug.svg", aria_announce_name: "a convergent ladybug", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 11, name: "Big Dipper Firefly", slug: "big-dipper-firefly", group: "wild", tier: "common", sprite_filename: "C004-big-dipper-firefly.svg", aria_announce_name: "a big dipper firefly", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 12, name: "Green Lacewing", slug: "green-lacewing", group: "wild", tier: "common", sprite_filename: "C005-green-lacewing.svg", aria_announce_name: "a green lacewing", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 13, name: "Common Earthworm", slug: "common-earthworm", group: "wild", tier: "common", sprite_filename: "C006-common-earthworm.svg", aria_announce_name: "a common earthworm", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 14, name: "Common Green Darner", slug: "common-green-darner", group: "wild", tier: "common", sprite_filename: "C008-common-green-darner.svg", aria_announce_name: "a common green darner", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 15, name: "Eastern Tiger Swallowtail", slug: "eastern-tiger-swallowtail", group: "wild", tier: "common", sprite_filename: "C009-eastern-tiger-swallowtail.svg", aria_announce_name: "an eastern tiger swallowtail", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 16, name: "Eastern Cottontail", slug: "eastern-cottontail", group: "wild", tier: "common", sprite_filename: "C010-eastern-cottontail.svg", aria_announce_name: "an eastern cottontail", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 17, name: "Eastern Bluebird", slug: "eastern-bluebird", group: "wild", tier: "common", sprite_filename: "C014-eastern-bluebird.svg", aria_announce_name: "an eastern bluebird", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 18, name: "Eastern Chipmunk", slug: "eastern-chipmunk", group: "wild", tier: "common", sprite_filename: "C015-eastern-chipmunk.svg", aria_announce_name: "an eastern chipmunk", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 19, name: "Red Squirrel", slug: "red-squirrel", group: "wild", tier: "common", sprite_filename: "C016-red-squirrel.svg", aria_announce_name: "a red squirrel", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 20, name: "Gray Treefrog", slug: "gray-treefrog", group: "wild", tier: "common", sprite_filename: "C017-gray-treefrog.svg", aria_announce_name: "a gray treefrog", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 21, name: "Eastern Garter Snake", slug: "eastern-garter-snake", group: "wild", tier: "common", sprite_filename: "C018-eastern-garter-snake.svg", aria_announce_name: "an eastern garter snake", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 22, name: "White Tailed Deer", slug: "white-tailed-deer", group: "wild", tier: "common", sprite_filename: "C019-white-tailed-deer.svg", aria_announce_name: "a white tailed deer", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 23, name: "Red Fox", slug: "red-fox", group: "wild", tier: "common", sprite_filename: "C020-red-fox.svg", aria_announce_name: "a red fox", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 24, name: "Woodchuck", slug: "woodchuck", group: "wild", tier: "common", sprite_filename: "C022-woodchuck.svg", aria_announce_name: "a woodchuck", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 25, name: "Northern Raccoon", slug: "northern-raccoon", group: "wild", tier: "common", sprite_filename: "C023-northern-raccoon.svg", aria_announce_name: "a northern raccoon", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 26, name: "Barred Owl", slug: "barred-owl", group: "wild", tier: "common", sprite_filename: "C024-barred-owl.svg", aria_announce_name: "a barred owl", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 27, name: "Black Bear", slug: "black-bear", group: "wild", tier: "common", sprite_filename: "C027-black-bear.svg", aria_announce_name: "a black bear", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 28, name: "Bobcat", slug: "bobcat", group: "wild", tier: "common", sprite_filename: "C028-bobcat.svg", aria_announce_name: "a bobcat", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 29, name: "Downy Woodpecker", slug: "downy-woodpecker", group: "wild", tier: "common", sprite_filename: "C030-downy-woodpecker.svg", aria_announce_name: "a downy woodpecker", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 30, name: "Mallard", slug: "mallard", group: "wild", tier: "common", sprite_filename: "C031-mallard.svg", aria_announce_name: "a mallard", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 31, name: "Polyphemus Moth", slug: "polyphemus-moth", group: "wild", tier: "common", sprite_filename: "C039-polyphemus-moth.svg", aria_announce_name: "a polyphemus moth", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 32, name: "Giant Panda", slug: "giant-panda", group: "wild", tier: "common", sprite_filename: "C040-giant-panda.svg", aria_announce_name: "a giant panda", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 33, name: "American Flamingo", slug: "american-flamingo", group: "wild", tier: "common", sprite_filename: "C041-american-flamingo.svg", aria_announce_name: "an american flamingo", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 34, name: "Galapagos Tortoise", slug: "galapagos-tortoise", group: "wild", tier: "common", sprite_filename: "C042-galapagos-tortoise.svg", aria_announce_name: "a galapagos tortoise", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 35, name: "Resplendent Quetzal", slug: "resplendent-quetzal", group: "wild", tier: "common", sprite_filename: "C043-resplendent-quetzal.svg", aria_announce_name: "a resplendent quetzal", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 36, name: "Bengal Tiger", slug: "bengal-tiger", group: "wild", tier: "common", sprite_filename: "C044-bengal-tiger.svg", aria_announce_name: "a bengal tiger", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 37, name: "Snow Leopard", slug: "snow-leopard", group: "wild", tier: "common", sprite_filename: "C045-snow-leopard.svg", aria_announce_name: "a snow leopard", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 38, name: "Tufted Titmouse", slug: "tufted-titmouse", group: "wild", tier: "common", sprite_filename: "C046-tufted-titmouse.svg", aria_announce_name: "a tufted titmouse", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 39, name: "American Crow", slug: "american-crow", group: "wild", tier: "common", sprite_filename: "C047-american-crow.svg", aria_announce_name: "an american crow", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 40, name: "Red Bellied Woodpecker", slug: "red-bellied-woodpecker", group: "wild", tier: "common", sprite_filename: "C048-red-bellied-woodpecker.svg", aria_announce_name: "a red bellied woodpecker", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 41, name: "White Breasted Nuthatch", slug: "white-breasted-nuthatch", group: "wild", tier: "common", sprite_filename: "C051-white-breasted-nuthatch.svg", aria_announce_name: "a white breasted nuthatch", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 42, name: "Eastern Gray Squirrel", slug: "eastern-gray-squirrel", group: "wild", tier: "common", sprite_filename: "C052-eastern-gray-squirrel.svg", aria_announce_name: "an eastern gray squirrel", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 43, name: "Striped Skunk", slug: "striped-skunk", group: "wild", tier: "common", sprite_filename: "C053-striped-skunk.svg", aria_announce_name: "a striped skunk", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 44, name: "American Green Frog", slug: "american-green-frog", group: "wild", tier: "common", sprite_filename: "C054-american-green-frog.svg", aria_announce_name: "an american green frog", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 45, name: "American Toad", slug: "american-toad", group: "wild", tier: "common", sprite_filename: "C055-american-toad.svg", aria_announce_name: "an american toad", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 46, name: "Redback Salamander", slug: "redback-salamander", group: "wild", tier: "common", sprite_filename: "C056-redback-salamander.svg", aria_announce_name: "a redback salamander", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 47, name: "Wild Turkey", slug: "wild-turkey", group: "wild", tier: "common", sprite_filename: "C057-wild-turkey.svg", aria_announce_name: "a wild turkey", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 48, name: "Common Raven", slug: "common-raven", group: "wild", tier: "common", sprite_filename: "C058-common-raven.svg", aria_announce_name: "a common raven", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 49, name: "American Woodcock", slug: "american-woodcock", group: "wild", tier: "common", sprite_filename: "C059-american-woodcock.svg", aria_announce_name: "an american woodcock", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 50, name: "Dark Eyed Junco", slug: "dark-eyed-junco", group: "wild", tier: "common", sprite_filename: "C060-dark-eyed-junco.svg", aria_announce_name: "a dark eyed junco", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 51, name: "Hairy Woodpecker", slug: "hairy-woodpecker", group: "wild", tier: "common", sprite_filename: "C061-hairy-woodpecker.svg", aria_announce_name: "a hairy woodpecker", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 52, name: "Yellow Bellied Sapsucker", slug: "yellow-bellied-sapsucker", group: "wild", tier: "common", sprite_filename: "C062-yellow-bellied-sapsucker.svg", aria_announce_name: "a yellow bellied sapsucker", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 53, name: "Pileated Woodpecker", slug: "pileated-woodpecker", group: "wild", tier: "common", sprite_filename: "C063-pileated-woodpecker.svg", aria_announce_name: "a pileated woodpecker", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 54, name: "Virginia Opossum", slug: "virginia-opossum", group: "wild", tier: "common", sprite_filename: "C064-virginia-opossum.svg", aria_announce_name: "a virginia opossum", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 55, name: "Big Brown Bat", slug: "big-brown-bat", group: "wild", tier: "common", sprite_filename: "C065-big-brown-bat.svg", aria_announce_name: "a big brown bat", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 56, name: "Hairy Tailed Mole", slug: "hairy-tailed-mole", group: "wild", tier: "common", sprite_filename: "C066-hairy-tailed-mole.svg", aria_announce_name: "a hairy tailed mole", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 57, name: "North American Porcupine", slug: "north-american-porcupine", group: "wild", tier: "common", sprite_filename: "C067-north-american-porcupine.svg", aria_announce_name: "a north american porcupine", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 58, name: "Deer Mouse", slug: "deer-mouse", group: "wild", tier: "common", sprite_filename: "C068-deer-mouse.svg", aria_announce_name: "a deer mouse", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 59, name: "Meadow Vole", slug: "meadow-vole", group: "wild", tier: "common", sprite_filename: "C069-meadow-vole.svg", aria_announce_name: "a meadow vole", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 60, name: "Common Snapping Turtle", slug: "common-snapping-turtle", group: "wild", tier: "common", sprite_filename: "C070-common-snapping-turtle.svg", aria_announce_name: "a common snapping turtle", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 61, name: "Spring Peeper", slug: "spring-peeper", group: "wild", tier: "common", sprite_filename: "C071-spring-peeper.svg", aria_announce_name: "a spring peeper", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 62, name: "Eastern Milk Snake", slug: "eastern-milk-snake", group: "wild", tier: "common", sprite_filename: "C072-eastern-milk-snake.svg", aria_announce_name: "an eastern milk snake", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 63, name: "Northern Water Snake", slug: "northern-water-snake", group: "wild", tier: "common", sprite_filename: "C073-northern-water-snake.svg", aria_announce_name: "a northern water snake", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 64, name: "Canada Goose", slug: "canada-goose", group: "wild", tier: "common", sprite_filename: "C074-canada-goose.svg", aria_announce_name: "a canada goose", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 65, name: "Great Horned Owl", slug: "great-horned-owl", group: "wild", tier: "common", sprite_filename: "C075-great-horned-owl.svg", aria_announce_name: "a great horned owl", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 66, name: "Indigo Bunting", slug: "indigo-bunting", group: "wild", tier: "common", sprite_filename: "C076-indigo-bunting.svg", aria_announce_name: "an indigo bunting", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 67, name: "Scarlet Tanager", slug: "scarlet-tanager", group: "wild", tier: "common", sprite_filename: "C077-scarlet-tanager.svg", aria_announce_name: "a scarlet tanager", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 68, name: "Cedar Waxwing", slug: "cedar-waxwing", group: "wild", tier: "common", sprite_filename: "C078-cedar-waxwing.svg", aria_announce_name: "a cedar waxwing", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 69, name: "Baltimore Oriole", slug: "baltimore-oriole", group: "wild", tier: "common", sprite_filename: "C079-baltimore-oriole.svg", aria_announce_name: "a baltimore oriole", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 70, name: "American Kestrel", slug: "american-kestrel", group: "wild", tier: "common", sprite_filename: "C080-american-kestrel.svg", aria_announce_name: "an american kestrel", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 71, name: "Peregrine Falcon", slug: "peregrine-falcon", group: "wild", tier: "common", sprite_filename: "C081-peregrine-falcon.svg", aria_announce_name: "a peregrine falcon", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 72, name: "Coopers Hawk", slug: "coopers-hawk", group: "wild", tier: "common", sprite_filename: "C082-coopers-hawk.svg", aria_announce_name: "a coopers hawk", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 73, name: "Ring Necked Duck", slug: "ring-necked-duck", group: "wild", tier: "common", sprite_filename: "C083-ring-necked-duck.svg", aria_announce_name: "a ring necked duck", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 74, name: "Willow Flycatcher", slug: "willow-flycatcher", group: "wild", tier: "common", sprite_filename: "C084-willow-flycatcher.svg", aria_announce_name: "a willow flycatcher", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 75, name: "Ruffed Grouse", slug: "ruffed-grouse", group: "wild", tier: "common", sprite_filename: "C085-ruffed-grouse.svg", aria_announce_name: "a ruffed grouse", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 76, name: "Yellow Billed Cuckoo", slug: "yellow-billed-cuckoo", group: "wild", tier: "common", sprite_filename: "C086-yellow-billed-cuckoo.svg", aria_announce_name: "a yellow billed cuckoo", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 77, name: "Ovenbird", slug: "ovenbird", group: "wild", tier: "common", sprite_filename: "C087-ovenbird.svg", aria_announce_name: "an ovenbird", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 78, name: "Eastern Racer", slug: "eastern-racer", group: "wild", tier: "common", sprite_filename: "C088-eastern-racer.svg", aria_announce_name: "an eastern racer", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 79, name: "Bald Eagle", slug: "bald-eagle", group: "wild", tier: "common", sprite_filename: "C089-bald-eagle.svg", aria_announce_name: "a bald eagle", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 80, name: "Gray Fox", slug: "gray-fox", group: "wild", tier: "common", sprite_filename: "C090-gray-fox.svg", aria_announce_name: "a gray fox", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 81, name: "North American Beaver", slug: "north-american-beaver", group: "wild", tier: "common", sprite_filename: "C091-north-american-beaver.svg", aria_announce_name: "a north american beaver", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 82, name: "American Mink", slug: "american-mink", group: "wild", tier: "common", sprite_filename: "C092-american-mink.svg", aria_announce_name: "an american mink", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 83, name: "Long Tailed Weasel", slug: "long-tailed-weasel", group: "wild", tier: "common", sprite_filename: "C093-long-tailed-weasel.svg", aria_announce_name: "a long tailed weasel", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 84, name: "Little Brown Bat", slug: "little-brown-bat", group: "wild", tier: "common", sprite_filename: "C094-little-brown-bat.svg", aria_announce_name: "a little brown bat", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 85, name: "Summer Tanager", slug: "summer-tanager", group: "wild", tier: "common", sprite_filename: "C095-summer-tanager.svg", aria_announce_name: "a summer tanager", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 86, name: "Yellow Bellied Flycatcher", slug: "yellow-bellied-flycatcher", group: "wild", tier: "common", sprite_filename: "C096-yellow-bellied-flycatcher.svg", aria_announce_name: "a yellow bellied flycatcher", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 87, name: "Cerulean Warbler", slug: "cerulean-warbler", group: "wild", tier: "common", sprite_filename: "C097-cerulean-warbler.svg", aria_announce_name: "a cerulean warbler", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 88, name: "Common Nighthawk", slug: "common-nighthawk", group: "wild", tier: "common", sprite_filename: "C098-common-nighthawk.svg", aria_announce_name: "a common nighthawk", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 89, name: "Red Headed Woodpecker", slug: "red-headed-woodpecker", group: "wild", tier: "common", sprite_filename: "C099-red-headed-woodpecker.svg", aria_announce_name: "a red headed woodpecker", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 90, name: "Grasshopper Sparrow", slug: "grasshopper-sparrow", group: "wild", tier: "common", sprite_filename: "C100-grasshopper-sparrow.svg", aria_announce_name: "a grasshopper sparrow", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 91, name: "Black Billed Cuckoo", slug: "black-billed-cuckoo", group: "wild", tier: "common", sprite_filename: "C101-black-billed-cuckoo.svg", aria_announce_name: "a black billed cuckoo", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 92, name: "Orange Crowned Warbler", slug: "orange-crowned-warbler", group: "wild", tier: "common", sprite_filename: "C102-orange-crowned-warbler.svg", aria_announce_name: "an orange crowned warbler", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 93, name: "Merlin", slug: "merlin", group: "wild", tier: "common", sprite_filename: "C103-merlin.svg", aria_announce_name: "a merlin", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 94, name: "Purple Martin", slug: "purple-martin", group: "wild", tier: "common", sprite_filename: "C104-purple-martin.svg", aria_announce_name: "a purple martin", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 95, name: "Orchard Oriole", slug: "orchard-oriole", group: "wild", tier: "common", sprite_filename: "C105-orchard-oriole.svg", aria_announce_name: "an orchard oriole", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 96, name: "Moose", slug: "moose", group: "wild", tier: "common", sprite_filename: "C106-moose.svg", aria_announce_name: "a moose", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 97, name: "Fisher", slug: "fisher", group: "wild", tier: "common", sprite_filename: "C107-fisher.svg", aria_announce_name: "a fisher", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 98, name: "American Ermine", slug: "american-ermine", group: "wild", tier: "common", sprite_filename: "C108-american-ermine.svg", aria_announce_name: "an american ermine", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 99, name: "Eastern Red Bat", slug: "eastern-red-bat", group: "wild", tier: "common", sprite_filename: "C109-eastern-red-bat.svg", aria_announce_name: "an eastern red bat", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 100, name: "Snowshoe Hare", slug: "snowshoe-hare", group: "wild", tier: "common", sprite_filename: "C110-snowshoe-hare.svg", aria_announce_name: "a snowshoe hare", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 101, name: "Star Nosed Mole", slug: "star-nosed-mole", group: "wild", tier: "common", sprite_filename: "C111-star-nosed-mole.svg", aria_announce_name: "a star nosed mole", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 102, name: "Eastern Wood Pewee", slug: "eastern-wood-pewee", group: "wild", tier: "common", sprite_filename: "C112-eastern-wood-pewee.svg", aria_announce_name: "an eastern wood pewee", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 103, name: "Eastern Phoebe", slug: "eastern-phoebe", group: "wild", tier: "common", sprite_filename: "C113-eastern-phoebe.svg", aria_announce_name: "an eastern phoebe", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 104, name: "Veery", slug: "veery", group: "wild", tier: "common", sprite_filename: "C114-veery.svg", aria_announce_name: "a veery", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 105, name: "Hermit Thrush", slug: "hermit-thrush", group: "wild", tier: "common", sprite_filename: "C115-hermit-thrush.svg", aria_announce_name: "a hermit thrush", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 106, name: "Northern Parula", slug: "northern-parula", group: "wild", tier: "common", sprite_filename: "C116-northern-parula.svg", aria_announce_name: "a northern parula", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 107, name: "Blue Headed Vireo", slug: "blue-headed-vireo", group: "wild", tier: "common", sprite_filename: "C117-blue-headed-vireo.svg", aria_announce_name: "a blue headed vireo", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 108, name: "Eastern Screech Owl", slug: "eastern-screech-owl", group: "wild", tier: "common", sprite_filename: "C118-eastern-screech-owl.svg", aria_announce_name: "an eastern screech owl", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 109, name: "Red Shouldered Hawk", slug: "red-shouldered-hawk", group: "wild", tier: "common", sprite_filename: "C119-red-shouldered-hawk.svg", aria_announce_name: "a red shouldered hawk", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 110, name: "Wood Frog", slug: "wood-frog", group: "wild", tier: "common", sprite_filename: "C120-wood-frog.svg", aria_announce_name: "a wood frog", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 111, name: "Red Eft", slug: "red-eft", group: "wild", tier: "common", sprite_filename: "C121-red-eft.svg", aria_announce_name: "a red eft", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 112, name: "Pickerel Frog", slug: "pickerel-frog", group: "wild", tier: "common", sprite_filename: "C122-pickerel-frog.svg", aria_announce_name: "a pickerel frog", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 113, name: "Black Throated Blue Warbler", slug: "black-throated-blue-warbler", group: "wild", tier: "common", sprite_filename: "C123-black-throated-blue-warbler.svg", aria_announce_name: "a black throated blue warbler", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 114, name: "Northern Saw Whet Owl", slug: "northern-saw-whet-owl", group: "wild", tier: "common", sprite_filename: "C124-northern-saw-whet-owl.svg", aria_announce_name: "a northern saw whet owl", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 115, name: "Whip Poor Will", slug: "whip-poor-will", group: "wild", tier: "common", sprite_filename: "C125-whip-poor-will.svg", aria_announce_name: "a whip poor will", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 116, name: "Wood Turtle", slug: "wood-turtle", group: "wild", tier: "common", sprite_filename: "C126-wood-turtle.svg", aria_announce_name: "a wood turtle", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 117, name: "Smooth Green Snake", slug: "smooth-green-snake", group: "wild", tier: "common", sprite_filename: "C127-smooth-green-snake.svg", aria_announce_name: "a smooth green snake", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 118, name: "Spotted Salamander", slug: "spotted-salamander", group: "wild", tier: "common", sprite_filename: "C128-spotted-salamander.svg", aria_announce_name: "a spotted salamander", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 119, name: "Southern Flying Squirrel", slug: "southern-flying-squirrel", group: "wild", tier: "common", sprite_filename: "C129-southern-flying-squirrel.svg", aria_announce_name: "a southern flying squirrel", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 120, name: "Luna Moth", slug: "luna-moth", group: "wild", tier: "common", sprite_filename: "C130-luna-moth.svg", aria_announce_name: "a luna moth", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 121, name: "Cecropia Moth", slug: "cecropia-moth", group: "wild", tier: "common", sprite_filename: "C131-cecropia-moth.svg", aria_announce_name: "a cecropia moth", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 122, name: "Wheel Bug", slug: "wheel-bug", group: "wild", tier: "common", sprite_filename: "C132-wheel-bug.svg", aria_announce_name: "a wheel bug", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 123, name: "Bobolink", slug: "bobolink", group: "wild", tier: "common", sprite_filename: "C133-bobolink.svg", aria_announce_name: "a bobolink", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 124, name: "Eastern Meadowlark", slug: "eastern-meadowlark", group: "wild", tier: "common", sprite_filename: "C134-eastern-meadowlark.svg", aria_announce_name: "an eastern meadowlark", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 125, name: "Golden Winged Warbler", slug: "golden-winged-warbler", group: "wild", tier: "common", sprite_filename: "C135-golden-winged-warbler.svg", aria_announce_name: "a golden winged warbler", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 126, name: "Northern Goshawk", slug: "northern-goshawk", group: "wild", tier: "common", sprite_filename: "C136-northern-goshawk.svg", aria_announce_name: "a northern goshawk", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 127, name: "Olive Sided Flycatcher", slug: "olive-sided-flycatcher", group: "wild", tier: "common", sprite_filename: "C137-olive-sided-flycatcher.svg", aria_announce_name: "an olive sided flycatcher", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 128, name: "Northern Long Eared Bat", slug: "northern-long-eared-bat", group: "wild", tier: "common", sprite_filename: "C138-northern-long-eared-bat.svg", aria_announce_name: "a northern long eared bat", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 129, name: "Tricolored Bat", slug: "tricolored-bat", group: "wild", tier: "common", sprite_filename: "C139-tricolored-bat.svg", aria_announce_name: "a tricolored bat", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 130, name: "New England Cottontail", slug: "new-england-cottontail", group: "wild", tier: "common", sprite_filename: "C140-new-england-cottontail.svg", aria_announce_name: "a new england cottontail", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 131, name: "Blandings Turtle", slug: "blandings-turtle", group: "wild", tier: "common", sprite_filename: "C141-blandings-turtle.svg", aria_announce_name: "a blandings turtle", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 132, name: "Marbled Salamander", slug: "marbled-salamander", group: "wild", tier: "common", sprite_filename: "C142-marbled-salamander.svg", aria_announce_name: "a marbled salamander", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 133, name: "Rusty Patched Bumblebee", slug: "rusty-patched-bumblebee", group: "wild", tier: "common", sprite_filename: "C143-rusty-patched-bumblebee.svg", aria_announce_name: "a rusty patched bumblebee", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 134, name: "Puritan Tiger Beetle", slug: "puritan-tiger-beetle", group: "wild", tier: "common", sprite_filename: "C144-puritan-tiger-beetle.svg", aria_announce_name: "a puritan tiger beetle", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 135, name: "Frosted Elfin", slug: "frosted-elfin", group: "wild", tier: "common", sprite_filename: "C145-frosted-elfin.svg", aria_announce_name: "a frosted elfin", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 136, name: "Common Eastern Bumblebee", slug: "common-eastern-bumblebee", group: "wild", tier: "common", sprite_filename: "C146-common-eastern-bumblebee.svg", aria_announce_name: "a common eastern bumblebee", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 137, name: "Eastern Carpenter Bee", slug: "eastern-carpenter-bee", group: "wild", tier: "common", sprite_filename: "C147-eastern-carpenter-bee.svg", aria_announce_name: "an eastern carpenter bee", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 138, name: "Paper Wasp", slug: "paper-wasp", group: "wild", tier: "common", sprite_filename: "C148-paper-wasp.svg", aria_announce_name: "a paper wasp", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 139, name: "Hover Fly", slug: "hover-fly", group: "wild", tier: "common", sprite_filename: "C149-hover-fly.svg", aria_announce_name: "a hover fly", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 140, name: "Bald Faced Hornet", slug: "bald-faced-hornet", group: "wild", tier: "common", sprite_filename: "C150-bald-faced-hornet.svg", aria_announce_name: "a bald faced hornet", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 141, name: "Mud Dauber Wasp", slug: "mud-dauber-wasp", group: "wild", tier: "common", sprite_filename: "C151-mud-dauber-wasp.svg", aria_announce_name: "a mud dauber wasp", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 142, name: "Great Golden Digger Wasp", slug: "great-golden-digger-wasp", group: "wild", tier: "common", sprite_filename: "C152-great-golden-digger-wasp.svg", aria_announce_name: "a great golden digger wasp", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 143, name: "Leafcutter Bee", slug: "leafcutter-bee", group: "wild", tier: "common", sprite_filename: "C153-leafcutter-bee.svg", aria_announce_name: "a leafcutter bee", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 144, name: "Garden Snail", slug: "garden-snail", group: "wild", tier: "common", sprite_filename: "C154-garden-snail.svg", aria_announce_name: "a garden snail", base_weight: 3, base_probability: 0.00303838 }),
+  Object.freeze({ species_id: 145, name: "American Marten", slug: "american-marten", group: "legacy", tier: "uncommon", sprite_filename: "L001-american-marten.svg", aria_announce_name: "an american marten", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 146, name: "Eastern Wolf", slug: "eastern-wolf", group: "legacy", tier: "uncommon", sprite_filename: "L002-eastern-wolf.svg", aria_announce_name: "an eastern wolf", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 147, name: "Passenger Pigeon", slug: "passenger-pigeon", group: "legacy", tier: "uncommon", sprite_filename: "L003-passenger-pigeon.svg", aria_announce_name: "a passenger pigeon", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 148, name: "Heath Hen", slug: "heath-hen", group: "legacy", tier: "uncommon", sprite_filename: "L004-heath-hen.svg", aria_announce_name: "a heath hen", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 149, name: "Eastern Wild Turkey Ghost", slug: "eastern-wild-turkey-ghost", group: "legacy", tier: "uncommon", sprite_filename: "L005-eastern-wild-turkey-ghost.svg", aria_announce_name: "an eastern wild turkey ghost", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 150, name: "Eastern Elk", slug: "eastern-elk", group: "legacy", tier: "uncommon", sprite_filename: "L006-eastern-elk.svg", aria_announce_name: "an eastern elk", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 151, name: "Woodland Caribou", slug: "woodland-caribou", group: "legacy", tier: "uncommon", sprite_filename: "L007-woodland-caribou.svg", aria_announce_name: "a woodland caribou", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 152, name: "Wild Atlantic Salmon", slug: "wild-atlantic-salmon", group: "legacy", tier: "uncommon", sprite_filename: "L008-wild-atlantic-salmon.svg", aria_announce_name: "a wild atlantic salmon", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 153, name: "Sea Mink", slug: "sea-mink", group: "legacy", tier: "uncommon", sprite_filename: "L009-sea-mink.svg", aria_announce_name: "a sea mink", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 154, name: "Great Auk", slug: "great-auk", group: "legacy", tier: "uncommon", sprite_filename: "L010-great-auk.svg", aria_announce_name: "a great auk", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 155, name: "Labrador Duck", slug: "labrador-duck", group: "legacy", tier: "uncommon", sprite_filename: "L011-labrador-duck.svg", aria_announce_name: "a labrador duck", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 156, name: "Eskimo Curlew", slug: "eskimo-curlew", group: "legacy", tier: "uncommon", sprite_filename: "L012-eskimo-curlew.svg", aria_announce_name: "an eskimo curlew", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 157, name: "Carolina Parakeet", slug: "carolina-parakeet", group: "legacy", tier: "uncommon", sprite_filename: "L013-carolina-parakeet.svg", aria_announce_name: "a carolina parakeet", base_weight: 2, base_probability: 0.00202559 }),
+  Object.freeze({ species_id: 158, name: "Eastern Cougar", slug: "eastern-cougar", group: "cryptid", tier: "rare", sprite_filename: "Y001-eastern-cougar.svg", aria_announce_name: "an eastern cougar", base_weight: 1, base_probability: 0.00101279 }),
+  Object.freeze({ species_id: 159, name: "Melanistic Bobcat", slug: "melanistic-bobcat", group: "cryptid", tier: "rare", sprite_filename: "Y002-melanistic-bobcat.svg", aria_announce_name: "a melanistic bobcat", base_weight: 1, base_probability: 0.00101279 }),
+  Object.freeze({ species_id: 160, name: "Wolverine", slug: "wolverine", group: "cryptid", tier: "rare", sprite_filename: "Y003-wolverine.svg", aria_announce_name: "a wolverine", base_weight: 1, base_probability: 0.00101279 }),
+  Object.freeze({ species_id: 161, name: "White Squirrel", slug: "white-squirrel", group: "cryptid", tier: "rare", sprite_filename: "Y004-white-squirrel.svg", aria_announce_name: "a white squirrel", base_weight: 1, base_probability: 0.00101279 }),
+  Object.freeze({ species_id: 162, name: "Lake Monster Champ", slug: "lake-monster-champ", group: "cryptid", tier: "rare", sprite_filename: "Y005-lake-monster-champ.svg", aria_announce_name: "a lake monster champ", base_weight: 1, base_probability: 0.00101279 }),
+  Object.freeze({ species_id: 163, name: "Pukwudgie", slug: "pukwudgie", group: "cryptid", tier: "rare", sprite_filename: "Y006-pukwudgie.svg", aria_announce_name: "a pukwudgie", base_weight: 1, base_probability: 0.00101279 }),
+  Object.freeze({ species_id: 164, name: "Dover Demon", slug: "dover-demon", group: "cryptid", tier: "rare", sprite_filename: "Y007-dover-demon.svg", aria_announce_name: "a dover demon", base_weight: 1, base_probability: 0.00101279 }),
+  Object.freeze({ species_id: 165, name: "Glawackus", slug: "glawackus", group: "cryptid", tier: "rare", sprite_filename: "Y008-glawackus.svg", aria_announce_name: "a glawackus", base_weight: 1, base_probability: 0.00101279 }),
+  Object.freeze({ species_id: 166, name: "Gloucester Sea Serpent", slug: "gloucester-sea-serpent", group: "cryptid", tier: "rare", sprite_filename: "Y009-gloucester-sea-serpent.svg", aria_announce_name: "a gloucester sea serpent", base_weight: 1, base_probability: 0.00101279 }),
+  Object.freeze({ species_id: 167, name: "Pioneer Valley Visitor", slug: "pioneer-valley-visitor", group: "cryptid", tier: "rare", sprite_filename: "Y010-pioneer-valley-visitor.svg", aria_announce_name: "a pioneer valley visitor", base_weight: 1, base_probability: 0.00101279 }),
+  Object.freeze({ species_id: 168, name: "Memphre", slug: "memphre", group: "cryptid", tier: "rare", sprite_filename: "Y011-memphre.svg", aria_announce_name: "a memphre", base_weight: 1, base_probability: 0.00101279 }),
+])
+&nbsp;
+// Convenience subsets — computed once at module load.
+export const BASELINE_RESIDENTS = Object.freeze(SPECIES_POOL.filter(s =&gt; s.tier === 'baseline'))
+export const EARNED_POOL = Object.freeze(SPECIES_POOL.filter(s =&gt; s.tier !== 'baseline'))
+export const BY_ID = Object.freeze(Object.fromEntries(SPECIES_POOL.map(s =&gt; [s.species_id, s])))
+&nbsp;
+// Smoke-test sentinel (per revision §2.6). Out-of-pool; NEVER use in real flows.
+export const SMOKE_SENTINEL_SPECIES_ID = 255
+&nbsp;
+// Sum of base_probability across earned pool — informational; useful in tests / docs.
+// Note: real total at award-time may differ once prefs/multipliers are applied.
+export const TOTAL_BASE_PROBABILITY = EARNED_POOL.reduce((a, s) =&gt; a + (s.base_probability <span class="branch-0 cbranch-no" title="branch not covered" >?? 0)</span>, 0)
+&nbsp;
+// ─── pickSpecies ─────────────────────────────────────────────────────────────
+// Deterministic, pure. Given the same (seed, prefs, opts) tuple, returns the same result.
+//
+// Inputs:
+//   seed  — string — typically `${source_event_id}|${event_log.created_at}|${householdId}`.
+//   prefs — { [species_id]: weight } — from critter_species_prefs PATCH'd rows (D-INV-1).
+//           Missing species_ids default to 1.0. Weight 2.0 = love, 0.5 = meh (per §3.29).
+//   opts  — { speciesMultipliers?: { [species_id]: number } } — future season/milestone
+//           multipliers. Each multiplier modulates base_probability (cap effective total
+//           at 1.0). Today: pass {} or omit; V4 blocker will source from DB/config.
+//
+// Output: species_id in [1, 8] (earned pool only — V101 retired baselines), OR null = "no critter awarded this event."
+//   The null path is intentional (variable-ratio reward — Dave directive 2026-05-30).
+//
+// Algorithm:
+//   1) Per-species effective_prob = base_probability × prefs_weight × multiplier.
+//   2) total = sum(effective_probs), clamped to 1.0 to defend against runaway multipliers.
+//   3) r = FNV-1a hash of seed → uniform in [0, 1).
+//   4) If r &gt;= total → return null (no critter this time).
+//   5) Else: walk cumulative distribution, return first species whose cumulative reaches r.
+&nbsp;
+export function pickSpecies(seed, prefs = {}, opts = {}) {
+  if (typeof seed !== 'string' || seed.length === 0) {
+    throw new Error('pickSpecies: seed must be a non-empty string')
+  }
+  const speciesMultipliers = opts &amp;&amp; opts.speciesMultipliers <span class="branch-0 cbranch-no" title="branch not covered" >? opts.speciesMultipliers </span>: {}
+  const probabilities = EARNED_POOL.map(s =&gt; {
+    const pref = (prefs &amp;&amp; Number.isFinite(prefs[s.species_id]) &amp;&amp; prefs[s.species_id] &gt; 0)
+      ? prefs[s.species_id]
+      : 1.0
+    const mult = (Number.isFinite(speciesMultipliers[s.species_id]) <span class="branch-0 cbranch-no" title="branch not covered" >&amp;&amp; speciesMultipliers[s.species_id] &gt;= 0)</span>
+<span class="branch-0 cbranch-no" title="branch not covered" >      ? speciesMultipliers[s.species_id]</span>
+      : 1.0
+    const base = Number.isFinite(s.base_probability) ? s.base_probability <span class="branch-0 cbranch-no" title="branch not covered" >: 0</span>
+    return base * pref * mult
+  })
+  const total = probabilities.reduce((a, b) =&gt; a + b, 0)
+  const totalClamped = Math.min(Math.max(total, 0), 1.0)
+  const r = fnv1aUniform(seed)
+  if (r &gt;= totalClamped) return null  // no critter for this event (variable-ratio gate)
+  let cum = 0
+  for (let i = 0; i &lt; EARNED_POOL.length; i++) {
+    cum += probabilities[i]
+    if (r &lt; cum) return EARNED_POOL[i].species_id
+<span class="branch-0 cbranch-no" title="branch not covered" >  }</span>
+<span class="cstat-no" title="statement not covered" >  return EARNED_POOL[EARNED_POOL.length - 1].species_id  // numeric edge (r ≈ totalClamped)</span>
+<span class="cstat-no" title="statement not covered" >}</span>
+&nbsp;
+// pickCopyVariant — deterministic seed → integer in [0, poolSize) for Stage 1 variant selection.
+// Pool size is the count of variants in the Stage 1 single-action set (default 10 per packet).
+// Pure JS; identical on Node + browser. (Unchanged from pre-probabilistic refactor.)
+export function pickCopyVariant(seed, poolSize) {
+  if (typeof seed !== 'string' || seed.length === 0) <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
+<span class="cstat-no" title="statement not covered" >    throw new Error('pickCopyVariant: seed must be a non-empty string')</span>
+<span class="cstat-no" title="statement not covered" >  }</span>
+  if (!Number.isInteger(poolSize) || poolSize &lt;= 0) <span class="branch-0 cbranch-no" title="branch not covered" >{</span>
+<span class="cstat-no" title="statement not covered" >    throw new Error('pickCopyVariant: poolSize must be a positive integer')</span>
+<span class="cstat-no" title="statement not covered" >  }</span>
+  // Use a different hash domain so copy-variant index doesn't trivially correlate with species.
+  const r = fnv1aUniform(seed + '|copy')
+  return Math.floor(r * poolSize)
+}
+&nbsp;
+// FNV-1a 32-bit hash → uniform in [0, 1). Pure JS, no deps, identical on Node + browser.
+function fnv1aUniform(s) {
+  let h = 0x811c9dc5 // 2166136261
+  for (let i = 0; i &lt; s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h &gt;&gt;&gt; 0) / 0x100000000
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-08-01T02:27:33.028Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

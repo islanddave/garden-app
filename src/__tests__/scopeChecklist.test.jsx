@@ -45,7 +45,7 @@ describe('ScopeChecklist — scope chips + preview', () => {
     render(<Harness runDryRun={dryRunOk()} />)
     expect(screen.getByText('All active')).toBeDefined()
     expect(screen.getByText('By project')).toBeDefined()
-    expect(screen.getByText('By space')).toBeDefined()
+    expect(screen.getByText('By zone')).toBeDefined()
   })
 
   it('resolves the dry-run and shows the committed headline (3 of 3)', async () => {
@@ -148,8 +148,8 @@ describe('ScopeChecklist — warnings + empty + a11y', () => {
   })
 })
 
-// V4-LOGMANYLOC-001 — 2-tier "By space" hierarchy + cascade selection.
-describe('ScopeChecklist — By space 2-tier hierarchy (V4-LOGMANYLOC-001)', () => {
+// V4-LOGMANYLOC-001 — 2-tier "By zone" hierarchy + cascade selection.
+describe('ScopeChecklist — By zone 2-tier hierarchy (V4-LOGMANYLOC-001)', () => {
   const TREE = [
     { id: 'pasture', name: 'Pasture', level: 0, parent_id: null, sort_order: 1 },
     { id: 'rowA', name: 'Row A', level: 1, parent_id: 'pasture', sort_order: 1 },

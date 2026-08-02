@@ -199,12 +199,15 @@ export default function BottomNav() {
             from Search/Favorites/ProjectNew/ZonePicker), which is half of why only 5 of 913 photos
             carried a location. Emoji glyph mirrors Harvests/Put-Up (avoids the icon-completeness
             harness for a new row).
-            V4-SPACEPHOTO-001: the label becomes "Zones" once the Space row exists — two rows both
-            reading "Space(s)" pointing at different tiers is the §6.8 four-noun drift made worse,
-            and the level-0 rows this page is rooted in ARE zones. Label change only; the route,
-            the page and the flag-off label are untouched. */}
+            V4-SPACECLIENTGAP-001 (Dave 2026-08-02): the label is now UNCONDITIONALLY "Zones", not
+            flag-conditional. Two rows both reading "Space(s)" pointing at different tiers is the
+            §6.8 four-noun drift made worse, and the level-0 rows this page is rooted in ARE zones
+            regardless of whether the Space surface is switched on. Naming is a product decision,
+            orthogonal to the feature gate: leaving it conditional would mean a rollback silently
+            RENAMES a nav row under the user, which is worse than a stable, correct name. Label
+            change only; the route and the page are untouched. */}
         <Link to="/locations" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📍</span>{SPACE_PHOTOS_ENABLED ? 'Zones' : 'Spaces'}
+          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📍</span>Zones
         </Link>
         <Link to="/inventory" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.inventory" size={22} decorative />Inventory

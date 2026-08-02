@@ -93,13 +93,20 @@ export const IMAGE_LIST_CACHE_ENABLED = true
 // longer blocks this flip; only the SERVER GATE below does. One-toggle rollback lever (module const
 // -> "rollback" = flip false + redeploy). Criteria-gated, never date-gated.
 // FLIP ORDER (binding — this flag is CLIENT-side and the photos Lambda carries its OWN server-side
-// space gate): [DONE] apply migrations/v4-spacephoto-001 -> [TODO] set the garden-photos Lambda env
-// var SPACE_PHOTOS_ENABLED=true -> [TODO] flip this true. There is no build variable to set: the
-// space id is discovered at runtime from the id-free GET /api/photos/space-hero (see lib/spaceId.js).
+// space gate): [DONE] apply migrations/v4-spacephoto-001 -> [DONE 2026-08-02] set the garden-photos
+// Lambda env var SPACE_PHOTOS_ENABLED=true -> [DONE 2026-08-02] flip this true. There is no build
+// variable to set: the space id is discovered at runtime from the id-free GET /api/photos/space-hero
+// (see lib/spaceId.js).
 // WARNING: `aws lambda update-function-configuration` REPLACES the entire env block — restate all
-// seven existing vars or PHOTO_CDN_SIGNING_SECRET and GARDEN_HOUSEHOLD_IDS are wiped.
+// eight existing vars or PHOTO_CDN_SIGNING_SECRET and GARDEN_HOUSEHOLD_IDS are wiped.
 // Client-before-server is the unsafe skew: with the server gate off, `GET /api/photos?space_id=`
 // ignores the param and returns the UNFILTERED garden-wide list, so the space gallery would
 // silently show every photo in the garden — and the id-free space-hero route is not registered at
-// all, so discovery falls through to the handler's 405 and the page shows its error state.
-export const SPACE_PHOTOS_ENABLED = false
+// all, so discovery falls through to the handler's 405 and the page shows its error state. That
+// ordering constraint is why this flip waited: the server gate went true in prod on 2026-08-01 and
+// soaked 48h clean before the client followed.
+//
+// FLIPPED TRUE 2026-08-02 (V4-SPACECLIENTGAP-001, Stage 2). Rollback is still one const: flip false
+// + redeploy. The flag-OFF path is not dead code — it is that lever, and it is covered by
+// SpacePhotos.flagOff.test.jsx, which mocks this false and re-pins the exact 48-route table.
+export const SPACE_PHOTOS_ENABLED = true

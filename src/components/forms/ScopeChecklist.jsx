@@ -138,11 +138,16 @@ export default function ScopeChecklist({
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
           <SelectChip active={scope.type === 'all'} onClick={() => onScopeChange({ type: 'all' })}>All active</SelectChip>
           {/* V4-PROJHIDE-001: the "By project" scope chip is hidden when projects aren't user-facing
-              (All active / By space remain). Flag OFF renders the chip exactly as before. */}
+              (All active / By zone remain). Flag OFF renders the chip exactly as before. */}
           {!PROJECTS_HIDDEN && (
             <SelectChip active={scope.type === 'project'} onClick={() => onScopeChange(scope.type === 'project' ? scope : { type: 'project', project_id: projects[0]?.id })}>By project</SelectChip>
           )}
-          <SelectChip active={scope.type === 'space'} onClick={() => onScopeChange(scope.type === 'space' ? scope : { type: 'space', location_id: zones[0]?.id })}>By space</SelectChip>
+          {/* V4-SPACECLIENTGAP-001 (Dave 2026-08-02): LABEL is "By zone" — these chips select level-0
+              locations (Deck/Drive/House/Pasture/Stable/Yard), which are ZONES. "Space" is now
+              reserved for the property tier above them. The WIRE VALUE `scope.type === 'space'` is
+              deliberately UNCHANGED: it is the contract POST /api/events/batch validates, and
+              renaming it here would 400 every batch log. Copy-only rename, never the protocol. */}
+          <SelectChip active={scope.type === 'space'} onClick={() => onScopeChange(scope.type === 'space' ? scope : { type: 'space', location_id: zones[0]?.id })}>By zone</SelectChip>
         </div>
         {/* V4-PROJHIDE-001: the project <select> follows its chip — hidden when projects aren't user-facing. */}
         {!PROJECTS_HIDDEN && scope.type === 'project' && (
@@ -188,7 +193,7 @@ export default function ScopeChecklist({
             )}
             {preview.capped && <p style={{ margin: '0 0 8px', color: P.terra, fontSize: '0.8rem' }}>Showing first 500 — narrow the scope to log more.</p>}
             {scope.type === 'space' && (
-              <p style={{ margin: '0 0 8px', color: P.light, fontSize: '0.78rem' }}>Plantings with no space aren't included — use “All active” to cover everything.</p>
+              <p style={{ margin: '0 0 8px', color: P.light, fontSize: '0.78rem' }}>Plantings with no zone aren't included — use “All active” to cover everything.</p>
             )}
             {total > 0 && (
               <button type="button" onClick={() => setShowList(v => !v)} style={linkBtn}>

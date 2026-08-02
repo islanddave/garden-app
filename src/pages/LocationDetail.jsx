@@ -30,8 +30,8 @@ export default function LocationDetail() {
   const [location, setLocation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  // V4-PHOTOLOCFIND-001: this space's gallery — ?location_id= walks the subtree server-side,
-  // so a parent space also shows its descendants' photos.
+  // V4-PHOTOLOCFIND-001: this zone's gallery — ?location_id= walks the subtree server-side,
+  // so a parent zone also shows its descendants' photos.
   // V4-IMGCACHE-001 D-1: location photos through the SWR cache. `loadPhotos` (refetch) also fires from
   // onUploadComplete so the grid refreshes after an upload without a remount.
   const { data: locPhotos, loading: photosLoading, refetch: loadPhotos } = useCachedFetch(id ? `/api/photos?location_id=${id}` : null)
@@ -132,7 +132,7 @@ export default function LocationDetail() {
         </div>
 
         {/* Gallery (V4-PHOTOLOCFIND-001) — makes the upload promise above true: photos land here
-            and in the Photo Library's space filter. Includes descendant spaces via the server walk. */}
+            and in the Photo Library's zone filter. Includes descendant zones via the server walk. */}
         {photosLoading ? (
           <p style={{ margin: '14px 0 0', fontSize: '0.85rem', color: P.light }}>Loading photos…</p>
         ) : photos.length > 0 && (
@@ -145,7 +145,7 @@ export default function LocationDetail() {
                     photoId={photo.id}
                     initialUrl={photo.thumb_url || photo.view_url}
                     fallback="none"
-                    alt={photo.caption ?? 'Space photo'}
+                    alt={photo.caption ?? 'Zone photo'}
                     decoding="async"
                     style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                   />

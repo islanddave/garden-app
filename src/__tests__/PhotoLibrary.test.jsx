@@ -130,7 +130,7 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     render(<PhotoLibrary />)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
     fetchSpy.mockResolvedValueOnce([])  // the refetch the filter change triggers
-    const spaceFilter = screen.getByDisplayValue('Filter by space…')
+    const spaceFilter = screen.getByDisplayValue('Filter by zone…')
     await act(async () => {
       fireEvent.change(spaceFilter, { target: { value: 'loc-1' } })
     })
@@ -235,6 +235,56 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     expect(putCall).toBeDefined()
     const body = JSON.parse(putCall[1].body)
     expect(body.project_id).toBe('proj-1')
+  })
+
+  // V4-SPACECLIENTGAP-001 — the one-of gate must name EVERY parent photos_must_have_parent counts.
+  // It was written against three of them, and `newPlant` was computed and then never consulted.
+  // Both cases below are photos the CHECK considers properly parented, so blocking their save is
+  // purely a client-side lie; the plant case is a LIVE PROD BUG independent of the space work.
+  async function openAndSave(photo) {
+    primeMount({ photos: [photo] })
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
+    fetchSpy.mockResolvedValueOnce([])
+    await act(async () => {
+      fireEvent.click(screen.getByAltText(photo.caption).closest('button'))
+    })
+    fetchSpy.mockResolvedValueOnce({ id: photo.id })
+    await act(async () => { fireEvent.click(screen.getByText('Save tags')) })
+    return fetchSpy.mock.calls.find(c => c[0] === `/api/photos/${photo.id}` && c[1]?.method === 'PUT')
+  }
+
+  it('saves a PLANT-only photo instead of refusing it (live prod bug)', async () => {
+    // plant_id set, no project, no location, no event. The old guard ignored newPlant entirely, so
+    // this photo could not be caption-edited at all. Mutation: drop `!newPlant` and this reds.
+    const put = await openAndSave({
+      id: 'photo-plant', caption: 'plant only', view_url: 'https://example/p.jpg',
+      project_id: null, location_id: null, plant_id: 'plant-1', event_id: null,
+    })
+    expect(put, 'a plant-parented photo must be editable').toBeDefined()
+    expect(screen.queryByText(/A standalone photo needs/)).toBeNull()
+  })
+
+  it('saves a SPACE-only photo — space_id is read from the row, which the PUT never clears', async () => {
+    // The general PUT neither accepts nor SETs space_id, so the attachment survives this save and
+    // the CHECK still passes. Reading modal.space_id is therefore the correct source.
+    // Mutation: drop `!modal.space_id` and this reds.
+    const put = await openAndSave({
+      id: 'photo-space', caption: 'space only', view_url: 'https://example/p.jpg',
+      project_id: null, location_id: null, plant_id: null, event_id: null, space_id: 'space-1',
+    })
+    expect(put, 'a space-parented photo must be editable').toBeDefined()
+    expect(screen.queryByText(/A standalone photo needs/)).toBeNull()
+  })
+
+  it('still refuses a genuinely parentless photo', async () => {
+    // The guard must not become vacuous: a photo with no parent at all would 500 on the CHECK.
+    const put = await openAndSave({
+      id: 'photo-orphan', caption: 'orphan', view_url: 'https://example/p.jpg',
+      project_id: null, location_id: null, plant_id: null, event_id: null, space_id: null,
+    })
+    expect(put, 'a parentless photo must NOT be PUT').toBeUndefined()
+    expect(screen.getByText(/A standalone photo needs at least a project, zone, or plant/)).toBeDefined()
   })
 })
 

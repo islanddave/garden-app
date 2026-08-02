@@ -1,6 +1,6 @@
 // V3-LOGMANY-001 — GET /api/locations returns { locations, locations_with_path }
 // (an object), but LogMany/ScopeChecklist consume a bare array. normalizeLocations
-// unwraps either shape so the "By space" tab cannot crash on `locations.find`.
+// unwraps either shape so the "By zone" tab cannot crash on `locations.find`.
 import { describe, it, expect } from 'vitest';
 import { normalizeLocations } from '../pages/LogMany.jsx';
 

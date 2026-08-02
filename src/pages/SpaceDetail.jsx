@@ -24,11 +24,12 @@ import { useParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useOptionalToast } from '../context/ToastContext.jsx'
 import { resolveSpaceId, spaceHeroPath, isPinnedFeatured } from '../lib/spaceId.js'
-import { P } from '../lib/constants.js'
+import { P, T } from '../lib/tokens.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import PhotosWall from '../components/PhotosWall.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import SpaceHero from '../components/SpaceHero.jsx'
+import SpaceAttachPicker from '../components/SpaceAttachPicker.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 
 const cardStyle = {
@@ -76,6 +77,7 @@ export default function SpaceDetail() {
   const [heroTick, setHeroTick] = useState(0)
   const [savingFeatured, setSavingFeatured] = useState(null)   // photo id in flight
   const [galleryTick, setGalleryTick] = useState(0)            // remounts the wall after an upload
+  const [pickerOpen, setPickerOpen] = useState(false)          // batch-attach sheet
 
   // The hero read is also the DISCOVERY read: with no route param it hits the id-free form, which
   // resolves the caller's own household space server-side and returns its id. So the id is not
@@ -195,14 +197,35 @@ export default function SpaceDetail() {
               CLOSED allowlist with no 'spaces' entry, so a spaces/<id>/… storage key 403s. The
               space attachment travels in the POST body via `linkage`, which is the documented
               parent path (`POST /api/photos` accepts space_id) and needs no key-policy change. */}
+          {/* V4-SPACECLIENTGAP-001: onUploadComplete bumps BOTH ticks. The gallery tick alone left
+              the hero stale in the case that matters most — the FIRST upload to an empty space. The
+              POST path calls autoPromoteFeatured, which fills a NULL spaces.featured_photo_id, so
+              the server has a hero the instant that upload lands; without re-reading it the page
+              kept rendering HeroEmpty ("No feature photo yet") over a space that now HAS one, until
+              a remount. Cheap by construction: heroTick is already the Retry lever's effect
+              dependency, so this reuses that read rather than adding a second path. */}
           <PhotoUpload
             keyPrefix="standalone"
             linkage={{ space_id: spaceId }}
             errorMode="surface"
             mode="both"
-            onUploadComplete={() => setGalleryTick((t) => t + 1)}
+            onUploadComplete={() => { setGalleryTick((t) => t + 1); setHeroTick((t) => t + 1) }}
             inputId={`space-photo-${spaceId}`}
           />
+          {/* V4-SPACECLIENTGAP-001: the ATTACH entry point. Until this shipped, the only way a photo
+              could acquire a space_id was to be uploaded here — 981 photos already existed with
+              nowhere to say "that one is the property". Separate control, not a mode on the upload
+              button, because they are different acts: one creates a photo, one files an existing
+              one. */}
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            data-testid="space-attach-open"
+            style={{ marginTop: 10, width: '100%', minHeight: T.buttonMinHeight, borderRadius: 8,
+              border: `1px solid ${P.green}`, background: P.white, color: P.green,
+              fontSize: '0.86rem', fontWeight: 700, cursor: 'pointer' }}>
+            Add existing photos
+          </button>
         </div>
 
         <div style={{ marginTop: 16 }}>
@@ -236,6 +259,35 @@ export default function SpaceDetail() {
           </ErrorBoundary>
         </div>
       </div>
+      )}
+
+      {/* Mounted only with a resolved id — every PUT it issues is keyed on it, same rule as the
+          gallery above. On a fully-successful batch the sheet closes and BOTH ticks fire: the wall
+          must re-read (new members) and so must the hero (its membership predicate means a newly
+          attached photo can now legitimately become the fallback hero on a space that had none).
+          A PARTIAL failure leaves the sheet open and still refreshes the wall — the ones that DID
+          land are real and hiding them until a full success would misreport the state. */}
+      {pickerOpen && spaceId && !heroError && (
+        <SpaceAttachPicker
+          spaceId={spaceId}
+          spaceName={name}
+          onClose={() => setPickerOpen(false)}
+          onAttached={({ attached, failed, done }) => {
+            if (attached > 0) {
+              setGalleryTick((t) => t + 1)
+              setHeroTick((t) => t + 1)
+            }
+            if (done) {
+              setPickerOpen(false)
+              toast?.show?.({
+                message: `${attached} ${attached === 1 ? 'photo' : 'photos'} added to ${name}`,
+                tone: 'success',
+              })
+            } else if (attached > 0) {
+              toast?.show?.({ message: `${attached} added, ${failed} couldn’t be`, tone: 'error' })
+            }
+          }}
+        />
       )}
     </Shell>
   )
@@ -280,17 +332,26 @@ function GalleryEmpty({ name }) {
 // therefore keeps a live button — which is correct and load-bearing: it is not featured yet, and
 // tapping it is the only way to persist it. A static ★ there would be the silently-reverting bug
 // wearing a checkmark.
+//
+// V4-SPACECLIENTGAP-001 sizing: this was a 0.7rem borderless text button with `padding: 0`, so its
+// hit box was the ~14px line box — well under the 44px floor and the frozen T.buttonMinHeight of 48
+// (formStyles.js:28). It sits directly under a photo tile in a 3-up grid, i.e. exactly the
+// thumb-reach target that most needs the floor. The FEATURED branch stays a non-interactive <div>
+// and is deliberately NOT padded to 48: it is a status label, not a tap target, and giving it a
+// button-sized box would imply it does something. Only the interactive branch grows.
 function FeaturedControl({ photo, isFeatured, saving, onSet }) {
   if (isFeatured) {
     return (
-      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: P.gold }}>★ Featured</div>
+      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: P.gold, minHeight: 20, display: 'flex', alignItems: 'center' }}>★ Featured</div>
     )
   }
   return (
     <button type="button" onClick={() => onSet(photo)} disabled={saving != null}
       aria-label={`Set as feature photo${photo.caption ? `: ${photo.caption}` : ''}`}
-      style={{ fontSize: '0.7rem', fontWeight: 600, color: P.green, background: 'transparent',
-        border: 'none', padding: 0, cursor: 'pointer' }}>
+      style={{ fontSize: '0.72rem', fontWeight: 600, color: P.green, background: 'transparent',
+        border: 'none', width: '100%', minHeight: T.buttonMinHeight, padding: '4px 2px',
+        display: 'flex', alignItems: 'center', textAlign: 'left', lineHeight: 1.25,
+        cursor: saving != null ? 'not-allowed' : 'pointer' }}>
       {saving === photo.id ? 'Setting…' : 'Set as feature photo'}
     </button>
   )

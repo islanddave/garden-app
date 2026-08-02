@@ -45,10 +45,10 @@ async function newSpace(owner, label) {
   return rows[0].id
 }
 
-async function insertPhoto({ storagePath, owner = USER, space = null, location = null, contentHash = null }) {
+async function insertPhoto({ storagePath, owner = USER, space = null, location = null, contentHash = null, intake = null }) {
   const rows = await directSql`
-    INSERT INTO photos (storage_path, uploaded_by, created_by, space_id, location_id, content_hash)
-    VALUES (${storagePath}, ${owner}, ${owner}, ${space}, ${location}, ${contentHash})
+    INSERT INTO photos (storage_path, uploaded_by, created_by, space_id, location_id, content_hash, intake_status)
+    VALUES (${storagePath}, ${owner}, ${owner}, ${space}, ${location}, ${contentHash}, ${intake})
     RETURNING id
   `
   return rows[0].id
@@ -695,6 +695,89 @@ describe('V4-SPACEPHOTO-001 — a de-membered hero falls back instead of renderi
     expect(after.status).toBe(200)
     expect(after.body.featured_photo_id).toBe(memberId)
     expect(after.body.featured_is_explicit).toBe(false)
+  })
+})
+
+// V4-SPACECLIENTGAP-001 — the quick-tag inbox must drain for space-parented photos.
+//
+// Why these are integration and not source-text assertions: both paths turn on the row's PRIOR
+// intake_status, which only exists in the database. A static check can prove the CASE expression is
+// constructed; only a real round trip proves the row actually left 'pending_tag' — and, in the
+// negative cases, that it correctly did NOT.
+describe('V4-SPACECLIENTGAP-001 — attaching a space drains the quick-tag inbox', () => {
+  beforeEach(() => { process.env.SPACE_PHOTOS_ENABLED = 'true' })
+  afterAll(() => { delete process.env.SPACE_PHOTOS_ENABLED })
+
+  const attach = (id, body) => callHandler(handler, {
+    method: 'PUT', path: `/api/photos/${id}/space`, body, userId: USER,
+  })
+  const status = async (id) => (await directSql`SELECT intake_status FROM photos WHERE id = ${id}`)[0].intake_status
+
+  it("clears pending_tag when the space becomes the photo's parent", async () => {
+    // The whole point: idx_photos_intake_pending keeps matching a pending row, so the quick-tag
+    // carousel re-serves a photo the user already filed onto the property. The inbox never drains.
+    // Mutation: drop `drainsInbox` from the UPDATE and this row stays 'pending_tag'.
+    const photoId = await insertPhoto({ storagePath: `drain/${RUN}-a.jpg`, location: locationId, intake: 'pending_tag' })
+    const res = await attach(photoId, { space_id: spaceId })
+    expect(res.status).toBe(200)
+    expect(res.body.intake_status).toBeNull()
+    expect(await status(photoId)).toBeNull()
+  })
+
+  it('leaves a DETACH pending — un-tagging is not filing', async () => {
+    // Mirrors the general PUT's rule: a pending row that is un-tagged must STAY pending. Clearing
+    // here would mark a photo filed that nobody filed. Mutation: drop the `nextSpaceId !== null`
+    // conjunct and this reds.
+    const photoId = await insertPhoto({ storagePath: `drain/${RUN}-b.jpg`, space: spaceId, location: locationId, intake: 'pending_tag' })
+    const res = await attach(photoId, { space_id: null })
+    expect(res.status).toBe(200)
+    expect(await status(photoId)).toBe('pending_tag')
+  })
+
+  it("does NOT touch 'upload_failed' — attaching a space is not a successful upload", async () => {
+    // A different state with its own recovery path. Mutation: widen the guard to any non-null
+    // intake_status and this reds.
+    const photoId = await insertPhoto({ storagePath: `drain/${RUN}-c.jpg`, location: locationId, intake: 'upload_failed' })
+    const res = await attach(photoId, { space_id: spaceId })
+    expect(res.status).toBe(200)
+    expect(await status(photoId)).toBe('upload_failed')
+  })
+
+  it('drains via the general re-tag PUT when the SPACE is the surviving parent', async () => {
+    // The general PUT has full-replace semantics, so this all-null save is an "un-tag" of the
+    // project/location/plant fields — but space_id is not among the fields it SETs, so the row is
+    // still properly parented and must drain. Without the gated pre-read, `setsParent` reads false
+    // here and a space-attached photo re-tagged through the modal falls back into the carousel
+    // forever. Mutation: remove the `spaceParented` term from setsParent and this reds.
+    const photoId = await insertPhoto({ storagePath: `drain/${RUN}-d.jpg`, space: spaceId, intake: 'pending_tag' })
+    const res = await callHandler(handler, {
+      method: 'PUT',
+      path: `/api/photos/${photoId}`,
+      body: { project_id: null, location_id: null, plant_id: null, caption: 'the whole place' },
+      userId: USER,
+    })
+    expect(res.status).toBe(200)
+    expect(await status(photoId)).toBeNull()
+    // And the attachment itself is untouched — the general PUT never SETs space_id, which is the
+    // property that let the attach path be a separate sub-resource in the first place.
+    const [row] = await directSql`SELECT space_id FROM photos WHERE id = ${photoId}`
+    expect(row.space_id).toBe(spaceId)
+  })
+
+  it('still leaves a genuinely parentless un-tag pending, with the gate open', async () => {
+    // The guard the general PUT's own comment block calls CRITICAL: blindly nulling intake_status
+    // on a row with no surviving parent makes it parentless AND non-pending, which
+    // photos_must_have_parent rejects — a 500 on a legitimate un-tag. The space pre-read must not
+    // weaken that. Mutation: make spaceParented unconditionally true and this reds.
+    const photoId = await insertPhoto({ storagePath: `drain/${RUN}-e.jpg`, location: locationId, intake: 'pending_tag' })
+    const res = await callHandler(handler, {
+      method: 'PUT',
+      path: `/api/photos/${photoId}`,
+      body: { project_id: null, location_id: null, plant_id: null, caption: null },
+      userId: USER,
+    })
+    expect(res.status).toBe(200)
+    expect(await status(photoId)).toBe('pending_tag')
   })
 })
 

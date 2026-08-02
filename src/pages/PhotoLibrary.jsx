@@ -209,8 +209,20 @@ export default function PhotoLibrary() {
     const newProject  = tagForm.project_id  || null
     const newLocation = tagForm.location_id || null
     const newPlant    = tagForm.plant_id    || null
-    if (!newProject && !newLocation && !modal.event_id) {
-      setTagErr('A standalone photo needs at least a project or location.')
+    // V4-SPACECLIENTGAP-001: the one-of gate must name EVERY parent the 7-clause
+    // photos_must_have_parent CHECK counts, not the three it happened to be written against.
+    //   - `newPlant` was computed on the line above and then never consulted — a plant-only photo
+    //     (plant_id set, no project, no location, no event) failed this guard and could not be
+    //     caption-edited at all. That is a LIVE PROD BUG today, independent of the space work.
+    //   - `modal.space_id` is the space tier. It reads from the MODAL, not the form, because this
+    //     form has no space control by design: the general PUT below does not send space_id and the
+    //     Lambda's UPDATE does not SET it, so the attachment survives a re-tag untouched. The
+    //     attach/detach path is the dedicated PUT /api/photos/:id/space (see the batch picker on
+    //     /space). Reading the persisted value is therefore correct — it is what the row still has
+    //     after this request, which is exactly what the CHECK will see.
+    // `modal.event_id` keeps its existing meaning: an event-attached photo is always parented.
+    if (!newProject && !newLocation && !newPlant && !modal.event_id && !modal.space_id) {
+      setTagErr('A standalone photo needs at least a project, zone, or plant.')
       return
     }
 
@@ -320,7 +332,7 @@ export default function PhotoLibrary() {
                   the plant picker below, which is project-scoped.) */}
               {!PROJECTS_HIDDEN && (
               <div>
-                <label style={fieldLabelStyle}>Project  ·  or pick a space below</label>
+                <label style={fieldLabelStyle}>Project  ·  or pick a zone below</label>
                 <select
                   value={uploadForm.project_id}
                   onChange={e => setUploadForm(f => ({ ...f, project_id: e.target.value, plant_id: '' }))}
@@ -350,7 +362,7 @@ export default function PhotoLibrary() {
               )}
 
               <div>
-                <label style={fieldLabelStyle}>{PROJECTS_HIDDEN ? 'Space  ·  optional' : 'Space  ·  or pick a project above'}</label>
+                <label style={fieldLabelStyle}>{PROJECTS_HIDDEN ? 'Zone  ·  optional' : 'Zone  ·  or pick a project above'}</label>
                 <select
                   value={uploadForm.location_id}
                   onChange={e => setUploadForm(f => ({ ...f, location_id: e.target.value }))}
@@ -375,7 +387,7 @@ export default function PhotoLibrary() {
 
               {targetMissing && (
                 <p style={{ margin: 0, fontSize: '0.8rem', color: P.light }}>
-                  A standalone photo needs at least a project or space.
+                  A standalone photo needs at least a project or zone.
                 </p>
               )}
 
@@ -451,7 +463,7 @@ export default function PhotoLibrary() {
               backgroundColor: filterLocation ? P.greenPale : P.white,
             }}
           >
-            <option value="">Filter by space…</option>
+            <option value="">Filter by zone…</option>
             {locations.map(l => <option key={l.id} value={l.id}>{l.full_path}</option>)}
           </select>
         </div>

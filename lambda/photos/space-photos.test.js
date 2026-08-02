@@ -165,6 +165,15 @@ describe('V4-SPACEPHOTO-001 — flag-OFF inertness (AC-5)', () => {
       // The list-decoration query. Same reasoning: the four list SELECTs stay byte-identical and the
       // single template that names space_id is constructed only when the gate is open.
       /if \(spacePhotosEnabled && rows\.length\)/,
+      // V4-SPACECLIENTGAP-001 — the general PUT's setsParent pre-read. The general re-tag PUT has
+      // full-replace semantics, so an all-null save is an "un-tag"; for a row whose surviving parent
+      // is the SPACE that must still drain intake_status, or a space-attached photo re-tagged
+      // through the modal falls back into the quick-tag carousel forever. The space_id lookup is a
+      // SEPARATE gated SELECT rather than a widening of that route's UPDATE, precisely because that
+      // UPDATE executes flag-off — naming space_id there would 42703 wherever the column is absent
+      // and would break the byte-identical-rollback invariant. Costs one indexed PK lookup, flag-ON
+      // only, on a route already performing a write.
+      /if \(spacePhotosEnabled\) \{\s*const spaceRow = await sql`/,
     ];
     for (const g of guards) expect(SRC, `missing flag guard: ${g}`).toMatch(g);
 
@@ -180,7 +189,9 @@ describe('V4-SPACEPHOTO-001 — flag-OFF inertness (AC-5)', () => {
     const withSpaceId = sqlTemplates(SRC).filter((t) => /space_id/.test(t));
     // 6 -> 8 on 2026-08-02: the attach route's UPDATE and the list-decoration SELECT. Both are
     // constructed only inside a `spacePhotosEnabled &&` branch — see the two guards added above.
-    expect(withSpaceId, 'templates naming space_id').toHaveLength(8);
+    // 8 -> 9 on 2026-08-02 (client flip): the general PUT's setsParent pre-read, likewise inside a
+    // `spacePhotosEnabled` branch — see the guard added above.
+    expect(withSpaceId, 'templates naming space_id').toHaveLength(9);
     const touchingSpaces = sqlTemplates(SRC).filter((t) => /\bspaces\b/.test(t));
     expect(touchingSpaces, 'templates touching the spaces table').toHaveLength(4);
   });

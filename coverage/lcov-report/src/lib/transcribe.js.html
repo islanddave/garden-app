@@ -1,0 +1,715 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for src/lib/transcribe.js</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/lib</a> transcribe.js</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">95.28% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>182/191</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">58.33% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>35/60</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">92.3% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>12/13</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">95.28% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>182/191</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">14x</span>
+<span class="cline-any cline-yes">14x</span>
+<span class="cline-any cline-yes">14x</span>
+<span class="cline-any cline-yes">14x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
+ * src/lib/transcribe.js
+ *
+ * Bite 5 of Post-V2 UX overhaul Increment 2: Web Speech transcription wrapper.
+ *
+ * Wraps the browser Web Speech API (window.SpeechRecognition /
+ * window.webkitSpeechRecognition) with two iOS-specific safety nets:
+ *
+ *   1. START WATCHDOG. iOS Safari sometimes ACCEPTS a `.start()` call without
+ *      ever firing `onstart`, `onresult`, `onerror`, or `onend` — the
+ *      recognition session silently no-ops. We arm a watchdog timer immediately
+ *      after `.start()`; if no recognition event arrives within
+ *      START_TIMEOUT_MS, we mark the session as `silent-failure` and surface
+ *      the manual-text fallback. Bite 5's TranscriptReview UI consumes this
+ *      code path to flip its state from "transcribing" to "couldn't transcribe
+ *      — type it".
+ *
+ *   2. NO-SPEECH WATCHDOG. Even when iOS does dispatch events, the `no-speech`
+ *      error condition is browser-divergent and sometimes never fires. A
+ *      secondary timer (NO_SPEECH_TIMEOUT_MS, measured from `onstart`) ensures
+ *      the caller is never left hanging on a quiet mic.
+ *
+ * The wrapper is intentionally LIVE-INPUT only. Web Speech does NOT consume
+ * pre-recorded audio blobs — you can't feed it the IndexedDB-stored MediaRecorder
+ * output. For previously-recorded captures, Rung-1 falls back to manual text
+ * entry (the dominant Bite 5 path). Live transcription is wired for callers
+ * that want to ask the user to repeat their note while recognition runs —
+ * useful when the user is reviewing a 30-second voice memo and would rather
+ * speak it cleanly into the live recognizer than type it out.
+ *
+ * Caller contract (`startLiveTranscription`):
+ *   const handle = startLiveTranscription({
+ *     languageCode:        'en-US',
+ *     onResult:            ({ transcript, isFinal, confidence }) =&gt; {...},
+ *     onError:             (code) =&gt; {...},  // 'unavailable' | 'denied' | 'silent-failure' | 'no-speech' | 'aborted' | 'failed'
+ *     onEnd:               ({ finalTranscript }) =&gt; {...},
+ *     startTimeoutMs:      START_TIMEOUT_MS,  // default 3500
+ *     noSpeechTimeoutMs:   NO_SPEECH_TIMEOUT_MS, // default 8000
+ *   })
+ *   // handle.stop()    -&gt; graceful stop, fires onEnd with accumulated transcript
+ *   // handle.cancel()  -&gt; abort without onEnd
+ *
+ * Synchronous user-activation: like getUserMedia, iOS requires `.start()` in
+ * the same call frame as the user gesture. Callers must invoke
+ * startLiveTranscription synchronously from a click/tap handler -- NOT through
+ * an awaited async boundary.
+ */
+&nbsp;
+export const START_TIMEOUT_MS = 3500
+export const NO_SPEECH_TIMEOUT_MS = 8000
+&nbsp;
+function getSpeechRecognitionCtor() {
+  if (typeof window === 'undefined') <span class="branch-0 cbranch-no" title="branch not covered" >return null</span>
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null
+}
+&nbsp;
+/**
+ * Synchronous probe -- returns true if the Web Speech API is exposed by the
+ * runtime. Does NOT verify that .start() actually works (iOS exposes the
+ * constructor without honoring it); that probe is the watchdog's job.
+ */
+export function isTranscriptionSupported() {
+  return getSpeechRecognitionCtor() !== null
+}
+&nbsp;
+<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >function noop() {}</span></span>
+&nbsp;
+/**
+ * Start a live transcription session. Must be called synchronously in the
+ * user-activation frame for iOS to honor the mic gesture.
+ *
+ * Returns a handle: { stop, cancel }. stop() initiates graceful shutdown and
+ * triggers onEnd with the accumulated final transcript. cancel() aborts the
+ * recognizer without invoking onEnd.
+ *
+ * If the API is unavailable, onError is invoked synchronously with
+ * 'unavailable' and a no-op handle is returned.
+ */
+export function startLiveTranscription(opts = {}) {
+  const {
+    languageCode      = 'en-US',
+    onResult          = noop,
+    onError           = noop,
+    onEnd             = noop,
+    startTimeoutMs    = START_TIMEOUT_MS,
+    noSpeechTimeoutMs = NO_SPEECH_TIMEOUT_MS,
+  } = opts
+&nbsp;
+  const Ctor = getSpeechRecognitionCtor()
+  if (!Ctor) {
+    try { onError('unavailable') } <span class="branch-0 cbranch-no" title="branch not covered" >catch {}</span>
+    return { stop: noop, cancel: noop }
+  }
+&nbsp;
+  let recognition
+  try {
+    recognition = new Ctor()
+  } <span class="branch-0 cbranch-no" title="branch not covered" >catch {</span>
+<span class="cstat-no" title="statement not covered" >    try { onError('failed') } catch {}</span>
+<span class="cstat-no" title="statement not covered" >    return { stop: noop, cancel: noop }</span>
+<span class="cstat-no" title="statement not covered" >  }</span>
+&nbsp;
+  recognition.lang            = languageCode
+  recognition.interimResults  = true
+  recognition.continuous      = true
+  recognition.maxAlternatives = 1
+&nbsp;
+  let finalTranscript  = ''
+  let startWatchdog    = null
+  let noSpeechWatchdog = null
+  let started   = false
+  let stopped   = false
+  let cancelled = false
+  let endedFired = false
+&nbsp;
+  function clearWatchdogs() {
+    if (startWatchdog    !== null) { clearTimeout(startWatchdog);    startWatchdog    = null }
+    if (noSpeechWatchdog !== null) { clearTimeout(noSpeechWatchdog); noSpeechWatchdog = null }
+  }
+&nbsp;
+  function armNoSpeechWatchdog() {
+    if (noSpeechTimeoutMs &lt;= 0) return
+    if (noSpeechWatchdog !== null) <span class="branch-0 cbranch-no" title="branch not covered" >clearTimeout(noSpeechWatchdog)</span>
+    noSpeechWatchdog = setTimeout(() =&gt; {
+      if (stopped || cancelled || endedFired) <span class="branch-0 cbranch-no" title="branch not covered" >return</span>
+      clearWatchdogs()
+      safeAbort()
+      try { onError('no-speech') } <span class="branch-0 cbranch-no" title="branch not covered" >catch {}</span>
+    }, noSpeechTimeoutMs)
+  }
+&nbsp;
+  function safeAbort() {
+    try { recognition.abort() } <span class="branch-0 cbranch-no" title="branch not covered" >catch {}</span>
+  }
+&nbsp;
+  recognition.onstart = () =&gt; {
+    started = true
+    if (startWatchdog !== null) { clearTimeout(startWatchdog); startWatchdog = null }
+    armNoSpeechWatchdog()
+  }
+&nbsp;
+  recognition.onresult = (event) =&gt; {
+    // Any result resets the no-speech watchdog (user is speaking).
+    armNoSpeechWatchdog()
+    const results = event.results <span class="branch-0 cbranch-no" title="branch not covered" >|| []</span>
+    for (let i = event.resultIndex || 0; i &lt; results.length; i++) {
+      const r = results[i]
+      if (!r || !r[0]) <span class="branch-0 cbranch-no" title="branch not covered" >continue</span>
+      const transcript = r[0].transcript <span class="branch-0 cbranch-no" title="branch not covered" >|| ''</span>
+      const confidence = typeof r[0].confidence === 'number' ? r[0].confidence <span class="branch-0 cbranch-no" title="branch not covered" >: null</span>
+      const isFinal    = !!r.isFinal
+      if (isFinal) finalTranscript = (finalTranscript + ' ' + transcript).trim()
+      try { onResult({ transcript, isFinal, confidence }) } <span class="branch-0 cbranch-no" title="branch not covered" >catch {}</span>
+    }
+  }
+&nbsp;
+  recognition.onerror = (event) =&gt; {
+    clearWatchdogs()
+    const err = (event &amp;&amp; event.error) <span class="branch-0 cbranch-no" title="branch not covered" >|| 'failed'</span>
+    const code =
+        err === 'not-allowed'          ? 'denied'
+      : err === 'service-not-allowed'  <span class="branch-0 cbranch-no" title="branch not covered" >? 'denied'</span>
+      : err === 'no-speech'            <span class="branch-0 cbranch-no" title="branch not covered" >? 'no-speech'</span>
+      : err === 'aborted'              ? 'aborted'
+      : err === 'audio-capture'        ? 'unavailable'
+<span class="branch-0 cbranch-no" title="branch not covered" >      : err === 'network'              ? 'failed'</span>
+<span class="cstat-no" title="statement not covered" >      :                                  'failed'</span>
+    try { onError(code) } <span class="branch-0 cbranch-no" title="branch not covered" >catch {}</span>
+  }
+&nbsp;
+  recognition.onend = () =&gt; {
+    clearWatchdogs()
+    if (endedFired) <span class="branch-0 cbranch-no" title="branch not covered" >return</span>
+    endedFired = true
+    if (cancelled) return
+    try { onEnd({ finalTranscript }) } <span class="branch-0 cbranch-no" title="branch not covered" >catch {}</span>
+  }
+&nbsp;
+  if (startTimeoutMs &gt; 0) {
+    startWatchdog = setTimeout(() =&gt; {
+      if (started || stopped || cancelled || endedFired) <span class="branch-0 cbranch-no" title="branch not covered" >return</span>
+      clearWatchdogs()
+      safeAbort()
+      try { onError('silent-failure') } <span class="branch-0 cbranch-no" title="branch not covered" >catch {}</span>
+    }, startTimeoutMs)
+  }
+&nbsp;
+  try {
+    recognition.start()
+  } <span class="branch-0 cbranch-no" title="branch not covered" >catch {</span>
+<span class="cstat-no" title="statement not covered" >    clearWatchdogs()</span>
+<span class="cstat-no" title="statement not covered" >    try { onError('failed') } catch {}</span>
+<span class="cstat-no" title="statement not covered" >    return { stop: noop, cancel: noop }</span>
+<span class="cstat-no" title="statement not covered" >  }</span>
+&nbsp;
+  return {
+    stop() {
+      if (stopped || cancelled) <span class="branch-0 cbranch-no" title="branch not covered" >return</span>
+      stopped = true
+      clearWatchdogs()
+      try { recognition.stop() } <span class="branch-0 cbranch-no" title="branch not covered" >catch {}</span>
+    },
+    cancel() {
+      if (stopped || cancelled) <span class="branch-0 cbranch-no" title="branch not covered" >return</span>
+      cancelled = true
+      clearWatchdogs()
+      safeAbort()
+    },
+  }
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
+                at 2026-08-01T02:27:32.931Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

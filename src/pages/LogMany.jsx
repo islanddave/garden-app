@@ -12,7 +12,7 @@ import EventTypePicker, { EVENT_TYPES_UI } from '../components/forms/EventTypePi
 
 // Bulk "Quick Log" (Unit A). Apply ONE event type to MANY plantings at once —
 // one event per planting — without per-item tapping. Scope: All active / By Project /
-// By Space. Server resolves the set (POST /api/events/batch); dry_run powers the
+// By Zone. Server resolves the set (POST /api/events/batch); dry_run powers the
 // server-accurate preview. Durable undo via /api/events/batches. V100: ambient, no interrupt.
 //
 // Lane D / Phase D (slice 2): the scope selector + 500-cap exclusion checklist live in
@@ -196,7 +196,7 @@ export default function LogMany() {
   const committedCount = selection?.committedCount ?? 0
   const scopeLabel = scope.type === 'all' ? 'all active plantings'
     : scope.type === 'project' ? (projects.find(p => p.id === scope.project_id)?.name ?? 'project')
-    : (locations.find(l => l.id === scope.location_id)?.name ?? 'space')
+    : (locations.find(l => l.id === scope.location_id)?.name ?? 'zone')
 
   async function confirm() {
     if (committedCount === 0 || saving) return

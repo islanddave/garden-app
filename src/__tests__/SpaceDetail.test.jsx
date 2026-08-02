@@ -397,3 +397,64 @@ describe('SpaceDetail — more than one space is NOT an error', () => {
     await waitFor(() => expect(fetchSpy.mock.calls.some(c => c[0] === '/api/photos?space_id=space-1')).toBe(true))
   })
 })
+
+// V4-SPACECLIENTGAP-001 Stage 2 — the client flip's page-level wiring.
+describe('SpaceDetail — an upload refreshes the HERO, not just the gallery', () => {
+  it('re-reads the hero after an upload so an empty space stops showing HeroEmpty', async () => {
+    // The first upload to an empty space is the case that matters: the POST path calls
+    // autoPromoteFeatured, which fills a NULL spaces.featured_photo_id, so the server has a hero
+    // the instant that upload lands. Bumping only galleryTick left the page rendering "No feature
+    // photo yet" over a space that HAD one, until a remount.
+    // Mutation: drop setHeroTick from onUploadComplete and this reds.
+    await renderPage({ hero: HERO_EMPTY, photos: [] })
+    expect(screen.getByText('No feature photo yet')).toBeTruthy()
+
+    const heroReadsBefore = fetchSpy.mock.calls.filter(c => String(c[0]).startsWith('/api/photos/space-hero')).length
+    // The space now has a hero server-side, as it would immediately after an upload.
+    primeFetch({ hero: HERO, photos: PHOTOS })
+    await act(async () => { uploadProps.current.onUploadComplete() })
+
+    const heroReadsAfter = fetchSpy.mock.calls.filter(c => String(c[0]).startsWith('/api/photos/space-hero')).length
+    expect(heroReadsAfter, 'the hero must be re-read').toBeGreaterThan(heroReadsBefore)
+    await waitFor(() => expect(screen.queryByText('No feature photo yet')).toBeNull())
+  })
+})
+
+describe('SpaceDetail — the batch attach entry point', () => {
+  it('offers "Add existing photos" once a space is resolved', async () => {
+    // Until this shipped there was no way for an existing photo to acquire a space_id at all —
+    // the attach route was live in prod with no client able to invoke it.
+    await renderPage()
+    expect(screen.getByTestId('space-attach-open')).toBeTruthy()
+  })
+
+  it('does NOT offer it when no space resolved — every PUT it makes is keyed on the id', async () => {
+    // No route param AND a zero-space body: a route param would legitimately WIN over the null
+    // hero (that is resolveSpaceId's contract), so it must be cleared to reach the empty state.
+    paramsRef.current = {}
+    await renderPage({ hero: HERO_NONE })
+    expect(screen.queryByTestId('space-attach-open')).toBeNull()
+  })
+
+  it('opens the picker as a labelled modal dialog', async () => {
+    await renderPage()
+    await act(async () => { fireEvent.click(screen.getByTestId('space-attach-open')) })
+    const dlg = await screen.findByRole('dialog')
+    expect(dlg.getAttribute('aria-modal')).toBe('true')
+    expect(dlg.getAttribute('aria-label')).toContain('Gardens at Mathews Ridge')
+  })
+})
+
+describe('SpaceDetail — FeaturedControl is a real tap target', () => {
+  it('the set-featured button clears the 44px floor', async () => {
+    // It was a 0.7rem borderless text button with padding: 0 — a ~14px hit box under a photo tile
+    // in a 3-up grid, i.e. exactly the thumb-reach target that most needs the floor. The frozen
+    // token is T.buttonMinHeight: 48 (formStyles.js:28).
+    await renderPage({ hero: HERO_IMPLICIT, photos: PHOTOS })
+    // Every non-featured tile carries one, so assert the floor on ALL of them — a per-tile style
+    // regression on one branch would otherwise hide behind a passing first match.
+    const btns = await screen.findAllByRole('button', { name: /Set as feature photo/ })
+    expect(btns.length).toBeGreaterThan(0)
+    for (const btn of btns) expect(parseInt(btn.style.minHeight, 10)).toBeGreaterThanOrEqual(44)
+  })
+})
