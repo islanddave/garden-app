@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import PhotoUpload from '../components/PhotoUpload.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
 import { invalidatePrefix as invalidatePhotoLists } from '../lib/dataCache.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
@@ -22,11 +22,13 @@ import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 // admits any one of project/location/plant/event. The upload form enforces one-of
 // project/space/planting (V4-PHOTOLOCFIND-001) — a bare parentless upload would violate the CHECK.
 //
-// V2-PHOTO-F1 Session 2 (2026-05-13): refactored to use shared <PhotoUpload>
-// component + useUploadPhoto hook. The component owns the 3-step presign/PUT/POST
-// dance and preview lifecycle. We still own project_id/plant_id/location_id
-// selection and caption/is_public — they flow in via the `linkage`/`caption`/
-// `is_public` props. errorMode="surface" preserves the prior loud-error UX.
+// V2-PHOTO-F1 Session 2 (2026-05-13): the upload used shared <PhotoUpload>, which owns the 3-step
+// presign/PUT/POST dance and fires it on pick.
+// BUG-PHOTOFIRST-001 (2026-08-02) SUPERSEDES that here: this page now stages the file locally and
+// drives useUploadPhoto directly on an explicit "Upload photo" press, because <PhotoUpload>'s
+// upload-on-pick contract is precisely what forced the attach target to be chosen first. The other
+// eight <PhotoUpload> call sites are unchanged and still use it. errorMode="surface" is preserved,
+// so the loud-error UX is the same.
 
 export default function PhotoLibrary() {
   const { fetch: apiFetch } = useApiFetch()
@@ -45,6 +47,23 @@ export default function PhotoLibrary() {
   const [uploadForm,     setUploadForm]     = useState({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
   const [plantsForUpload, setPlantsForUpload] = useState([])
   const [uploadErr,      setUploadErr]      = useState(null)
+  // BUG-PHOTOFIRST-001 (BD-001, Dave 2026-07-31) — PHOTO FIRST, attribute after.
+  // This form used to disable the picker until a project/zone/planting was already chosen, because
+  // <PhotoUpload> uploads immediately on pick and therefore needs an attach target up front. Dave
+  // named that constraint himself and overrode it: he usually does not know what a photo IS until he
+  // looks at it, and Log Event already works the other way round (pick photo -> then choose planting).
+  // The resolution is to STAGE the file locally and upload on an explicit action, which is exactly
+  // what EventNew does. Staging lives here rather than in <PhotoUpload> on purpose: that component
+  // has nine call sites whose contract is "uploads on pick", and widening it to a staging mode would
+  // put every one of them on a new code path to fix one page's ordering.
+  const [stagedFile,    setStagedFile]    = useState(null)
+  const [stagedPreview, setStagedPreview] = useState(null)
+  const [uploading,     setUploading]     = useState(false)
+  const stagedInputRef = useRef(null)
+  const stagedUploader = useUploadPhoto({ errorMode: 'surface' })
+  // A staged blob URL outlives the component unless revoked. Closing the form or leaving the page
+  // with a photo staged and unsent is the ordinary case now that picking comes first.
+  useEffect(() => () => { setStagedPreview(prev => { if (prev) URL.revokeObjectURL(prev); return null }) }, [])
 
   const [modal,          setModal]          = useState(null)
   const [tagForm,        setTagForm]        = useState({ project_id: '', location_id: '', plant_id: '' })
@@ -167,11 +186,51 @@ export default function PhotoLibrary() {
   // V2-PHOTO-F1 Session 2: 3-step engine moved into <PhotoUpload> + useUploadPhoto.
   // We retain only the surface-level state: error gating before the picker fires
   // (project_id required) and post-success cleanup (form reset + list reload).
+  function clearStaged() {
+    setStagedPreview(prev => { if (prev) URL.revokeObjectURL(prev); return null })
+    setStagedFile(null)
+  }
+
   function handleUploadComplete() {
     setShowUpload(false)
     setUploadForm({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
     setUploadErr(null)
+    clearStaged()
     loadPhotos()
+  }
+
+  // BUG-PHOTOFIRST-001: open the picker inside the tap. Same reason CaptureFlow and EventNew do it
+  // this way — a picker opened from a later effect has lost the trusted gesture and is suppressed.
+  function openStagedPicker(useCamera) {
+    const el = stagedInputRef.current
+    if (!el) return
+    if (useCamera) el.setAttribute('capture', 'environment')
+    else el.removeAttribute('capture')
+    el.click()
+  }
+
+  function onStagedPick(e) {
+    const f = e.target.files?.[0]
+    e.target.value = ''   // re-picking the same file must refire onChange
+    if (!f) return
+    setStagedPreview(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f) })
+    setStagedFile(f)
+    setUploadErr(null)
+  }
+
+  async function uploadStaged() {
+    if (!stagedFile || targetMissing || uploading) return
+    setUploading(true)
+    setUploadErr(null)
+    const res = await stagedUploader.upload(stagedFile, {
+      keyPrefix: 'standalone',
+      linkage: photoLinkage,
+      caption: photoCaption,
+      is_public: uploadForm.is_public,
+    })
+    setUploading(false)
+    if (res?.error) handleUploadError(res.error)
+    else handleUploadComplete()
   }
 
   function handleUploadError(msg) {
@@ -327,6 +386,47 @@ export default function PhotoLibrary() {
             {uploadErr && <ErrBanner msg={uploadErr} />}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} data-testid="photo-library-upload-form">
 
+              {/* ── BUG-PHOTOFIRST-001: the photo comes FIRST and is never gated. ── */}
+              <input
+                ref={stagedInputRef}
+                type="file"
+                accept="image/*"
+                onChange={onStagedPick}
+                style={{ display: 'none' }}
+                data-testid="pl-staged-input"
+              />
+              {!stagedPreview ? (
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button type="button" data-testid="pl-stage-take" onClick={() => openStagedPicker(true)}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 12px', border: `2px dashed ${P.border}`, borderRadius: 8, cursor: 'pointer', backgroundColor: P.white, color: P.mid, fontSize: '0.88rem', fontWeight: 600 }}>
+                    <span style={{ fontSize: '1.3rem' }}>📷</span><span>Take photo</span>
+                  </button>
+                  <button type="button" data-testid="pl-stage-choose" onClick={() => openStagedPicker(false)}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '18px 12px', border: `2px dashed ${P.border}`, borderRadius: 8, cursor: 'pointer', backgroundColor: P.white, color: P.mid, fontSize: '0.88rem', fontWeight: 600 }}>
+                    <span style={{ fontSize: '1.3rem' }}>🖼️</span><span>Choose photo</span>
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <img src={stagedPreview} alt="Upload preview" data-testid="pl-staged-preview"
+                    style={{ width: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: 10, display: 'block' }} />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+                    <button type="button" data-testid="pl-stage-replace" onClick={() => openStagedPicker(false)}
+                      style={{ border: `1px solid ${P.border}`, borderRadius: 8, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
+                      Change photo
+                    </button>
+                    <button type="button" data-testid="pl-stage-clear" onClick={clearStaged}
+                      style={{ border: `1px solid ${P.border}`, borderRadius: 8, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
+                      Remove
+                    </button>
+                  </div>
+                  {/* Now — and only now — ask where it goes. This ordering IS the fix. */}
+                  <p style={{ margin: '10px 0 0', fontSize: '0.82rem', color: P.mid }}>
+                    Where does this one go?
+                  </p>
+                </div>
+              )}
+
               {/* V4-PROJHIDE-001: upload project chooser hidden when projects aren't user-facing. Flag
                   OFF renders it exactly as before. (project_id stays '' when hidden — see report note re:
                   the plant picker below, which is project-scoped.) */}
@@ -385,24 +485,30 @@ export default function PhotoLibrary() {
 
               {/* V4-PUBHIDE-001: is_public toggle removed. */}
 
-              {targetMissing && (
+              {/* BUG-PHOTOFIRST-001: the one-of-target rule is unchanged (photos_must_have_parent),
+                  but it is no longer a PRECONDITION to picking — it is a condition on SENDING. Only
+                  say it once a photo is actually staged; before that it is a rule about nothing. */}
+              {stagedFile && targetMissing && (
                 <p style={{ margin: 0, fontSize: '0.8rem', color: P.light }}>
                   A standalone photo needs at least a project or zone.
                 </p>
               )}
 
-              <PhotoUpload
-                keyPrefix="standalone"
-                linkage={photoLinkage}
-                caption={photoCaption}
-                is_public={uploadForm.is_public}
-                errorMode="surface"
-                mode="both"
-                onUploadComplete={handleUploadComplete}
-                onUploadError={handleUploadError}
-                disabled={targetMissing}
-                inputId="photolibrary-upload-input"
-              />
+              <button
+                type="button"
+                data-testid="pl-staged-upload"
+                onClick={uploadStaged}
+                disabled={!stagedFile || targetMissing || uploading}
+                style={{
+                  backgroundColor: (!stagedFile || targetMissing) ? P.light : P.green,
+                  color: P.white, border: 'none', borderRadius: 8, padding: '12px 16px',
+                  fontSize: '0.9rem', fontWeight: 700, minHeight: 44,
+                  cursor: (!stagedFile || targetMissing || uploading) ? 'not-allowed' : 'pointer',
+                  opacity: uploading ? 0.7 : 1,
+                }}
+              >
+                {uploading ? 'Uploading…' : stagedFile ? 'Upload photo' : 'Pick a photo first'}
+              </button>
             </div>
           </div>
         )}

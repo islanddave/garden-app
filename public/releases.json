@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.89.0",
+    "date": "2026-08-02",
+    "highlights": [
+      "Photos now work photo-first. On the Photos page you can take or choose a picture straight away and decide where it belongs afterwards \u2014 the way Log Event already worked. Before, the camera stayed locked until you'd already picked a project or zone, which meant deciding what a photo was before you'd looked at it."
+    ]
+  },
+  {
     "version": "3.88.0",
     "date": "2026-08-02",
     "highlights": [

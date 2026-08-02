@@ -31,6 +31,20 @@ vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchSpy }),
 }))
 
+// BUG-PHOTOFIRST-001: PhotoLibrary now drives useUploadPhoto directly (photo staged first, uploaded
+// on an explicit press). Mock the HOOK, not api.js — the real hook imports `apiFetch` at module
+// load, which this file's api.js mock does not provide, so collection fails before any test runs.
+const { uploadSpy, uploadResultRef } = vi.hoisted(() => ({
+  uploadSpy: vi.fn(),
+  uploadResultRef: { current: { photo: { id: 'new-photo' } } },
+}))
+vi.mock('../hooks/useUploadPhoto.js', () => ({
+  useUploadPhoto: () => ({
+    upload: (...args) => { uploadSpy(...args); return Promise.resolve(uploadResultRef.current) },
+    isUploading: false, error: null, photo: null, preview: null, stage: null, progress: null, reset: vi.fn(),
+  }),
+}))
+
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }))
@@ -63,6 +77,11 @@ const SAMPLE_LOCATION = { id: 'loc-1', full_path: 'Garden › Bed A', is_active:
 beforeEach(() => {
   fetchSpy.mockReset()
   photoUploadProps.current = null
+  uploadSpy.mockReset()
+  uploadResultRef.current = { photo: { id: 'new-photo' } }
+  // jsdom implements neither; the staged preview builds a blob URL on every pick.
+  if (typeof URL.createObjectURL !== 'function') URL.createObjectURL = vi.fn(() => 'blob:stub')
+  if (typeof URL.revokeObjectURL !== 'function') URL.revokeObjectURL = vi.fn()
 })
 
 function primeMount({ projects = [SAMPLE_PROJECT], locations = [SAMPLE_LOCATION], photos = [] } = {}) {
@@ -72,57 +91,83 @@ function primeMount({ projects = [SAMPLE_PROJECT], locations = [SAMPLE_LOCATION]
 }
 
 describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
+  // BUG-PHOTOFIRST-001 (BD-001) — these tests were rewritten wholesale, not adjusted. They used to
+  // assert the OLD contract: a <PhotoUpload> stub whose `disabled` prop was true until a target was
+  // chosen. That gate IS the bug Dave reported ("I don't know what the photo is until I look at it"),
+  // so a test asserting it holds could only have been kept by keeping the defect.
+  // The one-of-target rule itself is unchanged and still pinned below — it just governs SENDING now,
+  // not PICKING.
+  const stageAPhoto = async () => {
+    const input = screen.getByTestId('pl-staged-input')
+    const file = new File(['x'], 'bed.jpg', { type: 'image/jpeg' })
+    await act(async () => { fireEvent.change(input, { target: { files: [file] } }) })
+    return file
+  }
+
   it('renders header and toggles the upload form open', async () => {
     primeMount()
     render(<PhotoLibrary />)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
     fireEvent.click(screen.getByText('+ Upload'))
     expect(screen.getByTestId('photo-library-upload-form')).toBeDefined()
-    expect(screen.getByTestId('photo-upload-stub')).toBeDefined()
+    expect(screen.getByTestId('pl-stage-take')).toBeDefined()
+    expect(screen.getByTestId('pl-stage-choose')).toBeDefined()
   })
 
-  it('PhotoUpload receives standalone keyPrefix + linkage shape', async () => {
+  // THE FIX, stated as an invariant: nothing about the target may gate the camera.
+  it('never gates the photo picker on a target being chosen', async () => {
     primeMount()
     render(<PhotoLibrary />)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
     fireEvent.click(screen.getByText('+ Upload'))
-    expect(photoUploadProps.current).toBeTruthy()
-    expect(photoUploadProps.current.keyPrefix).toBe('standalone')
-    expect(photoUploadProps.current.errorMode).toBe('surface')
-    // linkage starts null (no project selected) — the gate must hold the trigger disabled.
-    expect(photoUploadProps.current.linkage).toEqual({ project_id: null, location_id: null, plant_id: null })
-    expect(photoUploadProps.current.disabled).toBe(true)
+    expect(screen.getByTestId('pl-stage-take').disabled).toBeFalsy()
+    expect(screen.getByTestId('pl-stage-choose').disabled).toBeFalsy()
+    // ...and the send is what waits.
+    expect(screen.getByTestId('pl-staged-upload').disabled).toBe(true)
+    expect(screen.getByTestId('pl-staged-upload').textContent).toMatch(/Pick a photo first/i)
   })
 
-  it('enables PhotoUpload once project_id is selected', async () => {
+  it('previews the staged photo and only then asks where it goes', async () => {
     primeMount()
     render(<PhotoLibrary />)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
     fireEvent.click(screen.getByText('+ Upload'))
-    // The plants-for-upload effect fires on project change — prime it.
-    fetchSpy.mockResolvedValueOnce([])
-    const projectSelect = screen.getByDisplayValue(/Select project/i)
+    // The target hint must not nag before there is anything to place.
+    expect(screen.queryByText(/needs at least a project or zone/i)).toBeNull()
+    await stageAPhoto()
+    expect(screen.getByTestId('pl-staged-preview')).toBeDefined()
+    expect(screen.getByText(/Where does this one go\?/i)).toBeDefined()
+    expect(screen.getByText(/needs at least a project or zone/i)).toBeDefined()
+  })
+
+  it('blocks the upload until a project is selected, then allows it', async () => {
+    primeMount()
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
+    fireEvent.click(screen.getByText('+ Upload'))
+    await stageAPhoto()
+    expect(screen.getByTestId('pl-staged-upload').disabled).toBe(true)
+    fetchSpy.mockResolvedValueOnce([])  // plants-for-upload effect
     await act(async () => {
-      fireEvent.change(projectSelect, { target: { value: 'proj-1' } })
+      fireEvent.change(screen.getByDisplayValue(/Select project/i), { target: { value: 'proj-1' } })
     })
-    await waitFor(() => expect(photoUploadProps.current.disabled).toBe(false))
-    expect(photoUploadProps.current.linkage.project_id).toBe('proj-1')
+    await waitFor(() => expect(screen.getByTestId('pl-staged-upload').disabled).toBe(false))
   })
 
   // V4-PHOTOLOCFIND-001: one-of target gate — a space alone is a valid home (the meta-photo case);
-  // project is no longer singularly required.
-  it('enables PhotoUpload with a space alone (one-of gate)', async () => {
+  // project is no longer singularly required. Unchanged by BUG-PHOTOFIRST-001, re-pinned on the
+  // send button instead of the picker.
+  it('accepts a space alone as the target (one-of gate)', async () => {
     primeMount()
     render(<PhotoLibrary />)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
     fireEvent.click(screen.getByText('+ Upload'))
-    expect(photoUploadProps.current.disabled).toBe(true)
-    const spaceSelect = screen.getByDisplayValue('— None —')
+    await stageAPhoto()
+    expect(screen.getByTestId('pl-staged-upload').disabled).toBe(true)
     await act(async () => {
-      fireEvent.change(spaceSelect, { target: { value: 'loc-1' } })
+      fireEvent.change(screen.getByDisplayValue('— None —'), { target: { value: 'loc-1' } })
     })
-    await waitFor(() => expect(photoUploadProps.current.disabled).toBe(false))
-    expect(photoUploadProps.current.linkage).toEqual({ project_id: null, location_id: 'loc-1', plant_id: null })
+    await waitFor(() => expect(screen.getByTestId('pl-staged-upload').disabled).toBe(false))
   })
 
   it('space filter chip queries the server with ?location_id= (V4-PHOTOLOCFIND-001)', async () => {
@@ -168,37 +213,49 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     expect(screen.queryByAltText('the whole place')).toBeNull()
   })
 
-  it('handles upload completion: reloads photos and resets form', async () => {
+  it('sends the staged file with the chosen linkage, then resets and reloads', async () => {
     primeMount()
     render(<PhotoLibrary />)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
     fireEvent.click(screen.getByText('+ Upload'))
+    const file = await stageAPhoto()
     fetchSpy.mockResolvedValueOnce([])  // plants-for-upload after project change
-    const projectSelect = screen.getByDisplayValue(/Select project/i)
     await act(async () => {
-      fireEvent.change(projectSelect, { target: { value: 'proj-1' } })
+      fireEvent.change(screen.getByDisplayValue(/Select project/i), { target: { value: 'proj-1' } })
     })
-    // Next photo refetch — return one photo
     fetchSpy.mockResolvedValueOnce([{ id: 'photo-new', view_url: 'https://example/photo-new.jpg', project_id: 'proj-1' }])
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('trigger-complete'))
-    })
-    // After completion, /api/photos should have been called again (reload).
+    await act(async () => { fireEvent.click(screen.getByTestId('pl-staged-upload')) })
+
+    // The staged FILE is what gets sent — the whole point of deferring the upload.
+    expect(uploadSpy).toHaveBeenCalledTimes(1)
+    const [sentFile, opts] = uploadSpy.mock.calls[0]
+    expect(sentFile).toBe(file)
+    expect(opts.keyPrefix).toBe('standalone')
+    expect(opts.linkage).toEqual({ project_id: 'proj-1', location_id: null, plant_id: null })
+
     await waitFor(() => {
       const photoCalls = fetchSpy.mock.calls.filter(c => c[0]?.startsWith('/api/photos'))
       expect(photoCalls.length).toBeGreaterThanOrEqual(2)
     })
+    // Form closed and staging cleared, so the next open starts from a clean picker.
+    await waitFor(() => expect(screen.queryByTestId('photo-library-upload-form')).toBeNull())
   })
 
-  it('surfaces upload errors via onUploadError', async () => {
+  it('surfaces upload errors and keeps the photo staged', async () => {
     primeMount()
     render(<PhotoLibrary />)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
     fireEvent.click(screen.getByText('+ Upload'))
+    await stageAPhoto()
+    fetchSpy.mockResolvedValueOnce([])
     await act(async () => {
-      fireEvent.click(screen.getByTestId('trigger-error'))
+      fireEvent.change(screen.getByDisplayValue(/Select project/i), { target: { value: 'proj-1' } })
     })
+    uploadResultRef.current = { error: 'mock failure' }
+    await act(async () => { fireEvent.click(screen.getByTestId('pl-staged-upload')) })
     await waitFor(() => expect(screen.getByText(/mock failure/)).toBeDefined())
+    // Losing the user's photo on a failed send would be the worse bug: it must still be there to retry.
+    expect(screen.getByTestId('pl-staged-preview')).toBeDefined()
   })
 
   // V1.2a-3 Increment A (I1): the tag modal's Save must PUT to /api/photos/:id.

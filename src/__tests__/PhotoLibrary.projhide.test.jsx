@@ -10,6 +10,16 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
 
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
+
+// BUG-PHOTOFIRST-001: PhotoLibrary now drives useUploadPhoto directly (photo staged first, uploaded
+// on an explicit press). Mock the HOOK, not api.js — the real hook imports `apiFetch` at module
+// load, which this file's api.js mock does not provide, so collection fails before any test runs.
+vi.mock('../hooks/useUploadPhoto.js', () => ({
+  useUploadPhoto: () => ({
+    upload: vi.fn(() => Promise.resolve({ photo: { id: 'new-photo' } })),
+    isUploading: false, error: null, photo: null, preview: null, stage: null, progress: null, reset: vi.fn(),
+  }),
+}))
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }))
