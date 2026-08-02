@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.88.0",
+    "date": "2026-08-02",
+    "highlights": [
+      "A photo event can no longer be saved without a photo. If the photo doesn't come along \u2014 or you picked the Photo event type and hadn't attached one yet \u2014 the form now says so and waits, instead of quietly saving an empty entry you'd never find again."
+    ]
+  },
+  {
     "version": "3.87.0",
     "date": "2026-08-02",
     "highlights": [

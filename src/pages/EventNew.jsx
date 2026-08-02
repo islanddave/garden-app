@@ -410,6 +410,12 @@ export default function EventNew() {
     if (!fromQuick) return
     const f = takePendingCapture()
     if (f) { setPhotoFile(f); setPhotoPreview(URL.createObjectURL(f)) }
+    // BUG-SNAPATTACH-001: the claim can MISS — the park is module state cleared on read, so a
+    // remount between park and claim (overlay host, StrictMode, any route churn) consumes it and
+    // the second mount finds nothing. Silence here is what produced photo-typed events carrying no
+    // photo: the form arrives pre-set to "Photo", the user saves, and nothing ever says the file
+    // was dropped. Say so at the top of the form, while it is still cheap to re-pick.
+    else setNotice('That photo didn’t carry over — pick it again below.')
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (form.event_type === 'watering') { ux.tap(); ux.step(1, 'start_capture') }
@@ -634,6 +640,17 @@ export default function EventNew() {
     // gated PLANTING_REQUIRED_ENABLED (the two gates stay decoupled by design).
     if ((PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) && !form.plant_id) {
       setError('Choose a planting for this event.'); return
+    }
+
+    // BUG-SNAPATTACH-001: a photo event with no photo is never intentional, and prod has 22 of them
+    // out of 582. Two routes produce one outcome: "📷 Photo" is a first-class choice in the type
+    // picker so it can simply be saved with nothing attached, and the V4-PHOTOQUICK-001 park/claim
+    // seam can drop the file in transit. Both end as a permanent, silent, empty event — the app
+    // answers "✓ Logged" and there is nothing to recover, because no upload was ever attempted and
+    // so nothing ever failed. Gate it like the harvest quantity gate above: refuse the save, inline,
+    // while the photo can still be added. NOT a warn-and-proceed — proceeding is the bug.
+    if (form.event_type === 'photo' && !photoFile) {
+      setError('Add a photo for a photo event — or pick a different event type.'); return
     }
 
     // V1.2a-2 Wave 3: harvest panel gate — block the POST on invalid quantity,
