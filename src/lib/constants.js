@@ -188,6 +188,13 @@ export const PROJECT_CATEGORIES = [
   { v: 'infrastructure', label: 'Infrastructure' },
 ]
 
+// BD-003 (Dave, stated twice): where a completed sign-in lands. Every redirect in the auth path
+// MUST use this — never a literal. The bug this exists to prevent already happened: the route table
+// was moved to /today on 2026-07-17 (9f03bc8, in prod since v3.78.0) while THREE separate literal
+// '/dashboard' redirects in the Clerk sign-in path were left behind, so signing in still landed on
+// Dashboard and the route-table fix looked like it had covered it. Keep this the single source.
+export const POST_LOGIN_ROUTE = '/today'
+
 export const APP_NAME = 'Gardens at Mathews'
 export const PHOTO_BUCKET = 'garden-photos'
 

@@ -1,6 +1,6 @@
 import { HandleSSOCallback, useClerk } from '@clerk/react'
 import { useNavigate } from 'react-router-dom'
-import { P } from '../lib/constants.js'
+import { P, POST_LOGIN_ROUTE } from '../lib/constants.js'
 
 export default function AuthCallback() {
   const navigate = useNavigate()
@@ -10,13 +10,13 @@ export default function AuthCallback() {
       <div style={{fontSize:'2.5rem'}}>🌿</div>
       <HandleSSOCallback
         navigateToApp={async ({ session, decorateUrl }) => {
-          await setActive({ session, redirectUrl: decorateUrl('/dashboard') })
+          await setActive({ session, redirectUrl: decorateUrl(POST_LOGIN_ROUTE) })
         }}
         navigateToSignIn={() => navigate('/login')}
         navigateToSignUp={async () => {
           const signUp = client.signUp
           if (signUp?.status === 'complete' && signUp.createdSessionId) {
-            await setActive({ session: signUp.createdSessionId, redirectUrl: '/dashboard' })
+            await setActive({ session: signUp.createdSessionId, redirectUrl: POST_LOGIN_ROUTE })
           } else {
             navigate('/login')
           }

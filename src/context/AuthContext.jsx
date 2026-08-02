@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect } from 'react'
 import { useUser, useClerk } from '@clerk/react'
 import { invalidateAll as invalidateDataCache } from '../lib/dataCache.js'
 import { useCacheLifecycle } from '../hooks/useCacheLifecycle.js'
+import { POST_LOGIN_ROUTE } from '../lib/constants.js'
 
 const AuthContext = createContext(null)
 
@@ -35,7 +36,7 @@ export function AuthProvider({ children }) {
       await clerk.client.signIn.authenticateWithRedirect({
         strategy: 'oauth_google',
         redirectUrl: `${window.location.origin}/auth/callback`,
-        redirectUrlComplete: `${window.location.origin}/dashboard`,
+        redirectUrlComplete: `${window.location.origin}${POST_LOGIN_ROUTE}`,
       })
       return { error: null }
     } catch (err) {
