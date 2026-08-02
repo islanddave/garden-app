@@ -198,5 +198,11 @@ export const POST_LOGIN_ROUTE = '/today'
 export const APP_NAME = 'Gardens at Mathews'
 export const PHOTO_BUCKET = 'garden-photos'
 
+// The BottomNav's real height, and the single source of truth for --bottom-nav-height. It LIVES
+// here rather than in BottomNav.jsx (which re-exports it for its existing importers) so a page can
+// reference the nav's height without pulling the nav's whole module graph -- auth, api, Sheet -- in
+// behind it. BottomNav.jsx owns the CSS VARIABLE; this owns the NUMBER.
+export const BOTTOM_NAV_HEIGHT_PX = 56
+
 // Public URL base — used for canonical links, og:url, GCal descriptions (Phase 3+)
 export const APP_URL = 'https://garden.futureishere.net'

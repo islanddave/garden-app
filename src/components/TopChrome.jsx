@@ -93,7 +93,7 @@ export default function TopChrome() {
 
   if (cls === 'root') {
     return (
-      <header style={{ ...base, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 8 }}>
+      <header data-app-chrome="top" style={{ ...base, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 8 }}>
         {bannerLayers}
         <div style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center' }}>
           <Link to="/dashboard" style={BRAND}>{APP_NAME}</Link>
@@ -114,7 +114,7 @@ export default function TopChrome() {
 
   if (cls === 'unauth') {
     return (
-      <header style={{ ...base, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <header data-app-chrome="top" style={{ ...base, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         {bannerLayers}
         <Link to="/" style={{ ...BRAND, position: 'relative', zIndex: 1 }}>{APP_NAME}</Link>
         <Link to="/login" style={{ position: 'relative', zIndex: 1, color: P.greenDeep, textDecoration: 'none', fontWeight: 700, fontSize: '0.85rem' }}>Sign in</Link>
@@ -123,7 +123,7 @@ export default function TopChrome() {
   }
 
   return (
-    <header style={{ ...base, display: 'flex', alignItems: 'center', gap: 6 }}>
+    <header data-app-chrome="top" style={{ ...base, display: 'flex', alignItems: 'center', gap: 6 }}>
       {bannerLayers}
       <button type="button" onClick={() => navigate(-1)} aria-label="Back" data-testid="topbar-back"
         style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, marginLeft: -6, background: 'transparent', border: 'none', color: P.greenDeep, cursor: 'pointer' }}>
@@ -141,7 +141,7 @@ export default function TopChrome() {
 function CaptureBar({ title }) {
   const navigate = useNavigate()
   return (
-    <header style={{
+    <header data-app-chrome="top" style={{
       height: 'calc(52px + env(safe-area-inset-top))',
       paddingTop: 'env(safe-area-inset-top)',
       paddingLeft: 6, paddingRight: 14,

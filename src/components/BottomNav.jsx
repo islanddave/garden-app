@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useOverlayLocation, OverlayLink } from '../context/OverlayContext.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import WhatsNewDot from './WhatsNewDot.jsx'
-import { P } from '../lib/constants.js'
+import { P, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 import CatchUpBadge from './CatchUpBadge.jsx'
 import { CATCH_UP_EDITOR_SHIPPED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED } from '../lib/featureFlags.js'
 import { useApiFetch } from '../lib/api.js'
@@ -84,7 +84,9 @@ function SectionLabel({ children }) {
 // the variable follows, whereas driving it from App.jsx's `user` check would silently desync.
 // useLayoutEffect (not useEffect) so the value is committed BEFORE paint — otherwise the first
 // frame lays content out against 0px and visibly shifts.
-export const BOTTOM_NAV_HEIGHT_PX = 56
+// The NUMBER now lives in lib/constants.js (so pages can clear the nav without importing it);
+// re-exported here because this component owns the VARIABLE and is where readers look for it.
+export { BOTTOM_NAV_HEIGHT_PX }
 
 export default function BottomNav() {
   const location = useOverlayLocation()

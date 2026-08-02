@@ -38,12 +38,70 @@ const MAX_RESULTS = 200
 const LIST_MAX_H = 280            // unchanged ceiling — 6 rows; the value that was always there
 const LIST_MIN_H = 140            // 3 rows (3 x 44) + padding: below this, opening downward is worse
                                   // than flipping, because 2 rows is not a chooser.
+const LIST_ABS_MIN = 44           // one row. The floor when NEITHER direction can seat LIST_MIN_H —
+                                  // see computePlacement.
 const LIST_GAP = 8                // breathing room between the panel edge and the viewport edge
 
-// Space available above/below the input, measured against the VISUAL viewport (the only thing that
-// tracks the Android soft keyboard while the app runs `resizes-visual` — see V4-KBVIEWPORT-001).
-// Returns null when it cannot measure: jsdom has no layout engine and no visualViewport, so every
-// existing test keeps the previous down-280 behavior rather than silently exercising a new path.
+// V4-KBVIEWPORT-001: the app-chrome insets the listbox must stay clear of. Bottom = BottomNav +
+// TodayBand, read from the CSS variables those components own (BottomNav.jsx:87, TodayBand.jsx:24)
+// so this can never desync from their real heights. Top = TopChrome's actual bottom edge — it is
+// `position: sticky; top: 0`, so it occupies the top of the scrollport, and its height varies by
+// route class (88 root / 52 detail) plus safe-area, which is why it is measured rather than
+// constant. Returns zeros in jsdom (no computed vars, zero rects), so the suite keeps today's path.
+function readChromeInsets() {
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') {
+    return { top: 0, bottom: 0 }
+  }
+  const px = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0 }
+  const cs = getComputedStyle(document.documentElement)
+  const bottom = px(cs.getPropertyValue('--bottom-nav-height'))
+    + px(cs.getPropertyValue('--today-band-height'))
+  const header = document.querySelector('[data-app-chrome="top"]')
+  const rect = header?.getBoundingClientRect?.()
+  return { top: Math.max(0, rect?.bottom ?? 0), bottom }
+}
+
+// The placement decision, as a pure function of injected numbers. Exported for unit tests: this is
+// the ONLY part of the picker's geometry that can be verified without a layout engine, so it is
+// where the arithmetic lives. jsdom cannot observe the rendered outcome (zero rects, unresolved
+// stacking contexts) — see reference/jsdom-cannot-observe-layout-defects.md.
+//
+// V4-KBVIEWPORT-001 — chrome-aware in BOTH directions. This used to measure to the raw viewport
+// edges, which was harmless only because `resizes-visual` kept the whole bottom chrome stack BEHIND
+// the keyboard, leaving the band below the input genuinely empty. Once interactive-widget shrinks
+// the layout viewport, BottomNav (z100) and TodayBand (z80) occupy the bottom of that band and both
+// beat the listbox (z30) — so a tap aimed at a planting row would land on a nav tab and navigate
+// off a half-filled form. That is a wrong-write, strictly worse than the cosmetic overlap
+// V4-PICKERUX-001 closed. `chromeTop` is not symmetry for its own sake: subtracting `chromeBottom`
+// makes flipping UP the common case, and TopChrome (sticky, z80) paints over the listbox with
+// tappable Back/search/avatar controls in it — so a one-sided fix would trade a downward wrong-tap
+// hazard for an upward one.
+export function computePlacement({
+  rectTop, rectBottom, viewTop, viewBottom, chromeTop = 0, chromeBottom = 0,
+}) {
+  const below = Math.floor(viewBottom - chromeBottom - rectBottom - LIST_GAP)
+  const above = Math.floor(rectTop - viewTop - chromeTop - LIST_GAP)
+  // Flip only when down genuinely cannot seat a choosable list AND up is roomier. A flip that buys
+  // 10px is churn the user reads as jitter.
+  const flip = below < LIST_MIN_H && above > below
+  const room = flip ? above : below
+  // When the roomier direction still cannot seat LIST_MIN_H, render the room we ACTUALLY have.
+  // The old unconditional `Math.max(LIST_MIN_H, …)` floored a 40px gap up to 140px — a deliberate
+  // 100px overflow into exactly the chrome band we just subtracted for. Subtracting chrome makes
+  // both-directions-cramped much more common, so the floor would have made this fix increase the
+  // frequency of its own worst residual. One row, scrollable, bounds the overflow at 44px.
+  const maxHeight = room >= LIST_MIN_H
+    ? Math.min(LIST_MAX_H, room)
+    : Math.max(LIST_ABS_MIN, room)
+  return { flip, maxHeight }
+}
+
+// Space available above/below the input, measured against the VISUAL viewport — which tracks the
+// Android soft keyboard under BOTH viewport models, so this survives the interactive-widget change
+// unchanged. Returns null when it cannot measure: jsdom has no layout engine and no visualViewport,
+// so every existing test keeps the previous down-280 behavior rather than silently exercising a new
+// path. That guard has its own test (PlantingSelectPlacement.test.jsx) — do not "fix" it by making
+// jsdom measure; 340+ test files depend on it.
 function measurePlacement(inputEl) {
   if (!inputEl || typeof inputEl.getBoundingClientRect !== 'function') return null
   const r = inputEl.getBoundingClientRect()
@@ -53,13 +111,11 @@ function measurePlacement(inputEl) {
   const viewBottom = vv ? vv.offsetTop + vv.height
     : (typeof window !== 'undefined' ? window.innerHeight : 0)
   if (!viewBottom) return null
-  const below = Math.floor(viewBottom - r.bottom - LIST_GAP)
-  const above = Math.floor(r.top - viewTop - LIST_GAP)
-  // Flip only when down genuinely cannot seat a choosable list AND up is roomier. A flip that buys
-  // 10px is churn the user reads as jitter.
-  const flip = below < LIST_MIN_H && above > below
-  const room = flip ? above : below
-  return { flip, maxHeight: Math.max(LIST_MIN_H, Math.min(LIST_MAX_H, room)) }
+  const chrome = readChromeInsets()
+  return computePlacement({
+    rectTop: r.top, rectBottom: r.bottom, viewTop, viewBottom,
+    chromeTop: chrome.top, chromeBottom: chrome.bottom,
+  })
 }
 
 function prettyDate(iso) {
@@ -514,7 +570,8 @@ function listboxStyle(placement) {
     maxHeight: placement?.maxHeight ?? LIST_MAX_H,
     overflowY: 'auto',
     // Without this, flicking past the end of the results chains the scroll to the Sheet panel,
-    // which drags the anchored input (and the dropdown with it) down under the keyboard mid-choice.
+    // which drags the anchored input (and the dropdown with it) away mid-choice. (Pre-dates
+    // V4-KBVIEWPORT-001 and still correct under it — scroll chaining is not a viewport-model issue.)
     overscrollBehavior: 'contain',
   }
 }

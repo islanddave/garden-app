@@ -86,13 +86,27 @@ describe('V4-PICKERUX-001 P1 — measured listbox placement', () => {
     expect(list.style.maxHeight).toBe('280px')  // 400 - 0 - 8 = 392, clamped to the 280 ceiling
   })
 
-  // Cramped BOTH ways — flipping must not make it worse. Below = 60, above = 92: flip, and the
-  // floor keeps the panel choosable rather than collapsing it to 92px.
-  it('prefers the roomier side and never renders below the three-row floor', async () => {
+  // Cramped BOTH ways — flip to the roomier side and render the room it ACTUALLY has.
+  //
+  // REWRITTEN by V4-KBVIEWPORT-001. This case previously asserted `>= 140` (LIST_MIN_H) on the
+  // reasoning that "the floor keeps the panel choosable rather than collapsing it to 92px". That
+  // reasoning does not survive: below = 60, above = 92, so flooring to 140 renders a box 48px
+  // taller than the space it sits in. The third row it buys is off-viewport — the user sees two
+  // rows either way, and with the floor the third is INVISIBLE rather than scrollable. The listbox
+  // has its own scroll, so a shorter maxHeight costs reachability nothing.
+  //
+  // It also actively backfires now: chrome-aware measurement (computePlacement) subtracts
+  // BottomNav + TodayBand from the downward room, which makes both-cramped far more common — so
+  // the old floor would have made the chrome fix increase the frequency of its own worst residual,
+  // overflowing straight into the chrome band the subtraction exists to avoid.
+  //
+  // The floor is now LIST_ABS_MIN (one 44px row), which bounds a worst-case overflow at 44px
+  // instead of 140px. Arithmetic for the general case is pinned in PlantingSelectPlacementChrome.
+  it('prefers the roomier side and renders the room it actually has', async () => {
     stubGeometry({ inputTop: 100, inputBottom: 148, viewportHeight: 216 })
     const list = await openPicker()
-    expect(list.style.bottom).toBe('100%')
-    expect(Number.parseInt(list.style.maxHeight, 10)).toBeGreaterThanOrEqual(140)
+    expect(list.style.bottom).toBe('100%')            // above (92) > below (60) -> flip up
+    expect(list.style.maxHeight).toBe('92px')         // the real room, not a 140px overflow
   })
 
   // Tight below but tighter above → stay down. A flip that buys nothing is jitter.
