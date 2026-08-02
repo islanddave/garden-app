@@ -30,6 +30,38 @@ import { PROJECTS_HIDDEN } from '../../lib/featureFlags.js'
 // truncate silently. Unscoped garden lists run to the hundreds; 200 keeps the DOM sane.
 const MAX_RESULTS = 200
 
+// V4-PICKERUX-001 P1 — the listbox used to be a hardcoded 280px box that always opened DOWNWARD,
+// with no idea how much room was actually below the input. On Android with the keyboard up, the
+// real space below a mid-form field is routinely 60-150px, so the box was simply clipped and the
+// user got "about three rows" — the second half of the original report, and a completely separate
+// defect from the Save-button collision (P0) that shared its symptom.
+const LIST_MAX_H = 280            // unchanged ceiling — 6 rows; the value that was always there
+const LIST_MIN_H = 140            // 3 rows (3 x 44) + padding: below this, opening downward is worse
+                                  // than flipping, because 2 rows is not a chooser.
+const LIST_GAP = 8                // breathing room between the panel edge and the viewport edge
+
+// Space available above/below the input, measured against the VISUAL viewport (the only thing that
+// tracks the Android soft keyboard while the app runs `resizes-visual` — see V4-KBVIEWPORT-001).
+// Returns null when it cannot measure: jsdom has no layout engine and no visualViewport, so every
+// existing test keeps the previous down-280 behavior rather than silently exercising a new path.
+function measurePlacement(inputEl) {
+  if (!inputEl || typeof inputEl.getBoundingClientRect !== 'function') return null
+  const r = inputEl.getBoundingClientRect()
+  if (!r || (!r.top && !r.bottom && !r.height)) return null
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null
+  const viewTop = vv ? vv.offsetTop : 0
+  const viewBottom = vv ? vv.offsetTop + vv.height
+    : (typeof window !== 'undefined' ? window.innerHeight : 0)
+  if (!viewBottom) return null
+  const below = Math.floor(viewBottom - r.bottom - LIST_GAP)
+  const above = Math.floor(r.top - viewTop - LIST_GAP)
+  // Flip only when down genuinely cannot seat a choosable list AND up is roomier. A flip that buys
+  // 10px is churn the user reads as jitter.
+  const flip = below < LIST_MIN_H && above > below
+  const room = flip ? above : below
+  return { flip, maxHeight: Math.max(LIST_MIN_H, Math.min(LIST_MAX_H, room)) }
+}
+
 function prettyDate(iso) {
   if (!iso) return null
   const d = new Date(iso)
@@ -213,6 +245,40 @@ export default function PlantingSelect({
     [visible],
   )
 
+  // V4-PICKERUX-001 P1 — measured placement. null = "could not measure", which renders exactly the
+  // pre-P1 style (down, 280) rather than guessing.
+  const [placement, setPlacement] = useState(null)
+  useEffect(() => {
+    if (!open || disabled) { setPlacement(null); return }
+    let raf = 0
+    const apply = () => {
+      raf = 0
+      const next = measurePlacement(inputRef.current)
+      // Bail when nothing changed: this runs on visualViewport scroll, which fires per compositor
+      // frame during the keyboard animation. Re-rendering a 200-row listbox every frame, on the one
+      // interaction where the device is already animating, is exactly the cost not worth paying.
+      setPlacement(prev =>
+        (prev?.flip === next?.flip && prev?.maxHeight === next?.maxHeight) ? prev : next)
+    }
+    const schedule = () => {
+      if (raf) return
+      raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(apply) : (apply(), 0)
+    }
+    apply()
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null
+    vv?.addEventListener('resize', schedule)
+    vv?.addEventListener('scroll', schedule)
+    window.addEventListener?.('resize', schedule)
+    return () => {
+      if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf)
+      vv?.removeEventListener('resize', schedule)
+      vv?.removeEventListener('scroll', schedule)
+      window.removeEventListener?.('resize', schedule)
+    }
+    // visible.length is a dep because the panel's own height changes the flip decision once the
+    // list is short enough to not need the room.
+  }, [open, disabled, visible.length])
+
   useEffect(() => { setHighlight(0) }, [query, rows])
 
   const label = LABELERS[labelFormat] ?? LABELERS.qtyVariety
@@ -333,7 +399,7 @@ export default function PlantingSelect({
           id={listboxId}
           role="listbox"
           aria-label="Plantings"
-          style={listboxStyle}
+          style={listboxStyle(placement)}
           // Keep input focus while clicking rows; onBlur's deferred close still runs after click.
           onMouseDown={e => e.preventDefault()}
         >
@@ -357,11 +423,16 @@ export default function PlantingSelect({
               onClick={() => select(p)}
               style={rowStyle(i === highlight)}
             >
-              <span>{label(p)}</span>
+              {/* V4-PICKERUX-001 P1: minWidth 0 is load-bearing — a flex child's default
+                  min-width:auto refuses to shrink below its content, so textOverflow never engages
+                  without it and the row grows instead of ellipsing. */}
+              <span style={{ minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {label(p)}
+              </span>
               {/* V4-PROJHIDE-001: option project_name tag hidden when projects aren't user-facing.
                   V4-PICKERUX-001: also hidden when every visible row shares one project. */}
               {p.project_name && labelFormat !== 'wave' && !PROJECTS_HIDDEN && showProjectTag && (
-                <span style={{ fontSize: '0.74rem', color: P.light, marginLeft: 8 }}>{p.project_name}</span>
+                <span style={{ fontSize: '0.74rem', color: P.light, marginLeft: 8, flexShrink: 0 }}>{p.project_name}</span>
               )}
             </li>
           ))}
@@ -421,21 +492,31 @@ const linkBtn = {
   minHeight: 44,
 }
 
-const listboxStyle = {
-  position: 'absolute',
-  zIndex: 30,
-  top: '100%',
-  left: 0,
-  right: 0,
-  margin: '4px 0 0',
-  padding: 4,
-  listStyle: 'none',
-  backgroundColor: P.white,
-  border: `1px solid ${P.border}`,
-  borderRadius: T.radiusField,
-  boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
-  maxHeight: 280,
-  overflowY: 'auto',
+// V4-PICKERUX-001 P1: placement is now measured (see measurePlacement). `null` reproduces the
+// pre-P1 constant exactly — down, 280 — so an environment that cannot measure (jsdom, and any
+// browser where the input is not laid out yet) behaves as it always did.
+function listboxStyle(placement) {
+  const flip = !!placement?.flip
+  return {
+    position: 'absolute',
+    zIndex: 30,
+    ...(flip
+      ? { bottom: '100%', top: 'auto', margin: '0 0 4px' }
+      : { top: '100%', bottom: 'auto', margin: '4px 0 0' }),
+    left: 0,
+    right: 0,
+    padding: 4,
+    listStyle: 'none',
+    backgroundColor: P.white,
+    border: `1px solid ${P.border}`,
+    borderRadius: T.radiusField,
+    boxShadow: flip ? '0 -6px 18px rgba(0,0,0,0.12)' : '0 6px 18px rgba(0,0,0,0.12)',
+    maxHeight: placement?.maxHeight ?? LIST_MAX_H,
+    overflowY: 'auto',
+    // Without this, flicking past the end of the results chains the scroll to the Sheet panel,
+    // which drags the anchored input (and the dropdown with it) down under the keyboard mid-choice.
+    overscrollBehavior: 'contain',
+  }
 }
 
 function rowStyle(highlighted) {
@@ -443,6 +524,12 @@ function rowStyle(highlighted) {
     display: 'flex',
     alignItems: 'baseline',
     padding: '11px 10px',
+    // V4-PICKERUX-001 P1: HEIGHT, not just minHeight. A long name had no ellipsis mechanism
+    // anywhere, so it wrapped and grew the row past 44 — which shifted every row below it, making
+    // the y-position of "the third result" depend on how long the second one was. Under a soft
+    // keyboard, tap targets that move between renders are a mis-tap generator. Fixed height + the
+    // ellipsis on the label span below makes row positions deterministic.
+    height: 44,
     minHeight: 44,
     boxSizing: 'border-box',
     borderRadius: 5,

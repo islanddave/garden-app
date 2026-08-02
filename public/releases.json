@@ -4,7 +4,8 @@
     "date": "2026-08-02",
     "highlights": [
       "Choosing a planting is no longer a trap. While the planting list is open, the Save button steps out of the way \u2014 before, it sat on top of the list and could swallow a tap meant for a result, saving your event without the planting you were picking.",
-      "Planting names read cleaner. A planting named after its variety now shows once instead of twice ('Lemon Thyme' rather than 'Lemon Thyme \u2014 Lemon Thyme'), and the project name is hidden when every result is from the same project."
+      "You can see more of the planting list. It now measures the room it actually has and opens upward when there isn't enough below, instead of always dropping down to a fixed height and getting cut off by the keyboard.",
+      "Planting names read cleaner. A planting named after its variety now shows once instead of twice ('Lemon Thyme' rather than 'Lemon Thyme \u2014 Lemon Thyme'), the project name is hidden when every result is from the same project, and long names now trim with an ellipsis instead of wrapping and shifting the rows below them."
     ]
   },
   {
