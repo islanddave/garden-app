@@ -19,7 +19,7 @@
 //   POST /api/photos/batch — must derive inbox/{userId}/{uuid}.{ext} server-side and accept no
 //                            caller-supplied key.
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
 
 // The handler throws at MODULE LOAD if S3_PHOTOS_BUCKET is unset, and vi.mock factories + this
@@ -97,6 +97,16 @@ afterAll(async () => {
   await directSql`DELETE FROM entity WHERE entity_type = 'planting' AND planting_ref_id IN (${plantId}, ${plantIdB})`
   await directSql`DELETE FROM plants WHERE project_id = ${projectId}`
   await directSql`DELETE FROM plant_projects WHERE id = ${projectId}`
+})
+
+
+// CROSS-FILE ENV LEAK GUARD (added 2026-08-02). SPACE_PHOTOS_ENABLED is toggled in-process by
+// space-photos.int.test.js, vitest reuses workers across files, and process.env is per-worker — so a
+// crashed or --bail'd run there can leave the gate ON here. This file's whole premise is the
+// flag-OFF shape of the re-tag path; inheriting a stale `true` would silently exercise the widened
+// templates while every assertion still claimed to be testing flag-off. Fail loudly instead.
+beforeEach(() => {
+  expect(process.env.SPACE_PHOTOS_ENABLED, 'stale SPACE_PHOTOS_ENABLED leaked from another test file').toBeUndefined()
 })
 
 describe('PUT /api/photos/:id — bulk-intake tag path', () => {

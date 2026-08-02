@@ -45,9 +45,16 @@ SELECT json_build_object(
   'entity_memory_orphans', (SELECT count(*) FROM entity_memory em WHERE
        (em.project_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plant_projects pp WHERE pp.id = em.project_id AND pp.deleted_at IS NULL))
     OR (em.plant_id   IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plants p          WHERE p.id  = em.plant_id   AND p.deleted_at  IS NULL))),
+  -- Must enumerate EVERY parent photos_must_have_parent recognises, or a legal row reads as a
+  -- violation. That CHECK is 7-clause; this predicate is the same 7 minus the pending_tag escape.
+  -- space_id added 2026-08-02 (V4-SPACEPHOTO-001): it is a valid parent both in the live CHECK and
+  -- in the app, so without this the FIRST space photo ever uploaded takes the count 0 -> 1 and pages
+  -- a weekly ALERT for a perfectly correct row. Exactly the BUG-PHOTOPARENT-001 failure recorded in
+  -- integrity-baselines.json, where inventory_item_id was the missing clause and produced 6 false
+  -- positives. When the CHECK gains a clause, it gains one here in the same commit.
   'photos_parentless', (SELECT count(*) FROM photos WHERE deleted_at IS NULL
      AND project_id IS NULL AND event_id IS NULL AND plant_id IS NULL AND location_id IS NULL
-     AND inventory_item_id IS NULL),
+     AND inventory_item_id IS NULL AND space_id IS NULL),
   'photos_to_deleted_inventory', (SELECT count(*) FROM photos ph LEFT JOIN inventory_items i ON i.id = ph.inventory_item_id
      WHERE ph.deleted_at IS NULL AND ph.inventory_item_id IS NOT NULL AND (i.id IS NULL OR i.deleted_at IS NOT NULL)),
   'care_dupe_groups', (SELECT count(*) FROM (

@@ -15,7 +15,7 @@
 // S3: the handler throws at MODULE LOAD without S3_PHOTOS_BUCKET, and presigns view_url/thumb_url on
 // the owner-read arms. Same treatment as photos-intake.int.test.js — hoist the env, stub the
 // presigner to a deterministic URL, dynamic-import the handler after.
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { directSql, callHandler, setTestUserId, testRunId } from './_harness.js'
 
 vi.hoisted(() => {
@@ -52,6 +52,16 @@ afterAll(async () => {
   await directSql`UPDATE plant_projects SET featured_photo_id = NULL WHERE id = ${projectId}`
   await directSql`DELETE FROM photos WHERE created_by IN (${OWNER}, ${FOREIGN})`
   await directSql`DELETE FROM plant_projects WHERE created_by = ${OWNER}`
+})
+
+
+// CROSS-FILE ENV LEAK GUARD (added 2026-08-02). SPACE_PHOTOS_ENABLED is toggled in-process by
+// space-photos.int.test.js, vitest reuses workers across files, and process.env is per-worker — so a
+// crashed or --bail'd run there can leave the gate ON here. This file's whole premise is the
+// flag-OFF shape of the re-tag path; inheriting a stale `true` would silently exercise the widened
+// templates while every assertion still claimed to be testing flag-off. Fail loudly instead.
+beforeEach(() => {
+  expect(process.env.SPACE_PHOTOS_ENABLED, 'stale SPACE_PHOTOS_ENABLED leaked from another test file').toBeUndefined()
 })
 
 describe('AUTHZ photos GET /api/photos/view-url/:id — household + deleted_at (0A.5)', () => {

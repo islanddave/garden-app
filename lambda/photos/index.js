@@ -321,6 +321,18 @@ async function fetchSpaceHero(sql, spaceId, householdIds, spaceEnabled) {
              ON fp.id = s.featured_photo_id
             AND fp.deleted_at IS NULL
             AND fp.created_by = ANY(${householdIds})
+            -- MEMBERSHIP (added 2026-08-02 with PUT /api/photos/:id/space, crucible boss ruling).
+            -- The hero must still BE a space photo. space-featured has always required this at
+            -- WRITE time, but this read did not re-check it, on the reasonable ground that the
+            -- write guaranteed it. The attach route breaks that guarantee: it can now clear
+            -- space_id out from under an already-designated hero, leaving featured_photo_id
+            -- pointing at a photo the ?space_id gallery will never return — a hero the user can
+            -- see but cannot find, re-pick, or clear from the page it appears on.
+            -- Re-checking here is self-healing: a de-membered hero drops to the fallback arm
+            -- instead of rendering stale, and featured_is_explicit correctly reports FALSE.
+            -- This is the READ half of one invariant; do not delete it as redundant with the
+            -- write check, and do not add it without the write check.
+            AND fp.space_id = s.id
       LEFT JOIN LATERAL (
              SELECT p.id, p.storage_path
                FROM photos p
@@ -649,6 +661,87 @@ export const handler = async (event) => {
       return resp(200, updated[0]);
     }
 
+    // PUT /api/photos/:id/space — body { space_id: uuid|null } attaches an existing photo to the
+    // Space, or detaches it. This is the ATTACH path; designating a hero is space-featured above.
+    //
+    // WHY A DEDICATED SUB-RESOURCE rather than adding space_id to the general re-tag PUT (crucible
+    // 2026-08-02, boss-technical). Three independent reasons, in order of weight:
+    //   1. The general PUT's template EXECUTES WITH THE FLAG OFF. Naming space_id in it would break
+    //      the byte-identical-rollback invariant this whole feature is architected around (see
+    //      buildPhotoInsert's two-template split) and would 42703 in any environment lacking the
+    //      column. A flag-gated route cannot execute flag-off, so the hazard cannot arise here.
+    //   2. The general PUT replaces a fixed field set: an omitted key means "cleared". space_id
+    //      cannot join that rule without silently detaching on every ordinary re-tag from the
+    //      shipped client (which never sends it) — and there would then be no way to express
+    //      "clear" distinguishably from "didn't mention it". On a single-field route PUT genuinely
+    //      IS replace, so the key is REQUIRED: absent is a 400, explicit null is the clear.
+    //   3. The general PUT is the last write path in this handler unswept by V4-AUTHZSWEEP-001 (no
+    //      ownership loader; its `prev` CTE lacks deleted_at). Building here inherits none of that.
+    //
+    // Deliberately does NOT touch intake_status and does NOT call autoPromoteFeatured. Attaching a
+    // batch of photos to the property must not silently make the first one the hero — attach and
+    // designate are separate acts, which is the entire reason there are two routes. The upload path
+    // still auto-promotes (POST, 4-arg, guarded on featured_photo_id IS NULL); that is unchanged.
+    //
+    // Every rejection returns the SAME generic 400, matching space-featured: a distinct 404 would
+    // be an existence oracle for another household's photo ids.
+    const photoSpaceMatch = rawPath.match(/^\/api\/photos\/([^/]+)\/space$/);
+    if (spacePhotosEnabled && photoSpaceMatch && method === 'PUT') {
+      const photoId = photoSpaceMatch[1];
+      const body = JSON.parse(event.body ?? '{}');
+      const REJECT = { error: 'space_id must be a space you can use, or null' };
+
+      if (!UUID_RE.test(photoId)) return resp(400, REJECT);
+      // Key presence, not truthiness: `{space_id: null}` is a meaningful request (detach) and must
+      // be distinguishable from an omitted key, which is a malformed one.
+      if (!Object.prototype.hasOwnProperty.call(body, 'space_id')) {
+        return resp(400, { error: 'space_id is required (send null to detach)' });
+      }
+      const nextSpaceId = body.space_id ?? null;
+      if (nextSpaceId !== null) {
+        if (!UUID_RE.test(String(nextSpaceId)) || !await loadOwnedSpace(sql, nextSpaceId, householdIds)) {
+          warnRejectedFk(userId, 'photos', 'space_id', nextSpaceId);
+          return resp(400, REJECT);
+        }
+      }
+
+      // Load first rather than UPDATE-and-catch. photos_must_have_parent is 7-clause and counts
+      // space_id, so detaching a SPACE-ONLY photo leaves it parentless — a 23514 that isUpstream()
+      // does not classify, i.e. an opaque 500 on a legitimate request. Pre-checking turns that into
+      // an honest 400. deleted_at IS NULL here is load-bearing: without it a soft-deleted row could
+      // be attached and then designated hero.
+      const owned = await sql`
+        SELECT id, project_id, event_id, location_id, plant_id, inventory_item_id
+          FROM photos
+         WHERE id = ${photoId}
+           AND created_by = ANY(${householdIds})
+           AND deleted_at IS NULL
+      `;
+      if (!owned.length) {
+        warnRejectedFk(userId, 'photos', 'id', photoId);
+        return resp(400, REJECT);
+      }
+      const p = owned[0];
+      const hasOtherParent = Boolean(p.project_id || p.event_id || p.location_id || p.plant_id || p.inventory_item_id);
+      if (nextSpaceId === null && !hasOtherParent) {
+        return resp(400, { error: 'cannot detach the only parent — attach it elsewhere first' });
+      }
+
+      // No cast on the bound value: in an UPDATE assignment the column supplies the type, so a bare
+      // null binds cleanly. (A `::uuid` cast inside a CASE expression does NOT — the neon serverless
+      // driver cannot type a null parameter there. Same trap, different context.)
+      const attached = await sql`
+        UPDATE photos
+           SET space_id = ${nextSpaceId}
+         WHERE id = ${photoId}
+           AND created_by = ANY(${householdIds})
+           AND deleted_at IS NULL
+        RETURNING id, space_id
+      `;
+      if (!attached.length) return resp(400, REJECT);
+      return resp(200, attached[0]);
+    }
+
     // GET /api/photos — list user's photos with optional filters
     if (rawPath === '/api/photos' && method === 'GET') {
       const projectId = event.queryStringParameters?.project_id ?? null;
@@ -767,6 +860,41 @@ export const handler = async (event) => {
             ORDER BY p.created_at DESC
             LIMIT ${limit}
           `;
+      }
+
+      // V4-SPACEPHOTO-001: decorate the list with space_id when the gate is open.
+      //
+      // WHY A SEPARATE QUERY rather than adding `p.space_id` to the four SELECTs above. The client's
+      // "untagged" filter treats a photo with no parent as unfinished work, and space_id is one of
+      // the seven parents the CHECK recognises — but only the ?space_id branch selected the column,
+      // so the field was `undefined` on every row the Photos page ever saw and its space conjunct
+      // could never fire. Once photos carry a space_id, every one of them renders as "untagged"
+      // (the exact V002-E2 defect the filter's own comment claims to have fixed).
+      //
+      // The obvious fix — add the column to all four templates — costs the byte-identical-rollback
+      // invariant: those templates EXECUTE WITH THE GATE CLOSED, so naming space_id in them makes
+      // flag-off no longer byte-identical to the pre-V4 handler, reds the template-count tripwire in
+      // space-photos.test.js, and inverts an existing flag-off assertion (int:291 asserts the
+      // property is ABSENT). Splitting each into a pair fixes that at the price of eight near-
+      // identical SELECTs — the drift cost buildPhotoInsert's own header calls out.
+      //
+      // This gets all three properties at once: the four templates are untouched (so rollback stays
+      // byte-identical and every existing assertion stays valid), the ONE template that names
+      // space_id is constructed only when the gate is open, and the field appears exactly when the
+      // feature is live. Cost is one indexed PK lookup over at most `limit` ids, against a list call
+      // that already awaits N presign round trips — noise.
+      if (spacePhotosEnabled && rows.length) {
+        // deleted_at IS NULL is redundant here (every id came from a query that already filtered it)
+        // and is present anyway: the 0A.6 enumeration guard closes the CLASS, so a serving SELECT on
+        // photos carries the filter whether or not this particular caller needs it. That is the point
+        // of a class-closing guard — it must not require per-site reasoning to stay true.
+        const spaceRows = await sql`
+          SELECT id, space_id FROM photos
+           WHERE id = ANY(${rows.map((r) => r.id)})
+             AND deleted_at IS NULL
+        `;
+        const spaceById = new Map(spaceRows.map((r) => [r.id, r.space_id]));
+        rows = rows.map((r) => ({ ...r, space_id: spaceById.get(r.id) ?? null }));
       }
 
       // Attach pre-signed view URLs to each photo record.

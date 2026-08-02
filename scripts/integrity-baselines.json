@@ -4,7 +4,7 @@
   "repo_home_when_shipped": "garden-app/scripts/integrity-baselines.json",
   "evidence_run_ids": {
     "event_unattached_total": "W0.2-r1 orphans-by-type (53, breakdown matches by_type)",
-    "photos_parentless": "BUG-PHOTOPARENT-001 resolved 2026-07-29: the W0.2-r1 count of 6 was a checker false positive — all 6 had live inventory_item_id parents (seed-packet photos, inventory/{item}/ paths); predicate now counts inventory_item_id as a parent; corrected live count 0",
+    "photos_parentless": "BUG-PHOTOPARENT-001 resolved 2026-07-29: the W0.2-r1 count of 6 was a checker false positive — all 6 had live inventory_item_id parents (seed-packet photos, inventory/{item}/ paths); predicate now counts inventory_item_id as a parent; corrected live count 0. RECURRENCE OF THE SAME CLASS 2026-08-02 (V4-SPACEPHOTO-001): space_id was likewise absent, so the first space photo would have paged an ALERT for a legal row; predicate now counts space_id too. Rule: this predicate must enumerate every clause of photos_must_have_parent",
     "photos_to_deleted_inventory": "added 2026-07-29 with the BUG-PHOTOPARENT-001 fix — same orphan-edge class as photos_to_deleted_events for the fifth parent type; measured live 0",
     "phantom_photo_events": "W0.2-r1 phantom-count (22; forensic verdict W0.2b-r1 = pre-fix debris)",
     "care_dupe_groups": "W0.2-r1 care-dupe-groups (1314)",

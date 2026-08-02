@@ -140,8 +140,18 @@ export default function PhotoLibrary() {
       // V4-SPACEPHOTO-001: the space arm is UNCONDITIONAL, deliberately NOT behind
       // SPACE_PHOTOS_ENABLED. space_id becomes non-null the moment the migration + Lambda land,
       // which is independent of this client flag — and this is a PWA, so a stale cached bundle
-      // would keep flagging every deliberate space photo as unfinished work. Provably inert until
-      // then: no photo row carries space_id today, so the extra conjunct is always true.
+      // would keep flagging every deliberate space photo as unfinished work.
+      //
+      // ⚠ THE ORIGINAL INERTNESS CLAIM HERE WAS RIGHT ABOUT THE OUTCOME AND WRONG ABOUT THE
+      // MECHANISM, which made it dangerous. It said "provably inert: no photo row carries space_id
+      // today". The conjunct was inert for a different reason: the server did not RETURN the field.
+      // Only the ?space_id list branch selected p.space_id, so on every row this page ever saw it was
+      // `undefined` and `!p.space_id` was unconditionally true — the arm would have stayed inert
+      // FOREVER, including after rows started carrying a space_id, silently flagging every space
+      // photo as unfinished work (the exact V002-E2 defect the paragraph above exists to prevent).
+      // Fixed server-side 2026-08-02: the list decorates rows with space_id whenever the SERVER gate
+      // is open. This arm is now load-bearing rather than decorative — do not "simplify" it away, and
+      // do not re-derive its inertness from the row data without checking the wire.
       if (filterMode === 'untagged')   data = data.filter(p => !p.event_id && !p.project_id && !p.location_id && !p.plant_id && !p.space_id)
       setPhotos(data)
     } catch (err) {

@@ -157,6 +157,14 @@ describe('V4-SPACEPHOTO-001 — flag-OFF inertness (AC-5)', () => {
       /autoPromoteFeatured\(sql, inserted, householdIds, \{ spaceEnabled: spacePhotosEnabled \}\)/,
       /opts\?\.spaceEnabled && photo\.space_id/,
       /resolveHouseholdSpace\(sql, householdIds, spacePhotosEnabled\)/,
+      // PUT /api/photos/:id/space — the attach route (crucible 2026-08-02). Deliberately a separate
+      // sub-resource rather than a widening of the general re-tag PUT: that route executes with the
+      // gate CLOSED, so naming space_id in it would break flag-off byte-identity. This one cannot
+      // execute flag-off at all.
+      /if \(spacePhotosEnabled && photoSpaceMatch && method === 'PUT'\)/,
+      // The list-decoration query. Same reasoning: the four list SELECTs stay byte-identical and the
+      // single template that names space_id is constructed only when the gate is open.
+      /if \(spacePhotosEnabled && rows\.length\)/,
     ];
     for (const g of guards) expect(SRC, `missing flag guard: ${g}`).toMatch(g);
 
@@ -170,7 +178,9 @@ describe('V4-SPACEPHOTO-001 — flag-OFF inertness (AC-5)', () => {
     // and fails here — forcing whoever adds it to also add its guard above. Update the count only
     // together with a new entry in `guards`.
     const withSpaceId = sqlTemplates(SRC).filter((t) => /space_id/.test(t));
-    expect(withSpaceId, 'templates naming space_id').toHaveLength(6);
+    // 6 -> 8 on 2026-08-02: the attach route's UPDATE and the list-decoration SELECT. Both are
+    // constructed only inside a `spacePhotosEnabled &&` branch — see the two guards added above.
+    expect(withSpaceId, 'templates naming space_id').toHaveLength(8);
     const touchingSpaces = sqlTemplates(SRC).filter((t) => /\bspaces\b/.test(t));
     expect(touchingSpaces, 'templates touching the spaces table').toHaveLength(4);
   });

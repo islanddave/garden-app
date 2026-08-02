@@ -58,6 +58,14 @@ case "$FN" in
   garden-photos)
     REQUIRED_KEYS=(SECRET_NAME S3_PHOTOS_BUCKET GARDEN_HOUSEHOLD_IDS PHOTO_CDN_SIGNING_SECRET PHOTO_CDN_DOMAIN PHOTO_CDN_KEY_PAIR_ID)
     ;;
+  garden-photos-staging)
+    # Deliberately SHORTER than prod: staging carries no PHOTO_CDN_* trio, so signed-URL behaviour
+    # is NOT exercised there and a staging pass is not evidence about the prod CDN path.
+    # GARDEN_HOUSEHOLD_IDS was added 2026-08-02 — before that staging held only 2 keys and silently
+    # ran UNSCOPED, which made the promote-gate staging smoke vacuous for every household assertion.
+    # Listing it here is what stops a future one-var write from dropping it back to that state.
+    REQUIRED_KEYS=(SECRET_NAME S3_PHOTOS_BUCKET GARDEN_HOUSEHOLD_IDS)
+    ;;
   *)
     # Unknown function: require nothing by name, but still enforce non-empty baseline below.
     REQUIRED_KEYS=()

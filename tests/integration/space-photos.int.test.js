@@ -537,3 +537,192 @@ describe('AC-7 — the daily-plan spaces read still works after the ALTER', () =
     }
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// PUT /api/photos/:id/space — the ATTACH route (added 2026-08-02, crucible boss ruling).
+//
+// This is the whole reason the route exists: before it, photos.space_id was write-once-at-INSERT, so
+// the Space hero could only ever be a photo uploaded directly to /space — none of the 981 photos
+// already in prod could become the property's cover image.
+//
+// These cases are DB-shaped on purpose. The sibling lambda/photos/space-photos.test.js proves which
+// SQL text gets constructed; it runs against a recording fake and cannot see the 7-clause CHECK, the
+// FKs, or a null-parameter typing failure. Everything below has to touch real Postgres to mean
+// anything. Where a case exists to pin a guard, the mutation that must red it is named inline.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe('V4-SPACEPHOTO-001 — PUT /api/photos/:id/space (attach)', () => {
+  beforeEach(() => { process.env.SPACE_PHOTOS_ENABLED = 'true' })
+  afterAll(() => { delete process.env.SPACE_PHOTOS_ENABLED })
+
+  const put = (id, body) => callHandler(handler, {
+    method: 'PUT', path: `/api/photos/${id}/space`, body, userId: USER,
+  })
+
+  it('attaches an existing photo to the space', async () => {
+    const photoId = await insertPhoto({ storagePath: `attach/${RUN}-a.jpg`, location: locationId })
+    const res = await put(photoId, { space_id: spaceId })
+    expect(res.status).toBe(200)
+    expect(res.body.space_id).toBe(spaceId)
+    const [row] = await directSql`SELECT space_id FROM photos WHERE id = ${photoId}`
+    expect(row.space_id).toBe(spaceId)
+  })
+
+  it('detaches on an explicit null when another parent survives', async () => {
+    // Mutation: bind the null under a `::uuid` cast inside a CASE — neon cannot type it and this
+    // reds with a 500 while every source-text assertion stays green.
+    const photoId = await insertPhoto({ storagePath: `attach/${RUN}-b.jpg`, space: spaceId, location: locationId })
+    const res = await put(photoId, { space_id: null })
+    expect(res.status).toBe(200)
+    expect(res.body.space_id).toBeNull()
+  })
+
+  it('refuses to detach the ONLY parent — 400, not an opaque 500', async () => {
+    // photos_must_have_parent counts space_id, so clearing it here leaves the row parentless: a
+    // 23514 that isUpstream() does not classify. Mutation: delete the hasOtherParent pre-check and
+    // this returns 500 instead of 400.
+    const photoId = await insertPhoto({ storagePath: `attach/${RUN}-c.jpg`, space: spaceId })
+    const res = await put(photoId, { space_id: null })
+    expect(res.status).toBe(400)
+    const [row] = await directSql`SELECT space_id FROM photos WHERE id = ${photoId}`
+    expect(row.space_id).toBe(spaceId)
+  })
+
+  it('requires the key — an omitted space_id is a 400, never a silent detach', async () => {
+    // This is the property that justifies a dedicated route over widening the general re-tag PUT:
+    // there, an omitted key means "cleared". Mutation: accept an absent key as null.
+    const photoId = await insertPhoto({ storagePath: `attach/${RUN}-d.jpg`, space: spaceId, location: locationId })
+    const res = await put(photoId, {})
+    expect(res.status).toBe(400)
+    const [row] = await directSql`SELECT space_id FROM photos WHERE id = ${photoId}`
+    expect(row.space_id).toBe(spaceId)
+  })
+
+  it("rejects another household's space with the generic 400", async () => {
+    // Mutation: drop the loadOwnedSpace call — this then writes a cross-household FK, which the
+    // ?space_id gallery turns into a live cross-household READ.
+    const photoId = await insertPhoto({ storagePath: `attach/${RUN}-e.jpg`, location: locationId })
+    const res = await put(photoId, { space_id: foreignSpaceId })
+    expect(res.status).toBe(400)
+    const [row] = await directSql`SELECT space_id FROM photos WHERE id = ${photoId}`
+    expect(row.space_id).toBeNull()
+  })
+
+  it('rejects an absent-but-well-formed space id identically — no existence oracle', async () => {
+    const photoId = await insertPhoto({ storagePath: `attach/${RUN}-f.jpg`, location: locationId })
+    const absent = await put(photoId, { space_id: ABSENT_SPACE })
+    const foreign = await put(photoId, { space_id: foreignSpaceId })
+    expect(absent.status).toBe(foreign.status)
+    expect(absent.body).toEqual(foreign.body)
+  })
+
+  it("rejects another household's photo", async () => {
+    // Mutation: drop `created_by = ANY(householdIds)` from the ownership SELECT.
+    const photoId = await insertPhoto({ storagePath: `attach/${RUN}-g.jpg`, owner: FOREIGN_USER, location: locationId })
+    const res = await put(photoId, { space_id: spaceId })
+    expect(res.status).toBe(400)
+    const [row] = await directSql`SELECT space_id FROM photos WHERE id = ${photoId}`
+    expect(row.space_id).toBeNull()
+  })
+
+  it('rejects a soft-deleted photo', async () => {
+    // Load-bearing: without deleted_at IS NULL a dead row could be attached and then designated
+    // hero. Mutation: drop that conjunct from the ownership SELECT.
+    const photoId = await insertPhoto({ storagePath: `attach/${RUN}-h.jpg`, location: locationId })
+    await directSql`UPDATE photos SET deleted_at = now() WHERE id = ${photoId}`
+    const res = await put(photoId, { space_id: spaceId })
+    expect(res.status).toBe(400)
+  })
+
+  it('rejects a malformed photo id with 400, not a 22P02 500', async () => {
+    const res = await put('not-a-uuid', { space_id: spaceId })
+    expect(res.status).toBe(400)
+  })
+
+  it('does NOT auto-feature — attach and designate stay separate acts', async () => {
+    // Attaching a batch to the property must not silently make the first one the hero. Mutation:
+    // add an autoPromoteFeatured call to the attach route and this reds.
+    await directSql`UPDATE spaces SET featured_photo_id = NULL WHERE id = ${spaceId}`
+    const photoId = await insertPhoto({ storagePath: `attach/${RUN}-i.jpg`, location: locationId })
+    await put(photoId, { space_id: spaceId })
+    const [space] = await directSql`SELECT featured_photo_id FROM spaces WHERE id = ${spaceId}`
+    expect(space.featured_photo_id).toBeNull()
+  })
+
+  it('does NOT touch intake_status', async () => {
+    const photoId = await insertPhoto({ storagePath: `attach/${RUN}-j.jpg`, location: locationId })
+    await directSql`UPDATE photos SET intake_status = 'pending_tag' WHERE id = ${photoId}`
+    await put(photoId, { space_id: spaceId })
+    const [row] = await directSql`SELECT intake_status FROM photos WHERE id = ${photoId}`
+    expect(row.intake_status).toBe('pending_tag')
+  })
+
+  it('is inert with the gate closed', async () => {
+    delete process.env.SPACE_PHOTOS_ENABLED
+    const photoId = await insertPhoto({ storagePath: `attach/${RUN}-k.jpg`, location: locationId })
+    const res = await put(photoId, { space_id: spaceId })
+    expect(res.status).toBe(405)
+    const [row] = await directSql`SELECT space_id FROM photos WHERE id = ${photoId}`
+    expect(row.space_id).toBeNull()
+  })
+})
+
+describe('V4-SPACEPHOTO-001 — a de-membered hero falls back instead of rendering stale', () => {
+  beforeEach(() => { process.env.SPACE_PHOTOS_ENABLED = 'true' })
+  afterAll(() => { delete process.env.SPACE_PHOTOS_ENABLED })
+
+  it('drops an explicit hero that no longer carries this space_id', async () => {
+    // The cell the attach route ARMS. Before it existed nothing could clear space_id, so a
+    // designated hero was a gallery member by construction and fetchSpaceHero did not re-check.
+    // Now it can be cleared out from under the designation — leaving featured_photo_id pointing at
+    // a photo the ?space_id gallery will never return, i.e. a hero the user can see but cannot
+    // re-pick or clear from the page it appears on.
+    // Mutation: remove `AND fp.space_id = s.id` from fetchSpaceHero's explicit-hero join — the
+    // de-membered photo is then returned with featured_is_explicit true and this reds.
+    const heroId = await insertPhoto({ storagePath: `demember/${RUN}-hero.jpg`, space: spaceId, location: locationId })
+    const memberId = await insertPhoto({ storagePath: `demember/${RUN}-member.jpg`, space: spaceId })
+    await directSql`UPDATE spaces SET featured_photo_id = ${heroId} WHERE id = ${spaceId}`
+
+    const before = await callHandler(handler, { method: 'GET', path: `/api/photos/space-hero/${spaceId}`, userId: USER })
+    expect(before.status).toBe(200)
+    expect(before.body.featured_photo_id).toBe(heroId)
+    expect(before.body.featured_is_explicit).toBe(true)
+
+    await callHandler(handler, {
+      method: 'PUT', path: `/api/photos/${heroId}/space`, body: { space_id: null }, userId: USER,
+    })
+
+    const after = await callHandler(handler, { method: 'GET', path: `/api/photos/space-hero/${spaceId}`, userId: USER })
+    expect(after.status).toBe(200)
+    expect(after.body.featured_photo_id).toBe(memberId)
+    expect(after.body.featured_is_explicit).toBe(false)
+  })
+})
+
+describe('V4-SPACEPHOTO-001 — the default photo list carries space_id when the gate is open', () => {
+  afterAll(() => { delete process.env.SPACE_PHOTOS_ENABLED })
+
+  it('returns space_id on the unfiltered list so the client can tell space-attached from untagged', async () => {
+    // PhotoLibrary's "untagged" filter reads p.space_id. Only the ?space_id branch ever selected the
+    // column, so the field was undefined on every row that page saw and its space conjunct could
+    // never fire — every space photo would have rendered as unfinished work.
+    // Mutation: remove the list-decoration block and this reds.
+    process.env.SPACE_PHOTOS_ENABLED = 'true'
+    const photoId = await insertPhoto({ storagePath: `listdec/${RUN}-a.jpg`, space: spaceId })
+    const res = await callHandler(handler, { method: 'GET', path: '/api/photos', userId: USER })
+    expect(res.status).toBe(200)
+    const row = res.body.find((p) => p.id === photoId)
+    expect(row, 'the space photo should appear in the unfiltered list').toBeTruthy()
+    expect(row.space_id).toBe(spaceId)
+  })
+
+  it('omits space_id entirely with the gate closed — flag-off byte-identity', async () => {
+    // Pairs with the assertion elsewhere in this file that the flag-off list has no space_id
+    // property. This is what lets the four list SELECTs stay untouched.
+    delete process.env.SPACE_PHOTOS_ENABLED
+    await insertPhoto({ storagePath: `listdec/${RUN}-b.jpg`, location: locationId })
+    const res = await callHandler(handler, { method: 'GET', path: '/api/photos', userId: USER })
+    expect(res.status).toBe(200)
+    expect(res.body.length).toBeGreaterThan(0)
+    for (const p of res.body) expect(p).not.toHaveProperty('space_id')
+  })
+})

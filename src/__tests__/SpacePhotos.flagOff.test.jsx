@@ -1,10 +1,21 @@
 // SpacePhotos.flagOff.test.jsx — V4-SPACEPHOTO-001 Lane C INERTNESS proof.
 //
-// The backing columns (photos.space_id, spaces.featured_photo_id) do not exist in prod —
-// migrations/v4-spacephoto-001 is authored but UNAPPLIED — so SPACE_PHOTOS_ENABLED=false is the
-// only thing that makes this code promote-safe. These tests fail loudly if the flag is flipped or
-// if any surface leaks out from behind it. Every assertion is mechanical (route table, rendered
-// nav rows), not a screenshot claim.
+// ⚠ THE ORIGINAL RATIONALE HERE IS NOW FALSE, AND THE TESTS ARE STILL CORRECT. Read both parts.
+//
+// It said: "the backing columns do not exist in prod — migrations/v4-spacephoto-001 is authored but
+// UNAPPLIED — so SPACE_PHOTOS_ENABLED=false is the only thing that makes this code promote-safe."
+// That migration APPLIED to prod and staging on 2026-07-31 (schema_version 4.18.0-spacephoto-001);
+// photos.space_id, spaces.featured_photo_id, both FKs and the 7-clause convalidated CHECK are live,
+// and the SERVER gate has been true in prod since 2026-08-01. Schema no longer gates anything.
+//
+// What these tests actually prove, and why they still earn their place: the CLIENT flag is false, so
+// the /space routes must not be registered and the nav rows must not render. That is a real,
+// currently-true inertness property. But note the trap for whoever flips the flag — these assertions
+// are written against the SHIPPED VALUE of the constant, not against a mock, so the flip turns them
+// RED by construction (this file plus App.routes.test.jsx's exact route-count pin). They must be
+// retargeted in the SAME commit as the flip; they are not a bug to route around at that point.
+//
+// Every assertion is mechanical (route table, rendered nav rows), not a screenshot claim.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
