@@ -678,10 +678,17 @@ export const handler = async (event) => {
     //   3. The general PUT is the last write path in this handler unswept by V4-AUTHZSWEEP-001 (no
     //      ownership loader; its `prev` CTE lacks deleted_at). Building here inherits none of that.
     //
-    // Deliberately does NOT touch intake_status and does NOT call autoPromoteFeatured. Attaching a
-    // batch of photos to the property must not silently make the first one the hero — attach and
-    // designate are separate acts, which is the entire reason there are two routes. The upload path
-    // still auto-promotes (POST, 4-arg, guarded on featured_photo_id IS NULL); that is unchanged.
+    // Deliberately does NOT call autoPromoteFeatured. Attaching a batch of photos to the property
+    // must not silently make the first one the hero — attach and designate are separate acts, which
+    // is the entire reason there are two routes. The upload path still auto-promotes (POST, 4-arg,
+    // guarded on featured_photo_id IS NULL); that is unchanged.
+    //
+    // It DOES drain the quick-tag inbox (V4-SPACECLIENTGAP-001, 2026-08-02 — this clause previously
+    // read "does NOT touch intake_status", which was a description of the code as first built and
+    // never had a justification behind it). Attaching the Space IS filing the photo, so leaving the
+    // row at 'pending_tag' would keep idx_photos_intake_pending matching and the carousel would
+    // re-serve a photo the user already filed. Narrowly guarded — see `drainsInbox` below: attach
+    // only (never detach), and only out of 'pending_tag' (never 'upload_failed').
     //
     // Every rejection returns the SAME generic 400, matching space-featured: a distinct 404 would
     // be an existence oracle for another household's photo ids.

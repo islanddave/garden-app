@@ -648,12 +648,29 @@ describe('V4-SPACEPHOTO-001 — PUT /api/photos/:id/space (attach)', () => {
     expect(space.featured_photo_id).toBeNull()
   })
 
-  it('does NOT touch intake_status', async () => {
+  // REVERSED 2026-08-02 by V4-SPACECLIENTGAP-001. This test used to assert
+  // `intake_status` stayed 'pending_tag' after an attach. That was DESCRIPTIVE of the code as
+  // built, not a designed invariant: unlike every sibling in this block it carried no rationale
+  // and no mutation note, and the route's own header justifies only the OTHER half of its
+  // "does not touch intake_status and does not auto-feature" sentence (the auto-feature half —
+  // "attach and designate are separate acts" — which still holds and is still pinned above).
+  //
+  // Keeping it would have preserved a real defect: a photo whose only tag is the Space would sit
+  // in intake_status='pending_tag' forever, so idx_photos_intake_pending keeps matching and the
+  // quick-tag carousel re-serves a photo the user already filed. It was cold only because prod
+  // carried zero pending_tag rows; the client flip is what makes the path reachable.
+  //
+  // The drain behaviour and its three guards are covered in the V4-SPACECLIENTGAP-001 block
+  // below. What remains HERE is the narrower survivor: attach must not disturb a row that was
+  // never in the inbox to begin with.
+  it('leaves an already-filed row alone — attach only drains, it never writes a status', async () => {
+    // Mutation: make the CASE arm write anything other than NULL, or drop the ELSE, and this reds.
     const photoId = await insertPhoto({ storagePath: `attach/${RUN}-j.jpg`, location: locationId })
-    await directSql`UPDATE photos SET intake_status = 'pending_tag' WHERE id = ${photoId}`
+    const [before] = await directSql`SELECT intake_status FROM photos WHERE id = ${photoId}`
+    expect(before.intake_status).toBeNull()
     await put(photoId, { space_id: spaceId })
     const [row] = await directSql`SELECT intake_status FROM photos WHERE id = ${photoId}`
-    expect(row.intake_status).toBe('pending_tag')
+    expect(row.intake_status).toBeNull()
   })
 
   it('is inert with the gate closed', async () => {
