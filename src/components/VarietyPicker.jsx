@@ -295,8 +295,43 @@ export default function VarietyPicker({
   // Keep the blur-close ref in step with the stage it guards.
   useEffect(() => { createStageRef.current = createStage }, [createStage])
 
+  // V4-PICKERKB-001 (Dave, device pass 2026-08-02): "do not have it default to text box selected
+  // for keyboard — I'll tap the variety selector, be presented with the choice list, no keyboard.
+  // Find a way then to allow me to activate the keyboard if desired."
+  //
+  // Suppress the VIRTUAL keyboard with inputMode, do NOT drop focus. Focus is what makes this a
+  // working combobox — aria-expanded/aria-controls, the arrow-key handler, and the 150ms
+  // blur-close below all assume the input holds focus while the listbox is open. Blurring it to
+  // hide the keyboard would mean rewriting all three. inputMode governs only the on-screen
+  // keyboard, so a hardware/Bluetooth keyboard still types straight into the field.
+  const [kbMode, setKbMode] = useState('none')
+  // Chrome Android will not raise the keyboard just because inputMode changed on an element that
+  // is already focused — it needs a blur+refocus. That deliberate blur must NOT be read as
+  // "the user tabbed away", or onBlur would schedule the dropdown closed underneath them.
+  const deliberateBlurRef = useRef(false)
+
+  // Every re-open starts keyboard-free. Without this, one tap on "Type" would make the keyboard
+  // the default for the rest of the session, which is the behavior being removed.
+  useEffect(() => { if (!open) setKbMode('none') }, [open])
+
+  const enableKeyboard = useCallback(() => {
+    setKbMode('text')
+    const el = inputRef.current
+    if (!el) return
+    deliberateBlurRef.current = true
+    el.blur()
+    setTimeout(() => {
+      deliberateBlurRef.current = false
+      // setKbMode has flushed by now, so the element Chrome re-focuses has inputMode="text".
+      inputRef.current?.focus()
+    }, 0)
+  }, [])
+
   const onFocus = () => { if (!disabled) setOpen(true) }
   const onBlur = () => {
+    // A blur we caused ourselves to swap inputMode — leave `open` alone. Checked synchronously
+    // rather than inside the timer below, because the flag is cleared long before 150ms elapses.
+    if (deliberateBlurRef.current) return
     // Delay close so a click on the listbox (which preventDefaults mousedown to keep input
     // focus) lands first. A real blur — e.g. tabbing away — still closes the dropdown.
     setTimeout(() => {
@@ -355,6 +390,9 @@ export default function VarietyPicker({
   // ── Render: search mode ───────────────────────────────────────────────────
   const showBlankError = required && touched && !value && !query
   const hasError = !!createErr || showBlankError
+  // Hidden once the keyboard is up (it would be a no-op) and while the mint-a-crop panel owns the
+  // surface — that panel's own Name field autoFocuses and legitimately wants the keyboard.
+  const showKbBtn = open && !disabled && kbMode === 'none' && createStage !== 'newcrop'
 
   return (
     <div style={{ position: 'relative' }}>
@@ -369,15 +407,34 @@ export default function VarietyPicker({
         aria-required={required || undefined}
         aria-invalid={hasError || undefined}
         value={query}
+        inputMode={kbMode}
         onChange={e => { setQuery(e.target.value); setOpen(true); setCreateErr(null); setCreateStage(null) }}
         onFocus={onFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
         placeholder={placeholder}
         disabled={disabled}
-        style={inputStyle(hasError, disabled)}
+        style={showKbBtn ? { ...inputStyle(hasError, disabled), paddingRight: 48 } : inputStyle(hasError, disabled)}
         autoComplete="off"
       />
+
+      {/* V4-PICKERKB-001 — the explicit "I do want to type" affordance. Only while the list is open
+          and the keyboard is suppressed, so it is present exactly when it is actionable and never
+          competes with the chip/Change row of the selected state. onMouseDown preventDefault is the
+          same trick the listbox rows use: without it, pressing this button blurs the input and the
+          150ms blur-close races the refocus. Full field height so the tap target is >= 44px. */}
+      {showKbBtn && (
+        <button
+          type="button"
+          onMouseDown={e => e.preventDefault()}
+          onClick={enableKeyboard}
+          aria-label="Type to search varieties"
+          title="Type to search"
+          style={kbToggleBtn}
+        >
+          <span aria-hidden="true">⌨</span>
+        </button>
+      )}
 
       {/* V4-CROPTYPE-001 — mint-a-crop-type form. Rendered INSTEAD of the listbox (not inside it):
           a role="listbox" may only contain options, so nesting inputs here would be invalid ARIA
@@ -683,6 +740,23 @@ const inputStyle = (hasErr, disabled) => ({
   cursor: disabled ? 'not-allowed' : 'text',
   minHeight: 44, // mobile-tap-friendly
 })
+
+// V4-PICKERKB-001 — sits inside the field's own relative wrapper. top/bottom:0 rather than a fixed
+// height so the target tracks the field (minHeight 44) instead of drifting if it ever grows.
+const kbToggleBtn = {
+  position: 'absolute',
+  top: 0, bottom: 0, right: 0,
+  width: 44,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  background: 'none',
+  border: 'none',
+  borderRadius: 7,
+  color: P.mid,
+  fontSize: '1.05rem',
+  lineHeight: 1,
+  cursor: 'pointer',
+  padding: 0,
+}
 
 const listStyle = {
   position: 'absolute',
