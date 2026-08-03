@@ -105,7 +105,11 @@ function isSmallVessel(p){
 function rainClass(p){ return p.covered ? 'none' : 'outdoor'; }    // covered/indoor => 'none'; everything else => 'outdoor'
 function windowPrecip(hy){
   if(!hy || hy.recent_precip_in==null) return null;                 // missing precip -> no credit (uncertainty handled in hydrologyStatus)
-  return (hy.recent_precip_in||0) + (hy.today_precip_in||0);        // D-2..D0 actuals (matches the engine's past_days=2 read)
+  // BUG-TODAYWATER-001: this is D-2..D-1 ACTUALS + D0 FORECAST, not "D-2..D0 actuals" as this comment used
+  // to claim. today_precip_in is Open-Meteo precipitation_sum[2] read at ~02:01 for a day that has not
+  // started (index.js). So SOAK_CAP_IN has ALWAYS acted partly on a prediction — worth knowing before
+  // reasoning about any gate that consumes this.
+  return (hy.recent_precip_in||0) + (hy.today_precip_in||0);
 }
 // Returns { credit_days, wp, eff } when rain qualifies for credit, else null.
 function rainCreditDays(cls, wi, hy){
@@ -180,16 +184,60 @@ const SOAK_CAP_IN = 1.0;         // >= this over the 72h windowPrecip -> suppres
 const SOAK_WET_FLOOR_IN = 0.5;   // "already moist" prerequisite for the incoming-rain trigger
 const SOAK_FCST_QPF_IN = 0.5;    // incoming 24h amount that counts
 const SOAK_FCST_POP_PCT = 60;    // min PoP for an incoming-rain skip
+// BUG-TODAYWATER-001: a small vessel needs MUCH more gross rainfall than a bed before a skip is safe. A
+// 5-gal fabric bag is a ~113 sq-in footprint and a mature canopy sheds water AWAY from it, so a 1" event
+// delivers under half of one hand-watering — while the plant transpires 1.5-3 L/day. The cost asymmetry is
+// roughly 50:1 against the bed case: a false skip on a bag aborts pepper/tomato flowers within 24h above
+// 85F and locks in blossom-end-rot in fruit that ripen 2-3 weeks later (Ca is transpiration-delivered, so
+// the damage is invisible when it is caused and irreversible when it shows). A false WATER on a bag costs
+// nothing — it is free-draining by construction. Hence a deliberately high bar.
+const SOAK_TODAY_SMALL_IN = 2.0; // today-forecast bar for small vessels (bags/pots/cells)
 // Returns { wp, kind:'soak'|'incoming', fq?, pop? } when an outdoor planting must NOT be watered (media
 // saturated, or wet with more rain imminent = no drying window), else null. Pure fn of hydrology + exposure.
-function saturationSuppressed(rcls, hy){
+// BUG-TODAYWATER-001 — "is meaningful rain forecast for TODAY?" Deliberately reuses SOAK_FCST_QPF_IN and
+// SOAK_FCST_POP_PCT, the already-approved bar for "incoming rain counts as a reason to skip", so this
+// introduces no new agronomic judgement — it applies an existing bar to a horizon that was never checked.
+//
+// FAIL-CLOSED ON A NULL PoP, unlike the tomorrow branch below (`pop==null ||`). That permissiveness is
+// tolerable for tomorrow, where a missing probability still gets re-evaluated overnight before anyone acts.
+// For TODAY it would mean suppressing every outdoor planting on an amount with no probability attached at
+// all — and `fetchPrecip` sets today_pop:null whenever Open-Meteo omits it, so this is a real path, not a
+// theoretical one. Unknown probability means a data problem, not a certainty; the engine's own convention
+// elsewhere (isSmallVessel, rainTierFor) is that unknown fails safe toward WATERING.
+function todayQualifies(hy){
+  if(!hy) return false;
+  const q = hy.today_precip_in, pop = hy.today_pop;
+  return q != null && q >= SOAK_FCST_QPF_IN && pop != null && pop >= SOAK_FCST_POP_PCT;
+}
+
+// `opts.todayAware` gates the new branch (CARE_TODAY_AWARE_ENABLED); `opts.smallVessel` raises the bar for
+// bags/pots/cells per SOAK_TODAY_SMALL_IN. Both default off/false so an un-updated caller is byte-identical.
+function saturationSuppressed(rcls, hy, opts){
   if(rcls!=='outdoor') return null;                                 // covered/indoor never got the rain
   const wp = windowPrecip(hy); if(wp==null) return null;
   const wpR = Math.round(wp*100)/100;
-  if(wp >= SOAK_CAP_IN) return { wp: wpR, kind: 'soak' };
+  const todayAware = !!(opts && opts.todayAware);
+  // BUG-TODAYWATER-001 — DISJOINT TERMS. windowPrecip is `recent + today`, and `today` is a FORECAST, so
+  // the soak cap has always been part-prediction. Left that way, any forecast >= SOAK_CAP_IN trips SOAK
+  // before the today branch is reached — which would make the small-vessel bar below dead code AND let a
+  // busted forecast suppress a fabric bag through the one branch that outranks the heat gate. So when
+  // today-awareness is on, soak judges ACTUALS ONLY and the forecast is judged below, where it has its own
+  // bars and is subordinate to the fast-dry carve-outs. Flag OFF keeps the original basis exactly, so the
+  // shipped behaviour and every existing fixture are untouched until the flag is flipped.
+  const soakBasis = todayAware ? (hy.recent_precip_in || 0) : wp;
+  if(soakBasis >= SOAK_CAP_IN) return { wp: Math.round(soakBasis*100)/100, kind: 'soak' };
   const fq = hy && hy.tomorrow_precip_in, pop = hy && hy.tomorrow_pop;
   if(wp >= SOAK_WET_FLOOR_IN && fq!=null && fq >= SOAK_FCST_QPF_IN && (pop==null || pop >= SOAK_FCST_POP_PCT))
     return { wp: wpR, fq, pop, kind: 'incoming' };
+  // TODAY. Ordered LAST so it can never pre-empt the two branches that act on water already in the media —
+  // and evaluated against the raw forecast, NOT windowPrecip, so today is never counted twice (windowPrecip
+  // already contains today_precip_in; using it here would let one 0.6" event satisfy both a "0.5 already
+  // wet" floor and a "0.5 more coming" bar, silently halving SOAK_CAP_IN).
+  if(todayAware && todayQualifies(hy)){
+    const bar = (opts.smallVessel ? SOAK_TODAY_SMALL_IN : SOAK_FCST_QPF_IN);
+    if(hy.today_precip_in >= bar)
+      return { wp: wpR, fq: hy.today_precip_in, pop: hy.today_pop, kind: 'today' };
+  }
   return null;
 }
 
@@ -232,7 +280,7 @@ function coldFor(p, cad, low){
 // DRG-WXFLAGSPLIT-001 F1: rainMaxDaysEnabled gates the max-days CEILING independently of rainCreditEnabled
 // (which gates the tiered credit). Trailing param, default false -> every existing caller keeps flag-OFF
 // behaviour and the plan stays byte-identical until an env flip.
-function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false){
+function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false){
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[];
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
@@ -264,7 +312,9 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // fresh-transplant carve-out. A credited planting drops OUT of water_due (so counts.water_due is correct —
     // fixes the legacy defer-count bug) and lands on rain_skipped with a one-line reason string.
     const rcls=rainClass(p);
-    const _sat=saturationSuppressed(rcls, hydrology);   // DRG-WXSATCAP-001: flag-independent heavy-soak cap (outer gate)
+    // DRG-WXSATCAP-001: flag-independent heavy-soak cap (outer gate).
+    // BUG-TODAYWATER-001: pass the vessel size so the TODAY branch can hold small vessels to a higher bar.
+    const _sat=saturationSuppressed(rcls, hydrology, { todayAware: todayAwareEnabled, smallVessel: isSmallVessel(p) });
     // DRG-WXWATER-001 coarse-v1 (flag-ON only): exposure eligibility. Flag-OFF uses the location-derived class
     // (rcls==='outdoor'); flag-ON derives exposed = !covered when rain_exposed is unset, honoring a stored
     // rain_exposed boolean as an explicit override. _creditClass/_iaShown collapse to the flag-OFF values when OFF.
@@ -284,12 +334,27 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
           ? (_exposed ? rainCreditDaysTiered(_rainTier, wi, hydrology) : null)
           : rainCreditDays(rcls, wi, hydrology));
     const effDays=(dW!=null&&rc)?dW-rc.credit_days:dW;
-    if(dW!=null && dW>=wi && _sat){
+    // BUG-TODAYWATER-001 — the TODAY branch is SUBORDINATE to the fast-dry carve-outs; 'soak' and 'incoming'
+    // keep outranking them. The distinction is what the gate is acting on: 'soak' means water is measurably
+    // already IN the media, so overriding a heat gate is defensible. 'today' means water is merely PREDICTED,
+    // and a forecast busts. Letting a prediction outrank bagHeatGate would skip a 5-gal fabric bag at 92F,
+    // and outrank freshTransplant would skip a small root ball — both cost plants when the rain no-shows,
+    // and both are exactly the cases those carve-outs were written to protect.
+    const _satApplies = _sat && (_sat.kind !== 'today' || !(freshTransplant || bagHeatGate));
+    if(dW!=null && dW>=wi && _satApplies){
       // DRG-WXSATCAP-001: heavy-soak saturation cap OUTRANKS the tier decay + fast-dry discount + heat-gate.
       rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
         days_since:dW,interval:wi,saturated:true,
+        // BUG-TODAYWATER-001: structured decision inputs alongside the prose. Without these, "did we skip on
+        // a forecast that busted?" is unanswerable after the fact — and that is the failure this change can
+        // cause. Additive only; PLAN_SCHEMA_VERSION deliberately NOT bumped (the three readers pin the
+        // literal and deploy in one unordered matrix wave, so a bump opens a mismatch window).
+        sat_kind:_sat.kind, sat_wp:_sat.wp,
+        today_in:(hydrology&&hydrology.today_precip_in)??null, today_pop:(hydrology&&hydrology.today_pop)??null,
         reason: _sat.kind==='soak'
           ? `Skip — saturated (heavy soak, ${_sat.wp}" over the last few days; let it drain)`
+          : _sat.kind==='today'
+          ? `Skip — ${_sat.fq}" rain falling today${_sat.pop==null?'':' @ '+_sat.pop+'%'}`
           : `Skip — rain incoming on already-wet media (${_sat.fq}" forecast${_sat.pop==null?'':' @ '+_sat.pop+'%'}); let it drain`});
     } else if(dW!=null && dW>=wi && rc && effDays<wi){
       rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
@@ -376,18 +441,27 @@ function hydrologyStatus(hy){
   return {ok:true, uncertainty: reason ? {flag:true, reason} : {flag:false}};
 }
 
-function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false}){
+function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false}){
   const byUser=new Map();
   for(const p of plantings){ const c=resolveCadence(p,cadence); const u=ownerFor(p,c,ownerFallback)||'__UNASSIGNED__'; if(!byUser.has(u))byUser.set(u,[]); byUser.get(u).push(p); }
   const hy=hydrology||null; const callout=computeCallout(weather,hy); const hs=hydrologyStatus(hy);
-  const rainComing = !!(hy && hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null||hy.tomorrow_pop>=50));
+  // BUG-TODAYWATER-001: `rain_coming` could not see rain arriving TODAY -- it read tomorrow only, so on
+  // 2026-08-03 it reported false while 3.8" fell. Note this flag reaches NO engine gate (it is emitted at
+  // the bottom of this function and consumed client-side), so this is an honesty fix, not the fix that
+  // moves water_due -- that is the 'today' branch in saturationSuppressed. `rain_horizon` is additive and
+  // exists because the two horizons imply OPPOSITE advice: rain tomorrow means water containers today and
+  // let beds wait; rain today means beds can wait and containers may catch little or none.
+  const _tomorrowComing = !!(hy && hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null||hy.tomorrow_pop>=50));
+  const _todayComing = todayQualifies(hy);
+  const rainComing = _todayComing || _tomorrowComing;
+  const rainHorizon = _todayComing ? 'today' : (_tomorrowComing ? 'tomorrow' : null);
   const users={};
-  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled);
+  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled);
     users[u]=up; }
   return {date:today,
     weather: weather? {tonightLow:weather.tonightLow, highToday:weather.highToday, code:weather.code, short:weather.short, unit:weather.unit||'F', callout} : null,
-    hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop, rain_coming:rainComing, status:hs} : {status:hs},
+    hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop, rain_coming:rainComing, rain_horizon:rainHorizon, status:hs} : {status:hs},
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, PLAN_SCHEMA_VERSION, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall,
+module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall,
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered};

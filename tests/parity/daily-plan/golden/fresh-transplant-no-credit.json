@@ -3,6 +3,7 @@
   "hot": false,
   "hydrology": {
     "rain_coming": false,
+    "rain_horizon": null,
     "recent_precip_in": 0.8,
     "status": {
       "ok": true,

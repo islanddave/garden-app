@@ -39,6 +39,13 @@ export const CARE_RAIN_CREDIT_ENABLED = false
 // the Lambda env var, or the client rain trace diverges from the plan the server actually computed.
 export const CARE_RAIN_MAXDAYS_ENABLED = false
 
+// BUG-TODAYWATER-001 (2026-08-03): client mirror of the server CARE_TODAY_AWARE_ENABLED env flag. Lets the
+// engine suppress watering on rain forecast for TODAY, not just rain already fallen or rain due tomorrow.
+// Default OFF and inert. Same lockstep caveat as above — and note the flag is also the rollback lever here:
+// this Lambda has no staging surface and its deploy redeploys all 26 functions, so flipping the env var is
+// the two-minute revert path and flipping this constant is only the client-side trace.
+export const CARE_TODAY_AWARE_ENABLED = false
+
 // V4-OVERLAY-001 (design V102): route-backed overlays — forms/search open as flyovers over the
 // current tab instead of navigating away. Slice 1 = infra + /search consumer. When FALSE, every
 // overlay helper degrades to plain navigate/Link, no `background` is ever set, the overlay tree

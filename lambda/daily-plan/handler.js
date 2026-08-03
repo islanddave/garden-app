@@ -152,11 +152,19 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // CREDIT on by itself, with the interval ceiling still off, instead of the two behaviours moving together.
   // Mirror any flip in src/lib/featureFlags.js — the CJS Lambda cannot import that ESM module.
   const rainMaxDaysEnabled = process.env.CARE_RAIN_MAXDAYS_ENABLED === 'true';
+  // BUG-TODAYWATER-001: today-forecast suppression. DEFAULT OFF, so this ship is inert (byte-identical
+  // plan) until flipped after a dry-run replay. The flag is not ceremony -- it is the rollback path. This
+  // Lambda has NO staging surface (deploy-staging.yml's matrix omits daily-plan) and deploy-lambda.yml
+  // redeploys all 26 functions from a main SHA, so reverting the code means a promote-gate cycle with Dave
+  // approval plus a 26-function redeploy. With the flag, rollback is one update-function-configuration
+  // followed by scripts/rerun-daily-plan.sh --live: about two minutes, no promote.
+  // Mirror any flip in src/lib/featureFlags.js -- the CJS Lambda cannot import that ESM module.
+  const todayAwareEnabled = process.env.CARE_TODAY_AWARE_ENABLED === 'true';
   const plans = [];
   const bySpace = {};
   for (const p of plantings) (bySpace[p.workspace_id] ||= []).push(p);
   for (const [spaceId, rows] of Object.entries(bySpace)) {
-    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled });
+    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled });
     for (const [user_id, userPlan] of Object.entries(plan.users)) {
       plans.push({ space_id: spaceId, user_id, plan: userPlan, weather: plan.weather });
       if (!dryRun) {
