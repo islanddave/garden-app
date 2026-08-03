@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.93.1",
+    "date": "2026-08-03",
+    "highlights": [
+      "Releases go out reliably when two pieces of work are in flight at once. The release process checks a build against the staging site before promoting it, but it was identifying that build by the wrong marker — so if a second change landed while a release was mid-flight, the check lost track of its own build and halted a release that had actually passed. It now tracks the exact build it asked for. Nothing about the app itself changes."
+    ]
+  },
+  {
     "version": "3.93.0",
     "date": "2026-08-03",
     "highlights": [
