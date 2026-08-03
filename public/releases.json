@@ -1,5 +1,12 @@
 [
   {
+    "version": "3.94.0",
+    "date": "2026-08-03",
+    "highlights": [
+      "The daily plan now respects care profiles that forbid schedule-driven watering (dormancy or growth-gated plants like Lithops living stones). Those plants no longer get calendar watering reminders — watering a summer-dormant Lithops on a schedule is what rotted and killed one. Skipped plants appear loudly in their own 'watering suppressed' list with the reason and the profile's moisture guidance, so a suppressed plant is visibly suppressed rather than silently missing from the plan."
+    ]
+  },
+  {
     "version": "3.93.1",
     "date": "2026-08-03",
     "highlights": [

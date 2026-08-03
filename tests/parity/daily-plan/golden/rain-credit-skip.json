@@ -21,6 +21,7 @@
     "dave": {
       "counts": {
         "cold": 0,
+        "dormancy_suppressed": 0,
         "dormant": 0,
         "fertilize": 0,
         "no_history": 0,
@@ -41,6 +42,7 @@
       },
       "tasks": {
         "cold": [],
+        "dormancy_suppressed": [],
         "dormant": [],
         "fertilize": [],
         "no_history": [],

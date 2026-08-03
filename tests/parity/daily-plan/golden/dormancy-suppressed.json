@@ -1,0 +1,129 @@
+{
+  "date": "2026-08-03",
+  "hot": false,
+  "hydrology": {
+    "rain_coming": false,
+    "rain_horizon": null,
+    "recent_precip_in": 0,
+    "status": {
+      "ok": true,
+      "uncertainty": {
+        "flag": false
+      }
+    },
+    "today_pop": 0,
+    "today_precip_in": 0,
+    "tomorrow_pop": 0,
+    "tomorrow_precip_in": 0,
+    "upcoming_precip_in": 0
+  },
+  "users": {
+    "dave": {
+      "counts": {
+        "cold": 0,
+        "dormancy_suppressed": 2,
+        "dormant": 0,
+        "fertilize": 2,
+        "no_history": 0,
+        "pest": 0,
+        "plantings": 3,
+        "rain_skipped": 0,
+        "water_due": 1
+      },
+      "substrate": {
+        "feeding_now": 1,
+        "fertilize_recs": 2,
+        "msg": "2 planting(s) past the MG feed window — feed per recommendation.",
+        "on_hold": false,
+        "phase_counts": {
+          "mg_active_3_12wk": 1,
+          "needs_feed_24wk_plus": 2
+        },
+        "water_note": "Hard water (high Ca/Mg/bicarbonate) slowly raises root-zone pH -> micronutrient (Fe/Mn) lockout, worst for acid-lovers (blueberry)."
+      },
+      "tasks": {
+        "cold": [],
+        "dormancy_suppressed": [
+          {
+            "crop": "succulent (Lithops / living stone)",
+            "id": "li1",
+            "moisture": "OVERRIDE: water ONLY when actively growing; otherwise DO NOT WATER",
+            "name": "Lithops (seeded)",
+            "project": "Garden",
+            "project_id": "pj1",
+            "reason": "Watering suppressed — profile: NO calendar watering; water only on plant signals, never by interval",
+            "rule": "no_calendar_water"
+          },
+          {
+            "crop": "unknown",
+            "id": "li2",
+            "moisture": "OVERRIDE: water ONLY when actively growing; otherwise DO NOT WATER",
+            "name": "Living Stone (live unseeded shape)",
+            "project": "Garden",
+            "project_id": "pj1",
+            "reason": "Watering suppressed — profile: NO calendar watering; water only on plant signals, never by interval",
+            "rule": "no_calendar_water"
+          }
+        ],
+        "dormant": [],
+        "fertilize": [
+          {
+            "apply": "top-dress",
+            "crop": "succulent (Lithops / living stone)",
+            "id": "li1",
+            "in_ground": false,
+            "item": "Worm Castings (Brut 12lb + Wiggle Worm 30lb)",
+            "name": "Lithops (seeded)",
+            "phase": "needs_feed_24wk_plus",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "active",
+            "weeks_since_pot": 30
+          },
+          {
+            "apply": "top-dress",
+            "crop": "unknown",
+            "id": "li2",
+            "in_ground": false,
+            "item": "Worm Castings (Brut 12lb + Wiggle Worm 30lb)",
+            "name": "Living Stone (live unseeded shape)",
+            "phase": "needs_feed_24wk_plus",
+            "project": "Garden",
+            "project_id": "pj1",
+            "status": "active",
+            "weeks_since_pot": 30
+          }
+        ],
+        "no_history": [],
+        "pest": [],
+        "rain_skipped": [],
+        "water_due": [
+          {
+            "crop": "pepper",
+            "days_since": 9,
+            "id": "pep1",
+            "in_ground": false,
+            "interval": 3,
+            "method": "deep_even",
+            "moisture": "evenly_moist",
+            "name": "Bench Pepper",
+            "never": false,
+            "overdue_by": 6,
+            "project": "Garden",
+            "project_id": "pj1",
+            "rain_note": null
+          }
+        ]
+      }
+    }
+  },
+  "water_source": "well water (likely HARD)",
+  "weather": {
+    "callout": null,
+    "code": 1,
+    "highToday": 82,
+    "short": "Mild",
+    "tonightLow": 66,
+    "unit": "F"
+  }
+}

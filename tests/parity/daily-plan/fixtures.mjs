@@ -183,6 +183,28 @@ export const scenarios = [
       ],
     },
   },
+  // DRG-NOCALWATER-001 — profile-declared calendar-watering suppression (flag-independent, shared pre-branch
+  // path). Three plantings: (a) seeded Lithops-class profile with no_calendar_water -> dormancy_suppressed,
+  // (b) the LIVE prod shape (signals WITHOUT _seeded, so resolveCadence falls back to bundled JSON — the raw
+  // db_cadence read must still suppress), (c) a normal pepper that keeps its ordinary water_due item.
+  {
+    name: 'dormancy-suppressed',
+    desc: 'no_calendar_water / growth_gated profiles get NO calendar watering item; loud counts + per-item rule/reason.',
+    input: {
+      today: '2026-08-03',
+      weather: { tonightLow: 66, highToday: 82, code: 1, short: 'Mild', unit: 'F' },
+      hydrology: { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+      ownerFallback: 'dave',
+      plantings: [
+        P({ id: 'li1', name: 'Lithops (seeded)', variety: 'Lithops', genus: null, status: 'active', container_type: 'pot', container_size: '4 in', substrate_start: '2026-01-01', transplant_at: null, last_water: '2026-06-24', covered: true, db_cadence: { _seeded: true, crop: 'succulent (Lithops / living stone)', no_calendar_water: true, water_rule: 'growth_gated', water_interval_days_container: 30, fertilize_interval_days: 0, soil_moisture_target: 'OVERRIDE: water ONLY when actively growing; otherwise DO NOT WATER' } }),
+        // variety deliberately ABSENT from cadence-data-v2.json by_variety (the bundled 'Lithops' entry
+        // carries dormant_skip and would divert to the dormant bucket before the suppression gate) — this
+        // row must resolve to the DEFAULT cadence so ONLY the raw unseeded db_cadence signal protects it.
+        P({ id: 'li2', name: 'Living Stone (live unseeded shape)', variety: 'Lithops karasmontana C368', genus: null, status: 'active', container_type: 'pot', container_size: '4 in', substrate_start: '2026-01-01', transplant_at: null, last_water: '2026-06-24', covered: true, db_cadence: { crop: 'succulent (Lithops / living stone)', no_calendar_water: true, water_rule: 'growth_gated', water_interval_days_container: 30, soil_moisture_target: 'OVERRIDE: water ONLY when actively growing; otherwise DO NOT WATER' } }),
+        P({ id: 'pep1', name: 'Bench Pepper', variety: 'Cayenne', genus: 'Capsicum', status: 'fruiting', container_type: 'pot', container_size: '3 gal', substrate_start: '2026-06-01', transplant_at: '2026-06-01', last_water: '2026-07-25', covered: false, db_cadence: PEPPER }),
+      ],
+    },
+  },
   // BUG-TODAYWATER-001 — today-qualifying pairs (see TODAY_MODERATE/TODAY_HEAVY above for the verdict map).
   {
     name: 'today-moderate-flagoff',

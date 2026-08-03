@@ -277,11 +277,33 @@ function coldFor(p, cad, low){
   return null;
 }
 
+// ── DRG-NOCALWATER-001 — dormancy/growth-cycle watering suppression ──
+// Some care profiles (Lithops-class succulents) mark watering as NOT calendar-drivable: no_calendar_water:true
+// and/or water_rule:'growth_gated'. Until this gate existed NOTHING read those signals, and the nightly plan
+// issued interval watering for a summer-dormant Lithops (watering during dormancy rots it — the plant died).
+// Sources checked IN ORDER: the resolved cadence `c` AND the raw DB profile p.db_cadence. The raw read is
+// load-bearing, not belt-and-braces: resolveCadence only adopts db_cadence when `_seeded` is present, and the
+// LIVE Lithops cultivar profile carries the signals WITHOUT `_seeded` — a c-only check would drop the signal
+// through the exact fallback path that caused the original loss. no_calendar_water (explicit, stronger) wins
+// the label when both are set. Returns 'no_calendar_water' | 'growth_gated' | null.
+// Suppression is LOUD, never silent: the caller routes the planting to counts.dormancy_suppressed +
+// tasks.dormancy_suppressed with a per-item rule + reason, so a suppressed planting is distinguishable from a
+// forgotten one. Watering ONLY — fert/pest/cold generation is untouched. The check sits in the shared
+// pre-branch path of generatePlanForUser so it applies identically under EVERY flag combination
+// (todayAware / rainCredit / rainMaxDays on or off) — a guard written inside one flag branch would be
+// silently deleted when the flag flips (house flag-parity lesson).
+function waterSuppression(p, c){
+  const srcs=[c, p&&p.db_cadence];
+  for(const s of srcs){ if(s && s.no_calendar_water===true) return 'no_calendar_water'; }
+  for(const s of srcs){ if(s && s.water_rule==='growth_gated') return 'growth_gated'; }
+  return null;
+}
+
 // DRG-WXFLAGSPLIT-001 F1: rainMaxDaysEnabled gates the max-days CEILING independently of rainCreditEnabled
 // (which gates the tiered credit). Trailing param, default false -> every existing caller keeps flag-OFF
 // behaviour and the plan stays byte-identical until an env flip.
 function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false){
-  const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[];
+  const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[];
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
   const hotForBag=high!=null&&high>=BAG_HEAT_GATE_F;   // DRG-WATERCREDIT-004 fabric-bag heat-gate signal
@@ -294,6 +316,19 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     if(c.exclude) continue;
     const ph=feedPhase(weeksSince(today,p.substrate_start)); phaseCounts[ph]=(phaseCounts[ph]||0)+1;
     if(p.status==='dormant' || c.dormant_skip){ dormant.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,note:c.dormant_skip?c.notes:'Dormant — skip routine care'}); continue; }
+    // DRG-NOCALWATER-001: profile-declared calendar-watering suppression. Evaluated BEFORE any watering
+    // computation and BEFORE any flag fork, so it binds identically with todayAware/rainCredit/rainMaxDays
+    // on or off. Suppressed plantings get NO water_due/no_history/rain_skipped item — they land LOUDLY on
+    // tasks.dormancy_suppressed (+ counts.dormancy_suppressed) with the rule + guidance, and still flow
+    // through fert/pest/cold below (the signal governs watering only).
+    const _wsup=waterSuppression(p,c);
+    if(_wsup){
+      waterSuppressed.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,rule:_wsup,
+        moisture:(p.db_cadence&&p.db_cadence.soil_moisture_target)||c.soil_moisture_target||null,
+        reason:_wsup==='no_calendar_water'
+          ? 'Watering suppressed — profile: NO calendar watering; water only on plant signals, never by interval'
+          : 'Watering suppressed — profile: growth-gated; water only during active growth, never by interval'});
+    } else {
     // CARE-PROFILES-001: select inground or container cadence based on container_type.
     const inGround=likelyInGround(p,c);
     let wi=(inGround ? c.water_interval_days_inground : c.water_interval_days_container)
@@ -374,6 +409,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:dW,interval:wi,overdue_by:dW-wi,method:c.water_method,moisture:c.soil_moisture_target,never:false,rain_note});
     }
     else if(dW==null) water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,days_since:null,interval:wi,overdue_by:null,method:c.water_method,moisture:c.soil_moisture_target,never:true});
+    } // end DRG-NOCALWATER-001 watering guard (fert/pest/cold below run for suppressed plantings too)
     const fr=fertilizeRec(p,c,fm,today); if(fr) fertilize.push(fr);
     const pw=cad.pest_watch&&cad.pest_watch.cucurbit_beetle;
     if(pw&&pw.active){ const txt=((p.name||'')+' '+(p.variety||'')+' '+(c.crop||'')).toLowerCase();
@@ -391,8 +427,12 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       ? `Feeding on HOLD — fresh MG slow-release mix is feeding all ${feeding} plantings (potted recently; mix feeds 3-6 months). Optional: kelp via sprayer for transplant establishment. Watch for Mg (Epsom) / blossom-end-rot (gypsum) symptoms.`
       : `${fertilize.length} planting(s) past the MG feed window — feed per recommendation.`,
     water_note: fm.water_quality && fm.water_quality.implications[0]};
-  return {counts:{plantings:plantings.length,water_due:due.length,no_history:noHistory.length,fertilize:fertilize.length,pest:pest.length,cold:cold.length,dormant:dormant.length,rain_skipped:rainSkipped.length},
-    substrate, tasks:{water_due:due,no_history:noHistory,fertilize,pest,cold,dormant,rain_skipped:rainSkipped}};
+  // DRG-NOCALWATER-001: dormancy_suppressed is ADDITIVE (new counts key + new tasks array); existing task
+  // arrays keep their shape, so PLAN_SCHEMA_VERSION is deliberately NOT bumped (readers select named keys;
+  // same precedent as BUG-TODAYWATER-001's additive keys). A zero count is itself information: it says the
+  // suppression gate RAN and found nothing, distinguishing "no suppressed plantings" from "gate missing".
+  return {counts:{plantings:plantings.length,water_due:due.length,no_history:noHistory.length,fertilize:fertilize.length,pest:pest.length,cold:cold.length,dormant:dormant.length,rain_skipped:rainSkipped.length,dormancy_suppressed:waterSuppressed.length},
+    substrate, tasks:{water_due:due,no_history:noHistory,fertilize,pest,cold,dormant,rain_skipped:rainSkipped,dormancy_suppressed:waterSuppressed}};
 }
 
 // Compute the single weather callout (action only) from temp + hydrology. Priority order; null = no callout (no filler).
@@ -463,5 +503,5 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop, rain_coming:rainComing, rain_horizon:rainHorizon, status:hs} : {status:hs},
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall,
+module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression,
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered};

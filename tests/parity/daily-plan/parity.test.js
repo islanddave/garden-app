@@ -27,7 +27,9 @@ describe('G-PARITY regression gate — engine output matches committed goldens',
     for (const required of ['rain-credit-skip', 'fresh-transplant-no-credit', 'fabric-bag-heat-gate',
       'harvested-keep-water', 'planning-excluded', 'wx-freeze-coldprotect', 'wx-heat-and-rain-status', 'baseline-mixed',
       // BUG-TODAYWATER-001: today-qualifying inputs — without these the gate is blind to the today branch.
-      'today-moderate-flagoff', 'today-moderate-flagon', 'today-heavy-flagoff', 'today-heavy-flagon']) {
+      'today-moderate-flagoff', 'today-moderate-flagon', 'today-heavy-flagoff', 'today-heavy-flagon',
+      // DRG-NOCALWATER-001: profile-declared watering suppression (incl. the live unseeded-profile shape).
+      'dormancy-suppressed']) {
       expect(names).toContain(required);
     }
   });
