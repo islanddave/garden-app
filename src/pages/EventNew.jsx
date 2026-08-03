@@ -9,7 +9,7 @@ import { EVENT_TYPE_META, requiresPlanting } from '../lib/eventTypes.js'
 import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
-import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
+import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
 import { seasonTotalPhrase } from '../lib/harvestSummary.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
@@ -38,6 +38,28 @@ function readLastHarvestUnit() {
   } catch { /* localStorage unavailable — fall through to default */ }
   return DEFAULT_HARVEST_UNIT
 }
+
+// V4-HARVDUAL-001 Slice B: the optional weight half remembers its own unit, independently of the
+// quantity unit — the scale reads the same units every time (Dave's reads oz) while the quantity
+// unit changes per crop. Sharing one key would make them fight each other.
+const DEFAULT_WEIGHT_UNIT = 'g'
+function readLastWeightUnit() {
+  try {
+    const stored = localStorage.getItem('lastHarvestWeightUnit')
+    if (stored && WEIGHT_UNITS.includes(stored)) return stored
+  } catch { /* localStorage unavailable — fall through to default */ }
+  return DEFAULT_WEIGHT_UNIT
+}
+
+// Fresh harvest-panel state. Centralised because three places reset it (type change, Save & Next,
+// and the initial mount) and they previously drifted field-by-field as the panel grew.
+const freshHarvest = () => ({
+  quantity:       '',
+  unit:           readLastHarvestUnit(),
+  quality_rating: null,
+  weight:         '',
+  weight_unit:    readLastWeightUnit(),
+})
 
 // V4-STICKY-001: remember the last chosen project across sessions, mirroring
 // LogMany's quicklog.lastScope pattern (module-const key + guarded localStorage,
@@ -335,11 +357,7 @@ export default function EventNew() {
   const [container, setContainer] = useState({ type: '', size: '' })
 
   // V1.2a-2 Wave 3: harvest panel state — only submitted for event_type=harvest.
-  const [harvest, setHarvest] = useState(() => ({
-    quantity:       '',
-    unit:           readLastHarvestUnit(),
-    quality_rating: null,
-  }))
+  const [harvest, setHarvest] = useState(freshHarvest)
   const [harvestError, setHarvestError] = useState(null)
 
   // V4-FLAG-001: flag-mode state (event_type='flag_issue'). Severity is REQUIRED; the issue is a
@@ -383,7 +401,7 @@ export default function EventNew() {
     setMetadataState({})
     // V1.2a-2 Wave 3: reset the type-specific panels too. Harvest unit is
     // re-seeded from localStorage so the user's last choice persists across types.
-    setHarvest({ quantity: '', unit: readLastHarvestUnit(), quality_rating: null })
+    setHarvest(freshHarvest())
     setHarvestError(null)
     // V4-FLAG-001: reset flag-mode fields when the event type changes.
     setSeverity(null); setIssueChoice(''); setIssueOther('')
@@ -469,7 +487,7 @@ export default function EventNew() {
   // the full page (no provider).
   useReportOverlayDirty(!confirmation && !!(
     form.notes || form.private_notes || form.quantity ||
-    photoFile || harvest.quantity ||
+    photoFile || harvest.quantity || harvest.weight ||
     Object.keys(metadataState).length ||
     treatment.pest_target || treatment.product_id || treatment.product_text || treatment.category || treatment.amount ||
     container.type || container.size.trim() ||
@@ -610,6 +628,15 @@ export default function EventNew() {
     if (qty > MAX_PLAUSIBLE[harvest.unit]) {
       return `That's higher than expected for ${harvest.unit} — double-check the amount.`
     }
+    // V4-HARVDUAL-001: the weight is OPTIONAL, so an empty field is valid and validated away here
+    // before any Number() coercion (Number('') is 0, which would read as "entered zero").
+    if (harvest.weight !== '') {
+      const w = Number(harvest.weight)
+      if (!Number.isFinite(w) || w <= 0) return 'Enter a weight greater than zero, or leave it blank.'
+      if (toGrams(w, harvest.weight_unit) > MAX_PLAUSIBLE_WEIGHT_G) {
+        return `That's higher than expected for a single weighing — double-check the ${harvest.weight_unit}.`
+      }
+    }
     return null
   }
 
@@ -639,7 +666,7 @@ export default function EventNew() {
       is_public:     f.is_public,
     }))
     setMetadataState({})
-    setHarvest({ quantity: '', unit: readLastHarvestUnit(), quality_rating: null })
+    setHarvest(freshHarvest())
     setHarvestError(null)
     setSeverity(null); setIssueChoice(''); setIssueOther('')
     setContainer({ type: '', size: '' })
@@ -718,6 +745,12 @@ export default function EventNew() {
             quantity:       Number(harvest.quantity),
             unit:           harvest.unit,
             quality_rating: harvest.quality_rating != null ? Number(harvest.quality_rating) : null,
+            // V4-HARVDUAL-001: omit the key entirely when blank rather than sending null. On CREATE
+            // the two are equivalent, but the server reads absent-vs-null as distinct intents on the
+            // EDIT path, so keeping one shape for both avoids teaching the client a false equivalence.
+            ...(harvest.weight !== ''
+              ? { weight: Number(harvest.weight), weight_unit: harvest.weight_unit }
+              : {}),
           },
         }
       : {}
@@ -765,6 +798,10 @@ export default function EventNew() {
     // V1.2a-2 Wave 3: remember the chosen harvest unit for next time.
     if (isHarvest) {
       try { localStorage.setItem('lastHarvestUnit', harvest.unit) } catch { /* noop */ }
+      // only remember the weight unit once it has actually been used to weigh something
+      if (harvest.weight !== '') {
+        try { localStorage.setItem('lastHarvestWeightUnit', harvest.weight_unit) } catch { /* noop */ }
+      }
     }
 
     // V4-STICKY-001: remember the chosen project so the next cold session pre-fills it.
@@ -1252,6 +1289,53 @@ export default function EventNew() {
                   </Field>
                 </div>
               </div>
+              {/* ── V4-HARVDUAL-001 Slice B: optional weight, alongside the count ──
+                  Deliberately SECONDARY to quantity: smaller label, no asterisk, blank by default,
+                  and never blocking a save. The count-only path above is the fast path and stays
+                  exactly as it was — this row is for when the bowl happens to be near the scale.
+                  Its payoff is disproportionate to its size: a count AND a weight together is a
+                  per-variety calibration sample, which is what retires the estimated weights. */}
+              <div style={{ marginTop: 14 }}>
+                <label
+                  htmlFor="harvest-weight"
+                  style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: P.light, marginBottom: 6, letterSpacing: '0.3px', textTransform: 'uppercase' }}
+                >
+                  Weight  ·  optional
+                </label>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <div style={{ flex: 2 }}>
+                    <Input
+                      id="harvest-weight"
+                      type="text"
+                      inputMode="decimal"
+                      value={harvest.weight}
+                      onChange={e => {
+                        setHarvest(h => ({ ...h, weight: e.target.value }))
+                        if (harvestError) setHarvestError(null)
+                      }}
+                      aria-label="Harvest weight"
+                      error={!!harvestError}
+                      placeholder="e.g. 337"
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <Select
+                      value={harvest.weight_unit}
+                      onChange={e => setHarvest(h => ({ ...h, weight_unit: e.target.value }))}
+                      aria-label="Harvest weight unit"
+                      style={{ minHeight: 44, minWidth: 44 }}
+                    >
+                      {WEIGHT_UNITS.map(u => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+                <div style={{ marginTop: 5, fontSize: '0.72rem', color: P.light, lineHeight: 1.4 }}>
+                  Weigh the whole pick — the count above says how many that was.
+                </div>
+              </div>
+
               {harvestError && (
                 <div role="alert" style={{ marginTop: 6, fontSize: '0.78rem', color: P.terra, fontWeight: 600 }}>{harvestError}</div>
               )}

@@ -12,7 +12,7 @@ import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../componen
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 // BUG-HARVESTEDIT-001: the SAME constants the create form uses. The unit list also mirrors
 // harvest_log_unit_check in the database, so an option here that Postgres would reject cannot exist.
-import { HARVEST_UNITS, MAX_PLAUSIBLE } from '../lib/harvest-constants.js'
+import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
 
 
 // Shared metadata field label map — mirrors EVENT_METADATA_FIELDS keys from EventNew
@@ -95,6 +95,18 @@ export default function EventDetail() {
       harvest_quantity: event.harvest?.quantity != null ? String(event.harvest.quantity) : '',
       harvest_unit:     event.harvest?.unit ?? 'count',
       harvest_quality:  event.harvest?.quality_rating ?? null,
+      // V4-HARVDUAL-001: seed the weight box ONLY when the stored grams are the user's own
+      // measurement. weight_estimated=false has two causes and they must not be conflated here:
+      // a weight the user typed (show it — it is theirs to edit) versus one DERIVED from a
+      // weight-unit quantity like "3 lb" (leave blank — the Amount/Unit pair above already owns it).
+      // Showing a DERIVED or ESTIMATED number here would be worse than unhelpful: re-saving would
+      // promote a guess into a recorded measurement.
+      harvest_weight:   (event.harvest?.weight_estimated === false
+                         && !WEIGHT_UNITS.includes(event.harvest?.unit)
+                         && event.harvest?.weight_grams != null)
+        ? String(event.harvest.weight_grams) : '',
+      // stored grams are canonical; the unit the user originally typed is not persisted
+      harvest_weight_unit: 'g',
     })
     setSaveErr(null)
     setEditing(true)
@@ -116,6 +128,15 @@ export default function EventDetail() {
     }
     if (qty > MAX_PLAUSIBLE[form.harvest_unit]) {
       return `That's higher than expected for ${form.harvest_unit} — double-check the amount.`
+    }
+    // V4-HARVDUAL-001: optional, so blank is valid. Checked before Number() coercion (Number('')
+    // is 0, which would read as an entered zero and be rejected).
+    if (form.harvest_weight !== '') {
+      const w = Number(form.harvest_weight)
+      if (!Number.isFinite(w) || w <= 0) return 'Enter a weight greater than zero, or clear the field.'
+      if (toGrams(w, form.harvest_weight_unit) > MAX_PLAUSIBLE_WEIGHT_G) {
+        return `That's higher than expected for a single weighing — double-check the ${form.harvest_weight_unit}.`
+      }
     }
     return null
   }
@@ -144,6 +165,12 @@ export default function EventDetail() {
             quantity:       Number(form.harvest_quantity),
             unit:           form.harvest_unit,
             quality_rating: form.harvest_quality,
+            // Sent EXPLICITLY, including null. Unlike the create form (which omits the key when
+            // blank), this form always represents the user's full intent for the row, so a cleared
+            // box must mean "remove my weight" and fall back to the reference estimate. Omitting it
+            // would mean "leave whatever is there", which is the opposite of what clearing looks like.
+            weight:         form.harvest_weight === '' ? null : Number(form.harvest_weight),
+            weight_unit:    form.harvest_weight_unit,
           } } : {}),
         }),
       })
@@ -293,6 +320,40 @@ export default function EventDetail() {
                   </Select>
                 </Field>
               </div>
+
+              {/* V4-HARVDUAL-001 Slice B — the optional measured weight. Blank unless the user
+                  previously weighed this pick themselves; clearing it removes the measurement and
+                  the row falls back to the per-variety reference estimate. */}
+              <div style={{ display: 'flex', gap: 10 }}>
+                <Field label="Weight (optional)" htmlFor="ev-harvest-weight" style={{ marginBottom: 6, flex: 1 }}>
+                  <Input
+                    id="ev-harvest-weight"
+                    type="number"
+                    min="0"
+                    step="any"
+                    inputMode="decimal"
+                    value={form.harvest_weight}
+                    onChange={e => setForm(f => ({ ...f, harvest_weight: e.target.value }))}
+                    placeholder="e.g. 337"
+                  />
+                </Field>
+                <Field label="Weight unit" htmlFor="ev-harvest-weight-unit" style={{ marginBottom: 6, flex: 1 }}>
+                  <Select
+                    id="ev-harvest-weight-unit"
+                    value={form.harvest_weight_unit}
+                    onChange={e => setForm(f => ({ ...f, harvest_weight_unit: e.target.value }))}
+                  >
+                    {WEIGHT_UNITS.map(u => (
+                      <option key={u} value={u}>{u}</option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+              {event.harvest?.weight_estimated === true && (
+                <p style={{ margin: '0 0 12px', fontSize: '0.72rem', color: P.light, lineHeight: 1.4 }}>
+                  Currently estimated from this variety&rsquo;s typical weight. Enter a real weight to replace it.
+                </p>
+              )}
             </div>
           )}
 

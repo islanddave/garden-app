@@ -11,7 +11,7 @@
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, act, waitFor, cleanup } from '@testing-library/react'
 
 // ── Hoisted mock plumbing ───────────────────────────────────────────────
 const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef, uploadResultRef, uploadUiRef } = vi.hoisted(() => ({
@@ -533,5 +533,99 @@ describe('EventNew — Save button photo-stage labels', () => {
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(postCalls.length).toBe(1)
+  })
+})
+
+// ── V4-HARVDUAL-001 Slice B — the optional weight half of the harvest panel ──────────
+// The count-only path is the fast path and must stay exactly as it was; the weight is additive,
+// never required, and must never block a save on its own absence.
+describe('EventNew — optional harvest weight', () => {
+  async function setupHarvest() {
+    renderEventNew('event_type=harvest')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '5' } })
+  }
+  const save = async () => { await act(async () => { fireEvent.click(screen.getByText('Save')) }) }
+
+  it('renders the weight field only for harvest events', async () => {
+    renderEventNew('event_type=harvest'); await flushLoad()
+    expect(screen.getByLabelText('Harvest weight')).toBeTruthy()
+    expect(screen.getByLabelText('Harvest weight unit')).toBeTruthy()
+  })
+
+  it('does not render the weight field for a non-harvest event', async () => {
+    renderEventNew('event_type=watering'); await flushLoad()
+    expect(screen.queryByLabelText('Harvest weight')).toBeNull()
+  })
+
+  it('saves a count-only harvest with NO weight keys at all', async () => {
+    // absent, not null: the server reads absent-vs-null as different intents on the edit path, so
+    // the client must not blur them
+    await setupHarvest(); await save()
+    expect(postCalls.length).toBe(1)
+    expect(postCalls[0].harvest.quantity).toBe(5)
+    expect(postCalls[0].harvest).not.toHaveProperty('weight')
+    expect(postCalls[0].harvest).not.toHaveProperty('weight_unit')
+  })
+
+  it('sends weight + weight_unit when the user weighs the pick', async () => {
+    await setupHarvest()
+    fireEvent.change(screen.getByLabelText('Harvest weight'), { target: { value: '337' } })
+    await save()
+    expect(postCalls[0].harvest.weight).toBe(337)
+    expect(postCalls[0].harvest.weight_unit).toBe('g')
+    expect(postCalls[0].harvest.quantity).toBe(5) // count is untouched by the weight
+  })
+
+  it('passes the scale unit through unconverted — the server owns the conversion', async () => {
+    await setupHarvest()
+    fireEvent.change(screen.getByLabelText('Harvest weight unit'), { target: { value: 'oz' } })
+    fireEvent.change(screen.getByLabelText('Harvest weight'), { target: { value: '11.9' } })
+    await save()
+    expect(postCalls[0].harvest.weight).toBe(11.9)
+    expect(postCalls[0].harvest.weight_unit).toBe('oz')
+  })
+
+  it('blocks the POST on a zero or negative weight', async () => {
+    await setupHarvest()
+    fireEvent.change(screen.getByLabelText('Harvest weight'), { target: { value: '0' } })
+    await save()
+    expect(postCalls.length).toBe(0)
+    expect(screen.getByText(/weight greater than zero/i)).toBeTruthy()
+  })
+
+  it('blocks the POST on an implausible weight, judged after unit conversion', async () => {
+    await setupHarvest()
+    fireEvent.change(screen.getByLabelText('Harvest weight unit'), { target: { value: 'lb' } })
+    fireEvent.change(screen.getByLabelText('Harvest weight'), { target: { value: '200' } }) // 90 718 g
+    await save()
+    expect(postCalls.length).toBe(0)
+    expect(screen.getByText(/higher than expected for a single weighing/i)).toBeTruthy()
+  })
+
+  it('remembers the weight unit only once it has actually been used', async () => {
+    await setupHarvest()
+    fireEvent.change(screen.getByLabelText('Harvest weight unit'), { target: { value: 'oz' } })
+    await save() // weight left blank -> the choice was never exercised
+    expect(localStorage.getItem('lastHarvestWeightUnit')).toBeNull()
+  })
+
+  it('persists the weight unit after a weighed save', async () => {
+    await setupHarvest()
+    fireEvent.change(screen.getByLabelText('Harvest weight unit'), { target: { value: 'oz' } })
+    fireEvent.change(screen.getByLabelText('Harvest weight'), { target: { value: '11.9' } })
+    await save()
+    expect(localStorage.getItem('lastHarvestWeightUnit')).toBe('oz')
+  })
+
+  it('seeds the weight unit from localStorage, and ignores a bogus stored value', async () => {
+    localStorage.setItem('lastHarvestWeightUnit', 'lb')
+    renderEventNew('event_type=harvest'); await flushLoad()
+    expect(screen.getByLabelText('Harvest weight unit').value).toBe('lb')
+    cleanup()
+    localStorage.setItem('lastHarvestWeightUnit', 'stone')
+    renderEventNew('event_type=harvest'); await flushLoad()
+    expect(screen.getByLabelText('Harvest weight unit').value).toBe('g')
   })
 })
