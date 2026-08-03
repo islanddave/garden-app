@@ -24,6 +24,50 @@ export const engine = engineMod;
 const PEPPER = { _seeded: true, crop: 'pepper', water_interval_days_container: 3, water_method: 'deep_even', soil_moisture_target: 'evenly_moist', drought_tolerance: 'medium', cold: { tender: true, protect_below_F: 45 }, fertilize_interval_days: 14 };
 const TOMATO = { _seeded: true, crop: 'tomato', water_interval_days_container: 2, water_method: 'deep_even', soil_moisture_target: 'evenly_moist', drought_tolerance: 'low', cold: { tender: true, protect_below_F: 45 }, fertilize_interval_days: 14 };
 const LETTUCE = { _seeded: true, crop: 'lettuce', water_interval_days_container: 2, water_method: 'light_frequent', soil_moisture_target: 'consistently_moist', drought_tolerance: 'low', cold: { tender: false, protect_below_F: 25 }, fertilize_interval_days: 21 };
+// Explicit in_ground interval so the today-rain scenarios exercise the inground cadence key (a bare
+// water_interval_days leaves the planting in NO bucket, silently — verified landmine).
+const INGROUND_TOMATO = { _seeded: true, crop: 'tomato', water_interval_days_container: 2, water_interval_days_inground: 4, water_method: 'deep_even', soil_moisture_target: 'evenly_moist', drought_tolerance: 'medium', cold: { tender: true, protect_below_F: 45 }, fertilize_interval_days: 14 };
+
+// ── BUG-TODAYWATER-001 goldens — today-QUALIFYING inputs (today_precip_in >= SOAK_FCST_QPF_IN @ pop >= SOAK_FCST_POP_PCT).
+// The original 8 scenarios all carry today_precip_in ~0, so the parity gate was BLIND to the entire today
+// branch (crucible mutation test: hard-wiring the production defect killed only 2 tests). Each input below is
+// captured TWICE — flag OFF (pins that CARE_TODAY_AWARE_ENABLED unset stays byte-identical to the pre-change
+// engine, incl. the part-prediction soak basis wp=recent+forecast) and flag ON (pins the reviewed today-branch
+// verdicts: small-vessel SOAK_TODAY_SMALL_IN bar, in-ground general bar, 'today' subordinate to
+// bagHeatGate/freshTransplant, covered exemption). Scenario objects share one frozen input; the engine does
+// not mutate plantings.
+// TODAY_MODERATE: 1.0" @ 80% forecast, 0.2" recent, 86°F (>= BAG_HEAT_GATE_F 85, < HOT_F 88).
+//   flag-OFF: windowPrecip 1.2 >= SOAK_CAP_IN -> ALL outdoor soak-suppressed (forecast counted in the basis).
+//   flag-ON: soak judges actuals (0.2) only -> solo_cup WATERS (1.0 < 2.0 small bar, rain-credit note),
+//            in_ground SKIPS kind 'today' (1.0 >= 0.5), fabric bag WATERS (heat gate outranks the forecast),
+//            covered lettuce waters under both flags.
+const TODAY_MODERATE = {
+  today: '2026-08-03',
+  weather: { tonightLow: 68, highToday: 86, code: 61, short: 'Rain developing', unit: 'F' },
+  hydrology: { recent_precip_in: 0.2, today_precip_in: 1.0, today_pop: 80, upcoming_precip_in: 0.1, tomorrow_precip_in: 0.1, tomorrow_pop: 20 },
+  ownerFallback: 'dave',
+  plantings: [
+    P({ id: 'sv1', name: 'Bench Pepper Cell', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', container_type: 'solo_cup', container_size: '0.5 qt', substrate_start: '2026-06-01', transplant_at: '2026-06-01', last_water: '2026-07-30', covered: false, db_cadence: PEPPER }),
+    P({ id: 'bed1', name: 'Main Bed Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'in_ground', container_size: null, substrate_start: '2026-06-01', transplant_at: '2026-06-01', last_water: '2026-07-29', covered: false, db_cadence: INGROUND_TOMATO }),
+    P({ id: 'fb1', name: 'Deck Bag Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'fabric_bag', container_size: '7 gal', substrate_start: '2026-06-01', transplant_at: '2026-06-01', last_water: '2026-07-30', covered: false, db_cadence: TOMATO }),
+    P({ id: 'cv1', name: 'Covered Shelf Lettuce', variety: 'Buttercrunch', genus: 'Lactuca', status: 'vegetative', container_type: 'pot', container_size: '2 gal', substrate_start: '2026-06-01', transplant_at: '2026-06-01', last_water: '2026-07-31', covered: true, db_cadence: LETTUCE }),
+  ],
+};
+// TODAY_HEAVY: 2.5" @ 90% forecast, 0 recent, mild 78°F (no heat gates).
+//   flag-OFF: windowPrecip 2.5 -> ALL outdoor soak-suppressed (incl. the fresh transplant — soak outranks it).
+//   flag-ON: established solo_cup SKIPS kind 'today' (2.5 >= SOAK_TODAY_SMALL_IN 2.0), fresh tray_cell WATERS
+//            (freshTransplant outranks the forecast), in_ground SKIPS kind 'today'.
+const TODAY_HEAVY = {
+  today: '2026-08-03',
+  weather: { tonightLow: 66, highToday: 78, code: 63, short: 'Heavy rain', unit: 'F' },
+  hydrology: { recent_precip_in: 0, today_precip_in: 2.5, today_pop: 90, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0 },
+  ownerFallback: 'dave',
+  plantings: [
+    P({ id: 'sv1', name: 'Bench Pepper Cell', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', container_type: 'solo_cup', container_size: '0.5 qt', substrate_start: '2026-06-01', transplant_at: '2026-06-01', last_water: '2026-07-30', covered: false, db_cadence: PEPPER }),
+    P({ id: 'ft1', name: 'Fresh Pepper Cell', variety: 'Cayenne', genus: 'Capsicum', status: 'vegetative', container_type: 'tray_cell', container_size: '0.5 qt', substrate_start: '2026-07-29', transplant_at: '2026-07-29', last_water: '2026-07-30', covered: false, db_cadence: PEPPER }),
+    P({ id: 'bed1', name: 'Main Bed Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'in_ground', container_size: null, substrate_start: '2026-06-01', transplant_at: '2026-06-01', last_water: '2026-07-29', covered: false, db_cadence: INGROUND_TOMATO }),
+  ],
+};
 
 // Helper to keep planting literals terse + uniform.
 function P(o) {
@@ -138,6 +182,27 @@ export const scenarios = [
         P({ id: 'ht1', name: 'Thirsty Tomato', variety: 'Beefsteak', genus: 'Solanum', status: 'fruiting', container_type: 'pot', container_size: '5 gal', substrate_start: '2026-05-01', transplant_at: '2026-05-01', last_water: '2026-06-20', covered: false, db_cadence: TOMATO }),
       ],
     },
+  },
+  // BUG-TODAYWATER-001 — today-qualifying pairs (see TODAY_MODERATE/TODAY_HEAVY above for the verdict map).
+  {
+    name: 'today-moderate-flagoff',
+    desc: '1.0"@80% today forecast, flag OFF: part-prediction soak basis suppresses all outdoor (pre-change parity).',
+    input: TODAY_MODERATE,
+  },
+  {
+    name: 'today-moderate-flagon',
+    desc: '1.0"@80% today forecast, flag ON: solo_cup waters (small bar 2.0), in_ground skips kind today, hot fabric bag waters (gate outranks forecast).',
+    input: { ...TODAY_MODERATE, todayAwareEnabled: true },
+  },
+  {
+    name: 'today-heavy-flagoff',
+    desc: '2.5"@90% today forecast, flag OFF: soak suppresses all outdoor incl. the fresh transplant (pre-change parity).',
+    input: TODAY_HEAVY,
+  },
+  {
+    name: 'today-heavy-flagon',
+    desc: '2.5"@90% today forecast, flag ON: established solo_cup skips at the 2.0" small bar, fresh transplant still waters, in_ground skips.',
+    input: { ...TODAY_HEAVY, todayAwareEnabled: true },
   },
 ];
 

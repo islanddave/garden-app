@@ -93,6 +93,13 @@ async function fetchPrecip(lat, lng) {
       upcoming_precip_in: round2(tomorrow + (ps[4] || 0)),
       tomorrow_precip_in: round2(tomorrow),
       tomorrow_pop: pop[3] != null ? pop[3] : null,
+      // BUG-TODAYWATER-001 actuals backfill: D-1 OBSERVED rain as its own field — recent_precip_in is the
+      // D-2+D-1 SUM, so what actually fell on a given day was unrecoverable BY CONSTRUCTION, which made a
+      // busted today-forecast undetectable after the fact. Consumed ONLY by handler.backfillYesterdayActual
+      // (written onto YESTERDAY's plan row); engine.generatePlan copies named hydrology keys, so this never
+      // enters the current day's stored plan (byte-parity safe). null, NEVER 0, when Open-Meteo omits the
+      // value — absence of data must not be recorded as "no rain fell".
+      yesterday_precip_actual_in: Number.isFinite(ps[1]) ? round2(ps[1]) : null,
     };
   } catch (e) {
     console.warn(JSON.stringify({ msg: 'fetchPrecip failed — hydrology null', lat, lng, error: e.message }));
@@ -167,7 +174,10 @@ exports.handler = async (event) => {
   try {
     const res = await run({ pg: pool, today, dryRun, geocodeZip, fetchNWS, fetchPrecip, fetchStation });
     console.log(JSON.stringify({ msg: 'daily-plan', today, dryRun, rows: res.rows, ms: Date.now() - started }));
-    return { ok: true, today, dryRun, rows: res.rows };
+    // A0.3-DRY-PLANS sentinel — DRY responses carry the computed plans so scripts/rerun-daily-plan.sh
+    // --diff can compare a zero-write replay against the stored rows (it preflight-greps the deployed zip
+    // for this marker, same pattern as A0.2). LIVE responses stay lean; EventBridge nightly is unchanged.
+    return { ok: true, today, dryRun, rows: res.rows, ...(dryRun ? { plans: res.plans } : {}) };
   } catch (e) {
     console.error(JSON.stringify({ msg: 'daily-plan ERROR', today, dryRun, error: e.message }));
     throw e;

@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { resolve, dirname } from 'node:path';
 import h from './handler.js';
 const { resolveInvokeOptions } = h;
 
@@ -44,5 +47,17 @@ describe('A0.2 resolveInvokeOptions', () => {
     expect(resolveInvokeOptions({ ping: true }, { envDryRun: 'false', todayDefault: D }).ping).toBe(true);
     expect(resolveInvokeOptions({ ping: 'true' }, { envDryRun: 'false', todayDefault: D }).ping).toBe(false);
     expect(resolveInvokeOptions(EVENTBRIDGE, { envDryRun: 'false', todayDefault: D }).ping).toBe(false);
+  });
+});
+
+// A0.3-DRY-PLANS — dry responses carry the computed plans so rerun-daily-plan.sh --diff can compare a
+// zero-write replay against the stored rows. Static source guards (index.js pulls AWS/neon at module load,
+// same constraint as A0.2's nightly-timeout guards). The gated spread is the safety keystone: a LIVE
+// response must NOT bloat, and the sentinel is what the wrapper's preflight greps in the deployed zip.
+describe('A0.3-DRY-PLANS (static source guard)', () => {
+  const SRC = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'index.js'), 'utf8');
+  it('sentinel present + plans returned ONLY on dry runs', () => {
+    expect(SRC).toContain('A0.3-DRY-PLANS sentinel');
+    expect(SRC).toMatch(/\.\.\.\(dryRun \? \{ plans: res\.plans \} : \{\}\)/);
   });
 });

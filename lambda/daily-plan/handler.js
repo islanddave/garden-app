@@ -77,6 +77,38 @@ async function readPriorRuns(pg, userId, planDate) {
   }
 }
 
+// BUG-TODAYWATER-001 actuals backfill — previous plan_date as YYYY-MM-DD (pure UTC date math, matching
+// engine.daysBetween's calendar convention; plan_date is a calendar label, not an instant).
+function prevPlanDate(iso) {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// Write yesterday's OBSERVED rain (hy.yesterday_precip_actual_in, from the past-days array fetchPrecip
+// already reads) onto YESTERDAY's plan row as items.today_precip_actual_in — additive jsonb key, no DDL, no
+// PLAN_SCHEMA_VERSION bump (readers select named keys). This is what makes "did we skip on a forecast that
+// busted?" answerable: yesterday's row holds the forecast it acted on (today_precip_in / prior_runs) and,
+// after this run, what actually fell. Same fail-open posture as readPriorRuns — an audit write may NEVER
+// break plan generation. Scope: same user_id + previous plan_date ONLY; the CURRENT day's row is untouched
+// (flag-OFF byte-parity). 0 is real data (an observed dry day); null/absent means unknown -> no write.
+async function backfillYesterdayActual(pg, userId, today, hy) {
+  try {
+    const v = hy ? hy.yesterday_precip_actual_in : null;
+    if (typeof v !== 'number' || !Number.isFinite(v)) return false;
+    if (typeof today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return false;
+    await pg.query(
+      `update daily_plan
+         set items = jsonb_set(coalesce(items, '{}'::jsonb), '{today_precip_actual_in}', $3::jsonb, true)
+       where user_id = $1 and plan_date = $2`,
+      [userId, prevPlanDate(today), JSON.stringify(v)]);  // $3 as jsonb text — sidesteps neon null/numeric param typing
+    return true;
+  } catch (e) {
+    console.warn(JSON.stringify({ msg: 'actuals backfill failed — plan write unaffected', error: e?.message }));
+    return false;
+  }
+}
+
 async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchStation }) {
   // DRG-NIGHTLYTIMEOUT-001 — cheap nightly progress markers (db-ready / station-fetched / space-wx)
   // pin the stall site (Neon cold-resume vs fetch hang) in CloudWatch in one night. ms = since run() start.
@@ -194,7 +226,9 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   for (const [spaceId, rows] of Object.entries(bySpace)) {
     const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled });
     for (const [user_id, userPlan] of Object.entries(plan.users)) {
-      plans.push({ space_id: spaceId, user_id, plan: userPlan, weather: plan.weather });
+      // hydrology rides along for the A0.3-DRY-PLANS dry-replay diff (rerun-daily-plan.sh --diff needs the
+      // decision inputs, not just the verdicts). Additive: live-path consumers read res.rows only.
+      plans.push({ space_id: spaceId, user_id, plan: userPlan, weather: plan.weather, hydrology: plan.hydrology });
       if (!dryRun) {
         // BUG-TODAYWATER-001 / intraday regeneration — carry a bounded audit trail of what EARLIER runs of
         // the same day believed. The row is upserted on (user_id, plan_date) (there is a UNIQUE index), so
@@ -211,6 +245,9 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            values ($1,$2,$3, now())
            on conflict (user_id, plan_date) do update set items=excluded.items, generated_at=now()`,
           [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...userPlan.tasks })]);
+        // BUG-TODAYWATER-001: record yesterday's observed rain on yesterday's row. Fail-open (returns
+        // false, never throws) and touches ONLY (user_id, prevPlanDate) — today's upsert above is final.
+        await backfillYesterdayActual(pg, user_id, today, hyBySpace[spaceId]);
       }
     }
   }
@@ -236,4 +273,4 @@ function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   return { dryRun, today, ping: !!(event && event.ping === true) };
 }
 
-module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX };
+module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate };
