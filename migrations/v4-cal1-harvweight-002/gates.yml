@@ -1,0 +1,103 @@
+# gates.yml
+# V4-CAL1-HARVWEIGHT-002 — resolve_harvest_weight(), the single derivation locus.
+#
+# SEQUENCING: pre gates -> 0a-function.sql -> post gates. Function-only; no table, column, constraint
+# or row is touched, so no CTAS snapshot is required and there is nothing to backfill.
+#
+# ORDER vs THE LAMBDA (load-bearing, L-081): apply this to an environment BEFORE deploying the Lambda
+# that calls it. The reverse order leaves both harvest write paths raising 42883 (function does not
+# exist) on every harvest save. Rolling back is the mirror: revert the Lambda first, then 0r.
+#
+# Pre:  the refweight-001 unit_weights columns exist (the function reads them); the name is free.
+# Post: the function exists with the right signature and is STABLE; all five resolution tiers behave;
+#       the pairing invariant (grams and estimated are both-or-neither) holds for every tier.
+
+pre:
+  # The function resolves through plant_varieties/crop_types unit_weights — without those columns it
+  # would compile but silently resolve every estimate to NULL.
+  - name: pre_refweight_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND column_name='unit_weights'
+         AND table_name IN ('crop_types','plant_varieties')
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_function_name_free
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+       WHERE n.nspname='public' AND p.proname='resolve_harvest_weight'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # Argument NAMES are asserted too, not just types: the four params are positionally
+  # indistinguishable at three of four slots (uuid, text, numeric, numeric), so a silent reorder
+  # would type-check while swapping qty and user_grams.
+  - name: post_function_exists_with_signature
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+       WHERE n.nspname='public' AND p.proname='resolve_harvest_weight'
+         AND pg_get_function_identity_arguments(p.oid)
+             = 'p_plant_id uuid, p_unit text, p_qty numeric, p_user_grams numeric'
+    expect: rowcount_eq
+    value: 1
+
+  # STABLE, not VOLATILE: it must be usable in a LATERAL inside the harvest CTEs without the planner
+  # re-evaluating it per row, and it must never be marked IMMUTABLE (it reads three tables).
+  - name: post_function_is_stable
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+       WHERE n.nspname='public' AND p.proname='resolve_harvest_weight' AND p.provolatile='s'
+    expect: rowcount_eq
+    value: 1
+
+  # Tier 1 — a user-supplied weight is returned verbatim and flagged MEASURED.
+  - name: post_tier_user_supplied
+    sql: |
+      SELECT 1 FROM public.resolve_harvest_weight(NULL,'count',5,337)
+       WHERE weight_grams=337 AND weight_estimated=false
+    expect: rowcount_eq
+    value: 1
+
+  # Tier 2 — a weight-unit harvest converts exactly and is MEASURED. 2 lb = 907.184 g.
+  - name: post_tier_weight_unit
+    sql: |
+      SELECT 1 FROM public.resolve_harvest_weight(NULL,'lb',2,NULL)
+       WHERE weight_grams=907.184 AND weight_estimated=false
+    expect: rowcount_eq
+    value: 1
+
+  # Tier 5 — no factor anywhere yields NULL/NULL, never a guess and never a half-row.
+  - name: post_tier_unknown_is_null_pair
+    sql: |
+      SELECT 1 FROM public.resolve_harvest_weight(NULL,'count',5,NULL)
+       WHERE weight_grams IS NULL AND weight_estimated IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  # The both-or-neither invariant must hold for EVERY tier, including the unknown branch — this is
+  # what keeps chk_harvest_log_weight_pairing satisfied by construction at both call sites.
+  - name: post_pairing_holds_across_all_tiers
+    sql: |
+      SELECT 1 FROM (
+        SELECT * FROM public.resolve_harvest_weight(NULL,'count',5,337)
+        UNION ALL SELECT * FROM public.resolve_harvest_weight(NULL,'lb',2,NULL)
+        UNION ALL SELECT * FROM public.resolve_harvest_weight(NULL,'count',5,NULL)
+        UNION ALL SELECT * FROM public.resolve_harvest_weight(NULL,'bunch',1,NULL)
+      ) t WHERE (weight_grams IS NULL) <> (weight_estimated IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # Exactly one row, always — the callers use it in a LATERAL with no guard.
+  - name: post_returns_exactly_one_row
+    sql: |
+      SELECT 1 FROM public.resolve_harvest_weight(NULL,'count',5,NULL)
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.19.0-cal1-harvweight-002'
+    expect: rowcount_eq
+    value: 1

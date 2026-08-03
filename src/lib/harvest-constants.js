@@ -15,3 +15,15 @@ export const MAX_PLAUSIBLE = {
   cup:   1000,
   head:  1000,
 }
+
+// V4-HARVDUAL-001 Slice A — optional measured weight alongside the count. Mirrors the same names in
+// lambda/events/validators.js; keep both in sync in one commit (see the header note above).
+export const WEIGHT_UNITS = ['g', 'kg', 'lb', 'oz']
+
+export const WEIGHT_UNIT_GRAMS = { g: 1, kg: 1000, lb: 453.592, oz: 28.3495 }
+
+export const MAX_PLAUSIBLE_WEIGHT_G = 50000
+
+export function toGrams(weight, unit) {
+  return weight * (WEIGHT_UNIT_GRAMS[unit ?? 'g'] ?? 1)
+}

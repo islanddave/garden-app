@@ -13,6 +13,23 @@ export const MAX_PLAUSIBLE = {
   bunch: 1000, cup: 1000, head: 1000,
 };
 
+// V4-HARVDUAL-001 Slice A — the OPTIONAL measured-weight half of a harvest. Separate vocabulary from
+// HARVEST_UNITS on purpose: a weight is always a weight, so 'count'/'cup'/'head'/'bunch' are not
+// admissible here even though they are valid harvest.unit values.
+// Kitchen scales read oz and lb, so the client sends whatever the scale showed and the SERVER
+// converts — grams is the only thing that reaches the database (harvest_log.weight_grams).
+export const WEIGHT_UNITS = ['g', 'kg', 'lb', 'oz'];
+export const WEIGHT_UNIT_GRAMS = { g: 1, kg: 1000, lb: 453.592, oz: 28.3495 };
+// 50 kg in one pick. Deliberately far below MAX_PLAUSIBLE.g (500 000) — that cap governs a harvest
+// LOGGED in grams, where a big number is a legitimate unit artefact; this one governs a hand-weighed
+// bowl, where 50 kg is a typo. Catches the fat-finger (337 -> 3370) without blocking a real haul.
+export const MAX_PLAUSIBLE_WEIGHT_G = 50000;
+
+// Grams for a user-entered weight. Defaults to grams when weight_unit is omitted.
+export function toGrams(weight, unit) {
+  return weight * (WEIGHT_UNIT_GRAMS[unit ?? 'g'] ?? 1);
+}
+
 // F22 event_date bounds. Tolerates clock-skew + small client lag.
 const PAST_BOUND_MS = 5 * 365 * 24 * 3600 * 1000;
 const FUTURE_BOUND_MS = 3600 * 1000;
@@ -95,6 +112,26 @@ export function validateHarvestFields(h) {
   }
   if (h.quality_rating != null && ![1, 2, 3, 4, 5].includes(h.quality_rating)) {
     return { status: 400, error: 'harvest.quality_rating must be 1-5' };
+  }
+
+  // V4-HARVDUAL-001 Slice A — OPTIONAL measured weight alongside the count ("5 tomatoes, 337 g").
+  // quantity+unit are unchanged and still required; this is purely additive.
+  //
+  // Three distinct client intents, and the edit path treats them differently, so the distinction
+  // between "absent" and "explicitly null" is load-bearing:
+  //   weight: <number>  -> the user weighed it. Stored, weight_estimated = false.
+  //   weight: null      -> the user CLEARED their weight. Falls back to the reference estimate.
+  //   weight absent     -> untouched. An edit to quality/quantity must NOT drop a recorded weight.
+  if (h.weight_unit != null && !WEIGHT_UNITS.includes(h.weight_unit)) {
+    return { status: 400, error: 'harvest.weight_unit must be g, kg, lb, or oz' };
+  }
+  if (h.weight != null) {
+    if (typeof h.weight !== 'number' || !Number.isFinite(h.weight) || h.weight <= 0) {
+      return { status: 400, error: 'harvest.weight must be a positive finite number' };
+    }
+    if (toGrams(h.weight, h.weight_unit) > MAX_PLAUSIBLE_WEIGHT_G) {
+      return { status: 400, error: 'harvest.weight exceeds max' };
+    }
   }
   return null;
 }

@@ -24,7 +24,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams } from './validators.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope } from './household.js';
 import { FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES } from './statusTransitions.js';
@@ -928,43 +928,56 @@ export const handler = async (event) => {
           const hq = body.harvest.quantity;
           const hu = body.harvest.unit;
           const hqual = body.harvest.quality_rating ?? null;
-          // Weight recompute uses the SAME expression as the create CTE — measured when the unit is
-          // itself a weight, else estimated from the crop's grams_per_unit, else NULL. It must be
-          // recomputed on every edit: changing 3 lb -> 3 count has to CLEAR a measured weight, not
-          // leave a stale one behind, and chk_harvest_log_weight_pairing
-          // ((weight_grams IS NULL) = (weight_estimated IS NULL)) makes a half-update a hard 23514.
-          // The ct.default_unit = unit join gate is what keeps grams_per_unit present only for a
-          // valid estimate, so both columns move together by construction.
-          // NOTE on live data: all 306 prod harvest rows use count/cup/head/bunch, so today this
-          // resolves to NULL/NULL for every one of them. That is CAL-1's own coverage gap
-          // (V4-CAL1HARV-001), not this route's — but it does mean an edit to a weight unit is the
-          // first thing that will ever populate these columns.
+          // V4-HARVDUAL-001 Slice A. The weight derivation now lives in ONE place —
+          // public.resolve_harvest_weight (migrations/v4-cal1-harvweight-002) — called identically
+          // here and in the POST CTE. It previously existed as two hand-copied SQL expressions kept
+          // in agreement by a comment, which is the same shape as the bug this route was built to
+          // fix. It also now resolves through the refweight-001 variety->crop unit_weights tiers
+          // rather than crop_types.grams_per_unit alone; the old expression would have overwritten a
+          // MEASURED per-variety weight (Super Sweet 100 @ 8 g/fruit) with the crop-level tomato
+          // average (123 g/fruit) on any unrelated edit.
+          //
+          // The function returns both columns together, so chk_harvest_log_weight_pairing
+          // ((weight_grams IS NULL) = (weight_estimated IS NULL)) holds by construction and a
+          // half-update can no longer raise 23514.
+          //
+          // 0 is the "no user weight" sentinel, NOT null: the neon HTTP driver cannot type a null JS
+          // param even with a ::cast (same constraint the POST CTE documents), so the nullability is
+          // reintroduced in SQL with NULLIF. The validator rejects weight <= 0, so 0 is unambiguous.
+          const hUserGrams = typeof body.harvest.weight === 'number'
+            ? toGrams(body.harvest.weight, body.harvest.weight_unit) : 0;
+          // Explicit null means "I'm clearing my weight" -> fall back to the reference estimate.
+          // An ABSENT key must preserve a weight the user previously recorded (see validators.js).
+          const hClearWeight = body.harvest.weight === null;
           const updatedHarvest = await sql`
             UPDATE harvest_log h
-               SET quantity       = ${hq}::numeric,
-                   unit           = ${hu},
-                   quality_rating = ${hqual}::smallint,
-                   weight_grams   = COALESCE(
-                     ${hq}::numeric * CASE ${hu}::text
-                       WHEN 'g'  THEN 1
-                       WHEN 'kg' THEN 1000
-                       WHEN 'lb' THEN 453.592
-                       WHEN 'oz' THEN 28.3495
-                       ELSE NULL
-                     END,
-                     ct.grams_per_unit * ${hq}::numeric
-                   ),
-                   weight_estimated = CASE
-                     WHEN ${hu}::text IN ('g','kg','lb','oz') THEN false
-                     WHEN ct.grams_per_unit IS NOT NULL       THEN true
-                     ELSE NULL
-                   END,
+               SET quantity         = ${hq}::numeric,
+                   unit             = ${hu},
+                   quality_rating   = ${hqual}::smallint,
+                   weight_grams     = rw.weight_grams,
+                   weight_estimated = rw.weight_estimated,
                    updated_at = NOW()
-              FROM event_log ne
-              LEFT JOIN garden_node gn ON gn.id = ne.plant_id      AND gn.deleted_at IS NULL
-              LEFT JOIN cultivar    cv ON cv.id = gn.cultivar_id   AND cv.deleted_at IS NULL
-              LEFT JOIN crop_types  ct ON ct.slug = cv.crop_type_slug AND ct.deleted_at IS NULL
-                                      AND ct.default_unit = ${hu}
+              FROM event_log ne,
+              LATERAL public.resolve_harvest_weight(
+                ne.plant_id, ${hu}, ${hq}::numeric,
+                COALESCE(
+                  NULLIF(${hUserGrams}::numeric, 0),
+                  CASE WHEN ${hClearWeight}::boolean THEN NULL ELSE (
+                    -- Carry forward a weight the user typed on an earlier save, so editing the
+                    -- quality star does not silently discard their measurement.
+                    -- The unit-NOT-IN-weight-units guard distinguishes the two ways a row
+                    -- can be weight_estimated=false: a USER-SUPPLIED weight (preserve it — it is an
+                    -- independent fact) versus a weight DERIVED from a weight-unit quantity
+                    -- (recompute it — 3 lb -> 3 count must clear, per the original contract here).
+                    SELECT h2.weight_grams FROM harvest_log h2
+                     WHERE h2.event_id = ${eventId}
+                       AND h2.deleted_at IS NULL
+                       AND h2.weight_estimated = false
+                       AND h2.unit NOT IN ('g','kg','lb','oz')
+                     LIMIT 1
+                  ) END
+                )
+              ) rw
              WHERE h.event_id = ${eventId}
                AND h.deleted_at IS NULL
                AND ne.id = h.event_id
@@ -1190,6 +1203,10 @@ export const handler = async (event) => {
       const harvestUnit = isHarvest ? body.harvest.unit : null;
       const harvestQuality = isHarvest ? (body.harvest.quality_rating ?? null) : null;
       const harvestNotes = isHarvest ? (body.harvest.notes ?? null) : null;
+      // V4-HARVDUAL-001 Slice A — optional user-supplied weight, converted to grams server-side
+      // (the client sends whatever the scale read). 0 = not supplied; see the CTE note below.
+      const harvestUserGrams = isHarvest && typeof body.harvest.weight === 'number'
+        ? toGrams(body.harvest.weight, body.harvest.weight_unit) : 0;
 
       // ── Step 1: pre-fetch user_timezone (COALESCE to America/New_York) ───────────────────────
       const tzRows = await sql`
@@ -1258,32 +1275,20 @@ export const handler = async (event) => {
               ${harvestQuality}::smallint,
               ${harvestNotes},
               ${userId},
-              -- CAL-1 (V4-CAL1-HARVWEIGHT-001): grams = MEASURED when the unit is itself a weight
-              -- (g/kg/lb/oz), else ESTIMATED (qty * crop grams_per_unit, only when the crop's
-              -- default_unit matches this unit), else NULL — NULL grams_per_unit = UNKNOWN = no
-              -- estimate, never guessed. Computed fully in SQL (a nullable JS param can't be typed by
-              -- the neon HTTP driver even with a ::cast); the ct.default_unit = unit join gate makes
-              -- grams_per_unit present ONLY for a valid estimate, so the both-or-neither CHECK holds.
-              COALESCE(
-                ${harvestQty}::numeric * CASE ${harvestUnit}::text
-                  WHEN 'g'  THEN 1
-                  WHEN 'kg' THEN 1000
-                  WHEN 'lb' THEN 453.592
-                  WHEN 'oz' THEN 28.3495
-                  ELSE NULL
-                END,
-                ct.grams_per_unit * ${harvestQty}::numeric
-              ),
-              CASE
-                WHEN ${harvestUnit}::text IN ('g','kg','lb','oz') THEN false
-                WHEN ct.grams_per_unit IS NOT NULL               THEN true
-                ELSE NULL
-              END
-            FROM new_event ne
-            LEFT JOIN garden_node gn ON gn.id = ne.plant_id      AND gn.deleted_at IS NULL
-            LEFT JOIN cultivar    cv ON cv.id = gn.cultivar_id   AND cv.deleted_at IS NULL
-            LEFT JOIN crop_types  ct ON ct.slug = cv.crop_type_slug AND ct.deleted_at IS NULL
-                                    AND ct.default_unit = ${harvestUnit}
+              -- CAL-1 weight, resolved by public.resolve_harvest_weight (v4-cal1-harvweight-002) —
+              -- the SINGLE derivation locus, called identically by the PUT recompute above. Order:
+              -- user-supplied grams > weight-unit harvest > variety unit_weights > crop unit_weights
+              -- > NULL. NULL = UNKNOWN = no estimate, still never guessed. The function returns both
+              -- columns together so the both-or-neither CHECK holds by construction.
+              -- 0 is the "no user weight" sentinel because the neon HTTP driver cannot type a null JS
+              -- param even with a ::cast; NULLIF reintroduces the nullability inside SQL.
+              rw.weight_grams,
+              rw.weight_estimated
+            FROM new_event ne,
+            LATERAL public.resolve_harvest_weight(
+              ne.plant_id, ${harvestUnit}, ${harvestQty}::numeric,
+              NULLIF(${harvestUserGrams}::numeric, 0)
+            ) rw
             WHERE ${isHarvest}::boolean = true
             RETURNING id, quantity, unit, quality_rating, notes, weight_grams, weight_estimated
           )
