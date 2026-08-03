@@ -145,3 +145,30 @@ jobs:
           else
             echo "## integrity-weekly: ERROR — no report produced" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Publish alert to SNS (garden-ops-alerts — OPS-ALERTSINK-001 first producer)
+        # Sink slice (roadmap-addition-V101 §3-8). Publishes ONLY on status=alert or a
+        # missing report; OK / OK_WITH_UNVERIFIED stay silent (warn-tier, not page-tier).
+        # Uses the backup-role creds from the aws step (sns:Publish granted via the
+        # additive SnsPublishGardenOpsAlerts inline policy, 2026-08-03). continue-on-error
+        # so the sink can never mask the run's own result; topic ARN pinned like
+        # NEON_PROD_BRANCH_ID above (not a secret).
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          SNS_TOPIC_ARN: arn:aws:sns:us-east-1:769788341849:garden-ops-alerts
+        run: |
+          set -euo pipefail
+          STATUS=$(jq -r '.status // empty' integrity-report.json 2>/dev/null || true)
+          STATUS=${STATUS:-missing}
+          case "$STATUS" in
+            OK|ok|OK_WITH_UNVERIFIED|ok_with_unverified)
+              echo "status=$STATUS — nothing published"; exit 0;;
+          esac
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          ALERTS=$(jq -r '(.alerts // [])[] | "- " + .' integrity-report.json 2>/dev/null || echo "(report missing)")
+          printf 'integrity-weekly status: %s\nrun: %s\n\nalerts:\n%s\n' "$STATUS" "$RUN_URL" "$ALERTS" > /tmp/sns-msg.txt
+          aws sns publish --topic-arn "$SNS_TOPIC_ARN" \
+            --subject "garden integrity-weekly: $STATUS" \
+            --message "file:///tmp/sns-msg.txt" --region us-east-1
+          echo "published alert to garden-ops-alerts"
