@@ -28,139 +28,168 @@
 #       schema_version row present; a second apply changes 0 rows.
 
 pre:
+  # ENVIRONMENT-AGNOSTIC (fixed 2026-08-03). Like the post block, these were originally prod-derived
+  # absolute counts (26 slugs live / 4 habit-NULL / 3 deliberate-NULL) and failed on staging, which
+  # is missing 6 target slugs. Rewritten as violation counts + one informational capture.
+
   # The columns this migration writes must already exist — it is data-only and adds no DDL.
+  # This one IS absolute: it is a schema fact, identical in every environment.
   - name: pre_target_columns_exist
     sql: |
       SELECT 1 FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='crop_types'
-         AND column_name IN ('harvest_habit','repeat_interval_days','first_year_harvest')
+       WHERE table_schema = 'public' AND table_name = 'crop_types'
+         AND column_name IN ('harvest_habit', 'repeat_interval_days', 'first_year_harvest')
     expect: rowcount_eq
     value: 3
 
-  # All 26 target slugs must be live, or the seed silently under-applies via the WHERE IN.
-  - name: pre_all_26_slugs_live
+  # A SOFT-DELETED target slug would be silently skipped by the `deleted_at IS NULL` guard and the
+  # gap would survive the migration unnoticed. An ABSENT slug is fine (nothing to seed); a
+  # soft-deleted one is a real surprise worth stopping for.
+  - name: pre_no_target_slug_soft_deleted
     sql: |
       SELECT count(*) FROM public.crop_types
-       WHERE deleted_at IS NULL AND slug IN (
-         'arugula','basil','bay','bean','bitter_melon','blackberry','carrot','cilantro','cucamelon',
-         'cucumber','dill','endive','garlic','lemon_verbena','lettuce','luffa','melon','nasturtium',
-         'okra','potato','rosemary','shallot','spinach','squash','tomatillo','watermelon')
+       WHERE deleted_at IS NOT NULL
+         AND slug IN (
+           'arugula','basil','bay','bean','bitter_melon','blackberry','carrot','cilantro','cucamelon',
+           'cucumber','dill','endive','garlic','lemon_verbena','lettuce','luffa','melon','nasturtium',
+           'okra','potato','rosemary','shallot','spinach','squash','tomatillo','watermelon')
     expect: scalar_eq
-    value: 26
+    value: 0
 
-  # The 4 habit targets must still be NULL. If one is already set, someone hand-fixed it and the
-  # IS-NULL guard will skip it — surface that BEFORE applying rather than discovering it in the diff.
-  - name: pre_habit_targets_still_null
+  # No habit target may already hold a value that CONFLICTS with what 0a intends to write. A row
+  # that already matches is fine (idempotent re-run); a row that differs means someone hand-fixed it
+  # and the IS-NULL guard will silently skip it — surface that BEFORE applying.
+  - name: pre_no_conflicting_habit_value
     sql: |
       SELECT count(*) FROM public.crop_types
-       WHERE deleted_at IS NULL AND harvest_habit IS NULL
-         AND slug IN ('blackberry','carrot','spinach','luffa')
+       WHERE deleted_at IS NULL AND harvest_habit IS NOT NULL AND (
+            (slug = 'blackberry' AND harvest_habit <> 'repeat')
+         OR (slug = 'carrot'     AND harvest_habit <> 'single')
+         OR (slug = 'spinach'    AND harvest_habit <> 'cut_and_come_again')
+         OR (slug = 'luffa'      AND harvest_habit <> 'single'))
     expect: scalar_eq
-    value: 4
+    value: 0
 
-  # The three deliberate NULLs must be NULL going in — if any is already set, the design decision
+  # The three deliberate NULLs must be NULL going in. If any is already set, the design decision
   # recorded in 0a has been overtaken and the migration comment is stale.
   - name: pre_deliberate_nulls_are_null
     sql: |
       SELECT count(*) FROM public.crop_types
-       WHERE deleted_at IS NULL AND first_year_harvest IS NULL
-         AND slug IN ('garlic','shallot','lemon_verbena')
+       WHERE deleted_at IS NULL
+         AND slug IN ('garlic', 'shallot', 'lemon_verbena')
+         AND first_year_harvest IS NOT NULL
     expect: scalar_eq
-    value: 3
+    value: 0
 
-  # BASELINE for the post-gate diff. Measured on prod 2026-08-03 = 9 rows. Capture the actual
-  # plant_id set, not just the count, before applying.
+  # INFORMATIONAL capture, not a pass/fail. Records how much of the migration this environment
+  # actually exercises, so a green run is not over-read. Prod 2026-08-03 = 26; staging = 20.
+  - name: pre_record_target_slug_coverage
+    manual: true
+    note: |
+      Run and RECORD (do not gate):
+        SELECT count(*) FROM public.crop_types WHERE deleted_at IS NULL AND slug IN (<the 26>);
+      Anything below 26 means this environment does not exercise the whole migration — note which
+      slugs are absent and carry that into the post_staging_coverage_caveat gate.
+
+  # BASELINE for the post-gate harvest-ready diff. Capture the actual plant_id set, not a count.
   - name: pre_harvest_ready_baseline
-    sql: |
-      SELECT count(*) FROM public.crop_types ct
-       WHERE ct.deleted_at IS NULL AND ct.harvest_habit IN ('repeat','cut_and_come_again')
-         AND ct.repeat_interval_days IS NOT NULL
-    expect: scalar_gte
-    value: 1
-
+    manual: true
+    note: |
+      PROD ONLY. Capture the full candidate row set of GET /api/events/harvest-ready before
+      applying, for the row-for-row diff in post_harvest_ready_diff. Measured 2026-08-03: 9 rows.
 post:
-  # The core assertion: all 26 complete, minus the 3 deliberate NULLs = 23.
-  - name: post_completeness_23_of_26
+  # ENVIRONMENT-AGNOSTIC BY DESIGN (fixed 2026-08-03 after the first staging apply attempt).
+  # The original post-gates hardcoded prod-derived absolute counts (23 complete / 20 true / 3 false)
+  # and therefore could not pass on staging, which holds 82 live crop types to prod's 130 and is
+  # MISSING 6 of the 26 target slugs outright (bay, bean, carrot, lemon_verbena, nasturtium, okra).
+  # A gate that cannot run in the environment the Migration Authoring Rule says to apply to FIRST is
+  # not a gate. Every assertion below is now a VIOLATION COUNT that must be 0, so it holds in any
+  # environment regardless of which slugs happen to exist there.
+
+  # 1. CORE: no live target slug is left incomplete, except the three deliberate NULLs.
+  #    Incomplete = missing habit, or a repeating habit with no interval, or missing first_year_harvest.
+  - name: post_no_incomplete_target_slug
     sql: |
       SELECT count(*) FROM public.crop_types
        WHERE deleted_at IS NULL
          AND slug IN (
            'arugula','basil','bay','bean','bitter_melon','blackberry','carrot','cilantro','cucamelon',
-           'cucumber','dill','endive','garlic','lemon_verbena','lettuce','luffa','melon','nasturtium',
-           'okra','potato','rosemary','shallot','spinach','squash','tomatillo','watermelon')
-         AND harvest_habit IS NOT NULL
-         AND (harvest_habit='single' OR repeat_interval_days IS NOT NULL)
-         AND first_year_harvest IS NOT NULL
-    expect: scalar_eq
-    value: 23
-
-  # The 3 deliberate NULLs must STILL be NULL. This gate is what stops a future pass quietly
-  # "completing" them.
-  - name: post_deliberate_nulls_preserved
-    sql: |
-      SELECT count(*) FROM public.crop_types
-       WHERE deleted_at IS NULL AND first_year_harvest IS NULL
-         AND slug IN ('garlic','shallot','lemon_verbena')
-    expect: scalar_eq
-    value: 3
-
-  # chk_crop_types_repeat_interval restated as a gate: no 'single' row may carry an interval.
-  - name: post_no_single_carries_interval
-    sql: |
-      SELECT count(*) FROM public.crop_types
-       WHERE harvest_habit='single' AND repeat_interval_days IS NOT NULL
+           'cucumber','dill','endive','lettuce','luffa','melon','nasturtium','okra','potato',
+           'rosemary','spinach','squash','tomatillo','watermelon')
+         AND NOT (harvest_habit IS NOT NULL
+                  AND (harvest_habit = 'single' OR repeat_interval_days IS NOT NULL)
+                  AND first_year_harvest IS NOT NULL)
     expect: scalar_eq
     value: 0
 
-  # Exact seeded values, so a transcription slip fails loudly rather than shipping a wrong cadence.
+  # 2. The three deliberate NULLs must STILL be NULL wherever they exist. This is the gate that stops
+  #    a later pass quietly "completing" garlic/shallot/lemon_verbena.
+  - name: post_deliberate_nulls_preserved
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL
+         AND slug IN ('garlic','shallot','lemon_verbena')
+         AND first_year_harvest IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+  # 3. chk_crop_types_repeat_interval restated: no 'single' row may carry an interval, anywhere.
+  - name: post_no_single_carries_interval
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE harvest_habit = 'single' AND repeat_interval_days IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+  # 4. Exact seeded values, expressed as violations so an absent slug is vacuously fine but a WRONG
+  #    value fails loudly. Catches a transcription slip without assuming the slug exists.
   - name: post_seeded_values_exact
     sql: |
       SELECT count(*) FROM public.crop_types
        WHERE deleted_at IS NULL AND (
-         (slug='blackberry' AND harvest_habit='repeat'             AND repeat_interval_days=2)
-      OR (slug='carrot'     AND harvest_habit='single'             AND repeat_interval_days IS NULL)
-      OR (slug='spinach'    AND harvest_habit='cut_and_come_again' AND repeat_interval_days=10)
-      OR (slug='luffa'      AND harvest_habit='single'             AND repeat_interval_days IS NULL))
+            (slug = 'blackberry' AND (harvest_habit, repeat_interval_days) IS DISTINCT FROM ('repeat', 2))
+         OR (slug = 'carrot'     AND (harvest_habit, repeat_interval_days) IS DISTINCT FROM ('single', NULL))
+         OR (slug = 'spinach'    AND (harvest_habit, repeat_interval_days) IS DISTINCT FROM ('cut_and_come_again', 10))
+         OR (slug = 'luffa'      AND (harvest_habit, repeat_interval_days) IS DISTINCT FROM ('single', NULL)))
     expect: scalar_eq
-    value: 4
+    value: 0
 
-  # first_year_harvest split: 19 true written here + carrot pre-existing true = 20 of the 26 true;
-  # bay + rosemary written false + blackberry pre-existing false = 3 false.
-  - name: post_fyh_true_count
+  # 5. first_year_harvest polarity, as violations. bay/rosemary/blackberry are the only FALSE rows in
+  #    the target set; every other live target slug must be TRUE.
+  - name: post_fyh_polarity
     sql: |
       SELECT count(*) FROM public.crop_types
-       WHERE deleted_at IS NULL AND first_year_harvest=true
+       WHERE deleted_at IS NULL AND (
+            (slug IN ('bay','rosemary','blackberry') AND first_year_harvest IS DISTINCT FROM false)
+         OR (slug IN ('arugula','basil','bean','bitter_melon','carrot','cilantro','cucamelon',
+                      'cucumber','dill','endive','lettuce','luffa','melon','nasturtium','okra',
+                      'potato','spinach','squash','tomatillo','watermelon')
+             AND first_year_harvest IS DISTINCT FROM true))
+    expect: scalar_eq
+    value: 0
+
+  # 6. No harvest-season window was written for any target slug. A wrong window SUPPRESSES a true
+  #    readiness signal. Scoped to the target set rather than asserting a global count of 2, because
+  #    the asparagus/garlic pair that legitimately carries one is prod-specific.
+  - name: post_no_doy_written_on_targets
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE deleted_at IS NULL
          AND slug IN (
-           'arugula','basil','bean','bitter_melon','carrot','cilantro','cucamelon','cucumber','dill',
-           'endive','lettuce','luffa','melon','nasturtium','okra','potato','spinach','squash',
-           'tomatillo','watermelon')
+           'arugula','basil','bay','bean','bitter_melon','blackberry','carrot','cilantro','cucamelon',
+           'cucumber','dill','endive','lemon_verbena','lettuce','luffa','melon','nasturtium','okra',
+           'potato','rosemary','shallot','spinach','squash','tomatillo','watermelon')
+         AND (harvest_season_start_doy IS NOT NULL OR harvest_season_end_doy IS NOT NULL)
     expect: scalar_eq
-    value: 20
-
-  - name: post_fyh_false_count
-    sql: |
-      SELECT count(*) FROM public.crop_types
-       WHERE deleted_at IS NULL AND first_year_harvest=false
-         AND slug IN ('bay','rosemary','blackberry')
-    expect: scalar_eq
-    value: 3
-
-  # No harvest-season window was written for any of the 26 — a wrong window suppresses a true
-  # readiness signal. Only asparagus and garlic carry one, and this migration must not change that.
-  - name: post_no_doy_written
-    sql: |
-      SELECT count(*) FROM public.crop_types
-       WHERE deleted_at IS NULL AND harvest_season_start_doy IS NOT NULL
-    expect: scalar_eq
-    value: 2
+    value: 0
 
   - name: post_schema_version_present
     sql: |
-      SELECT 1 FROM public.schema_version WHERE version='4.17.0-croptype-002'
+      SELECT 1 FROM public.schema_version WHERE version = '4.17.0-croptype-002'
     expect: rowcount_eq
     value: 1
 
-  # Idempotency: re-run 0a-data.sql and assert it reports 0 rows changed on every statement.
+  # 7. Idempotency: re-run 0a-data.sql and assert every statement reports 0 rows changed.
   - name: post_second_apply_is_noop
     manual: true
     note: |
@@ -168,13 +197,25 @@ post:
       report INSERT 0 0. Any non-zero means an IS-NULL guard is missing and the file is not
       first-write-wins.
 
-  # The regression check that matters most, and it cannot be expressed as a single scalar.
+  # 8. The regression check that matters most, and it cannot be expressed as a single scalar.
   - name: post_harvest_ready_diff
     manual: true
     note: |
-      Re-run the GET /api/events/harvest-ready candidate query against prod and diff row-for-row
-      against the pre-gate capture. The 9 rows firing on 2026-08-03 (basil/Holy Basil,
-      dill/Mammoth Dill, parsley/Italian Parsley, tomatillo/Purple Blush, tomato/Sunray,
-      tomato/Beefsteak Rescue 2, tomato/Bush Early Girl, tomato/Czech Bush Slicer,
-      wineberry/Wild Wineberry) MUST all still be present. New rows may appear for blackberry and
-      spinach — that is the intended effect. A DISAPPEARING row is a blocking regression.
+      PROD ONLY (staging carries a different, smaller planting set). Re-run the
+      GET /api/events/harvest-ready candidate query and diff row-for-row against the pre-gate
+      capture. The 9 rows firing on 2026-08-03 (basil/Holy Basil, dill/Mammoth Dill,
+      parsley/Italian Parsley, tomatillo/Purple Blush, tomato/Sunray, tomato/Beefsteak Rescue 2,
+      tomato/Bush Early Girl, tomato/Czech Bush Slicer, wineberry/Wild Wineberry) MUST all still
+      be present. New rows may appear for blackberry and spinach — that is the intended effect.
+      A DISAPPEARING row is a blocking regression.
+
+  # 9. Staging does NOT exercise the whole migration. Recorded so a green staging run is not
+  #    mistaken for full coverage.
+  - name: post_staging_coverage_caveat
+    manual: true
+    note: |
+      As of 2026-08-03 staging is MISSING 6 of the 26 target slugs entirely: bay, bean, carrot,
+      lemon_verbena, nasturtium, okra. A green staging apply therefore leaves untested: the carrot
+      'single' write, the bay FALSE write, the lemon_verbena deliberate-NULL preservation, and 3 of
+      the 19 TRUE writes. Those paths are first exercised on the PROD apply — re-run the post-gates
+      there rather than treating staging green as sufficient.
