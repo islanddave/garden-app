@@ -2,8 +2,18 @@
 // ~2AM snapshot (the nightly daily-plan engine); in showery/convective regimes the amount can move several-
 // fold by midday. This module re-fetches precip LIVE from Open-Meteo using the EXACT same endpoint + field
 // mapping as the engine's lambda/daily-plan/index.js fetchPrecip, so the displayed figure can be refreshed
-// to "now" without re-running the engine (which would clobber per-plant task/done state). DISPLAY ONLY: the
-// watering recommendation stays the server's nightly conservative plan. Open-Meteo is keyless + CORS-enabled.
+// to "now" without re-running the engine. DISPLAY ONLY: the watering recommendation stays the server's
+// plan. Open-Meteo is keyless + CORS-enabled.
+//
+// CORRECTION (BUG-TODAYWATER-001, 2026-08-03): this comment used to justify display-only by saying a
+// re-run "would clobber per-plant task/done state". That is FALSE and has been since V3-TODAYDONE-001 —
+// `done` is computed at READ time from event_log (lambda/daily-plan-read), not stored on the plan, so
+// regeneration loses no check-offs. The claim was load-bearing: it was the stated reason the engine could
+// not simply be re-run with fresher data, and it blocked the actual fix for a plan that had gone 4x stale
+// by mid-morning. The engine is now regenerated intraday on its own schedule (05:30 / 15:30 ET, see
+// .github/workflows/deploy-lambda.yml). This module stays display-only for a different and still-valid
+// reason: it is a client-side fetch, and the watering DECISION must come from the server so that every
+// device and every reader agrees on one answer.
 
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100
 const numOr0 = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)

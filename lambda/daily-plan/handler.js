@@ -49,6 +49,34 @@ async function coordsForSpace(space, { geocodeZip }) {
   return { lat: Number(lat), lng: Number(lng) };
 }
 
+// BUG-TODAYWATER-001 — how many earlier generations of the SAME day to retain inside items.prior_runs.
+// 3 covers the nightly plus both intraday refreshes; a 4th would mean someone re-ran manually, and the
+// oldest (the nightly) is the one worth keeping, so we keep the head and drop from the tail.
+const PRIOR_RUNS_MAX = 3;
+
+// Read the row this run is about to replace and fold it into a compact history entry. Returns [] on a
+// first run of the day or on ANY failure — this is an audit nicety and must never be able to empty or
+// block the plan, which is the same fail-open posture fetchStation takes.
+async function readPriorRuns(pg, userId, planDate) {
+  try {
+    const { rows } = await pg.query(
+      `select items, generated_at from daily_plan where user_id = $1 and plan_date = $2`,
+      [userId, planDate]);
+    if (!rows.length) return [];
+    const prev = rows[0].items || {};
+    const entry = {
+      generated_at: rows[0].generated_at,
+      hydrology: prev.hydrology ?? null,
+      counts: prev.counts ?? null,
+    };
+    // Oldest-first, newest-dropped-when-full: the nightly run is the baseline worth keeping.
+    return [...(Array.isArray(prev.prior_runs) ? prev.prior_runs : []), entry].slice(0, PRIOR_RUNS_MAX);
+  } catch (e) {
+    console.warn(JSON.stringify({ msg: 'prior-runs read failed — continuing without history', error: e?.message }));
+    return [];
+  }
+}
+
 async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchStation }) {
   // DRG-NIGHTLYTIMEOUT-001 — cheap nightly progress markers (db-ready / station-fetched / space-wx)
   // pin the stall site (Neon cold-resume vs fetch hang) in CloudWatch in one night. ms = since run() start.
@@ -168,11 +196,21 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     for (const [user_id, userPlan] of Object.entries(plan.users)) {
       plans.push({ space_id: spaceId, user_id, plan: userPlan, weather: plan.weather });
       if (!dryRun) {
+        // BUG-TODAYWATER-001 / intraday regeneration — carry a bounded audit trail of what EARLIER runs of
+        // the same day believed. The row is upserted on (user_id, plan_date) (there is a UNIQUE index), so
+        // without this a re-run silently destroys the snapshot it replaced — and the one question this
+        // change makes urgent is exactly "what did the 02:00 run think, and did that forecast arrive?"
+        // Deliberately NOT a schema change: kept inside `items` as an additive key, so no DDL, no touching
+        // the UNIQUE constraint, no reader impact (every reader selects named keys), and no
+        // PLAN_SCHEMA_VERSION bump — that literal is pinned by three readers which deploy in one unordered
+        // wave, so bumping it opens a mismatch window. Hydrology + counts only, capped at PRIOR_RUNS_MAX:
+        // enough to reconstruct the decision, small enough that a day of re-runs cannot bloat the row.
+        const priorRuns = await readPriorRuns(pg, user_id, today);
         await pg.query(
           `insert into daily_plan (user_id, plan_date, items, generated_at)
            values ($1,$2,$3, now())
            on conflict (user_id, plan_date) do update set items=excluded.items, generated_at=now()`,
-          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, ...userPlan.tasks })]);
+          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...userPlan.tasks })]);
       }
     }
   }
@@ -198,4 +236,4 @@ function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   return { dryRun, today, ping: !!(event && event.ping === true) };
 }
 
-module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions };
+module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX };

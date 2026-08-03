@@ -374,6 +374,53 @@ jobs:
             echo "DRY_RUN already set to: $CURRENT (preserving)"
           fi
 
+      # BUG-TODAYWATER-001 — INTRADAY REGENERATION.
+      # The nightly plan is a frozen ~02:00 ET snapshot. On 2026-08-03 it was generated with a 0.98"
+      # forecast for a day that delivered 3.8" observed, so Today listed 200 plantings for watering in the
+      # rain; a manual re-run at 08:37 with the real figure took that to 18. Fixing the engine's gates does
+      # NOT fix this — a plan computed at 02:00 is only ever as good as the 02:00 forecast. The input has to
+      # be refreshed while the day is happening.
+      #
+      # Two refreshes, each tied to a real decision moment rather than a round number:
+      #   05:30 ET — before the primary morning watering window (foliage must dry before evening or you
+      #              drive foliar disease in this humidity), and before Dave looks at Today.
+      #   15:30 ET — before the evening container top-up, the one call that genuinely needs observed rather
+      #              than forecast rain.
+      # Cron is fixed-UTC so both drift an hour with DST; each lands inside its window in either offset.
+      #
+      # Safe to run repeatedly by construction: writes stay gated on the Lambda's own env DRY_RUN (an event
+      # can never force a live run), per-plant done state is computed at READ time from event_log
+      # (V3-TODAYDONE-001) so regeneration cannot clobber check-offs, and the row carries items.prior_runs
+      # so an earlier generation is auditable rather than destroyed.
+      #
+      # The nightly rule is (re)asserted here too. It has existed since DRG-TODAY-001 but was created out of
+      # band, so it was a snowflake — declaring it makes the whole schedule reproducible and drift-visible.
+      # put-rule is idempotent and the expression below is byte-identical to what is live.
+      - name: Ensure EventBridge cron rules for daily-plan (nightly + intraday)
+        if: matrix.function == 'daily-plan'
+        continue-on-error: true  # requires events:PutRule + events:PutTargets + lambda:AddPermission on deploy role
+        run: |
+          set -euo pipefail
+          LAMBDA_ARN=$(aws lambda get-function --function-name garden-daily-plan --query 'Configuration.FunctionArn' --output text)
+          ensure_rule () {
+            local NAME="$1" EXPR="$2" DESC="$3" SID="$4"
+            aws events put-rule --name "$NAME" --schedule-expression "$EXPR" --state ENABLED --description "$DESC"
+            aws events put-targets --rule "$NAME" --targets "Id=1,Arn=$LAMBDA_ARN"
+            local RULE_ARN
+            RULE_ARN=$(aws events describe-rule --name "$NAME" --query 'Arn' --output text)
+            # AddPermission is idempotent-by-statement-id — a duplicate returns ResourceConflictException.
+            aws lambda add-permission \
+              --function-name garden-daily-plan \
+              --statement-id "$SID" \
+              --action lambda:InvokeFunction \
+              --principal events.amazonaws.com \
+              --source-arn "$RULE_ARN" 2>/dev/null || echo "AddPermission $SID already exists (expected on re-deploy)."
+            echo "EventBridge rule $NAME -> garden-daily-plan ($EXPR)"
+          }
+          ensure_rule garden-daily-plan-nightly    'cron(0 6 * * ? *)'   'Overnight Daily Plan generation (DRG-TODAY-001). LIVE.'                                  EventBridgeInvokeDaily
+          ensure_rule garden-daily-plan-intraday-am 'cron(30 9 * * ? *)'  'Intraday Daily Plan refresh, 05:30 ET, before the morning watering window (BUG-TODAYWATER-001).' EventBridgeInvokeIntradayAm
+          ensure_rule garden-daily-plan-intraday-pm 'cron(30 19 * * ? *)' 'Intraday Daily Plan refresh, 15:30 ET, before the evening container pass (BUG-TODAYWATER-001).'  EventBridgeInvokeIntradayPm
+
       - name: Ensure EventBridge cron rule for xp-reconcile
         if: matrix.function == 'xp-reconcile'
         continue-on-error: true  # requires events:PutRule + events:PutTargets + lambda:AddPermission on deploy role
