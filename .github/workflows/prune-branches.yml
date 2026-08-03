@@ -1,0 +1,46 @@
+name: prune-branches (dry-run)
+
+# Gate 3 §10 — "what would K=6 delete?" answerable WITHOUT shipping anything.
+# Read-only, dispatch-only. Selection logic lives in
+# scripts/neon_branch_select.py (SHARED with integrity-weekly's hygiene step
+# and covered by scripts/test_neon_branch_select.py) and mirrors the shipped
+# snap.py pruner's guards: name {SNAP_BRANCH_PREFIX}* AND parented to the prod
+# branch, deny-list respected, age floor (default 24h), keep newest K — plus a
+# HAS-CHILDREN annotation for candidates the pruner would 422-skip. SNAP_DRY_RUN
+# is hard-wired '1' and the script refuses to run without it — this workflow
+# has NO deletion capability by construction; actual pruning stays in snap.py's
+# in-pipeline retention prune.
+#
+# Dispatchability requires this file on the default branch (main); once there,
+# pick ref=dev in the Actions UI to run the dev version. Secrets consumed:
+# NEON_API_KEY, NEON_PROJECT_ID (same as restore-verify/snap workflows).
+
+on:
+  workflow_dispatch:
+    inputs:
+      retention:
+        description: 'K — keep the newest K snap-* branches; report what pruning would delete'
+        required: false
+        default: '6'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Compute would-delete set (read-only, SNAP_DRY_RUN=1)
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          NEON_PROD_BRANCH_ID: br-delicate-sea-amum92c2
+          SNAP_RETENTION: ${{ inputs.retention }}
+          SNAP_DRY_RUN: '1'
+        run: |
+          set -euo pipefail
+          [[ "$SNAP_RETENTION" =~ ^[0-9]+$ ]] || { echo "::error::retention '$SNAP_RETENTION' is not a non-negative integer"; exit 1; }
+          python3 scripts/neon_branch_select.py prune

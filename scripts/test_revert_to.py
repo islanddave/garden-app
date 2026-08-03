@@ -140,7 +140,7 @@ def test_load_manifest_missing_fails_closed():
 def test_load_manifest_missing_fields():
     cfg = rt.Config(env=base_env())
     bad = {"git_tag": "v2.5.0"}
-    s3 = FakeS3({("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(bad).encode()})
+    s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(bad).encode()})
     with pytest.raises(rt.RevertError):
         rt.load_manifest(s3, cfg)
 
@@ -148,14 +148,14 @@ def test_load_manifest_missing_fields():
 def test_load_manifest_tag_mismatch():
     cfg = rt.Config(env=base_env())
     m = good_manifest(); m["git_tag"] = "v9.9.9"
-    s3 = FakeS3({("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(m).encode()})
+    s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(m).encode()})
     with pytest.raises(rt.RevertError):
         rt.load_manifest(s3, cfg)
 
 
 def test_load_manifest_ok():
     cfg = rt.Config(env=base_env())
-    s3 = FakeS3({("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
+    s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
     m = rt.load_manifest(s3, cfg)
     assert m["main_sha"] == "a" * 40
 
@@ -211,14 +211,14 @@ def test_fast_path_absent_returns_none(monkeypatch):
 
 def test_restore_dump_empty_fails(monkeypatch, tmp_path):
     cfg = rt.Config(env=base_env())
-    s3 = FakeS3({("garden-backups-prod", "db/snap-v2.5.0.dump"): b""})
+    s3 = FakeS3({("garden-snapshots-prod", "db/snap-v2.5.0.dump"): b""})
     with pytest.raises(rt.RevertError):
         rt.restore_dump_into_branch(s3, cfg, good_manifest(), "postgresql://stage")
 
 
 def test_restore_dump_pg_restore_error(monkeypatch):
     cfg = rt.Config(env=base_env())
-    s3 = FakeS3({("garden-backups-prod", "db/snap-v2.5.0.dump"): b"DUMP"})
+    s3 = FakeS3({("garden-snapshots-prod", "db/snap-v2.5.0.dump"): b"DUMP"})
 
     class P:
         returncode = 1
@@ -231,7 +231,7 @@ def test_restore_dump_pg_restore_error(monkeypatch):
 
 def test_restore_dump_tolerates_benign_warnings(monkeypatch):
     cfg = rt.Config(env=base_env())
-    s3 = FakeS3({("garden-backups-prod", "db/snap-v2.5.0.dump"): b"DUMP"})
+    s3 = FakeS3({("garden-snapshots-prod", "db/snap-v2.5.0.dump"): b"DUMP"})
 
     class P:
         returncode = 1
@@ -340,7 +340,7 @@ def test_restore_lambda_download_failure_raises(monkeypatch):
 
 def test_run_data_loss_guard(monkeypatch):
     cfg = rt.Config(env=base_env(CONFIRM_DATA_LOSS="no"))
-    s3 = FakeS3({("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
+    s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
     fr = FakeRequests()
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
@@ -353,7 +353,7 @@ def test_run_data_loss_guard(monkeypatch):
 
 def test_run_happy_path_fastpath(monkeypatch):
     cfg = rt.Config(env=base_env())
-    s3 = FakeS3({("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
+    s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
     fr = FakeRequests()
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
@@ -384,7 +384,7 @@ def test_run_happy_path_fastpath(monkeypatch):
 def test_run_aborts_and_rolls_back(monkeypatch):
     """A failure AFTER the prod-DB checkpoint must trigger rollback()."""
     cfg = rt.Config(env=base_env())
-    s3 = FakeS3({("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
+    s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
     fr = FakeRequests()
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
@@ -417,7 +417,7 @@ def test_run_aborts_and_rolls_back(monkeypatch):
 def test_run_failure_before_checkpoint_no_rollback(monkeypatch):
     """A failure BEFORE the prod-DB checkpoint must NOT roll back (nothing mutated)."""
     cfg = rt.Config(env=base_env())
-    s3 = FakeS3({("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
+    s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
     fr = FakeRequests()
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
@@ -529,7 +529,7 @@ def test_cf_skipped_in_rehearsal():
 
 def test_run_rejects_override_without_rehearsal(monkeypatch):
     cfg = rt.Config(env=base_env(DEV_BRANCH="revert-rehearsal-dev-1"))
-    s3 = FakeS3({("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
+    s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
     with pytest.raises(rt.RevertError) as e:
         rt.run(cfg, s3=s3)
     assert "REHEARSAL_MODE" in str(e.value)
@@ -540,8 +540,8 @@ def test_run_rehearsal_dump_path(monkeypatch):
     the STAGING branch, code legs to rehearsal refs, Lambda/CF untouched."""
     cfg = rt.Config(env=reh_env(FORCE_DUMP_PATH="1"))
     s3 = FakeS3({
-        ("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode(),
-        ("garden-backups-prod", "db/snap-v2.5.0.dump"): b"DUMP",
+        ("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode(),
+        ("garden-snapshots-prod", "db/snap-v2.5.0.dump"): b"DUMP",
     })
     fr = FakeRequests()
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
@@ -576,10 +576,125 @@ def test_run_rehearsal_dump_path(monkeypatch):
     assert any("revert-rehearsal-main-1" in u for m, u in fr.calls)
 
 
+def test_config_snap_bucket_default_is_snapshots():
+    # The old default (garden-backups-prod) pointed at the DAILY bucket, where
+    # snap manifests/dumps do not live — vars.SNAP_BUCKET is garden-snapshots-prod.
+    assert rt.Config(env=base_env()).snap_bucket == "garden-snapshots-prod"
+
+
+# --- branch hygiene: expires_at at creation + preserve-branch TTL ------------
+
+def test_create_branch_sets_expires_at(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "/branches", FakeResp(200, {"branches": []}))
+    fr.add("POST", "/branches", FakeResp(201, {"branch": {"id": "br-stage"},
+           "connection_uris": [{"connection_uri": "postgresql://stage"}]}))
+    monkeypatch.setattr(rt, "requests", fr)
+    bid, _ = rt.neon_create_branch_with_endpoint(cfg, "revert-stage-v2.5.0", ttl_days=7)
+    assert bid == "br-stage"
+    assert fr.last_json["branch"]["name"] == "revert-stage-v2.5.0"
+    assert fr.last_json["branch"].get("expires_at")  # TTL stamped AT CREATION
+
+
+def test_create_branch_expiry_rejected_retries_without(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "/branches", FakeResp(200, {"branches": []}))
+    calls = {"n": 0}
+    def resp(url):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return FakeResp(400, text='unknown field "expires_at"')
+        return FakeResp(201, {"branch": {"id": "br-stage"},
+                              "connection_uris": [{"connection_uri": "postgresql://stage"}]})
+    fr.add("POST", "/branches", resp)
+    monkeypatch.setattr(rt, "requests", fr)
+    bid, _ = rt.neon_create_branch_with_endpoint(cfg, "revert-stage-v2.5.0", ttl_days=7)
+    assert bid == "br-stage" and calls["n"] == 2  # hygiene degraded, revert not blocked
+    assert "expires_at" not in fr.last_json["branch"]
+
+
+def test_create_branch_no_ttl_omits_expiry(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "/branches", FakeResp(200, {"branches": []}))
+    fr.add("POST", "/branches", FakeResp(201, {"branch": {"id": "br-x"},
+           "connection_uris": [{"connection_uri": "postgresql://x"}]}))
+    monkeypatch.setattr(rt, "requests", fr)
+    rt.neon_create_branch_with_endpoint(cfg, "revert-stage-v2.5.0")
+    assert "expires_at" not in fr.last_json["branch"]
+
+
+def test_restore_prod_stamps_preserve_branch_ttl(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("POST", "/branches/br-delicate-sea-amum92c2/restore", FakeResp(200, {"ok": True}))
+    monkeypatch.setattr(rt, "requests", fr)
+    stamped = {}
+    monkeypatch.setattr(rt, "_expire_branch_by_name",
+                        lambda cfg2, name, days: stamped.update(name=name, days=days))
+    rt.neon_restore_prod_from(cfg, "br-source", "0/ABC")
+    assert stamped["name"].startswith("prerestore-v2.5.0-") and stamped["days"] == 7
+
+
+def test_expire_branch_by_name_patches(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "/branches", FakeResp(200, {"branches": [{"id": "br-pre", "name": "prerestore-x"}]}))
+    fr.add("PATCH", "/branches/br-pre", FakeResp(200, {"branch": {"id": "br-pre"}}))
+    monkeypatch.setattr(rt, "requests", fr)
+    assert rt._expire_branch_by_name(cfg, "prerestore-x", 7) is True
+    assert fr.last_json["branch"]["expires_at"]
+
+
+def test_expire_branch_by_name_never_raises(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "/branches", FakeResp(500, text="neon down"))
+    monkeypatch.setattr(rt, "requests", fr)
+    assert rt._expire_branch_by_name(cfg, "prerestore-x", 7) is False  # warn, no raise
+
+
+# --- prune contract: the pre-revert snap must NOT prune ----------------------
+
+def test_prerevert_snap_passes_prune_false(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "/git/ref/heads/main", FakeResp(200, {"object": {"sha": "mainHEAD"}}))
+    monkeypatch.setattr(rt, "requests", fr)
+    seen = {}
+    def fake_run(snap_cfg, s3=None, lambda_client=None, prune=True):
+        seen["prune"] = prune
+        return {"manifest": {}}
+    monkeypatch.setattr(rt, "snap_mod", types.SimpleNamespace(
+        Config=lambda env=None: "SNAPCFG", run=fake_run))
+    rt.prerevert_snap(cfg)
+    # snap's own retention prune runs BEFORE fast_path_branch and could delete
+    # the revert target — the pre-revert snap must archive only.
+    assert seen["prune"] is False
+
+
+def test_prerevert_snap_legacy_signature_fallback(monkeypatch, capsys):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "/git/ref/heads/main", FakeResp(200, {"object": {"sha": "mainHEAD"}}))
+    monkeypatch.setattr(rt, "requests", fr)
+    called = {"n": 0}
+    def old_run(snap_cfg, s3=None, lambda_client=None):  # no prune param yet
+        called["n"] += 1
+        return {"manifest": {}}
+    monkeypatch.setattr(rt, "snap_mod", types.SimpleNamespace(
+        Config=lambda env=None: "SNAPCFG", run=old_run))
+    rt.prerevert_snap(cfg)
+    assert called["n"] == 1
+    assert "prune" in capsys.readouterr().err  # transition hazard warned, not hidden
+
+
 def test_run_rehearsal_force_abort_rolls_back(monkeypatch):
     """Rehearsal + FORCE_ABORT: post-checkpoint failure triggers rollback()."""
     cfg = rt.Config(env=reh_env(FORCE_ABORT="1"))
-    s3 = FakeS3({("garden-backups-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
+    s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
     fr = FakeRequests()
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))

@@ -1,36 +1,124 @@
 name: restore-verify (scheduled)
 
-# B3 (spec §3) — "an untested backup is not a backup." Daily, restores the LATEST
-# durable daily dump (s3://garden-backups-prod/db/garden-*.dump) into a FRESH,
-# root-parented Neon scratch branch, asserts schema (table-set) + core row-count
-# coherence vs live prod, then deletes the scratch branch. A mismatch or restore
-# failure exits non-zero -> this run goes RED -> GitHub notifies Dave (the alert).
+# B3 (spec §3) — "an untested backup is not a backup" — Gate 0.2/0.3 rework.
 #
-# UNATTENDED by design: the restore-verify role's OIDC trust is scoped to the main
-# ref (NOT environment:production), so the scheduled run does NOT pause for approval.
-# Read-only blast radius: S3 GetObject on the backup bucket + a throwaway Neon branch.
-# Touches NOTHING in prod/dev/main/staging.
+# Gate 0.2: the old design restored into a Neon scratch branch created WITHOUT
+# parent_id, which Neon parents to PRODUCTION — the branch already contained
+# every object the dump might be missing, so the verify was TAUTOLOGICAL. Now
+# each leg restores into a genuinely EMPTY postgres:17 SERVICE CONTAINER in the
+# runner (also kills the daily scratch-branch churn and the branch cost).
+# scripts/restore-verify.py asserts the target is empty pre-restore, then after
+# restore asserts schemas {public,gv,extensions}, the extensions/gv function
+# inventories, the public trigger inventory, and core row counts — expected
+# inventory grounded by read-only SELECTs against live prod at run time.
 #
-# Scheduled + dispatch both require this file on the DEFAULT branch (main), so it is
-# inert until the OPS-GATE-001 promote. Schedule is 08:00 UTC, ~1h after backup.yml
-# (07:00 UTC), so the freshest daily dump exists when this runs.
+# Gate 0.3: TWO legs — the durable daily bucket AND the snap bucket
+# (garden-snapshots-prod/db/snap-*), whose dumps had NEVER been restore-tested.
+# workflow_dispatch takes bucket/prefix inputs for a one-off proof run (pick
+# the dev ref in the Actions UI once this file is on main).
+#
+# Transition boundary: dumps older than the full-scope dumper are public-only;
+# the script detects scope per dump via the archive TOC and only WARNS on
+# legacy dumps. Flip require_full_scope=1 (dispatch input) once full-scope
+# dumps exist to make legacy scope a hard failure.
+#
+# UNATTENDED by design: the restore-verify role's OIDC trust is scoped to the
+# main ref (NOT environment:production), so the scheduled run does NOT pause.
+# Blast radius: S3 GetObject + read-only prod SELECTs + a throwaway container.
+# NOTE: RESTORE_VERIFY_ROLE_ARN needs s3:GetObject/ListBucket on BOTH buckets —
+# the snap leg fails loudly (AccessDenied) if the role only covers the daily one.
+#
+# Schedule is 08:00 UTC, ~1h after backup.yml (07:00 UTC), so the freshest
+# daily dump exists when this runs.
 
 on:
   schedule:
     - cron: '0 8 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      bucket:
+        description: 'One-off proof: S3 bucket to verify (empty = normal daily+snap matrix)'
+        required: false
+        default: ''
+        type: string
+      prefix:
+        description: 'Dump key prefix for the one-off bucket (default db/)'
+        required: false
+        default: ''
+        type: string
+      require_full_scope:
+        description: 'Hard-fail legacy public-only dumps (flip to 1 after the full-scope dumper ships)'
+        required: false
+        default: '0'
+        type: choice
+        options:
+          - '0'
+          - '1'
 
 permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: restore-verify
+  cancel-in-progress: false
+
 jobs:
-  verify:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.mk.outputs.matrix }}
+    steps:
+      - name: Build verify matrix (daily + snap, or one-off dispatch bucket)
+        id: mk
+        env:
+          IN_BUCKET: ${{ inputs.bucket }}
+          IN_PREFIX: ${{ inputs.prefix }}
+          DAILY_BUCKET: ${{ vars.BACKUP_BUCKET_NAME }}
+          SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
+        run: |
+          set -euo pipefail
+          if [ -n "${IN_BUCKET}" ]; then
+            matrix=$(jq -cn --arg b "$IN_BUCKET" --arg p "${IN_PREFIX:-db/}" \
+              '{include:[{leg:"custom",bucket:$b,prefix:$p}]}')
+          else
+            matrix=$(jq -cn --arg db "$DAILY_BUCKET" --arg sb "$SNAP_BUCKET" \
+              '{include:[{leg:"daily",bucket:$db,prefix:"db/garden-"},{leg:"snap",bucket:$sb,prefix:"db/snap-"}]}')
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "matrix: $matrix"
+
+  verify:
+    needs: plan
+    runs-on: ubuntu-latest
+    name: verify (${{ matrix.leg }})
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    services:
+      # The genuinely-EMPTY restore target (Gate 0.2). postgres:17 tracks the
+      # latest 17.x — matches Neon (PG 17) and the PGDG pg17 client below.
+      # POSTGRES_PASSWORD is a throwaway for a job-lifetime loopback container,
+      # not a secret.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: garden_verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install postgresql-client-17 (pgdg)
+        # Neon + the service container run PG 17; pg_restore enforces a strict
+        # major-version match and ubuntu-latest ships a pg16 client. Same PGDG
+        # install pattern as backup.yml.
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
@@ -46,14 +134,15 @@ jobs:
           aws-region: us-east-1
 
       - name: Install python deps
-        run: pip install boto3 requests --quiet
+        run: pip install boto3 --quiet
 
-      - name: Restore-verify latest durable dump
+      - name: Restore-verify latest dump into EMPTY container (${{ matrix.leg }})
         env:
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          SCRATCH_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/garden_verify
           NEON_BACKUP_URL: ${{ secrets.NEON_BACKUP_URL }}
-          BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET_NAME }}
+          BACKUP_BUCKET: ${{ matrix.bucket }}
+          DUMP_PREFIX: ${{ matrix.prefix }}
+          REQUIRE_FULL_SCOPE: ${{ inputs.require_full_scope || '0' }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/restore-verify.py

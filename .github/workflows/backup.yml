@@ -43,28 +43,44 @@ jobs:
         # with connection poolers and will hang or produce corrupt output.
         # NEON_BACKUP_URL must point to the direct host, not the pooler host.
         # --no-owner: Neon roles differ from source; restore as current role.
-        # --schema=public: only dump app tables; exclude pg_catalog internals.
+        # FULL-DATABASE scope (no --schema flag): prod has THREE schemas — public,
+        # extensions (relocated uuid-ossp functions; 14 column defaults call
+        # extensions.uuid_generate_v4()), and gv (11 functions backing 11 triggers
+        # on 6 core tables). The old --schema=public dumps could NOT rebuild the
+        # DB from empty (Gate 0.1, verified live 2026-08-03). pg_catalog is never
+        # dumped regardless — no schema flag is needed to exclude it.
         # -Fc: custom format — supports selective restore and compression.
+        # Companion pg_dumpall --globals-only: cluster-level roles pg_dump never
+        # captures. --no-role-passwords keeps SCRAM hashes out of S3 (Neon manages
+        # role credentials via its own API; hashes are useless on restore).
         # PATH override: bare `pg_dump` resolves to pg16 on this runner image even
         # when pg17 is installed (postgresql-client-common wrapper picks pg16).
         # Prepending pg17's bin dir forces the major-version match Neon requires.
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
+          GLOBALS_FILE="/tmp/garden-$(date +%Y%m%d).globals.sql"
           pg_dump "${{ secrets.NEON_BACKUP_URL }}" \
-            --schema=public \
             --no-owner \
             --no-privileges \
             -Fc \
             > "$DUMP_FILE"
+          pg_dumpall --dbname "${{ secrets.NEON_BACKUP_URL }}" \
+            --globals-only \
+            --no-role-passwords \
+            -f "$GLOBALS_FILE"
           echo "DUMP_FILE=$DUMP_FILE" >> "$GITHUB_ENV"
-          echo "Dump file size: $(du -sh $DUMP_FILE | cut -f1)"
+          echo "GLOBALS_FILE=$GLOBALS_FILE" >> "$GITHUB_ENV"
+          echo "Dump file size: $(du -sh $DUMP_FILE | cut -f1); globals: $(du -sh $GLOBALS_FILE | cut -f1)"
 
       - name: Upload to S3
         run: |
           DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
+          GLOBALS_FILE="/tmp/garden-$(date +%Y%m%d).globals.sql"
           S3_KEY="db/garden-$(date +%Y%m%d).dump"
+          GLOBALS_S3_KEY="db/garden-$(date +%Y%m%d).globals.sql"
           aws s3 cp "$DUMP_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$S3_KEY"
+          aws s3 cp "$GLOBALS_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$GLOBALS_S3_KEY"
 
       - name: Verify upload (restorability floor)
         # OPS-GUARDINTEG-001 (2026-07-22): the old check asserted S3 existence only —
@@ -82,10 +98,24 @@ jobs:
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
+          GLOBALS_FILE="/tmp/garden-$(date +%Y%m%d).globals.sql"
           S3_KEY="db/garden-$(date +%Y%m%d).dump"
+          GLOBALS_S3_KEY="db/garden-$(date +%Y%m%d).globals.sql"
           MIN_BYTES=409600
           if ! pg_restore --list "$DUMP_FILE" > /dev/null; then
             echo "::error::Backup verification FAILED — pg_restore --list cannot read $DUMP_FILE; dump is not a valid archive"
+            exit 1
+          fi
+          # Full-DB scope proof: the archive must contain the extensions + gv schemas
+          # (the exact objects the old --schema=public dumps silently dropped).
+          for SCHEMA in extensions gv; do
+            if ! pg_restore --list "$DUMP_FILE" | grep -q "SCHEMA - $SCHEMA"; then
+              echo "::error::Backup verification FAILED — schema '$SCHEMA' missing from $DUMP_FILE; dump is not full-database scope"
+              exit 1
+            fi
+          done
+          if ! grep -q "CREATE ROLE" "$GLOBALS_FILE"; then
+            echo "::error::Backup verification FAILED — $GLOBALS_FILE has no CREATE ROLE statements; globals dump is empty or malformed"
             exit 1
           fi
           if ! OBJ_BYTES=$(aws s3api list-objects-v2 --bucket "${{ vars.BACKUP_BUCKET_NAME }}" --prefix "$S3_KEY" --query 'Contents[0].Size' --output text); then
@@ -100,11 +130,19 @@ jobs:
             echo "::error::Backup verification FAILED — $S3_KEY is ${OBJ_BYTES} bytes, below the ${MIN_BYTES}-byte restorability floor (truncated or empty dump)"
             exit 1
           fi
-          echo "Upload verified: $S3_KEY (${OBJ_BYTES} bytes >= ${MIN_BYTES} floor; pg_restore --list OK)"
+          if ! GLOB_BYTES=$(aws s3api list-objects-v2 --bucket "${{ vars.BACKUP_BUCKET_NAME }}" --prefix "$GLOBALS_S3_KEY" --query 'Contents[0].Size' --output text); then
+            echo "::error::Backup verification FAILED — could not query S3 for $GLOBALS_S3_KEY"
+            exit 1
+          fi
+          if [ -z "$GLOB_BYTES" ] || [ "$GLOB_BYTES" = "None" ] || [ "$GLOB_BYTES" -lt 500 ]; then
+            echo "::error::Backup verification FAILED — globals object $GLOBALS_S3_KEY missing or implausibly small (${GLOB_BYTES} bytes)"
+            exit 1
+          fi
+          echo "Upload verified: $S3_KEY (${OBJ_BYTES} bytes >= ${MIN_BYTES} floor; pg_restore --list OK; extensions+gv schemas present) + $GLOBALS_S3_KEY (${GLOB_BYTES} bytes)"
 
       - name: Cleanup local dump
         if: always()
-        run: rm -f /tmp/garden-*.dump
+        run: rm -f /tmp/garden-*.dump /tmp/garden-*.globals.sql
 
 # S3 lifecycle rules must be configured on the backup bucket (infrastructure step, not here):
 #   - Retain last 14 daily dumps

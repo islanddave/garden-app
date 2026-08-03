@@ -23,16 +23,21 @@ ENV CONTRACT (read at runtime; no secrets are hardcoded):
   NEON_PROJECT_ID     Neon project id.
   NEON_PROD_BRANCH_ID prod Neon branch id (default br-delicate-sea-amum92c2).
   NEON_BACKUP_URL     DIRECT (non-pooler) Postgres connection string for pg_dump.
-  SNAP_BUCKET         backup S3 bucket (default garden-backups-prod).
+  SNAP_BUCKET         snapshot S3 bucket (default garden-snapshots-prod — NOT the
+                      daily-backup bucket garden-backups-prod).
+  SNAP_BRANCH_PREFIX  Neon snap-branch name prefix (default "snap-"). Rehearsals
+                      set a distinct prefix so rehearsal branches can never
+                      collide with (or be pruned as) production snapshots.
   PHOTOS_BUCKET       REQUIRED, UNKNOWN at author time — the versioned photos
                       bucket whose current version-id list we snapshot.
-  SNAP_RETENTION      keep last K Neon snap-* branches (default 5). FLAG: confirm
-                      real Neon tier branch cap and set K below it.
+  SNAP_RETENTION      keep last K Neon snap branches (default 5, clamped >= 1;
+                      empty string falls back to default). FLAG: confirm real
+                      Neon tier branch cap and set K below it.
   CF_DIST             CloudFront distribution id (default E3FAJTXAORQYDT).
   APP_VERSION         human/app version label recorded in the manifest.
 
-Dependencies: boto3 (S3/Lambda), requests (Neon + GitHub REST), pg_dump (pg17
-client) via subprocess.
+Dependencies: boto3 (S3/Lambda), requests (Neon + GitHub REST), pg_dump +
+pg_dumpall (pg17 client) via subprocess.
 
 Idempotency: every artifact is create-if-missing. If it already exists it is
 SKIPPED, not errored, so a partial snap completes cleanly on re-run. BUT if a
@@ -99,10 +104,13 @@ class Config:
             "NEON_PROD_BRANCH_ID", "br-delicate-sea-amum92c2"
         )
         self.neon_backup_url = self._req(env, "NEON_BACKUP_URL")
-        self.snap_bucket = env.get("SNAP_BUCKET", "garden-backups-prod")
+        # `or` (not a get() default): GHA renders an UNSET repo var as "", which
+        # get() would return verbatim — an empty bucket name / int("") ValueError.
+        self.snap_bucket = env.get("SNAP_BUCKET") or "garden-snapshots-prod"
+        self.branch_prefix = env.get("SNAP_BRANCH_PREFIX") or "snap-"
         # PHOTOS_BUCKET is required and UNKNOWN at author time — fail loud.
         self.photos_bucket = self._req(env, "PHOTOS_BUCKET")
-        self.retention = int(env.get("SNAP_RETENTION", "5"))
+        self.retention = self._int_env(env, "SNAP_RETENTION", 5, minimum=1)
         self.cf_dist = env.get("CF_DIST", "E3FAJTXAORQYDT")
         self.app_version = env.get("APP_VERSION", "")
 
@@ -112,6 +120,15 @@ class Config:
         if not val:
             raise SnapError(f"required env var {key} is missing or empty")
         return val
+
+    @staticmethod
+    def _int_env(env, key, default, minimum):
+        raw = (env.get(key) or str(default)).strip() or str(default)
+        try:
+            val = int(raw)
+        except ValueError:
+            raise SnapError(f"{key} must be an integer, got {raw!r}")
+        return max(minimum, val)
 
 
 # --- helpers -----------------------------------------------------------------
@@ -141,9 +158,25 @@ def s3_key_for(kind, cfg):
     v = cfg.version
     return {
         "dump": f"db/snap-{v}.dump",
+        "globals": f"db/snap-{v}.globals.sql",
         "photo_versionids": f"photos/snap-{v}.versionids.json",
         "manifest": f"snapshots/{v}.json",
     }[kind]
+
+
+def gha_warning(msg):
+    sys.stdout.write(f"::warning::{msg}\n")
+
+
+def gha_step_summary(lines):
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except OSError:
+        pass
 
 
 def s3_object_exists(s3, bucket, key):
@@ -318,10 +351,10 @@ def _neon_list_branches(cfg):
 
 
 def ensure_neon_branch(cfg):
-    """Create copy-on-write branch snap-vX from prod branch HEAD. Idempotent:
-    if a branch named snap-vX already exists, reuse it. Returns (branch_id, lsn).
+    """Create copy-on-write branch {prefix}vX from prod branch HEAD. Idempotent:
+    if a branch with that name already exists, reuse it. Returns (branch_id, lsn).
     """
-    name = f"snap-{cfg.version}"
+    name = f"{cfg.branch_prefix}{cfg.version}"
     branches = _neon_list_branches(cfg)
     for b in branches:
         if b.get("name") == name:
@@ -370,6 +403,12 @@ def dump_to_s3(s3, cfg):
     """Fresh pg_dump (pg17, DIRECT endpoint, -Fc) at snap time → S3. Idempotent:
     skip if the dump object already exists. Returns the S3 key.
     Does NOT reuse the daily dump.
+
+    FULL-DATABASE scope (no -n/--schema): prod has THREE schemas — public,
+    extensions (relocated uuid-ossp functions; 14 columns default to
+    extensions.uuid_generate_v4()), and gv (11 functions backing 11 triggers on
+    6 core tables). The old --schema=public dumps could not rebuild the DB from
+    empty (Gate 0.1, verified live 2026-08-03).
     """
     key = s3_key_for("dump", cfg)
     if s3_object_exists(s3, cfg.snap_bucket, key):
@@ -380,7 +419,6 @@ def dump_to_s3(s3, cfg):
         cmd = [
             "pg_dump",
             cfg.neon_backup_url,  # DIRECT endpoint; passed as a value, not shell
-            "--schema=public",
             "--no-owner",
             "--no-privileges",
             "-Fc",
@@ -395,6 +433,40 @@ def dump_to_s3(s3, cfg):
         if not os.path.exists(dump_path) or os.path.getsize(dump_path) == 0:
             raise SnapError("pg_dump produced no output / empty dump")
         s3.upload_file(dump_path, cfg.snap_bucket, key)
+    return key
+
+
+def dump_globals_to_s3(s3, cfg):
+    """pg_dumpall --globals-only companion (roles; cluster-level state pg_dump
+    never captures) → same S3 prefix as the dump. Idempotent: skip if present.
+
+    --no-role-passwords: keeps SCRAM hashes out of S3; Neon manages role
+    credentials via its own API, so hashes are useless on restore anyway
+    (pg_dumpall 17 vs Neon 17.10 verified working 2026-08-03).
+    """
+    key = s3_key_for("globals", cfg)
+    if s3_object_exists(s3, cfg.snap_bucket, key):
+        return key  # idempotent skip
+
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, f"snap-{cfg.version}.globals.sql")
+        cmd = [
+            "pg_dumpall",
+            "--dbname",
+            cfg.neon_backup_url,
+            "--globals-only",
+            "--no-role-passwords",
+            "-f",
+            path,
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise SnapError(
+                f"pg_dumpall --globals-only failed (rc={proc.returncode}): {proc.stderr.strip()}"
+            )
+        if not os.path.exists(path) or os.path.getsize(path) == 0:
+            raise SnapError("pg_dumpall produced no output / empty globals dump")
+        s3.upload_file(path, cfg.snap_bucket, key)
     return key
 
 
@@ -491,12 +563,14 @@ def publish_lambda_versions(cfg, lambda_client=None):
 
 # --- self-verify -------------------------------------------------------------
 
-def self_verify(s3, cfg, dump_key, photo_key, neon_branch_id, tag):
+def self_verify(s3, cfg, dump_key, globals_key, photo_key, neon_branch_id, tag):
     """Confirm every artifact actually exists before the manifest is written.
     Any miss aborts (fails the ship).
     """
     if not s3_object_exists(s3, cfg.snap_bucket, dump_key):
         raise SnapError(f"self-verify: dump object missing s3://{cfg.snap_bucket}/{dump_key}")
+    if not s3_object_exists(s3, cfg.snap_bucket, globals_key):
+        raise SnapError(f"self-verify: globals object missing s3://{cfg.snap_bucket}/{globals_key}")
     if not s3_object_exists(s3, cfg.snap_bucket, photo_key):
         raise SnapError(f"self-verify: photo versionids missing s3://{cfg.snap_bucket}/{photo_key}")
     # Neon branch present?
@@ -527,36 +601,85 @@ def write_manifest(s3, cfg, manifest):
 
 # --- retention prune ---------------------------------------------------------
 
+PRUNE_DENY_NAMES = {"production", "staging", "main"}
+PRUNE_MIN_AGE_HOURS = 24
+
+
+def _prune_deny_reason(cfg, b):
+    if b.get("id") == cfg.neon_prod_branch_id:
+        return "prod branch id"
+    if b.get("default"):
+        return "default branch"
+    if b.get("protected"):
+        return "protected branch"
+    if str(b.get("name", "")).lower() in PRUNE_DENY_NAMES:
+        return "deny-listed name"
+    return None
+
+
+def _branch_age_hours(b, now=None):
+    raw = str(b.get("created_at") or "")
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return ((now or datetime.now(timezone.utc)) - dt).total_seconds() / 3600.0
+
+
 def prune_old_branches(cfg):
-    """Keep the last K Neon snap-* branches; delete oldest beyond K.
+    """Keep the last K Neon {prefix}* snapshot branches; delete oldest beyond K.
 
-    Ordering is by branch creation time (created_at) ascending; the K NEWEST are
-    kept. Never deletes the prod branch (only names starting 'snap-' are
-    candidates).
+    Candidates are scoped to name-prefix AND parent_id == the configured prod
+    branch id — a rehearsal run (whose NEON_PROD_BRANCH_ID is the staging
+    branch) can therefore never select production snapshots (Gate 4 §14; the
+    old name-prefix-only filter could).
+
+    Delete-time guards, each skip-and-report (never fatal — pruning OLD
+    snapshots is hygiene and must NEVER fail an already-complete, self-verified
+    snapshot; cf. snap-prune incident 2026-06-04, orphan staging child blocked
+    retention with a 422):
+      - hard deny-list: prod branch id, default/protected branches,
+        names {production, staging, main}
+      - 24h age floor (unparseable created_at counts as too young)
+      - HTTP semantics: 200/201/202 deleted; 404 already absent (success);
+        422/423 (has children / locked) and everything else skip-and-report.
+
+    Returns {"pruned": [{id,name}], "skipped": [{id,name,reason}]}. Skips are
+    surfaced as ::warning:: annotations + GITHUB_STEP_SUMMARY (Gate 2 §8 — they
+    previously went to stderr inside a green job and branch count silently
+    never converged).
     """
-    k = cfg.retention
-    if k < 0:
-        raise SnapError(f"SNAP_RETENTION must be >= 0, got {k}")
+    k = max(1, cfg.retention)
     branches = _neon_list_branches(cfg)
-    snaps = [b for b in branches if str(b.get("name", "")).startswith("snap-")]
-
-    def created_key(b):
-        return b.get("created_at") or ""
-
-    snaps.sort(key=created_key)  # oldest first
-    if len(snaps) <= k:
-        return []
-    to_delete = snaps[: len(snaps) - k]
-    deleted = []
-    skipped = []
+    snaps = [
+        b for b in branches
+        if str(b.get("name", "")).startswith(cfg.branch_prefix)
+        and b.get("parent_id") == cfg.neon_prod_branch_id
+    ]
+    snaps.sort(key=lambda b: b.get("created_at") or "")  # oldest first
+    report = {"pruned": [], "skipped": []}
+    to_delete = snaps[: len(snaps) - k] if len(snaps) > k else []
     for b in to_delete:
         bid = b["id"]
-        # Best-effort retention: pruning OLD snapshots is hygiene and must NEVER
-        # fail an already-complete, self-verified snapshot. A delete can legitimately
-        # fail with 422 "cannot delete branch that has children" when something (e.g.
-        # a lingering staging branch) was forked off an old snap-* branch. Warn and
-        # move on rather than red-failing the whole promote. (Fix: snap-prune incident
-        # 2026-06-04 — orphan Neon staging branch blocked retention.)
+        name = str(b.get("name", ""))
+        deny = _prune_deny_reason(cfg, b)
+        if deny:
+            report["skipped"].append({"id": bid, "name": name, "reason": deny})
+            continue
+        age = _branch_age_hours(b)
+        if age is None:
+            report["skipped"].append(
+                {"id": bid, "name": name, "reason": "age floor (unparseable created_at)"}
+            )
+            continue
+        if age < PRUNE_MIN_AGE_HOURS:
+            report["skipped"].append(
+                {"id": bid, "name": name,
+                 "reason": f"age floor ({age:.1f}h < {PRUNE_MIN_AGE_HOURS}h)"}
+            )
+            continue
         try:
             r = requests.delete(
                 f"{NEON_API}/projects/{cfg.neon_project_id}/branches/{bid}",
@@ -564,24 +687,33 @@ def prune_old_branches(cfg):
                 timeout=HTTP_TIMEOUT,
             )
         except requests.RequestException as e:  # noqa: BLE001 — never fatal
-            sys.stderr.write(f"[snap] WARN prune: delete branch {bid} errored ({e}); skipping\n")
-            skipped.append(bid)
+            report["skipped"].append({"id": bid, "name": name, "reason": f"request error: {e}"})
             continue
         if r.status_code in (200, 201, 202):
-            deleted.append(bid)
+            report["pruned"].append({"id": bid, "name": name})
+        elif r.status_code == 404:
+            report["pruned"].append({"id": bid, "name": name, "note": "already absent (404)"})
         else:
-            sys.stderr.write(
-                f"[snap] WARN prune: delete branch {bid} failed {r.status_code}: {r.text}; skipping\n"
+            report["skipped"].append(
+                {"id": bid, "name": name,
+                 "reason": f"HTTP {r.status_code}: {r.text[:200]}"}
             )
-            skipped.append(bid)
-    if skipped:
-        sys.stderr.write(f"[snap] prune kept-on-error {len(skipped)} branch(es): {skipped}\n")
-    return deleted
+    for s in report["skipped"]:
+        gha_warning(f"snap prune skipped branch {s['name']} ({s['id']}): {s['reason']}")
+    if report["pruned"] or report["skipped"]:
+        gha_step_summary(
+            ["### snap prune"]
+            + [f"- pruned: {p['name']} ({p['id']})" for p in report["pruned"]]
+            + [f"- skipped: {s['name']} ({s['id']}) — {s['reason']}" for s in report["skipped"]]
+        )
+    return report
 
 
 # --- orchestration -----------------------------------------------------------
 
-def run(cfg, s3=None, lambda_client=None):
+def run(cfg, s3=None, lambda_client=None, prune=True):
+    """prune=False is the revert-flow contract: revert-to.py's pre-revert snap
+    must not prune (it could delete the very snapshot being restored)."""
     s3 = s3 or boto3.client("s3")
 
     validate(cfg.version)
@@ -593,23 +725,25 @@ def run(cfg, s3=None, lambda_client=None):
     tag = ensure_tag(cfg)
     # (b) Neon branch + LSN
     neon_branch_id, neon_lsn = ensure_neon_branch(cfg)
-    # (c) fresh durable dump
+    # (c) fresh durable dump (full database) + cluster globals companion
     dump_key = dump_to_s3(s3, cfg)
+    globals_key = dump_globals_to_s3(s3, cfg)
     # (d)(i) photos version ids
     photo_key = capture_photo_versions(s3, cfg)
     # (d)(ii) lambda versions
     lambda_versions = publish_lambda_versions(cfg, lambda_client=lambda_client)
 
     # self-verify EVERY artifact before the manifest commit-marker
-    self_verify(s3, cfg, dump_key, photo_key, neon_branch_id, tag)
+    self_verify(s3, cfg, dump_key, globals_key, photo_key, neon_branch_id, tag)
 
     manifest = {
         "git_tag": tag,
         "main_sha": cfg.main_sha,
-        "neon_branch": f"snap-{cfg.version}",
+        "neon_branch": f"{cfg.branch_prefix}{cfg.version}",
         "neon_branch_id": neon_branch_id,
         "neon_lsn": neon_lsn,
         "dump_s3_key": dump_key,
+        "globals_s3_key": globals_key,
         "photo_versionids_key": photo_key,
         "lambda_versions": lambda_versions,
         "cf_dist": cfg.cf_dist,
@@ -619,9 +753,23 @@ def run(cfg, s3=None, lambda_client=None):
     manifest_key = write_manifest(s3, cfg, manifest)
 
     # Retention prune AFTER a successful, fully-verified snap.
-    pruned = prune_old_branches(cfg)
+    prune_report = prune_old_branches(cfg) if prune else {"pruned": [], "skipped": []}
+    if prune:
+        # Best-effort manifest enrichment with the prune outcome (Gate 2 §8).
+        # The commit-marker manifest is already durable; a failed rewrite must
+        # not fail the ship.
+        manifest["prune"] = prune_report
+        try:
+            write_manifest(s3, cfg, manifest)
+        except Exception as e:  # noqa: BLE001 — never fatal post-commit-marker
+            gha_warning(f"snap: could not record prune report in manifest: {e}")
 
-    return {"manifest_key": manifest_key, "manifest": manifest, "pruned": pruned}
+    return {
+        "manifest_key": manifest_key,
+        "manifest": manifest,
+        "pruned": prune_report["pruned"],
+        "skipped": prune_report["skipped"],
+    }
 
 
 def main(argv=None):
@@ -638,7 +786,7 @@ def main(argv=None):
     sys.stdout.write(
         f"[snap] OK {result['manifest']['git_tag']} -> "
         f"s3://{cfg.snap_bucket}/{result['manifest_key']} "
-        f"(pruned {len(result['pruned'])} old branches)\n"
+        f"(pruned {len(result['pruned'])}, skipped {len(result['skipped'])} old branches)\n"
     )
     return 0
 

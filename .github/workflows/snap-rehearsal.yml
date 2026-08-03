@@ -5,8 +5,11 @@ name: snap rehearsal (staging)
 # Runs in environment: production ONLY because the snap role's OIDC trust is scoped to
 # environment:production — it does NOT deploy, does NOT write main, does NOT mutate prod DB.
 # It snapshots the STAGING Neon branch + dumps STAGING. Side effects: tag v0.0.0, Neon branch
-# snap-v0.0.0 (from staging), snap-v0.0.0.* objects in garden-snapshots-prod, +1 published
-# version on each garden-* Lambda (additive). Rehearsal artifacts are cleaned up afterward.
+# rehearsal-snap-v0.0.0 (from staging), snap-v0.0.0.* objects in garden-snapshots-prod, +1
+# published version on each garden-* Lambda (additive). Rehearsal artifacts are cleaned up
+# afterward. SNAP_BRANCH_PREFIX keeps rehearsal branches namespace-separate from production
+# snap-* branches; snap.py's pruner additionally scopes candidates to children of
+# NEON_PROD_BRANCH_ID (here: staging), so a rehearsal prune can never touch prod snapshots.
 
 on:
   push:
@@ -31,6 +34,7 @@ jobs:
       NEON_PROD_BRANCH_ID: br-damp-frog-amdfxwrr
       NEON_BACKUP_URL: ${{ secrets.NEON_STAGING_URL }}
       SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
+      SNAP_BRANCH_PREFIX: rehearsal-snap-
       PHOTOS_BUCKET: ${{ vars.PHOTOS_BUCKET }}
       SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
       CF_DIST: E3FAJTXAORQYDT

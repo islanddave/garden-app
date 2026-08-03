@@ -54,10 +54,36 @@ def test_config_requires_photos_bucket():
 
 def test_config_defaults():
     cfg = make_cfg()
-    assert cfg.snap_bucket == "garden-backups-prod"
+    assert cfg.snap_bucket == "garden-snapshots-prod"
+    assert cfg.branch_prefix == "snap-"
     assert cfg.cf_dist == "E3FAJTXAORQYDT"
     assert cfg.neon_prod_branch_id == "br-delicate-sea-amum92c2"
     assert cfg.retention == 5
+
+
+def test_config_retention_empty_string_uses_default():
+    # GHA renders an unset ${{ vars.SNAP_RETENTION }} as "" — int("") ValueError before.
+    assert make_cfg(SNAP_RETENTION="").retention == 5
+    assert make_cfg(SNAP_RETENTION="  ").retention == 5
+
+
+def test_config_retention_clamped_to_one():
+    assert make_cfg(SNAP_RETENTION="0").retention == 1
+    assert make_cfg(SNAP_RETENTION="-3").retention == 1
+
+
+def test_config_retention_garbage_raises():
+    with pytest.raises(snap.SnapError):
+        make_cfg(SNAP_RETENTION="five")
+
+
+def test_config_snap_bucket_empty_string_uses_default():
+    assert make_cfg(SNAP_BUCKET="").snap_bucket == "garden-snapshots-prod"
+
+
+def test_config_branch_prefix_override():
+    assert make_cfg(SNAP_BRANCH_PREFIX="rehearsal-snap-").branch_prefix == "rehearsal-snap-"
+    assert make_cfg(SNAP_BRANCH_PREFIX="").branch_prefix == "snap-"
 
 
 # --- idempotent tag skip -----------------------------------------------------
@@ -147,6 +173,19 @@ def test_ensure_neon_branch_creates(monkeypatch):
     assert lsn == "0/DEF"
 
 
+def test_ensure_neon_branch_uses_prefix(monkeypatch):
+    cfg = make_cfg(SNAP_BRANCH_PREFIX="rehearsal-snap-")
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: [])
+    payloads = []
+    def fake_post(url, json=None, **kw):
+        payloads.append(json)
+        return _resp(201, {"branch": {"id": "br-r", "current_state_lsn": "0/1"}})
+    monkeypatch.setattr(snap.requests, "post", fake_post)
+    bid, _ = snap.ensure_neon_branch(cfg)
+    assert bid == "br-r"
+    assert payloads[0]["branch"]["name"] == "rehearsal-snap-v1.2.3"
+
+
 # --- dump idempotent skip ----------------------------------------------------
 
 def test_dump_to_s3_skip_if_exists(monkeypatch):
@@ -165,9 +204,11 @@ def test_dump_to_s3_runs_pg_dump(monkeypatch, tmp_path):
     cfg = make_cfg()
     s3 = mock.Mock()
     monkeypatch.setattr(snap, "s3_object_exists", lambda *a, **k: False)
+    cmds = []
 
     def fake_run(cmd, **kw):
         # pg_dump is passed args (no shell); write a non-empty file at -f path
+        cmds.append(cmd)
         fpath = cmd[cmd.index("-f") + 1]
         with open(fpath, "wb") as fh:
             fh.write(b"PGDMP\x00data")
@@ -178,6 +219,54 @@ def test_dump_to_s3_runs_pg_dump(monkeypatch, tmp_path):
     key = snap.dump_to_s3(s3, cfg)
     assert key == "db/snap-v1.2.3.dump"
     s3.upload_file.assert_called_once()
+    # Gate 0.1: FULL-database dump — any schema filter would silently drop the
+    # extensions + gv schemas the restore-from-empty path needs.
+    assert not any("--schema" in arg or arg == "-n" for arg in cmds[0])
+
+
+def test_dump_globals_runs_pg_dumpall(monkeypatch):
+    cfg = make_cfg()
+    s3 = mock.Mock()
+    monkeypatch.setattr(snap, "s3_object_exists", lambda *a, **k: False)
+    cmds = []
+
+    def fake_run(cmd, **kw):
+        cmds.append(cmd)
+        fpath = cmd[cmd.index("-f") + 1]
+        with open(fpath, "w") as fh:
+            fh.write("CREATE ROLE neondb_owner;\n")
+        r = mock.Mock(); r.returncode = 0; r.stderr = ""
+        return r
+
+    monkeypatch.setattr(snap.subprocess, "run", fake_run)
+    key = snap.dump_globals_to_s3(s3, cfg)
+    assert key == "db/snap-v1.2.3.globals.sql"
+    s3.upload_file.assert_called_once()
+    assert cmds[0][0] == "pg_dumpall"
+    assert "--globals-only" in cmds[0]
+    # Neon manages role credentials; SCRAM hashes must not land in S3.
+    assert "--no-role-passwords" in cmds[0]
+
+
+def test_dump_globals_skip_if_exists(monkeypatch):
+    cfg = make_cfg()
+    s3 = mock.Mock()
+    monkeypatch.setattr(snap, "s3_object_exists", lambda *a, **k: True)
+    sub = mock.Mock()
+    monkeypatch.setattr(snap.subprocess, "run", sub)
+    assert snap.dump_globals_to_s3(s3, cfg) == "db/snap-v1.2.3.globals.sql"
+    sub.assert_not_called()
+    s3.upload_file.assert_not_called()
+
+
+def test_dump_globals_fails_on_nonzero(monkeypatch):
+    cfg = make_cfg()
+    s3 = mock.Mock()
+    monkeypatch.setattr(snap, "s3_object_exists", lambda *a, **k: False)
+    r = mock.Mock(); r.returncode = 1; r.stderr = "pg_authid denied"
+    monkeypatch.setattr(snap.subprocess, "run", lambda cmd, **kw: r)
+    with pytest.raises(snap.SnapError):
+        snap.dump_globals_to_s3(s3, cfg)
 
 
 def test_dump_to_s3_fails_on_nonzero(monkeypatch):
@@ -279,19 +368,45 @@ def test_self_verify_fails_when_dump_missing(monkeypatch):
     s3 = mock.Mock()
     monkeypatch.setattr(snap, "s3_object_exists", lambda s, b, k: False)
     with pytest.raises(snap.SnapError):
-        snap.self_verify(s3, cfg, "db/x.dump", "photos/x.json", "br-1", "v1.2.3")
+        snap.self_verify(s3, cfg, "db/x.dump", "db/x.globals.sql",
+                         "photos/x.json", "br-1", "v1.2.3")
+
+
+def test_self_verify_fails_when_globals_missing(monkeypatch):
+    cfg = make_cfg()
+    s3 = mock.Mock()
+    monkeypatch.setattr(
+        snap, "s3_object_exists",
+        lambda s, b, k: not k.endswith(".globals.sql"),
+    )
+    with pytest.raises(snap.SnapError, match="globals"):
+        snap.self_verify(s3, cfg, "db/x.dump", "db/x.globals.sql",
+                         "photos/x.json", "br-1", "v1.2.3")
 
 
 # --- retention prune ---------------------------------------------------------
 
-def _branch(name, t):
-    return {"id": f"br-{name}-{t}", "name": name, "created_at": t}
+PROD_ID = "br-delicate-sea-amum92c2"  # matches Config default neon_prod_branch_id
+
+
+def _branch(name, t, parent_id=PROD_ID, **extra):
+    b = {"id": f"br-{name}-{t}", "name": name, "created_at": t, "parent_id": parent_id}
+    b.update(extra)
+    return b
+
+
+def _pruned_ids(report):
+    return [p["id"] for p in report["pruned"]]
+
+
+def _skipped_ids(report):
+    return [s["id"] for s in report["skipped"]]
 
 
 def test_prune_keeps_k_newest(monkeypatch):
     cfg = make_cfg(SNAP_RETENTION="2")
     branches = [
-        {"id": "br-prod", "name": "production", "created_at": "2026-01-01"},
+        {"id": PROD_ID, "name": "production", "created_at": "2026-01-01"},
         _branch("snap-v1", "2026-01-02"),
         _branch("snap-v2", "2026-01-03"),
         _branch("snap-v3", "2026-01-04"),
@@ -303,12 +418,11 @@ def test_prune_keeps_k_newest(monkeypatch):
         deleted.append(url.rsplit("/", 1)[-1])
         return _resp(200)
     monkeypatch.setattr(snap.requests, "delete", fake_delete)
-    pruned = snap.prune_old_branches(cfg)
+    report = snap.prune_old_branches(cfg)
     # 4 snaps, keep 2 newest (v3,v4) -> prune v1,v2. prod never touched.
-    assert len(pruned) == 2
-    assert "br-snap-v1-2026-01-02" in pruned
-    assert "br-snap-v2-2026-01-03" in pruned
-    assert all("prod" not in d for d in deleted)
+    assert _pruned_ids(report) == ["br-snap-v1-2026-01-02", "br-snap-v2-2026-01-03"]
+    assert report["skipped"] == []
+    assert PROD_ID not in deleted
 
 
 def test_prune_noop_under_k(monkeypatch):
@@ -317,17 +431,223 @@ def test_prune_noop_under_k(monkeypatch):
     monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
     delete = mock.Mock()
     monkeypatch.setattr(snap.requests, "delete", delete)
-    assert snap.prune_old_branches(cfg) == []
+    assert snap.prune_old_branches(cfg) == {"pruned": [], "skipped": []}
     delete.assert_not_called()
+
+
+def test_prune_scopes_to_prod_parent(monkeypatch):
+    # Gate 4 §14: prefix-named branches under a DIFFERENT parent (e.g. prod
+    # snapshots seen from a staging-pointed rehearsal) are not candidates.
+    cfg = make_cfg(SNAP_RETENTION="1")
+    branches = [
+        _branch("snap-v1", "2026-01-02"),
+        _branch("snap-v2", "2026-01-03"),
+        _branch("snap-v8", "2026-01-04", parent_id="br-other-parent"),
+        _branch("snap-v9", "2026-01-05", parent_id="br-other-parent"),
+    ]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    deleted = []
+    def fake_delete(url, **kw):
+        deleted.append(url.rsplit("/", 1)[-1])
+        return _resp(200)
+    monkeypatch.setattr(snap.requests, "delete", fake_delete)
+    report = snap.prune_old_branches(cfg)
+    assert _pruned_ids(report) == ["br-snap-v1-2026-01-02"]
+    assert all("other-parent" not in d for d in deleted)
+
+
+def test_prune_respects_branch_prefix(monkeypatch):
+    cfg = make_cfg(SNAP_RETENTION="1", SNAP_BRANCH_PREFIX="rehearsal-snap-")
+    branches = [
+        _branch("snap-v1", "2026-01-02"),
+        _branch("rehearsal-snap-v0.0.0", "2026-01-03"),
+        _branch("rehearsal-snap-v0.0.1", "2026-01-04"),
+    ]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    monkeypatch.setattr(snap.requests, "delete", lambda url, **kw: _resp(200))
+    report = snap.prune_old_branches(cfg)
+    assert _pruned_ids(report) == ["br-rehearsal-snap-v0.0.0-2026-01-03"]
+
+
+def test_prune_deny_list(monkeypatch):
+    # Deny-list holds even for branches that pass the prefix+parent filter.
+    cfg = make_cfg(SNAP_RETENTION="1")
+    branches = [
+        {"id": PROD_ID, "name": "snap-vprod", "created_at": "2026-01-01",
+         "parent_id": PROD_ID},
+        _branch("snap-v1", "2026-01-02", default=True),
+        _branch("snap-v2", "2026-01-03", protected=True),
+        _branch("snap-v3", "2026-01-04"),
+        _branch("snap-v4", "2026-01-05"),
+    ]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    deleted = []
+    def fake_delete(url, **kw):
+        deleted.append(url.rsplit("/", 1)[-1])
+        return _resp(200)
+    monkeypatch.setattr(snap.requests, "delete", fake_delete)
+    report = snap.prune_old_branches(cfg)
+    assert _pruned_ids(report) == ["br-snap-v3-2026-01-04"]
+    reasons = {s["id"]: s["reason"] for s in report["skipped"]}
+    assert reasons[PROD_ID] == "prod branch id"
+    assert reasons["br-snap-v1-2026-01-02"] == "default branch"
+    assert reasons["br-snap-v2-2026-01-03"] == "protected branch"
+    assert PROD_ID not in deleted
+
+
+def test_prune_deny_listed_names(monkeypatch):
+    cfg = make_cfg(SNAP_RETENTION="1", SNAP_BRANCH_PREFIX="")
+    branches = [
+        _branch("main", "2026-01-01"),
+        _branch("staging", "2026-01-02"),
+        _branch("production", "2026-01-03"),
+        _branch("snap-v1", "2026-01-04"),
+        _branch("snap-v2", "2026-01-05"),
+    ]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    monkeypatch.setattr(snap.requests, "delete", lambda url, **kw: _resp(200))
+    # empty prefix in env falls back to "snap-" (Config), so force it directly
+    # to prove the name deny-list is load-bearing even with no prefix guard.
+    cfg.branch_prefix = ""
+    report = snap.prune_old_branches(cfg)
+    assert _pruned_ids(report) == ["br-snap-v1-2026-01-04"]
+    assert {s["reason"] for s in report["skipped"][:3]} == {"deny-listed name"}
+
+
+def test_prune_age_floor(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    cfg = make_cfg(SNAP_RETENTION="1")
+    fresh = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    branches = [
+        _branch("snap-v1", fresh),
+        _branch("snap-v2", "2026-01-03"),
+        _branch("snap-v3", "2026-01-04"),
+    ]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    monkeypatch.setattr(snap.requests, "delete", lambda url, **kw: _resp(200))
+    report = snap.prune_old_branches(cfg)
+    # fresh branch sorts LAST (newest) so k=1 keeps it; both old candidates
+    # clear the 24h floor and are deleted.
+    assert _pruned_ids(report) == ["br-snap-v2-2026-01-03", "br-snap-v3-2026-01-04"]
+    assert report["skipped"] == []
+
+
+def test_prune_age_floor_blocks_young_candidate(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    cfg = make_cfg(SNAP_RETENTION="1")
+    t0 = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    t1 = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    branches = [_branch("snap-v1", t0), _branch("snap-v2", t1)]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    delete = mock.Mock()
+    monkeypatch.setattr(snap.requests, "delete", delete)
+    report = snap.prune_old_branches(cfg)
+    assert report["pruned"] == []
+    assert len(report["skipped"]) == 1
+    assert "age floor" in report["skipped"][0]["reason"]
+    delete.assert_not_called()
+
+
+def test_prune_unparseable_created_at_skipped(monkeypatch):
+    cfg = make_cfg(SNAP_RETENTION="1")
+    # "1999-junk" string-sorts before any real 2026 timestamp, so the
+    # unparseable branch lands in the delete window and hits the age guard.
+    branches = [
+        _branch("snap-v1", "1999-junk"),
+        _branch("snap-v2", "2026-01-03"),
+    ]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    delete = mock.Mock()
+    monkeypatch.setattr(snap.requests, "delete", delete)
+    report = snap.prune_old_branches(cfg)
+    assert report["pruned"] == []
+    assert report["skipped"][0]["reason"] == "age floor (unparseable created_at)"
+    delete.assert_not_called()
+
+
+def test_prune_404_treated_as_success(monkeypatch):
+    cfg = make_cfg(SNAP_RETENTION="1")
+    branches = [_branch("snap-v1", "2026-01-02"), _branch("snap-v2", "2026-01-03")]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    monkeypatch.setattr(snap.requests, "delete", lambda url, **kw: _resp(404, text="not found"))
+    report = snap.prune_old_branches(cfg)
+    assert _pruned_ids(report) == ["br-snap-v1-2026-01-02"]
+    assert report["pruned"][0]["note"] == "already absent (404)"
+    assert report["skipped"] == []
+
+
+@pytest.mark.parametrize("status", [422, 423])
+def test_prune_422_423_skip_and_report(monkeypatch, status):
+    cfg = make_cfg(SNAP_RETENTION="1")
+    branches = [_branch("snap-v1", "2026-01-02"), _branch("snap-v2", "2026-01-03")]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    monkeypatch.setattr(
+        snap.requests, "delete",
+        lambda url, **kw: _resp(status, text="cannot delete branch that has children"),
+    )
+    report = snap.prune_old_branches(cfg)  # must NOT raise
+    assert report["pruned"] == []
+    assert len(report["skipped"]) == 1
+    assert f"HTTP {status}" in report["skipped"][0]["reason"]
+    assert report["skipped"][0]["name"] == "snap-v1"
+
+
+def test_prune_partial_failure(monkeypatch):
+    cfg = make_cfg(SNAP_RETENTION="1")
+    branches = [
+        _branch("snap-v1", "2026-01-02"),
+        _branch("snap-v2", "2026-01-03"),
+        _branch("snap-v3", "2026-01-04"),
+    ]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    def fake_delete(url, **kw):
+        if url.endswith("br-snap-v1-2026-01-02"):
+            return _resp(422, text="has children")
+        return _resp(200)
+    monkeypatch.setattr(snap.requests, "delete", fake_delete)
+    report = snap.prune_old_branches(cfg)
+    assert _pruned_ids(report) == ["br-snap-v2-2026-01-03"]
+    assert _skipped_ids(report) == ["br-snap-v1-2026-01-02"]
+
+
+def test_prune_k_clamped_in_prune(monkeypatch):
+    # Even a hand-built cfg with retention 0 must keep at least 1 snapshot.
+    cfg = make_cfg(SNAP_RETENTION="1")
+    cfg.retention = 0
+    branches = [_branch("snap-v1", "2026-01-02"), _branch("snap-v2", "2026-01-03")]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    monkeypatch.setattr(snap.requests, "delete", lambda url, **kw: _resp(200))
+    report = snap.prune_old_branches(cfg)
+    assert _pruned_ids(report) == ["br-snap-v1-2026-01-02"]
+
+
+def test_prune_emits_warnings_for_skips(monkeypatch, capsys):
+    cfg = make_cfg(SNAP_RETENTION="1")
+    branches = [_branch("snap-v1", "2026-01-02"), _branch("snap-v2", "2026-01-03")]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    monkeypatch.setattr(snap.requests, "delete", lambda url, **kw: _resp(423, text="locked"))
+    snap.prune_old_branches(cfg)
+    out = capsys.readouterr().out
+    assert "::warning::" in out
+    assert "snap-v1" in out  # branch NAME, not just id (Gate 2 §8)
+
+
+def test_prune_writes_step_summary(monkeypatch, tmp_path):
+    cfg = make_cfg(SNAP_RETENTION="1")
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    branches = [_branch("snap-v1", "2026-01-02"), _branch("snap-v2", "2026-01-03")]
+    monkeypatch.setattr(snap, "_neon_list_branches", lambda c: branches)
+    monkeypatch.setattr(snap.requests, "delete", lambda url, **kw: _resp(200))
+    snap.prune_old_branches(cfg)
+    text = summary.read_text()
+    assert "snap prune" in text
+    assert "snap-v1" in text
 
 
 # --- manifest written LAST ---------------------------------------------------
 
-def test_run_writes_manifest_last(monkeypatch):
-    cfg = make_cfg()
-    s3 = mock.Mock()
-    order = []
-
+def _patch_run_steps(monkeypatch, order):
     monkeypatch.setattr(snap, "precheck_existing_manifest", lambda s, c: None)
     monkeypatch.setattr(snap, "ensure_tag",
                         lambda c: order.append("tag") or "v1.2.3")
@@ -335,26 +655,63 @@ def test_run_writes_manifest_last(monkeypatch):
                         lambda c: order.append("neon") or ("br-1", "0/ABC"))
     monkeypatch.setattr(snap, "dump_to_s3",
                         lambda s, c: order.append("dump") or "db/snap-v1.2.3.dump")
+    monkeypatch.setattr(snap, "dump_globals_to_s3",
+                        lambda s, c: order.append("globals") or "db/snap-v1.2.3.globals.sql")
     monkeypatch.setattr(snap, "capture_photo_versions",
                         lambda s, c: order.append("photos") or "photos/snap-v1.2.3.versionids.json")
     monkeypatch.setattr(snap, "publish_lambda_versions",
                         lambda c, lambda_client=None: order.append("lambda") or {"garden-plants": "3"})
     monkeypatch.setattr(snap, "self_verify",
                         lambda *a, **k: order.append("verify"))
-    monkeypatch.setattr(snap, "write_manifest",
-                        lambda s, c, m: order.append("manifest") or "snapshots/v1.2.3.json")
+
+
+def test_run_writes_manifest_last(monkeypatch):
+    cfg = make_cfg()
+    s3 = mock.Mock()
+    order = []
+    manifests = []
+    _patch_run_steps(monkeypatch, order)
+    def fake_write(s, c, m):
+        order.append("manifest")
+        manifests.append(json.loads(json.dumps(m)))
+        return "snapshots/v1.2.3.json"
+    monkeypatch.setattr(snap, "write_manifest", fake_write)
     monkeypatch.setattr(snap, "prune_old_branches",
-                        lambda c: order.append("prune") or [])
+                        lambda c: order.append("prune") or
+                        {"pruned": [{"id": "br-old", "name": "snap-v0"}], "skipped": []})
 
     result = snap.run(cfg, s3=s3, lambda_client=mock.Mock())
     # manifest must come AFTER every artifact + self-verify
     mi = order.index("manifest")
-    for step in ("tag", "neon", "dump", "photos", "lambda", "verify"):
+    for step in ("tag", "neon", "dump", "globals", "photos", "lambda", "verify"):
         assert order.index(step) < mi, f"{step} must precede manifest"
-    # prune is the only thing after manifest
+    # prune runs after the commit-marker manifest
     assert order.index("prune") > mi
     assert result["manifest"]["git_tag"] == "v1.2.3"
     assert result["manifest"]["cf_dist"] == "E3FAJTXAORQYDT"
+    assert result["manifest"]["globals_s3_key"] == "db/snap-v1.2.3.globals.sql"
+    # commit-marker manifest has no prune report; the post-prune rewrite does
+    assert "prune" not in manifests[0]
+    assert manifests[1]["prune"]["pruned"][0]["name"] == "snap-v0"
+    assert result["pruned"] == [{"id": "br-old", "name": "snap-v0"}]
+    assert result["skipped"] == []
+
+
+def test_run_prune_false_skips_prune(monkeypatch):
+    # revert-to.py contract: the pre-revert snap must not prune (it could
+    # delete the very snapshot being restored).
+    cfg = make_cfg()
+    s3 = mock.Mock()
+    order = []
+    _patch_run_steps(monkeypatch, order)
+    monkeypatch.setattr(snap, "write_manifest", lambda s, c, m: "snapshots/v1.2.3.json")
+    prune = mock.Mock()
+    monkeypatch.setattr(snap, "prune_old_branches", prune)
+    result = snap.run(cfg, s3=s3, lambda_client=mock.Mock(), prune=False)
+    prune.assert_not_called()
+    assert result["pruned"] == []
+    assert result["skipped"] == []
+    assert "prune" not in result["manifest"]
 
 
 def test_run_aborts_if_self_verify_fails(monkeypatch):
@@ -364,6 +721,7 @@ def test_run_aborts_if_self_verify_fails(monkeypatch):
     monkeypatch.setattr(snap, "ensure_tag", lambda c: "v1.2.3")
     monkeypatch.setattr(snap, "ensure_neon_branch", lambda c: ("br-1", "0/ABC"))
     monkeypatch.setattr(snap, "dump_to_s3", lambda s, c: "db/x.dump")
+    monkeypatch.setattr(snap, "dump_globals_to_s3", lambda s, c: "db/x.globals.sql")
     monkeypatch.setattr(snap, "capture_photo_versions", lambda s, c: "photos/x.json")
     monkeypatch.setattr(snap, "publish_lambda_versions",
                         lambda c, lambda_client=None: {"garden-plants": "3"})
@@ -393,6 +751,6 @@ def test_main_returns_zero_on_success(monkeypatch):
     monkeypatch.setattr(
         snap, "run",
         lambda cfg: {"manifest_key": "snapshots/v1.json",
-                     "manifest": {"git_tag": "v1"}, "pruned": []},
+                     "manifest": {"git_tag": "v1"}, "pruned": [], "skipped": []},
     )
     assert snap.main([]) == 0

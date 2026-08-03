@@ -28,6 +28,18 @@ name: integrity-weekly (P0)
 #     --json conclusion,updatedAt,databaseId
 # conclusion=failure -> download artifact integrity-report and surface report.alerts[] lines
 # verbatim in the brief (shape: {status, alerts[], improvements[], warnings[], metrics{}}).
+#
+# NEON BRANCH HYGIENE (Gate 2 §7, added 2026-08-03): OUT-OF-BAND check that the branch
+# fleet is under control — an in-pipeline pruner cannot detect its own non-execution, so
+# this must live outside promote/snap. Reds when: branch count > cap (DERIVED as
+# SNAP_RETENTION+4 unless NEON_MAX_BRANCHES overrides — auto-adapts to retention changes);
+# any branch outside {production, staging, newest-K prod-parented snap-*} is older than
+# STRAY_MAX_AGE_DAYS; or an over-K snap-* branch persists across 2 consecutive runs
+# (prune skipped twice). Selection logic is scripts/neon_branch_select.py, shared with
+# prune-branches.yml and covered by scripts/test_neon_branch_select.py.
+# Prior-run state persists as the neon-branch-state artifact (90d). Alerts merge into
+# integrity-report.json so the morning brief surfaces them through the existing hookup.
+# Uses the branches API only — the consumption-history API is Scale-plan-only (403 on Launch).
 
 on:
   schedule:
@@ -37,6 +49,7 @@ on:
 permissions:
   id-token: write   # OIDC for the backup role (S3 census only)
   contents: read
+  actions: read     # download the previous run's neon-branch-state artifact (persistence for the 2-run prune-skip check)
 
 concurrency:
   group: integrity-weekly
@@ -65,6 +78,44 @@ jobs:
           BASELINE_FILE: scripts/integrity-baselines.json
           OUT: integrity-report.json
         run: bash scripts/integrity-weekly-check.sh
+
+      - name: Neon branch hygiene (out-of-band, Gate 2 §7)
+        if: ${{ always() }}
+        # Logic lives in scripts/neon_branch_select.py (shared with
+        # prune-branches.yml so the dry-run report and this check cannot
+        # diverge; tested by scripts/test_neon_branch_select.py). Cap is
+        # DERIVED as SNAP_KEEP+4 (production + staging + K snaps + 2 headroom
+        # for in-flight TTL'd prerestore-*/revert-stage-*) — set
+        # NEON_MAX_BRANCHES to override explicitly (RIA-1).
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          NEON_PROD_BRANCH_ID: br-delicate-sea-amum92c2
+          SNAP_KEEP: ${{ vars.SNAP_RETENTION }}
+          STRAY_MAX_AGE_DAYS: '7'
+          GH_TOKEN: ${{ github.token }}
+          STATE_FILE: neon-branch-state.json
+          PREV_STATE_DIR: prev-neon-state
+        run: |
+          set -euo pipefail
+          mkdir -p "$PREV_STATE_DIR"
+          # Prior-run state: newest completed run of THIS workflow that has the artifact.
+          for rid in $(gh run list --repo "$GITHUB_REPOSITORY" --workflow integrity-weekly.yml \
+                        --status completed -L 15 --json databaseId --jq '.[].databaseId' 2>/dev/null || true); do
+            if gh run download "$rid" --repo "$GITHUB_REPOSITORY" -n neon-branch-state -D "$PREV_STATE_DIR" 2>/dev/null; then
+              echo "prior branch state from run $rid"
+              break
+            fi
+          done
+          python3 scripts/neon_branch_select.py hygiene
+
+      - name: Upload neon branch state (prior-run persistence)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-branch-state
+          path: neon-branch-state.json
+          retention-days: 90
 
       - name: Upload run snapshot artifact
         if: ${{ always() }}

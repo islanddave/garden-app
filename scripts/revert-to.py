@@ -41,9 +41,20 @@ ENV CONTRACT (read at runtime; no secrets hardcoded):
   NEON_PROD_BRANCH_ID prod Neon branch id (default br-delicate-sea-amum92c2).
   NEON_BACKUP_URL     DIRECT (non-pooler) prod Postgres URL (pre-revert snap
                       dump + RPO probe).
-  SNAP_BUCKET         durable archive bucket (default garden-backups-prod).
+  SNAP_BUCKET         durable archive bucket (default garden-snapshots-prod —
+                      matches the live vars.SNAP_BUCKET; the old
+                      garden-backups-prod default pointed at the DAILY bucket,
+                      where snap manifests/dumps do not live).
   PHOTOS_BUCKET       versioned photos bucket (pre-revert snap needs it).
   SNAP_RETENTION      pre-revert snap retention K (default 5).
+  REVERT_BRANCH_TTL_DAYS  Neon expires_at TTL (days, default 7) stamped on every
+                      branch this script creates (revert-stage-*) or causes to
+                      be created (prerestore-* via preserve_under_name). Without
+                      it every real revert leaves two PERMANENT billable
+                      branches nothing deletes (the abandoned-branch rent).
+                      Expiry-stamping is best-effort: a Neon API that rejects
+                      expires_at degrades to a loud WARN, never a failed revert;
+                      integrity-weekly's out-of-band branch check is the backstop.
   CF_DIST             CloudFront distribution id (default E3FAJTXAORQYDT).
   CONFIRM_DATA_LOSS   must equal the literal string "yes" to perform the prod
                       DB reset (defense-in-depth on top of the env approval —
@@ -85,13 +96,14 @@ UNKNOWNS to resolve in the staging rehearsal (flagged, not guessed):
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import boto3
 import requests
@@ -159,9 +171,10 @@ class Config:
         self.neon_project_id = self._req(env, "NEON_PROJECT_ID")
         self.neon_prod_branch_id = env.get("NEON_PROD_BRANCH_ID", "br-delicate-sea-amum92c2")
         self.neon_backup_url = self._req(env, "NEON_BACKUP_URL")
-        self.snap_bucket = env.get("SNAP_BUCKET", "garden-backups-prod")
+        self.snap_bucket = env.get("SNAP_BUCKET", "garden-snapshots-prod")
         self.photos_bucket = env.get("PHOTOS_BUCKET", "")
         self.retention = int(env.get("SNAP_RETENTION", "5"))
+        self.branch_ttl_days = int(env.get("REVERT_BRANCH_TTL_DAYS", "7"))
         self.cf_dist = env.get("CF_DIST", "E3FAJTXAORQYDT")
         self.confirm_data_loss = env.get("CONFIRM_DATA_LOSS", "")
         # --- rehearsal redirect (REHEARSAL_MODE=1 only) ---------------------
@@ -189,6 +202,11 @@ class Config:
 
 def utc_now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _expires_at(days):
+    """RFC3339 expiry `days` from now for Neon branch.expires_at."""
+    return (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def gh_headers(cfg):
@@ -329,6 +347,17 @@ def prerevert_snap(cfg):
     snap_env["MAIN_SHA"] = current_main
     snap_env["APP_VERSION"] = f"prerevert-of-{cfg.target_version}"
     snap_cfg = snap_mod.Config(env=snap_env)
+    # prune=False is LOAD-BEARING: snap's own retention prune runs BEFORE this
+    # revert reaches fast_path_branch, and with the snap fleet at/over K it can
+    # DELETE snap-<TARGET_VERSION> — the very branch the revert is about to
+    # restore from. The revert's snap must archive only, never prune.
+    if "prune" in inspect.signature(snap_mod.run).parameters:
+        return snap_mod.run(snap_cfg, prune=False)
+    sys.stderr.write(
+        "[revert] WARN: snap.run() has no prune parameter — retention prune may "
+        "delete the revert target branch before the DB stage (transition hazard; "
+        "update snap.py)\n"
+    )
     return snap_mod.run(snap_cfg)
 
 
@@ -391,23 +420,40 @@ def fast_path_branch(cfg, manifest):
     return None
 
 
-def neon_create_branch_with_endpoint(cfg, name):
+def neon_create_branch_with_endpoint(cfg, name, ttl_days=None):
     """Create a fresh restore-target branch WITH a read-write endpoint; return
     (branch_id, direct_connection_uri). Idempotent: reuse if name exists.
+    ttl_days stamps expires_at AT CREATION (abandoned-branch-rent fix); if the
+    API rejects the field, retry WITHOUT it and warn loudly — a hygiene
+    attribute must never fail the revert itself.
     """
     for b in _neon_list_branches(cfg):
         if b.get("name") == name:
             bid = b["id"]
             uri = _branch_direct_uri(cfg, bid)
             return bid, uri
+    branch = {"name": name}
+    if ttl_days:
+        branch["expires_at"] = _expires_at(ttl_days)
     payload = {
-        "branch": {"name": name},
+        "branch": branch,
         "endpoints": [{"type": "read_write"}],
     }
     r = requests.post(
         f"{NEON_API}/projects/{cfg.neon_project_id}/branches",
         headers=neon_headers(cfg), json=payload, timeout=HTTP_TIMEOUT,
     )
+    if ttl_days and r.status_code in (400, 422) and "expires_at" in (r.text or ""):
+        sys.stderr.write(
+            f"[revert] WARN: Neon rejected expires_at on branch create "
+            f"({r.status_code}); retrying WITHOUT expiry — branch {name} will be "
+            f"permanent until integrity-weekly flags it\n"
+        )
+        payload["branch"].pop("expires_at", None)
+        r = requests.post(
+            f"{NEON_API}/projects/{cfg.neon_project_id}/branches",
+            headers=neon_headers(cfg), json=payload, timeout=HTTP_TIMEOUT,
+        )
     if r.status_code not in (200, 201):
         raise RevertError(f"Neon create restore branch failed {r.status_code}: {r.text}")
     body = r.json()
@@ -488,6 +534,38 @@ def validate_branch(cfg, target_uri):
     return {"public_tables": int(existing), "counts": counts}
 
 
+def _expire_branch_by_name(cfg, name, ttl_days):
+    """Best-effort: stamp expires_at on the branch named `name` (used for the
+    prerestore-* branch Neon creates server-side via preserve_under_name, which
+    the create-time expires_at cannot reach). NEVER raises — a failed hygiene
+    PATCH must not fail (or roll back) a succeeded restore; integrity-weekly's
+    out-of-band branch check is the backstop for a missed expiry.
+    """
+    try:
+        for b in _neon_list_branches(cfg):
+            if b.get("name") == name:
+                r = requests.patch(
+                    f"{NEON_API}/projects/{cfg.neon_project_id}/branches/{b['id']}",
+                    headers=neon_headers(cfg),
+                    json={"branch": {"expires_at": _expires_at(ttl_days)}},
+                    timeout=HTTP_TIMEOUT,
+                )
+                if r.status_code == 200:
+                    return True
+                sys.stderr.write(
+                    f"[revert] WARN: expires_at PATCH on {name} failed "
+                    f"{r.status_code}: {r.text[:200]} — branch stays permanent "
+                    f"until integrity-weekly flags it\n"
+                )
+                return False
+        sys.stderr.write(
+            f"[revert] WARN: preserve branch {name} not found for expiry stamping\n"
+        )
+    except Exception as e:  # noqa: BLE001 — hygiene must never break the revert
+        sys.stderr.write(f"[revert] WARN: expiry stamping for {name} errored: {e}\n")
+    return False
+
+
 def neon_restore_prod_from(cfg, source_branch_id, source_lsn=None):
     """Neon 'Restore branch': reset the PROD branch to the state of
     source_branch_id (optionally at source_lsn). Preserves the prod endpoint /
@@ -500,12 +578,13 @@ def neon_restore_prod_from(cfg, source_branch_id, source_lsn=None):
     # is set unconditionally with a unique name; the pre-restore state is retained
     # as a backup branch rather than orphaning child lineage. (U2 RESOLVED in the
     # 2026-06-03 staging rehearsal — the live API rejected the no-preserve body.)
+    preserve_name = (
+        f"prerestore-{cfg.target_version}-"
+        f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{os.urandom(2).hex()}"
+    )
     body = {
         "source_branch_id": source_branch_id,
-        "preserve_under_name": (
-            f"prerestore-{cfg.target_version}-"
-            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{os.urandom(2).hex()}"
-        ),
+        "preserve_under_name": preserve_name,
     }
     if source_lsn:
         body["source_lsn"] = source_lsn
@@ -515,6 +594,9 @@ def neon_restore_prod_from(cfg, source_branch_id, source_lsn=None):
     )
     if r.status_code not in (200, 201):
         raise RevertError(f"Neon restore prod failed {r.status_code}: {r.text}")
+    # The preserve branch was just created server-side — stamp its TTL now
+    # ("at creation" for a branch we cannot create ourselves). Best-effort.
+    _expire_branch_by_name(cfg, preserve_name, cfg.branch_ttl_days)
     return r.json()
 
 
@@ -692,7 +774,9 @@ def run(cfg, s3=None, lambda_client=None, cloudfront_client=None):
             source_lsn = manifest.get("neon_lsn")
         else:
             restore_name = f"revert-stage-{cfg.target_version}"
-            source_branch_id, uri = neon_create_branch_with_endpoint(cfg, restore_name)
+            source_branch_id, uri = neon_create_branch_with_endpoint(
+                cfg, restore_name, ttl_days=cfg.branch_ttl_days
+            )
             restore_dump_into_branch(s3, cfg, manifest, uri)
             validate_branch(cfg, uri)
             source_lsn = None
