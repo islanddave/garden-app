@@ -1,0 +1,4574 @@
+{
+ "schema": "garden.harvest_weights.v3-reference",
+ "schema_version": "3.0.0",
+ "authored": "2026-08-03",
+ "supersedes": "harvest-weights-v1.json (per-crop stub, all null)",
+ "companion": "harvest-weights-v2.json — the MEASURED per-cultivar sample log. v2 always wins over v3.",
+ "status": "REFERENCE ESTIMATES — populated per Dave directive 2026-08-03 so harvest totals compute in grams now. Every value is an estimate; a measured sample for a (variety, unit) supersedes it.",
+ "tier_contract": "Resolution order for an estimated harvest weight: (1) harvest logged in a weight unit (g/kg/lb/oz) = MEASURED, never estimated; (2) plant_varieties.unit_weights[unit]; (3) crop_types.unit_weights[unit]; (4) NULL = no estimate. Tiers 2-3 always set harvest_log.weight_estimated=true.",
+ "source_vocab": {
+  "usda": "USDA FoodData Central standard portion weight.",
+  "catalog": "Seed-catalog stated fruit/head size for that named variety.",
+  "estimate": "Typed best-guess from horticultural norms for the class; no per-variety source found."
+ },
+ "confidence_vocab": {
+  "high": "Sourced value or a tight, well-documented range.",
+  "medium": "Sourced class value applied to this variety, or a wide documented range.",
+  "low": "Variety identity or type is uncertain — verify before trusting a total."
+ },
+ "units": [
+  "lb",
+  "oz",
+  "kg",
+  "g",
+  "count",
+  "bunch",
+  "cup",
+  "head"
+ ],
+ "by_crop_type": {
+  "apple": {
+   "unit_weights": {
+    "count": 182,
+    "cup": 125
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 182,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA medium apple 182 g; 1 cup sliced 125 g."
+  },
+  "apricot": {
+   "unit_weights": {
+    "count": 35,
+    "cup": 155
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 35,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA apricot 35 g."
+  },
+  "avocado": {
+   "unit_weights": {
+    "count": 200,
+    "cup": 150
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 200,
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  "black_raspberry": {
+   "unit_weights": {
+    "cup": 123,
+    "count": 2.5
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 123,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "Cup per USDA raspberry; per-berry estimated."
+  },
+  "blackberry": {
+   "unit_weights": {
+    "cup": 144,
+    "count": 5
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 144,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA blackberries raw 1 cup 144 g."
+  },
+  "blueberry": {
+   "unit_weights": {
+    "cup": 148,
+    "count": 1.5
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 148,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA blueberries raw 1 cup 148 g (~100 berries)."
+  },
+  "cherry": {
+   "unit_weights": {
+    "count": 8,
+    "cup": 154
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 154,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA sweet cherries 1 cup w/pits 154 g."
+  },
+  "cranberry": {
+   "unit_weights": {
+    "cup": 100,
+    "count": 1.2
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 100,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA whole cranberries 1 cup 100 g."
+  },
+  "elderberry": {
+   "unit_weights": {
+    "cup": 145,
+    "count": 0.3
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 145,
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  "grape": {
+   "unit_weights": {
+    "cup": 151,
+    "count": 5
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 151,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA seedless grapes 1 cup 151 g."
+  },
+  "melon": {
+   "unit_weights": {
+    "count": 1360,
+    "cup": 160
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 1360,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "Cantaloupe basis; see variety overrides."
+  },
+  "nectarine": {
+   "unit_weights": {
+    "count": 142,
+    "cup": 143
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 142,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "peach": {
+   "unit_weights": {
+    "count": 150,
+    "cup": 154
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 150,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "pear": {
+   "unit_weights": {
+    "count": 178,
+    "cup": 140
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 178,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "pineapple": {
+   "unit_weights": {
+    "count": 905,
+    "cup": 165
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 905,
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  "plum": {
+   "unit_weights": {
+    "count": 66,
+    "cup": 165
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 66,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "raspberry": {
+   "unit_weights": {
+    "cup": 123,
+    "count": 3.5
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 123,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA raspberries raw 1 cup 123 g."
+  },
+  "red_raspberry": {
+   "unit_weights": {
+    "cup": 123,
+    "count": 3.5
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 123,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA raspberries raw 1 cup 123 g."
+  },
+  "rhubarb": {
+   "unit_weights": {
+    "cup": 122,
+    "count": 51
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 122,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA 1 stalk 51 g, 1 cup diced 122 g."
+  },
+  "sour_cherry": {
+   "unit_weights": {
+    "cup": 155,
+    "count": 5
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 155,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "strawberry": {
+   "unit_weights": {
+    "count": 15,
+    "cup": 144
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 144,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "USDA medium berry 12 g / large 18 g; garden-mixed 15 g."
+  },
+  "watermelon": {
+   "unit_weights": {
+    "count": 4500,
+    "cup": 152
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 4500,
+   "source": "usda",
+   "confidence": "low",
+   "note": "Whole-fruit weight swings 3-10 kg by type; see overrides."
+  },
+  "wineberry": {
+   "unit_weights": {
+    "cup": 123,
+    "count": 2
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 123,
+   "source": "estimate",
+   "confidence": "medium",
+   "note": "Raspberry cup basis; wineberries run smaller per berry."
+  },
+  "althaea": {
+   "unit_weights": {
+    "cup": 20
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 20,
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  "basil": {
+   "unit_weights": {
+    "cup": 24,
+    "count": 0.5
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 24,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA basil fresh chopped 1 cup 24 g; 1 leaf ~0.5 g."
+  },
+  "bay": {
+   "unit_weights": {
+    "count": 0.2
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 0.2,
+   "source": "estimate",
+   "confidence": "medium",
+   "note": "Per leaf."
+  },
+  "bee_balm": {
+   "unit_weights": {
+    "count": 2,
+    "cup": 20
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 20,
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Per sprig/flower head."
+  },
+  "borage": {
+   "unit_weights": {
+    "cup": 25
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 25,
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  "chervil": {
+   "unit_weights": {
+    "cup": 15
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 15,
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  "chives": {
+   "unit_weights": {
+    "cup": 48,
+    "count": 0.3
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 48,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA chopped chives 1 tbsp 3 g."
+  },
+  "cilantro": {
+   "unit_weights": {
+    "cup": 16,
+    "count": 1
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 16,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA coriander leaves raw 1 cup 16 g."
+  },
+  "culantro": {
+   "unit_weights": {
+    "cup": 20,
+    "count": 2
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 20,
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  "dill": {
+   "unit_weights": {
+    "cup": 9,
+    "count": 1,
+    "bunch": 30
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 9,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA dill weed fresh 1 cup sprigs 8.9 g."
+  },
+  "lemongrass": {
+   "unit_weights": {
+    "count": 65,
+    "cup": 67
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 65,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA 1 stalk 65 g."
+  },
+  "mint": {
+   "unit_weights": {
+    "cup": 25,
+    "count": 0.2
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 25,
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  "oregano": {
+   "unit_weights": {
+    "cup": 15,
+    "count": 0.2
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 15,
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  "parsley": {
+   "unit_weights": {
+    "cup": 60,
+    "count": 1.5,
+    "bunch": 60
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 60,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA parsley chopped 1 cup 60 g; 1 sprig ~1.5 g."
+  },
+  "perilla": {
+   "unit_weights": {
+    "cup": 20,
+    "count": 1.5
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 20,
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  "rosemary": {
+   "unit_weights": {
+    "cup": 28,
+    "count": 1.5
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 28,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "USDA fresh rosemary 1 tbsp 1.7 g."
+  },
+  "sage": {
+   "unit_weights": {
+    "cup": 20,
+    "count": 0.5
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 20,
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  "tarragon": {
+   "unit_weights": {
+    "cup": 15,
+    "count": 0.3
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 15,
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  "thyme": {
+   "unit_weights": {
+    "cup": 30,
+    "count": 1,
+    "bunch": 25
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 30,
+   "source": "estimate",
+   "confidence": "medium",
+   "note": "Loose sprigs; packing dominates. Prefer direct weighing."
+  },
+  "vietnamese_coriander": {
+   "unit_weights": {
+    "cup": 18
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 18,
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  "artichoke": {
+   "unit_weights": {
+    "count": 128,
+    "head": 128
+   },
+   "primary_unit": "head",
+   "grams_per_unit": 128,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA medium globe 128 g."
+  },
+  "arugula": {
+   "unit_weights": {
+    "cup": 20,
+    "bunch": 25
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 20,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA arugula 1 cup 20 g."
+  },
+  "asparagus": {
+   "unit_weights": {
+    "count": 16,
+    "cup": 134,
+    "bunch": 340
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 16,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA medium spear 16 g."
+  },
+  "bean": {
+   "unit_weights": {
+    "cup": 110,
+    "count": 6
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 6,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA snap beans 1 cup 110 g."
+  },
+  "beet": {
+   "unit_weights": {
+    "count": 82,
+    "cup": 136
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 82,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA beet 2in 82 g; 1 cup raw sliced 136 g."
+  },
+  "bitter_melon": {
+   "unit_weights": {
+    "count": 200,
+    "cup": 93
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 200,
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  "bok_choy": {
+   "unit_weights": {
+    "head": 300,
+    "count": 300,
+    "cup": 70
+   },
+   "primary_unit": "head",
+   "grams_per_unit": 300,
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  "broccoli": {
+   "unit_weights": {
+    "head": 450,
+    "count": 450,
+    "cup": 91
+   },
+   "primary_unit": "head",
+   "grams_per_unit": 450,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "USDA 1 cup chopped 91 g; head 400-600 g."
+  },
+  "brussels_sprouts": {
+   "unit_weights": {
+    "count": 19,
+    "cup": 88
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 19,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "cabbage": {
+   "unit_weights": {
+    "head": 900,
+    "count": 900,
+    "cup": 89
+   },
+   "primary_unit": "head",
+   "grams_per_unit": 900,
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  "carrot": {
+   "unit_weights": {
+    "count": 61,
+    "cup": 128,
+    "bunch": 450
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 61,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA medium carrot 61 g."
+  },
+  "celery": {
+   "unit_weights": {
+    "count": 40,
+    "cup": 101,
+    "bunch": 340
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 40,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA medium stalk 40 g."
+  },
+  "chard": {
+   "unit_weights": {
+    "cup": 36,
+    "count": 35,
+    "bunch": 340
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 36,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "collard": {
+   "unit_weights": {
+    "cup": 36,
+    "count": 28,
+    "bunch": 340
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 36,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "cucamelon": {
+   "unit_weights": {
+    "count": 5,
+    "cup": 130
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 5,
+   "source": "estimate",
+   "confidence": "medium",
+   "note": "Grape-sized fruit, 4-6 g each."
+  },
+  "cucumber": {
+   "unit_weights": {
+    "count": 300,
+    "cup": 119
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 300,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "USDA 8in slicer 301 g; see overrides."
+  },
+  "eggplant": {
+   "unit_weights": {
+    "count": 450,
+    "cup": 82
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 450,
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  "endive": {
+   "unit_weights": {
+    "head": 250,
+    "count": 250,
+    "cup": 50
+   },
+   "primary_unit": "head",
+   "grams_per_unit": 250,
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  "garlic": {
+   "unit_weights": {
+    "count": 45,
+    "head": 45,
+    "cup": 136
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 45,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "Per bulb."
+  },
+  "kale": {
+   "unit_weights": {
+    "cup": 21,
+    "count": 25,
+    "bunch": 200
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 21,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA kale chopped 1 cup 21 g."
+  },
+  "kohlrabi": {
+   "unit_weights": {
+    "count": 140,
+    "cup": 135
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 140,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "leek": {
+   "unit_weights": {
+    "count": 89,
+    "cup": 89,
+    "bunch": 270
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 89,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA 1 leek 89 g."
+  },
+  "lettuce": {
+   "unit_weights": {
+    "head": 300,
+    "count": 300,
+    "cup": 36
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 36,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "USDA leaf lettuce shredded 1 cup 36 g. Pack-variable."
+  },
+  "luffa": {
+   "unit_weights": {
+    "count": 250,
+    "cup": 95
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 250,
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  "mustard": {
+   "unit_weights": {
+    "cup": 56,
+    "count": 15,
+    "bunch": 150
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 56,
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  "okra": {
+   "unit_weights": {
+    "count": 12,
+    "cup": 100
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 12,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "onion": {
+   "unit_weights": {
+    "count": 110,
+    "cup": 160,
+    "bunch": 300
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 110,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "USDA medium bulb 110 g; scallions far lighter, see overrides."
+  },
+  "parsnip": {
+   "unit_weights": {
+    "count": 130,
+    "cup": 133
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 130,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "pea": {
+   "unit_weights": {
+    "cup": 145,
+    "count": 5
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 5,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA shelled peas 1 cup 145 g; 1 pod ~5 g."
+  },
+  "pepper": {
+   "unit_weights": {
+    "count": 45,
+    "cup": 149
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 45,
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Sweet-vs-hot spans 0.5-200 g; variety override required for a usable number."
+  },
+  "potato": {
+   "unit_weights": {
+    "count": 173,
+    "cup": 150
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 173,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "USDA medium potato 173 g."
+  },
+  "radicchio": {
+   "unit_weights": {
+    "head": 200,
+    "count": 200,
+    "cup": 40
+   },
+   "primary_unit": "head",
+   "grams_per_unit": 200,
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  "radish": {
+   "unit_weights": {
+    "count": 4.5,
+    "cup": 116,
+    "bunch": 150
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 4.5,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA 1 radish 4.5 g."
+  },
+  "shallot": {
+   "unit_weights": {
+    "count": 25,
+    "cup": 160
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 25,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "Per bulb."
+  },
+  "spinach": {
+   "unit_weights": {
+    "cup": 30,
+    "count": 10,
+    "bunch": 340
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 30,
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA spinach raw 1 cup 30 g."
+  },
+  "squash": {
+   "unit_weights": {
+    "count": 200,
+    "cup": 113
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 200,
+   "source": "usda",
+   "confidence": "low",
+   "note": "Summer ~200 g vs winter 1-8 kg; variety override required."
+  },
+  "sweet_potato": {
+   "unit_weights": {
+    "count": 130,
+    "cup": 133
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 130,
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  "tomatillo": {
+   "unit_weights": {
+    "count": 34,
+    "cup": 132
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 34,
+   "source": "usda",
+   "confidence": "medium",
+   "note": "USDA medium tomatillo 34 g."
+  },
+  "tomato": {
+   "unit_weights": {
+    "count": 123,
+    "cup": 180
+   },
+   "primary_unit": "count",
+   "grams_per_unit": 123,
+   "source": "usda",
+   "confidence": "low",
+   "note": "USDA medium 123 g; cherry-to-beefsteak spans 13-750 g. Variety override required."
+  }
+ },
+ "by_variety": [
+  {
+   "crop_type_slug": "althaea",
+   "variety_name": "Althaea officinalis",
+   "unit_weights": {
+    "cup": 20
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "artichoke",
+   "variety_name": "Green Globe Improved",
+   "unit_weights": {
+    "count": 150,
+    "head": 150
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "arugula",
+   "variety_name": "Arugula",
+   "unit_weights": {
+    "cup": 20,
+    "bunch": 25
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "arugula",
+   "variety_name": "Astro",
+   "unit_weights": {
+    "cup": 20,
+    "bunch": 25
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "arugula",
+   "variety_name": "Baby Greens",
+   "unit_weights": {
+    "cup": 20,
+    "bunch": 25
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "asparagus",
+   "variety_name": "Asparagus",
+   "unit_weights": {
+    "count": 16,
+    "cup": 134
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": "Per spear."
+  },
+  {
+   "crop_type_slug": "avocado",
+   "variety_name": "Avocado",
+   "unit_weights": {
+    "count": 200,
+    "cup": 150
+   },
+   "source": "usda",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "basil",
+   "variety_name": "Genovese (Italian) Basil",
+   "unit_weights": {
+    "cup": 24,
+    "count": 0.5
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "basil",
+   "variety_name": "Holy Basil (Tulsi)",
+   "unit_weights": {
+    "cup": 20,
+    "count": 0.5
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "basil",
+   "variety_name": "Lettuce Leaf Basil",
+   "unit_weights": {
+    "cup": 22,
+    "count": 0.5
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "basil",
+   "variety_name": "Ocimum basilicum 'Sweet'",
+   "unit_weights": {
+    "cup": 24,
+    "count": 0.5
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "basil",
+   "variety_name": "Purple Basil",
+   "unit_weights": {
+    "cup": 24,
+    "count": 0.5
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "basil",
+   "variety_name": "Purple Petra Basil",
+   "unit_weights": {
+    "cup": 24,
+    "count": 0.5
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "basil",
+   "variety_name": "Thai Basil",
+   "unit_weights": {
+    "cup": 22,
+    "count": 0.5
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "bay",
+   "variety_name": "Sweet Bay",
+   "unit_weights": {
+    "count": 0.2
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "bean",
+   "variety_name": "Contender",
+   "unit_weights": {
+    "count": 6,
+    "cup": 110
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Bush snap pod."
+  },
+  {
+   "crop_type_slug": "bean",
+   "variety_name": "Ferrari",
+   "unit_weights": {
+    "count": 5,
+    "cup": 110
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Filet."
+  },
+  {
+   "crop_type_slug": "bean",
+   "variety_name": "Gold Rush",
+   "unit_weights": {
+    "count": 6,
+    "cup": 110
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Wax."
+  },
+  {
+   "crop_type_slug": "bean",
+   "variety_name": "Maxibel",
+   "unit_weights": {
+    "count": 5,
+    "cup": 110
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Filet haricot vert."
+  },
+  {
+   "crop_type_slug": "bean",
+   "variety_name": "Quincy",
+   "unit_weights": {
+    "count": 6,
+    "cup": 110
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "bean",
+   "variety_name": "Seychelles",
+   "unit_weights": {
+    "count": 6,
+    "cup": 110
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Pole snap."
+  },
+  {
+   "crop_type_slug": "bean",
+   "variety_name": "Tavera",
+   "unit_weights": {
+    "count": 5,
+    "cup": 110
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Filet."
+  },
+  {
+   "crop_type_slug": "bee_balm",
+   "variety_name": "Wild Bergamot",
+   "unit_weights": {
+    "count": 2,
+    "cup": 20
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "beet",
+   "variety_name": "Beet",
+   "unit_weights": {
+    "count": 82,
+    "cup": 136
+   },
+   "source": "usda",
+   "confidence": "medium",
+   "note": "Generic beet, USDA 2in root."
+  },
+  {
+   "crop_type_slug": "beet",
+   "variety_name": "Bull's Blood",
+   "unit_weights": {
+    "count": 70,
+    "cup": 136
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Grown mostly for greens."
+  },
+  {
+   "crop_type_slug": "beet",
+   "variety_name": "Chioggia",
+   "unit_weights": {
+    "count": 85,
+    "cup": 136
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "beet",
+   "variety_name": "Gourmet Blend",
+   "unit_weights": {
+    "count": 85,
+    "cup": 136
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "beet",
+   "variety_name": "Touchstone Gold",
+   "unit_weights": {
+    "count": 85,
+    "cup": 136
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "bitter_melon",
+   "variety_name": "Bitter Melon",
+   "unit_weights": {
+    "count": 200,
+    "cup": 93
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "black_raspberry",
+   "variety_name": "Black Raspberry",
+   "unit_weights": {
+    "count": 2.5,
+    "cup": 123
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "blueberry",
+   "variety_name": "High Bush",
+   "unit_weights": {
+    "count": 1.6,
+    "cup": 148
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Highbush berry ~1.5-2 g; cup falls back to crop 148 g."
+  },
+  {
+   "crop_type_slug": "bok_choy",
+   "variety_name": "Choko",
+   "unit_weights": {
+    "head": 300,
+    "count": 300,
+    "cup": 300
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "bok_choy",
+   "variety_name": "Toy Choy",
+   "unit_weights": {
+    "head": 300,
+    "count": 300,
+    "cup": 120
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "borage",
+   "variety_name": "Borage",
+   "unit_weights": {
+    "cup": 25
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "broccoli",
+   "variety_name": "Belstar",
+   "unit_weights": {
+    "count": 500,
+    "cup": 91,
+    "head": 500
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Main head."
+  },
+  {
+   "crop_type_slug": "broccoli",
+   "variety_name": "Broccoli",
+   "unit_weights": {
+    "count": 450,
+    "cup": 91,
+    "head": 450
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": "Generic."
+  },
+  {
+   "crop_type_slug": "broccoli",
+   "variety_name": "Green Magic",
+   "unit_weights": {
+    "count": 500,
+    "cup": 91,
+    "head": 500
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "broccoli",
+   "variety_name": "Kailaan",
+   "unit_weights": {
+    "count": 60,
+    "cup": 91,
+    "head": 60
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Chinese broccoli, thin shoots."
+  },
+  {
+   "crop_type_slug": "broccoli",
+   "variety_name": "Rapini",
+   "unit_weights": {
+    "count": 80,
+    "cup": 91,
+    "head": 80
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Broccoli raab shoots."
+  },
+  {
+   "crop_type_slug": "brussels_sprouts",
+   "variety_name": "Long Island Improved",
+   "unit_weights": {
+    "count": 19,
+    "cup": 88
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Per sprout."
+  },
+  {
+   "crop_type_slug": "cabbage",
+   "variety_name": "Cabbage (unknown)",
+   "unit_weights": {
+    "count": 900,
+    "cup": 89,
+    "head": 900
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Generic."
+  },
+  {
+   "crop_type_slug": "cabbage",
+   "variety_name": "Copenhagen Market",
+   "unit_weights": {
+    "count": 1600,
+    "cup": 89,
+    "head": 1600
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "3-4 lb."
+  },
+  {
+   "crop_type_slug": "cabbage",
+   "variety_name": "Red Acre",
+   "unit_weights": {
+    "count": 1400,
+    "cup": 89,
+    "head": 1400
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "3 lb."
+  },
+  {
+   "crop_type_slug": "carrot",
+   "variety_name": "Atomic Red",
+   "unit_weights": {
+    "count": 80,
+    "cup": 128
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Long storage type."
+  },
+  {
+   "crop_type_slug": "carrot",
+   "variety_name": "Danvers 126",
+   "unit_weights": {
+    "count": 85,
+    "cup": 128
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "carrot",
+   "variety_name": "Little Finger",
+   "unit_weights": {
+    "count": 20,
+    "cup": 128
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Baby carrot."
+  },
+  {
+   "crop_type_slug": "carrot",
+   "variety_name": "Tendersweet",
+   "unit_weights": {
+    "count": 90,
+    "cup": 128
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "carrot",
+   "variety_name": "Tonda di Parigi",
+   "unit_weights": {
+    "count": 25,
+    "cup": 128
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Round Paris market."
+  },
+  {
+   "crop_type_slug": "celery",
+   "variety_name": "Utah",
+   "unit_weights": {
+    "count": 45,
+    "cup": 101
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Per stalk."
+  },
+  {
+   "crop_type_slug": "chard",
+   "variety_name": "Chard",
+   "unit_weights": {
+    "cup": 36,
+    "count": 35,
+    "bunch": 340
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "chervil",
+   "variety_name": "Chervil",
+   "unit_weights": {
+    "cup": 15
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "chives",
+   "variety_name": "Chives",
+   "unit_weights": {
+    "cup": 48,
+    "count": 0.3
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "chives",
+   "variety_name": "Common",
+   "unit_weights": {
+    "cup": 48,
+    "count": 0.3
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "chives",
+   "variety_name": "Garlic Chives",
+   "unit_weights": {
+    "cup": 48,
+    "count": 0.3
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "cilantro",
+   "variety_name": "Cilantro / Coriander",
+   "unit_weights": {
+    "cup": 16,
+    "count": 1
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "collard",
+   "variety_name": "Collards",
+   "unit_weights": {
+    "cup": 36,
+    "count": 28,
+    "bunch": 340
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "collard",
+   "variety_name": "Top Bunch 2.0",
+   "unit_weights": {
+    "cup": 36,
+    "count": 28,
+    "bunch": 340
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "cucamelon",
+   "variety_name": "Cucamelon",
+   "unit_weights": {
+    "count": 5,
+    "cup": 130
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Grape-sized."
+  },
+  {
+   "crop_type_slug": "cucumber",
+   "variety_name": "Spacemaster 80",
+   "unit_weights": {
+    "count": 200,
+    "cup": 119
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Compact slicer, 7-8 in."
+  },
+  {
+   "crop_type_slug": "cucumber",
+   "variety_name": "Suyo Long",
+   "unit_weights": {
+    "count": 280,
+    "cup": 119
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Asian long, 12-18 in but slender."
+  },
+  {
+   "crop_type_slug": "culantro",
+   "variety_name": "Culantro",
+   "unit_weights": {
+    "cup": 20,
+    "count": 2
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "dill",
+   "variety_name": "Dill 'Bouquet'",
+   "unit_weights": {
+    "cup": 9,
+    "count": 1,
+    "bunch": 30
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "dill",
+   "variety_name": "Mammoth",
+   "unit_weights": {
+    "cup": 9,
+    "count": 1,
+    "bunch": 30
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "eggplant",
+   "variety_name": "Ping Tung Long",
+   "unit_weights": {
+    "count": 200,
+    "cup": 82
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Long slender Asian."
+  },
+  {
+   "crop_type_slug": "eggplant",
+   "variety_name": "Pumpkin on a Stick",
+   "unit_weights": {
+    "count": 30,
+    "cup": 82
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Ornamental fruit."
+  },
+  {
+   "crop_type_slug": "endive",
+   "variety_name": "Tres Fine",
+   "unit_weights": {
+    "head": 250,
+    "count": 250,
+    "cup": 250
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "garlic",
+   "variety_name": "Garlic (hardneck)",
+   "unit_weights": {
+    "count": 50,
+    "cup": 136,
+    "head": 50
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Per bulb."
+  },
+  {
+   "crop_type_slug": "kale",
+   "variety_name": "Dwarf Blue Curled (Vates)",
+   "unit_weights": {
+    "cup": 21,
+    "count": 25,
+    "bunch": 200
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "kale",
+   "variety_name": "Lacinato (Dinosaur)",
+   "unit_weights": {
+    "cup": 21,
+    "count": 25,
+    "bunch": 200
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "kale",
+   "variety_name": "Redbor",
+   "unit_weights": {
+    "cup": 21,
+    "count": 25,
+    "bunch": 200
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "kohlrabi",
+   "variety_name": "Purple Vienna",
+   "unit_weights": {
+    "count": 140,
+    "cup": 135
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "leek",
+   "variety_name": "Jaune du Poitou",
+   "unit_weights": {
+    "count": 200,
+    "cup": 89
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "leek",
+   "variety_name": "King Richard",
+   "unit_weights": {
+    "count": 150,
+    "cup": 89
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Long-shafted summer leek."
+  },
+  {
+   "crop_type_slug": "lemongrass",
+   "variety_name": "Lemongrass",
+   "unit_weights": {
+    "count": 65,
+    "cup": 67
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "lettuce",
+   "variety_name": "Australe",
+   "unit_weights": {
+    "count": 350,
+    "cup": 36,
+    "head": 350
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Batavian head."
+  },
+  {
+   "crop_type_slug": "lettuce",
+   "variety_name": "Black Seeded Simpson",
+   "unit_weights": {
+    "count": 250,
+    "cup": 36,
+    "head": 250
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Loose leaf."
+  },
+  {
+   "crop_type_slug": "lettuce",
+   "variety_name": "Brentwood",
+   "unit_weights": {
+    "count": 400,
+    "cup": 36,
+    "head": 400
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Romaine."
+  },
+  {
+   "crop_type_slug": "lettuce",
+   "variety_name": "Little Gem",
+   "unit_weights": {
+    "count": 150,
+    "cup": 36,
+    "head": 150
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Mini romaine."
+  },
+  {
+   "crop_type_slug": "lettuce",
+   "variety_name": "Marvel of Four Seasons",
+   "unit_weights": {
+    "count": 300,
+    "cup": 36,
+    "head": 300
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Butterhead."
+  },
+  {
+   "crop_type_slug": "lettuce",
+   "variety_name": "Mixed Lettuce",
+   "unit_weights": {
+    "count": 250,
+    "cup": 36,
+    "head": 250
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Generic mix."
+  },
+  {
+   "crop_type_slug": "lettuce",
+   "variety_name": "Parris Island Cos",
+   "unit_weights": {
+    "count": 450,
+    "cup": 36,
+    "head": 450
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Full romaine."
+  },
+  {
+   "crop_type_slug": "lettuce",
+   "variety_name": "Red Leaf",
+   "unit_weights": {
+    "count": 300,
+    "cup": 36,
+    "head": 300
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "lettuce",
+   "variety_name": "Red Sails",
+   "unit_weights": {
+    "count": 350,
+    "cup": 36,
+    "head": 350
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Loose leaf."
+  },
+  {
+   "crop_type_slug": "lettuce",
+   "variety_name": "Romaine",
+   "unit_weights": {
+    "count": 450,
+    "cup": 36,
+    "head": 450
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "lettuce",
+   "variety_name": "Ruby Red",
+   "unit_weights": {
+    "count": 300,
+    "cup": 36,
+    "head": 300
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "luffa",
+   "variety_name": "Loofah Sponge",
+   "unit_weights": {
+    "count": 300,
+    "cup": 95
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "melon",
+   "variety_name": "Cantaloupe",
+   "unit_weights": {
+    "count": 1500,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "3-4 lb."
+  },
+  {
+   "crop_type_slug": "melon",
+   "variety_name": "Charentais",
+   "unit_weights": {
+    "count": 1000,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "2-2.5 lb French."
+  },
+  {
+   "crop_type_slug": "melon",
+   "variety_name": "Green Flesh",
+   "unit_weights": {
+    "count": 1800,
+    "cup": 160
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Honeydew-class; confirm."
+  },
+  {
+   "crop_type_slug": "melon",
+   "variety_name": "Minnesota Mini",
+   "unit_weights": {
+    "count": 900,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Personal-size, ~2 lb."
+  },
+  {
+   "crop_type_slug": "mint",
+   "variety_name": "Chocolate Mint",
+   "unit_weights": {
+    "cup": 25,
+    "count": 0.2
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "mint",
+   "variety_name": "Peppermint",
+   "unit_weights": {
+    "cup": 25,
+    "count": 0.2
+   },
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "mustard",
+   "variety_name": "Florida Broadleaf",
+   "unit_weights": {
+    "cup": 56,
+    "count": 15,
+    "bunch": 150
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "mustard",
+   "variety_name": "Red Mustard (heirloom, unspecified variety)",
+   "unit_weights": {
+    "cup": 56,
+    "count": 15,
+    "bunch": 150
+   },
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "okra",
+   "variety_name": "Clemson Spineless 80",
+   "unit_weights": {
+    "count": 12,
+    "cup": 100
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Pod at 3-4 in."
+  },
+  {
+   "crop_type_slug": "onion",
+   "variety_name": "Flat of Italy",
+   "unit_weights": {
+    "count": 150,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Flat cipollini-style."
+  },
+  {
+   "crop_type_slug": "onion",
+   "variety_name": "Monastrell",
+   "unit_weights": {
+    "count": 180,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Storage onion."
+  },
+  {
+   "crop_type_slug": "onion",
+   "variety_name": "Onion (scallion-type)",
+   "unit_weights": {
+    "count": 15,
+    "cup": 160
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": "Bunching scallion."
+  },
+  {
+   "crop_type_slug": "onion",
+   "variety_name": "Red Amposta",
+   "unit_weights": {
+    "count": 160,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "onion",
+   "variety_name": "Red Onion (long-day)",
+   "unit_weights": {
+    "count": 150,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "onion",
+   "variety_name": "Scallion",
+   "unit_weights": {
+    "count": 15,
+    "cup": 160
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": "USDA 1 scallion ~15 g."
+  },
+  {
+   "crop_type_slug": "onion",
+   "variety_name": "Tokyo Long White",
+   "unit_weights": {
+    "count": 30,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Long bunching."
+  },
+  {
+   "crop_type_slug": "onion",
+   "variety_name": "Yellow Granex PRR",
+   "unit_weights": {
+    "count": 220,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Vidalia-type, large."
+  },
+  {
+   "crop_type_slug": "onion",
+   "variety_name": "Yellow Onion (long-day)",
+   "unit_weights": {
+    "count": 150,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "onion",
+   "variety_name": "Yellow Sweet Spanish Utah",
+   "unit_weights": {
+    "count": 300,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Very large sweet Spanish."
+  },
+  {
+   "crop_type_slug": "oregano",
+   "variety_name": "Greek",
+   "unit_weights": {
+    "cup": 15,
+    "count": 0.2
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "oregano",
+   "variety_name": "Greek Oregano",
+   "unit_weights": {
+    "cup": 15,
+    "count": 0.2
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "oregano",
+   "variety_name": "Hot & Spicy Oregano",
+   "unit_weights": {
+    "cup": 15,
+    "count": 0.2
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "oregano",
+   "variety_name": "Oregano",
+   "unit_weights": {
+    "cup": 15,
+    "count": 0.2
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "parsley",
+   "variety_name": "Curly Parsley",
+   "unit_weights": {
+    "cup": 60,
+    "count": 1.5,
+    "bunch": 60
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "parsley",
+   "variety_name": "Italian Parsley",
+   "unit_weights": {
+    "cup": 60,
+    "count": 1.5,
+    "bunch": 60
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "parsnip",
+   "variety_name": "Javelin",
+   "unit_weights": {
+    "count": 140,
+    "cup": 133
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pea",
+   "variety_name": "Cascadia",
+   "unit_weights": {
+    "count": 7,
+    "cup": 145
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Snap pod."
+  },
+  {
+   "crop_type_slug": "pea",
+   "variety_name": "Iona",
+   "unit_weights": {
+    "count": 6,
+    "cup": 145
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pea",
+   "variety_name": "Progress #9",
+   "unit_weights": {
+    "count": 6,
+    "cup": 145
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Shell pod."
+  },
+  {
+   "crop_type_slug": "pea",
+   "variety_name": "Wando",
+   "unit_weights": {
+    "count": 6,
+    "cup": 145
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Shell pod."
+  },
+  {
+   "crop_type_slug": "peach",
+   "variety_name": "Peach",
+   "unit_weights": {
+    "count": 150,
+    "cup": 154
+   },
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Aji Cito",
+   "unit_weights": {
+    "count": 1.5,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Tiny aji."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Aji Habanero",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Altiplano",
+   "unit_weights": {
+    "count": 40,
+    "cup": 149
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Read as a mild Anaheim-class hybrid; confirm."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Anaheim",
+   "unit_weights": {
+    "count": 45,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Ancho",
+   "unit_weights": {
+    "count": 60,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Dried-name for poblano."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Ancho/Poblano",
+   "unit_weights": {
+    "count": 60,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Armageddon F1",
+   "unit_weights": {
+    "count": 12,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Super-hot, reaper-class."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Ausilio Thin Skin Italian",
+   "unit_weights": {
+    "count": 50,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Italian frying."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Baby Bell Mix",
+   "unit_weights": {
+    "count": 25,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Mini bell."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Bhut Jolokia",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Ghost."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Big Jim",
+   "unit_weights": {
+    "count": 85,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Large NM chile."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Biquinho",
+   "unit_weights": {
+    "count": 3,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Tiny teardrop."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Biquinho Red & Yellow Blend",
+   "unit_weights": {
+    "count": 3,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Biquinho Red (Mary's)",
+   "unit_weights": {
+    "count": 3,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Biquinho Yellow F1",
+   "unit_weights": {
+    "count": 3,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Birdseye",
+   "unit_weights": {
+    "count": 1,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Black Hungarian",
+   "unit_weights": {
+    "count": 30,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Black Olive",
+   "unit_weights": {
+    "count": 3,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Ornamental."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Bottle Rocket",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Buena Mulata",
+   "unit_weights": {
+    "count": 12,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Cayenne-type."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Bulgarian Carrot (Shipka)",
+   "unit_weights": {
+    "count": 15,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "California Wonder",
+   "unit_weights": {
+    "count": 150,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Blocky bell."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Candlelight",
+   "unit_weights": {
+    "count": 3,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Ornamental."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Capeliente",
+   "unit_weights": {
+    "count": 5,
+    "cup": 149
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Read as a small C. chinense; confirm."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Carmen",
+   "unit_weights": {
+    "count": 110,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Italian bull's horn."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Cayenne Blend",
+   "unit_weights": {
+    "count": 12,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Cherry Bombs",
+   "unit_weights": {
+    "count": 20,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Cherry Hot",
+   "unit_weights": {
+    "count": 15,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Cherry Stuffer (Burpee)",
+   "unit_weights": {
+    "count": 25,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Chile de Arbol",
+   "unit_weights": {
+    "count": 2,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Chili Red",
+   "unit_weights": {
+    "count": 12,
+    "cup": 149
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Generic red chili; variety unspecified."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Chili Red (UNVERIFIED)",
+   "unit_weights": {
+    "count": 12,
+    "cup": 149
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Generic red chili; variety unspecified."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Chilly Chill",
+   "unit_weights": {
+    "count": 2,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Ornamental mini."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Chiltepin",
+   "unit_weights": {
+    "count": 0.5,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Chinese 5-Color",
+   "unit_weights": {
+    "count": 1.5,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Ornamental."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Chocolate Habanero",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Cubanelle",
+   "unit_weights": {
+    "count": 80,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Devil's Tongue",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Dragon Roll",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Shishito-class."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Early Jalapeño",
+   "unit_weights": {
+    "count": 25,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Emerald Green",
+   "unit_weights": {
+    "count": 150,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Bell."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Fish Pepper",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Fresno",
+   "unit_weights": {
+    "count": 20,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Gatherer's Gold",
+   "unit_weights": {
+    "count": 60,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "NM-type."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Ghost",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Golden California Wonder",
+   "unit_weights": {
+    "count": 150,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Gong Bao (Kung Pao)",
+   "unit_weights": {
+    "count": 6,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Habanero",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Habanero (Johnny's Organic)",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Helios",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Aji-type."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Hidalgo Serrano",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Hinkelhatz",
+   "unit_weights": {
+    "count": 5,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Hot Paper Lantern",
+   "unit_weights": {
+    "count": 12,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Hot Portugal",
+   "unit_weights": {
+    "count": 25,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Jalapeno",
+   "unit_weights": {
+    "count": 25,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Jalapeno Orange",
+   "unit_weights": {
+    "count": 25,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Jedi",
+   "unit_weights": {
+    "count": 30,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Jalapeno F1, long fruit."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Jimmy Nardello",
+   "unit_weights": {
+    "count": 25,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Sweet Italian frying."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Katana F1 (Shishito)",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "King of the North",
+   "unit_weights": {
+    "count": 140,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Bell."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Kori Sitakame",
+   "unit_weights": {
+    "count": 5,
+    "cup": 149
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Confirm type."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Lemon Drop (Aji Limon)",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Lemon Habanero",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Megatron F1 (jumbo jalapeno)",
+   "unit_weights": {
+    "count": 45,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Mini Sweet",
+   "unit_weights": {
+    "count": 20,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "New Mexico (Hatch-type)",
+   "unit_weights": {
+    "count": 60,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "NuMex Lemon Spice Jalapeño",
+   "unit_weights": {
+    "count": 25,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Orange Sun",
+   "unit_weights": {
+    "count": 180,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Large bell."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Padron",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Padron (Mary's)",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Palmetto Punch",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Read as habanero-class; confirm."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Pantera",
+   "unit_weights": {
+    "count": 70,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Poblano F1."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Pepperoncini",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Peter",
+   "unit_weights": {
+    "count": 15,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Pick-N-Pop Yellow",
+   "unit_weights": {
+    "count": 15,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Mini snack."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Piquin",
+   "unit_weights": {
+    "count": 0.5,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Piri Piri",
+   "unit_weights": {
+    "count": 2,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Pueblo Mosco",
+   "unit_weights": {
+    "count": 50,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Pumpkin Jalapeno",
+   "unit_weights": {
+    "count": 25,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Purple Cayenne",
+   "unit_weights": {
+    "count": 12,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Purple Tiger",
+   "unit_weights": {
+    "count": 1.5,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Ornamental."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Quadrato d'Asti Rosso",
+   "unit_weights": {
+    "count": 200,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Large blocky Italian bell."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Red Ember",
+   "unit_weights": {
+    "count": 20,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Cayenne F1."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Red Hot Cherry",
+   "unit_weights": {
+    "count": 20,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Red Mini Bell",
+   "unit_weights": {
+    "count": 20,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Red Mushroom",
+   "unit_weights": {
+    "count": 15,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Red and Green - sweet bell [orphan]",
+   "unit_weights": {
+    "count": 150,
+    "cup": 149
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Generic sweet bell."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Rista Cayanne II",
+   "unit_weights": {
+    "count": 12,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Ristra cayenne."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Santa Fe Grande",
+   "unit_weights": {
+    "count": 25,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Santaka",
+   "unit_weights": {
+    "count": 2,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Scotch Bonnet",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Serrano",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Serrano Huasteca",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Shishito",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Shishito (Burpee)",
+   "unit_weights": {
+    "count": 8,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Sugar Rush Peach",
+   "unit_weights": {
+    "count": 12,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Sunbright",
+   "unit_weights": {
+    "count": 170,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Bell."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Sweet Chocolate",
+   "unit_weights": {
+    "count": 120,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Bell."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Sweet Sivri",
+   "unit_weights": {
+    "count": 30,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Turkish long sweet."
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Tabasco",
+   "unit_weights": {
+    "count": 1,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Takanotsume",
+   "unit_weights": {
+    "count": 2,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Tepin",
+   "unit_weights": {
+    "count": 0.4,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Thai Dragon",
+   "unit_weights": {
+    "count": 3,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Thai Hot",
+   "unit_weights": {
+    "count": 1.5,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Thai Volcano",
+   "unit_weights": {
+    "count": 2,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Trinidad Scorpion",
+   "unit_weights": {
+    "count": 10,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "White Habanero",
+   "unit_weights": {
+    "count": 5,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "pepper",
+   "variety_name": "Yatsufusa",
+   "unit_weights": {
+    "count": 2,
+    "cup": 149
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "perilla",
+   "variety_name": "Purple Perilla (Shiso)",
+   "unit_weights": {
+    "cup": 20,
+    "count": 1.5
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "potato",
+   "variety_name": "Clancy",
+   "unit_weights": {
+    "count": 120,
+    "cup": 150
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "potato",
+   "variety_name": "Fingerling",
+   "unit_weights": {
+    "count": 45,
+    "cup": 150
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "potato",
+   "variety_name": "Russet",
+   "unit_weights": {
+    "count": 200,
+    "cup": 150
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "potato",
+   "variety_name": "Seed Potato",
+   "unit_weights": {
+    "count": 150,
+    "cup": 150
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Generic."
+  },
+  {
+   "crop_type_slug": "potato",
+   "variety_name": "Yukon Gold",
+   "unit_weights": {
+    "count": 150,
+    "cup": 150
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "radicchio",
+   "variety_name": "Palla Rossa Mavrik",
+   "unit_weights": {
+    "count": 300,
+    "cup": 40,
+    "head": 300
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "radish",
+   "variety_name": "Cherry Belle",
+   "unit_weights": {
+    "count": 10,
+    "cup": 116
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Round, 1 in."
+  },
+  {
+   "crop_type_slug": "radish",
+   "variety_name": "French Breakfast",
+   "unit_weights": {
+    "count": 12,
+    "cup": 116
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "radish",
+   "variety_name": "Purple Plum",
+   "unit_weights": {
+    "count": 12,
+    "cup": 116
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "radish",
+   "variety_name": "Rat's Tail",
+   "unit_weights": {
+    "count": 2,
+    "cup": 116
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Seed pods, not roots."
+  },
+  {
+   "crop_type_slug": "red_raspberry",
+   "variety_name": "Red Raspberry",
+   "unit_weights": {
+    "count": 3.5,
+    "cup": 123
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": "Per berry; cup falls back to crop 123 g."
+  },
+  {
+   "crop_type_slug": "rosemary",
+   "variety_name": "Rosemary",
+   "unit_weights": {
+    "cup": 28,
+    "count": 1.5
+   },
+   "source": "usda",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "sage",
+   "variety_name": "Garden Sage",
+   "unit_weights": {
+    "cup": 20,
+    "count": 0.5
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "sage",
+   "variety_name": "Pineapple Sage",
+   "unit_weights": {
+    "cup": 18,
+    "count": 0.5
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "shallot",
+   "variety_name": "Shallots",
+   "unit_weights": {
+    "count": 25,
+    "cup": 160
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": "Per bulb."
+  },
+  {
+   "crop_type_slug": "shallot",
+   "variety_name": "Zebrune",
+   "unit_weights": {
+    "count": 45,
+    "cup": 160
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Long banana shallot."
+  },
+  {
+   "crop_type_slug": "spinach",
+   "variety_name": "Baby Greens Blend",
+   "unit_weights": {
+    "cup": 30,
+    "count": 10,
+    "bunch": 340
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "spinach",
+   "variety_name": "Baby Spinach",
+   "unit_weights": {
+    "cup": 30,
+    "count": 10,
+    "bunch": 340
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "spinach",
+   "variety_name": "Lavewa",
+   "unit_weights": {
+    "cup": 30,
+    "count": 10,
+    "bunch": 340
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "spinach",
+   "variety_name": "Matador",
+   "unit_weights": {
+    "cup": 30,
+    "count": 10,
+    "bunch": 340
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "spinach",
+   "variety_name": "Oceanside",
+   "unit_weights": {
+    "cup": 30,
+    "count": 10,
+    "bunch": 340
+   },
+   "source": "usda",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "squash",
+   "variety_name": "Cinderella (Rouge Vif d'Etampes)",
+   "unit_weights": {
+    "count": 7000,
+    "cup": 113
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Winter pumpkin, 15-20 lb."
+  },
+  {
+   "crop_type_slug": "squash",
+   "variety_name": "Dark Green Zucchini",
+   "unit_weights": {
+    "count": 220,
+    "cup": 113
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Summer, picked 6-8 in."
+  },
+  {
+   "crop_type_slug": "squash",
+   "variety_name": "Early Prolific Straightneck",
+   "unit_weights": {
+    "count": 200,
+    "cup": 113
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Summer yellow."
+  },
+  {
+   "crop_type_slug": "squash",
+   "variety_name": "Howden",
+   "unit_weights": {
+    "count": 9000,
+    "cup": 113
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Jack-o-lantern pumpkin, 18-25 lb."
+  },
+  {
+   "crop_type_slug": "squash",
+   "variety_name": "Pennsylvania Dutch Crookneck",
+   "unit_weights": {
+    "count": 4500,
+    "cup": 113
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Winter crookneck, 8-12 lb."
+  },
+  {
+   "crop_type_slug": "squash",
+   "variety_name": "Pink Banana",
+   "unit_weights": {
+    "count": 6800,
+    "cup": 113
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Winter banana, 10-20 lb."
+  },
+  {
+   "crop_type_slug": "squash",
+   "variety_name": "Red Kuri",
+   "unit_weights": {
+    "count": 1600,
+    "cup": 113
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Winter, 3-4 lb."
+  },
+  {
+   "crop_type_slug": "squash",
+   "variety_name": "Waltham Butternut",
+   "unit_weights": {
+    "count": 1400,
+    "cup": 113
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Winter, 3 lb."
+  },
+  {
+   "crop_type_slug": "squash",
+   "variety_name": "Zephyr",
+   "unit_weights": {
+    "count": 180,
+    "cup": 113
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Summer, picked 4-6 in."
+  },
+  {
+   "crop_type_slug": "strawberry",
+   "variety_name": "Alpine",
+   "unit_weights": {
+    "count": 2,
+    "cup": 144
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Fraises des bois, tiny."
+  },
+  {
+   "crop_type_slug": "strawberry",
+   "variety_name": "Cavendish",
+   "unit_weights": {
+    "count": 20,
+    "cup": 144
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "June-bearing, large."
+  },
+  {
+   "crop_type_slug": "strawberry",
+   "variety_name": "Early June",
+   "unit_weights": {
+    "count": 18,
+    "cup": 144
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "strawberry",
+   "variety_name": "Strawberry",
+   "unit_weights": {
+    "count": 15,
+    "cup": 144
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": "Generic."
+  },
+  {
+   "crop_type_slug": "sweet_potato",
+   "variety_name": "Sweet Potato",
+   "unit_weights": {
+    "count": 180,
+    "cup": 133
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "tarragon",
+   "variety_name": "French Tarragon",
+   "unit_weights": {
+    "cup": 15,
+    "count": 0.3
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "tarragon",
+   "variety_name": "Russian Tarragon",
+   "unit_weights": {
+    "cup": 15,
+    "count": 0.3
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "thyme",
+   "variety_name": "Lemon Thyme",
+   "unit_weights": {
+    "cup": 30,
+    "count": 1,
+    "bunch": 25
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "tomatillo",
+   "variety_name": "Cisneros",
+   "unit_weights": {
+    "count": 60,
+    "cup": 132
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Large-fruited."
+  },
+  {
+   "crop_type_slug": "tomatillo",
+   "variety_name": "Grande Rio Verde",
+   "unit_weights": {
+    "count": 55,
+    "cup": 132
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Large green."
+  },
+  {
+   "crop_type_slug": "tomatillo",
+   "variety_name": "Pineapple Tomatillo",
+   "unit_weights": {
+    "count": 8,
+    "cup": 132
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Small golden fruit."
+  },
+  {
+   "crop_type_slug": "tomatillo",
+   "variety_name": "Purple",
+   "unit_weights": {
+    "count": 30,
+    "cup": 132
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "tomatillo",
+   "variety_name": "Purple blush",
+   "unit_weights": {
+    "count": 30,
+    "cup": 132
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "1884",
+   "unit_weights": {
+    "count": 400,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Large pink beefsteak, 12-16 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Banana Creme",
+   "unit_weights": {
+    "count": 70,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Small yellow banana/paste, 2-3 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Beefsteak",
+   "unit_weights": {
+    "count": 350,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Classic beefsteak, 10-16 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Big Boy",
+   "unit_weights": {
+    "count": 350,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "10-16 oz hybrid slicer."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Black Cherry",
+   "unit_weights": {
+    "count": 17,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Cherry, ~0.5 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Black Krim",
+   "unit_weights": {
+    "count": 280,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "8-12 oz beefsteak."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Brandywine Pink",
+   "unit_weights": {
+    "count": 500,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "16-24 oz; can reach 1.5 lb."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Bush Early Girl",
+   "unit_weights": {
+    "count": 180,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "6-7 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Celebrity",
+   "unit_weights": {
+    "count": 210,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "7-8 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Cherokee Green",
+   "unit_weights": {
+    "count": 310,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "10-12 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Cherokee Purple",
+   "unit_weights": {
+    "count": 310,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "10-12 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Cherry Falls",
+   "unit_weights": {
+    "count": 25,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Trailing cherry, ~1 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Chocolate Cherry",
+   "unit_weights": {
+    "count": 17,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Cherry, ~0.5 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Cream Sausage",
+   "unit_weights": {
+    "count": 100,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Paste/sausage, 3-4 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Czech Bush Slicer",
+   "unit_weights": {
+    "count": 140,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "4-6 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Del Tonet",
+   "unit_weights": {
+    "count": 200,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "low",
+   "note": "Slicer, 6-8 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Delicious",
+   "unit_weights": {
+    "count": 600,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Very large beefsteak, 16-32 oz+."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Dester",
+   "unit_weights": {
+    "count": 400,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Beefsteak, 12-16 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Eva Purple Ball",
+   "unit_weights": {
+    "count": 140,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "4-6 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Floridade",
+   "unit_weights": {
+    "count": 200,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "6-8 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Glacier",
+   "unit_weights": {
+    "count": 70,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Early, 2-3 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Granadero",
+   "unit_weights": {
+    "count": 110,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Roma/paste, ~4 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Green Zebra",
+   "unit_weights": {
+    "count": 100,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "3-4 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Jet Star",
+   "unit_weights": {
+    "count": 250,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "8-10 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Large Red Cherry",
+   "unit_weights": {
+    "count": 28,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Large cherry, ~1 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Manitoba",
+   "unit_weights": {
+    "count": 180,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "6-7 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Margaret Curtain",
+   "unit_weights": {
+    "count": 340,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "low",
+   "note": "Beefsteak, ~12 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Moskvich Heirloom",
+   "unit_weights": {
+    "count": 140,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "4-6 oz early."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Mountain Fresh Plus",
+   "unit_weights": {
+    "count": 300,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "10-12 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "New Yorker",
+   "unit_weights": {
+    "count": 155,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "5-6 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Oregon Spring",
+   "unit_weights": {
+    "count": 155,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "5-6 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Patio Choice Yellow",
+   "unit_weights": {
+    "count": 15,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Yellow cherry, ~0.5 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Pineapple Tomato",
+   "unit_weights": {
+    "count": 750,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "Very large bicolor, 24-32 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Red Grape",
+   "unit_weights": {
+    "count": 13,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Grape type, ~0.5 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Rosa Sicilian",
+   "unit_weights": {
+    "count": 400,
+    "cup": 180
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Read as a large pink Sicilian beefsteak; confirm."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Rosso Sicilian",
+   "unit_weights": {
+    "count": 100,
+    "cup": 180
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Read as a Sicilian paste type; confirm."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "San Marzano",
+   "unit_weights": {
+    "count": 110,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Catalog 110 g / 3.9 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "San Marzano Roma",
+   "unit_weights": {
+    "count": 110,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Catalog ~110 g."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Speckled Roman",
+   "unit_weights": {
+    "count": 140,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Paste, ~5 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Stupice",
+   "unit_weights": {
+    "count": 70,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Early small slicer, 2-3 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Sub Arctic Plenty",
+   "unit_weights": {
+    "count": 60,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Very early, 2 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Sun Sugar",
+   "unit_weights": {
+    "count": 15,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Cherry, 0.5-1 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Sunray",
+   "unit_weights": {
+    "count": 225,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "~8 oz golden slicer."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Super Sweet 100",
+   "unit_weights": {
+    "count": 15,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Cherry, ~0.5 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Thessaloniki",
+   "unit_weights": {
+    "count": 200,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "6-8 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Tie-Dye",
+   "unit_weights": {
+    "count": 300,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "10-12 oz bicolor."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Ukrainian Purple",
+   "unit_weights": {
+    "count": 140,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "4-6 oz elongated."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Valencia",
+   "unit_weights": {
+    "count": 250,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "8-10 oz orange globe."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Virginia Sweets",
+   "unit_weights": {
+    "count": 450,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "~16 oz bicolor beefsteak."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Yellow Brandywine",
+   "unit_weights": {
+    "count": 500,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "16-24 oz."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Yellow Pear",
+   "unit_weights": {
+    "count": 20,
+    "cup": 180
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Pear cherry, ~1 oz."
+  },
+  {
+   "crop_type_slug": "vietnamese_coriander",
+   "variety_name": "Vietnamese Coriander",
+   "unit_weights": {
+    "cup": 18
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
+  },
+  {
+   "crop_type_slug": "watermelon",
+   "variety_name": "Crimson Sweet",
+   "unit_weights": {
+    "count": 11000,
+    "cup": 152
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "20-25 lb."
+  },
+  {
+   "crop_type_slug": "watermelon",
+   "variety_name": "Mountain Sweet Yellow",
+   "unit_weights": {
+    "count": 11000,
+    "cup": 152
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "20-30 lb."
+  },
+  {
+   "crop_type_slug": "watermelon",
+   "variety_name": "Sugar Baby",
+   "unit_weights": {
+    "count": 4000,
+    "cup": 152
+   },
+   "source": "catalog",
+   "confidence": "high",
+   "note": "Icebox, 8-10 lb."
+  },
+  {
+   "crop_type_slug": "watermelon",
+   "variety_name": "Tender Sweet Orange",
+   "unit_weights": {
+    "count": 9000,
+    "cup": 152
+   },
+   "source": "catalog",
+   "confidence": "medium",
+   "note": "~20 lb."
+  },
+  {
+   "crop_type_slug": "wineberry",
+   "variety_name": "Wild Wineberry",
+   "unit_weights": {
+    "count": 2,
+    "cup": 123
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": ""
+  }
+ ]
+}

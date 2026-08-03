@@ -1,0 +1,148 @@
+# gates.yml
+# V4-CAL1-REFWEIGHT-001 — reference (estimate) tier for harvest weight conversion.
+#
+# SEQUENCING (ORDERED — do not reorder, do not skip):
+#   1. CTAS snapshots (crop_types, plant_varieties, harvest_log) — see 0a header.
+#   2. pre gates -> 0a -> 0b-seed -> 0c-validate -> 0d-backfill -> post gates.
+#      0c AFTER 0b on purpose: VALIDATE is then a real assertion over 408 seeded rows, not a
+#      vacuous scan. 0d AFTER 0b because the backfill reads the seeded unit_weights.
+#   3. 0e-coverage.sql (read-only) to report what landed.
+#
+# Nothing user-facing reads these columns yet; blast radius is confined to `SELECT *` consumers of
+# crop_types / plant_varieties / harvest_log receiving extra keys (NULL before the seed).
+#
+# Pre:  substrate from v4-cal1-harvweight-001 present; none of the six new columns exist; CHECK names free.
+# Post: six columns exist, NULLABLE, no default; six CHECKs exist AND convalidated; every seeded
+#       unit_weights map is shape-legal; the harvweight pairing invariant still holds after the
+#       backfill; no estimate was written without a positive weight; both schema_version rows present.
+
+pre:
+  # The estimate tier is layered on harvweight-001's substrate — without those four columns the
+  # backfill has nowhere to write.
+  - name: pre_harvweight_substrate_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public'
+         AND ( (table_name='crop_types'  AND column_name IN ('default_unit','grams_per_unit'))
+            OR (table_name='harvest_log' AND column_name IN ('weight_grams','weight_estimated')) )
+    expect: rowcount_eq
+    value: 4
+
+  - name: pre_tables_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name IN ('crop_types','plant_varieties','harvest_log')
+    expect: rowcount_eq
+    value: 3
+
+  # A name collision would mean this migration silently adopts someone else's column.
+  - name: pre_new_columns_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public'
+         AND table_name IN ('crop_types','plant_varieties')
+         AND column_name IN ('unit_weights','weight_source','weight_confidence')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_check_constraint_names_free
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_crop_types_unit_weights','chk_crop_types_weight_source',
+                         'chk_crop_types_weight_confidence','chk_plant_varieties_unit_weights',
+                         'chk_plant_varieties_weight_source','chk_plant_varieties_weight_confidence')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_six_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public'
+         AND table_name IN ('crop_types','plant_varieties')
+         AND column_name IN ('unit_weights','weight_source','weight_confidence')
+    expect: rowcount_eq
+    value: 6
+
+  # NULL = UNKNOWN stays the central contract; a NOT NULL or DEFAULT would break it structurally.
+  - name: post_columns_nullable_and_defaultless
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public'
+         AND table_name IN ('crop_types','plant_varieties')
+         AND column_name IN ('unit_weights','weight_source','weight_confidence')
+         AND (is_nullable <> 'YES' OR column_default IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_six_checks_present_and_validated
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('chk_crop_types_unit_weights','chk_crop_types_weight_source',
+                         'chk_crop_types_weight_confidence','chk_plant_varieties_unit_weights',
+                         'chk_plant_varieties_weight_source','chk_plant_varieties_weight_confidence')
+         AND convalidated
+    expect: rowcount_eq
+    value: 6
+
+  # Belt-and-braces over the CHECK: no seeded map may carry an out-of-vocab unit or a non-positive
+  # value. A dead key is silently unreachable data; a non-positive factor corrupts a yield total.
+  - name: post_unit_weights_all_shape_legal
+    sql: |
+      SELECT 1 FROM (
+        SELECT unit_weights AS w FROM public.crop_types      WHERE unit_weights IS NOT NULL
+        UNION ALL
+        SELECT unit_weights      FROM public.plant_varieties WHERE unit_weights IS NOT NULL
+      ) s, LATERAL jsonb_each(s.w) AS e(k,v)
+       WHERE k NOT IN ('lb','oz','kg','g','count','bunch','cup','head')
+          OR jsonb_typeof(v) <> 'number'
+          OR (v#>>'{}')::numeric <= 0
+    expect: rowcount_eq
+    value: 0
+
+  # The seed must never claim a measurement it does not have.
+  - name: post_seed_never_claims_measured
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE weight_source = 'measured' AND unit_weights IS NOT NULL
+         AND updated_at >= (SELECT applied_at FROM public.schema_version
+                             WHERE version='4.18.1-cal1-refweight-seed-001')
+    expect: rowcount_eq
+    value: 0
+
+  # harvweight-001's pairing invariant must survive the backfill.
+  - name: post_weight_pairing_still_holds
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE (weight_grams IS NULL) <> (weight_estimated IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # No zero/negative weight may have been derived.
+  - name: post_no_nonpositive_estimated_weight
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE weight_estimated IS TRUE AND (weight_grams IS NULL OR weight_grams <= 0)
+    expect: rowcount_eq
+    value: 0
+
+  # The backfill must not have invented a MEASURED row: weight_estimated=false is only legal for a
+  # harvest actually logged in a weight unit.
+  - name: post_measured_only_from_weight_units
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE weight_estimated IS FALSE AND unit NOT IN ('g','kg','lb','oz')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_schema_version_ddl_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.18.0-cal1-refweight-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_schema_version_seed_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.18.1-cal1-refweight-seed-001'
+    expect: rowcount_eq
+    value: 1
