@@ -30,6 +30,24 @@ export function toGrams(weight, unit) {
   return weight * (WEIGHT_UNIT_GRAMS[unit ?? 'g'] ?? 1);
 }
 
+// V4-HARVDUAL-001 Slice C — did the USER type this row's weight, as opposed to it being derived?
+//
+// harvest_log.weight_estimated=false has TWO causes and they are not interchangeable:
+//   (a) the user weighed the pick and typed the grams   -> an independent fact; preserve it, and it
+//                                                          is what calibrates the variety
+//   (b) the quantity itself was a weight ("3 lb")       -> derived from quantity+unit; recompute it,
+//                                                          and it teaches nothing about grams-per-item
+// Only (a) may seed a cultivar_weight_sample, and only (a) survives an edit that omits the weight.
+// Extracted here because the create path, the edit path and the calibration hook must agree, and
+// re-deriving the test at each site is how the three drift apart.
+export function isUserSuppliedWeight(harvestRow) {
+  if (!harvestRow) return false;
+  if (harvestRow.weight_estimated !== false) return false;
+  if (harvestRow.weight_grams == null) return false;
+  if (WEIGHT_UNITS.includes(harvestRow.unit)) return false;
+  return Number(harvestRow.weight_grams) > 0;
+}
+
 // F22 event_date bounds. Tolerates clock-skew + small client lag.
 const PAST_BOUND_MS = 5 * 365 * 24 * 3600 * 1000;
 const FUTURE_BOUND_MS = 3600 * 1000;

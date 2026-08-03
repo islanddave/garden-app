@@ -24,7 +24,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight } from './validators.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope } from './household.js';
 import { FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES } from './statusTransitions.js';
@@ -956,6 +956,10 @@ export const handler = async (event) => {
                    quality_rating   = ${hqual}::smallint,
                    weight_grams     = rw.weight_grams,
                    weight_estimated = rw.weight_estimated,
+                   -- Slice C: the third column of the resolver. NOT optional — pervariety-001's
+                   -- chk_harvest_log_weight_basis_pairing is VALIDATED, so writing a weight without
+                   -- its basis is a hard 23514.
+                   weight_basis     = rw.weight_basis,
                    updated_at = NOW()
               FROM event_log ne,
               LATERAL public.resolve_harvest_weight(
@@ -981,9 +985,29 @@ export const handler = async (event) => {
              WHERE h.event_id = ${eventId}
                AND h.deleted_at IS NULL
                AND ne.id = h.event_id
-            RETURNING h.id, h.quantity, h.unit, h.quality_rating, h.weight_grams, h.weight_estimated
+            RETURNING h.id, h.quantity, h.unit, h.quality_rating, h.weight_grams, h.weight_estimated, h.weight_basis
           `;
           harvestRow = updatedHarvest[0] ?? null;
+
+          // V4-HARVDUAL-001 Slice C — keep the calibration sample in step with the edit. Called
+          // UNCONDITIONALLY (unlike the create path), because an edit can also REMOVE a weight or
+          // switch the unit to lb, and the function's job is then to retire the sample this event
+          // produced earlier.
+          //
+          // The grams come from the POST-UPDATE ROW, not from the request body. Those differ: when
+          // the client omits `weight` entirely, Slice A deliberately CARRIES FORWARD the weight the
+          // user typed on an earlier save, so hUserGrams is 0 while the row still holds a real
+          // measurement. Reading the request here would retire a sample whose weight is still very
+          // much present. The row's own (weight_estimated=false AND unit is not a weight unit) pair
+          // is the same test used everywhere else to mean "the user typed this".
+          const savedGrams = isUserSuppliedWeight(harvestRow) ? Number(harvestRow.weight_grams) : 0;
+          try {
+            await sql`SELECT public.record_harvest_weight_sample(
+              ${eventId}::uuid, ${updatedRows[0].plant_id}::uuid, ${hu},
+              ${hq}::numeric, NULLIF(${savedGrams}::numeric, 0), ${userId})`;
+          } catch (e) {
+            console.warn('[cal1] auto-capture of the weight sample failed (edit saved):', e?.message);
+          }
         }
 
         return resp(200, { ...updatedRows[0], harvest: harvestRow });
@@ -1003,7 +1027,7 @@ export const handler = async (event) => {
             -- event_log.quantity, a free-text field that is not what the Harvests totals read.
             -- LEFT JOIN, not INNER: a non-harvest event must still return, with harvest null.
             (SELECT row_to_json(x) FROM (
-               SELECT h.id, h.quantity, h.unit, h.quality_rating, h.weight_grams, h.weight_estimated
+               SELECT h.id, h.quantity, h.unit, h.quality_rating, h.weight_grams, h.weight_estimated, h.weight_basis
                  FROM harvest_log h
                 WHERE h.event_id = e.id AND h.deleted_at IS NULL
                 LIMIT 1
@@ -1267,7 +1291,7 @@ export const handler = async (event) => {
           new_harvest AS (
             INSERT INTO harvest_log
               (event_id, project_id, quantity, unit, quality_rating, notes, created_by,
-               weight_grams, weight_estimated)
+               weight_grams, weight_estimated, weight_basis)
             SELECT
               ne.id, ne.project_id,
               ${harvestQty}::numeric,
@@ -1275,22 +1299,24 @@ export const handler = async (event) => {
               ${harvestQuality}::smallint,
               ${harvestNotes},
               ${userId},
-              -- CAL-1 weight, resolved by public.resolve_harvest_weight (v4-cal1-harvweight-002) —
-              -- the SINGLE derivation locus, called identically by the PUT recompute above. Order:
-              -- user-supplied grams > weight-unit harvest > variety unit_weights > crop unit_weights
-              -- > NULL. NULL = UNKNOWN = no estimate, still never guessed. The function returns both
-              -- columns together so the both-or-neither CHECK holds by construction.
+              -- CAL-1 weight, resolved by public.resolve_harvest_weight (v2, slicec-001) — the
+              -- SINGLE derivation locus, called identically by the PUT recompute above. Order:
+              -- user-supplied grams > weight-unit harvest > cultivar_weight_derived (real samples) >
+              -- variety unit_weights > crop unit_weights (gated on variety_grams_required) > NULL.
+              -- NULL = UNKNOWN = no estimate, still never guessed. The function returns all THREE
+              -- columns together so every harvest_log weight CHECK holds by construction.
               -- 0 is the "no user weight" sentinel because the neon HTTP driver cannot type a null JS
               -- param even with a ::cast; NULLIF reintroduces the nullability inside SQL.
               rw.weight_grams,
-              rw.weight_estimated
+              rw.weight_estimated,
+              rw.weight_basis
             FROM new_event ne,
             LATERAL public.resolve_harvest_weight(
               ne.plant_id, ${harvestUnit}, ${harvestQty}::numeric,
               NULLIF(${harvestUserGrams}::numeric, 0)
             ) rw
             WHERE ${isHarvest}::boolean = true
-            RETURNING id, quantity, unit, quality_rating, notes, weight_grams, weight_estimated
+            RETURNING id, quantity, unit, quality_rating, notes, weight_grams, weight_estimated, weight_basis
           )
           SELECT
             ne.*,
@@ -1424,6 +1450,30 @@ export const handler = async (event) => {
       delete newEvent.harvest_row;
       newEvent.harvest = harvest;
       const eventId = newEvent.id;
+
+      // V4-HARVDUAL-001 Slice C — auto-capture the calibration sample. A harvest logged with BOTH a
+      // count and a weight IS a per-variety measurement ("5 San Marzano, 337 g" = 67.4 g/fruit), and
+      // capturing it is what retires the reference-estimate tier one variety at a time.
+      //
+      // Runs AFTER the transaction, not inside it: record_harvest_weight_sample needs the event row
+      // to exist (FK + it reads event_date), and a CTE's INSERT is not visible to a function called
+      // from a sibling CTE in the same statement. sql.transaction() also cannot feed statement 1's
+      // returned id into statement 2.
+      //
+      // NEVER THROWS, mirroring the critter hook below: a calibration sample is derived data, and
+      // losing one must never fail the user's harvest save. It is fully recoverable — re-saving the
+      // harvest, or the 0c backfill, produces it again. All the branch logic (weight-unit harvests,
+      // unattributed plantings, unchanged re-saves) lives in the SQL function, so this stays a
+      // single call from both write paths.
+      if (isHarvest && harvestUserGrams > 0) {
+        try {
+          await sql`SELECT public.record_harvest_weight_sample(
+            ${eventId}::uuid, ${newEvent.plant_id}::uuid, ${harvestUnit},
+            ${harvestQty}::numeric, ${harvestUserGrams}::numeric, ${userId})`;
+        } catch (e) {
+          console.warn('[cal1] auto-capture of the weight sample failed (harvest saved):', e?.message);
+        }
+      }
 
       // MVP-Critter server-side hook (Phase B++ refactor 2026-05-30) — fire awardCritterServer
       // for the inserted event. Inline (same Lambda, same DB connection); critter_state row

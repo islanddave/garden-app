@@ -3,7 +3,7 @@
 // rule can never apply to only one write path.
 import { describe, it, expect } from 'vitest';
 import {
-  validateHarvestFields, validatePostBody, toGrams,
+  validateHarvestFields, validatePostBody, toGrams, isUserSuppliedWeight,
   WEIGHT_UNITS, WEIGHT_UNIT_GRAMS, MAX_PLAUSIBLE_WEIGHT_G,
 } from './validators.js';
 
@@ -96,3 +96,42 @@ describe('client/server constant parity', () => {
     expect(client.toGrams(1, 'lb')).toBe(toGrams(1, 'lb'));
   });
 });
+
+// ── V4-HARVDUAL-001 Slice C — the user-supplied-vs-derived predicate ─────────────────────
+// This is the test that separates the two causes of weight_estimated=false. Getting it wrong is
+// not cosmetic: treat (b) as (a) and an edit carries a stale 1360 g forward onto a count harvest
+// AND seeds a bogus calibration sample for the variety; treat (a) as (b) and every edit silently
+// discards a measurement the user typed.
+describe('isUserSuppliedWeight', () => {
+  const row = (over) => ({ unit: 'count', weight_grams: 337, weight_estimated: false, ...over });
+
+  it('is true for a weight the user typed on a counted harvest', () => {
+    expect(isUserSuppliedWeight(row())).toBe(true);
+  });
+
+  it('is FALSE when the weight was derived from a weight-unit quantity', () => {
+    for (const unit of WEIGHT_UNITS) {
+      expect(isUserSuppliedWeight(row({ unit, weight_grams: 1360.776 })), unit).toBe(false);
+    }
+  });
+
+  it('is false for an estimated weight', () => {
+    expect(isUserSuppliedWeight(row({ weight_estimated: true, weight_grams: 40 }))).toBe(false);
+  });
+
+  it('is false when there is no weight at all', () => {
+    expect(isUserSuppliedWeight(row({ weight_grams: null, weight_estimated: null }))).toBe(false);
+    expect(isUserSuppliedWeight(null)).toBe(false);
+    expect(isUserSuppliedWeight(undefined)).toBe(false);
+  });
+
+  it('tolerates the numeric-as-string the pg driver returns', () => {
+    expect(isUserSuppliedWeight(row({ weight_grams: '337' }))).toBe(true);
+    expect(isUserSuppliedWeight(row({ weight_grams: '0' }))).toBe(false);
+  });
+
+  it('does not treat weight_estimated=undefined as measured', () => {
+    // a partially-selected row must never be read as "the user weighed this"
+    expect(isUserSuppliedWeight({ unit: 'count', weight_grams: 337 })).toBe(false);
+  });
+})

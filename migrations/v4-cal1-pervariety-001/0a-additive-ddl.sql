@@ -40,9 +40,14 @@
 --   objects), then PROD. Take a CTAS snapshot of crop_types + harvest_log before 0b (see 0r).
 
 -- ── append-only RAW sample log ──────────────────────────────────────────────────────────────────────
+-- FK FIX 2026-08-03 (V4-HARVDUAL-001 Slice C, first application of this migration): the FK below
+-- originally read `REFERENCES public.cultivar(id)`. `cultivar` is a VIEW over plant_varieties, and
+-- PostgreSQL rejects a foreign key to a view outright — "referenced relation cultivar is not a
+-- table" — so 0a could never have applied as authored. Retargeted at the BASE TABLE. The column
+-- keeps the name cultivar_id to match the view vocabulary used throughout CAL-1.
 CREATE TABLE IF NOT EXISTS public.cultivar_weight_sample (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  cultivar_id uuid NOT NULL REFERENCES public.cultivar(id) ON DELETE RESTRICT,
+  cultivar_id uuid NOT NULL REFERENCES public.plant_varieties(id) ON DELETE RESTRICT,
   unit        text NOT NULL,
   total_grams numeric NOT NULL,   -- RAW numerator: grams of unit_count items weighed together
   unit_count  numeric NOT NULL,   -- RAW denominator: how many units were on the scale
