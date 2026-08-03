@@ -138,7 +138,11 @@ describe('slugifyCropType', () => {
 });
 
 describe('resolveCropTypeName — always-add, guard the coupled 8', () => {
-  const HAVE = ['tomato', 'pepper', 'onion', 'garlic', 'shallot', 'chives', 'basil', 'bean', 'carrot', 'hibiscus'];
+  // V4-CROPSPLIT-001 added bunching_onion. It MUST be present here: the synonym branch requires
+  // have.has(alias), so without the row the scallion aliases fall through to {ok:true} and mint a
+  // brand-new `scallion` type. That is not a test artefact — it is the real deploy-ordering hazard,
+  // which is why the migration must land BEFORE this Lambda ships.
+  const HAVE = ['tomato', 'pepper', 'onion', 'bunching_onion', 'garlic', 'shallot', 'chives', 'basil', 'bean', 'carrot', 'hibiscus'];
 
   it('creates a genuinely new crop freely', () => {
     for (const name of ['Amaranth', 'Luffa', 'Rose of Sharon', 'Tomatillo']) {
@@ -159,10 +163,18 @@ describe('resolveCropTypeName — always-add, guard the coupled 8', () => {
 
   it('steers known aliases of the coupled slugs (the facet-loss case)', () => {
     const cases = [['Chili', 'pepper'], ['Chile', 'pepper'], ['Sweet Pepper', 'pepper'],
-      ['Scallion', 'onion'], ['Green Onion', 'onion'], ['Snap Bean', 'bean']];
+      ['Scallion', 'bunching_onion'], ['Green Onion', 'bunching_onion'], ['Snap Bean', 'bean']];
     for (const [name, slug] of cases) {
       expect(resolveCropTypeName(name, HAVE), name).toMatchObject({ ok: false, reason: 'coupled_synonym', existingSlug: slug });
     }
+  });
+
+  it('scallion aliases FALL THROUGH and mint a new type when bunching_onion is absent', () => {
+    // The deploy-ordering hazard, pinned. resolveCropTypeName's synonym branch requires
+    // have.has(alias); with no bunching_onion row, 'Scallion' mints `scallion` instead of steering.
+    // This is why V4-CROPSPLIT-001's migration MUST be applied before this Lambda is deployed.
+    const WITHOUT = HAVE.filter(s => s !== 'bunching_onion');
+    expect(resolveCropTypeName('Scallion', WITHOUT)).toMatchObject({ ok: true, slug: 'scallion' });
   });
 
   it('does NOT block "Garlic Chives" — a distinct crop, not an alias of garlic or chives', () => {

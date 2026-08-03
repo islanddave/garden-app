@@ -112,14 +112,14 @@ export const VALID_CROP_CATEGORY = [
   'vegetable', 'flower', 'herb', 'fruit', 'succulent', 'houseplant', 'tree', 'ornamental',
 ];
 
-// The 8 slugs that crop-derive branches on (lambda/{varieties,tags}/crop-derive.js, kept
+// The 9 slugs that crop-derive branches on (lambda/{varieties,tags}/crop-derive.js, kept
 // byte-identical by a test). A variety typed to one of these gets crop-specific DERIVED facets:
 // pepper -> heat/scoville, tomato -> determinacy, onion -> day_length, onion|garlic|shallot|chives
-// -> allium_type, basil -> basil_use, bean -> bean_type/habit/use.
+// -> allium_type, bunching_onion -> allium_type, basil -> basil_use, bean -> bean_type/habit/use.
 // This is why they are guarded: minting "Peppers" as a SECOND type does not error anywhere — it
 // silently produces varieties that derive NO heat facet and quietly fall out of those views. The
 // failure is invisible, which is exactly the kind worth blocking at the door.
-export const COUPLED_CROP_SLUGS = ['basil', 'bean', 'chives', 'garlic', 'onion', 'pepper', 'shallot', 'tomato'];
+export const COUPLED_CROP_SLUGS = ['basil', 'bean', 'bunching_onion', 'chives', 'garlic', 'onion', 'pepper', 'shallot', 'tomato'];
 
 // Hand-maintained aliases for the coupled 8 ONLY. Deliberately narrow: a false positive here
 // blocks a legitimate crop, so entries must be names that are unambiguously the coupled crop.
@@ -129,7 +129,8 @@ export const COUPLED_CROP_SYNONYMS = {
   chili: 'pepper', chile: 'pepper', chilli: 'pepper', capsicum: 'pepper',
   sweet_pepper: 'pepper', hot_pepper: 'pepper', bell_pepper: 'pepper', chili_pepper: 'pepper',
   tomatoe: 'tomato', love_apple: 'tomato',
-  scallion: 'onion', green_onion: 'onion', spring_onion: 'onion', bunching_onion: 'onion',
+  scallion: 'bunching_onion', green_onion: 'bunching_onion', spring_onion: 'bunching_onion',
+  welsh_onion: 'bunching_onion', japanese_bunching_onion: 'bunching_onion',
   snap_bean: 'bean', green_bean: 'bean', string_bean: 'bean', pole_bean: 'bean', bush_bean: 'bean',
   sweet_basil: 'basil',
 };

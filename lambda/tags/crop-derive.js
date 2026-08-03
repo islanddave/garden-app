@@ -93,6 +93,10 @@ export const ALLIUM_LABELS = { bulbing: 'Bulbing', bunching: 'Bunching' };
 export function alliumType(cropSlug, prose) {
   if (cropSlug === 'garlic' || cropSlug === 'shallot') return 'bulbing';
   if (cropSlug === 'chives') return 'bunching';
+  // V4-CROPSPLIT-001: bunching onions moved off `onion` to their own slug. Without this branch the
+  // moved cultivars silently lose their allium_type facet — the gate below is `=== 'onion'`, and a
+  // dropped facet is invisible in the UI. Definitional for the slug, so no prose check is needed.
+  if (cropSlug === 'bunching_onion') return 'bunching';
   if (cropSlug === 'onion') {
     const s = String(prose || '').toLowerCase();
     if (/non[-_ ]?bulbing|bunching|scallion/.test(s)) return 'bunching';
@@ -206,7 +210,7 @@ export function computeDerivedTags(cultivar, cropTypesBySlug) {
     const d = cultivar.determinacy || parseDeterminacy(cultivar.growth_habit);
     if (d && DETERMINACY_LABELS[d]) out.push({ facet: 'determinacy', slug: d, label: DETERMINACY_LABELS[d] });
   }
-  if (cropSlug === 'onion') {
+  if (cropSlug === 'onion' || cropSlug === 'bunching_onion') {
     const dl = cultivar.day_length_response || parseDayLength(cultivar.growth_habit);
     if (dl && DAY_LENGTH_LABELS[dl]) out.push({ facet: 'day_length', slug: dl, label: DAY_LENGTH_LABELS[dl] });
   }

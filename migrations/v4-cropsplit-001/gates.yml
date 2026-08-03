@@ -1,0 +1,248 @@
+# gates.yml
+# V4-CROPSPLIT-001 — split winter_squash / bunching_onion / rat_tail_radish out of their parents.
+#
+# SEQUENCING (ORDERED — do not reorder, do not skip):
+#   1. CTAS snapshots: crop_types, plant_varieties, preservation_log, tag, entity_tag.
+#      The last two matter because 0b-redrive writes them and NO SQL file does — the radicchio
+#      precedent snapshotted neither.
+#   2. pre gates -> 0a-data.sql -> 0b-redrive.mjs -> post gates.
+#   3. NO 0c-validate step: 0a adds no constraints. The existing CHECKs already enforce the seed at
+#      write time (a bad habit/interval pair fails the apply, loudly).
+#   4. DEPLOY ORDER IS LOAD-BEARING — see post_deploy_order_note.
+#
+# ENVIRONMENT-AGNOSTIC BY DESIGN. Every gate is a violation count that must be 0, never a
+# prod-derived absolute — staging carries 82 live crop types to prod's 130 and is missing slugs
+# entirely. A gate that cannot run where the Migration Authoring Rule says to apply first is not a
+# gate. (Learned the hard way on v4-croptype-002, which had to be rewritten mid-apply.)
+#
+# BLAST RADIUS — this migration CHANGES USER-VISIBLE BEHAVIOUR by design:
+#   * bunching_onion: 2 live scallion plantings become ELIGIBLE for the Ready-to-pick band for the
+#     first time (they could never appear while onion was harvest_habit='single'). NEW rows here
+#     are the fix, not a regression.
+#   * winter_squash: both live squash plantings are SUMMER and stay on `squash`, so the
+#     harvest-ready set must be IDENTICAL. Any change at all is a bug.
+#   * Garden by-type grouping and Harvests per-crop totals gain three new buckets. Intended.
+
+pre:
+  - name: pre_new_slugs_absent
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug IN ('winter_squash', 'bunching_onion', 'rat_tail_radish')
+    expect: scalar_eq
+    value: 0
+    note: |
+      Counts soft-deleted rows too. crop_types_pkey is a plain PRIMARY KEY (slug) with no
+      live-partial unique, so a soft-deleted row squats the slug and ON CONFLICT DO NOTHING would
+      leave it invisible rather than erroring.
+
+  - name: pre_parent_slugs_live
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug IN ('squash', 'onion', 'radish') AND deleted_at IS NULL
+    expect: scalar_eq
+    value: 3
+
+  # Without this, pre_move_set_on_parent passes VACUOUSLY on a typo'd uuid.
+  - name: pre_move_ids_all_exist
+    sql: |
+      SELECT 10 - count(*) FROM public.plant_varieties WHERE id IN (
+        'b6ffab33-afb9-4354-80a1-bfb8f61a76dd','83b3195b-8be3-4806-94c5-c5dc85a7cb58',
+        'f1bbb5be-d48a-45d2-b536-b75d36860eec','feb6719d-5d8e-45a8-b7fe-0cb5a6dd1121',
+        'c7d0aee5-6983-4220-9b25-db9a19f88ab5','a0f88678-9c47-4aed-899b-141448c06ca7',
+        '3d6fdd43-6fce-4c62-862c-d58f66b2845c','3127a432-af9b-405d-8144-6a3c3470956e',
+        '0b640bff-ad0a-446f-92b9-993afb5cf2c0','a53f78ae-aa0f-47ca-bff8-f6633048cdb8')
+    expect: scalar_eq
+    value: 0
+
+  - name: pre_move_set_on_parent
+    sql: |
+      SELECT count(*) FROM public.plant_varieties WHERE
+        (id IN ('b6ffab33-afb9-4354-80a1-bfb8f61a76dd','83b3195b-8be3-4806-94c5-c5dc85a7cb58',
+                'f1bbb5be-d48a-45d2-b536-b75d36860eec','feb6719d-5d8e-45a8-b7fe-0cb5a6dd1121',
+                'c7d0aee5-6983-4220-9b25-db9a19f88ab5','a0f88678-9c47-4aed-899b-141448c06ca7')
+         AND crop_type_slug IS DISTINCT FROM 'squash')
+        OR (id IN ('3d6fdd43-6fce-4c62-862c-d58f66b2845c','3127a432-af9b-405d-8144-6a3c3470956e',
+                   '0b640bff-ad0a-446f-92b9-993afb5cf2c0')
+         AND crop_type_slug IS DISTINCT FROM 'onion')
+        OR (id = 'a53f78ae-aa0f-47ca-bff8-f6633048cdb8'
+         AND crop_type_slug IS DISTINCT FROM 'radish')
+    expect: scalar_eq
+    value: 0
+    note: IS DISTINCT FROM so a NULL slug counts as a violation rather than passing silently.
+
+  - name: pre_capture_baselines
+    manual: true
+    note: |
+      Row-level captures, never counts. (1) harvest-ready candidate set + the READY subset;
+      (2) Sow Now close dates for the 6 winter-squash and 3 bunching-onion inventory items;
+      (3) per-crop season gram totals for squash/onion/radish; (4) the derived facet set per moved
+      cultivar. Needed for post_harvest_ready_diff and post_season_total_conservation.
+
+post:
+  - name: post_new_slugs_behaviourally_complete
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE slug IN ('winter_squash', 'bunching_onion', 'rat_tail_radish')
+         AND deleted_at IS NULL
+         AND NOT (harvest_habit IS NOT NULL
+                  AND (harvest_habit = 'single' OR repeat_interval_days IS NOT NULL)
+                  AND first_year_harvest IS NOT NULL
+                  AND default_unit IS NOT NULL)
+    expect: scalar_eq
+    value: 0
+    note: |
+      unit_weights is deliberately EXCLUDED from this completeness check. winter_squash and
+      rat_tail_radish carry NULL by design (bimodal / unsourceable — justified in 0a); every one of
+      their cultivars already carries a per-variety weight, and the live resolve_harvest_weight
+      (v4-cal1-harvweight-002) resolves COALESCE(derived, variety, crop) with no default_unit
+      predicate, so the crop tier is provably inert today. bunching_onion DOES carry one.
+
+  - name: post_all_moves_landed
+    sql: |
+      SELECT count(*) FROM public.plant_varieties WHERE
+        (id IN ('b6ffab33-afb9-4354-80a1-bfb8f61a76dd','83b3195b-8be3-4806-94c5-c5dc85a7cb58',
+                'f1bbb5be-d48a-45d2-b536-b75d36860eec','feb6719d-5d8e-45a8-b7fe-0cb5a6dd1121',
+                'c7d0aee5-6983-4220-9b25-db9a19f88ab5','a0f88678-9c47-4aed-899b-141448c06ca7')
+         AND crop_type_slug IS DISTINCT FROM 'winter_squash')
+        OR (id IN ('3d6fdd43-6fce-4c62-862c-d58f66b2845c','3127a432-af9b-405d-8144-6a3c3470956e',
+                   '0b640bff-ad0a-446f-92b9-993afb5cf2c0')
+         AND crop_type_slug IS DISTINCT FROM 'bunching_onion')
+        OR (id = 'a53f78ae-aa0f-47ca-bff8-f6633048cdb8'
+         AND crop_type_slug IS DISTINCT FROM 'rat_tail_radish')
+    expect: scalar_eq
+    value: 0
+
+  # Catches an over-broad predicate having swept extra cultivars along.
+  - name: post_no_stray_moves
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE crop_type_slug IN ('winter_squash', 'bunching_onion', 'rat_tail_radish')
+         AND id NOT IN (
+           'b6ffab33-afb9-4354-80a1-bfb8f61a76dd','83b3195b-8be3-4806-94c5-c5dc85a7cb58',
+           'f1bbb5be-d48a-45d2-b536-b75d36860eec','feb6719d-5d8e-45a8-b7fe-0cb5a6dd1121',
+           'c7d0aee5-6983-4220-9b25-db9a19f88ab5','a0f88678-9c47-4aed-899b-141448c06ca7',
+           '3d6fdd43-6fce-4c62-862c-d58f66b2845c','3127a432-af9b-405d-8144-6a3c3470956e',
+           '0b640bff-ad0a-446f-92b9-993afb5cf2c0','a53f78ae-aa0f-47ca-bff8-f6633048cdb8')
+    expect: scalar_eq
+    value: 0
+
+  - name: post_parents_retained_expected_cultivars
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE deleted_at IS NULL
+         AND ((crop_type_slug = 'squash' AND name NOT IN
+                 ('Dark Green Zucchini', 'Zephyr', 'Early Prolific Straightneck'))
+           OR (crop_type_slug = 'radish' AND name = 'Rat''s Tail'))
+    expect: scalar_eq
+    value: 0
+
+  # The invariant lambda/preservation/attribution.js assumes and nothing currently enforces:
+  # a preservation row's denormalized crop_type_slug must agree with its planting's cultivar.
+  # Global, not scoped to this split — worth promoting to a permanent check.
+  - name: post_preservation_consistent
+    sql: |
+      SELECT count(*) FROM public.preservation_log p
+        JOIN public.plant_varieties v ON v.id = p.variety_id
+       WHERE p.deleted_at IS NULL AND p.crop_type_slug IS DISTINCT FROM v.crop_type_slug
+    expect: scalar_eq
+    value: 0
+
+  # BOTH directions. check-cultivar-faceting.mjs only asserts the DESIRED tag exists; it never
+  # checks the STALE link was removed, so this direction has no other detector anywhere.
+  - name: post_no_stale_derived_type_link
+    sql: |
+      SELECT count(*)
+        FROM public.entity_tag et
+        JOIN public.tag t ON t.id = et.tag_id
+        JOIN public.plant_varieties v ON v.id = et.entity_id
+       WHERE et.deleted_at IS NULL AND et.entity_type = 'cultivar'
+         AND t.facet = 'type' AND t.source = 'derived' AND t.deleted_at IS NULL
+         AND t.slug IS DISTINCT FROM v.crop_type_slug
+    expect: scalar_eq
+    value: 0
+
+  - name: post_moved_cultivars_have_type_tag
+    sql: |
+      SELECT 10 - count(DISTINCT et.entity_id)
+        FROM public.entity_tag et
+        JOIN public.tag t ON t.id = et.tag_id
+        JOIN public.plant_varieties v ON v.id = et.entity_id
+       WHERE et.deleted_at IS NULL AND et.entity_type = 'cultivar'
+         AND t.facet = 'type' AND t.slug = v.crop_type_slug AND t.deleted_at IS NULL
+         AND et.entity_id IN (
+           'b6ffab33-afb9-4354-80a1-bfb8f61a76dd','83b3195b-8be3-4806-94c5-c5dc85a7cb58',
+           'f1bbb5be-d48a-45d2-b536-b75d36860eec','feb6719d-5d8e-45a8-b7fe-0cb5a6dd1121',
+           'c7d0aee5-6983-4220-9b25-db9a19f88ab5','a0f88678-9c47-4aed-899b-141448c06ca7',
+           '3d6fdd43-6fce-4c62-862c-d58f66b2845c','3127a432-af9b-405d-8144-6a3c3470956e',
+           '0b640bff-ad0a-446f-92b9-993afb5cf2c0','a53f78ae-aa0f-47ca-bff8-f6633048cdb8')
+    expect: scalar_eq
+    value: 0
+    note: Catches the silent no-tag case if 0b-redrive was skipped or ran against a dead target row.
+
+  - name: post_bunching_onion_allium_facet
+    sql: |
+      SELECT 3 - count(DISTINCT et.entity_id)
+        FROM public.entity_tag et
+        JOIN public.tag t ON t.id = et.tag_id
+       WHERE et.deleted_at IS NULL AND et.entity_type = 'cultivar'
+         AND t.facet = 'allium_type' AND t.slug = 'bunching' AND t.deleted_at IS NULL
+         AND et.entity_id IN ('3d6fdd43-6fce-4c62-862c-d58f66b2845c',
+                              '3127a432-af9b-405d-8144-6a3c3470956e',
+                              '0b640bff-ad0a-446f-92b9-993afb5cf2c0')
+    expect: scalar_eq
+    value: 0
+    note: |
+      REQUIRES the crop-derive.js change (alliumType must branch on 'bunching_onion') to have
+      shipped in BOTH byte-identical copies. Without it the 3 moved cultivars silently lose their
+      allium_type facet, because the existing gate is `cropSlug === 'onion'`.
+
+  - name: post_no_single_carries_interval
+    sql: |
+      SELECT count(*) FROM public.crop_types
+       WHERE harvest_habit = 'single' AND repeat_interval_days IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+  - name: post_schema_version_present
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.18.0-cropsplit-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_second_apply_noop
+    manual: true
+    note: Re-run 0a-data.sql — every UPDATE must report 0, INSERT 0 0. Then re-run 0b-redrive.mjs; it must report links_added/removed 0.
+
+  - name: post_harvest_ready_diff
+    manual: true
+    note: |
+      PROD ONLY. Row-for-row diff vs the pre-capture.
+        * NO row may DISAPPEAR — blocking regression.
+        * The two SUMMER squash plantings (Dark Green Zucchini, Zephyr) must be UNCHANGED; both
+          stay on `squash`, so nothing about them may move.
+        * The 2 live scallion plantings MAY newly appear once enough days have elapsed since their
+          last harvest — that is the entire point of the onion split.
+
+  - name: post_season_total_conservation
+    manual: true
+    note: |
+      Sum of grams over (squash + winter_squash) must EXACTLY equal the pre-split squash total;
+      likewise (onion + bunching_onion) and (radish + rat_tail_radish). Catches a lost weight tier.
+      Should hold trivially since every moved cultivar carries its own unit_weights — which is
+      precisely why asserting beats assuming.
+
+  - name: post_deploy_order_note
+    manual: true
+    note: |
+      LOAD-BEARING ORDER: this migration MUST land before the Lambda deploy that repoints
+      COUPLED_CROP_SYNONYMS. resolveCropTypeName's synonym branch requires have.has(alias); if the
+      Lambda ships first, 'scallion' -> 'bunching_onion' fails that check, falls through to
+      {ok:true}, and MINTS A BRAND-NEW `scallion` crop_type — the exact invisible second-type
+      failure the coupled guard exists to prevent.
+      Also run NO seed-intake script between the DB apply and the SPA deploy: parseSowProfile's
+      static CROP_TYPE_SLUGS in the deployed bundle would not yet contain the new slugs, so a packet
+      guessing one would be dropped to crop_type_slug = null.
+
+  - name: post_facet_healthcheck
+    manual: true
+    note: node scripts/healthcheck-cultivar-facets.mjs must exit 0.

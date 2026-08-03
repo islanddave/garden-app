@@ -7,18 +7,16 @@
 
 /** Live crop_types enum whitelist. 'other' and null guesses are omitted. */
 export const CROP_TYPE_SLUGS = Object.freeze([
-  'arugula', 'asparagus', 'avocado', 'basil', 'bee_balm', 'beet', 'begonia',
-  'bitter_melon', 'black_raspberry', 'blueberry', 'broccoli', 'cabbage',
-  'cactus', 'chard', 'chives', 'christmas_cactus', 'chrysanthemum',
-  'cilantro', 'collard', 'crown_of_thorns', 'cucamelon', 'cucumber',
-  'culantro', 'dill', 'dracaena', 'echeveria', 'eggplant', 'endive',
-  'fittonia', 'garlic', 'geranium', 'haworthia', 'hosta', 'jade',
-  'japanese_maple', 'leek', 'lemongrass', 'lettuce', 'lithops', 'luffa',
-  'marigold', 'melon', 'mint', 'nasturtium', 'onion', 'oregano', 'parsley',
-  'peach', 'pepper', 'pineapple', 'potato', 'pothos', 'radicchio', 'rose', 'rosemary',
-  'sage', 'sedum', 'shallot', 'spinach', 'squash', 'strawberry', 'succulent',
-  'sweet_potato', 'tarragon', 'tomatillo', 'tomato', 'tradescantia',
-  'vietnamese_coriander', 'watermelon', 'wineberry',
+  'arugula', 'asparagus', 'avocado', 'basil', 'bee_balm', 'beet', 'begonia', 'bitter_melon',
+  'black_raspberry', 'blueberry', 'broccoli', 'bunching_onion', 'cabbage', 'cactus', 'chard',
+  'chives', 'christmas_cactus', 'chrysanthemum', 'cilantro', 'collard', 'crown_of_thorns',
+  'cucamelon', 'cucumber', 'culantro', 'dill', 'dracaena', 'echeveria', 'eggplant', 'endive',
+  'fittonia', 'garlic', 'geranium', 'haworthia', 'hosta', 'jade', 'japanese_maple', 'leek',
+  'lemongrass', 'lettuce', 'lithops', 'luffa', 'marigold', 'melon', 'mint', 'nasturtium',
+  'onion', 'oregano', 'parsley', 'peach', 'pepper', 'pineapple', 'potato', 'pothos',
+  'radicchio', 'rat_tail_radish', 'rose', 'rosemary', 'sage', 'sedum', 'shallot', 'spinach',
+  'squash', 'strawberry', 'succulent', 'sweet_potato', 'tarragon', 'tomatillo', 'tomato',
+  'tradescantia', 'vietnamese_coriander', 'watermelon', 'wineberry', 'winter_squash'
 ]);
 
 // ── V4-CROPGUESS-001 — crop-guess cross-check (croptype-mistyping-20260721 Pending 1) ────────
@@ -65,8 +63,12 @@ export function slugifyCropName(crop) {
  */
 export const CROP_GUESS_SYNONYMS = Object.freeze({
   collards: 'collard',           // plural of the same crop; the catalog slug is singular
-  pumpkin: 'squash',             // Cucurbita spp.; no pumpkin/winter_squash type exists yet
-  winter_squash: 'squash',       // same conflation as pumpkin — see the note above
+  pumpkin: 'winter_squash',      // V4-CROPSPLIT-001: winter_squash now EXISTS. Pumpkins ARE winter
+                                 // squash: zero behavioural columns differ, and the label
+                                 // cross-cuts species (Howden C. pepo, Cinderella C. maxima).
+  scallion: 'bunching_onion',    // V4-CROPSPLIT-001; mirrors validate.js COUPLED_CROP_SYNONYMS.
+  green_onion: 'bunching_onion', // Without these a 'Scallion' packet resolves UNRESOLVED, since
+                                 // the slugified crop no longer equals any live guess.
   broccoli_raab: 'broccoli',     // Rapini, Brassica rapa Ruvo. OPEN judgment call (Dave), not a defect
   chinese_broccoli: 'broccoli',  // Kailaan, B. oleracea Alboglabra — same species as broccoli
 });

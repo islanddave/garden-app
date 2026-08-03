@@ -313,13 +313,36 @@ describe('checkCropGuess', () => {
   });
 
   it('accepts a reviewed synonym', () => {
-    const r = checkCropGuess(pk('Winter Squash', 'squash'));
+    // V4-CROPSPLIT-001: was pk('Winter Squash', 'squash') -> synonym/squash. That synonym existed
+    // ONLY because winter_squash had no slug of its own, and it is now deleted. Pumpkin is the
+    // surviving reviewed synonym: pumpkins ARE winter squash (zero behavioural columns differ, and
+    // the label cross-cuts species — Howden is C. pepo, Cinderella C. maxima).
+    const r = checkCropGuess(pk('Pumpkin', 'winter_squash'));
     expect(r.status).toBe('synonym');
-    expect(r.slug).toBe('squash');
+    expect(r.slug).toBe('winter_squash');
+  });
+
+  it('a Winter Squash packet guessing the old conflated slug is now UNRESOLVED', () => {
+    // The regression guard for the split itself. Before V4-CROPSPLIT-001 this resolved to 'squash'
+    // and silently bound winter squash to the SUMMER squash cadence (repeat/2d). If someone
+    // re-adds winter_squash -> squash to CROP_GUESS_SYNONYMS, this fails.
+    expect(checkCropGuess(pk('Winter Squash', 'squash')).status).toBe('unresolved');
+    expect(checkCropGuess(pk('Winter Squash', 'winter_squash')).status).toBe('match');
+  });
+
+  it('scallion steers to bunching_onion, not the bulb onion slug', () => {
+    // 'Scallion' slugifies to `scallion`, which reaches bunching_onion via the synonym map — so
+    // the correct status is 'synonym', not 'match'. A packet whose crop IS 'Bunching Onion'
+    // matches directly.
+    expect(checkCropGuess(pk('Scallion', 'bunching_onion')).status).toBe('synonym');
+    expect(checkCropGuess(pk('Bunching Onion', 'bunching_onion')).status).toBe('match');
+    // Guessing the bulb slug for a scallion packet must NOT quietly pass — bulb onion is
+    // harvest_habit='single', which is the defect the onion split exists to fix.
+    expect(checkCropGuess(pk('Scallion', 'onion')).status).toBe('unresolved');
   });
 
   it('does NOT accept an arbitrary mismatch just because the synonym KEY exists', () => {
-    // pumpkin is a known key, but only ever maps to squash. Any other target must not ride it.
+    // pumpkin is a known key, but only ever maps to winter_squash. Any other target must not ride it.
     expect(checkCropGuess(pk('Pumpkin', 'melon')).status).toBe('unresolved');
   });
 

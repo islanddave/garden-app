@@ -437,7 +437,7 @@
    "variety_match": "NEW",
    "matched_variety_id": null,
    "matched_variety_name": null,
-   "crop_type_slug_guess": "squash",
+   "crop_type_slug_guess": "winter_squash",
    "sow_profile": {
     "life_cycle": "annual",
     "season": "warm",
@@ -478,7 +478,7 @@
    "variety_match": "NEW",
    "matched_variety_id": null,
    "matched_variety_name": null,
-   "crop_type_slug_guess": "squash",
+   "crop_type_slug_guess": "winter_squash",
    "sow_profile": {
     "life_cycle": "annual",
     "season": "warm",
@@ -519,7 +519,7 @@
    "variety_match": "NEW",
    "matched_variety_id": null,
    "matched_variety_name": null,
-   "crop_type_slug_guess": "squash",
+   "crop_type_slug_guess": "winter_squash",
    "sow_profile": {
     "life_cycle": "annual",
     "season": "warm",
