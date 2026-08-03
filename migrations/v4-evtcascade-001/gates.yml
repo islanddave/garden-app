@@ -1,0 +1,87 @@
+# gates.yml
+# V4-EVTCASCADE-001 — repair of child rows stranded by event undo. DATA-ONLY (no DDL on app tables).
+#
+# SEQUENCING: this migration is a backlog repair, not a schema dependency, so it does NOT gate the
+# code deploy in either direction — the Lambda cascade fix is correct against repaired and unrepaired
+# data alike (it only ever writes children of the event being undone). Order actually applied:
+#   1. PROD: pre gates -> 0b -> post gates. Applied by the authoring session 2026-08-03 (Dave-approved
+#      "go all recommends"), because scripts/integrity-baselines.json is refreshed to 0 in the same
+#      commit and a baseline of 0 against an unrepaired DB would alert on the very next Monday run.
+#   2. Lambda code fix ships to dev in the same commit; it reaches PROD only on the next promote.
+#      Between the repair and that promote, prod still leaks on every undo — a small re-alert in that
+#      window is CORRECT signal, not drift, and clears once the promote lands.
+#   3. STAGING (Neon branch br-damp-frog-amdfxwrr): apply 0b whenever staging is next refreshed. Not
+#      urgent — staging carries its own unrelated backlog and nothing reads these counts there.
+#
+# Pre:  the three child tables exist; neither snapshot table pre-exists (a collision would mean an
+#       earlier run already captured state and this one would silently adopt it).
+# Post: zero live harvest_log rows and zero live photos point at a soft-deleted event; every photo
+#       0b detached still satisfies photos_must_have_parent; no photo row was deleted; critter_state
+#       is byte-identical to pre-apply; the version row is recorded.
+
+pre:
+  - name: pre_tables_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name IN ('harvest_log','photos','critter_state')
+    expect: rowcount_eq
+    value: 3
+
+  - name: pre_snapshot_tables_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public'
+         AND table_name IN ('snap_evtcascade001_harvest_log','snap_evtcascade001_photos')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # The two metrics this migration exists to zero. integrity-baselines.json pins both at 0 in the same
+  # commit, so any non-zero here means the repair did not take and the baseline is lying.
+  - name: post_no_live_harvest_log_on_deleted_event
+    sql: |
+      SELECT 1 FROM public.harvest_log hl JOIN public.event_log e ON e.id = hl.event_id
+       WHERE hl.deleted_at IS NULL AND e.deleted_at IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_live_photo_on_deleted_event
+    sql: |
+      SELECT 1 FROM public.photos ph JOIN public.event_log e ON e.id = ph.event_id
+       WHERE ph.deleted_at IS NULL AND e.deleted_at IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  # DETACH, not delete: every snapshotted photo must still be live. Catches the failure mode where a
+  # future edit of 0b "simplifies" the photo branch into a cascade and silently eats user photos.
+  - name: post_every_detached_photo_still_live
+    sql: |
+      SELECT 1 FROM public.snap_evtcascade001_photos s
+       JOIN public.photos ph ON ph.id = s.id
+       WHERE ph.deleted_at IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_detached_photos_still_have_a_parent
+    sql: |
+      SELECT 1 FROM public.snap_evtcascade001_photos s
+       JOIN public.photos ph ON ph.id = s.id
+       WHERE ph.project_id IS NULL AND ph.event_id IS NULL AND ph.plant_id IS NULL
+         AND ph.location_id IS NULL AND ph.inventory_item_id IS NULL AND ph.space_id IS NULL
+         AND COALESCE(ph.intake_status = 'pending_tag', false) = false
+    expect: rowcount_eq
+    value: 0
+
+  # critter_state is deliberately out of scope — assert the migration did not touch it.
+  - name: post_critter_state_untouched
+    sql: |
+      SELECT 1 FROM public.critter_state
+       WHERE deleted_at IS NULL AND updated_at >= NOW() - INTERVAL '1 hour'
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.18.1-evtcascade-001'
+    expect: rowcount_eq
+    value: 1

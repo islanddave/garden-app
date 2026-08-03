@@ -524,6 +524,20 @@ export const handler = async (event) => {
         sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
         sql`UPDATE event_log SET deleted_at = NOW(), updated_at = NOW()
             WHERE metadata->>'batch_id' = ${batchId} AND deleted_at IS NULL`,
+        // Child-row handling — same three-way split as the single-event undo below (see the long
+        // note at DELETE /api/events/:id): harvest_log cascades, photos detach + re-parent,
+        // critter_state is left alone on purpose. Keyed on batch_id (not on deleted_at) so a
+        // partially-undone batch converges instead of stranding the rest.
+        sql`UPDATE harvest_log h SET deleted_at = NOW(), updated_at = NOW()
+            FROM event_log e
+            WHERE e.id = h.event_id AND e.metadata->>'batch_id' = ${batchId} AND h.deleted_at IS NULL`,
+        sql`UPDATE photos ph SET
+              event_id   = NULL,
+              project_id = COALESCE(ph.project_id, e.project_id),
+              plant_id   = COALESCE(ph.plant_id,   e.plant_id),
+              updated_at = NOW()
+            FROM event_log e
+            WHERE e.id = ph.event_id AND e.metadata->>'batch_id' = ${batchId} AND ph.deleted_at IS NULL`,
         sql`
           WITH affected AS (
             SELECT DISTINCT project_id FROM event_log WHERE metadata->>'batch_id' = ${batchId}
@@ -996,6 +1010,25 @@ export const handler = async (event) => {
       // Callers: Dashboard 5s undo toast, EventDetail delete, ProjectDetail delete.
       // XP/streak/achievements are NOT reversed here (same as batch undo — reconciliation
       // cron concern, V1.2a-2).
+      //
+      // CHILD-ROW HANDLING (BUG-EVTCASCADE-001, 2026-08-03). Until this fix the undo touched
+      // event_log ONLY, so every delete stranded its children against a dead parent: 18 of 45
+      // all-time deletes leaked (9 harvest_log + 6 photos + 6 critter_state), and integrity-weekly
+      // caught the growth 2026-08-03. Each child type gets the treatment its SEMANTICS demand —
+      // a blanket cascade would have destroyed photos:
+      //   * harvest_log  -> CASCADE soft-delete. It is a pure detail record of the harvest event
+      //     (no date of its own; readers all drive FROM event_log and LEFT JOIN it). With the
+      //     event gone the quantity means nothing, so an undo must take it too — otherwise the
+      //     row is unreachable-but-live debt forever.
+      //   * photos       -> DETACH, never delete. A photo is irreplaceable user content that
+      //     happens to hang off an event; deleting a harvest must not eat the picture. Null the
+      //     dangling event_id and re-parent to the event's project/plant so the photo survives in
+      //     the gallery AND photos_must_have_parent still holds (it is COALESCE, not assignment —
+      //     an existing parent always wins).
+      //   * critter_state -> DELIBERATELY UNTOUCHED. Rewards are never clawed back on undo (same
+      //     policy as the XP/streak/achievements note above). integrity-weekly's orphan predicate
+      //     was narrowed to match, so a soft-deleted parent no longer reads as corruption; a
+      //     MISSING (hard-deleted) parent still does.
       if (method === 'DELETE') {
         const owned = await sql`
           SELECT el.id, el.project_id, el.event_type, el.plant_id
@@ -1013,6 +1046,18 @@ export const handler = async (event) => {
           sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
           sql`UPDATE event_log SET deleted_at = NOW(), updated_at = NOW()
               WHERE id = ${eventId} AND deleted_at IS NULL`,
+          sql`UPDATE harvest_log SET deleted_at = NOW(), updated_at = NOW()
+              WHERE event_id = ${eventId} AND deleted_at IS NULL`,
+          // Re-parent FROM the event row rather than from JS locals: plant_id is NULL on every
+          // project-level event, and the neon driver cannot type a NULL bound param even with an
+          // explicit ::uuid cast. Reading both parents out of event_log keeps every param typed.
+          sql`UPDATE photos ph SET
+                event_id   = NULL,
+                project_id = COALESCE(ph.project_id, e.project_id),
+                plant_id   = COALESCE(ph.plant_id,   e.plant_id),
+                updated_at = NOW()
+              FROM event_log e
+              WHERE e.id = ${eventId} AND ph.event_id = ${eventId} AND ph.deleted_at IS NULL`,
         ];
         if (owned[0].event_type === 'watering' || owned[0].event_type === 'rain') {
           // Recompute watering memory from SURVIVING events (runs after the soft-delete in

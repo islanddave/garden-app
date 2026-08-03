@@ -34,11 +34,26 @@ SELECT json_build_object(
      WHERE ph.deleted_at IS NULL AND ph.event_id IS NOT NULL AND (e.id IS NULL OR e.deleted_at IS NOT NULL)),
   'harvest_log_to_deleted_events', (SELECT count(*) FROM harvest_log hl LEFT JOIN event_log e ON e.id = hl.event_id
      WHERE hl.deleted_at IS NULL AND hl.event_id IS NOT NULL AND (e.id IS NULL OR e.deleted_at IS NOT NULL)),
+  -- MISSING parent, not merely soft-deleted (narrowed 2026-08-03, BUG-EVTCASCADE-001).
+  -- The original predicate treated a SOFT-DELETED parent as an orphan, which made this metric a
+  -- census of deliberate policy rather than of corruption: garden-app never claws a reward back
+  -- when its source event is undone or its planting is deleted (same rule the events Lambda states
+  -- for XP/streak/achievements), so every undo-after-award legitimately produced a "+1 orphan" and
+  -- the metric could only ever ratchet upward — 10 of 10 live rows were this benign case. A row
+  -- pointing at a HARD-DELETED / never-existent parent is real referential damage and still alerts.
   'critter_state_orphans', (SELECT count(*) FROM critter_state cs WHERE cs.deleted_at IS NULL AND (
        (cs.source_event_id IS NOT NULL AND NOT EXISTS
-          (SELECT 1 FROM event_log e WHERE e.id = cs.source_event_id AND e.deleted_at IS NULL))
+          (SELECT 1 FROM event_log e WHERE e.id = cs.source_event_id))
     OR (cs.plant_id IS NOT NULL AND NOT EXISTS
-          (SELECT 1 FROM plants p WHERE p.id = cs.plant_id AND p.deleted_at IS NULL)))),
+          (SELECT 1 FROM plants p WHERE p.id = cs.plant_id)))),
+  -- Rate, not census (added 2026-08-03). event_unattached_total below is a CUMULATIVE count of a
+  -- shipped, intentional product path — project-level harvest/photo logging, the rows V4-HARVESTQTY-001
+  -- deliberately surfaces as "unattributed" — running ~2/day. As an alert metric it breached any fixed
+  -- baseline within days and would have demanded a weekly re-baseline forever, which is how a monitor
+  -- trains you to ignore it. The total stays REPORTED (trend/forensics); the ALERT moved here, to a
+  -- 7-day inflow that fires on a genuine SPIKE and returns to normal on its own.
+  'event_unattached_new_7d', (SELECT count(*) FROM event_log
+     WHERE deleted_at IS NULL AND plant_id IS NULL AND created_at >= NOW() - INTERVAL '7 days'),
   'favorites_orphans', (SELECT count(*) FROM favorites f WHERE
        (f.entity_type = 'plant'   AND NOT EXISTS (SELECT 1 FROM plants p         WHERE p.id  = f.entity_id AND p.deleted_at  IS NULL))
     OR (f.entity_type = 'project' AND NOT EXISTS (SELECT 1 FROM plant_projects pp WHERE pp.id = f.entity_id AND pp.deleted_at IS NULL))),
@@ -125,13 +140,20 @@ jq -n \
   ($db[0] + {s3_not_in_db: $s3_not_in_db, db_not_in_s3: $db_not_in_s3}) as $cur
   | $base[0].metrics as $b
   | ($base[0].alert_metrics) as $alertable
+  # Threshold metrics (added 2026-08-03) read "current > baseline" as "over the ceiling", not as
+  # "drifted from a census". Being UNDER one is the normal resting state, so they are excluded from
+  # improvements — otherwise every healthy run emits a permanent "improved … refresh the baseline"
+  # line, which is both noise and actively wrong advice (dropping the ceiling to the last quiet week
+  # would guarantee a false alert on the next busy one).
+  | (($base[0].threshold_metrics) // []) as $thresholds
   | [ $alertable[] as $k
       | select(($cur[$k] != null) and ($b[$k] != null) and ($cur[$k] > $b[$k]))
       | "\($k) grew above baseline: \($b[$k]) -> \($cur[$k]) (+\($cur[$k] - $b[$k]))"
         + (if $k == "phantom_photo_events" then " [AMBIGUITY: no client-version attribution exists; a stale pre-v3.73 client is indistinguishable from a funnel regression — evidence W0.2b-r1 stale-client-baseline]" else "" end)
         + (if $k == "db_not_in_s3" then " [DATA LOSS CLASS: DB row references a missing S3 object]" else "" end) ] as $alerts
   | [ $alertable[] as $k
-      | select(($cur[$k] != null) and ($b[$k] != null) and ($cur[$k] < $b[$k]))
+      | select(($cur[$k] != null) and ($b[$k] != null) and ($cur[$k] < $b[$k])
+               and (($thresholds | index($k)) == null))
       | "\($k) improved: \($b[$k]) -> \($cur[$k]) (refresh baseline with the repair commit)" ] as $improvements
   | ([ $alertable[] | select($cur[.] == null) | "metric \(.) UNMEASURED this run" ]
      + (if $s3_status != "MEASURED" then ["S3<->DB class UNVERIFIED (bucket list unavailable this run)"] else [] end)) as $warnings

@@ -3,7 +3,8 @@
   "seeded_by": "W3.D (fourthread V102) from fourthread-evidence-20260728.md W0.2-r1 rows + W3.D dry-run for checked-edge classes",
   "repo_home_when_shipped": "garden-app/scripts/integrity-baselines.json",
   "evidence_run_ids": {
-    "event_unattached_total": "W0.2-r1 orphans-by-type (53, breakdown matches by_type)",
+    "event_unattached_total": "DEMOTED TO INFO-ONLY 2026-08-03 (BUG-EVTCASCADE-001 triage) — removed from alert_metrics, value refreshed 53 -> 63 as a trend anchor only. It is a CUMULATIVE census of a shipped intentional path: project-level (plant_id NULL) harvest/photo logging, the rows V4-HARVESTQTY-001 surfaces as 'unattributed' and events/index.js harvest-summary calls 'a live daily inflow'. All 10 rows of the 2026-08-03 breach were legitimate project-scoped events. A cumulative counter of normal behavior can only ratchet up, so as an alert it demanded a weekly re-baseline forever. Alerting moved to event_unattached_new_7d",
+    "event_unattached_new_7d": "NEW 2026-08-03 — replaces event_unattached_total in alert_metrics. THRESHOLD, not a census: 7-day inflow of unattached events. Trailing-8-week observed inflow 2,4,5,5,4,5,11 (wk of 07-27 = 11, harvest-season peak); measured 10 at seeding. Set to 25, ~2x the observed peak, so ordinary harvest-season variation is silent while a genuine regression (a write path that stops attributing plant_id, which would produce dozens/day) still fires. Self-clearing — no re-baseline needed after a spike passes",
     "photos_parentless": "BUG-PHOTOPARENT-001 resolved 2026-07-29: the W0.2-r1 count of 6 was a checker false positive — all 6 had live inventory_item_id parents (seed-packet photos, inventory/{item}/ paths); predicate now counts inventory_item_id as a parent; corrected live count 0. RECURRENCE OF THE SAME CLASS 2026-08-02 (V4-SPACEPHOTO-001): space_id was likewise absent, so the first space photo would have paged an ALERT for a legal row; predicate now counts space_id too. Rule: this predicate must enumerate every clause of photos_must_have_parent",
     "photos_to_deleted_inventory": "added 2026-07-29 with the BUG-PHOTOPARENT-001 fix — same orphan-edge class as photos_to_deleted_events for the fifth parent type; measured live 0",
     "phantom_photo_events": "W0.2-r1 phantom-count (22; forensic verdict W0.2b-r1 = pre-fix debris)",
@@ -13,10 +14,13 @@
     "user_stats_drift": "W0.2-r1 user-stats-drift (1: user_3CxBE... 275 ledger XP, no user_stats row)",
     "s3_not_in_db": "W0.2-r1 s3-db-mismatch (6)",
     "db_not_in_s3": "W0.2-r1 s3-db-mismatch (0)",
+    "harvest_log_to_deleted_events": "4 -> 0 2026-08-03 (BUG-EVTCASCADE-001). ROOT CAUSE: DELETE /api/events/:id and the batch undo both soft-deleted event_log ONLY — no child cascade — so 18 of 45 all-time deletes stranded children. Fix ships in the same commit: harvest_log now cascade-soft-deletes with its event. The 9 live orphans were repaired by migrations/v4-evtcascade-001 (data-only). Baseline is 0 and must STAY 0 — any growth is a real regression of the cascade, not drift",
+    "photos_to_deleted_events": "5 -> 0 2026-08-03 (BUG-EVTCASCADE-001, same root cause as harvest_log_to_deleted_events). Photos DETACH rather than cascade — a photo is irreplaceable user content, so the undo nulls event_id and re-parents to the event's project/plant instead of deleting the picture. All 6 live orphans already carried a project_id and stayed visible in the gallery; repaired by migrations/v4-evtcascade-001. Baseline 0 and must stay 0",
+    "critter_state_orphans": "9 -> 0 2026-08-03 — PREDICATE NARROWED, no data repaired. Was counting soft-deleted parents, i.e. deliberate policy: rewards are never clawed back when a source event is undone or a planting deleted (the events Lambda states the same rule for XP/streak/achievements), so the metric could only ratchet upward and 10 of 10 live rows were this benign case. Now counts MISSING (hard-deleted / never-existent) parents only — measured live 0 at the narrowing. That is genuine referential damage and must stay 0",
     "checked_edges": "W3.D-r1 dry-run 2026-07-28 (audit-plan V100 point-in-time values were 39/5/4/4/1/4; measured tonight 39/5/4/9/1/4 — critter_state=9 because the shipped definition covers BOTH edges: source_event_id->deleted-event OR plant_id->deleted-plant, broader than the audit's unspecified-edge 4)"
   },
   "alert_metrics": [
-    "event_unattached_total",
+    "event_unattached_new_7d",
     "events_to_deleted_plants",
     "photos_to_deleted_events",
     "harvest_log_to_deleted_events",
@@ -31,12 +35,16 @@
     "s3_not_in_db",
     "db_not_in_s3"
   ],
+  "threshold_metrics": [
+    "event_unattached_new_7d"
+  ],
   "metrics": {
-    "event_unattached_total": 53,
+    "event_unattached_total": 63,
+    "event_unattached_new_7d": 25,
     "events_to_deleted_plants": 39,
-    "photos_to_deleted_events": 5,
-    "harvest_log_to_deleted_events": 4,
-    "critter_state_orphans": 9,
+    "photos_to_deleted_events": 0,
+    "harvest_log_to_deleted_events": 0,
+    "critter_state_orphans": 0,
     "favorites_orphans": 1,
     "entity_memory_orphans": 4,
     "photos_parentless": 0,

@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.91.0",
+    "date": "2026-08-03",
+    "highlights": [
+      "Deleting an entry now takes its details with it. Undoing a harvest used to leave the quantity behind in the record — invisible on every screen, but still sitting in the garden log. The same went for other detail attached to an entry. Those leftovers are now removed with the entry, and the ones already in the log have been swept up.",
+      "A picture is never deleted as collateral. If you delete an entry that had a photo attached, the photo stays in the project gallery instead of disappearing with it."
+    ]
+  },
+  {
     "version": "3.90.0",
     "date": "2026-08-03",
     "highlights": [

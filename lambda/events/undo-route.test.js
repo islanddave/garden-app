@@ -28,7 +28,11 @@ describe('events Lambda — DELETE /api/events/:id (single-event undo)', () => {
   it('ownership pre-check is household-widened (event-entity op) and 404s when not owned', () => {
     const idx = SRC.indexOf('/api/events/:id \u2014 single-event undo');
     expect(idx).toBeGreaterThan(-1);
-    const block = SRC.slice(idx, idx + 2600);
+    // Window widened 2600 -> 4000 (2026-08-03, BUG-EVTCASCADE-001): the child-row cascade added ~2KB
+    // of code+rationale inside this route, leaving the old slice ~70 chars from a false failure. These
+    // fixed-offset windows are the fragile part of the L-072 static-source style — size them for the
+    // section, not for today's byte count.
+    const block = SRC.slice(idx, idx + 4000);
     expect(block).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\)/);
     expect(block).toMatch(/resp\(404, \{ error: 'Not found' \}\)/);
   });
@@ -39,7 +43,7 @@ describe('events Lambda — DELETE /api/events/:id (single-event undo)', () => {
 
   it('watering undo recomputes entity_memory from surviving events (parity with batch undo)', () => {
     const idx = SRC.indexOf('/api/events/:id \u2014 single-event undo');
-    const block = SRC.slice(idx, idx + 4200);
+    const block = SRC.slice(idx, idx + 6000);   // widened 4200 -> 6000, same reason as above
     expect(block).toMatch(/last_watered_at = surv\.mw/);
     expect(block).toMatch(/next_water_at = CASE WHEN surv\.mw IS NULL THEN NULL/);
   });
