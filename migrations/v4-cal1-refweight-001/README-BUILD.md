@@ -121,3 +121,16 @@ app's pickers) — not folded into a weights migration.
   explicit Dave OK (see `v4-cal1-pervariety-001/README-BUILD.md`).
 - **No Lambda INSERT change.** New harvests still write NULL weights until the derivation specced in
   `v4-cal1-harvweight-001` is built. Re-running `0d-backfill.sql` fills them in the meantime.
+
+## Follow-up (same day, Dave-directed)
+
+The three loose ends above are closed — prod is now at **332/332 harvest rows weighted, ~60.4 kg**,
+and zero harvest events lack a `plant_id`:
+
+- The 2026-08-01 tomato harvest was assigned to the **San Marzano Roma** planting (Dave's call).
+- `blackberry/Aster` variety created and linked to the *Aster Blackberry* planting (4 harvests).
+- `lemon_verbena` crop type + `Lemon Verbena` variety created and linked (1 harvest). This is a NEW
+  crop type — it surfaces in the app's crop pickers.
+
+Both new varieties and the new crop type carry `weight_source='estimate'`, and the reference JSON was
+updated to match (now 83 crop types + 328 varieties) so a re-seed reproduces prod exactly.

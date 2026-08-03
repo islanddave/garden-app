@@ -498,6 +498,17 @@
    "confidence": "low",
    "note": ""
   },
+  "lemon_verbena": {
+   "unit_weights": {
+    "cup": 18,
+    "count": 0.3
+   },
+   "primary_unit": "cup",
+   "grams_per_unit": 18,
+   "source": "estimate",
+   "confidence": "low",
+   "note": "Loose leaf; pack density dominates. Prefer direct weighing."
+  },
   "artichoke": {
    "unit_weights": {
     "count": 128,
@@ -1276,6 +1287,17 @@
    "note": ""
   },
   {
+   "crop_type_slug": "blackberry",
+   "variety_name": "Aster",
+   "unit_weights": {
+    "count": 6,
+    "cup": 144
+   },
+   "source": "estimate",
+   "confidence": "medium",
+   "note": "Thornless blackberry; per-berry. Added 2026-08-03 to link the Aster Blackberry planting."
+  },
+  {
    "crop_type_slug": "blueberry",
    "variety_name": "High Bush",
    "unit_weights": {
@@ -1765,6 +1787,17 @@
    "source": "catalog",
    "confidence": "high",
    "note": "Long-shafted summer leek."
+  },
+  {
+   "crop_type_slug": "lemon_verbena",
+   "variety_name": "Lemon Verbena",
+   "unit_weights": {
+    "cup": 18,
+    "count": 0.3
+   },
+   "source": "estimate",
+   "confidence": "low",
+   "note": ""
   },
   {
    "crop_type_slug": "lemongrass",

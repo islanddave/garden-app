@@ -7,7 +7,7 @@
 
 BEGIN;
 
--- 82 crop types (fallback tier) ------------------------------------
+-- 83 crop types (fallback tier) ------------------------------------
 UPDATE public.crop_types SET unit_weights='{"cup":20}'::jsonb, weight_source='estimate', weight_confidence='low',
        default_unit=COALESCE(default_unit,'cup'), grams_per_unit=('{"cup":20}'::jsonb->>COALESCE(default_unit,'cup'))::numeric, updated_at=now()
  WHERE slug='althaea' AND deleted_at IS NULL AND (weight_source IS NULL OR weight_source <> 'measured');
@@ -134,6 +134,9 @@ UPDATE public.crop_types SET unit_weights='{"count":140,"cup":135}'::jsonb, weig
 UPDATE public.crop_types SET unit_weights='{"count":89,"cup":89,"bunch":270}'::jsonb, weight_source='usda', weight_confidence='high',
        default_unit=COALESCE(default_unit,'count'), grams_per_unit=('{"count":89,"cup":89,"bunch":270}'::jsonb->>COALESCE(default_unit,'count'))::numeric, updated_at=now()
  WHERE slug='leek' AND deleted_at IS NULL AND (weight_source IS NULL OR weight_source <> 'measured');
+UPDATE public.crop_types SET unit_weights='{"cup":18,"count":0.3}'::jsonb, weight_source='estimate', weight_confidence='low',
+       default_unit=COALESCE(default_unit,'cup'), grams_per_unit=('{"cup":18,"count":0.3}'::jsonb->>COALESCE(default_unit,'cup'))::numeric, updated_at=now()
+ WHERE slug='lemon_verbena' AND deleted_at IS NULL AND (weight_source IS NULL OR weight_source <> 'measured');
 UPDATE public.crop_types SET unit_weights='{"count":65,"cup":67}'::jsonb, weight_source='usda', weight_confidence='high',
        default_unit=COALESCE(default_unit,'count'), grams_per_unit=('{"count":65,"cup":67}'::jsonb->>COALESCE(default_unit,'count'))::numeric, updated_at=now()
  WHERE slug='lemongrass' AND deleted_at IS NULL AND (weight_source IS NULL OR weight_source <> 'measured');
@@ -255,7 +258,7 @@ UPDATE public.crop_types SET unit_weights='{"cup":123,"count":2}'::jsonb, weight
        default_unit=COALESCE(default_unit,'cup'), grams_per_unit=('{"cup":123,"count":2}'::jsonb->>COALESCE(default_unit,'cup'))::numeric, updated_at=now()
  WHERE slug='wineberry' AND deleted_at IS NULL AND (weight_source IS NULL OR weight_source <> 'measured');
 
--- 326 varieties (override tier; wins over the crop fallback) ----------------
+-- 328 varieties (override tier; wins over the crop fallback) ----------------
 UPDATE public.plant_varieties SET unit_weights='{"cup":20}'::jsonb, weight_source='estimate', weight_confidence='low', updated_at=now()
  WHERE crop_type_slug='althaea' AND name='Althaea officinalis' AND deleted_at IS NULL
    AND (weight_source IS NULL OR weight_source <> 'measured');
@@ -345,6 +348,9 @@ UPDATE public.plant_varieties SET unit_weights='{"count":200,"cup":93}'::jsonb, 
    AND (weight_source IS NULL OR weight_source <> 'measured');
 UPDATE public.plant_varieties SET unit_weights='{"count":2.5,"cup":123}'::jsonb, weight_source='estimate', weight_confidence='medium', updated_at=now()
  WHERE crop_type_slug='black_raspberry' AND name='Black Raspberry' AND deleted_at IS NULL
+   AND (weight_source IS NULL OR weight_source <> 'measured');
+UPDATE public.plant_varieties SET unit_weights='{"count":6,"cup":144}'::jsonb, weight_source='estimate', weight_confidence='medium', updated_at=now()
+ WHERE crop_type_slug='blackberry' AND name='Aster' AND deleted_at IS NULL
    AND (weight_source IS NULL OR weight_source <> 'measured');
 UPDATE public.plant_varieties SET unit_weights='{"count":1.6,"cup":148}'::jsonb, weight_source='catalog', weight_confidence='high', updated_at=now()
  WHERE crop_type_slug='blueberry' AND name='High Bush' AND deleted_at IS NULL
@@ -474,6 +480,9 @@ UPDATE public.plant_varieties SET unit_weights='{"count":200,"cup":89}'::jsonb, 
    AND (weight_source IS NULL OR weight_source <> 'measured');
 UPDATE public.plant_varieties SET unit_weights='{"count":150,"cup":89}'::jsonb, weight_source='catalog', weight_confidence='high', updated_at=now()
  WHERE crop_type_slug='leek' AND name='King Richard' AND deleted_at IS NULL
+   AND (weight_source IS NULL OR weight_source <> 'measured');
+UPDATE public.plant_varieties SET unit_weights='{"cup":18,"count":0.3}'::jsonb, weight_source='estimate', weight_confidence='low', updated_at=now()
+ WHERE crop_type_slug='lemon_verbena' AND name='Lemon Verbena' AND deleted_at IS NULL
    AND (weight_source IS NULL OR weight_source <> 'measured');
 UPDATE public.plant_varieties SET unit_weights='{"count":65,"cup":67}'::jsonb, weight_source='usda', weight_confidence='high', updated_at=now()
  WHERE crop_type_slug='lemongrass' AND name='Lemongrass' AND deleted_at IS NULL
@@ -1236,7 +1245,7 @@ UPDATE public.plant_varieties SET unit_weights='{"count":2,"cup":123}'::jsonb, w
    AND (weight_source IS NULL OR weight_source <> 'measured');
 
 INSERT INTO public.schema_version (version, description)
-VALUES ('4.18.1-cal1-refweight-seed-001','CAL-1 reference seed: unit_weights/weight_source/weight_confidence for 82 crop types + 326 varieties from harvest-weights-v3-reference.json. Estimates only; measured rows are never overwritten.')
+VALUES ('4.18.1-cal1-refweight-seed-001','CAL-1 reference seed: unit_weights/weight_source/weight_confidence for 83 crop types + 328 varieties from harvest-weights-v3-reference.json. Estimates only; measured rows are never overwritten.')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
