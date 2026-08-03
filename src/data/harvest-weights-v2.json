@@ -1,42 +1,201 @@
 {
-  "schema": "garden.harvest_weights.v2",
-  "schema_version": "2.0.0",
-  "supersedes": "harvest-weights-v1.json (v1 per-crop-type stub — retained for reference; v2 is the authoring source of record)",
-  "authored": "2026-07-30",
-  "zone": "5b western Massachusetts, ~518ft",
-  "status": "AUTHORING — by_cultivar_samples is populated as Dave weighs (started 2026-07-30 evening harvest). Empty/null until measured.",
-  "contract": "Per-VARIETY (cultivar) append-only measurement LOG + per-crop-type fallback defaults. Each sample stores RAW total_grams + unit_count (NOT a pre-divided ratio) so the derived grams_per_unit is auditable, re-derivable, and count-weighted. Append every measurement Dave reports — never dedup/overwrite, even repeats; corrections are appended (see corrections), never edits. Derived grams_per_unit = SUM(total_grams)/SUM(unit_count) per (cultivar,unit), count-weighted, over non-voided samples; confidence from dispersion (CV); min-n>=2 total unit_count-bearing samples to emit a cultivar estimate into cross-season aggregates (n=1 = provisional, excluded from comparison). NEVER a guessed factor: a variety with <min-n samples AND variety_grams_required=true yields NO estimate (NULL), never a crop-type substitute — a wrong number silently corrupts multi-season yield comparison, so NULL beats a guess. Estimated grams are computed ON-READ from this data; only genuinely MEASURED harvests (unit g/kg/lb/oz) store a weight in the app.",
-  "seed_note": "A seed generator resolves each (crop_type_slug, variety_name) to a live cultivar_id FAIL-CLOSED — 0 matches OR >1 match => skip + coverage-report, NEVER pick-first (a wrong cultivar_id corrupts the integrity invariant). It emits cal1-cultivar-keys.lock.json (human key -> resolved cultivar_id) and the seed SQL, and is BATCH-idempotent via seed_batch (re-running does not double-insert). TONIGHT'S WEIGHING GOES HERE (by_cultivar_samples rows), not app harvest-logging.",
-  "units": ["lb", "oz", "kg", "g", "count", "bunch", "cup", "head"],
-  "grams_note": "total_grams is in GRAMS. Scale reads oz/lb? convert: 1 oz = 28.3495 g, 1 lb = 453.592 g. Record the total weight of unit_count items weighed together (e.g. 12 fruit on the scale together => total_grams 220, unit_count 12). This preserves the raw numerator+denominator so the estimate is count-weighted and auditable.",
-  "sample_field_contract": {
-    "crop_type_slug": "crop_types.slug (from the live join). Fallback tier + coverage grouping.",
-    "variety_name": "the cultivar display_name; resolved to cultivar_id at seed (fail-closed on 0 or >1 match).",
-    "unit": "the harvest unit this sample calibrates — must be one of units[] and match how the crop is logged.",
-    "total_grams": "measured total grams of unit_count items (>0).",
-    "unit_count": "how many units were on the scale for total_grams (>0).",
-    "sampled_at": "ISO date of the weighing.",
-    "seed_batch": "batch id for idempotent re-seed (e.g. '20260730-evening'). Optional at authoring; set at seed.",
-    "note": "context (fruit size, pack density for cup, ripeness, etc.)."
+ "schema": "garden.harvest_weights.v2",
+ "schema_version": "2.0.0",
+ "supersedes": "harvest-weights-v1.json (v1 per-crop-type stub — retained for reference; v2 is the authoring source of record)",
+ "authored": "2026-07-30",
+ "zone": "5b western Massachusetts, ~518ft",
+ "status": "AUTHORING — first real batch recorded 2026-08-03 (8 tomato varieties, batch '20260803-dave-tomato'). Derived grams-per-unit applied to plant_varieties.unit_weights with weight_source='measured' via scripts/cal1/apply-measured-samples.mjs. NOTE: these are still n=1 samples per variety (min-n=2 in the pervariety-001 view), so they are the best available truth but not yet dispersion-checked — a second weighing per variety upgrades confidence.",
+ "contract": "Per-VARIETY (cultivar) append-only measurement LOG + per-crop-type fallback defaults. Each sample stores RAW total_grams + unit_count (NOT a pre-divided ratio) so the derived grams_per_unit is auditable, re-derivable, and count-weighted. Append every measurement Dave reports — never dedup/overwrite, even repeats; corrections are appended (see corrections), never edits. Derived grams_per_unit = SUM(total_grams)/SUM(unit_count) per (cultivar,unit), count-weighted, over non-voided samples; confidence from dispersion (CV); min-n>=2 total unit_count-bearing samples to emit a cultivar estimate into cross-season aggregates (n=1 = provisional, excluded from comparison). NEVER a guessed factor: a variety with <min-n samples AND variety_grams_required=true yields NO estimate (NULL), never a crop-type substitute — a wrong number silently corrupts multi-season yield comparison, so NULL beats a guess. Estimated grams are computed ON-READ from this data; only genuinely MEASURED harvests (unit g/kg/lb/oz) store a weight in the app.",
+ "seed_note": "A seed generator resolves each (crop_type_slug, variety_name) to a live cultivar_id FAIL-CLOSED — 0 matches OR >1 match => skip + coverage-report, NEVER pick-first (a wrong cultivar_id corrupts the integrity invariant). It emits cal1-cultivar-keys.lock.json (human key -> resolved cultivar_id) and the seed SQL, and is BATCH-idempotent via seed_batch (re-running does not double-insert). TONIGHT'S WEIGHING GOES HERE (by_cultivar_samples rows), not app harvest-logging.",
+ "units": [
+  "lb",
+  "oz",
+  "kg",
+  "g",
+  "count",
+  "bunch",
+  "cup",
+  "head"
+ ],
+ "grams_note": "total_grams is in GRAMS. Scale reads oz/lb? convert: 1 oz = 28.3495 g, 1 lb = 453.592 g. Record the total weight of unit_count items weighed together (e.g. 12 fruit on the scale together => total_grams 220, unit_count 12). This preserves the raw numerator+denominator so the estimate is count-weighted and auditable.",
+ "sample_field_contract": {
+  "crop_type_slug": "crop_types.slug (from the live join). Fallback tier + coverage grouping.",
+  "variety_name": "the cultivar display_name; resolved to cultivar_id at seed (fail-closed on 0 or >1 match).",
+  "unit": "the harvest unit this sample calibrates — must be one of units[] and match how the crop is logged.",
+  "total_grams": "measured total grams of unit_count items (>0).",
+  "unit_count": "how many units were on the scale for total_grams (>0).",
+  "sampled_at": "ISO date of the weighing.",
+  "seed_batch": "batch id for idempotent re-seed (e.g. '20260730-evening'). Optional at authoring; set at seed.",
+  "note": "context (fruit size, pack density for cup, ripeness, etc.)."
+ },
+ "corrections_note": "To fix a mis-typed sample: do NOT edit or delete it. Append a matching entry to by_cultivar_voids referencing the bad sample's (crop_type_slug, variety_name, sampled_at, total_grams) + reason, and (optionally) append a corrected sample. The derived view anti-joins voids. Preserves the append-only audit trail.",
+ "crop_class_guidance": "Per-variety estimation earns its complexity for COUNT-of-discrete-fruit (tomato/pepper/tomatillo/cucumber/squash) where cherry vs beefsteak diverge 15g<->300g+ — per-variety REQUIRED there. For volume-RIGID fruit (berries by cup) a cup normalizes size, so per-crop nearly suffices (variety_grams_required=false, flagged crop-type fallback OK). For PACK-variable (leafy/herb by cup) and CONDITION-variable (head/bunch), grams-per-unit is an operator/season variable, NOT a cultivar constant -> PREFER DIRECT WEIGHING (log the harvest itself in grams); estimation there is low-reliability.",
+ "by_crop_type_fallback": {
+  "tomato": {
+   "default_unit": "count",
+   "variety_grams_required": true,
+   "crop_type_grams_per_unit": null,
+   "notes": "76 rows. HIGH variance (cherry ~15-20g / slicer ~150g / beefsteak ~300g+) -> per-variety REQUIRED, no crop-type fallback. Paste/sauce cultivars may prefer default_unit=g (used by weight)."
   },
-  "corrections_note": "To fix a mis-typed sample: do NOT edit or delete it. Append a matching entry to by_cultivar_voids referencing the bad sample's (crop_type_slug, variety_name, sampled_at, total_grams) + reason, and (optionally) append a corrected sample. The derived view anti-joins voids. Preserves the append-only audit trail.",
-  "crop_class_guidance": "Per-variety estimation earns its complexity for COUNT-of-discrete-fruit (tomato/pepper/tomatillo/cucumber/squash) where cherry vs beefsteak diverge 15g<->300g+ — per-variety REQUIRED there. For volume-RIGID fruit (berries by cup) a cup normalizes size, so per-crop nearly suffices (variety_grams_required=false, flagged crop-type fallback OK). For PACK-variable (leafy/herb by cup) and CONDITION-variable (head/bunch), grams-per-unit is an operator/season variable, NOT a cultivar constant -> PREFER DIRECT WEIGHING (log the harvest itself in grams); estimation there is low-reliability.",
-  "by_crop_type_fallback": {
-    "tomato":        { "default_unit": "count", "variety_grams_required": true,  "crop_type_grams_per_unit": null, "notes": "76 rows. HIGH variance (cherry ~15-20g / slicer ~150g / beefsteak ~300g+) -> per-variety REQUIRED, no crop-type fallback. Paste/sauce cultivars may prefer default_unit=g (used by weight)." },
-    "squash":        { "default_unit": "count", "variety_grams_required": true,  "crop_type_grams_per_unit": null, "notes": "30 rows. Summer vs winter differ hugely -> per-variety." },
-    "blueberry":     { "default_unit": "cup",   "variety_grams_required": false, "crop_type_grams_per_unit": null, "notes": "23 rows. Volume-rigid; a cup ~140-150g varies little by variety -> flagged crop-type fallback acceptable." },
-    "tomatillo":     { "default_unit": "count", "variety_grams_required": true,  "crop_type_grams_per_unit": null, "notes": "21 rows. ~30-50g/husked fruit -> per-variety." },
-    "red_raspberry": { "default_unit": "cup",   "variety_grams_required": false, "crop_type_grams_per_unit": null, "notes": "16 rows. Volume-rigid, ~120-130g/cup -> flagged fallback OK." },
-    "cucumber":      { "default_unit": "count", "variety_grams_required": true,  "crop_type_grams_per_unit": null, "notes": "14 rows. Slicing vs pickling differ -> per-variety." },
-    "pepper":        { "default_unit": "count", "variety_grams_required": true,  "crop_type_grams_per_unit": null, "notes": "13 rows. Bell ~120-150g vs small hot a few g -> per-variety REQUIRED (Ristra Cayenne != Chili Red)." },
-    "wineberry":     { "default_unit": "cup",   "variety_grams_required": false, "crop_type_grams_per_unit": null, "notes": "9 rows. ~120g/cup -> flagged fallback OK." },
-    "basil":         { "default_unit": "cup",   "variety_grams_required": false, "crop_type_grams_per_unit": null, "notes": "7 rows. PACK-variable -> PREFER DIRECT WEIGHING; cup estimate low-reliability." },
-    "lettuce":       { "default_unit": "cup",   "variety_grams_required": false, "crop_type_grams_per_unit": null, "notes": "3 rows. PACK-variable -> prefer direct weighing." },
-    "shallot":       { "default_unit": "count", "variety_grams_required": true,  "crop_type_grams_per_unit": null, "notes": "3 rows. ~30-50g/bulb -> per-variety." },
-    "broccoli":      { "default_unit": "head",  "variety_grams_required": false, "crop_type_grams_per_unit": null, "notes": "2 rows. CONDITION-variable -> prefer direct weighing (weigh the head)." }
+  "squash": {
+   "default_unit": "count",
+   "variety_grams_required": true,
+   "crop_type_grams_per_unit": null,
+   "notes": "30 rows. Summer vs winter differ hugely -> per-variety."
   },
-  "by_cultivar_samples": [
-    { "crop_type_slug": "tomato", "variety_name": "__TEMPLATE__ replace with a real cultivar display_name", "unit": "count", "total_grams": null, "unit_count": null, "sampled_at": null, "seed_batch": null, "note": "TEMPLATE — shows the shape; e.g. weigh 12 Sungold together => total_grams 220, unit_count 12, unit 'count'. The seed generator skips non-matching keys, so this template is harmless, but delete it before the real seed." }
-  ],
-  "by_cultivar_voids": []
+  "blueberry": {
+   "default_unit": "cup",
+   "variety_grams_required": false,
+   "crop_type_grams_per_unit": null,
+   "notes": "23 rows. Volume-rigid; a cup ~140-150g varies little by variety -> flagged crop-type fallback acceptable."
+  },
+  "tomatillo": {
+   "default_unit": "count",
+   "variety_grams_required": true,
+   "crop_type_grams_per_unit": null,
+   "notes": "21 rows. ~30-50g/husked fruit -> per-variety."
+  },
+  "red_raspberry": {
+   "default_unit": "cup",
+   "variety_grams_required": false,
+   "crop_type_grams_per_unit": null,
+   "notes": "16 rows. Volume-rigid, ~120-130g/cup -> flagged fallback OK."
+  },
+  "cucumber": {
+   "default_unit": "count",
+   "variety_grams_required": true,
+   "crop_type_grams_per_unit": null,
+   "notes": "14 rows. Slicing vs pickling differ -> per-variety."
+  },
+  "pepper": {
+   "default_unit": "count",
+   "variety_grams_required": true,
+   "crop_type_grams_per_unit": null,
+   "notes": "13 rows. Bell ~120-150g vs small hot a few g -> per-variety REQUIRED (Ristra Cayenne != Chili Red)."
+  },
+  "wineberry": {
+   "default_unit": "cup",
+   "variety_grams_required": false,
+   "crop_type_grams_per_unit": null,
+   "notes": "9 rows. ~120g/cup -> flagged fallback OK."
+  },
+  "basil": {
+   "default_unit": "cup",
+   "variety_grams_required": false,
+   "crop_type_grams_per_unit": null,
+   "notes": "7 rows. PACK-variable -> PREFER DIRECT WEIGHING; cup estimate low-reliability."
+  },
+  "lettuce": {
+   "default_unit": "cup",
+   "variety_grams_required": false,
+   "crop_type_grams_per_unit": null,
+   "notes": "3 rows. PACK-variable -> prefer direct weighing."
+  },
+  "shallot": {
+   "default_unit": "count",
+   "variety_grams_required": true,
+   "crop_type_grams_per_unit": null,
+   "notes": "3 rows. ~30-50g/bulb -> per-variety."
+  },
+  "broccoli": {
+   "default_unit": "head",
+   "variety_grams_required": false,
+   "crop_type_grams_per_unit": null,
+   "notes": "2 rows. CONDITION-variable -> prefer direct weighing (weigh the head)."
+  }
+ },
+ "by_cultivar_samples": [
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "San Marzano Roma",
+   "unit": "count",
+   "total_grams": 337,
+   "unit_count": 5,
+   "sampled_at": "2026-08-03",
+   "seed_batch": "20260803-dave-tomato",
+   "note": "Dave: '5 tomatoes were 337g total'. Reported as 'San Marzano'; the only San Marzano PLANTING is San Marzano Roma, so the same derived value was applied to both varieties."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "San Marzano",
+   "unit": "count",
+   "total_grams": 337,
+   "unit_count": 5,
+   "sampled_at": "2026-08-03",
+   "seed_batch": "20260803-dave-tomato",
+   "note": "SAME physical weighing as the San Marzano Roma row — recorded against both variety rows because Dave reported it as 'San Marzano' and the DB carries both names. Not an independent sample; do NOT treat the pair as n=2."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Moskvich Heirloom",
+   "unit": "count",
+   "total_grams": 115,
+   "unit_count": 1,
+   "sampled_at": "2026-08-03",
+   "seed_batch": "20260803-dave-tomato",
+   "note": "Dave: '115g each — a very good representative size here'."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Super Sweet 100",
+   "unit": "count",
+   "total_grams": 8,
+   "unit_count": 1,
+   "sampled_at": "2026-08-03",
+   "seed_batch": "20260803-dave-tomato",
+   "note": "Dave: '8g each'."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Black Cherry",
+   "unit": "count",
+   "total_grams": 16,
+   "unit_count": 1,
+   "sampled_at": "2026-08-03",
+   "seed_batch": "20260803-dave-tomato",
+   "note": "Dave: '16g each'."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Cherry Falls",
+   "unit": "count",
+   "total_grams": 74,
+   "unit_count": 12,
+   "sampled_at": "2026-08-03",
+   "seed_batch": "20260803-dave-tomato",
+   "note": "Dave: '12 tomatoes were 74g total'."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Sunray",
+   "unit": "count",
+   "total_grams": 90,
+   "unit_count": 1,
+   "sampled_at": "2026-08-03",
+   "seed_batch": "20260803-dave-tomato",
+   "note": "Dave: '90g each'."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Celebrity",
+   "unit": "count",
+   "total_grams": 273,
+   "unit_count": 3,
+   "sampled_at": "2026-08-03",
+   "seed_batch": "20260803-dave-tomato",
+   "note": "Dave: '273g for 3 total'."
+  },
+  {
+   "crop_type_slug": "tomato",
+   "variety_name": "Granadero",
+   "unit": "count",
+   "total_grams": 168,
+   "unit_count": 2,
+   "sampled_at": "2026-08-03",
+   "seed_batch": "20260803-dave-tomato",
+   "note": "Dave: '168g for 2 total' (reported as 'grandadero')."
+  }
+ ],
+ "by_cultivar_voids": [],
+ "applied_note": "Until v4-cal1-pervariety-001 is applied, cultivar_weight_sample does not exist, so this file IS the raw-sample record of truth and the derived value is written straight to plant_varieties.unit_weights (weight_source='measured'). When pervariety-001 lands, these rows seed cultivar_weight_sample via gen-cal1-seed.mjs and the view takes over the derivation."
 }
