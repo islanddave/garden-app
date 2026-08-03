@@ -86,15 +86,17 @@ post:
     expect: rowcount_eq
     value: 0
 
+  # Only the CHECKs that are safe to arm before the Lambda ships. The two writer-coupled ones
+  # (basis_pairing, basis_estimated) belong to 0g-recheck-after-lambda — arming them here 23514'd
+  # every prod harvest save on 2026-08-03. See the README incident note.
   - name: post_pervariety_checks_validated
     sql: |
       SELECT 1 FROM pg_constraint
        WHERE conname IN ('chk_cws_unit_vocab','chk_cws_total_grams_pos','chk_cws_unit_count_pos',
-                         'chk_harvest_log_weight_basis','chk_harvest_log_weight_basis_pairing',
-                         'chk_harvest_log_weight_basis_estimated')
+                         'chk_harvest_log_weight_basis')
          AND convalidated
     expect: rowcount_eq
-    value: 6
+    value: 4
 
   # ── auto-capture ─────────────────────────────────────────────────────────────
   - name: post_autocapture_functions_present

@@ -1,19 +1,20 @@
-// cal1-harvweight.int.test.js — V4-CAL1-HARVWEIGHT-001 harvest weight derivation (POST /api/events).
+// cal1-harvweight.int.test.js — CAL-1 harvest weight derivation (POST /api/events).
 //
-// The harvest POST path (lambda/events/index.js new_harvest CTE) derives harvest_log.weight_grams +
-// weight_estimated at write time:
-//   MEASURED  — the harvest unit is itself a weight (g/kg/lb/oz): grams = qty * GRAMS_PER_WEIGHT_UNIT,
-//               weight_estimated = false. No crop chain needed.
-//   ESTIMATED — the unit matches the crop's default_unit AND the crop has a grams_per_unit:
-//               grams = qty * crop.grams_per_unit, weight_estimated = true.
-//   NEITHER   — else (unseeded crop, unit≠default_unit, or no planting resolved): both NULL. NULL
-//               grams_per_unit = UNKNOWN = no estimate; the value is never guessed (0a NULL contract).
+// REWRITTEN 2026-08-03 for V4-HARVDUAL-001. The original pinned harvweight-001's contract, where a
+// weight was estimated from crop_types.grams_per_unit gated on crop_types.default_unit = unit. That
+// contract is retired: refweight-001 replaced the scalar with a per-unit jsonb map at BOTH the crop
+// and variety level, pervariety-001 added real measured samples, and slicec-001 folded all of it
+// into public.resolve_harvest_weight — the single derivation locus both write paths call.
 //
-// Seeds the live derivation join: event_log.plant_id -> garden_node(view over plants).cultivar_id
-// (= plants.variety_id) -> cultivar(view over plant_varieties).crop_type_slug -> crop_types.slug,
-// gated by crop_types.default_unit = harvest unit. Requires the CAL-1 columns (staging-applied
-// 2026-07-30 to br-damp-frog-amdfxwrr, which integration-test.yml branches its ephemeral DB from);
-// skips cleanly if a branch lacks them.
+// RESOLUTION ORDER under test (resolve_harvest_weight v2):
+//   1. user-supplied grams          -> basis 'measured',  estimated false
+//   2. unit is g/kg/lb/oz           -> basis 'measured',  estimated false
+//   3. cultivar_weight_derived      -> basis 'cultivar',  estimated true   (real weighings)
+//   4. plant_varieties.unit_weights -> basis 'cultivar',  estimated true   (reference)
+//   5. crop_types.unit_weights      -> basis 'crop_type', estimated true   ONLY if the crop allows it
+//   6. nothing                      -> NULL/NULL/NULL — no estimate, never guessed
+//
+// Requires the CAL-1 columns; skips cleanly on a branch that lacks them.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, callHandler, setTestUserId, testRunId, insertProject } from './_harness.js'
 import { handler as eventsHandler } from '../../lambda/events/index.js'
@@ -21,58 +22,94 @@ import { handler as eventsHandler } from '../../lambda/events/index.js'
 const HAS_CAL1 = (await directSql`
   SELECT (to_regclass('public.harvest_log') IS NOT NULL
     AND EXISTS (SELECT 1 FROM information_schema.columns
-                 WHERE table_name='harvest_log' AND column_name='weight_grams')) AS ok`)[0].ok
+                 WHERE table_name='harvest_log' AND column_name='weight_grams')
+    AND EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='crop_types' AND column_name='unit_weights')
+    AND to_regclass('public.cultivar_weight_sample') IS NOT NULL) AS ok`)[0].ok
 
-describe.skipIf(!HAS_CAL1)('CAL-1 harvest weight derivation — POST /api/events (V4-CAL1-HARVWEIGHT-001)', () => {
+describe.skipIf(!HAS_CAL1)('CAL-1 harvest weight derivation — POST /api/events (V4-HARVDUAL-001)', () => {
   const RUN = testRunId()
   const USER = `cal1_user_${RUN}`
-  const CROP = `cal1-crop-${RUN}`              // seeded: default_unit=count, grams_per_unit=50
-  const CROP_UNSEEDED = `cal1-crop-uns-${RUN}` // default_unit=count, grams_per_unit=NULL
-  let projectId, plantSeeded, plantUnseeded
+  const CROP_FALLBACK = `cal1-crop-fb-${RUN}`   // unit_weights, variety_grams_required = FALSE
+  const CROP_STRICT   = `cal1-crop-st-${RUN}`   // unit_weights, variety_grams_required = TRUE
+  const CROP_UNSEEDED = `cal1-crop-uns-${RUN}`  // no unit_weights at all
+  let projectId
+  let plantCropFallback, plantCropFallbackClean, plantCropStrict, plantVarietyRef, plantSampled, plantUnseeded
+  let cvSampledId
 
   beforeAll(async () => {
     setTestUserId(USER)
     projectId = (await insertProject({ name: 'cal1-' + RUN, createdBy: USER })).id
 
+    // A crop whose crop-level number IS a defensible fallback (low between-variety variance).
     await directSql`
-      INSERT INTO crop_types (slug, display_name, default_unit, grams_per_unit)
-      VALUES (${CROP}, ${'CAL1 Test Crop'}, 'count', ${50})`
+      INSERT INTO crop_types (slug, display_name, default_unit, unit_weights, variety_grams_required)
+      VALUES (${CROP_FALLBACK}, 'CAL1 Fallback Crop', 'count', ${'{"count":50}'}::jsonb, false)`
+    // A high-variance crop: a crop-level average must NOT stand in for a missing variety number.
     await directSql`
-      INSERT INTO crop_types (slug, display_name, default_unit, grams_per_unit)
-      VALUES (${CROP_UNSEEDED}, ${'CAL1 Unseeded Crop'}, 'count', ${null})`
+      INSERT INTO crop_types (slug, display_name, default_unit, unit_weights, variety_grams_required)
+      VALUES (${CROP_STRICT}, 'CAL1 Strict Crop', 'count', ${'{"count":50}'}::jsonb, true)`
+    await directSql`
+      INSERT INTO crop_types (slug, display_name, default_unit, unit_weights, variety_grams_required)
+      VALUES (${CROP_UNSEEDED}, 'CAL1 Unseeded Crop', 'count', NULL, false)`
 
-    // cultivar (plant_varieties base) -> planting (plants base, variety_id = cultivar) per crop.
-    const cvSeeded = await directSql`
-      INSERT INTO plant_varieties (name, created_by, crop_type_slug)
-      VALUES (${'cal1-cv-seeded-' + RUN}, ${USER}, ${CROP}) RETURNING id`
-    plantSeeded = (await directSql`
-      INSERT INTO plants (project_id, name, created_by, variety_id)
-      VALUES (${projectId}, ${'cal1-plant-seeded'}, ${USER}, ${cvSeeded[0].id}) RETURNING id`)[0].id
+    const mkPlanting = async (slug, cvName, plantName, unitWeights = null) => {
+      const cv = await directSql`
+        INSERT INTO plant_varieties (name, created_by, crop_type_slug, unit_weights)
+        VALUES (${cvName + '-' + RUN}, ${USER}, ${slug}, ${unitWeights}::jsonb) RETURNING id`
+      const pl = await directSql`
+        INSERT INTO plants (project_id, name, created_by, variety_id)
+        VALUES (${projectId}, ${plantName}, ${USER}, ${cv[0].id}) RETURNING id`
+      return { cultivarId: cv[0].id, plantId: pl[0].id }
+    }
 
-    const cvUnseeded = await directSql`
-      INSERT INTO plant_varieties (name, created_by, crop_type_slug)
-      VALUES (${'cal1-cv-uns-' + RUN}, ${USER}, ${CROP_UNSEEDED}) RETURNING id`
-    plantUnseeded = (await directSql`
-      INSERT INTO plants (project_id, name, created_by, variety_id)
-      VALUES (${projectId}, ${'cal1-plant-uns'}, ${USER}, ${cvUnseeded[0].id}) RETURNING id`)[0].id
+    plantCropFallback = (await mkPlanting(CROP_FALLBACK, 'cv-fb', 'plant-fb')).plantId
+    // A SECOND fallback planting that no test ever weighs. The user-weight tests above post real
+    // weights against plantCropFallback, and auto-capture then turns those into samples for its
+    // variety — so by the time the crop-tier assertion runs, that variety has been promoted to the
+    // SAMPLE tier and no longer exercises the crop fallback at all. (Auto-capture working exactly as
+    // designed; the fixture was the bug.) This planting stays pristine.
+    plantCropFallbackClean = (await mkPlanting(CROP_FALLBACK, 'cv-fb-clean', 'plant-fb-clean')).plantId
+    plantCropStrict   = (await mkPlanting(CROP_STRICT,   'cv-st', 'plant-st')).plantId
+    plantUnseeded     = (await mkPlanting(CROP_UNSEEDED, 'cv-uns', 'plant-uns')).plantId
+    // variety reference overrides the crop number (7 vs 50)
+    plantVarietyRef   = (await mkPlanting(CROP_STRICT, 'cv-ref', 'plant-ref', '{"count":7}')).plantId
+    // a variety carrying BOTH a reference (7) and a real sample (200 g / 10 = 20) — the sample wins
+    const sampled = await mkPlanting(CROP_STRICT, 'cv-sampled', 'plant-sampled', '{"count":7}')
+    plantSampled = sampled.plantId
+    cvSampledId = sampled.cultivarId
+    await directSql`
+      INSERT INTO cultivar_weight_sample
+        (cultivar_id, unit, total_grams, unit_count, sampled_at, created_by)
+      VALUES (${cvSampledId}, 'count', 200, 10, now(), ${USER})`
   })
 
   afterAll(async () => {
-    // FK-safe teardown mirroring events.int.test.js (entity registry + entity_memory before plants).
     await directSql`DELETE FROM xp_events WHERE user_id = ${USER}`
     await directSql`DELETE FROM user_achievements WHERE user_id = ${USER}`
     await directSql`DELETE FROM user_stats WHERE user_id = ${USER}`
     await directSql`DELETE FROM app_events WHERE user_clerk_sub = ${USER}`
     await directSql`DELETE FROM harvest_log WHERE created_by = ${USER}`
     await directSql`DELETE FROM entity_memory WHERE project_id = ${projectId}`
+    // cultivar_weight_sample carries a BEFORE DELETE immutability trigger — by design, corrections
+    // go to the void ledger and rows are never removed. That makes ordinary teardown impossible, so
+    // the trigger is disabled for the duration of this DELETE and restored immediately. This is the
+    // ONLY sanctioned place to do that: production corrections must still go through the void ledger.
+    // (Worth knowing operationally — purging bad sample data anywhere needs this same dance.)
+    await directSql`DELETE FROM cultivar_weight_void WHERE created_by = ${USER}`
+    await directSql`ALTER TABLE cultivar_weight_sample DISABLE TRIGGER trg_cws_immutable`
+    try {
+      await directSql`DELETE FROM cultivar_weight_sample WHERE created_by = ${USER}`
+    } finally {
+      await directSql`ALTER TABLE cultivar_weight_sample ENABLE TRIGGER trg_cws_immutable`
+    }
     await directSql`DELETE FROM event_log WHERE created_by = ${USER}`
     await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (SELECT id FROM plants WHERE created_by = ${USER})`
     await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by = ${USER})`
     await directSql`DELETE FROM plants WHERE created_by = ${USER}`
-    // entity also carries a cultivar_ref_id -> plant_varieties FK (RESTRICT); clear before varieties.
     await directSql`DELETE FROM entity WHERE cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ${USER})`
     await directSql`DELETE FROM plant_varieties WHERE created_by = ${USER}`
-    await directSql`DELETE FROM crop_types WHERE slug IN (${CROP}, ${CROP_UNSEEDED})`
+    await directSql`DELETE FROM crop_types WHERE slug IN (${CROP_FALLBACK}, ${CROP_STRICT}, ${CROP_UNSEEDED})`
     await directSql`DELETE FROM plant_projects WHERE created_by = ${USER}`
   })
 
@@ -84,45 +121,150 @@ describe.skipIf(!HAS_CAL1)('CAL-1 harvest weight derivation — POST /api/events
     })
   }
 
-  it('MEASURED: unit=kg → weight_grams = qty*1000, weight_estimated=false (no crop chain)', async () => {
+  // ── tier 2: the quantity IS the weight ───────────────────────────────────────
+  it('MEASURED: unit=kg → qty*1000, estimated=false, basis=measured', async () => {
     const { status, body } = await postHarvest({ harvest: { quantity: 2, unit: 'kg' } })
     expect(status).toBe(201)
     expect(Number(body.harvest.weight_grams)).toBe(2000)
     expect(body.harvest.weight_estimated).toBe(false)
+    expect(body.harvest.weight_basis).toBe('measured')
   })
 
-  it('MEASURED: unit=oz → weight_grams = qty*28.3495, weight_estimated=false', async () => {
+  it('MEASURED: unit=oz → qty*28.3495, estimated=false', async () => {
     const { status, body } = await postHarvest({ harvest: { quantity: 4, unit: 'oz' } })
     expect(status).toBe(201)
     expect(Number(body.harvest.weight_grams)).toBeCloseTo(113.398, 2)
     expect(body.harvest.weight_estimated).toBe(false)
   })
 
-  it('ESTIMATED: unit=count on a seeded crop (grams_per_unit=50) → weight_grams=qty*50, estimated=true', async () => {
-    const { status, body } = await postHarvest({ plant_id: plantSeeded, harvest: { quantity: 3, unit: 'count' } })
+  // ── tier 1: dual capture — the whole point of V4-HARVDUAL-001 ────────────────
+  it('USER WEIGHT: count + weight together → the typed grams beat every estimate', async () => {
+    const { status, body } = await postHarvest({
+      plant_id: plantCropFallback, harvest: { quantity: 5, unit: 'count', weight: 337 },
+    })
     expect(status).toBe(201)
-    expect(Number(body.harvest.weight_grams)).toBe(150)
-    expect(body.harvest.weight_estimated).toBe(true)
+    expect(Number(body.harvest.weight_grams)).toBe(337)   // NOT 5*50 = 250
+    expect(body.harvest.weight_estimated).toBe(false)
+    expect(body.harvest.weight_basis).toBe('measured')
   })
 
-  it('NO ESTIMATE: unit=count on an unseeded crop (grams_per_unit NULL) → both NULL (never guessed)', async () => {
-    const { status, body } = await postHarvest({ plant_id: plantUnseeded, harvest: { quantity: 5, unit: 'count' } })
+  it('USER WEIGHT: the scale unit is converted server-side', async () => {
+    const { status, body } = await postHarvest({
+      plant_id: plantCropFallback, harvest: { quantity: 5, unit: 'count', weight: 2, weight_unit: 'lb' },
+    })
+    expect(status).toBe(201)
+    expect(Number(body.harvest.weight_grams)).toBeCloseTo(907.184, 2)
+    expect(body.harvest.weight_estimated).toBe(false)
+  })
+
+  it('AUTO-CAPTURE: a dual count+weight harvest becomes a calibration sample for the variety', async () => {
+    const before = await directSql`
+      SELECT count(*)::int AS n FROM cultivar_weight_sample WHERE cultivar_id = ${cvSampledId}`
+    const { status } = await postHarvest({
+      plant_id: plantSampled, harvest: { quantity: 4, unit: 'count', weight: 100 },
+    })
+    expect(status).toBe(201)
+    const after = await directSql`
+      SELECT count(*)::int AS n FROM cultivar_weight_sample WHERE cultivar_id = ${cvSampledId}`
+    expect(after[0].n).toBe(before[0].n + 1)
+    // pooled count-weighted: (200 + 100) / (10 + 4)
+    const derived = await directSql`
+      SELECT grams_per_unit::float8 AS g FROM cultivar_weight_derived
+       WHERE cultivar_id = ${cvSampledId} AND unit = 'count'`
+    expect(derived[0].g).toBeCloseTo(300 / 14, 4)
+  })
+
+  it('AUTO-CAPTURE: a weight-unit harvest records NO sample (no count, so no ratio)', async () => {
+    const before = await directSql`
+      SELECT count(*)::int AS n FROM cultivar_weight_sample WHERE cultivar_id = ${cvSampledId}`
+    await postHarvest({ plant_id: plantSampled, harvest: { quantity: 3, unit: 'lb' } })
+    const after = await directSql`
+      SELECT count(*)::int AS n FROM cultivar_weight_sample WHERE cultivar_id = ${cvSampledId}`
+    expect(after[0].n).toBe(before[0].n)
+  })
+
+  // ── tiers 3/4/5: estimates ───────────────────────────────────────────────────
+  it('SAMPLE TIER: a real weighing outranks the variety reference value', async () => {
+    // reference says 7 g/fruit; pooled samples say 300/14. The samples must win.
+    const { status, body } = await postHarvest({
+      plant_id: plantSampled, harvest: { quantity: 2, unit: 'count' },
+    })
+    expect(status).toBe(201)
+    expect(Number(body.harvest.weight_grams)).toBeCloseTo(2 * (300 / 14), 3)
+    expect(body.harvest.weight_estimated).toBe(true)
+    expect(body.harvest.weight_basis).toBe('cultivar')
+  })
+
+  it('VARIETY TIER: variety unit_weights outrank the crop number', async () => {
+    const { status, body } = await postHarvest({
+      plant_id: plantVarietyRef, harvest: { quantity: 3, unit: 'count' },
+    })
+    expect(status).toBe(201)
+    expect(Number(body.harvest.weight_grams)).toBe(21)   // 3 * 7, NOT 3 * 50
+    expect(body.harvest.weight_basis).toBe('cultivar')
+  })
+
+  it('CROP TIER: used when the crop permits a crop-level fallback', async () => {
+    const { status, body } = await postHarvest({
+      plant_id: plantCropFallbackClean, harvest: { quantity: 3, unit: 'count' },
+    })
+    expect(status).toBe(201)
+    expect(Number(body.harvest.weight_grams)).toBe(150)  // 3 * 50
+    expect(body.harvest.weight_estimated).toBe(true)
+    expect(body.harvest.weight_basis).toBe('crop_type')
+  })
+
+  it('CROP TIER GATED: variety_grams_required blocks the crop average → no estimate', async () => {
+    // the crop HAS a number (50) but the variety does not, and this crop's between-variety variance
+    // makes that average indefensible — NULL beats a plausible-looking guess
+    const { status, body } = await postHarvest({
+      plant_id: plantCropStrict, harvest: { quantity: 3, unit: 'count' },
+    })
+    expect(status).toBe(201)
+    expect(body.harvest.weight_grams).toBeNull()
+    expect(body.harvest.weight_estimated).toBeNull()
+    expect(body.harvest.weight_basis).toBeNull()
+  })
+
+  it('NO ESTIMATE: a crop with no unit_weights at all → all three NULL', async () => {
+    const { status, body } = await postHarvest({
+      plant_id: plantUnseeded, harvest: { quantity: 5, unit: 'count' },
+    })
     expect(status).toBe(201)
     expect(body.harvest.weight_grams).toBeNull()
     expect(body.harvest.weight_estimated).toBeNull()
   })
 
-  it('NO ESTIMATE: project-level count harvest (no plant_id resolves no crop) → both NULL', async () => {
+  it('NO ESTIMATE: an unattributed (project-level) harvest resolves no crop → NULL', async () => {
     const { status, body } = await postHarvest({ harvest: { quantity: 7, unit: 'count' } })
     expect(status).toBe(201)
     expect(body.harvest.weight_grams).toBeNull()
     expect(body.harvest.weight_estimated).toBeNull()
   })
 
-  it('pairing invariant: no row carries a weight without its provenance flag (or vice-versa)', async () => {
+  it('NO ESTIMATE: a unit the maps do not cover falls through (count-only map, cup harvest)', async () => {
+    const { status, body } = await postHarvest({
+      plant_id: plantVarietyRef, harvest: { quantity: 2, unit: 'cup' },
+    })
+    expect(status).toBe(201)
+    expect(body.harvest.weight_grams).toBeNull()
+  })
+
+  // ── invariants ───────────────────────────────────────────────────────────────
+  it('pairing invariant: weight, estimated flag and basis are all-or-nothing together', async () => {
     const bad = await directSql`
       SELECT count(*)::int AS n FROM harvest_log
-       WHERE created_by = ${USER} AND (weight_grams IS NULL) <> (weight_estimated IS NULL)`
+       WHERE created_by = ${USER}
+         AND ((weight_grams IS NULL) <> (weight_estimated IS NULL)
+           OR (weight_grams IS NULL) <> (weight_basis IS NULL))`
+    expect(bad[0].n).toBe(0)
+  })
+
+  it('basis and estimated flag never disagree', async () => {
+    const bad = await directSql`
+      SELECT count(*)::int AS n FROM harvest_log
+       WHERE created_by = ${USER} AND weight_basis IS NOT NULL
+         AND weight_estimated <> (weight_basis <> 'measured')`
     expect(bad[0].n).toBe(0)
   })
 })

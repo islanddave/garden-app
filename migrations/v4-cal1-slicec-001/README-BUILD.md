@@ -96,3 +96,23 @@ together.
 **No read-path change.** `lambda/harvests/aggregate.js` still sums strictly per native unit under its
 standing "NO unit conversion, ever" invariant. Surfacing a single grams-normalised season total
 overturns that and remains a **significant-alteration STOP** needing Dave's explicit OK.
+
+## INCIDENT 2026-08-03 — a CHECK armed one deploy too early
+
+`0d-validate` originally armed all three basis CHECKs. Two of them constrain a column that only the
+NEW Lambda writes, and the deployed prod Lambda still wrote `weight_grams` with no `weight_basis` —
+so **every prod harvest save began raising 23514** the moment they were validated. Caught during the
+pre-promote blast-radius pass (not by CI, and not by any gate: the apply itself succeeded — the
+failure only surfaces on the next user write). Mitigated by dropping both constraints; restored by
+`0g-recheck-after-lambda.sql` once the Lambda shipped.
+
+**The generalisable rule.** L-081 says apply schema *before* the code that depends on it. That is
+necessary but not sufficient. Adding a column is backward-compatible; **arming a CHECK over that
+column is not** — it is forward-incompatible with every writer still in flight. Any migration whose
+constraint the new code satisfies and the old code violates must be split:
+
+1. **pre-deploy** — add the column, backfill it, leave the CHECK `NOT VALID` or absent
+2. **post-deploy** — arm the CHECK, once every writer sets the column
+
+`gates.yml`'s `post_pervariety_checks_validated` gate was likewise relaxed from 6 to 4: the two
+writer-coupled CHECKs are 0g's responsibility, not 0d's.
