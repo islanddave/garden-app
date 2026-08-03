@@ -1,5 +1,15 @@
 [
   {
+    "version": "3.93.0",
+    "date": "2026-08-03",
+    "highlights": [
+      "Your scallions can finally tell you they need picking. Bunching onions sat under the same heading as bulb onions, which the app treats as a one-time harvest — so a scallion could never appear in “Ready to pick,” however long it had been. Two of yours were fifty-seven days overdue with no way to say so. They now have their own heading and are back in the rotation.",
+      "Winter squash is no longer treated like a courgette. One “Squash” heading covered both, so the app expected a pick every two days — right for a zucchini, wrong for a butternut that is cut once and cured for months. Winter squash and pumpkins now have their own heading, which matters because six of the seven squash packets in your seed box are winter types.",
+      "Rat’s Tail radish is grown for its pods, and the app now knows it. It sits under its own heading rather than with the root radishes, so a crop you pick from repeatedly is not modelled as a single pull.",
+      "Naming things by what they are. “Squash” is now “Summer Squash,” so the two headings read clearly side by side."
+    ]
+  },
+  {
     "version": "3.92.0",
     "date": "2026-08-03",
     "highlights": [
