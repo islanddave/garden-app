@@ -59,3 +59,41 @@ describe('photos Lambda — DRG evidence auto-capture on photo log', () => {
     expect(BLOCK).not.toMatch(/\$\{\.\.\.householdIds\}/);
   });
 });
+
+// V4-PHOTOCAPTION-001 — the PUT re-tag route must sync an edited caption into the
+// upload-time evidence snapshot (note + claim), or DrG reads stale evidence forever.
+const SYNC_START = SRC.indexOf('evidence caption sync:');
+const SYNC_END = SRC.indexOf('evidence caption sync non-fatal failure', SYNC_START);
+const SYNC_BLOCK = (SYNC_START > -1 && SYNC_END > -1) ? SRC.slice(SYNC_START, SYNC_END + 60) : '';
+
+describe('photos Lambda — PUT caption sync into evidence snapshot', () => {
+  it('exists in the PUT route (after the photos UPDATE, before the 200)', () => {
+    expect(SYNC_START).toBeGreaterThan(-1);
+    const putStart = SRC.indexOf("PUT|PATCH /api/photos/:id");
+    expect(putStart).toBeGreaterThan(-1);
+    expect(SYNC_START).toBeGreaterThan(putStart);
+  });
+
+  it('updates BOTH note and claim from the submitted caption, claim keeping the placeholder fallback', () => {
+    expect(SYNC_BLOCK).toMatch(/UPDATE public\.evidence/);
+    expect(SYNC_BLOCK).toMatch(/note = \$\{body\.caption \?\? null\}/);
+    expect(SYNC_BLOCK).toMatch(/claim = \$\{body\.caption \?\? 'Photo observation'\}/);
+  });
+
+  it('is scoped to this photo, the photo_log source, the household, and live rows only', () => {
+    expect(SYNC_BLOCK).toMatch(/photo_ref = \$\{photoId\}/);
+    expect(SYNC_BLOCK).toMatch(/source = 'photo_log'/);
+    expect(SYNC_BLOCK).toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
+    expect(SYNC_BLOCK).toMatch(/deleted_at IS NULL/);
+  });
+
+  it('is best-effort + non-fatal (caption save must never fail on evidence sync)', () => {
+    expect(SYNC_BLOCK).toMatch(/try \{/);
+    expect(SYNC_BLOCK).toMatch(/catch \(evErr\)/);
+    expect(SYNC_BLOCK).toMatch(/non-fatal/);
+  });
+
+  it('never deletes evidence (Soft-Delete-Only Rule)', () => {
+    expect(SYNC_BLOCK).not.toMatch(/DELETE FROM public\.evidence/);
+  });
+});

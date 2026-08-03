@@ -16,7 +16,7 @@ import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import { useToast } from '../context/ToastContext.jsx'
-import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap, useOverlayDismiss } from '../context/OverlayContext.jsx'
+import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap, useOverlayDismiss, useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS, SEVERITY_LEVELS, ISSUE_OPTIONS } from '../lib/dropdownRegistry.js'
 
@@ -426,11 +426,14 @@ export default function EventNew() {
     if (form.event_type === 'watering') { ux.tap(); ux.step(1, 'start_capture') }
   }, [form.event_type])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // §4 draft stash — restore a dismissed-while-dirty overlay form. Once, on mount, ONLY when opened
-  // as an overlay with no seed deep-link (a bare "Log an event" tap): a deep-link's params express an
+  // §4 draft stash — restore a dismissed/abandoned dirty form. Once, on mount, on BOTH surfaces
+  // (V4-DRAFTFULLPAGE-001 (a) extended the stash from overlay-only to the full page: a mis-tap away
+  // from full-page /log destroyed in-progress input with no recovery — no blocker exists on this
+  // router (useBlocker needs a data router; App uses declarative BrowserRouter), and persistence
+  // beats blocking on mobile anyway). Same key both surfaces, so a draft typed on one resumes on the
+  // other. ONLY without a seed deep-link (a bare "Log an event" tap): a deep-link's params express an
   // explicit fresh intent and must win over a stale draft. Restores `form` fields only (see key doc).
   useEffect(() => {
-    if (!inOverlay) return
     const hasSeed = !!(preselectedProjectId || preselectedEventType || preselectedPlantId || resolveEventId || fromQuick)
     if (hasSeed) return
     const draft = readDraft(EVENTNEW_DRAFT_KEY)
@@ -442,16 +445,36 @@ export default function EventNew() {
     if (typeof draft.showAddDetails === 'boolean') setShowAddDetails(draft.showAddDetails)
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // §4 draft stash — persist the in-progress form while dirty (overlay only). Cleared on a successful
-  // save (spent) above. Dirty = any user-entered content; the pristine default is never stashed.
+  // §4 draft stash — persist the in-progress form while dirty (BOTH surfaces, V4-DRAFTFULLPAGE-001).
+  // Cleared on a successful save (spent). Dirty NARROWED to typed text (was any-field): the sticky
+  // seeds (event_type kept post-save, remembered plant_id) satisfied the old predicate on every
+  // mount, so the post-save rewrite stored a draft whose EMPTY plant_id then clobbered the
+  // V4-LOGTARGET-001 remembered-planting seed on the next bare mount. Typed text is the
+  // irreplaceable content; picks still ride along in the snapshot whenever text is present.
   useEffect(() => {
-    if (!inOverlay) return
-    const dirty = !!(form.notes || form.private_notes || form.quantity || form.plant_id || form.event_type)
+    const dirty = !!(form.notes || form.private_notes || form.quantity)
     if (!dirty) return
     const snap = {}
     for (const k of DRAFT_FORM_FIELDS) snap[k] = form[k]
     writeDraft(EVENTNEW_DRAFT_KEY, { form: snap, showPrivate, showAddDetails })
-  }, [inOverlay, form, showPrivate, showAddDetails])
+  }, [form, showPrivate, showAddDetails])
+
+  // V4-DRAFTFULLPAGE-001 (b) — report in-progress content to the hosting Sheet (OverlayHost feeds
+  // Sheet §5.2: a stray backdrop tap no-ops while dirty; Escape + the labelled Close stay live, and
+  // the draft stash above keeps the bytes recoverable). BROADER than the stash predicate: it also
+  // counts the non-stashed panels (photo, harvest qty, metadata, treatment, container, issue text)
+  // whose loss a dismiss makes unrecoverable. Deliberately EXCLUDES bare event_type/plant_id picks —
+  // sticky/deep-link seeding would otherwise lock the backdrop on every pristine mount. False while
+  // the confirmation card shows (already saved — the card must stay backdrop-dismissable). No-op on
+  // the full page (no provider).
+  useReportOverlayDirty(!confirmation && !!(
+    form.notes || form.private_notes || form.quantity ||
+    photoFile || harvest.quantity ||
+    Object.keys(metadataState).length ||
+    treatment.pest_target || treatment.product_id || treatment.product_text || treatment.category || treatment.amount ||
+    container.type || container.size.trim() ||
+    issueOther
+  ))
 
   // Load plants when project selection changes (project-scoped mode — the default).
   useEffect(() => {

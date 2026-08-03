@@ -66,7 +66,7 @@ export default function PhotoLibrary() {
   useEffect(() => () => { setStagedPreview(prev => { if (prev) URL.revokeObjectURL(prev); return null }) }, [])
 
   const [modal,          setModal]          = useState(null)
-  const [tagForm,        setTagForm]        = useState({ project_id: '', location_id: '', plant_id: '' })
+  const [tagForm,        setTagForm]        = useState({ project_id: '', location_id: '', plant_id: '', caption: '' })
   const [plantsForModal, setPlantsForModal] = useState([])
   const [tagging,        setTagging]        = useState(false)
   const [tagErr,         setTagErr]         = useState(null)
@@ -259,6 +259,7 @@ export default function PhotoLibrary() {
       project_id:  photo.project_id  ?? '',
       location_id: photo.location_id ?? '',
       plant_id:    photo.plant_id    ?? '',
+      caption:     photo.caption     ?? '',   // V4-PHOTOCAPTION-001: editable post-upload
     })
     setTagErr(null)
   }
@@ -268,6 +269,9 @@ export default function PhotoLibrary() {
     const newProject  = tagForm.project_id  || null
     const newLocation = tagForm.location_id || null
     const newPlant    = tagForm.plant_id    || null
+    // V4-PHOTOCAPTION-001: caption now comes from the form (was modal.caption round-tripped
+    // unchanged — the PUT always accepted it; only the input was missing). Trimmed-empty → null.
+    const newCaption  = tagForm.caption.trim() || null
     // V4-SPACECLIENTGAP-001: the one-of gate must name EVERY parent the 7-clause
     // photos_must_have_parent CHECK counts, not the three it happened to be written against.
     //   - `newPlant` was computed on the line above and then never consulted — a plant-only photo
@@ -295,8 +299,8 @@ export default function PhotoLibrary() {
           project_id:  newProject,
           location_id: newLocation,
           plant_id:    newPlant,
-          caption:     modal.caption ?? null,
-          tags:        modal.tags    ?? null,
+          caption:     newCaption,
+          tags:        modal.tags ?? null,
         }),
       })
 
@@ -309,7 +313,7 @@ export default function PhotoLibrary() {
 
       setPhotos(ps => ps.map(p =>
         p.id === modal.id
-          ? { ...p, project_id: newProject, location_id: newLocation, plant_id: newPlant, project_name: updatedProjectName }
+          ? { ...p, project_id: newProject, location_id: newLocation, plant_id: newPlant, caption: newCaption, project_name: updatedProjectName }
           : p
       ))
       setModal(null)
@@ -766,8 +770,8 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
           pinned, body scrolls.
           NOTE the two conditions for reproducing it: the tag form renders only when the photo is
           NOT attached to an event (the hasEvent branch replaces it with a pointer to the event
-          log), and the caption line renders only when the photo HAS a caption -- captions are set
-          at upload time and are not editable here, so a caption-less photo is the shorter case. */}
+          log), and the static caption line now renders only for event-attached photos — on the tag
+          form the caption is an editable input (V4-PHOTOCAPTION-001; was set-at-upload-only). */}
       <div style={{
         backgroundColor: P.white, borderRadius: 12,
         maxWidth: 480, width: '100%', maxHeight: '90dvh', overflow: 'hidden',
@@ -797,7 +801,9 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
         {/* minHeight:0 is load-bearing: a flex child's default min-height:auto refuses to shrink
             below its content, which would defeat overflowY on a shrunken viewport. */}
         <div style={{ padding: '16px 20px 20px', overflowY: 'auto', minHeight: 0 }}>
-          {photo.caption && (
+          {/* V4-PHOTOCAPTION-001: static caption only where there is no editable field (event-attached
+              photos have no tag form); on the form the input below owns the caption. */}
+          {hasEvent && photo.caption && (
             <p style={{ margin: '0 0 12px', fontSize: '0.88rem', color: P.mid }}>{photo.caption}</p>
           )}
 
@@ -866,6 +872,19 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
                   <option value="">— None —</option>
                   {locations.map(l => <option key={l.id} value={l.id}>{l.full_path}</option>)}
                 </select>
+              </div>
+
+              {/* V4-PHOTOCAPTION-001: caption editable post-upload — PUT /api/photos/:id already
+                  accepted it; only this input was missing. */}
+              <div>
+                <label style={fieldLabelStyle} htmlFor="pl-modal-caption">Caption  ·  optional</label>
+                <input
+                  id="pl-modal-caption"
+                  value={tagForm.caption}
+                  onChange={e => setTagForm(f => ({ ...f, caption: e.target.value }))}
+                  placeholder="What are you seeing?"
+                  style={inputStyle}
+                />
               </div>
 
               <button type="submit" disabled={tagging} style={{ ...primaryBtn(tagging), alignSelf: 'flex-start' }}>

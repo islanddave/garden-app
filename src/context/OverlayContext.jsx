@@ -6,7 +6,7 @@
 // (TopChrome/TodayBand/BottomNav/CritterArrivalController) follows the BACKGROUND, not the
 // overlay URL (§2). Entirely inert when OVERLAY_ROUTES_ENABLED is false: no background is ever
 // set, the overlay tree never renders, and every helper degrades to plain navigate/Link.
-import React, { createContext, useContext, useMemo, useCallback } from 'react'
+import React, { createContext, useContext, useMemo, useCallback, useEffect } from 'react'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { OVERLAY_ROUTES_ENABLED } from '../lib/featureFlags.js'
 
@@ -22,6 +22,28 @@ export function OverlaySurfaceProvider({ children }) {
 }
 export function useInOverlaySurface() {
   return useContext(OverlaySurfaceContext)
+}
+
+// V4-DRAFTFULLPAGE-001 (b) — the missing half of Sheet §5.2: Sheet shipped a `dirty` prop (backdrop
+// tap no-ops while dirty; Escape + the labelled Close stay live) with zero consumers. This channel
+// lets overlay CONTENT report its dirty state UP to the hosting Sheet: OverlayHost owns the state
+// and provides the setter; content calls useReportOverlayDirty(bool). Everywhere else (full page,
+// isolated tests) the context is null and the hook is a strict no-op. Value is the setter function
+// itself — stable from useState, so consumer effects keyed on it never re-fire.
+const OverlayDirtyContext = createContext(null)
+export function OverlayDirtyProvider({ onDirtyChange, children }) {
+  return <OverlayDirtyContext.Provider value={onDirtyChange}>{children}</OverlayDirtyContext.Provider>
+}
+// Report in-progress (dirty) state to the hosting Sheet. Cleanup resets to false so an unmounting
+// form (dismiss, route swap) can never strand the host dirty and lock the backdrop for the next
+// content.
+export function useReportOverlayDirty(dirty) {
+  const report = useContext(OverlayDirtyContext)
+  useEffect(() => {
+    if (!report) return
+    report(dirty)
+    return () => report(false)
+  }, [report, dirty])
 }
 
 // A background is honored only if the flag is on AND it looks like a real location. Guards the

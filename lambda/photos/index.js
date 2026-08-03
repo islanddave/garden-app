@@ -1151,6 +1151,24 @@ export const handler = async (event) => {
       `;
       if (!updatedRows.length) return resp(404, { error: 'Photo not found' });
       const { prev_intake_status: prevIntakeStatus, ...updated } = updatedRows[0];
+      // V4-PHOTOCAPTION-001 — evidence caption sync: the upload-time auto-capture snapshots the
+      // caption into an evidence row (note + claim, source='photo_log'). Caption became editable
+      // via this PUT, so the snapshot must follow or DrG reads stale evidence forever. Owner-scoped
+      // to the household like the photo UPDATE above; best-effort non-fatal like the capture itself;
+      // 0-row match (photo never linked to a planting) is a clean no-op.
+      try {
+        await sql`
+          UPDATE public.evidence
+             SET note = ${body.caption ?? null},
+                 claim = ${body.caption ?? 'Photo observation'}
+           WHERE photo_ref = ${photoId}
+             AND source = 'photo_log'
+             AND created_by = ANY(${householdIds})
+             AND deleted_at IS NULL
+        `;
+      } catch (evErr) {
+        console.error('evidence caption sync non-fatal failure', evErr?.message ?? evErr);
+      }
       if (prevIntakeStatus === 'pending_tag') {
         await autoPromoteFeatured(sql, updated, householdIds);
       }

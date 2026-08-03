@@ -57,7 +57,7 @@ import SpaceDetail from './pages/SpaceDetail.jsx'
 import SplashScreen from './components/SplashScreen.jsx'
 import UpdateBanner from './components/UpdateBanner.jsx'
 import Sheet from './components/forms/Sheet.jsx'
-import { OverlayProvider, OverlaySurfaceProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
+import { OverlayProvider, OverlaySurfaceProvider, OverlayDirtyProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
 import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED } from './lib/featureFlags.js'
 
 function AppFallback({ error, retry } = {}) {
@@ -123,11 +123,17 @@ function ScopedEventRedirect() {
 // <ErrorBoundary>), so a form throw is still caught by the route boundary and its fallback renders
 // INSIDE the sheet. Passes ariaLabel (not title) so the dialog gets an accessible name with no
 // duplicate visible heading (SC 4.1.2). onClose routes both backdrop tap and Escape to §4 dismiss.
-function OverlayHost({ ariaLabel, size = 'peek', children }) {
+// V4-DRAFTFULLPAGE-001 (b): hosts the dirty channel — content reports via useReportOverlayDirty and
+// the value feeds Sheet's §5.2 dirty guard (backdrop tap no-ops while dirty; Escape/Close stay live).
+// Exported for the wiring test only; App renders it solely inside the overlay tree.
+export function OverlayHost({ ariaLabel, size = 'peek', children }) {
   const dismiss = useOverlayDismiss()
+  const [dirty, setDirty] = React.useState(false)
   return (
-    <Sheet open onClose={dismiss} ariaLabel={ariaLabel} size={size}>
-      <OverlaySurfaceProvider>{children}</OverlaySurfaceProvider>
+    <Sheet open onClose={dismiss} ariaLabel={ariaLabel} size={size} dirty={dirty}>
+      <OverlaySurfaceProvider>
+        <OverlayDirtyProvider onDirtyChange={setDirty}>{children}</OverlayDirtyProvider>
+      </OverlaySurfaceProvider>
     </Sheet>
   )
 }
