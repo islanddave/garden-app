@@ -3,8 +3,14 @@
     "version": "3.91.0",
     "date": "2026-08-03",
     "highlights": [
-      "Deleting an entry now takes its details with it. Undoing a harvest used to leave the quantity behind in the record — invisible on every screen, but still sitting in the garden log. The same went for other detail attached to an entry. Those leftovers are now removed with the entry, and the ones already in the log have been swept up.",
-      "A picture is never deleted as collateral. If you delete an entry that had a photo attached, the photo stays in the project gallery instead of disappearing with it."
+      "Deleting an entry now takes its details with it. Undoing a harvest used to leave the quantity behind in the record \u2014 invisible on every screen, but still sitting in the garden log. The same went for other detail attached to an entry. Those leftovers are now removed with the entry, and the ones already in the log have been swept up.",
+      "A picture is never deleted as collateral. If you delete an entry that had a photo attached, the photo stays in the project gallery instead of disappearing with it.",
+      "Every picker now works the same way. Choosing a planting \u2014 in the event form or when tagging a photo \u2014 behaves exactly like choosing a variety: the list opens with no keyboard in your way, and the small keyboard button brings up typing only when you want to search. One pattern, everywhere.",
+      "You can talk to the pickers. A mic button next to the keyboard button lets you say 'Chili Red' or 'Minnesota Mini' instead of typing it \u2014 the match is forgiving, so 'sun ray' still finds Sunray. First use asks for microphone permission, once.",
+      "The bottom navigation and Today band step aside while you type. When the keyboard is up on a full page, both hide so the space goes to what you're doing, and they return a moment after the keyboard closes. Pinch-zooming does not trigger it.",
+      "A half-typed log entry can no longer be destroyed by a stray tap. On the full page your draft is kept and restored when you come back, and in the quick-log overlay a tap on the dimmed background no longer discards typed work \u2014 Close and Escape still do.",
+      "Photo captions can be edited after upload, from the photo's tag dialog \u2014 and an edited caption now reaches the plant's evidence record instead of leaving a stale copy behind.",
+      "The watering engine now writes down the rain that actually fell, next to what the forecast promised. That record is what will let rain-aware watering prove itself before it makes decisions \u2014 and it makes a busted forecast visible instead of silent."
     ]
   },
   {
