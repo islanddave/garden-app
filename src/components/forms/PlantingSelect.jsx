@@ -25,6 +25,11 @@ import { P } from '../../lib/constants.js'
 import { T, inputChrome } from './formStyles.js'
 import { formatQty } from '../../lib/format.js'
 import { PROJECTS_HIDDEN } from '../../lib/featureFlags.js'
+import { useInOverlaySurface } from '../../context/OverlayContext.jsx'
+import {
+  useComboboxInput, looseIncludes,
+  kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingRight,
+} from '../../lib/comboboxInput.js'
 
 // Max rows rendered in the listbox — VarietyPicker precedent: cap VISIBLY (footer row), never
 // truncate silently. Unscoped garden lists run to the hundreds; 200 keeps the DOM sane.
@@ -43,15 +48,44 @@ const LIST_ABS_MIN = 44           // one row. The floor when NEITHER direction c
 const LIST_GAP = 8                // breathing room between the panel edge and the viewport edge
 
 // V4-KBVIEWPORT-001: the app-chrome insets the listbox must stay clear of. Bottom = BottomNav +
-// TodayBand, read from the CSS variables those components own (BottomNav.jsx:87, TodayBand.jsx:24)
-// so this can never desync from their real heights. Top = TopChrome's actual bottom edge — it is
+// TodayBand, read from the CSS variables those components own (BottomNav.jsx, TodayBand.jsx)
+// so this can never desync from their real heights — INCLUDING V4-KBCHROME-001 suppression,
+// which zeroes those vars in the same commit it hides the components, so a suppressed nav is
+// automatically a 0px inset here with no coupling. Top = TopChrome's actual bottom edge — it is
 // `position: sticky; top: 0`, so it occupies the top of the scrollport, and its height varies by
 // route class (88 root / 52 detail) plus safe-area, which is why it is measured rather than
 // constant. Returns zeros in jsdom (no computed vars, zero rects), so the suite keeps today's path.
-function readChromeInsets() {
+//
+// CONTAINER-AWARE (analyst finding I2, generalized per Dave's photo-tag smoke 2026-08-03): inside
+// an opaque floating container that paints OVER the chrome — the Sheet overlay (z200 > nav z100 >
+// band z80) and PhotoLibrary's PhotoModal (fixed, z200) — these insets are pure over-subtraction:
+// TodayBand mounts app-wide, so 112px of chromeBottom plus 52-88px of chromeTop were reserved for
+// chrome the container covers, and on a keyboard-shrunk viewport that starved the picker to ~2
+// rows and forced pointless flips. Two detection paths, belt and braces:
+//   - `inOverlay` — the OverlaySurfaceContext signal, exactly as EventNew's sticky Save consumes
+//     it (bottom: inOverlay ? 0 : nav+12). Covers the Sheet overlay tree.
+//   - hasFixedAncestor(anchorEl) — a DOM walk from the input. Covers PhotoModal and any other
+//     fixed-position modal WITHOUT requiring its host file to thread a prop (PhotoLibrary is not
+//     ours to edit). Everything fixed in this app that can host the picker paints over the
+//     bottom chrome (z190+), so `position: fixed` is a sufficient discriminator today.
+// Direction note: the pre-fix bug was CONSERVATIVE (list too small — never a wrong-write onto
+// nav). Zeroing insets inside an opaque container keeps it conservative: the container covers
+// the chrome, so there is nothing tappable to collide with.
+export function hasFixedAncestor(el) {
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return false
+  let node = el && el.nodeType === 1 ? el : null
+  while (node && node !== document.documentElement) {
+    try { if (getComputedStyle(node).position === 'fixed') return true } catch { return false }
+    node = node.parentElement
+  }
+  return false
+}
+
+export function readChromeInsets(anchorEl = null, inOverlay = false) {
   if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') {
     return { top: 0, bottom: 0 }
   }
+  if (inOverlay || hasFixedAncestor(anchorEl)) return { top: 0, bottom: 0 }
   const px = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0 }
   const cs = getComputedStyle(document.documentElement)
   const bottom = px(cs.getPropertyValue('--bottom-nav-height'))
@@ -102,7 +136,7 @@ export function computePlacement({
 // so every existing test keeps the previous down-280 behavior rather than silently exercising a new
 // path. That guard has its own test (PlantingSelectPlacement.test.jsx) — do not "fix" it by making
 // jsdom measure; 340+ test files depend on it.
-function measurePlacement(inputEl) {
+function measurePlacement(inputEl, inOverlay = false) {
   if (!inputEl || typeof inputEl.getBoundingClientRect !== 'function') return null
   const r = inputEl.getBoundingClientRect()
   if (!r || (!r.top && !r.bottom && !r.height)) return null
@@ -111,7 +145,7 @@ function measurePlacement(inputEl) {
   const viewBottom = vv ? vv.offsetTop + vv.height
     : (typeof window !== 'undefined' ? window.innerHeight : 0)
   if (!viewBottom) return null
-  const chrome = readChromeInsets()
+  const chrome = readChromeInsets(inputEl, inOverlay)
   return computePlacement({
     rectTop: r.top, rectBottom: r.bottom, viewTop, viewBottom,
     chromeTop: chrome.top, chromeBottom: chrome.bottom,
@@ -223,6 +257,20 @@ export default function PlantingSelect({
   const inputRef = useRef(null)
   const listboxId = useMemo(() => `ps-list-${Math.random().toString(36).slice(2, 9)}`, [])
 
+  // Rendering inside the route-overlay Sheet? Context default is false (full page / no provider),
+  // exactly the signal EventNew's sticky Save uses. Feeds chrome-inset zeroing in placement.
+  const inOverlay = useInOverlaySurface()
+
+  // V4-PICKERKB-002 + V4-PICKERVOICE-001 — the shared input-mode cluster (keyboard-less open,
+  // ⌨ opt-in, 🎤 voice). Mechanism + rationale live in lib/comboboxInput.js; VarietyPicker is
+  // the device-validated reference consumer.
+  const { kbMode, enableKeyboard, isDeliberateBlur, voiceSupported, voiceState, toggleVoice } =
+    useComboboxInput({
+      open,
+      inputRef,
+      onVoiceText: (t) => { setQuery(t); setOpen(true) },
+    })
+
   const controlled = plants != null
   const rows = controlled ? plants : fetched
 
@@ -255,12 +303,15 @@ export default function PlantingSelect({
     let list = rows
     if (varietyId) list = list.filter(p => String(p.variety_id ?? p.variety_ref?.id ?? '') === String(varietyId))
     else if (cropSlug) list = list.filter(p => p.variety_ref?.crop_type_slug === cropSlug)
-    const q = query.trim().toLowerCase()
+    const q = query.trim()
     if (q) {
+      // V4-PICKERVOICE-001: voice-forgiving normalization ("sun ray" -> "Sunray"). Strictly
+      // widens the old .toLowerCase().includes() — typed queries keep every match they had.
+      // Fully client-side here (unlike VarietyPicker there is no server ?q= leg to stay strict).
       list = list.filter(p =>
-        (p.name || '').toLowerCase().includes(q) ||
-        (p.variety_ref?.name || '').toLowerCase().includes(q) ||
-        (p.project_name || '').toLowerCase().includes(q)
+        looseIncludes(p.name, q) ||
+        looseIncludes(p.variety_ref?.name, q) ||
+        looseIncludes(p.project_name, q)
       )
     }
     if (sort === 'sown') {
@@ -309,7 +360,7 @@ export default function PlantingSelect({
     let raf = 0
     const apply = () => {
       raf = 0
-      const next = measurePlacement(inputRef.current)
+      const next = measurePlacement(inputRef.current, inOverlay)
       // Bail when nothing changed: this runs on visualViewport scroll, which fires per compositor
       // frame during the keyboard animation. Re-rendering a 200-row listbox every frame, on the one
       // interaction where the device is already animating, is exactly the cost not worth paying.
@@ -332,8 +383,8 @@ export default function PlantingSelect({
       window.removeEventListener?.('resize', schedule)
     }
     // visible.length is a dep because the panel's own height changes the flip decision once the
-    // list is short enough to not need the room.
-  }, [open, disabled, visible.length])
+    // list is short enough to not need the room. inOverlay flips the chrome-inset zeroing.
+  }, [open, disabled, visible.length, inOverlay])
 
   useEffect(() => { setHighlight(0) }, [query, rows])
 
@@ -380,6 +431,9 @@ export default function PlantingSelect({
   }
 
   const onBlur = () => {
+    // A blur we caused ourselves to swap inputMode (⌨ opt-in) — leave `open` alone, or the
+    // deferred close below would shut the list exactly when the user asked to type into it.
+    if (isDeliberateBlur()) return
     // Delay close so a listbox click (which preventDefaults mousedown to keep input focus)
     // lands first — VarietyPicker convention.
     setTimeout(() => setOpen(false), 150)
@@ -425,6 +479,12 @@ export default function PlantingSelect({
     ? disabledHint
     : (placeholder ?? EMPTY_PLACEHOLDER[emptyMeaning] ?? EMPTY_PLACEHOLDER.unset)
 
+  // V4-PICKERKB-002: ⌨ while the list is open and the keyboard is still suppressed; 🎤 whenever
+  // speech is available and the list is open (independent of kbMode). Mirrors VarietyPicker.
+  const showKbBtn = open && !disabled && kbMode === 'none'
+  const showMicBtn = open && !disabled && voiceSupported
+  const togglePad = toggleSlotsPaddingRight({ showKb: showKbBtn, showMic: showMicBtn })
+
   return (
     <div style={{ position: 'relative' }}>
       <input
@@ -441,15 +501,53 @@ export default function PlantingSelect({
         aria-describedby={ariaDescribedBy}
         data-testid={dataTestId}
         value={query}
+        inputMode={kbMode}
         onChange={e => { setQuery(e.target.value); setOpen(true) }}
         onFocus={() => { if (!disabled) setOpen(true) }}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
         placeholder={effectivePlaceholder}
         disabled={disabled}
-        style={{ ...inputChrome(showBlankError), minHeight: 44, ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : null) }}
+        style={{
+          ...inputChrome(showBlankError), minHeight: 44,
+          ...(togglePad ? { paddingRight: togglePad } : null),
+          ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : null),
+        }}
         autoComplete="off"
       />
+      {/* V4-PICKERKB-002 — "I do want to type". onMouseDown preventDefault keeps input focus so
+          the 150ms blur-close never races the refocus (listbox-row trick). */}
+      {showKbBtn && (
+        <button
+          type="button"
+          onMouseDown={e => e.preventDefault()}
+          onClick={enableKeyboard}
+          aria-label="Type to search plantings"
+          title="Type to search"
+          style={kbToggleBtnStyle}
+        >
+          <span aria-hidden="true">⌨</span>
+        </button>
+      )}
+      {/* V4-PICKERVOICE-001 — speak the value. Denied mic = quiet disabled state, no modal/toast. */}
+      {showMicBtn && (
+        <button
+          type="button"
+          onMouseDown={e => e.preventDefault()}
+          onClick={voiceState === 'denied' ? undefined : toggleVoice}
+          aria-label={
+            voiceState === 'denied' ? 'Microphone unavailable'
+            : voiceState === 'listening' ? 'Stop listening'
+            : 'Speak to search plantings'
+          }
+          aria-pressed={voiceState === 'listening'}
+          aria-disabled={voiceState === 'denied' || undefined}
+          title="Speak to search"
+          style={micToggleBtnStyle(voiceState)}
+        >
+          <span aria-hidden="true">🎤</span>
+        </button>
+      )}
       {open && !disabled && (
         <ul
           id={listboxId}

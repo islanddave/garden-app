@@ -20,8 +20,8 @@
 // which is where this class of bug actually lives.
 // WHAT THEY DO NOT CATCH: whether the real chrome insets fed in at runtime are accurate (that is
 // readChromeInsets, and it is device-verified), or how any of it paints.
-import { describe, it, expect } from 'vitest'
-import { computePlacement } from '../components/forms/PlantingSelect.jsx'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { computePlacement, readChromeInsets, hasFixedAncestor } from '../components/forms/PlantingSelect.jsx'
 
 // A 812px device with a ~300px keyboard up => 512px layout viewport, per the V4-KBVIEWPORT-001
 // arithmetic. Chrome = BottomNav 56 + TodayBand 56 = 112; TopChrome detail variant = 52.
@@ -108,5 +108,81 @@ describe('computePlacement — chrome-aware in both directions', () => {
     for (const top of [40, 150, 300, 450]) {
       expect(at(top, { chromeTop: 0, chromeBottom: 0 })).toEqual(at(top))
     }
+  })
+})
+
+// ── V4-PICKERKB-002 / analyst finding I2 — container-aware insets ────────────
+// Inside an opaque floating container that paints OVER the bottom chrome (the Sheet overlay,
+// PhotoLibrary's PhotoModal) the chrome insets are pure over-subtraction: TodayBand mounts
+// app-wide, so 112px of chromeBottom + 52-88 of chromeTop were reserved for chrome the container
+// covers, starving the picker to ~2 rows on a keyboard-shrunk viewport (Dave's photo-tag smoke,
+// 2026-08-03). Two detection paths: the OverlaySurfaceContext flag (threaded like EventNew's
+// sticky Save) and a fixed-position ancestor walk (PhotoModal, whose host file threads nothing).
+//
+// jsdom cannot resolve CSS custom properties through getComputedStyle, so the full-page control
+// readings here are made DISCRIMINATING two ways: a mocked getComputedStyle that reads the same
+// inline styles the chrome components write (vars), and a stubbed [data-app-chrome="top"] rect.
+// Direction pin: the containerized result must be {0,0} — never larger than full-page (the bug
+// was conservative; the fix must not invent a wrong-write direction).
+describe('readChromeInsets — container-aware', () => {
+  let spy
+  beforeEach(() => {
+    document.documentElement.style.setProperty('--bottom-nav-height', '56px')
+    document.documentElement.style.setProperty('--today-band-height', '56px')
+    const header = document.createElement('div')
+    header.setAttribute('data-app-chrome', 'top')
+    header.getBoundingClientRect = () => ({ top: 0, bottom: 88, height: 88 })
+    document.body.appendChild(header)
+    spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((el) => ({
+      getPropertyValue: (p) => el.style.getPropertyValue(p),
+      position: el.style.position,
+    }))
+  })
+  afterEach(() => {
+    spy.mockRestore()
+    document.body.innerHTML = ''
+    document.documentElement.style.removeProperty('--bottom-nav-height')
+    document.documentElement.style.removeProperty('--today-band-height')
+  })
+
+  const fixedAnchor = () => {
+    const modal = document.createElement('div')
+    modal.style.position = 'fixed'
+    const anchor = document.createElement('input')
+    modal.appendChild(anchor)
+    document.body.appendChild(modal)
+    return anchor
+  }
+  const plainAnchor = () => {
+    const wrap = document.createElement('div')
+    const anchor = document.createElement('input')
+    wrap.appendChild(anchor)
+    document.body.appendChild(wrap)
+    return anchor
+  }
+
+  it('full page: measures the real chrome (control reading — proves the zeros below discriminate)', () => {
+    expect(readChromeInsets(plainAnchor())).toEqual({ top: 88, bottom: 112 })
+    expect(readChromeInsets()).toEqual({ top: 88, bottom: 112 })      // no anchor = full-page shape
+  })
+
+  it('inOverlay (the Sheet path, same signal as EventNew Save) zeroes BOTH insets', () => {
+    expect(readChromeInsets(plainAnchor(), true)).toEqual({ top: 0, bottom: 0 })
+  })
+
+  it('a fixed-position ancestor (the PhotoModal path — no prop threading available) zeroes BOTH', () => {
+    expect(readChromeInsets(fixedAnchor())).toEqual({ top: 0, bottom: 0 })
+  })
+
+  it('hasFixedAncestor: walks to the root, honors only position:fixed', () => {
+    expect(hasFixedAncestor(fixedAnchor())).toBe(true)
+    expect(hasFixedAncestor(plainAnchor())).toBe(false)
+    expect(hasFixedAncestor(null)).toBe(false)
+    const abs = document.createElement('div')
+    abs.style.position = 'absolute'
+    const anchor = document.createElement('input')
+    abs.appendChild(anchor)
+    document.body.appendChild(abs)
+    expect(hasFixedAncestor(anchor)).toBe(false)                      // absolute is not a floating container
   })
 })

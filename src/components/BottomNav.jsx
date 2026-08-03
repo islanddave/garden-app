@@ -9,6 +9,7 @@ import { CATCH_UP_EDITOR_SHIPPED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED } from '
 import { useApiFetch } from '../lib/api.js'
 import BottomNavDot from './BottomNavDot.jsx'
 import { useMode } from '../lib/mode.js'
+import { useKeyboardChromeSuppressed } from '../lib/keyboardChrome.js'
 import Sheet from './forms/Sheet.jsx'
 import Icon from './Icon.jsx'
 
@@ -90,11 +91,17 @@ export { BOTTOM_NAV_HEIGHT_PX }
 
 export default function BottomNav() {
   const location = useOverlayLocation()
+  // V4-KBCHROME-001 — ONE predicate drives BOTH the paint (visibility on the <nav> below) and
+  // the inset var, in the SAME commit: the style prop lands in React's DOM mutation pass and
+  // this useLayoutEffect runs synchronously after it, both before the next paint — so the var
+  // and the pixels can never disagree for a frame, in either direction (suppress AND restore).
+  // Detector rationale + jsdom inertness (always false there): lib/keyboardChrome.js.
+  const kbSuppressed = useKeyboardChromeSuppressed()
   useLayoutEffect(() => {
     const root = document.documentElement
-    root.style.setProperty('--bottom-nav-height', `${BOTTOM_NAV_HEIGHT_PX}px`)
+    root.style.setProperty('--bottom-nav-height', kbSuppressed ? '0px' : `${BOTTOM_NAV_HEIGHT_PX}px`)
     return () => { root.style.setProperty('--bottom-nav-height', '0px') }
-  }, [])
+  }, [kbSuppressed])
   const navigate = useNavigate()
   const { profile, signOut } = useAuth()
   const { getToken } = useApiFetch()
@@ -318,6 +325,11 @@ export default function BottomNav() {
         borderTop: `1px solid ${P.border}`,
         display: 'flex', alignItems: 'stretch',
         zIndex: 100,
+        // V4-KBCHROME-001: hidden (not unmounted) while the soft keyboard is up — under
+        // interactive-widget=resizes-content the nav otherwise rides the shrunken viewport up
+        // to sit on the keyboard. visibility also removes it from hit-testing + the a11y tree.
+        // Chrome, not a reward surface: plain visibility, no transition (Reward UX V102).
+        visibility: kbSuppressed ? 'hidden' : 'visible',
       }}>
         {TABS.map(tab => {
           const active = isActive(tab.to)

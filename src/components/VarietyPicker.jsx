@@ -25,6 +25,10 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useVarieties } from '../hooks/useVarieties.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
+import {
+  useComboboxInput, looseIncludes, looseKey,
+  kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingRight,
+} from '../lib/comboboxInput.js'
 
 const DEBOUNCE_MS = 250
 
@@ -127,6 +131,33 @@ export default function VarietyPicker({
   // Reset highlight whenever results change or we switch create stage
   useEffect(() => { setHighlight(0) }, [varieties, query, createStage])
 
+  // ── V4-PICKERVOICE-001 QA-G3 — voice-transcript server rescue ─────────────
+  // The server ?q= is a strict LIKE, so a spaced transcript ("brandy wine") returns an EMPTY
+  // page for a stored "Brandywine" — and an empty list plus a non-empty query renders the
+  // create footer, turning one recognizer artifact into a duplicate-variety hazard. Mitigation:
+  // when a VOICE-originated query comes back empty from the server AND its looseKey-collapsed
+  // form differs from what was sent, retry the server ONCE with the collapsed form and let the
+  // forgiving client filter (which matches the raw transcript against the rescued rows) take it
+  // from there. Deterministic, at most one extra query, voice-only — a typed query never arms
+  // this (pinned in VarietyPickerKeyboard.test.jsx). Only after the rescue also misses does the
+  // create footer stand. NOTE the class this cannot rescue: a stored name WITH a space reached
+  // by a doubled-letter transcript ("chilli red" -> "Chili Red") fails both forms; the real fix
+  // is normalization in the varieties Lambda — follow-up, not built here.
+  // { raw, collapsed } while a rescue is still permitted for the in-flight voice query; null
+  // otherwise. A ref, not state: it must be readable/clearable synchronously from handlers
+  // without re-render churn.
+  const voiceRescueRef = useRef(null)
+  useEffect(() => {
+    if (loading) return
+    const vr = voiceRescueRef.current
+    if (!vr) return
+    if (lastSentRef.current !== vr.raw) return   // the raw transcript must be the ACTIVE server query
+    if (varieties.length > 0) { voiceRescueRef.current = null; return } // server found rows — no rescue needed
+    voiceRescueRef.current = null                // one retry, ever, then the create footer may stand
+    lastSentRef.current = vr.collapsed           // keep the debounce dedupe coherent with what we sent
+    search(vr.collapsed)
+  }, [loading, varieties, search])
+
   // ── Filtered list (server already filtered by ?q=; this is a defensive client filter) ──
   // `matched` is the FULL match set; `filtered` is what we render (capped at MAX_RESULTS). Keeping
   // both lets the listbox tell the user when there is more, instead of truncating silently.
@@ -137,12 +168,13 @@ export default function VarietyPicker({
     if (cropSlugFilter) list = list.filter(v => v.crop_type_slug === cropSlugFilter)
     const byName = (a, b) => (a.name || '').localeCompare(b.name || '')
     if (!q) return [...list].sort(byName)
-    return list.filter(v => {
-      const name = (v.name || '').toLowerCase()
-      const sp = (v.species || '').toLowerCase()
-      const cn = (v.common_name || '').toLowerCase()
-      return name.includes(q) || sp.includes(q) || cn.includes(q)
-    }).sort(byName)
+    // V4-PICKERVOICE-001: voice-forgiving normalization ("sun ray" -> "Sunray", "chilli red" ->
+    // "Chili Red"). Strictly widens the old .toLowerCase().includes() — typed queries keep every
+    // match they had. NOTE: the SERVER ?q= LIKE stays strict, so a spaced transcript can still
+    // return an empty server page; this defensive filter can only be as loose as its input list.
+    return list.filter(v =>
+      looseIncludes(v.name, q) || looseIncludes(v.species, q) || looseIncludes(v.common_name, q)
+    ).sort(byName)
   }, [varieties, query, speciesFilter, cropSlugFilter])
 
   const filtered = useMemo(() => matched.slice(0, MAX_RESULTS), [matched])
@@ -299,39 +331,32 @@ export default function VarietyPicker({
   // for keyboard — I'll tap the variety selector, be presented with the choice list, no keyboard.
   // Find a way then to allow me to activate the keyboard if desired."
   //
-  // Suppress the VIRTUAL keyboard with inputMode, do NOT drop focus. Focus is what makes this a
-  // working combobox — aria-expanded/aria-controls, the arrow-key handler, and the 150ms
-  // blur-close below all assume the input holds focus while the listbox is open. Blurring it to
-  // hide the keyboard would mean rewriting all three. inputMode governs only the on-screen
-  // keyboard, so a hardware/Bluetooth keyboard still types straight into the field.
-  const [kbMode, setKbMode] = useState('none')
-  // Chrome Android will not raise the keyboard just because inputMode changed on an element that
-  // is already focused — it needs a blur+refocus. That deliberate blur must NOT be read as
-  // "the user tabbed away", or onBlur would schedule the dropdown closed underneath them.
-  const deliberateBlurRef = useRef(false)
-
-  // Every re-open starts keyboard-free. Without this, one tap on "Type" would make the keyboard
-  // the default for the rest of the session, which is the behavior being removed.
-  useEffect(() => { if (!open) setKbMode('none') }, [open])
-
-  const enableKeyboard = useCallback(() => {
-    setKbMode('text')
-    const el = inputRef.current
-    if (!el) return
-    deliberateBlurRef.current = true
-    el.blur()
-    setTimeout(() => {
-      deliberateBlurRef.current = false
-      // setKbMode has flushed by now, so the element Chrome re-focuses has inputMode="text".
-      inputRef.current?.focus()
-    }, 0)
-  }, [])
+  // V4-PICKERKB-002: the mechanism minted here is now the SHARED useComboboxInput hook
+  // (lib/comboboxInput.js) so every type-ahead picker behaves identically (Dave consistency
+  // directive 2026-08-03) — this component keeps only the wiring. The hook also adds the 🎤
+  // voice mode (V4-PICKERVOICE-001): final transcript -> query -> the same debounced search +
+  // client filter below. Full rationale (inputMode over blur, the deliberate blur+refocus
+  // dance) lives with the hook.
+  const { kbMode, enableKeyboard, isDeliberateBlur, voiceSupported, voiceState, toggleVoice } =
+    useComboboxInput({
+      open,
+      inputRef,
+      onVoiceText: (t) => {
+        // Arm the one-shot server rescue (QA-G3 effect above) ONLY when the collapsed form
+        // actually differs from what the debounce will send — same-form transcripts get the
+        // normal single query.
+        const raw = t.trim()
+        const collapsed = looseKey(raw)
+        voiceRescueRef.current = collapsed && collapsed !== raw ? { raw, collapsed } : null
+        setQuery(t); setOpen(true); setCreateErr(null); setCreateStage(null)
+      },
+    })
 
   const onFocus = () => { if (!disabled) setOpen(true) }
   const onBlur = () => {
     // A blur we caused ourselves to swap inputMode — leave `open` alone. Checked synchronously
     // rather than inside the timer below, because the flag is cleared long before 150ms elapses.
-    if (deliberateBlurRef.current) return
+    if (isDeliberateBlur()) return
     // Delay close so a click on the listbox (which preventDefaults mousedown to keep input
     // focus) lands first. A real blur — e.g. tabbing away — still closes the dropdown.
     setTimeout(() => {
@@ -393,6 +418,10 @@ export default function VarietyPicker({
   // Hidden once the keyboard is up (it would be a no-op) and while the mint-a-crop panel owns the
   // surface — that panel's own Name field autoFocuses and legitimately wants the keyboard.
   const showKbBtn = open && !disabled && kbMode === 'none' && createStage !== 'newcrop'
+  // 🎤 shows whenever speech is available and the list is open — independent of kbMode (speaking
+  // over a raised keyboard is legitimate), same mint-a-crop exclusion as ⌨.
+  const showMicBtn = open && !disabled && voiceSupported && createStage !== 'newcrop'
+  const togglePad = toggleSlotsPaddingRight({ showKb: showKbBtn, showMic: showMicBtn })
 
   return (
     <div style={{ position: 'relative' }}>
@@ -408,13 +437,18 @@ export default function VarietyPicker({
         aria-invalid={hasError || undefined}
         value={query}
         inputMode={kbMode}
-        onChange={e => { setQuery(e.target.value); setOpen(true); setCreateErr(null); setCreateStage(null) }}
+        onChange={e => {
+          // Any keystroke disarms the voice rescue: typed queries must NEVER double-fetch, and a
+          // stale armed rescue could otherwise fire if typing later reproduced the transcript.
+          voiceRescueRef.current = null
+          setQuery(e.target.value); setOpen(true); setCreateErr(null); setCreateStage(null)
+        }}
         onFocus={onFocus}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
         placeholder={placeholder}
         disabled={disabled}
-        style={showKbBtn ? { ...inputStyle(hasError, disabled), paddingRight: 48 } : inputStyle(hasError, disabled)}
+        style={togglePad ? { ...inputStyle(hasError, disabled), paddingRight: togglePad } : inputStyle(hasError, disabled)}
         autoComplete="off"
       />
 
@@ -430,9 +464,31 @@ export default function VarietyPicker({
           onClick={enableKeyboard}
           aria-label="Type to search varieties"
           title="Type to search"
-          style={kbToggleBtn}
+          style={kbToggleBtnStyle}
         >
           <span aria-hidden="true">⌨</span>
+        </button>
+      )}
+
+      {/* V4-PICKERVOICE-001 — speak the value instead of typing it. Same focus-preserving
+          onMouseDown trick as ⌨. Denied mic renders as a quiet disabled state (no modal, no
+          toast); every other failure quietly returns to idle — the recovery path is "type". */}
+      {showMicBtn && (
+        <button
+          type="button"
+          onMouseDown={e => e.preventDefault()}
+          onClick={voiceState === 'denied' ? undefined : toggleVoice}
+          aria-label={
+            voiceState === 'denied' ? 'Microphone unavailable'
+            : voiceState === 'listening' ? 'Stop listening'
+            : 'Speak to search varieties'
+          }
+          aria-pressed={voiceState === 'listening'}
+          aria-disabled={voiceState === 'denied' || undefined}
+          title="Speak to search"
+          style={micToggleBtnStyle(voiceState)}
+        >
+          <span aria-hidden="true">🎤</span>
         </button>
       )}
 
@@ -741,22 +797,8 @@ const inputStyle = (hasErr, disabled) => ({
   minHeight: 44, // mobile-tap-friendly
 })
 
-// V4-PICKERKB-001 — sits inside the field's own relative wrapper. top/bottom:0 rather than a fixed
-// height so the target tracks the field (minHeight 44) instead of drifting if it ever grows.
-const kbToggleBtn = {
-  position: 'absolute',
-  top: 0, bottom: 0, right: 0,
-  width: 44,
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  background: 'none',
-  border: 'none',
-  borderRadius: 7,
-  color: P.mid,
-  fontSize: '1.05rem',
-  lineHeight: 1,
-  cursor: 'pointer',
-  padding: 0,
-}
+// V4-PICKERKB-002: the ⌨/🎤 toggle-button styles moved to lib/comboboxInput.js (shared with
+// PlantingSelect) — slot geometry documented there.
 
 const listStyle = {
   position: 'absolute',

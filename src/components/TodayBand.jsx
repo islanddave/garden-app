@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOverlayLocation } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
+import { useKeyboardChromeSuppressed } from '../lib/keyboardChrome.js'
 import { todayBand } from '../lib/todayBand.js'
 import { SEVERITY_STYLES } from '../lib/waterDue.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
@@ -61,11 +62,16 @@ export default function TodayBand() {
   const { visible, total } = todayBand(dash)
   const onToday = location.pathname === '/today'
 
-  useEffect(() => {
+  // V4-KBCHROME-001 — same ONE-predicate wiring as BottomNav: visibility (style prop, DOM
+  // mutation pass) + the inset var (this layout effect, synchronously after, pre-paint) flip in
+  // the SAME commit, so --today-band-height and the pixels never disagree for a frame.
+  // useLayoutEffect (was useEffect) for exactly that guarantee; detector: lib/keyboardChrome.js.
+  const kbSuppressed = useKeyboardChromeSuppressed()
+  useLayoutEffect(() => {
     const root = document.documentElement
-    root.style.setProperty('--today-band-height', onToday ? '0px' : BAND_HEIGHT)
+    root.style.setProperty('--today-band-height', (onToday || kbSuppressed) ? '0px' : BAND_HEIGHT)
     return () => root.style.setProperty('--today-band-height', '0px')
-  }, [onToday])
+  }, [onToday, kbSuppressed])
 
   if (onToday) return null
 
@@ -93,6 +99,9 @@ export default function TodayBand() {
       position: 'fixed', left: 0, right: 0, zIndex: 80,
       bottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom))',
       pointerEvents: 'none',
+      // V4-KBCHROME-001: hidden (not unmounted) while the soft keyboard is up. Operational
+      // chrome, not a reward surface — plain visibility, no flourish (Reward UX V101/V102).
+      visibility: kbSuppressed ? 'hidden' : 'visible',
     }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '0 12px 6px', pointerEvents: 'auto' }}>
         <button
