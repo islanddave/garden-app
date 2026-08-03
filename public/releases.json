@@ -1,11 +1,13 @@
 [
   {
     "version": "3.90.0",
-    "date": "2026-08-02",
+    "date": "2026-08-03",
     "highlights": [
       "The soft keyboard no longer shoves the page around. The app now tells Chrome to shrink the page when the keyboard opens, so buttons anchored to the bottom sit just above it instead of hiding behind it. This retires a workaround that was lifting the Save button roughly 500px up the screen \u2014 straight into the planting list you were trying to tap.",
-      "Two dialogs could put their own buttons out of reach on a short screen. The photo detail dialog could clip its Save button away with no way to scroll to it, and the variety picker could push its search box off the top of the screen. Both now scroll.",
-      "The planting list now knows the bottom nav is there. It sizes itself to the space actually free above the nav bar, and shows the room it really has instead of overflowing off-screen."
+      "Two dialogs could put their own buttons out of reach on a short screen. The photo detail dialog could clip its Save button away with no way to scroll to it, and the variety picker could push its search box off the top. Both now scroll.",
+      "The planting list knows the bottom nav is there. It sizes itself to the space actually free, in both directions, and shows the room it really has instead of overflowing off-screen.",
+      "Tapping the variety picker no longer throws the keyboard up at you. You get the list of choices; a small keyboard button in the field brings up typing when you actually want to search.",
+      "Watering advice now accounts for rain falling today, not just rain that already fell or rain due tomorrow \u2014 and the day's plan refreshes twice during the day instead of being fixed overnight. Before this, a plan built at 2am from a light forecast could still be telling you to water two hundred plants at breakfast while three inches of rain came down."
     ]
   },
   {
