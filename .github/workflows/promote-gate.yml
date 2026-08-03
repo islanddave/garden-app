@@ -233,11 +233,23 @@ jobs:
             echo "::error::deploy-staging dispatch failed ($HTTP) — garden-bot App likely needs Actions:write on the installation"; exit 1
           fi
           echo "dispatched deploy-staging for $DEV_SHA at epoch $DISPATCH_EPOCH"
-          # 2) locate the run we just created (head_sha == DEV_SHA, newest created at/after dispatch)
+          # 2) locate the run we just created.
+          #
+          # MATCH ON THE RUN TITLE, NOT head_sha. deploy-staging sets `run-name: staging <dev_sha>`
+          # (the SHA it actually checks out). A workflow_dispatch run's head_sha is the HEAD of the
+          # REF it was dispatched on — here `dev` — NOT the dev_sha input. Those two coincide only
+          # while dev sits still. On 2026-08-03 a concurrent session pushed to dev between the
+          # promote dispatch and this lookup: the staging run built the correct commit and its smoke
+          # passed, but this step searched head_shas for the promoted SHA, found none, and
+          # fail-closed after 5 minutes. Concurrent dev pushes are normal here, so head_sha matching
+          # was a latent time-bomb rather than an edge case.
+          #
+          # head_sha is retained as a FALLBACK so a run created before the run-name change (or by a
+          # dispatch that omitted dev_sha, where the two are legitimately equal) still resolves.
           RUN_ID=""
           for i in $(seq 1 30); do
             sleep 10
-            RUN_ID=$(apiq "https://api.github.com/repos/$REPO/actions/workflows/deploy-staging.yml/runs?event=workflow_dispatch&per_page=20" | python3 -c "import sys,json,datetime as t; d=json.load(sys.stdin); rs=[r for r in d.get('workflow_runs',[]) if r.get('head_sha')=='$DEV_SHA' and t.datetime.strptime(r['created_at'],'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=t.timezone.utc).timestamp()>=$DISPATCH_EPOCH-30]; print(max(rs,key=lambda r:r['created_at'])['id'] if rs else '')")
+            RUN_ID=$(apiq "https://api.github.com/repos/$REPO/actions/workflows/deploy-staging.yml/runs?event=workflow_dispatch&per_page=20" | python3 -c "import sys,json,datetime as t; d=json.load(sys.stdin); sha='$DEV_SHA'; ok=lambda r: sha in (r.get('display_title') or '') or r.get('head_sha')==sha; rs=[r for r in d.get('workflow_runs',[]) if ok(r) and t.datetime.strptime(r['created_at'],'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=t.timezone.utc).timestamp()>=$DISPATCH_EPOCH-30]; print(max(rs,key=lambda r:r['created_at'])['id'] if rs else '')")
             if [ -n "$RUN_ID" ]; then echo "run id: $RUN_ID"; break; fi
             echo "  ...waiting for run to register ($i)"
           done

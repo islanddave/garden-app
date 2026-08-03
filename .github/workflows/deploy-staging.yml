@@ -1,5 +1,15 @@
 name: Build and Deploy — Staging + Regression Suite
 
+# The run title carries the SHA this run actually BUILT, which is inputs.dev_sha — not the dispatch
+# ref's HEAD. promote-gate's write-path smoke gate locates its dispatched run by this title.
+#
+# It cannot use head_sha for that: a workflow_dispatch run's head_sha is the HEAD of the REF it was
+# dispatched on (dev), while the code checked out below is inputs.dev_sha. Those are equal only when
+# dev has not moved since the promoted SHA was chosen. On 2026-08-03 a concurrent session pushed to
+# dev mid-promote, the gate searched for the promoted SHA among head_shas, found nothing, and
+# fail-closed after 5 minutes — even though this run had built exactly the right commit and passed.
+run-name: staging ${{ inputs.dev_sha || github.sha }}
+
 on:
   workflow_dispatch:
     inputs:
