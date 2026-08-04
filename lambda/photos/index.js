@@ -4,7 +4,10 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { householdScope, loadOwnedSpace, warnRejectedFk } from './household.js';
+import { householdScope, loadOwnedSpace, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
+// BUG-PARENTOWN-001: body-supplied PARENT-id loaders for the five photo parents household.js does
+// not cover. See lambda/authz-parents.js for the contract and for why they live in a separate file.
+import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isAllowedUploadKey } from './uploadKeyPolicy.js';
 
@@ -392,6 +395,12 @@ export const handler = async (event) => {
     console.error('verifyToken failed:', err?.message ?? String(err));
     return resp(401, { error: 'Unauthorized' });
   }
+  // Adversarial-review hardening (mirrors lambda/plants/index.js): householdScope('') returns [''] and
+  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
+  // ownership value rather than a no-match — every `created_by = ANY(householdIds)` predicate in this
+  // file would then match rows whose created_by is ''. Clerk never issues one; this makes that
+  // assumption enforced instead of relied upon.
+  if (!userId) return resp(401, { error: 'Unauthorized' });
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown (photos scope SWITCHED uploaded_by -> created_by)
@@ -993,6 +1002,70 @@ export const handler = async (event) => {
         }
       }
 
+      // ── AUTHZ: the OTHER FIVE parents (BUG-PARENTOWN-001, 4th instance of the pattern) ──────────
+      // space_id (above) was the only gated parent on this verb. photos carries SIX body-settable
+      // parent FKs — enumerated from pg_constraint, not assumed: project_id, event_id, location_id,
+      // plant_id, inventory_item_id, space_id — and the five below were stored exactly as sent. A
+      // foreign key proves the referenced row EXISTS, never that the caller OWNS it, so an
+      // authenticated non-member could write a cross-household FK — and that FK is READABLE:
+      //   • all five gallery branches LEFT JOIN the container UNSCOPED and return
+      //     `pp.display_name AS project_name` (index.js ~857/876/903). So the attacker POSTs a photo
+      //     carrying the victim's project_id, GETs /api/photos, and reads back the VICTIM'S
+      //     CONTAINER NAME. Same shape as the plants `LEFT JOIN garden_node parent` leak
+      //     (parent_plant_name / parent_project_id) the assessment doc flags.
+      //   • event_id is the widest column: 735 of 993 live photos are event-attached and the
+      //     planting gallery unions `photos.event_id -> event_log.plant_id`, so a foreign event_id
+      //     reaches a planting relationship without ever naming the planting.
+      //
+      // WHAT IT IS *NOT* — checked, because an overstated impact is a claim that fails the next
+      // grep: the row does NOT appear in the victim's gallery (every branch carries
+      // `p.created_by = ANY(householdIds)`), and it does NOT become the victim's hero
+      // (autoPromoteFeatured's four arms are each household-scoped on the parent — the BUG-
+      // PHOTOLOCAUTHZ-001 fix closed the last ungated one). The defect is the cross-household FK
+      // write plus the read-back leak above, which is enough.
+      //
+      // Same loaders, same generic 400s, no existence oracle — one pattern, and identical to the
+      // space_id gate directly above rather than a new dialect. Runs BEFORE buildPhotoInsert so a
+      // rejected write leaves no row and no evidence/auto-promote side effects.
+      //
+      // NARROWING, measured read-only against live prod 2026-08-04 before shipping (live photos that
+      // would still be creatable by a HOUSEHOLD MEMBER / by an authenticated NON-MEMBER):
+      //   plant_id 251/251 → 0 · event_id 735/735 → 0 · location_id 9/9 → 0 · inventory_item_id 6/6 → 0
+      //   project_id 970 → 968 / 0.
+      // The two project_id losses are both photos attached to ONE container that was soft-deleted a
+      // week AFTER they were uploaded. Rejecting a new attachment to a soft-deleted container is the
+      // intended behaviour and matches index.js:1045 + findings/index.js:83, which already filter it.
+      if (body.project_id != null) {
+        if (!await loadOwnedProject(sql, body.project_id, householdIds)) {
+          warnRejectedFk(userId, 'photos', 'project_id', body.project_id);
+          return resp(400, { error: 'project_id does not match a project you can use' });
+        }
+      }
+      if (body.plant_id != null) {
+        if (!await loadOwnedPlantingRef(sql, body.plant_id, householdIds)) {
+          warnRejectedFk(userId, 'photos', 'plant_id', body.plant_id);
+          return resp(400, { error: 'plant_id does not match a planting you can use' });
+        }
+      }
+      if (body.event_id != null) {
+        if (!await loadOwnedEvent(sql, body.event_id, householdIds)) {
+          warnRejectedFk(userId, 'photos', 'event_id', body.event_id);
+          return resp(400, { error: 'event_id does not match an event you can use' });
+        }
+      }
+      if (body.location_id != null) {
+        if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
+          warnRejectedFk(userId, 'photos', 'location_id', body.location_id);
+          return resp(400, { error: 'location_id does not match a location you can use' });
+        }
+      }
+      if (body.inventory_item_id != null) {
+        if (!await loadOwnedInventoryItem(sql, body.inventory_item_id, householdIds)) {
+          warnRejectedFk(userId, 'photos', 'inventory_item_id', body.inventory_item_id);
+          return resp(400, { error: 'inventory_item_id does not match an inventory item you can use' });
+        }
+      }
+
       // neon serverless driver: tagged-template calls are auto-committed individually.
       // For atomicity, wrap in sql.transaction([...]) — multiple tagged templates
       // run in one BEGIN/COMMIT and roll back together on failure.
@@ -1121,6 +1194,32 @@ export const handler = async (event) => {
       // the modal silently falls back into the quick-tag carousel. Note space_id is read from the
       // ROW, not the body: this route neither accepts nor SETs space_id, so the persisted value is
       // what the photos_must_have_parent CHECK will see after the UPDATE.
+      // ── AUTHZ: the re-tag verb re-parents from the body too (BUG-PARENTOWN-001) ────────────────
+      // The photo itself is household-scoped (`created_by = ANY(householdIds)` in prev/UPDATE), but
+      // the three parents it MOVES the photo to were not — so a member could re-tag their own photo
+      // INTO another household's container/planting/location gallery, which is the POST gap reached
+      // by a second request instead of one. Gating POST alone would have left this open. Same
+      // loaders, same generic 400s; null still means "clear the parent" (full-replace semantics) and
+      // is deliberately not gated. Runs before the UPDATE so a rejected re-tag mutates nothing.
+      if (body.project_id != null) {
+        if (!await loadOwnedProject(sql, body.project_id, householdIds)) {
+          warnRejectedFk(userId, 'photos', 'project_id', body.project_id);
+          return resp(400, { error: 'project_id does not match a project you can use' });
+        }
+      }
+      if (body.plant_id != null) {
+        if (!await loadOwnedPlantingRef(sql, body.plant_id, householdIds)) {
+          warnRejectedFk(userId, 'photos', 'plant_id', body.plant_id);
+          return resp(400, { error: 'plant_id does not match a planting you can use' });
+        }
+      }
+      if (body.location_id != null) {
+        if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
+          warnRejectedFk(userId, 'photos', 'location_id', body.location_id);
+          return resp(400, { error: 'location_id does not match a location you can use' });
+        }
+      }
+
       let spaceParented = false;
       if (spacePhotosEnabled) {
         const spaceRow = await sql`

@@ -123,3 +123,89 @@ export function describeAuthzMatrix(cfg) {
     }
   })
 }
+
+// ── SECOND HARNESS: body-supplied PARENT ids (BUG-PARENTOWN-001) ──────────────────────────────────
+//
+// WHY describeAuthzMatrix ABOVE CANNOT COVER THIS, which is exactly why the gap survived two
+// per-site fixes. That matrix is RESOURCE-centric: it seeds a row owned by OWNER and proves FOREIGN
+// cannot read or mutate THAT row. The defect class here is the opposite direction — the attacker
+// creates a BRAND NEW row OF THEIR OWN and points its parent FK at the victim's container / planting
+// / event / location / inventory item. Nothing owned by the victim is read or written, so every arm
+// of the resource matrix passes while the hole is wide open. A DB foreign key proves the referenced
+// row EXISTS; it never proves the caller OWNS it.
+//
+// This harness is the compensating control for that class, and it is deliberately generated PER FK
+// COLUMN so instance N+1 fails CI by name instead of being found by audit.
+//
+// EACH COLUMN GETS TWO ARMS, and BOTH are load-bearing:
+//   1. own-parent    → the SAME request with the caller's OWN parent id must still SUCCEED. Without
+//                      this, a handler that blanket-rejects every parent id passes the security arm
+//                      while breaking every real user. A predicate that quietly narrows legitimate
+//                      access is worse than the bug.
+//   2. foreign-parent→ 400, the error is GENERIC (no "not found" vs "forbidden" oracle), and the DB
+//                      is proven to hold ZERO rows referencing the victim's id. Assert the DATABASE,
+//                      never the handler's echo.
+//
+// cfg fields:
+//   name             string label
+//   handler          Lambda handler under test
+//   columns          [string] — the body FK columns to generate arms for
+//   seedParents      async (userId) => ({ [column]: parentId }) — one owned parent per column
+//   request          (patch, ownIds) => { method, path, body } — a request that is otherwise VALID
+//   countReferencing async (column, parentId, subs) => number — rows THE ATTACKER wrote against that
+//                    parent id. subs = { VICTIM, ATTACKER }. Scope the count to the attacker's
+//                    created_by: the victim's own fixtures legitimately reference their own parents,
+//                    so an unscoped count is non-zero before the first request and asserts nothing.
+//   okStatus         (opt) expected own-parent status, default 201
+//   cleanup          (opt) async ({ VICTIM, ATTACKER, victimIds, attackerIds }) => void
+export function describeForeignParentMatrix(cfg) {
+  const RUN = testRunId()
+  const VICTIM = cfg.victim ?? `authz_fp_victim_${RUN}`
+  const ATTACKER = cfg.attacker ?? `authz_fp_attacker_${RUN}`
+  const okStatus = cfg.okStatus ?? 201
+
+  describe(`AUTHZ ${cfg.name} — body-supplied parent ids are household-gated (BUG-PARENTOWN-001)`, () => {
+    let victimIds = {}
+    let attackerIds = {}
+
+    beforeAll(async () => {
+      setTestUserId(VICTIM)
+      victimIds = await cfg.seedParents(VICTIM)
+      setTestUserId(ATTACKER)
+      attackerIds = await cfg.seedParents(ATTACKER)
+    })
+
+    afterAll(async () => {
+      if (cfg.cleanup) await cfg.cleanup({ VICTIM, ATTACKER, victimIds, attackerIds })
+    })
+
+    for (const column of cfg.columns) {
+      it(`${column} — OWN parent still accepted (the gate must not narrow real access)`, async () => {
+        setTestUserId(ATTACKER)
+        const own = attackerIds[column]
+        expect(own, `fixture bug: seedParents produced no ${column} for the attacker`).toBeTruthy()
+        const { status, body } = await callHandler(cfg.handler, cfg.request({ [column]: own }, attackerIds))
+        // Carry the response body: integration tests only run in CI, so a bare status number is a
+        // failure that cannot name itself.
+        expect(status, `${cfg.name} ${column}=own → ${status}: ${JSON.stringify(body)}`).toBe(okStatus)
+      })
+
+      it(`${column} — FOREIGN parent rejected 400, generically, and nothing is written`, async () => {
+        setTestUserId(ATTACKER)
+        const foreign = victimIds[column]
+        expect(foreign, `fixture bug: seedParents produced no ${column} for the victim`).toBeTruthy()
+        const { status, body } = await callHandler(cfg.handler, cfg.request({ [column]: foreign }, attackerIds))
+        expect(status, `${cfg.name} ${column}=foreign → ${status}: ${JSON.stringify(body)} — ownership predicate missing?`).toBe(400)
+        expect(
+          String(body?.error ?? ''),
+          `${cfg.name} ${column}: the 400 must not distinguish "not found" from "forbidden" — that distinction is itself an existence oracle. Got: ${JSON.stringify(body)}`,
+        ).not.toMatch(/not found|forbidden|denied|no permission|unauthor/i)
+        const leaked = await cfg.countReferencing(column, foreign, { VICTIM, ATTACKER })
+        expect(
+          leaked,
+          `${cfg.name} ${column}: ${leaked} row(s) persisted against the victim's ${column} — the predicate did not hold (assert the DB, never the echo)`,
+        ).toBe(0)
+      })
+    }
+  })
+}

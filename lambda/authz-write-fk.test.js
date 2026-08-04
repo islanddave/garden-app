@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadOwnedLocation, loadOwnedInventoryItem, loadOwnedPlanting, loadOwnedSpace, warnRejectedFk } from './household.js';
+import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const HOUSE = ['user_a', 'user_b'];
@@ -98,14 +99,38 @@ describe('V4-AUTHZSWEEP-001: ownership loaders bind the correct owner column', (
 // household-isolation.test.js and wxcoverloc.test.js are static.
 const SITES = [
   ['plants/index.js', 'location_id', 'loadOwnedLocation'],
-  ['plants/index.js', 'parent_plant_id', 'loadOwnedPlanting'],
+  ['plants/index.js', 'parent_plant_id', 'loadOwnedPlantingRef'],
   ['plants/index.js', 'source_inventory_item_id', 'loadOwnedInventoryItem'],
   ['inventory-items/index.js', 'location_id', 'loadOwnedLocation'],
   ['projects/index.js', 'location_id', 'loadOwnedLocation'],
   // V4-SPACEPHOTO-001: photos.space_id is attachable from the POST body, and the ?space_id gallery
   // reads back by it — an ungated attach is a live cross-household READ, not just a bad FK.
   ['photos/index.js', 'space_id', 'loadOwnedSpace'],
+  // BUG-PARENTOWN-001 — the PARENT-id half of the same class, and the reason this table is the
+  // enforcement mechanism rather than documentation: the V4-AUTHZSWEEP-001 pass gated the three
+  // plants PUT columns above and left every POST column, the whole photos parent set, and
+  // succession_group_id (settable on BOTH verbs) out of the table entirely, so nothing failed when
+  // they stayed open. Adding a row here is now part of adding a body-settable FK.
+  ['plants/index.js', 'project_id', 'loadOwnedProject'],
+  ['plants/index.js', 'succession_group_id', 'loadOwnedPlantingRef'],
+  ['photos/index.js', 'project_id', 'loadOwnedProject'],
+  ['photos/index.js', 'plant_id', 'loadOwnedPlantingRef'],
+  ['photos/index.js', 'event_id', 'loadOwnedEvent'],
+  ['photos/index.js', 'location_id', 'loadOwnedLocation'],
+  ['photos/index.js', 'inventory_item_id', 'loadOwnedInventoryItem'],
 ];
+// Which module each loader is imported from. Two homes today; authz-parents.js is a temporary one
+// (see its header) and collapses into household.js in the consolidating sweep — at which point this
+// map goes away rather than growing a third entry.
+const LOADER_MODULE = {
+  loadOwnedLocation: './household.js',
+  loadOwnedInventoryItem: './household.js',
+  loadOwnedPlanting: './household.js',
+  loadOwnedSpace: './household.js',
+  loadOwnedProject: './authz-parents.js',
+  loadOwnedPlantingRef: './authz-parents.js',
+  loadOwnedEvent: './authz-parents.js',
+};
 
 describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a loader', () => {
   for (const [file, field, loader] of SITES) {
@@ -129,14 +154,77 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     expect(src).not.toMatch(/uploaded_by = ANY/);
   });
 
-  it('each gated handler imports the loaders it uses', () => {
+  it('each gated handler imports the loaders it uses, from the right module', () => {
     for (const file of [...new Set(SITES.map(s => s[0]))]) {
       const src = readFileSync(join(here, file), 'utf8');
-      const needed = SITES.filter(s => s[0] === file).map(s => s[2]);
-      const importLine = src.match(/import \{[^}]*\} from '\.\/household\.js';/);
-      expect(importLine, `${file} must import from ./household.js`).toBeTruthy();
-      for (const n of needed) expect(importLine[0], `${file} imports ${n}`).toContain(n);
-      expect(importLine[0], `${file} imports warnRejectedFk`).toContain('warnRejectedFk');
+      const needed = [...new Set(SITES.filter(s => s[0] === file).map(s => s[2]))];
+      const houseImport = src.match(/import \{[^}]*\} from '\.\/household\.js';/);
+      expect(houseImport, `${file} must import from ./household.js`).toBeTruthy();
+      // A per-dir Lambda zip cannot reach ../, so an import from anywhere but './' 502s at module
+      // load — assert the module, not just the symbol.
+      for (const n of needed) {
+        const mod = LOADER_MODULE[n];
+        expect(mod, `${n} has no LOADER_MODULE entry — add one`).toBeTruthy();
+        const line = src.match(new RegExp(`import \\{[^}]*\\} from '${mod.replace('.', '\\.')}';`));
+        expect(line, `${file} must import from ${mod}`).toBeTruthy();
+        expect(line[0], `${file} imports ${n} from ${mod}`).toContain(n);
+      }
+      expect(houseImport[0], `${file} imports warnRejectedFk`).toContain('warnRejectedFk');
+    }
+  });
+
+  // ── BUG-PARENTOWN-001 loader unit tests (layer 1 for the three new predicates) ──────────────────
+  // The integration arms in tests/integration/authz-matrix.int.test.js only run in CI against an
+  // ephemeral Neon branch. These run locally and pin the SQL shape, so a predicate regression is
+  // caught before it costs a CI cycle.
+  const UUID = '00000000-0000-4000-8000-000000000001';
+
+  it('loadOwnedProject scopes plant_projects by created_by and excludes soft-deleted', async () => {
+    const sql = fakeSql([{ id: UUID, name: 'Bed 1' }]);
+    expect(await loadOwnedProject(sql, UUID, HOUSE)).toEqual({ id: UUID, name: 'Bed 1' });
+    const t = textOf(sql);
+    expect(t).toMatch(/FROM public\.plant_projects/i);   // base table, NOT the `container` view
+    expect(t).toMatch(/deleted_at IS NULL/i);
+    expect(t).toMatch(/created_by = ANY\(\?\)/);
+    expect(sql.calls[0].values).toEqual([UUID, HOUSE]);
+  });
+
+  it('loadOwnedPlantingRef keeps the load-bearing `project_id IS NULL` conjunct', async () => {
+    // Without it the own-created_by arm reaches a planting created INSIDE another household's
+    // container — the exact row the plants by-id predicate exists to keep unreachable. This is the
+    // one substantive difference from household.js loadOwnedPlanting, so assert it explicitly.
+    const sql = fakeSql([{ id: UUID, name: 'Tomato' }]);
+    expect(await loadOwnedPlantingRef(sql, UUID, HOUSE)).toEqual({ id: UUID, name: 'Tomato' });
+    const t = textOf(sql);
+    expect(t).toMatch(/FROM public\.plants/i);
+    expect(t).toMatch(/gn\.project_id IS NULL AND gn\.created_by = ANY\(\?\)/);
+    expect(sql.calls[0].values).toEqual([UUID, HOUSE, HOUSE]);
+  });
+
+  it('loadOwnedEvent guards the project-less arm with its own planting-ownership check', async () => {
+    // event_log has a SECOND parent (plant_id) that the two ownership arms never inspect. Without
+    // this the photos event_id gate is bypassable via a project-less event anchored to a foreign
+    // planting. Scoped to the fallback arm only — see the loader comment for the measured reason.
+    const sql = fakeSql([{ id: UUID }]);
+    expect(await loadOwnedEvent(sql, UUID, HOUSE)).toEqual({ id: UUID });
+    const t = textOf(sql);
+    expect(t).toMatch(/FROM public\.event_log/i);
+    expect(t).toMatch(/el\.plant_id IS NULL OR EXISTS/i);
+    expect(sql.calls[0].values).toEqual([UUID, HOUSE, HOUSE, HOUSE, HOUSE]);
+  });
+
+  it('the new loaders reject a malformed id WITHOUT touching the database', async () => {
+    // A 22P02 falling through to an opaque 500 is a worse contract and a weak side channel.
+    for (const fn of [loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent]) {
+      const sql = fakeSql([{ id: 'should-never-be-reached' }]);
+      expect(await fn(sql, 'not-a-uuid', HOUSE)).toBeNull();
+      expect(sql.calls, `${fn.name} must short-circuit before issuing SQL`).toHaveLength(0);
+    }
+  });
+
+  it('the new loaders return null (no existence oracle) on a non-match', async () => {
+    for (const fn of [loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent]) {
+      expect(await fn(fakeSql([]), UUID, HOUSE)).toBeNull();
     }
   });
 });

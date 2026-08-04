@@ -9,7 +9,12 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { householdScope, loadOwnedLocation, loadOwnedPlanting, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
+import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
+// BUG-PARENTOWN-001: body-supplied PARENT-id loaders. loadOwnedPlantingRef REPLACES household.js's
+// loadOwnedPlanting on this path — same query plus the load-bearing `project_id IS NULL` conjunct on
+// the own-created_by arm, matching this file's canonical by-id predicate and tags/index.js
+// entityExists. See lambda/authz-parents.js for why they live in a separate file.
+import { loadOwnedProject, loadOwnedPlantingRef } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
@@ -312,7 +317,7 @@ export const handler = async (event) => {
           }
         }
         if (body.parent_plant_id != null) {
-          if (!await loadOwnedPlanting(sql, body.parent_plant_id, householdIds)) {
+          if (!await loadOwnedPlantingRef(sql, body.parent_plant_id, householdIds)) {
             warnRejectedFk(userId, 'plants', 'parent_plant_id', body.parent_plant_id);
             return resp(400, { error: 'parent_plant_id does not match a planting you can use' });
           }
@@ -321,6 +326,15 @@ export const handler = async (event) => {
           if (!await loadOwnedInventoryItem(sql, body.source_inventory_item_id, householdIds)) {
             warnRejectedFk(userId, 'plants', 'source_inventory_item_id', body.source_inventory_item_id);
             return resp(400, { error: 'source_inventory_item_id does not match an inventory item you can use' });
+          }
+        }
+        // BUG-PARENTOWN-001: succession_group_id is the FOURTH body-settable cross-entity FK on this
+        // verb (plants_succession_group_id_fkey -> plants.id) and the V4-AUTHZSWEEP-001 pass missed
+        // it — the same class as the three above, ungated on BOTH verbs until now.
+        if (body.succession_group_id != null) {
+          if (!await loadOwnedPlantingRef(sql, body.succession_group_id, householdIds)) {
+            warnRejectedFk(userId, 'plants', 'succession_group_id', body.succession_group_id);
+            return resp(400, { error: 'succession_group_id does not match a planting you can use' });
           }
         }
 
@@ -629,6 +643,59 @@ export const handler = async (event) => {
       }
       if (body.container_type != null && !ALLOWED_CONTAINER.includes(body.container_type)) {
         return resp(400, { error: `container_type must be one of ${ALLOWED_CONTAINER.join(', ')} or null` });
+      }
+
+      // ── AUTHZ: body-supplied PARENT ids (BUG-PARENTOWN-001, 5th instance of the pattern) ────────
+      // Until now POST stored project_id / location_id / parent_plant_id / source_inventory_item_id /
+      // succession_group_id exactly as sent. Every one has a DB foreign key, and a foreign key proves
+      // the referenced row EXISTS — never that the caller OWNS it. So an authenticated non-member
+      // could create a planting INSIDE another household's container (the very row the by-id
+      // predicate's `project_id IS NULL` conjunct exists to keep unreachable — see the long comment
+      // on the PUT path, which named this POST gap explicitly), or hang it off their location /
+      // lineage parent and read the parent's fields back through the by-id GET's unscoped
+      // `LEFT JOIN parent` (parent_plant_name, parent_project_id).
+      //
+      // PUT has gated location_id / parent_plant_id / source_inventory_item_id since
+      // V4-AUTHZSWEEP-001; POST never did. Same loaders, same generic 400s, no existence oracle —
+      // one pattern for both verbs. Runs BEFORE the INSERT so a rejected write leaves no row.
+      //
+      // NARROWING, measured read-only against live prod 2026-08-04 before shipping: of the 269 live
+      // plantings, 269/269 project_id, 268/268 location_id, 41/41 source_inventory_item_id, 1/1
+      // parent_plant_id and 203/203 succession_group_id still pass for a household member; all five
+      // go to 0 for an authenticated non-member. No legitimate caller loses a write.
+      //
+      // NOT gated: variety_id (plant_varieties is a GLOBAL catalogue, unscoped in tags/index.js
+      // entityExists('cultivar') too) and featured_photo_id / featured_image_id (not in the INSERT
+      // column list below — unsettable on this verb).
+      if (body.project_id != null) {
+        if (!await loadOwnedProject(sql, body.project_id, householdIds)) {
+          warnRejectedFk(userId, 'plants', 'project_id', body.project_id);
+          return resp(400, { error: 'project_id does not match a project you can use' });
+        }
+      }
+      if (body.location_id != null) {
+        if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
+          warnRejectedFk(userId, 'plants', 'location_id', body.location_id);
+          return resp(400, { error: 'location_id does not match a location you can use' });
+        }
+      }
+      if (body.parent_plant_id != null) {
+        if (!await loadOwnedPlantingRef(sql, body.parent_plant_id, householdIds)) {
+          warnRejectedFk(userId, 'plants', 'parent_plant_id', body.parent_plant_id);
+          return resp(400, { error: 'parent_plant_id does not match a planting you can use' });
+        }
+      }
+      if (body.source_inventory_item_id != null) {
+        if (!await loadOwnedInventoryItem(sql, body.source_inventory_item_id, householdIds)) {
+          warnRejectedFk(userId, 'plants', 'source_inventory_item_id', body.source_inventory_item_id);
+          return resp(400, { error: 'source_inventory_item_id does not match an inventory item you can use' });
+        }
+      }
+      if (body.succession_group_id != null) {
+        if (!await loadOwnedPlantingRef(sql, body.succession_group_id, householdIds)) {
+          warnRejectedFk(userId, 'plants', 'succession_group_id', body.succession_group_id);
+          return resp(400, { error: 'succession_group_id does not match a planting you can use' });
+        }
       }
 
       const qty = parseInt(body.quantity, 10);
