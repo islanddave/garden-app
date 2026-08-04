@@ -6,6 +6,7 @@ import { P } from '../../lib/constants.js'
 import { computeMaturity } from '../../lib/plantingMaturity.js'
 import { useEntityTags } from '../../hooks/useTags.js'
 import TagChip from '../forms/TagChip.jsx'
+import TransplantDatePrompt from './TransplantDatePrompt.jsx'
 import { shuLabel, determinacyLabel } from '../../lib/varietySpec.js'
 
 function Attr({ label, value }) {
@@ -19,7 +20,7 @@ function Attr({ label, value }) {
   )
 }
 
-export default function CropCard({ planting }) {
+export default function CropCard({ planting, onUpdated }) {
   const { projected } = useEntityTags('plant', planting?.id)
   const m = computeMaturity(planting)
   const v = planting?.variety_ref || {}
@@ -52,12 +53,21 @@ export default function CropCard({ planting }) {
               Day {m.ageDays}{m.anchorLabel ? ` since ${m.anchorLabel}` : ''}
             </div>
           )}
-          {m.harvestWindowLabel && (
+          {/* V4-MATURITYBASIS-001: a from-transplant crop with no transplant date has an
+              unknowable window (design D3). Rather than a bare suppressed label, the slot the date
+              would have occupied carries a low-key tappable prompt that sets the date and yields a
+              correct window on the spot. Same type scale as the label it replaces — see
+              TransplantDatePrompt for why this is not headline treatment. */}
+          {m.awaitingTransplant ? (
+            <div style={{ marginTop: 3 }}>
+              <TransplantDatePrompt planting={planting} onSaved={onUpdated} />
+            </div>
+          ) : m.harvestWindowLabel && (
             <div style={{ fontSize: '0.82rem', color: m.isMature ? P.green : P.mid, marginTop: 3 }}>
               {m.isMature ? '✅ ' : '⏳ '}{m.harvestWindowLabel}
               {/* V4-MATURITYBASIS-001: name the basis when it moved the number off the sow date,
                   so a corrected window reads as explained rather than as silently different. */}
-              {m.dtmBasis === 'from-transplant' && !m.awaitingTransplant && m.dtmAnchorLabel && (
+              {m.dtmBasis === 'from-transplant' && m.dtmAnchorLabel && (
                 <span style={{ color: P.light }}> (from {m.dtmAnchorLabel})</span>
               )}
             </div>

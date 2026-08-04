@@ -1,0 +1,130 @@
+# gates.yml
+# V4-MATURITYBASIS-001 Slice C — v_sow_candidates += crop_types.dtm_basis.
+#
+# PROMOTE-TIME SEQUENCING (ORDERED — do not reorder, do not skip):
+#   1. STAGING: pre gates -> apply 0a-additive-ddl.sql -> post gates.
+#   2. deploy-staging + regression pass (build-and-test remains the required promote gate).
+#   3. PROD: pre gates -> apply 0a -> post gates. This mutates SHARED prod Neon — additive and
+#      read-inert, but treat it with deploy-level care, not as a neutral pre-step.
+#   4. THEN deploy the engine. The view-widen MUST land before the code that reads it; an absent
+#      dtm_basis makes the engine fall back to from-sow, i.e. today's exact math — it fails SAFE
+#      (no crash, no suppressed window), it just does not yet apply the correction.
+#
+# STAGING PREREQUISITE — VERIFIED, not assumed (design D6 flagged this as unverified):
+#   integration-test.yml branches off staging WITHOUT applying migrations, so a test touching a
+#   prod-only column fails for unrelated reasons. Checked 2026-08-04 against live staging:
+#   v4-staging-reconcile-001 is applied IN FULL (all 11 of its objects present, incl.
+#   crop_types.dtm_basis with crop_types_dtm_basis_chk convalidated=t, and the staging-only
+#   plants_container_type_domain correctly dropped). staging crop_types is 91 rows, all dtm_basis
+#   NULL — which is the safe default: NULL == from-sow == today's behaviour, so the widened view
+#   changes no staging test outcome.
+#
+# Pre:  the view does not yet expose dtm_basis; the base column exists on crop_types; the view
+#       already LEFT JOINs crop_types (so this is a projection add, not a join change).
+# Post: the view exposes dtm_basis, all 30 pre-existing columns survived under their original names
+#       (append-only proof), the row count is unchanged (projection-only proof), and schema_version
+#       is recorded.
+#
+# NOTE: there is no sweep phase — this migration adds no constraint and mutates no row.
+
+pre:
+  - name: pre_view_lacks_dtm_basis
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates' AND column_name='dtm_basis'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_base_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='crop_types' AND column_name='dtm_basis'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_view_column_count
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+    expect: scalar_eq
+    value: 30
+
+  # The join this projection depends on must already be there — if crop_types were NOT joined,
+  # 0a would be a JOIN change (row-count-affecting), not an append.
+  - name: pre_view_already_joins_crop_types
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+         AND column_name='first_year_harvest'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_no_dependent_views
+    sql: |
+      SELECT count(*) FROM pg_depend d
+        JOIN pg_rewrite r ON r.oid = d.objid
+        JOIN pg_class c ON c.oid = r.ev_class
+       WHERE d.refobjid = 'public.v_sow_candidates'::regclass
+         AND c.relname <> 'v_sow_candidates'
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: post_view_exposes_dtm_basis
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates' AND column_name='dtm_basis'
+    expect: rowcount_eq
+    value: 1
+
+  # Append-only proof: every pre-existing column must still be present under its original name.
+  - name: post_prior_columns_intact
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+         AND column_name IN ('inventory_item_id','item_name','quantity_on_hand','unit','created_by',
+                             'purchase_date','source','metadata','variety_id','variety_name',
+                             'crop_type_slug','lifecycle','grown_as','sun_requirements',
+                             'days_to_maturity_min','days_to_maturity_max','start_method',
+                             'start_indoor_weeks_min','start_indoor_weeks_max','direct_sow_timing',
+                             'sow_depth_in','seed_spacing_in','row_spacing_in','days_to_germ_min',
+                             'days_to_germ_max','sow_season','sow_notes','growth_habit',
+                             'day_length_response','first_year_harvest')
+    expect: rowcount_eq
+    value: 30
+
+  - name: post_view_column_count
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+    expect: scalar_eq
+    value: 31
+
+  # Projection-only proof: a widened projection must not add or drop a single candidate row.
+  # Self-differencing so it stays env-agnostic (prod 223 rows, staging differs) and inside the
+  # rowcount_eq/scalar_eq gate vocabulary the other migrations use.
+  # A non-zero result would mean the LEFT JOIN had fanned out — i.e. a duplicate crop_types.slug.
+  - name: post_rowcount_matches_base_join
+    sql: |
+      SELECT (SELECT count(*) FROM public.v_sow_candidates)
+           - (SELECT count(*) FROM inventory_items i
+                JOIN plant_varieties v ON v.id = i.variety_id
+               WHERE i.category = 'seeds' AND i.deleted_at IS NULL
+                 AND i.status = 'active' AND v.deleted_at IS NULL)
+    expect: scalar_eq
+    value: 0
+
+  # Every non-NULL value the engine will read must be one the CHECK allows, so the engine's
+  # two-value comparison can never see a third state it silently treats as from-sow.
+  - name: post_basis_values_are_check_legal
+    sql: |
+      SELECT count(*) FROM public.v_sow_candidates
+       WHERE dtm_basis IS NOT NULL AND dtm_basis NOT IN ('from-sow','from-transplant')
+    expect: scalar_eq
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.20.5-maturitybasis-001'
+    expect: rowcount_eq
+    value: 1

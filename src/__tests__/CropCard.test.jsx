@@ -47,13 +47,36 @@ describe('CropCard', () => {
     expect(screen.queryByText(/\(from /)).toBeNull()
   })
 
-  it('D3: shows the suppressed label for a from-transplant planting with no transplant date', () => {
+  // D3 + the "add transplant date" affordance: the suppressed window slot is no longer a dead
+  // static label — it carries the tappable prompt that fills the missing date.
+  it('D3: the suppressed window slot renders the add-transplant-date prompt', () => {
     const planting = {
       id: 'p', sown_at: '2026-04-20',
       variety_ref: { days_to_maturity_min: 70, days_to_maturity_max: 80, dtm_basis: 'from-transplant' },
     }
     render(<CropCard planting={planting} />)
-    expect(screen.getByText(/Est\. harvest — set at transplant/)).toBeTruthy()
+    expect(screen.getByTestId('add-transplant-date')).toBeTruthy()
+    expect(screen.getByText('add transplant date')).toBeTruthy()
+    // No fabricated date, and no basis parenthetical on a window that does not exist.
+    expect(screen.queryByText(/Est\. harvest [A-Z]/)).toBeNull()
     expect(screen.queryByText(/\(from /)).toBeNull()
+  })
+
+  it('does NOT render the prompt once a transplant date exists', () => {
+    const planting = {
+      id: 'p', sown_at: '2026-04-20', transplanted_at: '2026-06-23',
+      variety_ref: { days_to_maturity_min: 70, days_to_maturity_max: 80, dtm_basis: 'from-transplant' },
+    }
+    render(<CropCard planting={planting} />)
+    expect(screen.queryByTestId('add-transplant-date')).toBeNull()
+  })
+
+  it('does NOT render the prompt for a from-sow crop missing a transplant date', () => {
+    const planting = {
+      id: 'p', sown_at: '2026-04-20',
+      variety_ref: { days_to_maturity_min: 70, days_to_maturity_max: 80, dtm_basis: 'from-sow' },
+    }
+    render(<CropCard planting={planting} />)
+    expect(screen.queryByTestId('add-transplant-date')).toBeNull()
   })
 })

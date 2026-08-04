@@ -518,8 +518,14 @@ export default function PlantingDetail() {
         }}
       />
 
-      {/* V4-PLANTINGUI-001 — per-crop slot: maturity/harvest + cultivar attrs + projected facets. */}
-      <CropCard planting={pl} />
+      {/* V4-PLANTINGUI-001 — per-crop slot: maturity/harvest + cultivar attrs + projected facets.
+          V4-MATURITYBASIS-001: onUpdated patches the loaded record in place after the "add
+          transplant date" prompt saves, so the corrected Est.-harvest window paints immediately
+          instead of waiting on a refetch (mirrors the optimistic field updates in onLogged above). */}
+      <CropCard
+        planting={pl}
+        onUpdated={(patch) => setPlanting(prev => (prev ? { ...prev, ...patch } : prev))}
+      />
 
       {/* V4-PLANTINGUI-001 — life-story milestone spine (lifecycle arc; full Event log remains below). */}
       {buildLifeStory(pl).length > 0 && (

@@ -1056,3 +1056,119 @@ describe('BUG-SOWNONANNUAL-001 — non-annuals get a season-length clamp', () =>
     expect(JSON.stringify(r)).not.toContain('Sep 28');
   });
 });
+
+// ── V4-MATURITYBASIS-001 Slice C — basis-aware fall indoor pass ────────────────────────────────
+// `latest` (last day to START SEED INDOORS) previously subtracted DTM straight off the fall frost
+// anchor, i.e. assumed DTM counts from the indoor sow. For a crop whose catalogue DTM is quoted
+// FROM TRANSPLANT that omits the whole nursery period, so the engine told the user to start fall
+// brassicas 4-6 weeks after the real deadline. Measured on live prod 2026-08-04: 16 fall_indoor
+// windows read OPEN, 14 of them from-transplant crops whose true latest-start had passed between
+// 2026-06-23 and 2026-07-17. After this change: 2 open, both genuinely from-sow (beet, carrot).
+describe('fall indoor pass — DTM basis (V4-MATURITYBASIS-001 Slice C)', () => {
+  // weeks 4-6 / dtm 66 / cool -> uncorrected latest = FF + (28 - 66 - 14) = Aug 7.
+  const fall = (overrides = {}) => synth({
+    start_method: 'start_indoors', start_indoor_weeks_min: 4, start_indoor_weeks_max: 6,
+    days_to_maturity_max: 66, sow_season: 'cool', ...overrides,
+  });
+
+  it('NULL basis (uncurated) reproduces the pre-basis window exactly', () => {
+    const { bucket, entry } = run(fall({ dtm_basis: null }));
+    expect(bucket).toBe('start_indoors_now');
+    expect(entry.daysLeft).toBe(28);
+    expect(entry.windowLabel).toContain('Aug 7');
+  });
+
+  it('an ABSENT dtm_basis key (pre-view-change payload) behaves identically to NULL', () => {
+    const c = fall();
+    delete c.dtm_basis;
+    const { bucket, entry } = run(c);
+    expect(bucket).toBe('start_indoors_now');
+    expect(entry.windowLabel).toContain('Aug 7');
+  });
+
+  it('from-sow shifts nothing — byte-identical to the NULL-basis entry', () => {
+    const strip = (r) => JSON.stringify({ b: r.bucket, w: r.entry.windowLabel, d: r.entry.daysLeft });
+    expect(strip(run(fall({ dtm_basis: 'from-sow' })))).toBe(strip(run(fall({ dtm_basis: null }))));
+  });
+
+  it('an unrecognised basis value falls back to the from-sow behaviour', () => {
+    // A bundle older than the data must degrade to today's math, never to a suppressed window.
+    const { bucket, entry } = run(fall({ dtm_basis: 'from-germination' }));
+    expect(bucket).toBe('start_indoors_now');
+    expect(entry.windowLabel).toContain('Aug 7');
+  });
+
+  it('from-transplant pulls the latest indoor start back by the FULL nursery period', () => {
+    // wMax 6 weeks = 42 days: Aug 7 -> Jun 26. Evaluated inside the corrected window (open Jun 26
+    // - 28d = May 29), the close date is the corrected one, not the old one. 6 days left is inside
+    // windowClosingDays, so the urgency bucket is `window_closing` — the correction does not just
+    // move the date, it moves this candidate into the bucket that actually shouts at the user.
+    const { bucket, entry } = run(fall({ dtm_basis: 'from-transplant' }), '2026-06-20');
+    expect(bucket).toBe('window_closing');
+    expect(entry.windowLabel).toContain('Jun 26');
+    expect(entry.windowLabel).not.toContain('Aug 7');
+    expect(entry.daysLeft).toBe(6);
+  });
+
+  it('the seasonal failure itself: a window that read OPEN now reads too_late', () => {
+    // On 2026-07-10 the uncorrected window (Jul 10 - Aug 7) was open and the card said
+    // "Start indoors through Aug 7". The corrected window (May 29 - Jun 26) closed two weeks ago.
+    expect(run(fall({ dtm_basis: null })).bucket).toBe('start_indoors_now');
+    expect(run(fall({ dtm_basis: 'from-transplant' })).bucket).toBe('too_late');
+  });
+
+  it('uses start_indoor_weeks_MAX (the longer nursery = the earlier close)', () => {
+    // min 4 / max 6 -> shift 42d, not 28d. Aug 7 - 42 = Jun 26; Aug 7 - 28 would be Jul 10.
+    const { entry } = run(fall({ dtm_basis: 'from-transplant' }), '2026-06-20');
+    expect(entry.windowLabel).toContain('Jun 26');
+  });
+
+  it('falls back to start_indoor_weeks_MIN when max is absent', () => {
+    const { entry } = run(fall({
+      dtm_basis: 'from-transplant', start_indoor_weeks_min: 4, start_indoor_weeks_max: null,
+    }), '2026-06-20');
+    expect(entry.windowLabel).toContain('Jul 10'); // Aug 7 - 28d
+  });
+
+  it('from-transplant with NO nursery estimate emits no fall window rather than a wrong one', () => {
+    // Uncomputable latest-start. The same rule latestSafeMs applies to a null dtm: unknown must
+    // never be fabricated into a confident date, least of all an OPEN one in a frost race.
+    const c = fall({
+      dtm_basis: 'from-transplant', start_indoor_weeks_min: null, start_indoor_weeks_max: null,
+    });
+    const r = run(c);
+    expect(r.bucket).toBe('too_late');
+    expect(JSON.stringify(r)).not.toContain('Aug 7');
+  });
+
+  it('the SPRING indoor window is untouched by basis', () => {
+    const spring = (basis) => run(fall({ dtm_basis: basis }), '2026-04-01');
+    expect(spring('from-transplant').entry.windowLabel)
+      .toBe(spring(null).entry.windowLabel);
+  });
+
+  it('DIRECT-sow windows are untouched by basis (latestSafeMs is from-sow and stays that way)', () => {
+    const direct = (basis) => run(synth({
+      start_method: 'direct_sow', direct_sow_timing: 'after last frost',
+      sow_season: 'cool', days_to_maturity_max: 66, dtm_basis: basis,
+    }));
+    const a = direct('from-transplant');
+    const b = direct(null);
+    expect(a.bucket).toBe(b.bucket);
+    expect(a.entry.windowLabel).toBe(b.entry.windowLabel);
+  });
+
+  it('gated bulbing alliums still get no fall pass at all', () => {
+    const onion = toCandidate(PACKETS.onionMonastrell, { dtm_basis: 'from-transplant' });
+    expect(run(onion).bucket).toBe('hold');
+  });
+
+  it('reproduces the live prod correction for Belstar broccoli (dtm 66, 4-6 wks)', () => {
+    // The Belstar packet literally reads "Days to maturity from transplant" — the ground truth
+    // this whole slice encodes. Prod said start-by Aug 7; the real deadline was Jun 26.
+    const belstar = toCandidate(PACKETS.broccoliBelstar, { dtm_basis: 'from-transplant' });
+    const at = (d) => run(belstar, d);
+    expect(at('2026-06-20').entry.windowLabel).toContain('Jun 26');
+    expect(at('2026-08-04').entry.windowLabel).not.toMatch(/Start indoors/);
+  });
+});

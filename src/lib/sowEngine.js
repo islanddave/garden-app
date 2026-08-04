@@ -5,6 +5,12 @@
 // action buckets for the /sow page. Numeric candidate fields may arrive as
 // strings (neon driver) — everything is Number()-coerced here.
 
+// V4-MATURITYBASIS-001 Slice C — the DTM basis vocabulary is single-sourced from the maturity
+// engine rather than re-declared here. Both are pure, zero-dependency src/lib modules and
+// plantingMaturity.js imports nothing, so there is no cycle and no runtime weight; a local copy of
+// the two CHECK-constrained strings would be one more thing that can silently drift from the DB.
+import { DTM_BASIS_TRANSPLANT } from './plantingMaturity.js';
+
 export const FROST_ANCHORS = Object.freeze({
   lastSpringFrost: '05-20',
   firstFallFrost: '09-28',
@@ -442,9 +448,34 @@ function buildIndoorWindows(candidate, dtm, ctx, gated = false) {
   if (gated) return windows;
 
   // Fall indoor pass: cool|cool_warm only; dtm null -> skip fall math.
+  //
+  // V4-MATURITYBASIS-001 Slice C — BASIS-AWARE.
+  // `latest` is the last date seed may be STARTED INDOORS. Subtracting dtm straight off the frost
+  // anchor assumes days_to_maturity counts from that indoor sow. For a crop whose catalogue DTM is
+  // quoted FROM TRANSPLANT that is wrong by the entire nursery period (4–6 weeks across the live
+  // fall candidates), because maturity is reached `nursery` days later than the math assumes:
+  //     maturity      = indoorStart + nursery + dtm   must be <=  FF + grace - FALL_SLOWDOWN_DAYS
+  //     => indoorStart <= FF + grace - FALL_SLOWDOWN_DAYS - dtm - nursery
+  // i.e. the corrected latest-start is the existing one shifted back by the nursery period.
+  // Measured against live prod 2026-08-04: 14 fall brassica/lettuce windows the engine still showed
+  // OPEN had in fact closed between 2026-06-23 and 2026-07-17. Telling the user to start fall
+  // brassicas that cannot beat a Sep-28 frost is the failure this corrects.
+  //
+  // `wMax` (normalised above to start_indoor_weeks_max ?? _min) is the deliberate choice over wMin:
+  // a LONGER nursery closes the window EARLIER, the conservative direction in a frost race.
+  // from-sow and NULL (uncurated) shift by zero — byte-identical to the pre-basis behaviour, which
+  // is what keeps this a provable no-op for direct-sow crops and for every uncurated crop type.
   const grace = FALL_GRACE_DAYS[candidate.sow_season];
   if (grace != null && dtm != null) {
-    const latest = ctx.FF + (grace - dtm - FALL_SLOWDOWN_DAYS) * DAY_MS;
+    const fromTransplant = candidate.dtm_basis === DTM_BASIS_TRANSPLANT;
+    // A from-transplant crop with NO nursery estimate has an uncomputable latest-start. Emitting
+    // the uncorrected date would be a confidently wrong OPEN in exactly the race this pass exists
+    // to stop, so emit nothing instead — the same rule latestSafeMs applies to a null dtm
+    // ("genuinely unknown — must NOT be fabricated into a date"). Unreachable in prod today:
+    // all 28 fall-eligible from-transplant candidates carry indoor weeks (checked 2026-08-04).
+    if (fromTransplant && wMax == null) return windows;
+    const nurseryDays = fromTransplant ? wMax * 7 : 0;
+    const latest = ctx.FF + (grace - dtm - FALL_SLOWDOWN_DAYS - nurseryDays) * DAY_MS;
     windows.push({
       open: latest - 28 * DAY_MS,
       close: latest,
