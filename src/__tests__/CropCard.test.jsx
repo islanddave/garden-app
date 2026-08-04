@@ -80,3 +80,68 @@ describe('CropCard', () => {
     expect(screen.queryByTestId('add-transplant-date')).toBeNull()
   })
 })
+
+// ── V4-RIPECUE-001 — researched ripeness cues on the card ─────────────────────────────────────
+// The crucible killed the maturity-window section (11.8% calibration) and put the cues here
+// instead, for reach: 100% of plantings vs 6%. These tests pin the two behaviours that make that
+// trade honest — a sourced cue reaches the card even on a bare record, and an unsourced crop
+// renders NOTHING rather than a guess.
+describe('CropCard — ripeness cues (V4-RIPECUE-001)', () => {
+  it('renders the crop-level mechanic for a sourced crop', () => {
+    render(<CropCard planting={{ id: 'p', variety_ref: { crop_type_slug: 'tomato', name: 'Big Boy' } }} />)
+    expect(screen.getByText(/When it.s ripe/i)).toBeTruthy()
+    expect(screen.getByText(/90% of its ripe colour/i)).toBeTruthy()
+  })
+
+  it('leads with the cultivar target-state when one exists, and keeps the mechanic under it', () => {
+    render(<CropCard planting={{ id: 'p', variety_ref: { crop_type_slug: 'pepper', name: 'Pick-N-Pop Yellow' } }} />)
+    expect(screen.getByText(/bright canary yellow/i)).toBeTruthy()
+    expect(screen.getByText(/full size while firm/i)).toBeTruthy()
+  })
+
+  it('renders NOTHING for a crop with no sourced cue — a blank is the correct outcome', () => {
+    const { container } = render(
+      <CropCard planting={{ id: 'p', variety_ref: { crop_type_slug: 'fittonia', name: 'Nerve Plant' } }} />,
+    )
+    // No cue, no maturity, no chips, no attrs -> the whole card stays away.
+    expect(container.firstChild).toBeNull()
+  })
+
+  it('a sourced cue alone is enough to render the card on an otherwise bare cultivar record', () => {
+    // Without this the cue would be silently dropped from exactly the sparsest records.
+    render(<CropCard planting={{ id: 'p', variety_ref: { crop_type_slug: 'pepper', name: 'No Such Cultivar' } }} />)
+    expect(screen.getByText(/When it.s ripe/i)).toBeTruthy()
+  })
+
+  it('attributes the cue to a checkable source — the verifiability half of the downgrade path', () => {
+    render(<CropCard planting={{ id: 'p', variety_ref: { crop_type_slug: 'tomato', name: 'Big Boy' } }} />)
+    const link = screen.getByRole('link', { name: /Extension/i })
+    expect(link.getAttribute('href')).toMatch(/^https:\/\//)
+    expect(link.getAttribute('rel')).toContain('noopener')
+  })
+})
+
+// Batch-2 crop mechanics + the low-confidence caveat channel.
+describe('CropCard — crop-mechanic breadth and derived-cue honesty (V4-RIPECUE-001)', () => {
+  it('renders the crop mechanic for a non-pepper/tomato crop', () => {
+    render(<CropCard planting={{ id: 'p', variety_ref: { crop_type_slug: 'garlic', name: 'Music' } }} />)
+    expect(screen.getByText(/lower leaves have browned/i)).toBeTruthy()
+  })
+
+  it('summer squash gets the pierces-easily half, not the winter-squash half', () => {
+    render(<CropCard planting={{ id: 'p', variety_ref: { crop_type_slug: 'squash', name: 'Dark Green Zucchini' } }} />)
+    expect(screen.getByText(/should pierce easily/i)).toBeTruthy()
+    expect(screen.queryByText(/cured for storage/i)).toBeNull()
+  })
+
+  it('shows the caveat on the derived wineberry cue, so it cannot pass as a quoted instruction', () => {
+    render(<CropCard planting={{ id: 'p', variety_ref: { crop_type_slug: 'wineberry', name: 'Wild Wineberry' } }} />)
+    expect(screen.getByText(/bristly calyx/i)).toBeTruthy()
+    expect(screen.getByText(/neither source gives an actual harvest instruction/i)).toBeTruthy()
+  })
+
+  it('a high-confidence cue renders no caveat line', () => {
+    render(<CropCard planting={{ id: 'p', variety_ref: { crop_type_slug: 'broccoli', name: 'Calabrese' } }} />)
+    expect(screen.queryByText(/Derived from/i)).toBeNull()
+  })
+})

@@ -8,6 +8,7 @@ import { useEntityTags } from '../../hooks/useTags.js'
 import TagChip from '../forms/TagChip.jsx'
 import TransplantDatePrompt from './TransplantDatePrompt.jsx'
 import { shuLabel, determinacyLabel } from '../../lib/varietySpec.js'
+import { resolveRipenessCues } from '../../lib/ripenessCues.js'
 
 function Attr({ label, value }) {
   if (value == null || value === '') return null
@@ -16,6 +17,54 @@ function Attr({ label, value }) {
       <div style={{ fontSize: '0.72rem', fontWeight: 600, color: P.light, marginBottom: 2,
         textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</div>
       <div style={{ fontSize: '0.9rem', color: P.dark, lineHeight: 1.5, wordBreak: 'break-word' }}>{value}</div>
+    </div>
+  )
+}
+
+// V4-RIPECUE-001 — "how will I know it's ripe", the crucible's replacement for the killed
+// maturity-window section (100% reach vs 6%; decision D3). Rendered as an ordinary Attr row, at the
+// same weight as Sun and Expected yield, on purpose:
+//   - It is instructions for a task the user already started, not a nudge — the reward-UX seat put
+//     exactly that outside the V102 rule (crucible §7.3). It is still given the lowest salience the
+//     card has, because V102's delivery discipline (no badge, no colour encoding, no promotion, no
+//     time-decaying state, ambient only) is the house default and nothing here needs an exception.
+//   - The cultivar target-state leads the crop mechanic when both exist, because the target state is
+//     what disambiguates ("full canary yellow" tells you what "full colour" means for THIS plant).
+// The source line is not decoration: it is the verifiability half of the downgrade path the crucible
+// required (§9 Slice 1, "do not ship cues without a downgrade path"). Dave can check the claim
+// against the page it came from rather than against his memory of what the app told him.
+function RipenessCue({ cues }) {
+  const { target, mechanic } = cues
+  if (!target && !mechanic) return null   // unsourced crop / anything not harvested -> render NOTHING
+  const attribution = target ?? mechanic
+  return (
+    <div>
+      <div style={{ fontSize: '0.72rem', fontWeight: 600, color: P.light, marginBottom: 2,
+        textTransform: 'uppercase', letterSpacing: '0.5px' }}>When it&rsquo;s ripe</div>
+      {target && (
+        <div style={{ fontSize: '0.9rem', color: P.dark, lineHeight: 1.5, wordBreak: 'break-word' }}>{target.cue}</div>
+      )}
+      {mechanic && (
+        <div style={{ fontSize: '0.9rem', color: target ? P.mid : P.dark, lineHeight: 1.5, wordBreak: 'break-word',
+          marginTop: target ? 4 : 0 }}>{mechanic.cue}</div>
+      )}
+      {/* A 'low'-confidence cue is a DERIVATION, not a quotation, and the module requires it to say
+          so. Rendering the caveat is what keeps the confidence tier honest — otherwise a derived
+          wineberry cue reads on screen exactly like a quoted extension instruction. Read off BOTH
+          records rather than off `attribution`: a caveat belongs to the specific claim it qualifies,
+          so a cultivar override must not be able to hide a caveat on the crop mechanic under it. */}
+      {[target?.caveat, mechanic?.caveat].filter(Boolean).map(c => (
+        <div key={c} style={{ fontSize: '0.78rem', color: P.mid, lineHeight: 1.5, marginTop: 4, fontStyle: 'italic' }}>
+          {c}
+        </div>
+      ))}
+      <div style={{ fontSize: '0.72rem', color: P.light, lineHeight: 1.5, marginTop: 4 }}>
+        {attribution.source_url ? (
+          <a href={attribution.source_url} target="_blank" rel="noreferrer noopener" style={{ color: P.light }}>
+            {attribution.source}
+          </a>
+        ) : attribution.source}
+      </div>
     </div>
   )
 }
@@ -39,8 +88,13 @@ export default function CropCard({ planting, onUpdated }) {
 
   const hasMaturity = m.ageDays != null || m.harvestWindowLabel
   const hasChips = Array.isArray(projected) && projected.length > 0
+  // V4-RIPECUE-001: a sourced cue is enough on its own to earn the card. Without this a planting
+  // whose cultivar carries no DTM/sun/yield prose renders no card at all, which would silently drop
+  // the cue from exactly the sparsest records — the reach the cue was chosen for.
+  const cues = resolveRipenessCues(v)
+  const hasCue = !!(cues.target || cues.mechanic)
   const attrs = [dtm, v.sun_requirements, v.expected_yield_notes].filter(Boolean)
-  if (!hasMaturity && !hasChips && specChips.length === 0 && attrs.length === 0) return null
+  if (!hasMaturity && !hasChips && specChips.length === 0 && attrs.length === 0 && !hasCue) return null
 
   return (
     <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 24,
@@ -98,11 +152,12 @@ export default function CropCard({ planting, onUpdated }) {
       )}
 
       {/* structured cultivar attributes */}
-      {attrs.length > 0 && (
+      {(attrs.length > 0 || hasCue) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <Attr label="Days to maturity" value={dtm} />
           <Attr label="Sun" value={v.sun_requirements} />
           <Attr label="Expected yield" value={v.expected_yield_notes} />
+          <RipenessCue cues={cues} />
         </div>
       )}
     </div>
