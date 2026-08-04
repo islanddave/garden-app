@@ -91,7 +91,26 @@ describe('sparse by design — an ordinary red slicer gets no cultivar cue', () 
   const ORDINARY_RED = [
     'Celebrity', 'Beefsteak', 'Big Boy', 'Jet Star', 'Stupice', 'Moskvich Heirloom',
     'Delicious', 'Oregon Spring', 'Sub Arctic Plenty', 'Bush Early Girl', 'Manitoba',
-    'New Yorker', 'Floridade', 'Mountain Fresh Plus',
+    // 'Floridade' was corrected to 'Floradade' in plant_varieties on 20260804 (UF 1976 release;
+    // the row's own care_notes and its victoryseeds "flora-dade" source_url both already said so,
+    // and the nursery sign OCR reads "Tomato - Floradade"). BOTH spellings stay listed on purpose:
+    // entity.display_name and plants.name still carry the old string — no trigger syncs a name
+    // UPDATE to the entity mirror — so the old spelling is still live on other surfaces, and this
+    // assertion should hold for whichever one reaches resolveRipenessCues.
+    'New Yorker', 'Floridade', 'Floradade', 'Mountain Fresh Plus',
+    // 20260804: eight more, each CONFIRMED plain-red against a fetched listing rather than assumed
+    // from the name. That matters — the list is an assertion that research was DONE and came back
+    // negative, not a list of cultivars nobody got to. Sources, in order:
+    //   Cherry Falls      kitchengardenseeds.com/tomato-cherry-falls.html
+    //   Thessaloniki      trueleafmarket.com/products/tomato-thessaloniki-seeds
+    //   Czech Bush Slicer plantgoodseed.com/products/czech-bush-tomato-seeds-solanum-lycerpersicum
+    //   Granadero         johnnyseeds.com .../granadero-organic-f1-tomato-seed-2584G.html
+    //   San Marzano Roma  territorialseed.com/products/tomato-san-marzano
+    //   Large Red Cherry  totallytomato.com/product/T00424/82
+    //   Red Grape         harrisseeds.com/products/11888-tomato-red-grape-f1
+    //   Super Sweet 100   johnnyseeds.com .../supersweet-100-f1-tomato-seed-3981.html
+    'Cherry Falls', 'Thessaloniki', 'Czech Bush Slicer', 'Granadero',
+    'San Marzano Roma', 'Large Red Cherry', 'Red Grape', 'Super Sweet 100',
   ]
 
   it.each(ORDINARY_RED)('%s carries no cultivar-level cue', (name) => {

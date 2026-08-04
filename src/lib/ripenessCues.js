@@ -230,6 +230,42 @@ export const CUES_BY_CROP_TYPE = {
     confidence: 'high',
     asserted_on: DAY,
   },
+  // ── 20260804: three live harvestable crops that had NO mechanic at all ───────────────────────
+  // Found by counting coverage against Neon rather than against the last count written down: 212 of
+  // 217 live harvestable plantings had a cue, and the uncovered five were not all avocado. cilantro
+  // (2 plantings), spinach (1) and luffa (1) were simply missing, and all three source cleanly from
+  // extension services — they were a gap in the audit, not a gap in the literature.
+  cilantro: {
+    cue: 'Once plants are ~6 in. tall, cut leaves or take the whole plant an inch above ground; harvest before a flower stalk shoots up — bolted leaves taste off.',
+    source: 'Wisconsin Horticulture (UW–Madison Extension)',
+    source_url: 'https://hort.extension.wisc.edu/articles/cilantro-coriander-coriandrum-sativum/',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  // Two-source composite: the leaf-size mechanic is Clemson, the bolting mechanic is UMN, and no
+  // single page states both — hence medium rather than high, though each half is near-verbatim.
+  // The bolting half is the actionable one: it says harvest the WHOLE planting off one plant's
+  // seed stalk, which is a different action from picking leaves as they size up.
+  spinach: {
+    cue: 'Pick outer leaves once they’re 3–6 in. long, letting inner ones size up; when one plant sends up a seed stalk, harvest them all — the rest follow fast.',
+    source: 'Clemson HGIC / UMN Extension',
+    source_url: 'https://hgic.clemson.edu/factsheet/spinach/',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  // The live planting is named 'Loofah Sponge', so this cue targets the SPONGE goal. Luffa has two
+  // genuinely exclusive harvest goals on a given fruit — eaten under 7 in. as a squash, or left the
+  // whole season to dry — and they must never be merged into one sentence, because following half
+  // of each instruction wastes the fruit either way. The source's "after first frost" is a seasonal
+  // marker, not a gate; the operative signals are weight, dryness and the rattle, which is what the
+  // cue leads with. 'Tan' dropped in keeping with the colour-agnostic rule for crop-level cues.
+  luffa: {
+    cue: 'For a sponge, leave it on the vine until the gourd feels light and dry in the hand and the seeds rattle when shaken — usually after first frost.',
+    source: 'NC State Extension Gardener Plant Toolbox',
+    source_url: 'https://plants.ces.ncsu.edu/plants/luffa-aegyptiaca/',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
   endive: {
     cue: 'Cut the head once it has reached full size, is well formed, and feels firm to a gentle squeeze.',
     source: 'Utah State University Extension',
@@ -440,6 +476,22 @@ export const CUES_BY_CROP_TYPE = {
     confidence: 'medium',
     asserted_on: DAY,
   },
+  // ── AVOCADO — the gap this pass was opened to close ──────────────────────────────────────────
+  // The awkward crop: an avocado does not soften on the tree, so "is it soft yet?" is unanswerable
+  // in the field and every softness-based instinct is wrong. The only on-tree test UC ANR gives is
+  // destructive — cut one open and read the SEED COAT — which is why the cue leads with the fact
+  // that makes the destructive test worth doing. Deliberately NOT asserted: a skin colour or a
+  // calendar month. Maturity month is per-variety (the same source dates Bacon, Hass and Reed
+  // months apart) and the live row is just 'Avocado' with no cultivar, so any month here would be
+  // a guess. Medium, not high: the cue combines two statements from the page rather than quoting
+  // one, and the source is an extension blog post rather than a factsheet.
+  avocado: {
+    cue: 'Avocados never soften on the tree. Cut a test fruit: a thick white seed coat means not yet; a thin, browned seed coat means ready.',
+    source: 'UC ANR — Topics in Subtropics',
+    source_url: 'https://ucanr.edu/blog/topics-subtropics/article/when-avocado-ripe',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
 }
 
 // ── TARGET STATE, cultivar-level, sparse ────────────────────────────────────────────────────────
@@ -511,6 +563,218 @@ export const CUES_BY_CULTIVAR = {
     asserted_on: DAY,
   },
 
+  // ── 20260804 PEPPER PASS ──────────────────────────────────────────────────────────────────────
+  // Ordered by how badly the crop mechanic alone would mislead. Two shapes dominate, and both are
+  // the shape this file exists for: pods picked deliberately IMMATURE (the whole New Mexican /
+  // poblano / shishito family), and pods whose ripe colour is NOT red so that "wait for red" would
+  // hold them past ripeness. Ordinary green→red chiles got no entry — the crop mechanic already
+  // says "full size, firm and glossy, you never have to wait for red", which is the whole truth for
+  // them, and a cultivar line repeating it is chrome.
+
+  // NMSU is the authority on New Mexican types and states the mature-green target as a TOUCH and
+  // SHAPE test, not a colour — so this reads as a mechanic even at cultivar grain. Live record is
+  // 'New Mexico (Hatch-type)'; keyed on the full normalized name.
+  newmexicohatchtype: {
+    cue: 'Mature green IS the harvest stage: firm when squeezed, flat, smooth and bluntly pointed at 6–7 in. You do not wait for red.',
+    source: 'NMSU Extension H-230 — Growing Chiles in New Mexico',
+    source_url: 'https://pubs.nmsu.edu/_h/H230/',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  // Same publication family, and it settles the single most common pepper misread in the garden:
+  // a jalapeño is picked BEFORE maturity by design, so green is not a compromise.
+  jalapeno: {
+    cue: 'Dark green is the immature stage and the usual pick; red is actual maturity.',
+    source: 'NMSU Extension H-240 — Growing Chile Peppers in New Mexico Gardens',
+    source_url: 'https://pubs.nmsu.edu/_h/H240/index.html',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  // The source explicitly instructs the early pick, which is rare and worth quoting closely.
+  cubanelle: {
+    cue: 'Pick at pale yellow-green — that is the frying stage, not an unripe one. Left on, it goes on to red.',
+    source: 'John Scheepers Kitchen Garden Seeds',
+    source_url: 'https://www.kitchengardenseeds.com/cubanelle-sweet-pepper.html',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  // 'Ancho' and 'Poblano' are the same pepper at two stages, and the name on the plant is the DRIED
+  // one — so the label itself points at the wrong stage. That is the entire value of this entry.
+  ancho: {
+    cue: 'The poblano stage is the target — pick while glossy dark green. “Ancho” is the dried reddish-brown pod.',
+    source: 'John Scheepers Kitchen Garden Seeds',
+    source_url: 'https://www.kitchengardenseeds.com/poblano-ancho-chile-pepper.html',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  sweetsivri: {
+    cue: 'Ripens on to red, but the young green pods are the deliberate pick — they make a crisper pickle.',
+    source: 'Thresh Seed Co.',
+    source_url: 'https://www.threshseed.com/products/tatli-kil-sivri-sweet-sivri',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  dragonroll: {
+    cue: 'Pick while green, before the pods transition to red — green is the intended eating stage.',
+    source: 'Garden Center Ohio plant catalog',
+    source_url: 'https://catalog.gardencenterohio.com/products/pepper-hot-dragon-roll/',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+
+  // ── RIPE IS NOT RED ──────────────────────────────────────────────────────────────────────────
+  gatherersgold: {
+    cue: 'Stays golden at full maturity — gold IS ripe here, and it will never go red.',
+    source: 'Territorial Seed Company',
+    source_url: 'https://territorialseed.com/products/pepper-gatherers-gold-sweet-italian',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  sunbright: {
+    cue: 'Most bells are only half-ripe at yellow; this one is finished at yellow. Pick it there.',
+    source: 'SeedsNow',
+    source_url: 'https://www.seedsnow.com/products/pepper-sweet-sun-bright-yellow',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  orangesun: {
+    cue: 'Ripens green to vivid creamsicle-orange — orange is ripe and it will not go on to red.',
+    source: 'John Scheepers Kitchen Garden Seeds',
+    source_url: 'https://www.kitchengardenseeds.com/orange-sun-bell-pepper-orange.html',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  goldencaliforniawonder: {
+    cue: 'Runs green → golden yellow → deep orange and never red; the richer the colour, the riper the fruit.',
+    source: 'Sow True Seed',
+    source_url: 'https://sowtrueseed.com/products/sweet-pepper-golden-california-wonder',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  lemondropajilimon: {
+    cue: 'Goes light green to golden yellow at ripeness — yellow IS ripe, it never reddens.',
+    source: 'Hudson Valley Seed Company',
+    source_url: 'https://hudsonvalleyseed.com/products/lemon-drop-hot-pepper',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  sugarrushpeach: {
+    cue: 'Ripe is peachy orange and never red — yellow at about 60 days is early, full peach colour lands near 80.',
+    source: 'Adaptive Seeds',
+    source_url: 'https://www.adaptiveseeds.com/product/vegetables/peppers/hot-pepper-sugar-rush-peach-organic/',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  pumpkinjalapeno: {
+    cue: 'Ripens to warm orange, not red — orange is the finished colour for this jalapeño.',
+    source: 'John Scheepers Kitchen Garden Seeds (Pumpkin Spice Jalapeño)',
+    source_url: 'https://www.kitchengardenseeds.com/seed-index/fruits-and-vegetables/hot-chile-peppers/pumpkin-spice-jalapeno-hot-chile-pepper.html',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+
+  // ── AN INTERMEDIATE COLOUR THAT READS AS RIPE ────────────────────────────────────────────────
+  // These invert the usual correction: here the striking colour is the UNRIPE one. Black Hungarian
+  // is the sharpest case — the source says the near-black stage is hot but poor eating, and that
+  // the flavour only arrives at red, so picking on looks costs the whole point of the variety.
+  blackhungarian: {
+    cue: 'The near-black purple stage is NOT ripe — it ripens on to vivid red, and the berry-like flavour only arrives then.',
+    source: 'Experimental Farm Network',
+    source_url: 'https://store.experimentalfarmnetwork.org/products/black-hungarian-pepper',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  blackolive: {
+    cue: 'The dark purple-black pods are mid-season, not ripe — they mature on to red.',
+    source: 'All-America Selections',
+    source_url: 'https://all-americaselections.org/product/ornamental-pepper-black-olive/',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  santafegrande: {
+    cue: 'Green → yellow → orange → glossy red. The familiar pale-yellow pick is an early stage; red is full maturity.',
+    source: 'Sandia Seed Company',
+    source_url: 'https://www.sandiaseed.com/products/santa-fe-grande',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  tabasco: {
+    cue: 'Pods pass through yellow and orange before ripening bright red; flavour is best at the dark red stage.',
+    source: 'Texas A&M AgriLife — Henderson County Master Gardeners',
+    source_url: 'https://txmg.org/hendersonmg/plant-library/peppers-tabasco/',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  // Live record spells it 'Chilly Chill'; the AAS listing is 'Chilly Chili F1'. Near-certainly the
+  // same plant (one ornamental, same colour run) but the names differ by a letter, so this stays
+  // medium rather than high on identity grounds, not on what the page says.
+  chillychill: {
+    cue: 'Fruit runs yellow then orange and only matures at red — the earlier colours are stages, not ripeness.',
+    source: 'All-America Selections (Chilly Chili F1)',
+    source_url: 'https://all-americaselections.org/product/ornamental-pepper-chilly-chili/',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  candlelight: {
+    cue: 'Pods run green → orange → red; orange is mid-ripening and fully ripe is red.',
+    source: 'ChilePlants.com (Cross Country Nurseries)',
+    source_url: 'https://www.chileplants.com/search.aspx?ProductCode=CHICAN',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  // The page lists the colour RUN; that red is terminal is read off the ordering rather than stated.
+  purpletiger: {
+    cue: 'Pods run purple, then cream, then red — purple is a ripening stage here, not ripeness.',
+    source: 'Trade Winds Fruit',
+    source_url: 'https://www.tradewindsfruit.com/capsicum-annuum-purple-tiger-pepper-seeds',
+    confidence: 'low',
+    caveat: 'The source lists the colour sequence but does not state that red is the final ripe stage — that is read from the ordering.',
+    asserted_on: DAY,
+  },
+
+  // ── DERIVED FROM DAY-COUNTS, and marked accordingly ──────────────────────────────────────────
+  // Live record is 'Katana F1 (Shishito)', and this entry is keyed on the parenthetical-stripped
+  // form. It is NOT covered by the `shishito` entry above: that key is 'shishito' and resolves from
+  // neither 'katanaf1shishito' nor 'katanaf1', so this cultivar was silently getting no target cue
+  // despite a sourced shishito entry already sitting in the file. Sourced to its own listing rather
+  // than borrowed from the open-pollinated Shishito, which is a different cultivar.
+  katanaf1: {
+    cue: 'A shishito type: pick pale green at around 60 days. Left on the plant it reddens by about 75.',
+    source: 'High Mowing Organic Seeds',
+    source_url: 'https://www.highmowingseeds.com/organic-non-gmo-katana-f1-shishito-pepper.html',
+    confidence: 'low',
+    caveat: 'The listing gives green and red day-counts and the pale-green fruit colour; it does not itself say to pick green.',
+    asserted_on: DAY,
+  },
+  anaheim: {
+    cue: 'Green is a real harvest stage here, not unripe — roughly 65 days green against 85 days red-ripe.',
+    source: 'Johnny’s Selected Seeds (Highlander F1 Anaheim)',
+    source_url: 'https://www.johnnyseeds.com/vegetables/peppers/hot-peppers/highlander-organic-f1-anaheim-pepper-seed-3829G.html',
+    confidence: 'low',
+    caveat: 'Day-counts are for Johnny’s Highlander F1, not the open-pollinated Anaheim, and the two-stage reading is inferred from them.',
+    asserted_on: DAY,
+  },
+  biquinhoyellowf1: {
+    cue: 'Ripe pods are bright yellow teardrops — yellow is the finish line, not a stage on the way to red.',
+    source: 'True Leaf Market',
+    source_url: 'https://trueleafmarket.com/products/pepper-seeds-hot-biquinho-yellow',
+    confidence: 'low',
+    caveat: 'The page states the ripe pods are yellow but never describes the transition or rules out red — that half is derived.',
+    asserted_on: DAY,
+  },
+
+  // ── DELIBERATELY ABSENT: Habanero, Scotch Bonnet, Devil's Tongue ─────────────────────────────
+  // All three are sold in orange, yellow, red and chocolate strains that ripen to DIFFERENT
+  // terminal colours, and the live rows name no strain — plant_varieties carries only 'Habanero',
+  // 'Scotch Bonnet', "Devil's Tongue" with generic sources (Wikipedia, PepperScale). Sourcing found
+  // good pages, but each was for one specific strain. Asserting "ripe is orange" on a row that
+  // might be the red strain is precisely the confident-wrong-cue this file refuses to ship, and on
+  // a 100k–350k SHU pod the wrong pick is not a cheap mistake. The app's own care_notes for
+  // Habanero already hedge to "Harvest orange or red", so a cue claiming orange would contradict
+  // the record next to it. The crop mechanic ("full size, firm and glossy, you never have to wait
+  // for red") is correct for every strain and is what these three should render. Pin the strain on
+  // the variety row and these become high-confidence entries immediately.
+
   // ── TOMATOES that never turn red, or whose "unripe" look is actually ripe ────────────────────
   // The highest-value entries in the file: each one corrects an intuition rather than confirming
   // it, which is what Dave asked for with the Pick-N-Pop example. "Wait for red" on any of these
@@ -557,6 +821,121 @@ export const CUES_BY_CULTIVAR = {
     confidence: 'high',
     asserted_on: DAY,
   },
+
+  // ── 20260804 TOMATO PASS ─────────────────────────────────────────────────────────────────────
+  // Same ordering principle as the peppers: how badly does "wait for red" mislead here. The
+  // green-shouldered types come first because a green shoulder reads as "not ready" to almost
+  // anyone, and they are the cues most likely to change what Dave actually picks.
+  ukrainianpurple: {
+    cue: 'Ripe is purple bordering on chocolate-brown, often with a little green left in the shoulders. That green is normal.',
+    source: 'Thresh Seed Co.',
+    source_url: 'https://www.threshseed.com/products/ukrainian-purple',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  margaretcurtain: {
+    cue: 'Looks like a bigger Black Krim: dusky dark fruit with a green shoulder that stays green when fully ripe.',
+    source: 'Koanga Institute',
+    source_url: 'https://koanga.org.nz/gardens/plant-now/september/tomato-margaret-curtain/',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  blackcherry: {
+    cue: 'Ripe is a dusky purple-brown, never red, and colour sets blossom-end first — so the shoulders darken last.',
+    source: 'Johnny’s Selected Seeds',
+    source_url: 'https://www.johnnyseeds.com/vegetables/tomatoes/cherry-tomatoes/black-cherry-organic-tomato-seed-88G.html',
+    confidence: 'high',
+    asserted_on: DAY,
+  },
+  // The best single find of the pass: the SKIN colour actively misreports the interior, so this is
+  // the one where looking at the fruit and believing it is the wrong move.
+  deltonet: {
+    cue: 'Ripe skin is peachy-pink over a deep red interior — the skin never reddens, so it looks underripe when it is not.',
+    source: 'Uprising Seeds',
+    source_url: 'https://www.uprisingorganics.com/products/tomato-del-tonet',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+
+  // ── RIPENS YELLOW / GOLD / ORANGE, never red ─────────────────────────────────────────────────
+  valencia: {
+    cue: 'Ripe is a glowing sunny orange — orange is the finished colour, it does not go on to red.',
+    source: 'Johnny’s Selected Seeds',
+    source_url: 'https://www.johnnyseeds.com/vegetables/tomatoes/heirloom-tomatoes/valencia-organic-tomato-seed-749.html',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  sunray: {
+    cue: 'Ripe is a vibrant golden-orange — gold is the finished colour here, not a stage on the way to red.',
+    source: 'Reimer Seeds',
+    source_url: 'https://www.reimerseeds.com/sunray-tomato-seeds',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  yellowpear: {
+    cue: 'Ripe is an even shiny yellow on the pear-shaped fruit — yellow is the ripe state, not an early one.',
+    source: 'John Scheepers Kitchen Garden Seeds',
+    source_url: 'https://www.kitchengardenseeds.com/tomato-yellow-pear.html',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  // Live record spells it 'Banana Creme'; the sourced listing is 'Banana Cream'.
+  bananacreme: {
+    cue: 'Ripe is an even creamy pale yellow along the whole elongated fruit — it never turns red or orange.',
+    source: 'Trade Winds Fruit (Banana Cream)',
+    source_url: 'https://www.tradewindsfruit.com/banana-cream-tomato-seeds',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  // Vendors split on whether the streaks read orange or red (Pinetree says orange-and-yellow,
+  // Territorial says red-and-yellow). The ACTIONABLE half — it never goes solid red — is common to
+  // both, so the cue asserts that and leaves the shade alone. Medium for exactly that reason.
+  pineappletomato: {
+    cue: 'Ripe is yellow-orange streaked with red, inside and out — it never turns solid red.',
+    source: 'Pinetree Garden Seeds',
+    source_url: 'https://www.superseeds.com/products/pineapple-tomato-85-days-heirloom',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+
+  // ── PINK, not red ────────────────────────────────────────────────────────────────────────────
+  // Weaker corrections than the group above and knowingly so: pink-vs-red is a subtler call than
+  // yellow-vs-red and vendor wording wobbles ("pinkish red", "dark pink"). They earn their place
+  // because holding a pink beefsteak out for scarlet does overripen it, but if this section ever
+  // needs pruning for card space, prune here first and keep the colour-shift cues above.
+  evapurpleball: {
+    cue: 'Despite the name, ripe reads pink-purple rather than dark purple or black — a smooth, blemish-free ball.',
+    source: 'TomatoFest',
+    source_url: 'https://www.tomatofest.com/Eva_Purple_Ball_Tomato_Seeds_p/tf-0168.htm',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  '1884': {
+    cue: 'Ripe is dark pink rather than red, on a somewhat ribbed 1–2 lb beefsteak.',
+    source: 'Tomato Growers Supply Company',
+    source_url: 'https://tomatogrowers.com/products/1884',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+  dester: {
+    cue: 'Ripe is pinkish-red rather than deep scarlet — this is a large pink beefsteak, often over a pound.',
+    source: 'Nichols Garden Nursery',
+    source_url: 'https://nicholsgardennursery.com/products/dester-tomato',
+    confidence: 'medium',
+    asserted_on: DAY,
+  },
+
+  // ── DELIBERATELY ABSENT: Tie-Dye ─────────────────────────────────────────────────────────────
+  // 'Tie-Dye' names at least three genetically distinct tomatoes with materially different ripe
+  // appearances — Pink Berkeley Tie-Dye (dark pink with green striping), Berkeley Tie-Dye Green
+  // (green with red-yellow stripes) and Fred's Tie-Dye — and the live row says only 'Tie-Dye'. A
+  // sourced cue exists for the Pink Berkeley one, and shipping it would be a coin flip on whether
+  // the ripe fruit is pink or green. Between those two answers the cue would either be the most
+  // useful line on the card or the most harmful, which is not a bet this file takes. Pin the
+  // variety and it becomes a high-value entry.
+  //
+  // Also absent: Rosa Sicilian. Its listing describes the RIBBING and shape, not a ripeness state,
+  // and calls the colour "rosy red-pink" — close enough to ordinary red that a cue would be chrome.
 }
 
 /** Key normalizer: case/punctuation-insensitive, and vendor parentheticals are dropped. */
