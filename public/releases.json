@@ -1,5 +1,17 @@
 [
   {
+    "version": "3.96.0",
+    "date": "2026-08-04",
+    "highlights": [
+      "The \u201cIt sprouted!\u201d button now only appears on plants that could actually be sprouting. It was keyed on a stamp that exists on 5 of 269 plantings, so it showed up on 264 of them \u2014 including plants already fruiting, already harvested, and every one of the 107 bought as nursery transplants. It now appears on 21.",
+      "Finished plants stop asking to be harvested. Wild wineberries that had gone dormant for the season sat at the top of the harvest list, and the three entries below them were no better. Dormant plants are now excluded, and anything overdue by more than three times its own picking interval drops off as well \u2014 measured against 220 real harvests, that removes 4 of them. The list is now led by plants actually in production.",
+      "Ripeness cues on the plant card. 197 of 200 edible plantings now carry a short note on how to tell when to pick, each one taken from a named extension service or seed vendor and linked so you can check it. Where no source could be found, the card says nothing rather than guessing \u2014 and where a cue was inferred rather than stated outright, it says so on screen. Ornamentals and houseplants show nothing at all.",
+      "The needs-attention bar no longer sits on every screen. It was pinned to the bottom of 49 of the 50 pages, including when there was nothing to report, taking 56 pixels everywhere. It is hidden for now; the Today page is unaffected.",
+      "Logging an event starts with the photo. The photo picker moved to the top of the Log Event form, matching how Snap and the Photos page already work. For photo events the field is also now marked as required at the top of the form instead of failing on save.",
+      "Plantings that aren't in a project can be opened and edited. Previously any planting without a project returned \u201cnot found\u201d on its detail page, on edit, on archive and on delete. Switching projects in the Log Event form also now clears a planting picked from the previous one, instead of saving a mismatched pair."
+    ]
+  },
+  {
     "version": "3.95.0",
     "date": "2026-08-04",
     "highlights": [
