@@ -348,7 +348,7 @@ describe('project-less plantings — full by-id lifecycle (BUG-PLANTLESSWRITE-00
   it('GET /:id → 200 (was 404: the container INNER JOIN dropped it)', async () => {
     setTestUserId(USER)
     const { status, body } = await callHandler(handler, { method: 'GET', path: `/api/plants/${plantlessId}` })
-    expect(status).toBe(200)
+    expect(status, `GET → ${JSON.stringify(body)}`).toBe(200)
     expect(body.id).toBe(plantlessId)
     expect(body.project_id ?? null).toBeNull()
     expect(body.project_name ?? null).toBeNull() // LEFT JOIN, key still present
@@ -359,7 +359,7 @@ describe('project-less plantings — full by-id lifecycle (BUG-PLANTLESSWRITE-00
     const { status, body } = await callHandler(handler, {
       method: 'PUT', path: `/api/plants/${plantlessId}`, body: { name: 'plantless-renamed-' + RUN },
     })
-    expect(status).toBe(200)
+    expect(status, `PUT name → ${JSON.stringify(body)}`).toBe(200)
     expect(body.name).toBe('plantless-renamed-' + RUN)
     expect(body.notes).toBe('keep-me')
     const rows = await directSql`SELECT name FROM plants WHERE id = ${plantlessId}`
@@ -367,11 +367,19 @@ describe('project-less plantings — full by-id lifecycle (BUG-PLANTLESSWRITE-00
   })
 
   it('PUT status change → 200 (status_change event_log + entity_memory guard path)', async () => {
+    // `vegetative`, NOT `growing`: `growing` is a PROJECT status (statusEvents.js
+    // PROJECT_STATUS_LABELS) and the base table carries a VALIDATED CHECK,
+    // chk_plants_status = seed|seedling|vegetative|flowering|fruiting|harvested|dormant|ended|
+    // failed|rooting. `growing` violates it → 23514 → the handler's catch returns 400. The
+    // constraint lives on `plants`; `garden_node` is a view and reports no constraints of its own,
+    // which is why a check against the view suggests there is no status constraint at all.
     setTestUserId(USER)
-    const { status } = await callHandler(handler, {
-      method: 'PUT', path: `/api/plants/${plantlessId}`, body: { status: 'growing' },
+    const { status, body } = await callHandler(handler, {
+      method: 'PUT', path: `/api/plants/${plantlessId}`, body: { status: 'vegetative' },
     })
-    expect(status).toBe(200)
+    // Assert on the body, so the next failure names its own cause instead of showing a bare number.
+    expect(status, `PUT status → ${status}: ${JSON.stringify(body)}`).toBe(200)
+    expect(body.status).toBe('vegetative')
     const ev = await directSql`
       SELECT project_id, plant_id FROM event_log
        WHERE plant_id = ${plantlessId} AND event_type = 'status_change' AND deleted_at IS NULL
@@ -385,12 +393,12 @@ describe('project-less plantings — full by-id lifecycle (BUG-PLANTLESSWRITE-00
     const on = await callHandler(handler, {
       method: 'PATCH', path: `/api/plants/${plantlessId}/archive`, body: { archived: true },
     })
-    expect(on.status).toBe(200)
+    expect(on.status, `archive on → ${JSON.stringify(on.body)}`).toBe(200)
     expect(on.body.archived_at).toBeTruthy()
     const off = await callHandler(handler, {
       method: 'PATCH', path: `/api/plants/${plantlessId}/archive`, body: { archived: false },
     })
-    expect(off.status).toBe(200)
+    expect(off.status, `archive off → ${JSON.stringify(off.body)}`).toBe(200)
     expect(off.body.archived_at).toBeNull()
   })
 
@@ -399,7 +407,7 @@ describe('project-less plantings — full by-id lifecycle (BUG-PLANTLESSWRITE-00
     const { status, body } = await callHandler(handler, {
       method: 'POST', path: `/api/plants/${plantlessId}/seen`, body: {},
     })
-    expect(status).toBe(201)
+    expect(status, `seen → ${JSON.stringify(body)}`).toBe(201)
     expect(body.leaf_id).toBe(plantlessId)
   })
 
@@ -467,8 +475,8 @@ describe('project-less plantings — full by-id lifecycle (BUG-PLANTLESSWRITE-00
 
   it('DELETE /:id → 200 and actually soft-deletes the project-less row', async () => {
     setTestUserId(USER)
-    const { status } = await callHandler(handler, { method: 'DELETE', path: `/api/plants/${plantlessId}` })
-    expect(status).toBe(200)
+    const { status, body } = await callHandler(handler, { method: 'DELETE', path: `/api/plants/${plantlessId}` })
+    expect(status, `DELETE → ${JSON.stringify(body)}`).toBe(200)
     const rows = await directSql`SELECT deleted_at FROM plants WHERE id = ${plantlessId}`
     expect(rows[0].deleted_at).toBeTruthy() // the DELETE always returns 200; assert the DB, not the echo
   })
