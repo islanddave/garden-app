@@ -64,7 +64,48 @@ describe('harvest-ready SQL shape', () => {
   it('excludes archived and dead plantings (ambient nudge, unlike the pinned detail page)', () => {
     expect(candidates).toMatch(/p\.archived_at IS NULL/);
     expect(candidates).toMatch(/c\.archived_at IS NULL/);
-    expect(candidates).toMatch(/p\.status NOT IN \('failed', 'ended'\)/);
+    expect(candidates).toMatch(/p\.status NOT IN \('failed', 'ended', 'dormant'\)/);
+  });
+
+  // A wild wineberry that went dormant on 2026-07-31 kept ranking #1 of 18 at 10.5x overdue,
+  // because `dormant` is not 'failed' and not 'ended'. statusTransitions.js already classifies
+  // dormant as a terminal/past state and dashboard/handlers.js excludes it in 7 places — this
+  // route was the lone outlier. Regression guard on the specific status, not just the list shape.
+  it('excludes DORMANT plantings (finished-for-the-season no longer nags)', () => {
+    expect(candidates).toMatch(/'dormant'/);
+  });
+
+  // Staleness backstop for the whole leak class: whatever status leaks through next (or a plain
+  // abandonment with no status change at all), nothing can sit at the top of the list many
+  // multiples overdue. Ceiling is empirical — see the constant's comment for the distribution.
+  it('applies the staleness ceiling as a multiple of the crop repeat interval', () => {
+    expect(candidates).toMatch(/\$\{HARVEST_STALE_INTERVAL_CEILING\} \* ct\.repeat_interval_days/);
+  });
+
+  // The server ceiling is defence-in-depth behind src/lib/harvestReadiness.js's MAX_OVERDUE_RATIO,
+  // which is authoritative. They live in different deploy units (Lambda vs bundle) so the value
+  // cannot be imported and MUST be duplicated — this is the guard that stops the duplicate from
+  // drifting. Divergence is not merely untidy: the looser of the two becomes silent dead config.
+  it('server ceiling equals the client MAX_OVERDUE_RATIO (single effective value)', () => {
+    const serverCeiling = Number(
+      /const HARVEST_STALE_INTERVAL_CEILING = (\d+(?:\.\d+)?)/.exec(src)?.[1]
+    );
+    const clientSrc = readFileSync(
+      join(here, '..', '..', 'src', 'lib', 'harvestReadiness.js'), 'utf-8'
+    );
+    const clientCeiling = Number(
+      /MAX_OVERDUE_RATIO\s*=\s*(\d+(?:\.\d+)?)/.exec(clientSrc)?.[1]
+    );
+    expect(Number.isFinite(serverCeiling)).toBe(true);
+    expect(Number.isFinite(clientCeiling)).toBe(true);
+    expect(serverCeiling).toBe(clientCeiling);
+  });
+
+  // The ceiling must NARROW only. Rows the pure client predicate owns rejecting (NULL/non-positive
+  // interval) must still arrive, or the server has quietly taken over eligibility.
+  it('staleness ceiling is NULL-safe and no-ops on non-positive intervals', () => {
+    expect(candidates).toMatch(/ct\.repeat_interval_days IS NULL/);
+    expect(candidates).toMatch(/ct\.repeat_interval_days <= 0/);
   });
 
   it('scopes to the household via container.created_by', () => {
@@ -74,6 +115,10 @@ describe('harvest-ready SQL shape', () => {
   it('returns candidates only — the eligibility predicate is NOT duplicated in SQL', () => {
     // Single source of truth: src/lib/harvestReadiness.js decides. If these ever appear here the
     // predicate has two homes and they will drift.
+    // NOTE the staleness ceiling above is deliberately NOT a violation of this: it is a fourth,
+    // server-only concern (is this rhythm still live?) with no counterpart in isReadyToPick, so it
+    // narrows the candidate set without duplicating — and therefore without being able to drift
+    // from — any of the three eligibility legs asserted below.
     expect(candidates).not.toMatch(/harvest_habit\s+IN/i);
     expect(candidates).not.toMatch(/repeat_interval_days\s+IS NOT NULL/i);
     expect(candidates).not.toMatch(/harvest_season_start_doy\s*(<=|>=|BETWEEN)/i);

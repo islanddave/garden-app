@@ -58,6 +58,30 @@ function resp(statusCode, body) {
 // are CALENDAR windows anchored at 00:00 in this zone, not UTC days.
 const HARVEST_TZ = 'America/New_York';
 
+// Staleness ceiling for harvest-readiness candidates, in multiples of the crop's repeat interval.
+//
+// !! MUST EQUAL `MAX_OVERDUE_RATIO` in src/lib/harvestReadiness.js. !!
+// The client predicate is authoritative for eligibility; this is defence-in-depth that also keeps
+// the payload from carrying rows every consumer will discard. Two surfaces with DIFFERENT ceilings
+// would make the looser one dead config and the pair a latent disagreement, so
+// harvest-ready.test.js asserts the two constants are equal — change them together or that fails.
+//
+// Value chosen from the EMPIRICAL distribution of real picking rhythm on live prod, not a guess:
+// across 220 observed consecutive-harvest gaps (gap / crop repeat_interval_days, repeating habits
+// only) the distribution is p50=0.50, p90=1.50, p95=1.76, p99=4.00, max=19.00, and the tail above
+// each candidate ceiling is >3: 4/220 (1.8%), >4: 2/220 (0.9%), >5: 1/220. p99 lands at 4.0, so 4
+// is the marginally better-supported cut — but it differs from 3 by TWO events in the entire
+// recorded history, which does not justify diverging from the client. Aligned on 3 deliberately.
+//
+// This is a BACKSTOP for the class of bug, not just the instance: it bounds the damage from ANY
+// future status value (or a plain abandonment with no status change at all) so nothing can again
+// sit at the top of the list at 10x overdue. Note the ratio is interval-relative and so
+// systematically inflates short-interval crops — the wineberry's 10.5 was 21 days on a 2-day
+// interval, while a 58-day-stale scallion only reaches 4.14. It therefore CANNOT substitute for
+// the status filter below: a dormant planting picked recently sits at ratio <= 3 and would still
+// nag forever.
+const HARVEST_STALE_INTERVAL_CEILING = 3;
+
 const DAILY_FLAT_XP_CAP = 30;
 const FLAT_XP_PER_EVENT = 10;
 
@@ -265,7 +289,12 @@ export const handler = async (event) => {
             NULL::timestamptz,
             CASE WHEN ${eventType} IN ('watering','rain')      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
             NULL::timestamptz
-          FROM public.garden_node p WHERE p.id = ANY(${plantIds})
+          -- BUG-EMPROJGUARD-001 (batch path): container_id IS NULLABLE, so a project-less planting
+          -- in the batch would contribute a ZERO-parent row and abort the whole batch transaction.
+          -- Latent today (0 such plantings in prod) but reachable the moment CaptureFlow starts
+          -- creating them, which BUG-CAPTUREFLOW400-001 unblocks.
+          FROM public.garden_node p
+          WHERE p.id = ANY(${plantIds}) AND p.container_id IS NOT NULL
           ON CONFLICT (project_id) DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
             last_watered_at    = CASE WHEN ${eventType} IN ('watering','rain')      THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
@@ -620,8 +649,19 @@ export const handler = async (event) => {
     //     quantities".
     //   * days_since_last_harvest is whole ET days; it can be NEGATIVE if a pick was future-dated,
     //     and that row is passed through unfiltered for the pure predicate to reject.
-    //   * Live planting = deleted_at/archived_at NULL and status not failed/ended. (Unlike
+    //   * Live planting = deleted_at/archived_at NULL and status not failed/ended/DORMANT. (Unlike
     //     harvest-summary, archived IS filtered — this is an ambient nudge, not a pinned detail page.)
+    //     `dormant` was added after a wild wineberry that had gone dormant on 2026-07-31 (a
+    //     server-emitted `status_change` "Harvested -> Dormant") ranked #1 of 18 at 10.5x overdue for
+    //     days. statusTransitions.js already classifies dormant as a terminal/past state alongside
+    //     failed/ended, and dashboard/handlers.js excludes it in 7 places — this route was the
+    //     outlier. Dormant is the non-productive terminal subset; `fruiting`/`harvested` are also
+    //     "past" states there but are exactly the productive ones this route exists to surface.
+    //   * Staleness ceiling (HARVEST_STALE_INTERVAL_CEILING): a candidate more than N repeat
+    //     intervals past its last pick is dropped as no-longer-active rhythm. NULL-safe and
+    //     no-op for non-positive intervals, so rows the pure client predicate is responsible for
+    //     rejecting (NULL interval, `single` habit) still arrive unchanged — and a NEGATIVE
+    //     days_since (future-dated pick) still passes through for the client to reject, as before.
     if (rawPath === '/api/events/harvest-ready' && method === 'GET') {
       const rows = await sql`
         WITH last_pick AS (
@@ -652,7 +692,13 @@ export const handler = async (event) => {
           AND c.archived_at IS NULL
           AND p.deleted_at IS NULL
           AND p.archived_at IS NULL
-          AND (p.status IS NULL OR p.status NOT IN ('failed', 'ended'))
+          AND (p.status IS NULL OR p.status NOT IN ('failed', 'ended', 'dormant'))
+          AND (
+            ct.repeat_interval_days IS NULL
+            OR ct.repeat_interval_days <= 0
+            OR ((NOW() AT TIME ZONE ${HARVEST_TZ})::date - lp.last_date)
+                 <= ${HARVEST_STALE_INTERVAL_CEILING} * ct.repeat_interval_days
+          )
       `;
       const meta = await sql`
         SELECT (NOW() AT TIME ZONE ${HARVEST_TZ})::date AS et_today,
@@ -1209,7 +1255,9 @@ export const handler = async (event) => {
 
       const eventDate = normalizeEventDate(body.event_date) ?? new Date().toISOString();
       const eventType = body.event_type;
-      const projectId = body.project_id;
+      // BUG-CAPTUREFLOW400-001: normalize absent -> NULL. validatePostBody now admits a body with
+      // plant_id and no project_id, so this is genuinely nullable rather than validator-guaranteed.
+      const projectId = body.project_id ?? null;
       const metadata = body.metadata ?? null;
       // B8 — normalize flagged_as_issue ONCE; use throughout SQL bindings.
       const flagged = body.flagged_as_issue === true;
@@ -1324,12 +1372,18 @@ export const handler = async (event) => {
           FROM new_event ne
         `,
         sql`
+          -- BUG-EMPROJGUARD-001 (POST path): self-guard on project_id, mirroring the plant-keyed
+          -- sibling below. Was an unconditional VALUES, which was safe only while validatePostBody
+          -- required project_id. Now that a plant-only body is admitted (BUG-CAPTUREFLOW400-001),
+          -- an unguarded NULL would insert a ZERO-parent row, violate exactly_one_parent, and abort
+          -- the whole transaction — converting the old guaranteed 400 into a 500. These two fixes
+          -- MUST ship together.
           INSERT INTO entity_memory
             (project_id, last_event_at,
              last_watered_at, last_fertilized_at, last_pruned_at, last_observed_at, last_harvested_at,
              next_water_at, last_issue_at)
-          VALUES (
-            ${projectId},
+          SELECT
+            ${projectId}::uuid,
             ${eventDate}::timestamptz,
             CASE WHEN ${eventType} IN ('watering','rain')      THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'fertilizing' THEN ${eventDate}::timestamptz ELSE NULL END,
@@ -1338,7 +1392,7 @@ export const handler = async (event) => {
             CASE WHEN ${eventType} = 'harvest'       THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} IN ('watering','rain')      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
             CASE WHEN ${flagged}::boolean = true     THEN ${eventDate}::timestamptz ELSE NULL END
-          )
+          WHERE ${projectId}::uuid IS NOT NULL
           ON CONFLICT (project_id) DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
             last_watered_at    = CASE WHEN ${eventType} IN ('watering','rain')      THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,

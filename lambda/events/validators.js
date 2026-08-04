@@ -55,7 +55,23 @@ const FUTURE_BOUND_MS = 3600 * 1000;
 // Returns null on success, or { status, error } on validation failure.
 export function validatePostBody(body) {
   if (!body.event_type) return { status: 400, error: 'event_type is required' };
-  if (!body.project_id) return { status: 400, error: 'project_id is required' };
+
+  // BUG-CAPTUREFLOW400-001 (Dave decision S1: project-less plantings ARE a supported state).
+  //
+  // This used to be an unconditional `project_id is required`, which contradicted the plantings
+  // surface: V3-CAPTURE-001 deliberately made garden_node.container_id nullable so CaptureFlow
+  // could create a photo-first planting with no project. CaptureFlow then POSTed an event for that
+  // planting and hit a GUARANTEED 400 here — a contract split between two halves of one flow, not
+  // a typo. Verified nullable on live prod: garden_node.container_id and event_log.project_id are
+  // both NULLABLE.
+  //
+  // The real invariant is the DB's entity_memory_exactly_one_parent CHECK — an event must hang off
+  // SOMETHING. So require project_id OR plant_id rather than project_id alone. Requiring at least
+  // one still rejects a fully parentless event, which would be unreachable in every read path
+  // (every listing joins through one of them).
+  if (!body.project_id && !body.plant_id) {
+    return { status: 400, error: 'project_id or plant_id is required' };
+  }
 
   // V3-EVENT-003 §3.1 — status_change is emitted ONLY by the server-side status-transition
   // path (plants/projects PUT). Reserve it from the public POST so a client cannot forge one.

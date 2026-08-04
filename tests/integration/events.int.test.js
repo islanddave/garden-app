@@ -286,13 +286,14 @@ describe('POST /api/events — validation + create', () => {
     expect(body.error).toMatch(/event_type/i)
   })
 
-  it('missing project_id → 400', async () => {
+  it('missing both project_id and plant_id → 400', async () => {
     setTestUserId(USER)
     const { status, body } = await callHandler(handler, {
       method: 'POST', path: '/api/events',
       body: { event_type: 'observation' },
     })
-    expect(status).toBe(400) // validators.js: 'project_id is required'
+    // BUG-CAPTUREFLOW400-001: project_id alone is no longer required — plant_id satisfies it too.
+    expect(status).toBe(400) // validators.js: 'project_id or plant_id is required'
     expect(body.error).toMatch(/project_id/i)
   })
 

@@ -2956,6 +2956,45 @@
    "water_interval_days_container": 2,
    "fertilize_interval_days": 30
   },
+  "Phaseolus": {
+   "crop": "bush bean (Phaseolus vulgaris)",
+   "water_interval_days_container": 2,
+   "water_interval_days_inground": 4,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "~1-1.5 gal per 5-gal bag. Water at the base in the morning — beans are prone to foliar disease and wet leaves overnight spread rust and anthracnose.",
+   "soil_moisture_target": "evenly moist, top inch dry between waterings; even moisture matters MOST from first flower through pod fill — a dry spell then causes blossom drop and stringy, flat pods",
+   "drought_tolerance": "medium",
+   "heat_response": "sets pods poorly above ~90F regardless of water; blossom drop in a heat wave is a heat signal, NOT a thirst signal — do not shorten the interval chasing it",
+   "fertilize_interval_days": 30,
+   "confidence": "high",
+   "notes": "DRG-CADENCEOBS-001 follow-on (triage S3): was falling to the naked 3-day default. LEGUME — fixes its own nitrogen via rhizobia, so it is a LIGHT feeder and excess N produces lush foliage with few pods. Shallow-rooted (most roots in the top 6in), which is why the container interval is shorter than the drought tolerance alone suggests. Bush types crop heavily over ~2-3 weeks then decline; pick every 1-2 days to keep them setting. Cold data deliberately omitted (frost classification is unchanged by this entry and lives in frostClass.js)."
+  },
+  "Daucus": {
+   "crop": "carrot (Daucus carota)",
+   "water_interval_days_container": 2,
+   "water_interval_days_inground": 4,
+   "water_method": "even_moist_top2in",
+   "water_volume_note": "~1 gal per 5-gal bag, applied gently — carrot shoulders sit at the surface and heavy watering exposes them (green shoulders). Deep containers matter more than frequent water for root length.",
+   "soil_moisture_target": "consistently even; never a wet/dry swing. Re-wetting a dried-out carrot bed is the classic cause of SPLIT roots, and irregular moisture also drives forking",
+   "drought_tolerance": "medium",
+   "heat_response": "roots get woody and can turn bitter in sustained heat; steady moisture mitigates but does not eliminate it",
+   "fertilize_interval_days": 30,
+   "confidence": "high",
+   "notes": "DRG-CADENCEOBS-001 follow-on (triage S3): was falling to the naked 3-day default. LOW NITROGEN is the governing rule — excess N gives lush tops and forked, hairy, or stunted roots. Calibrated alongside Beta (beet, 2/28), the closest root-crop analogue already in this file. NOTE only 1 of Dave's 3 carrot plantings carries genus='Daucus'; the other two (Atomic Red, Danvers 126) have a NULL genus and are unaffected by this entry — that is a varieties-data gap, not a cadence gap. Cold data deliberately omitted."
+  },
+  "Aloysia": {
+   "crop": "lemon verbena (Aloysia citrodora)",
+   "water_interval_days_container": 3,
+   "water_interval_days_inground": 5,
+   "water_method": "soak_then_dry",
+   "water_volume_note": "~1.5 gal per 5-gal bag; let the top 1-2in dry first. A large, actively growing shrub in midsummer can double this — size drives demand more than the calendar does.",
+   "soil_moisture_target": "moist but sharply drained; top 1-2in dry between waterings. Wet feet cause root rot faster than drought causes damage — when in doubt, wait",
+   "drought_tolerance": "medium",
+   "heat_response": "enjoys heat and full sun; wilts dramatically then recovers, so wilt alone is a poor trigger — check the soil, not the leaves",
+   "fertilize_interval_days": 21,
+   "confidence": "medium",
+   "notes": "DRG-CADENCEOBS-001 follow-on (triage S3): was falling to the naked 3-day default (over-watering a shrub that resents it). Grown for leaves, so it takes moderate regular feeding, unlike the Mediterranean woody herbs it is often shelved with — and the crop label deliberately avoids the substrings in engine.js isMedHerb() (oregano/rosemary/sage/thyme/tarragon/lavender) so feeding is NOT suppressed and no drought rain-hold is applied. Confidence medium: demand scales strongly with plant size, which a static genus interval cannot capture. Frost-tender and deciduous — dropping all leaves after a cold snap or on being moved indoors is NORMAL dormancy, not death; it re-leafs late in spring. Cold data deliberately omitted to keep this change scoped to watering/fertilizing."
+  },
   "Artemisia": {
    "water_interval_days_container": 4,
    "fertilize_interval_days": 30

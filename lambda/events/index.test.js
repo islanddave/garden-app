@@ -40,8 +40,17 @@ describe('validatePostBody — required fields', () => {
   it('missing event_type → 400', () => {
     bad({ project_id: 'p' }, /event_type is required/);
   });
-  it('missing project_id → 400', () => {
-    bad({ event_type: 'watering' }, /project_id is required/);
+  it('missing BOTH project_id and plant_id → 400', () => {
+    bad({ event_type: 'watering' }, /project_id or plant_id is required/);
+  });
+  // BUG-CAPTUREFLOW400-001 — project-less plantings are a supported state (Dave decision S1).
+  // CaptureFlow creates a planting with project_id NULL and then logs an event against it; that
+  // body carries plant_id only and must be accepted rather than 400'd.
+  it('plant_id WITHOUT project_id passes (CaptureFlow photo-first path)', () => {
+    ok({ event_type: 'watering', plant_id: 'plant-1' });
+  });
+  it('project_id WITHOUT plant_id still passes (project-level event)', () => {
+    ok({ event_type: 'watering', project_id: 'proj-1' });
   });
   it('basic observation passes', () => {
     ok(basicEvent());
