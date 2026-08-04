@@ -55,6 +55,11 @@ export default function CropCard({ planting }) {
           {m.harvestWindowLabel && (
             <div style={{ fontSize: '0.82rem', color: m.isMature ? P.green : P.mid, marginTop: 3 }}>
               {m.isMature ? '✅ ' : '⏳ '}{m.harvestWindowLabel}
+              {/* V4-MATURITYBASIS-001: name the basis when it moved the number off the sow date,
+                  so a corrected window reads as explained rather than as silently different. */}
+              {m.dtmBasis === 'from-transplant' && !m.awaitingTransplant && m.dtmAnchorLabel && (
+                <span style={{ color: P.light }}> (from {m.dtmAnchorLabel})</span>
+              )}
             </div>
           )}
           {/* progress bar toward maturity */}

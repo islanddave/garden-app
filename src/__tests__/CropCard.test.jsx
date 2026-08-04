@@ -27,4 +27,33 @@ describe('CropCard', () => {
     expect(screen.getByText('Sun')).toBeTruthy()
     expect(screen.getByText('60–75 days')).toBeTruthy()
   })
+
+  // V4-MATURITYBASIS-001 Slice A
+  it('names the basis when the window was anchored on the transplant date', () => {
+    const planting = {
+      id: 'p', sown_at: '2026-04-20', transplanted_at: '2026-06-23',
+      variety_ref: { days_to_maturity_min: 70, days_to_maturity_max: 80, dtm_basis: 'from-transplant' },
+    }
+    render(<CropCard planting={planting} />)
+    expect(screen.getByText('(from transplant)')).toBeTruthy()
+  })
+
+  it('does not name a basis when the crop type is uncurated (NULL)', () => {
+    const planting = {
+      id: 'p', sown_at: '2026-04-20', transplanted_at: '2026-06-23',
+      variety_ref: { days_to_maturity_min: 70, days_to_maturity_max: 80, dtm_basis: null },
+    }
+    render(<CropCard planting={planting} />)
+    expect(screen.queryByText(/\(from /)).toBeNull()
+  })
+
+  it('D3: shows the suppressed label for a from-transplant planting with no transplant date', () => {
+    const planting = {
+      id: 'p', sown_at: '2026-04-20',
+      variety_ref: { days_to_maturity_min: 70, days_to_maturity_max: 80, dtm_basis: 'from-transplant' },
+    }
+    render(<CropCard planting={planting} />)
+    expect(screen.getByText(/Est\. harvest — set at transplant/)).toBeTruthy()
+    expect(screen.queryByText(/\(from /)).toBeNull()
+  })
 })

@@ -51,3 +51,122 @@ describe('computeMaturity', () => {
     expect(m.pctToMaturity).toBe(1)
   })
 })
+
+// V4-MATURITYBASIS-001 Slice A. The load-bearing property of this slice is that it is a NO-OP
+// until crop_types.dtm_basis is curated: with dtm_basis absent or null, every output field must be
+// byte-identical to the pre-basis engine. The Case-A planting below is the real prod shape (7
+// peppers sown 2026-04-20, transplanted 2026-06-23 -> a 64-day nursery gap).
+describe('computeMaturity — DTM basis (V4-MATURITYBASIS-001)', () => {
+  const DTM = { days_to_maturity_min: 70, days_to_maturity_max: 80 }
+  const caseA = { sown_at: '2026-04-20', transplanted_at: '2026-06-23' }
+  const TODAY = new Date('2026-08-04T00:00:00')
+
+  // maturity dates are LOCAL-midnight + N days; format in the same (local) frame so the
+  // assertion cannot shift a day under a positive UTC offset.
+  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+  const OUTPUT_KEYS = [
+    'ageDays', 'anchorField', 'anchorDate', 'anchorLabel',
+    'dtmMin', 'dtmMax', 'maturityMinDate', 'maturityMaxDate',
+    'harvestWindowLabel', 'isMature', 'pctToMaturity',
+  ]
+  const legacyShape = (m) => Object.fromEntries(OUTPUT_KEYS.map(k => [k, m[k]]))
+
+  it('NULL basis is byte-identical to no basis field at all', () => {
+    const withNull = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: null } }, TODAY)
+    const without = computeMaturity({ ...caseA, variety_ref: { ...DTM } }, TODAY)
+    expect(legacyShape(withNull)).toEqual(legacyShape(without))
+    expect(withNull.dtmBasis).toBeNull()
+    expect(withNull.basisResolved).toBe(false)
+  })
+
+  it('NULL basis anchors DTM on the sow date (today’s behaviour, preserved)', () => {
+    const m = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: null } }, TODAY)
+    // 2026-04-20 + 70d = 2026-06-29
+    expect(ymd(m.maturityMinDate)).toBe('2026-06-29')
+    expect(ymd(m.maturityMaxDate)).toBe('2026-07-09')
+    expect(m.dtmAnchorField).toBe('sown_at')
+    expect(m.isMature).toBe(true)
+    expect(m.harvestWindowLabel).toBe('Maturity window reached')
+  })
+
+  it("'from-sow' is identical to NULL basis", () => {
+    const sow = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: 'from-sow' } }, TODAY)
+    const nul = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: null } }, TODAY)
+    expect(legacyShape(sow)).toEqual(legacyShape(nul))
+    expect(sow.dtmBasis).toBe('from-sow')
+    expect(sow.basisResolved).toBe(true)
+  })
+
+  it("'from-transplant' shifts the window by the full nursery gap and un-matures the planting", () => {
+    const m = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: 'from-transplant' } }, TODAY)
+    // 2026-06-23 + 70d = 2026-09-01 (64-day shift == transplanted_at - sown_at)
+    expect(ymd(m.maturityMinDate)).toBe('2026-09-01')
+    expect(ymd(m.maturityMaxDate)).toBe('2026-09-11')
+    expect(m.dtmAnchorField).toBe('transplanted_at')
+    expect(m.dtmAnchorLabel).toBe('transplant')
+    expect(m.isMature).toBe(false)
+    expect(m.harvestWindowLabel).toMatch(/^Est\. harvest /)
+
+    const nul = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: null } }, TODAY)
+    const shiftDays = (m.maturityMinDate - nul.maturityMinDate) / 86400000
+    expect(shiftDays).toBe(64)
+    expect(nul.isMature).toBe(true) // the false-mature state this fix corrects
+  })
+
+  it("'from-transplant' falls back to planted_out_at when there is no transplant date", () => {
+    const m = computeMaturity(
+      { sown_at: '2026-04-20', planted_out_at: '2026-06-23', variety_ref: { ...DTM, dtm_basis: 'from-transplant' } },
+      TODAY,
+    )
+    expect(m.dtmAnchorField).toBe('planted_out_at')
+    expect(ymd(m.maturityMinDate)).toBe('2026-09-01')
+  })
+
+  it('D3: from-transplant with NO transplant date suppresses the date instead of guessing', () => {
+    const m = computeMaturity({ sown_at: '2026-04-20', variety_ref: { ...DTM, dtm_basis: 'from-transplant' } }, TODAY)
+    expect(m.awaitingTransplant).toBe(true)
+    expect(m.harvestWindowLabel).toBe('Est. harvest — set at transplant')
+    expect(m.maturityMinDate).toBeNull()
+    expect(m.maturityMaxDate).toBeNull()
+    expect(m.isMature).toBeNull()
+    expect(m.pctToMaturity).toBeNull()
+    // the AGE band must survive the suppression
+    expect(m.anchorLabel).toBe('sown')
+    expect(m.ageDays).toBe(106)
+  })
+
+  it('the AGE anchor is untouched by basis', () => {
+    for (const b of [null, 'from-sow', 'from-transplant']) {
+      const m = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: b } }, TODAY)
+      expect(m.anchorField).toBe('transplanted_at')
+      expect(m.anchorLabel).toBe('transplanted')
+      expect(m.ageDays).toBe(42)
+    }
+  })
+
+  it('an unrecognised basis value degrades to from-sow rather than breaking', () => {
+    const m = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: 'from-moonrise' } }, TODAY)
+    const nul = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: null } }, TODAY)
+    expect(legacyShape(m)).toEqual(legacyShape(nul))
+    expect(m.dtmBasis).toBeNull()
+    expect(m.basisResolved).toBe(false)
+  })
+
+  it('basis is inert when the cultivar carries no DTM at all', () => {
+    const m = computeMaturity({ ...caseA, variety_ref: { dtm_basis: 'from-transplant' } }, TODAY)
+    expect(m.harvestWindowLabel).toBeNull()
+    expect(m.awaitingTransplant).toBe(false)
+    expect(m.ageDays).toBe(42)
+  })
+
+  it('from-transplant honours a single-sided DTM (min only)', () => {
+    const m = computeMaturity(
+      { ...caseA, variety_ref: { days_to_maturity_min: 70, dtm_basis: 'from-transplant' } },
+      TODAY,
+    )
+    expect(ymd(m.maturityMinDate)).toBe('2026-09-01')
+    expect(ymd(m.maturityMaxDate)).toBe('2026-09-01')
+    expect(m.harvestWindowLabel).toMatch(/^Est\. harvest ~/)
+  })
+})

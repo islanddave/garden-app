@@ -8,7 +8,10 @@
 // crop with no matching type had to be saved with crop_type_slug = NULL, which dropped it out of
 // every type-grouped view.
 //
-// Contract: { cropTypes: [{ slug, display_name, default_lifecycle, category, sort_order }], loading,
+// V4-MATURITYBASIS-001 adds `dtm_basis` ('from-sow' | 'from-transplant' | null) to the row shape —
+// the DTM basis for the crop kind. Additive; null means uncurated.
+//
+// Contract: { cropTypes: [{ slug, display_name, default_lifecycle, category, sort_order, dtm_basis }], loading,
 //             createCropType(payload) -> { cropType } | { error, existing, reason } }
 
 import { useState, useEffect, useCallback } from 'react'

@@ -108,7 +108,7 @@ export const handler = async (event) => {
     if (rawPath === '/api/varieties/crop-types') {
       if (method === 'GET') {
         const rows = await sql`
-          SELECT slug, display_name, default_lifecycle, category, sort_order
+          SELECT slug, display_name, default_lifecycle, category, sort_order, dtm_basis
           FROM public.crop_types
           WHERE deleted_at IS NULL
           ORDER BY sort_order ASC, display_name ASC

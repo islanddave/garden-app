@@ -178,7 +178,7 @@ export const handler = async (event) => {
                      'sun_requirements', pv.sun_requirements,
                      'common_diseases', pv.common_diseases,
                      'expected_yield_notes', pv.expected_yield_notes,
-                     'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug
+                     'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug, 'dtm_basis', ct.dtm_basis
                    )
                  ELSE NULL END AS variety_ref,
                  parent.display_name AS parent_plant_name, parent.container_id AS parent_project_id,
@@ -186,6 +186,7 @@ export const handler = async (event) => {
           FROM public.garden_node p
           JOIN public.container pp ON pp.id = p.container_id
           LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
+          LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
           LEFT JOIN photos fp ON fp.id = p.featured_photo_id
           LEFT JOIN public.garden_node parent ON parent.id = p.parent_plant_id AND parent.deleted_at IS NULL
           LEFT JOIN entity_memory em ON em.project_id = pp.id
@@ -472,12 +473,13 @@ export const handler = async (event) => {
                        'sun_requirements', pv.sun_requirements,
                        'common_diseases', pv.common_diseases,
                        'expected_yield_notes', pv.expected_yield_notes,
-                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug
+                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug, 'dtm_basis', ct.dtm_basis
                      )
                    ELSE NULL END AS variety_ref
             FROM public.garden_node p
             JOIN public.container pp ON pp.id = p.container_id
             LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
+            LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
             LEFT JOIN photos fp ON fp.id = p.featured_photo_id
             WHERE pp.created_by = ANY(${householdIds})
               AND p.container_id = ${projectId}
@@ -511,12 +513,13 @@ export const handler = async (event) => {
                        'sun_requirements', pv.sun_requirements,
                        'common_diseases', pv.common_diseases,
                        'expected_yield_notes', pv.expected_yield_notes,
-                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug
+                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug, 'dtm_basis', ct.dtm_basis
                      )
                    ELSE NULL END AS variety_ref
             FROM public.garden_node p
             LEFT JOIN public.container pp ON pp.id = p.container_id
             LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
+            LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
             LEFT JOIN photos fp ON fp.id = p.featured_photo_id
             WHERE (pp.created_by = ANY(${householdIds})
                    OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})))
