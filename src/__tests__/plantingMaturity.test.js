@@ -98,20 +98,29 @@ describe('computeMaturity — DTM basis (V4-MATURITYBASIS-001)', () => {
     expect(sow.basisResolved).toBe(true)
   })
 
-  it("'from-transplant' shifts the window by the full nursery gap and un-matures the planting", () => {
+  // SLICE D UPDATE: this test asserted the RAW catalogue window (2026-09-01 .. 09-11). Slice D
+  // calibrates from-transplant windows by the measured site factor, because the raw catalogue
+  // window was measured to contain the actual first harvest 0 times out of 21. The window now sits
+  // BETWEEN the two old extremes, which is the whole point:
+  //   sow-anchored (the original bug)   2026-06-29   far too early
+  //   calibrated   (Slice D)            2026-07-28   <- 16/18 of observed harvests land in-window
+  //   raw catalogue from transplant     2026-09-01   0/21 — too late, told Dave to wait 3 weeks
+  it("'from-transplant' calibrates the window between the sow-anchored and raw-catalogue extremes", () => {
     const m = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: 'from-transplant' } }, TODAY)
-    // 2026-06-23 + 70d = 2026-09-01 (64-day shift == transplanted_at - sown_at)
-    expect(ymd(m.maturityMinDate)).toBe('2026-09-01')
-    expect(ymd(m.maturityMaxDate)).toBe('2026-09-11')
+    // anchor 2026-06-23; lo = round(0.70*70)-14 = 35d, hi = round(0.70*80)+14 = 70d
+    expect(ymd(m.maturityMinDate)).toBe('2026-07-28')
+    expect(ymd(m.maturityMaxDate)).toBe('2026-09-01')
     expect(m.dtmAnchorField).toBe('transplanted_at')
     expect(m.dtmAnchorLabel).toBe('transplant')
-    expect(m.isMature).toBe(false)
-    expect(m.harvestWindowLabel).toMatch(/^Est\. harvest /)
+    expect(m.calibrated).toBe(true)
 
     const nul = computeMaturity({ ...caseA, variety_ref: { ...DTM, dtm_basis: null } }, TODAY)
-    const shiftDays = (m.maturityMinDate - nul.maturityMinDate) / 86400000
-    expect(shiftDays).toBe(64)
-    expect(nul.isMature).toBe(true) // the false-mature state this fix corrects
+    // Still strictly later than the sow-anchored window this whole change exists to push back...
+    expect(m.maturityMinDate > nul.maturityMinDate).toBe(true)
+    expect((m.maturityMinDate - nul.maturityMinDate) / 86400000).toBe(29)
+    // ...and the calibrated window is strictly wider than the 10-day catalogue span it replaces.
+    const span = (m.maturityMaxDate - m.maturityMinDate) / 86400000
+    expect(span).toBe(35)
   })
 
   it("'from-transplant' falls back to planted_out_at when there is no transplant date", () => {
@@ -120,7 +129,9 @@ describe('computeMaturity — DTM basis (V4-MATURITYBASIS-001)', () => {
       TODAY,
     )
     expect(m.dtmAnchorField).toBe('planted_out_at')
-    expect(ymd(m.maturityMinDate)).toBe('2026-09-01')
+    // Slice D: calibrated off the planted_out_at anchor (2026-06-23 + 35d), not the raw 70d.
+    expect(ymd(m.maturityMinDate)).toBe('2026-07-28')
+    expect(m.calibrated).toBe(true)
   })
 
   it('D3: from-transplant with NO transplant date suppresses the date instead of guessing', () => {
@@ -160,13 +171,18 @@ describe('computeMaturity — DTM basis (V4-MATURITYBASIS-001)', () => {
     expect(m.ageDays).toBe(42)
   })
 
-  it('from-transplant honours a single-sided DTM (min only)', () => {
+  // SLICE D UPDATE: a single-sided DTM used to collapse to a point estimate ("Est. harvest ~date").
+  // Calibration deliberately turns it into a real range: the +/-14d residual uncertainty exists
+  // whether or not the catalogue happened to quote a max, and a point date would claim precision
+  // the data does not have.
+  it('from-transplant widens a single-sided DTM into a real range rather than a point date', () => {
     const m = computeMaturity(
       { ...caseA, variety_ref: { days_to_maturity_min: 70, dtm_basis: 'from-transplant' } },
       TODAY,
     )
-    expect(ymd(m.maturityMinDate)).toBe('2026-09-01')
-    expect(ymd(m.maturityMaxDate)).toBe('2026-09-01')
-    expect(m.harvestWindowLabel).toMatch(/^Est\. harvest ~/)
+    // both ends scale off the one populated value: 2026-06-23 + 35d .. + 63d
+    expect(ymd(m.maturityMinDate)).toBe('2026-07-28')
+    expect(ymd(m.maturityMaxDate)).toBe('2026-08-25')
+    expect(m.calibrated).toBe(true)
   })
 })

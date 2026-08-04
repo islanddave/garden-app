@@ -6,9 +6,12 @@
 // strings (neon driver) — everything is Number()-coerced here.
 
 // V4-MATURITYBASIS-001 Slice C — the DTM basis vocabulary is single-sourced from the maturity
-// engine rather than re-declared here. Both are pure, zero-dependency src/lib modules and
-// plantingMaturity.js imports nothing, so there is no cycle and no runtime weight; a local copy of
-// the two CHECK-constrained strings would be one more thing that can silently drift from the DB.
+// engine rather than re-declared here. A local copy of the two CHECK-constrained strings would be
+// one more thing that can silently drift from the DB.
+// Slice D update: plantingMaturity.js is no longer import-free — it now pulls maturityCalibration.js.
+// That module is itself zero-dependency, so the graph stays acyclic
+// (sowEngine -> plantingMaturity -> maturityCalibration) and still costs nothing at runtime. Keep
+// maturityCalibration.js dependency-free or this note stops being true.
 import { DTM_BASIS_TRANSPLANT } from './plantingMaturity.js';
 
 export const FROST_ANCHORS = Object.freeze({

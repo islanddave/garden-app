@@ -14,6 +14,15 @@
 // only the DTM anchor is basis-sensitive.
 //
 // variety_ref.days_to_maturity_min/max come from the cultivar (PLANTTYPE substrate).
+//
+// V4-MATURITYBASIS-001 (Slice D) — from-transplant windows are now SITE-CALIBRATED.
+// Slice A exposed that from-transplant crops land inside the catalogue window 0 times out of 21.
+// Slice D scales those windows by the measured site factor (~0.70) and presents them as a widened
+// range (+/-14d), which puts 16 of 18 observed first-harvests inside the window. from-sow and
+// uncurated (null) bases are DELIBERATELY untouched — see maturityCalibration.js for why, and for
+// the full derivation and its provenance. All calibration constants live there, not here.
+
+import { calibrateFromTransplant, SITE_FACTOR } from './maturityCalibration.js'
 
 export const DTM_BASIS_SOW = 'from-sow'
 export const DTM_BASIS_TRANSPLANT = 'from-transplant'
@@ -41,7 +50,8 @@ const DAY_MS = 86400000
 //   { ageDays, anchorField, anchorDate, anchorLabel,
 //     dtmMin, dtmMax, maturityMinDate, maturityMaxDate,
 //     harvestWindowLabel, isMature, pctToMaturity,
-//     dtmBasis, basisResolved, dtmAnchorField, dtmAnchorDate, dtmAnchorLabel, awaitingTransplant }
+//     dtmBasis, basisResolved, dtmAnchorField, dtmAnchorDate, dtmAnchorLabel, awaitingTransplant,
+//     calibrated, calibrationFactor }
 // Returns nulls (not throws) for every field that can't be computed.
 export function computeMaturity(planting, today = new Date()) {
   const out = {
@@ -51,6 +61,7 @@ export function computeMaturity(planting, today = new Date()) {
     dtmBasis: null, basisResolved: false,
     dtmAnchorField: null, dtmAnchorDate: null, dtmAnchorLabel: null,
     awaitingTransplant: false,
+    calibrated: false, calibrationFactor: null,
   }
   if (!planting) return out
 
@@ -98,23 +109,41 @@ export function computeMaturity(planting, today = new Date()) {
   }
 
   if (dtmAnchor && (dtmMin != null || dtmMax != null)) {
-    const lo = dtmMin != null ? dtmMin : dtmMax
-    const hi = dtmMax != null ? dtmMax : dtmMin
+    // Slice D: for from-transplant crops, scale the catalogue ends by the site factor and widen.
+    // Returns null for every other basis, so from-sow/uncurated keep the raw catalogue window.
+    const calib = calibrateFromTransplant(basis, dtmMin, dtmMax)
+    out.calibrated = calib != null
+    out.calibrationFactor = calib != null ? SITE_FACTOR : null
+
+    const lo = calib ? calib.loDays : (dtmMin != null ? dtmMin : dtmMax)
+    const hi = calib ? calib.hiDays : (dtmMax != null ? dtmMax : dtmMin)
     out.maturityMinDate = new Date(dtmAnchor.getTime() + lo * DAY_MS)
     out.maturityMaxDate = new Date(dtmAnchor.getTime() + hi * DAY_MS)
     out.isMature = now >= out.maturityMinDate
-    // progress toward the EARLIEST maturity date (0..1), clamped.
+    // progress toward the EARLIEST maturity date (0..1), clamped. Uses the calibrated opening when
+    // calibration applied, so the bar and the label agree.
     const span = out.maturityMinDate - dtmAnchor
     out.pctToMaturity = span > 0 ? Math.max(0, Math.min(1, (now - dtmAnchor) / span)) : (now >= out.maturityMinDate ? 1 : 0)
 
     const a = fmt(out.maturityMinDate)
     const b = fmt(out.maturityMaxDate)
-    if (out.isMature) {
+    // A calibrated number must be visibly distinct from a catalogue one (design D3's labelling
+    // rule). Plain text in the same ink and type scale as the rest of the label — deliberately not
+    // a badge, tint, or confidence gradient (Reward UX V102 bars colour used to encode magnitude).
+    const suffix = calib ? ' · site-calibrated' : ''
+    if (out.isMature && calib && b) {
+      // A calibrated window that has OPENED must keep its closing date visible. Collapsing it to a
+      // bare "Maturity window reached" would throw away the +/-14d uncertainty that is the entire
+      // point of calibrating — and would read as more confident than the raw catalogue label it
+      // replaced, which is the failure mode Slice D exists to fix. Uncalibrated windows keep the
+      // original wording untouched.
+      out.harvestWindowLabel = `Harvest window open — through ${b}${suffix}`
+    } else if (out.isMature) {
       out.harvestWindowLabel = 'Maturity window reached'
     } else if (a && b && a !== b) {
-      out.harvestWindowLabel = `Est. harvest ${a} – ${b}`
+      out.harvestWindowLabel = `Est. harvest ${a} – ${b}${suffix}`
     } else if (a) {
-      out.harvestWindowLabel = `Est. harvest ~${a}`
+      out.harvestWindowLabel = `Est. harvest ~${a}${suffix}`
     }
   }
 

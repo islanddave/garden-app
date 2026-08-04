@@ -114,6 +114,9 @@ describe('TransplantDatePrompt -> corrected window, in place', () => {
     fireEvent.click(screen.getByText('Save'))
 
     await waitFor(() => expect(screen.queryByTestId('add-transplant-date')).toBeNull())
+    // Slice D: the window that appears is now SITE-CALIBRATED off the new transplant date
+    // (2026-06-23 + 35d .. + 70d = Jul 28 .. Sep 1), not the raw catalogue 70-80d. Sep 1 is still
+    // the closing date, so the payoff assertion holds; the sow-anchored Jun 29 must still be gone.
     expect(screen.getByText(/Sep 1, 2026/)).toBeTruthy()
     expect(screen.queryByText(/Jun 29, 2026/)).toBeNull()
     expect(screen.getByText('(from transplant)')).toBeTruthy()
