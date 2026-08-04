@@ -13,7 +13,7 @@ vi.mock('../lib/pendingCapture.js', () => ({ setPendingCapture: setPendingSpy, t
 const { apiFetchSpy } = vi.hoisted(() => ({ apiFetchSpy: vi.fn() }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy, getToken: vi.fn() }) }))
 
-import QuickActions from '../components/planting/QuickActions.jsx'
+import QuickActions, { canMarkSprouted } from '../components/planting/QuickActions.jsx'
 
 const PL = { id: 'pl1', project_id: 'proj1', status: 'seedling' }
 
@@ -77,5 +77,62 @@ describe('QuickActions', () => {
   it('hides the "It sprouted!" action once the planting has germinated_at (CAL-2)', () => {
     renderQA({ planting: { ...PL, germinated_at: '2026-07-01' } })
     expect(screen.queryByRole('button', { name: /sprouted/i })).toBeNull()
+  })
+})
+
+// BUG-SPROUTGATE-001 — the stamp alone is not a gate. Measured against live prod on 2026-08-04:
+// 264 of 269 plantings rendered the button before this change, 21 after.
+describe('BUG-SPROUTGATE-001 — sprout gate (stage + sown origin, not the stamp alone)', () => {
+  it('shows for a sown, pre-emergence planting', () => {
+    expect(canMarkSprouted({ status: 'seed', source_type: 'seed_packet' })).toBe(true)
+    expect(canMarkSprouted({ status: 'seed', source_type: 'saved_seed' })).toBe(true)
+  })
+
+  it('keeps "seedling" — the one stage where the event is true and still unrecorded', () => {
+    // The germination event does not write status, and StatusPicker does not write germinated_at,
+    // so a hand-advanced seedling has no other route to capture it.
+    expect(canMarkSprouted({ status: 'seedling', source_type: 'seed_packet' })).toBe(true)
+  })
+
+  it('hides for every post-emergence lifecycle stage', () => {
+    for (const status of ['vegetative', 'flowering', 'fruiting', 'harvested', 'dormant', 'ended', 'failed']) {
+      expect(canMarkSprouted({ status, source_type: 'seed_packet' })).toBe(false)
+    }
+  })
+
+  it('hides for "rooting" — a cutting striking roots is not germination', () => {
+    expect(canMarkSprouted({ status: 'rooting', source_type: 'seed_packet' })).toBe(false)
+  })
+
+  it('hides for origins that arrived already growing, whatever the stage', () => {
+    for (const source_type of ['nursery_transplant', 'division', 'volunteer', 'gift', 'cutting_taken', 'rescued', 'plant_swap']) {
+      expect(canMarkSprouted({ status: 'seed', source_type })).toBe(false)
+    }
+  })
+
+  it('origin is a DENY-list: unknown / absent / future free-text origins still pass the stage gate', () => {
+    // source_type is free-text (V4-SOURCEFREE-001) — an allow-list would silently break on a new
+    // dropdownRegistry value. NULL means UNKNOWN, and the stage gate already carries the reduction.
+    expect(canMarkSprouted({ status: 'seed' })).toBe(true)
+    expect(canMarkSprouted({ status: 'seed', source_type: null })).toBe(true)
+    expect(canMarkSprouted({ status: 'seed', source_type: 'unknown' })).toBe(true)
+    expect(canMarkSprouted({ status: 'seed', source_type: 'bulb_order_2027' })).toBe(true)
+  })
+
+  it('the stamp still wins over everything', () => {
+    expect(canMarkSprouted({ status: 'seed', source_type: 'seed_packet', germinated_at: '2026-05-01' })).toBe(false)
+  })
+
+  it('is null-safe', () => {
+    expect(canMarkSprouted(null)).toBe(false)
+    expect(canMarkSprouted({})).toBe(false)
+  })
+
+  it('the rendered button follows the gate (nursery transplant at fruiting: gone)', () => {
+    renderQA({ planting: { ...PL, status: 'fruiting', source_type: 'nursery_transplant' } })
+    expect(screen.queryByRole('button', { name: /sprouted/i })).toBeNull()
+    // the other two quick actions are untouched
+    expect(screen.getByRole('button', { name: /Log watering/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Add a photo/i })).toBeTruthy()
   })
 })
