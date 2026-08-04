@@ -1,0 +1,1097 @@
+{
+  "schema": "crop-guess-corpus/v1",
+  "note": "DERIVED — do not hand-edit. Regenerate with: node scripts/gen-crop-guess-corpus.mjs. Canonical packet data lives in the source datasets listed under `sources`; this file carries only the four fields checkCropGuess reads, so the gate can run in CI where the gardening-docs sibling checkout does not exist.",
+  "generator": "scripts/gen-crop-guess-corpus.mjs",
+  "sources": [
+    {
+      "name": "v4-seedinv-002-jul-intake",
+      "in_repo": true,
+      "rel_path": "migrations/v4-seedinv-002-jul-intake/dataset.json",
+      "packets": 74,
+      "sha256": "d06e217e6c8c1074c634b8552216f80a9d6067197c1fdf25ff8b0b4941a4445e"
+    },
+    {
+      "name": "seed-load-dataset-V1",
+      "in_repo": false,
+      "rel_path": "../seeds/seed-load-dataset-V1.json",
+      "packets": 105,
+      "sha256": "228df97b4111134fb6e157ddceabd49ab188335137bf7625fff49016a837b01a"
+    }
+  ],
+  "rows": [
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Radish",
+      "variety": "Purple Plum",
+      "guess": "radish"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Carrot",
+      "variety": "Atomic Red",
+      "guess": "carrot"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Potato (true seed)",
+      "variety": "Clancy",
+      "guess": "potato"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Beet",
+      "variety": "Touchstone Gold",
+      "guess": "beet"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Beet",
+      "variety": "Gourmet Blend",
+      "guess": "beet"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Radish",
+      "variety": "French Breakfast",
+      "guess": "radish"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Carrot",
+      "variety": "Danvers 126",
+      "guess": "carrot"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Carrot",
+      "variety": "Little Finger",
+      "guess": "carrot"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Spinach",
+      "variety": "Oceanside",
+      "guess": "spinach"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Spinach",
+      "variety": "Matador",
+      "guess": "spinach"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Winter Squash",
+      "variety": "Pink Banana",
+      "guess": "winter_squash"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Winter Squash",
+      "variety": "Pennsylvania Dutch Crookneck",
+      "guess": "winter_squash"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Winter Squash",
+      "variety": "Red Kuri",
+      "guess": "winter_squash"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Parsnip",
+      "variety": "Javelin",
+      "guess": "parsnip"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Artichoke",
+      "variety": "Green Globe Improved",
+      "guess": "artichoke"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Brussels Sprouts",
+      "variety": "Long Island Improved",
+      "guess": "brussels_sprouts"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Viola",
+      "variety": "Back to Black",
+      "guess": "viola"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Morning Glory",
+      "variety": "Chocolate",
+      "guess": "morning_glory"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Four o'Clock",
+      "variety": "Broken Colors",
+      "guess": "four_o_clock"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Morning Glory",
+      "variety": "Grandpa Ott's",
+      "guess": "morning_glory"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Morning Glory",
+      "variety": "Heavenly Blue",
+      "guess": "morning_glory"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Stock",
+      "variety": "Column Blend",
+      "guess": "stock"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Delphinium",
+      "variety": "Pacific Giants Blend",
+      "guess": "delphinium"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Nasturtium",
+      "variety": "Black Velvet",
+      "guess": "nasturtium"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Padron",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Ghost (Bhut Jolokia)",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Scotch Bonnet",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Habanero",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Thai Hot",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "NuMex Lemon Spice Jalapeño",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Serrano",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Jimmy Nardello",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Biquinho Red & Yellow Blend",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Ancho/Poblano",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Early Jalapeño",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Marigold",
+      "variety": "Favourite Blend (French)",
+      "guess": "marigold"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Marigold",
+      "variety": "Naughty Marietta (French)",
+      "guess": "marigold"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Marigold",
+      "variety": "Red Metamorph (French)",
+      "guess": "marigold"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Tomato",
+      "variety": "Glacier",
+      "guess": "tomato"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Tomato",
+      "variety": "Manitoba",
+      "guess": "tomato"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "White Habanero",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Trinidad Scorpion",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Thai Volcano",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Tepin",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Thai Hot",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Takanotsume",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Tabasco",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Shishito",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Serrano (Mary's)",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Serrano Huasteca",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Red Mushroom",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Red Hot Cherry",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Purple Cayenne",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Pueblo Mosco",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Peter",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Pepperoncini",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Padron (Mary's)",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Lemon Habanero",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Hinkelhatz",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Hidalgo Serrano",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Fresno",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Fish",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Baby Bell Mix",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Big Jim",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Birdseye",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Buena Mulata",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Chinese 5 Color",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Chiltepin",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Chile de Arbol",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Biquinho Red (Mary's)",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Chocolate Habanero",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Aji Cito",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Biquinho Yellow",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "v4-seedinv-002-jul-intake",
+      "crop": "Pepper",
+      "variety": "Aji Habanero",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Oregano",
+      "variety": "Greek (True)",
+      "guess": "oregano"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Poppy, Corn",
+      "variety": "Shirley Single Blend",
+      "guess": null
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Celery",
+      "variety": "Utah",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Hollyhock",
+      "variety": "The Watchman",
+      "guess": null
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Cucumber",
+      "variety": "Spacemaster 80",
+      "guess": "cucumber"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Columbine",
+      "variety": "Rocky Mountain Blue",
+      "guess": null
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Columbine",
+      "variety": "McKana Giants Blend",
+      "guess": null
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Four O'Clock",
+      "variety": "Marvel of Peru",
+      "guess": null
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Basil",
+      "variety": "Lettuce Leaf",
+      "guess": "basil"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Chives, Garlic",
+      "variety": "Garlic Chives",
+      "guess": "chives"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Chives",
+      "variety": "Common",
+      "guess": "chives"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Amaranth",
+      "variety": "Edible Red Leaf",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Chervil",
+      "variety": "Chervil",
+      "guess": "chervil"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Carnation",
+      "variety": "Chabaud Blend",
+      "guess": null
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Bean, Pole",
+      "variety": "Seychelles",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Kale",
+      "variety": "Redbor",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Spinach",
+      "variety": "Baby Greens Blend",
+      "guess": "spinach"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Beet",
+      "variety": "Touchstone Gold",
+      "guess": "beet"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Tweedia (Oxypetalum)",
+      "variety": "Tweedia",
+      "guess": null
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Arugula",
+      "variety": "Baby Greens",
+      "guess": "arugula"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Onion, Bulb",
+      "variety": "Monastrell",
+      "guess": "onion"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Collards",
+      "variety": "Top Bunch 2.0",
+      "guess": "collard"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Potato (true seed)",
+      "variety": "Clancy",
+      "guess": "potato"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pumpkin",
+      "variety": "Howden",
+      "guess": "winter_squash"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Broccoli",
+      "variety": "Belstar",
+      "guess": "broccoli"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Eggplant (ornamental)",
+      "variety": "Pumpkin on a Stick",
+      "guess": "eggplant"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Bean, Bush (Filet)",
+      "variety": "Tavera",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Bean, Bush (Filet)",
+      "variety": "Maxibel",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Tomato, Cherry (Bush)",
+      "variety": "Patio Choice Yellow",
+      "guess": "tomato"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Lettuce, Leaf",
+      "variety": "Brentwood",
+      "guess": "lettuce"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Spinach",
+      "variety": "Oceanside",
+      "guess": "spinach"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Kale",
+      "variety": "Dwarf Blue Curled (Vates)",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pea, Snap",
+      "variety": "Cascadia",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Arugula",
+      "variety": "Astro",
+      "guess": "arugula"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Watermelon",
+      "variety": "Sugar Baby",
+      "guess": "watermelon"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Onion, Bulb",
+      "variety": "Yellow Granex PRR",
+      "guess": "onion"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Watermelon",
+      "variety": "Mountain Sweet Yellow",
+      "guess": "watermelon"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Flower Mix",
+      "variety": "Hummingbird Haven",
+      "guess": null
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Flower Mix (edible)",
+      "variety": "Edible Beauties",
+      "guess": null
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Shallot",
+      "variety": "Zebrune",
+      "guess": "shallot"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pea, Shelling",
+      "variety": "Progress #9",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Lettuce, Butterhead",
+      "variety": "Marvel of Four Seasons",
+      "guess": "lettuce"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Lettuce, Leaf",
+      "variety": "Black Seeded Simpson",
+      "guess": "lettuce"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pumpkin",
+      "variety": "Cinderella (Rouge Vif d'Etampes)",
+      "guess": "winter_squash"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Bok Choy",
+      "variety": "Toy Choy",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Broccoli Raab",
+      "variety": "Rapini",
+      "guess": "broccoli"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Bean, Bush",
+      "variety": "Ferrari",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Bean, Bush",
+      "variety": "Contender",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Beet",
+      "variety": "Chioggia",
+      "guess": "beet"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Lettuce, Butterhead",
+      "variety": "Australe",
+      "guess": "lettuce"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Tomato, Cherry (Bush)",
+      "variety": "Cherry Falls",
+      "guess": "tomato"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Blackberry Lily (Iris domestica)",
+      "variety": "Blackberry Lily",
+      "guess": null
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper, Chile",
+      "variety": "Biquinho Red & Yellow Blend",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Lettuce, Leaf",
+      "variety": "Red Sails",
+      "guess": "lettuce"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Cabbage",
+      "variety": "Red Acre",
+      "guess": "cabbage"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Tomatillo",
+      "variety": "Purple",
+      "guess": "tomatillo"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Tomato, Pole",
+      "variety": "Moskvich",
+      "guess": "tomato"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Tomatillo",
+      "variety": "Grande Rio Verde",
+      "guess": "tomatillo"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Tomato, Cherry (Pole)",
+      "variety": "Red & Yellow Pear Blend",
+      "guess": "tomato"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Tomato, Pole",
+      "variety": "Green Zebra",
+      "guess": "tomato"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Basil, Holy (Tulsi)",
+      "variety": "Tulsi",
+      "guess": "basil"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Spinach",
+      "variety": "Lavewa",
+      "guess": "spinach"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Lettuce, Romaine",
+      "variety": "Parris Island Cos",
+      "guess": "lettuce"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Onion, Bulb",
+      "variety": "Yellow Sweet Spanish Utah",
+      "guess": "onion"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Mustard",
+      "variety": "Florida Broadleaf",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Okra",
+      "variety": "Clemson Spineless 80",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Borage",
+      "variety": "Borage",
+      "guess": "borage"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Tomato, Pole",
+      "variety": "Black Krim",
+      "guess": "tomato"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pea, Shelling",
+      "variety": "Wando",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Onion, Bunching",
+      "variety": "Tokyo Long White",
+      "guess": "bunching_onion"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Onion, Bulb",
+      "variety": "Red Amposta",
+      "guess": "onion"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Squash, Summer",
+      "variety": "Early Prolific Straightneck",
+      "guess": "squash"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Honesty / Money Plant (Lunaria)",
+      "variety": "Honesty",
+      "guess": null
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Lettuce, Romaine (Mini)",
+      "variety": "Little Gem",
+      "guess": "lettuce"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pea, Shelling (Petite)",
+      "variety": "Iona",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Bok Choy",
+      "variety": "Choko",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Carrot",
+      "variety": "Tendersweet",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Marigold, African",
+      "variety": "Crackerjack",
+      "guess": "marigold"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Tomato, Bush (Paste)",
+      "variety": "Cream Sausage",
+      "guess": "tomato"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Bean, Bush (Wax)",
+      "variety": "Gold Rush",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Beet",
+      "variety": "Bull's Blood",
+      "guess": "beet"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Kohlrabi",
+      "variety": "Purple Vienna",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Kale",
+      "variety": "Lacinato (Dinosaur)",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Radicchio",
+      "variety": "Palla Rossa Mavrik",
+      "guess": "radicchio"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Onion, Cipollini",
+      "variety": "Flat of Italy",
+      "guess": "onion"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Carrot",
+      "variety": "Tonda di Parigi",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Chinese Broccoli (Gai Lan)",
+      "variety": "Kailaan",
+      "guess": "broccoli"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Cabbage",
+      "variety": "Copenhagen Market",
+      "guess": "cabbage"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Radish",
+      "variety": "Cherry Belle",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Radish (podding)",
+      "variety": "Rat's Tail",
+      "guess": "other"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper, Sweet",
+      "variety": "Orange Sun",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper, Sweet",
+      "variety": "California Wonder",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper, Sweet",
+      "variety": "Golden California Wonder",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper, Chile",
+      "variety": "Santaka",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper, Chile",
+      "variety": "Megatron F1 (jumbo jalapeno)",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper, Chile",
+      "variety": "Cayenne",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper, Chile",
+      "variety": "Lemon Drop (Aji Limon)",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper, Chile",
+      "variety": "Serrano",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper",
+      "variety": "Ausilio Thin Skin Italian",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper",
+      "variety": "Black Hungarian",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper",
+      "variety": "Hot Portugal",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper",
+      "variety": "Katana F1 (Shishito)",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Pepper",
+      "variety": "Candlelight",
+      "guess": "pepper"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Squash, Winter",
+      "variety": "Waltham Butternut",
+      "guess": "winter_squash"
+    },
+    {
+      "corpus": "seed-load-dataset-V1",
+      "crop": "Strawberry",
+      "variety": "Alpine",
+      "guess": null
+    }
+  ]
+}

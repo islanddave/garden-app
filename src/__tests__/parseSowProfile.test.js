@@ -299,6 +299,33 @@ describe('slugifyCropName', () => {
     expect(slugifyCropName('Winter Squash')).toBe('winter_squash');
     expect(slugifyCropName('Chinese Broccoli (Gai Lan)')).toBe('chinese_broccoli');
   });
+
+  it('un-inverts a comma qualifier when the recombined form is a LIVE crop type', () => {
+    // The hole that hid two real defects (20260804). "Squash, Winter" is a catalog spelling of
+    // "Winter Squash", not a subtype of squash — but the head-only rule discarded the only word
+    // that discriminates the crop type, so the packet matched its parent guess and resolved clean.
+    // Neon disagreed with both: Waltham Butternut is `winter_squash`, Tokyo Long White is
+    // `bunching_onion`. Both spellings must now reach the same slug.
+    expect(slugifyCropName('Squash, Winter')).toBe('winter_squash');
+    expect(slugifyCropName('Onion, Bunching')).toBe('bunching_onion');
+    expect(slugifyCropName('Squash, Winter')).toBe(slugifyCropName('Winter Squash'));
+    expect(slugifyCropName('Onion, Bunching')).toBe(slugifyCropName('Bunching Onion'));
+  });
+
+  it('does NOT invert when the recombined form is not a crop type — the guard on the guard', () => {
+    // Without this restriction the inversion would be exactly the "widen the normaliser until
+    // mismatches vanish" move the corpus gate forbids. Every comma crop in both datasets whose
+    // inverted form is not a live slug must still fall back to the head, unchanged.
+    expect(slugifyCropName('Squash, Summer')).toBe('squash');       // summer_squash is not a slug
+    expect(slugifyCropName('Onion, Bulb')).toBe('onion');           // bulb_onion is not a slug
+    expect(slugifyCropName('Onion, Cipollini')).toBe('onion');
+    expect(slugifyCropName('Pepper, Sweet')).toBe('pepper');
+    expect(slugifyCropName('Lettuce, Romaine (Mini)')).toBe('lettuce');
+    expect(slugifyCropName('Tomato, Cherry (Bush)')).toBe('tomato');
+    expect(slugifyCropName('Chives, Garlic')).toBe('chives');
+    expect(slugifyCropName('Bean, Bush (Filet)')).toBe('bean');
+    expect(slugifyCropName('Marigold, African')).toBe('marigold');
+  });
   it('is total over junk input', () => {
     for (const v of [null, undefined, '', '   ', '---']) expect(slugifyCropName(v)).toBe('');
   });
@@ -328,6 +355,21 @@ describe('checkCropGuess', () => {
     // re-adds winter_squash -> squash to CROP_GUESS_SYNONYMS, this fails.
     expect(checkCropGuess(pk('Winter Squash', 'squash')).status).toBe('unresolved');
     expect(checkCropGuess(pk('Winter Squash', 'winter_squash')).status).toBe('match');
+  });
+
+  it('the COMMA spelling of that same packet flags too — the hole that shipped', () => {
+    // The assertion above has been green since V4-CROPSPLIT-001, and the dataset defect sat right
+    // next to it the whole time spelled 'Squash, Winter'. Two spellings of one statement must not
+    // have two verdicts. Same story for the onion split, which is the more expensive of the two:
+    // bulb onion is harvest_habit='single' and bunching is the cut-and-come-again type Dave
+    // actually cuts, so the wrong slug there changes what the app tells him to do.
+    expect(checkCropGuess(pk('Squash, Winter', 'squash')).status).toBe('unresolved');
+    expect(checkCropGuess(pk('Squash, Winter', 'winter_squash')).status).toBe('match');
+    expect(checkCropGuess(pk('Onion, Bunching', 'onion')).status).toBe('unresolved');
+    expect(checkCropGuess(pk('Onion, Bunching', 'bunching_onion')).status).toBe('match');
+    // and the summer/bulb siblings must keep passing, or the fix has over-reached
+    expect(checkCropGuess(pk('Squash, Summer', 'squash')).status).toBe('match');
+    expect(checkCropGuess(pk('Onion, Bulb', 'onion')).status).toBe('match');
   });
 
   it('scallion steers to bunching_onion, not the bulb onion slug', () => {

@@ -36,13 +36,10 @@ export const CROP_TYPE_SLUGS = Object.freeze([
 // resolves to UNRESOLVED so a loader surfaces it for review rather than silently binding it.
 // "No valid target exists" is a first-class outcome, not licence to approximate.
 
-/** Packet `crop` -> comparable slug. Comma-head ("Pepper, Chile" -> pepper) and parentheticals
- *  ("Potato (true seed)" -> potato) are formatting, not disagreement, so they are normalised away
- *  BEFORE comparison — that alone removes 2 of the false alarms the original detector produced. */
-export function slugifyCropName(crop) {
-  if (crop == null) return '';
-  return String(crop)
-    .split(',')[0]
+const CROP_TYPE_SLUG_SET = new Set(CROP_TYPE_SLUGS);
+
+function bareSlug(s) {
+  return String(s ?? '')
     .replace(/\([^)]*\)/g, '')
     .trim()
     .toLowerCase()
@@ -50,16 +47,54 @@ export function slugifyCropName(crop) {
     .replace(/^_+|_+$/g, '');
 }
 
+/** Packet `crop` -> comparable slug. Comma-head ("Pepper, Chile" -> pepper) and parentheticals
+ *  ("Potato (true seed)" -> potato) are formatting, not disagreement, so they are normalised away
+ *  BEFORE comparison — that alone removes 2 of the false alarms the original detector produced.
+ *
+ *  BUT the comma-head rule had a hole, and it hid two live defects of the very class this detector
+ *  exists to catch (found 20260804). "Squash, Winter" and "Onion, Bunching" are the SAME inverted
+ *  form as "Winter Squash" and "Bunching Onion" — a catalog listing convention, not a subtype. The
+ *  head-only rule threw away the one word that discriminates the crop type, so both slugified to
+ *  the parent (`squash`, `onion`), matched their parent guess, and resolved 'match'. Neon disagreed
+ *  with both: Waltham Butternut is `winter_squash` and Tokyo Long White is `bunching_onion` in
+ *  prod. A re-load would have handed the butternut summer squash's repeat/2-day cadence — exactly
+ *  the L-286 failure, passing the gate built to stop it. A shipped test already asserts the
+ *  uninverted spelling flags (`pk('Winter Squash','squash')` -> unresolved); this closes the comma
+ *  spelling of the same statement.
+ *
+ *  The inversion is applied ONLY when the recombined form is itself a LIVE crop type. That guard is
+ *  what keeps it from becoming the "widen the normaliser until mismatches vanish" move the corpus
+ *  gate forbids: it can only ever make the detector see MORE, never less. Every other comma crop in
+ *  both datasets is unaffected — 'chile_pepper', 'bulb_onion', 'romaine_lettuce', 'cherry_tomato',
+ *  'holy_basil', 'summer_squash', 'bush_bean' are none of them crop types, so those all still fall
+ *  back to the head exactly as before. */
+export function slugifyCropName(crop) {
+  if (crop == null) return '';
+  const parts = String(crop).split(',');
+  const head = bareSlug(parts[0]);
+  if (parts.length > 1 && head) {
+    const qualifier = bareSlug(parts.slice(1).join(' '));
+    if (qualifier && CROP_TYPE_SLUG_SET.has(`${qualifier}_${head}`)) return `${qualifier}_${head}`;
+  }
+  return head;
+}
+
 /**
  * Reviewed synonyms: slugified crop name -> accepted crop_type_slug. Every entry is a HUMAN
  * decision recorded with its reason. Seeded from a re-run of the measured audit over both seed
  * datasets (179 packets). Adding an entry here is the ONLY sanctioned way to accept a mismatch.
  *
- * NOTE — `pumpkin` and `winter_squash` are accepted because `squash` is the only available target
- * TODAY, not because the mapping is horticulturally clean. Both are the known squash-slug
- * conflation: `crop_types.squash` carries harvest_habit=repeat / repeat_interval_days=2, a SUMMER
- * squash cadence, while these are single-harvest crops cured for months. Recorded here so the debt
- * is visible and greppable rather than invisible. See harvest-surfacing-20260721.
+ * NOTE (rewritten 20260804 — the previous text was STALE and read as licence for the exact defect
+ * the entry below now prevents). It said pumpkin was "accepted because `squash` is the only
+ * available target TODAY". That has not been true since V4-CROPSPLIT-001 shipped `winter_squash`
+ * (harvest_habit 'single'), and the entry it annotated had already been corrected to winter_squash
+ * while the comment still described the debt. `crop_types.squash` is display_name 'Summer Squash'
+ * and carries harvest_habit=repeat / repeat_interval_days=2 / loss_horizon_hours=36; `winter_squash`
+ * carries 'single' with neither. There is no remaining squash debt here — a pumpkin routed to
+ * `squash` is now simply wrong, and it is wrong twice over, because `ripenessCues.js` gives
+ * `squash` "press a thumbnail into the rind — it should pierce easily", which is the INVERSE of the
+ * winter-squash test. Verified in Neon 20260804: Howden, Cinderella and Waltham Butternut are all
+ * `winter_squash`.
  */
 export const CROP_GUESS_SYNONYMS = Object.freeze({
   collards: 'collard',           // plural of the same crop; the catalog slug is singular
