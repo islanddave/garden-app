@@ -26,9 +26,10 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validatePostBody, validateBatchBody, validateHarvestFields, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight } from './validators.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
-import { householdScope } from './household.js';
+import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
 import { FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES } from './statusTransitions.js';
-import { awardCritterServer, awardCrittersForBatch, readUserPrefs as readPrefsForCritter, readSpeciesPrefs as readSpeciesPrefsForCritter } from './critterAward.js';
+import { awardCritterServer, readUserPrefs as readPrefsForCritter, readSpeciesPrefs as readSpeciesPrefsForCritter } from './critterAward.js';
+import { applyBatchSideEffects } from './batchSideEffects.js';
 import { randomUUID } from 'node:crypto';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -43,6 +44,20 @@ async function getSecrets() {
 }
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
+
+// ── Write-FK ownership loaders (BUG-EVENTSOWN-001) ────────────────────────────────────────────
+// A DB foreign key proves the referenced row EXISTS; it never proves the caller OWNS it. Contract,
+// verbatim from the shipped loaders: return the row or null, and answer null with a GENERIC 400 —
+// never "not found" vs "forbidden", because that distinction is itself a leak.
+//
+// Ownership predicates live in ./authz-parents.js — one canonical body, byte-identical copies in
+// lambda/{events,photos,plants}/ (each Lambda zips from its own dir, so it cannot import upward).
+// lambda/authz-parents-copies-sync.test.js fails if any copy drifts from the canonical file.
+//
+// NOTE — these deliberately do NOT use household.js loadOwnedPlanting. That one is the same query
+// MINUS the `project_id IS NULL` conjunct and is therefore strictly LOOSER: without it the
+// own-created_by arm reaches a planting the caller created inside another household's container.
+import { loadOwnedProject, loadOwnedPlantingRef } from './authz-parents.js';
 
 function resp(statusCode, body) {
   return {
@@ -82,8 +97,56 @@ const HARVEST_TZ = 'America/New_York';
 // nag forever.
 const HARVEST_STALE_INTERVAL_CEILING = 3;
 
-const DAILY_FLAT_XP_CAP = 30;
+// ── Daily flat-XP cap ─────────────────────────────────────────────────────────────────────────
+// Raised 30 -> 300 (Batch-B decision packet item 3). The unit is UNCHANGED — 10 XP per LOGGING
+// ACTION, capped per user per day in the user's own timezone — so this is one constant, fully
+// reversible, exactly as the packet frames it. Achievement XP stays UNCAPPED (F16, unchanged).
+//
+// THE NUMBER, re-measured live on prod 2026-08-04 rather than taken from the packet.
+// The distribution that matters is LOGGING ACTIONS per active day, because after
+// BUG-BATCHSIDEEFFECTS-001 a batch is one cap-eligible action (see batchSideEffects.js §Decision 1):
+//     active days 73 | actions 2,630 | mean 36 | p50 20 | p75 52 | p90 81 | p95 106 | max 258
+// Modelled over those 73 days at 10 XP/action:
+//     cap      days capped   XP granted   XP forfeited   avg XP/active day
+//      30 (old)   89.0%          2,090       24,210            29
+//     100         61.6%          6,000       20,300            82
+//     200         49.3%         10,110       16,190           138
+//     300  <--    43.8%         13,500       12,800           185
+//     500         28.8%         18,800        7,500           258
+//    none          0.0%         26,300            0           360
+// Why 300 and not higher or lower:
+//   • 300 XP = 30 actions. The p50 day is 20 actions, so THE MEDIAN DAY NOW FINISHES UNCAPPED.
+//     That is the stated defect — "logging stops paying by mid-morning" — closed at the median.
+//     At 30 XP the median day capped after 3 of its 18 single-path actions (17% of the way in).
+//   • It still binds on 43.8% of days, which keeps `daily_xp_remaining` a LIVE signal rather than
+//     dead config. Removing the cap entirely would make that field a constant and delete the only
+//     brake in the system.
+//   • It bounds the outlier. A 258-action day would otherwise grant 2,580 XP — 68% of the user's
+//     entire lifetime XP (3,790) in one day. Letting a single day dominate the whole record is the
+//     over-reinforcement failure reward-ux-guideline V100 §8 guards against.
+//   • 6.7x more XP actually granted over the same 73 days (2,020 -> 13,500).
+//
+// INTERACTION WITH BUG-BATCHSIDEEFFECTS-001, which was the thing to model before choosing:
+// under the per-ACTION grain the cap-eligible population grows only 2,330 -> 2,630 (+13%), so this
+// number is chosen for post-fix traffic, not yesterday's. Under a per-EVENT grain it would have
+// grown to 12,025 (5.2x) and NO cap up to 1,000 XP leaves fewer than 58.9% of days capped — the
+// two changes would have cancelled out. The grain decision and the cap decision are one decision.
+//
+// V102 note: this is reward-shaped, and V102 §5's standing recommendation for a crucible
+// re-validation around a reward change applies. It does not gate the dev work (the mechanism,
+// delivery discipline and award RATE are all untouched — only a cap constant moves).
+const DAILY_FLAT_XP_CAP = 300;
+// Per logging action: one single-event POST, or one batch of up to 500. Name kept for continuity
+// with the deployed response contract (`daily_xp_remaining`); the grain is documented above.
 const FLAT_XP_PER_EVENT = 10;
+
+// V4-EVENTSOURCE-001 — event_log.source values written by THIS Lambda. The full value set, what
+// each one means, and why 'direct' is reserved-but-never-inferred live in
+// migrations/v4-eventsource-001/0a-additive-ddl.sql. Keep the two in step: the column carries a
+// NOT VALID CHECK, so an unlisted value here 23514s on write.
+// NOT set here: 'app_status' (lambda/plants + lambda/projects emit those rows) and 'import'.
+const EVENT_SOURCE_SINGLE = 'app';
+const EVENT_SOURCE_BATCH  = 'app_batch';
 
 // Harvest constants, validator, UUID regex live in validators.js (DB-free, unit-testable).
 // Re-exported here for backward compat with any caller importing from index.js directly.
@@ -187,6 +250,19 @@ export const handler = async (event) => {
       const excludeIds = Array.isArray(body.exclude_plant_ids) ? body.exclude_plant_ids : [];
       const dryRun = body.dry_run === true;
 
+      // Timezone for the streak / daily-XP window. The single path pre-fetches this the same way
+      // (Step 1); the batch path never needed it before because it had no timezone-scoped side
+      // effects. It does now.
+      const batchTzRows = await sql`
+        SELECT COALESCE(
+          (SELECT user_timezone FROM profiles WHERE id = ${userId}),
+          'America/New_York'
+        ) AS tz
+      `;
+      const batchUserTz = batchTzRows[0].tz;
+      const batchTzOffset = parseInt(event.headers?.['x-client-tz-offset'] ?? event.headers?.['X-Client-Tz-Offset'] ?? '0', 10);
+      const batchTzOffsetMin = Number.isFinite(batchTzOffset) ? batchTzOffset : 0;
+
       // (1) Idempotency fast-path: same key (same owner) returns the prior batch, no re-insert.
       const prior = await sql`
         SELECT id, item_count FROM event_batches
@@ -194,17 +270,36 @@ export const handler = async (event) => {
       `;
       if (prior.length) {
         // Backfill event_ids from event_log for idempotent re-hits (Phase B+ critter wiring).
+        // BUG-BATCHSIDEEFFECTS-001: this SELECT now carries plant_id / created_at / metadata too,
+        // because the re-hit path re-runs the SAME side-effect function as the fresh path (see
+        // batchSideEffects.js §Decision 3). Previously a re-hit returned here having done nothing,
+        // so a Lambda that died between COMMIT and the reward hooks lost that batch's rewards
+        // permanently. Every effect in that function is idempotent, so re-running COMPLETES a
+        // partial first attempt and re-applies nothing.
         const priorEvents = await sql`
-          SELECT id FROM event_log
+          SELECT id, plant_id, created_at, metadata FROM event_log
            WHERE metadata->>'batch_id' = ${prior[0].id}::text
              AND created_by = ${userId}
              AND deleted_at IS NULL
         `;
+        const priorFx = await applyBatchSideEffects({
+          sql,
+          userId,
+          userTz: batchUserTz,
+          batchId: prior[0].id,
+          eventType,
+          events: priorEvents,
+          itemCount: prior[0].item_count,
+          tzOffsetMin: batchTzOffsetMin,
+          dailyXpCap: DAILY_FLAT_XP_CAP,
+          flatXpPerAction: FLAT_XP_PER_EVENT,
+        });
         return resp(200, {
           batch_id: prior[0].id,
           count: prior[0].item_count,
           event_ids: priorEvents.map(r => r.id),
           idempotent: true,
+          ...priorFx,
         });
       }
 
@@ -267,12 +362,17 @@ export const handler = async (event) => {
               (id, idempotency_key, created_by, event_type, scope_json, event_date, item_count, status)
             VALUES (${batchId}, ${key}, ${userId}, ${eventType}, ${scopeJson}::jsonb,
                     ${eventDate}::timestamptz::date, ${plantIds.length}, 'complete')`,
+        // V4-EVENTSOURCE-001: `source` is a first-class provenance column (migration
+        // v4-eventsource-001/0a), replacing the microsecond-timestamp collision heuristic that was
+        // 98.5% false-positive precisely BECAUSE this statement gives every row in a batch the same
+        // created_at. Set at the write, so provenance no longer depends on app_events surviving.
         sql`INSERT INTO event_log
               (project_id, location_id, plant_id, event_type, event_date, is_public,
-               logged_by, created_by, metadata)
+               logged_by, created_by, metadata, source)
             SELECT p.container_id, pp.location_id, p.id, ${eventType}, ${eventDate}::timestamptz, true,
                    ${userId}, ${userId},
-                   jsonb_build_object('batch_id', ${batchId}::text, 'batch_v', 1)
+                   jsonb_build_object('batch_id', ${batchId}::text, 'batch_v', 1),
+                   ${EVENT_SOURCE_BATCH}
             FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id
             WHERE p.id = ANY(${plantIds})`,
         sql`
@@ -390,28 +490,32 @@ export const handler = async (event) => {
              AND p.germinated_at IS NULL
         `,
       ]);
-      // MVP-Critter server-side hook (Phase B++ refactor 2026-05-30) — fetch inserted events
-      // with plant_id + created_at, then call awardCrittersForBatch which awards critters
-      // INLINE in the events Lambda (one prefs fetch reused across the whole batch).
-      // Replaces the prior client-side fan-out (LogMany iterating event_ids).
+      // ── Post-transaction side effects (BUG-BATCHSIDEEFFECTS-001) ─────────────────────────────
+      // This block used to be the critter hook and NOTHING ELSE, which is the whole defect: the
+      // single-event path below runs six post-transaction effects and the batch path ran one, so
+      // 80.6% of all logged events earned no XP, advanced no streak, evaluated no achievement and
+      // emitted no telemetry. All six now live in ./batchSideEffects.js — one function, called
+      // from here AND from the idempotency fast-path above, every effect idempotent. Read that
+      // file's header for the four design decisions (grain, transaction placement, idempotency,
+      // O(1) cost) and for exactly what a retry does to user_stats and XP.
       const insertedEvents = await sql`
         SELECT id, plant_id, created_at, metadata FROM event_log
          WHERE metadata->>'batch_id' = ${batchId}::text
            AND created_by = ${userId}
            AND deleted_at IS NULL
       `;
-      try {
-        const tzOffsetHeader = parseInt(event.headers?.['x-client-tz-offset'] ?? event.headers?.['X-Client-Tz-Offset'] ?? '0', 10);
-        await awardCrittersForBatch({
-          sql,
-          userId,
-          events: insertedEvents,
-          householdId: userId,
-          tzOffsetMin: Number.isFinite(tzOffsetHeader) ? tzOffsetHeader : 0,
-        });
-      } catch (critterErr) {
-        console.warn('critter batch hook failed (non-fatal):', critterErr?.message ?? String(critterErr));
-      }
+      const batchFx = await applyBatchSideEffects({
+        sql,
+        userId,
+        userTz: batchUserTz,
+        batchId,
+        eventType,
+        events: insertedEvents,
+        itemCount: plantIds.length,
+        tzOffsetMin: batchTzOffsetMin,
+        dailyXpCap: DAILY_FLAT_XP_CAP,
+        flatXpPerAction: FLAT_XP_PER_EVENT,
+      });
       return resp(200, {
         batch_id: batchId,
         count: plantIds.length,
@@ -419,6 +523,11 @@ export const handler = async (event) => {
         // Phase B+ build still iterates and calls /api/critters — UNIQUE INDEX makes those
         // idempotent re-hits). Will remove once all clients are Phase B++.
         event_ids: insertedEvents.map(r => r.id),
+        // Same reward keys the single-event POST returns (xp_gained, daily_xp_remaining,
+        // updated_streak, newly_earned_achievements, total_events). ADDITIVE — no existing client
+        // field changes shape. The client does not read them yet; surfacing batch rewards in
+        // LogMany is a src/ change and belongs to whoever owns that lane.
+        ...batchFx,
       });
     }
 
@@ -822,6 +931,12 @@ export const handler = async (event) => {
                 INSERT INTO xp_events (user_id, amount, reason, source_id)
                 SELECT ${userId}, a.xp_reward, 'achievement_earned', i.achievement_id
                 FROM inserted i JOIN achievements a ON a.id = i.achievement_id
+                -- V4-EVENTSOURCE-001/0c added UNIQUE (user_id, reason, source_id) WHERE
+                -- source_id IS NOT NULL. This grant already could not duplicate (it only reads the
+                -- rows the inserted CTE actually created), so DO NOTHING never fires here — it is
+                -- present so a future change cannot turn a silent no-op into a 23505 that aborts
+                -- the whole statement.
+                ON CONFLICT (user_id, reason, source_id) WHERE source_id IS NOT NULL DO NOTHING
                 RETURNING amount, source_id
               ),
               stats_xp AS (
@@ -1280,6 +1395,56 @@ export const handler = async (event) => {
       const harvestUserGrams = isHarvest && typeof body.harvest.weight === 'number'
         ? toGrams(body.harvest.weight, body.harvest.weight_unit) : 0;
 
+      // ── Step 0: household ownership gate on every body-supplied parent id ────────────────────
+      // BUG-EVENTSOWN-001 / events-authz-gap-V100. Before this, POST /api/events took body
+      // project_id / plant_id / location_id straight from the request and inserted them. RLS policy
+      // `events_auth_insert` only asserts current_user_id() = created_by — it says nothing about
+      // the PARENTS — and `garden_node` / `container` are views with no security_invoker, so base
+      // table RLS does not even apply to this Lambda's queries. The Lambda predicate is the ONLY
+      // real authorization gate here.
+      //
+      // Impact this closes is not "a junk row": the transaction below upserts entity_memory
+      // (last_watered_at / next_water_at / last_harvested_at / last_issue_at), which the Today band
+      // and the daily-plan engine read. A forged watering event silently SUPPRESSES a real care
+      // reminder on someone else's planting — the failure mode is a dead plant, not a visible bad
+      // row. Severity MEDIUM only because the prod Clerk instance is sign_up.mode=restricted;
+      // **if that is ever switched off restricted this reclassifies to HIGH**.
+      //
+      // Same predicate, same generic-400 contract, same warnRejectedFk observability as the
+      // BUG-TAGENTOWN-001 fix in lambda/tags and the sweep landing in lambda/plants — one pattern.
+      // location_id is gated too: the assessment's table listed only project_id/plant_id, but
+      // body.location_id is inserted on this path with no check either and is the same class.
+      //
+      // NARROWING CHANGE — measured blast radius on live prod 2026-08-04. Historical rows that
+      // WOULD have been rejected by these predicates: 1 (soft-deleted project), 39 (soft-deleted
+      // planting, 35 of them via the batch path which is separately scoped), 31 (soft-deleted
+      // location). All are parents soft-deleted AFTER their event was written, and only 9 live
+      // single-path events carry a location_id at all. No client sends a foreign id. Per the
+      // assessment this should ship on its own, not folded into a feature promote.
+      if (projectId) {
+        if (!await loadOwnedProject(sql, projectId, householdIds)) {
+          warnRejectedFk(userId, 'event_log', 'project_id', projectId);
+          return resp(400, { error: 'Invalid project_id' });
+        }
+      }
+      if (body.plant_id) {
+        if (!await loadOwnedPlantingRef(sql, body.plant_id, householdIds)) {
+          warnRejectedFk(userId, 'event_log', 'plant_id', body.plant_id);
+          return resp(400, { error: 'Invalid plant_id' });
+        }
+      }
+      if (body.location_id) {
+        // household.js loadOwnedLocation has no UUID pre-check (a known gap noted in
+        // lambda/authz-parents.js), so a malformed id would 22P02 into the catch and answer an
+        // opaque 500 while the other two gates answer 400. Guard it here so all three behave
+        // identically; drop this line when the loaders merge and gain their own guard.
+        if (!AUTHZ_UUID_RE.test(String(body.location_id))
+            || !await loadOwnedLocation(sql, body.location_id, householdIds)) {
+          warnRejectedFk(userId, 'event_log', 'location_id', body.location_id);
+          return resp(400, { error: 'Invalid location_id' });
+        }
+      }
+
       // ── Step 1: pre-fetch user_timezone (COALESCE to America/New_York) ───────────────────────
       const tzRows = await sql`
         SELECT COALESCE(
@@ -1303,7 +1468,7 @@ export const handler = async (event) => {
             INSERT INTO event_log
               (project_id, location_id, plant_id, event_type, event_date,
                notes, private_notes, quantity, quantity_numeric, is_public,
-               logged_by, created_by, metadata,
+               logged_by, created_by, metadata, source,
                flagged_as_issue, severity,
                treatment_product_id, treatment_product_text, treatment_category, treatment_amount, pest_target)
             VALUES (
@@ -1320,6 +1485,12 @@ export const handler = async (event) => {
               ${userId},
               ${userId},
               ${metadata},
+              -- V4-EVENTSOURCE-001: provenance recorded at the write. This is what makes app_events
+              -- droppable later WITHOUT losing the only "did this come through the app?" surface in
+              -- the schema (packet item 10 Option B). Do not drop app_events until this has landed
+              -- AND the drift repair has completed — daily_xp_capped is still the only measurement
+              -- of forfeited XP anywhere.
+              ${EVENT_SOURCE_SINGLE},
               ${flagged},
               ${severity},
               ${treatmentProductId},
@@ -1332,7 +1503,7 @@ export const handler = async (event) => {
               id, project_id, location_id, plant_id, event_type, event_date,
               notes, private_notes, quantity, quantity_numeric, is_public,
               logged_by, created_by, metadata,
-              flagged_as_issue, severity, resolved_at, resolved_by,
+              flagged_as_issue, severity, resolved_at, resolved_by, source,
               treatment_product_id, treatment_product_text, treatment_category, treatment_amount, pest_target,
               created_at, updated_at
           ),
@@ -1581,12 +1752,26 @@ export const handler = async (event) => {
       // consecutive days now count (old NOW()-based math credited only the day you pressed log).
       // The pure helper (./streak.js) owns the math; the dashboard recomputes the same way at read
       // time so a stale streak never lingers. Break-recovery: graceDays=1 forgives one missed day.
+      //
+      // BUG-BATCHSIDEEFFECTS-001 — total_events is now the RECOMPUTED live count, not `+ 1`.
+      // The blind increment was the only non-idempotent column in this block and the direct cause
+      // of user_stats.total_events reading 2,003 against 11,993 real live rows: every batch event
+      // bypassed this path entirely, and a retry of this path double-counted. An absolute value is
+      // idempotent by definition, keeps the single and batch paths in agreement (batchSideEffects.js
+      // Step 2 writes the identical expression), and converges rather than accumulating.
+      // ⚠ DEPLOY-VISIBLE: the FIRST event logged after this ships jumps total_events from 2,003 to
+      // ~12,000 in one step. Verified safe against an achievement avalanche — the event_count
+      // ladder tops out at 500 (five_hundred) and all four rungs are already earned by the only
+      // user with batch history. The extra aggregate rides inside the query that was already
+      // scanning these exact rows, so it costs no additional round trip.
       let achievementResult = { newly_earned: [], current_streak: null, total_events: null };
       try {
         const actRows = await sql`
           WITH z AS (SELECT ${userTz}::text AS tz)
           SELECT
             to_char((NOW() AT TIME ZONE (SELECT tz FROM z))::date, 'YYYY-MM-DD') AS today,
+            (SELECT count(*)::int FROM event_log e
+              WHERE e.created_by = ${userId} AND e.deleted_at IS NULL) AS live_events,
             COALESCE((
               SELECT json_agg(d ORDER BY d DESC) FROM (
                 SELECT DISTINCT (e.event_date AT TIME ZONE (SELECT tz FROM z))::date AS d
@@ -1599,15 +1784,16 @@ export const handler = async (event) => {
             ), '[]'::json) AS days
         `;
         const todayStr = actRows[0]?.today ?? null;
+        const liveEvents = actRows[0]?.live_events ?? null;
         const activityDays = (actRows[0]?.days ?? []).map((d) => String(d).slice(0, 10));
         const { current, longest } = computeStreak(activityDays, todayStr, STREAK_GRACE_DAYS);
         const latestDay = activityDays.length ? activityDays[0] : todayStr;
 
         const statsRows = await sql`
           INSERT INTO user_stats (user_id, total_events, last_active_date, current_streak, longest_streak)
-          VALUES (${userId}, 1, ${latestDay}::date, ${current}, ${longest})
+          VALUES (${userId}, ${liveEvents}, ${latestDay}::date, ${current}, ${longest})
           ON CONFLICT (user_id) DO UPDATE SET
-            total_events     = user_stats.total_events + 1,
+            total_events     = ${liveEvents},
             current_streak   = ${current},
             longest_streak   = GREATEST(user_stats.longest_streak, ${longest}),
             last_active_date = ${latestDay}::date,
@@ -1679,6 +1865,8 @@ export const handler = async (event) => {
               INSERT INTO xp_events (user_id, amount, reason, source_id)
               SELECT ${userId}, a.xp_reward, 'achievement_earned', i.achievement_id
               FROM inserted i JOIN achievements a ON a.id = i.achievement_id
+              -- See the resolve path above: defensive against the new 0c unique index, never fires.
+              ON CONFLICT (user_id, reason, source_id) WHERE source_id IS NOT NULL DO NOTHING
               RETURNING amount, source_id
             ),
             stats_xp AS (
@@ -1722,6 +1910,10 @@ export const handler = async (event) => {
             SELECT ${userId}, ${FLAT_XP_PER_EVENT}, 'event_logged', ${eventId}::uuid
             FROM today_xp
             WHERE today_sum < ${DAILY_FLAT_XP_CAP}
+            -- eventId is brand new on every single-event POST, so this cannot conflict today. It is
+            -- here so the single and batch grants carry the SAME retry semantics: at most one
+            -- 'event_logged' grant per logging action, enforced by 0c rather than by convention.
+            ON CONFLICT (user_id, reason, source_id) WHERE source_id IS NOT NULL DO NOTHING
             RETURNING amount
           ),
           stats AS (

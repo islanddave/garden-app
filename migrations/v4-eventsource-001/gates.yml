@@ -1,0 +1,122 @@
+# gates.yml
+# V4-EVENTSOURCE-001 — event_log.source provenance column + backfill + xp_events idempotency index.
+#
+# SEQUENCING — this one DOES gate the code deploy, in one direction only:
+#   0a/0c MUST reach an environment BEFORE the lambda/events code that writes `source` and relies on
+#   ON CONFLICT against uq_xp_events_user_reason_source. Without 0a every event INSERT 42703s on the
+#   unknown column. The reverse is unconstrained: 0a/0b/0c are safe against the currently-deployed
+#   Lambda (nullable column, NULL-admitting NOT VALID CHECK, no writer that can violate the index).
+#
+#   CONSEQUENCE FOR CI (do not skip this): integration-test.yml branches off STAGING and does NOT
+#   apply migrations. So the order is
+#       1. apply 0a + 0c to STAGING   <-- before the dev push, or integration tests fail on 42703
+#       2. push code to dev
+#       3. apply 0a + 0b + 0c to PROD before the promote reaches prod
+#   0b (data backfill) is not a code dependency and may lag; nothing reads `source` yet.
+#
+# L-058 SWEEP: empty. The only CHECK is created NOT VALID on purpose — see 0a's header. Do NOT add
+#   a VALIDATE step here: validating would arm the constraint against the still-deployed old writer,
+#   and arming a CHECK is a deploy, not a migration.
+
+pre:
+  - name: pre_event_log_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='event_log'
+    expect: rowcount_eq
+    value: 1
+
+  # 0b reads app_events. If it has already been dropped, the backfill silently classifies nothing
+  # and the whole point of item 10 (move provenance out BEFORE dropping) has been lost.
+  - name: pre_app_events_still_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='app_events'
+    expect: rowcount_eq
+    value: 1
+
+  # 0c is a UNIQUE index over existing data — it fails loudly on a duplicate. Prove there is none
+  # BEFORE the DDL rather than discovering it mid-apply.
+  - name: pre_no_duplicate_xp_grants
+    sql: |
+      SELECT 1 FROM (
+        SELECT user_id, reason, source_id FROM public.xp_events
+         WHERE source_id IS NOT NULL
+         GROUP BY 1,2,3 HAVING count(*) > 1) d
+    expect: rowcount_eq
+    value: 0
+
+sweep: []
+
+post:
+  - name: post_source_column_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='event_log' AND column_name='source'
+    expect: rowcount_eq
+    value: 1
+
+  # Nullable with no default is what makes 0a safe against the deployed Lambda. If a later edit
+  # ever adds NOT NULL or a DEFAULT, that safety is gone and this gate says so.
+  - name: post_source_is_nullable_no_default
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='event_log' AND column_name='source'
+         AND is_nullable='YES' AND column_default IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_source_check_present_and_not_valid
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='event_log_source_check' AND convalidated = false
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_source_index_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND indexname='idx_event_log_source'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_xp_idempotency_index_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND indexname='uq_xp_events_user_reason_source'
+    expect: rowcount_eq
+    value: 1
+
+  # ── 0b backfill assertions ──────────────────────────────────────────────────────────────────
+  # Exactness, not coverage: EVERY batch-metadata row must be classified. A miss here means the
+  # batch INSERT changed shape and the provenance column is already lying.
+  - name: post_every_batch_row_classified
+    sql: |
+      SELECT 1 FROM public.event_log
+       WHERE deleted_at IS NULL AND metadata ->> 'batch_id' IS NOT NULL AND source IS DISTINCT FROM 'app_batch'
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_every_status_change_row_classified
+    sql: |
+      SELECT 1 FROM public.event_log
+       WHERE deleted_at IS NULL AND event_type = 'status_change'
+         AND metadata ->> 'schema' = 'status_change.v1' AND source IS DISTINCT FROM 'app_status'
+    expect: rowcount_eq
+    value: 0
+
+  # The backfill must NEVER manufacture 'direct'. A telemetry try/catch failure is indistinguishable
+  # from a direct write, so 'direct' can only be set by a writer that KNOWS it bypassed the API.
+  # If this ever trips, someone taught 0b to guess.
+  - name: post_backfill_invented_no_direct_rows
+    sql: |
+      SELECT 1 FROM public.event_log WHERE source = 'direct'
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version IN ('4.21.0-eventsource-001','4.21.1-eventsource-001-xpidem')
+    expect: rowcount_eq
+    value: 2
