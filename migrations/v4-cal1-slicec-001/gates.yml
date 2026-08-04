@@ -49,6 +49,15 @@ post:
     expect: rowcount_eq
     value: 1
 
+  # !! RETIRED 2026-08-04 by migrations/v4-cal1-sampleconf-001 — DO NOT RE-RUN AGAINST A v3 DATABASE.
+  # This gate encodes the defect that migration fixes. The claim below ("whatever the sample count")
+  # rested on the first eight samples reading ~25% under catalog; at 21 samples the n=1 deltas are
+  # noise spanning -92%..+83%, so a single weighing is NOT a better estimate than a curated figure.
+  # Under v3 a derived row outranks the reference only when corroborated (confidence high/medium,
+  # i.e. sample_n>=2, or sample_n>=5), and this gate fails by design on 16 of 18 rows. Its
+  # replacement is v4-cal1-sampleconf-001/gates.yml :: post_provisional_does_not_outrank_reference
+  # (plus post_corroborated_still_outranks_reference, which preserves the half of this that was right).
+  #
   # A real sample must outrank the reference value for the same variety, whatever the sample count:
   # one weighing beats a catalog figure. min-n governs comparison, not best-available-estimate.
   - name: post_sample_tier_outranks_reference

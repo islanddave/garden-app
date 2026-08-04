@@ -6,13 +6,21 @@
 // and variety level, pervariety-001 added real measured samples, and slicec-001 folded all of it
 // into public.resolve_harvest_weight — the single derivation locus both write paths call.
 //
-// RESOLUTION ORDER under test (resolve_harvest_weight v2):
+// RESOLUTION ORDER under test (resolve_harvest_weight v3, V4-CAL1SAMPLECONF-001):
 //   1. user-supplied grams          -> basis 'measured',  estimated false
 //   2. unit is g/kg/lb/oz           -> basis 'measured',  estimated false
-//   3. cultivar_weight_derived      -> basis 'cultivar',  estimated true   (real weighings)
+//   3. cultivar_weight_derived, CORROBORATED -> basis 'cultivar', estimated true  (real weighings)
 //   4. plant_varieties.unit_weights -> basis 'cultivar',  estimated true   (reference)
-//   5. crop_types.unit_weights      -> basis 'crop_type', estimated true   ONLY if the crop allows it
-//   6. nothing                      -> NULL/NULL/NULL — no estimate, never guessed
+//   5. cultivar_weight_derived, provisional  -> basis 'cultivar', estimated true  (n=1, only where
+//                                      no variety reference exists)
+//   6. crop_types.unit_weights      -> basis 'crop_type', estimated true   ONLY if the crop allows it
+//   7. nothing                      -> NULL/NULL/NULL — no estimate, never guessed
+//
+// UPDATED 2026-08-04 for V4-CAL1SAMPLECONF-001. v2 ranked tier 3 above tier 4 unconditionally; a
+// single unrepresentative weighing therefore overrode catalog on 16 of 18 derived groups (5
+// Beefsteak resolved 140 g against a curated 1750 g). Tier 3 now requires corroboration —
+// confidence IN ('high','medium'), i.e. sample_n >= 2, OR sample_n >= 5. The boundary cases live in
+// cal1-sampleconf.int.test.js; this file keeps the end-to-end tier walk.
 //
 // Requires the CAL-1 columns; skips cleanly on a branch that lacks them.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -37,6 +45,18 @@ describe.skipIf(!HAS_CAL1)('CAL-1 harvest weight derivation — POST /api/events
   let plantCropFallback, plantCropFallbackClean, plantCropStrict, plantVarietyRef, plantSampled, plantUnseeded
   let cvSampledId
 
+  // Hoisted to describe scope so individual tests can build their own fixtures (the uncorroborated
+  // n=1 case below needs a variety no other test has weighed).
+  const mkPlanting = async (slug, cvName, plantName, unitWeights = null) => {
+    const cv = await directSql`
+      INSERT INTO plant_varieties (name, created_by, crop_type_slug, unit_weights)
+      VALUES (${cvName + '-' + RUN}, ${USER}, ${slug}, ${unitWeights}::jsonb) RETURNING id`
+    const pl = await directSql`
+      INSERT INTO plants (project_id, name, created_by, variety_id)
+      VALUES (${projectId}, ${plantName}, ${USER}, ${cv[0].id}) RETURNING id`
+    return { cultivarId: cv[0].id, plantId: pl[0].id }
+  }
+
   beforeAll(async () => {
     setTestUserId(USER)
     projectId = (await insertProject({ name: 'cal1-' + RUN, createdBy: USER })).id
@@ -52,16 +72,6 @@ describe.skipIf(!HAS_CAL1)('CAL-1 harvest weight derivation — POST /api/events
     await directSql`
       INSERT INTO crop_types (slug, display_name, default_unit, unit_weights, variety_grams_required)
       VALUES (${CROP_UNSEEDED}, 'CAL1 Unseeded Crop', 'count', NULL, false)`
-
-    const mkPlanting = async (slug, cvName, plantName, unitWeights = null) => {
-      const cv = await directSql`
-        INSERT INTO plant_varieties (name, created_by, crop_type_slug, unit_weights)
-        VALUES (${cvName + '-' + RUN}, ${USER}, ${slug}, ${unitWeights}::jsonb) RETURNING id`
-      const pl = await directSql`
-        INSERT INTO plants (project_id, name, created_by, variety_id)
-        VALUES (${projectId}, ${plantName}, ${USER}, ${cv[0].id}) RETURNING id`
-      return { cultivarId: cv[0].id, plantId: pl[0].id }
-    }
 
     plantCropFallback = (await mkPlanting(CROP_FALLBACK, 'cv-fb', 'plant-fb')).plantId
     // A SECOND fallback planting that no test ever weighs. The user-weight tests above post real
@@ -184,14 +194,45 @@ describe.skipIf(!HAS_CAL1)('CAL-1 harvest weight derivation — POST /api/events
   })
 
   // ── tiers 3/4/5: estimates ───────────────────────────────────────────────────
-  it('SAMPLE TIER: a real weighing outranks the variety reference value', async () => {
-    // reference says 7 g/fruit; pooled samples say 300/14. The samples must win.
+  it('SAMPLE TIER: a CORROBORATED weighing outranks the variety reference value', async () => {
+    // By this point the fixture sample (200 g / 10) and the auto-captured one (100 g / 4) give
+    // n=2 -> confidence 'medium', which is corroborated, so the pooled 300/14 beats the 7 g
+    // reference. Asserted explicitly: under v3 the tier depends on sample_n, so a future fixture
+    // change that silently dropped this to n=1 would flip the expected tier rather than fail here.
+    const d = await directSql`
+      SELECT sample_n::int AS n, confidence FROM cultivar_weight_derived
+       WHERE cultivar_id = ${cvSampledId} AND unit = 'count'`
+    expect(d[0].n, `this test needs a corroborated row; got sample_n=${d[0].n}`).toBeGreaterThanOrEqual(2)
+    expect(['high', 'medium'], `confidence was '${d[0].confidence}'`).toContain(d[0].confidence)
+
     const { status, body } = await postHarvest({
       plant_id: plantSampled, harvest: { quantity: 2, unit: 'count' },
     })
     expect(status).toBe(201)
-    expect(Number(body.harvest.weight_grams)).toBeCloseTo(2 * (300 / 14), 3)
+    expect(Number(body.harvest.weight_grams),
+      `corroborated samples (n=${d[0].n}, ${d[0].confidence}) must win: expected `
+      + `${(2 * (300 / 14)).toFixed(3)} g, got ${body.harvest.weight_grams} g`)
+      .toBeCloseTo(2 * (300 / 14), 3)
     expect(body.harvest.weight_estimated).toBe(true)
+    expect(body.harvest.weight_basis).toBe('cultivar')
+  })
+
+  it('SAMPLE TIER: an UNCORROBORATED (n=1) weighing does NOT outrank the reference', async () => {
+    // The defect V4-CAL1SAMPLECONF-001 fixes, in miniature: reference 40 g/fruit, one weighing at
+    // 4 g/fruit. 3 count must resolve to 120 g (reference), not 12 g (the single sample).
+    const one = await mkPlanting(CROP_STRICT, 'cv-one-sample', 'plant-one-sample', '{"count":40}')
+    await directSql`
+      INSERT INTO cultivar_weight_sample
+        (cultivar_id, unit, total_grams, unit_count, sampled_at, created_by)
+      VALUES (${one.cultivarId}, 'count', 4, 1, now(), ${USER})`
+    const { status, body } = await postHarvest({
+      plant_id: one.plantId, harvest: { quantity: 3, unit: 'count' },
+    })
+    expect(status).toBe(201)
+    expect(Number(body.harvest.weight_grams),
+      `n=1 is uncorroborated, so the 40 g reference must hold: expected 120 g, got `
+      + `${body.harvest.weight_grams} g (the v2 defect returned 3 x 4 = 12 g)`)
+      .toBeCloseTo(120, 3)
     expect(body.harvest.weight_basis).toBe('cultivar')
   })
 

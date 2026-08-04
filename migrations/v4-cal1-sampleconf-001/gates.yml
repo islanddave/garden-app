@@ -1,0 +1,173 @@
+# gates.yml
+# V4-CAL1SAMPLECONF-001 — confidence-aware real-sample tier in resolve_harvest_weight.
+#
+# SEQUENCING: single file, no ordering constraints inside this directory.
+#   1. v4-cal1-slicec-001 must already be applied (this replaces the function it created)
+#   2. 0a-resolver-v3.sql
+#   3. these post gates
+#
+# ORDER vs THE LAMBDA: NONE REQUIRED, unlike every prior CAL-1 migration. v3 changes only the
+# function body — identical signature, identical three return columns, identical weight_basis
+# vocabulary. The deployed POST CTE and PUT recompute call it the same way before and after, so
+# schema and writer are decoupled here and this may be applied independently of any deploy.
+#
+# STAGING FIRST. integration-test.yml branches CI off `staging` and does NOT apply migrations, so
+# the new integration coverage (tests/integration/cal1-sampleconf.int.test.js) fails on a staging
+# database that still carries v2 until 0a is applied there. Apply to staging BEFORE the dev push.
+#
+# ── SUPERSEDES A GATE IN THE PRIOR MIGRATION ─────────────────────────────────────────────────────
+# v4-cal1-slicec-001/gates.yml :: post_sample_tier_outranks_reference asserts the exact behaviour
+# this migration removes ("A real sample must outrank the reference value for the same variety,
+# whatever the sample count"). That gate is RETIRED — it encodes the defect. It is not CI-wired
+# (nothing under .github/workflows or scripts references gates.yml; these are applied by hand), so
+# it cannot fail a build, but do not re-run it against a v3 database and do not treat its intent as
+# current. post_provisional_does_not_outrank_reference below is its replacement.
+
+pre:
+  - name: pre_slicec_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.20.0-cal1-slicec-001'
+    expect: rowcount_eq
+    value: 1
+
+  # The promotion predicate reads these two columns off the view; without them 0a resolves nothing.
+  - name: pre_derived_exposes_confidence_and_sample_n
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar_weight_derived'
+         AND column_name IN ('confidence','sample_n')
+    expect: rowcount_eq
+    value: 2
+
+  # Records the defect at its worst so the post gate below is a real before/after, not an assertion
+  # about a value nobody checked. 5 Beefsteak must read 140 g here and 1750 g after.
+  - name: pre_beefsteak_resolves_to_the_bad_number
+    sql: |
+      SELECT 1
+        FROM public.plant_varieties v
+        JOIN public.plants pl ON pl.variety_id = v.id AND pl.deleted_at IS NULL
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, 'count', 5, NULL) r
+       WHERE v.name = 'Beefsteak' AND v.deleted_at IS NULL
+         AND round(r.weight_grams) = 140
+      LIMIT 1
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.20.6-cal1-sampleconf-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── the fix ──────────────────────────────────────────────────────────────────
+  # Replaces slicec-001's post_sample_tier_outranks_reference. An UNCORROBORATED derived row must no
+  # longer beat a curated reference: for every (cultivar, unit) that is 'provisional' AND has a
+  # variety reference, the resolver must return the reference, not the sample.
+  - name: post_provisional_does_not_outrank_reference
+    sql: |
+      SELECT 1
+        FROM public.plant_varieties v
+        JOIN public.plants pl ON pl.variety_id = v.id AND pl.deleted_at IS NULL
+        JOIN public.cultivar_weight_derived d ON d.cultivar_id = v.id
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
+       WHERE v.deleted_at IS NULL
+         AND d.confidence = 'provisional' AND d.sample_n < 5
+         AND (v.unit_weights ->> d.unit) IS NOT NULL
+         AND round(r.weight_grams, 4) <> round((v.unit_weights ->> d.unit)::numeric, 4)
+    expect: rowcount_eq
+    value: 0
+
+  # The other half, and the reason this is not a blanket demotion: a CORROBORATED sample must still
+  # win. Today that is San Marzano Roma (n=2, cv 1.5%) and Celebrity (n=3, medium).
+  - name: post_corroborated_still_outranks_reference
+    sql: |
+      SELECT 1
+        FROM public.plant_varieties v
+        JOIN public.plants pl ON pl.variety_id = v.id AND pl.deleted_at IS NULL
+        JOIN public.cultivar_weight_derived d ON d.cultivar_id = v.id
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
+       WHERE v.deleted_at IS NULL
+         AND (d.confidence IN ('high','medium') OR d.sample_n >= 5)
+         AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4) OR r.weight_basis <> 'cultivar')
+    expect: rowcount_eq
+    value: 0
+
+  # ...and that at least one row actually exercises it, so the gate above cannot pass vacuously.
+  - name: post_at_least_one_corroborated_row_exists
+    sql: |
+      SELECT 1 FROM public.cultivar_weight_derived
+       WHERE confidence IN ('high','medium') OR sample_n >= 5
+    expect: rowcount_gte
+    value: 1
+
+  # A provisional sample is DEMOTED, not discarded: where there is no curated reference it is still
+  # the estimate, and still reads as 'cultivar' rather than falling through to a crop average.
+  - name: post_provisional_still_used_when_no_reference
+    sql: |
+      SELECT 1
+        FROM public.plant_varieties v
+        JOIN public.plants pl ON pl.variety_id = v.id AND pl.deleted_at IS NULL
+        JOIN public.cultivar_weight_derived d ON d.cultivar_id = v.id
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
+       WHERE v.deleted_at IS NULL
+         AND d.confidence = 'provisional'
+         AND (v.unit_weights ->> d.unit) IS NULL
+         AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4) OR r.weight_basis <> 'cultivar')
+    expect: rowcount_eq
+    value: 0
+
+  # The headline, stated as the number Dave sees: 5 Beefsteak = 1750 g (3.9 lb), not 140 g (0.3 lb).
+  - name: post_beefsteak_headline_fixed
+    sql: |
+      SELECT 1
+        FROM public.plant_varieties v
+        JOIN public.plants pl ON pl.variety_id = v.id AND pl.deleted_at IS NULL
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, 'count', 5, NULL) r
+       WHERE v.name = 'Beefsteak' AND v.deleted_at IS NULL
+         AND round(r.weight_grams) <> 1750
+    expect: rowcount_eq
+    value: 0
+
+  # ── unchanged contracts (regression guard) ───────────────────────────────────
+  - name: post_user_weight_still_wins
+    sql: |
+      SELECT 1 FROM public.resolve_harvest_weight(NULL,'count',5,337)
+       WHERE weight_grams=337 AND weight_estimated=false AND weight_basis='measured'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_signature_and_return_type_unchanged
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+       WHERE n.nspname='public' AND p.proname='resolve_harvest_weight'
+         AND pg_get_function_result(p.oid)
+             = 'TABLE(weight_grams numeric, weight_estimated boolean, weight_basis text)'
+    expect: rowcount_eq
+    value: 1
+
+  # No new weight_basis value was introduced, so chk_harvest_log_weight_basis (VALIDATED) still
+  # holds and no deployed writer needs to change. This is the guard against someone "improving"
+  # v3 by adding a 'cultivar_sample' basis without widening the CHECK first.
+  - name: post_basis_vocabulary_unchanged
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE deleted_at IS NULL AND weight_basis IS NOT NULL
+         AND weight_basis NOT IN ('measured','cultivar','crop_type')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a touches no rows. Nothing already stored may have moved.
+  - name: post_no_stored_weight_changed
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE deleted_at IS NULL AND (weight_grams IS NULL) <> (weight_basis IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # The samples are Dave's real weighings. v3 reranks them; it must never remove one.
+  - name: post_no_sample_lost
+    sql: |
+      SELECT 1 FROM public.cultivar_weight_sample
+    expect: rowcount_gte
+    value: 21
