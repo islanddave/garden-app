@@ -1461,10 +1461,18 @@ export const handler = async (event) => {
       // returned id into statement 2.
       //
       // NEVER THROWS, mirroring the critter hook below: a calibration sample is derived data, and
-      // losing one must never fail the user's harvest save. It is fully recoverable — re-saving the
-      // harvest, or the 0c backfill, produces it again. All the branch logic (weight-unit harvests,
-      // unattributed plantings, unchanged re-saves) lives in the SQL function, so this stays a
-      // single call from both write paths.
+      // losing one must never fail the user's harvest save. Recovery is by RE-SAVING the harvest
+      // (the PUT path calls this function unconditionally), or by calling
+      // record_harvest_weight_sample directly for the affected event ids.
+      //
+      // NOT by the 0c backfill — an earlier version of this comment claimed that and it is FALSE
+      // (corrected 2026-08-04). 0c-backfill-basis.sql never references cultivar_weight_sample at
+      // all, and it is deliberately measured-safe: its WHERE clause excludes every row where
+      // (weight_estimated IS FALSE AND unit NOT IN ('g','kg','lb','oz')) — i.e. precisely the
+      // user-weighed rows a calibration sample comes from. Re-running 0c recovers NOTHING here.
+      //
+      // All the branch logic (weight-unit harvests, unattributed plantings, unchanged re-saves)
+      // lives in the SQL function, so this stays a single call from both write paths.
       if (isHarvest && harvestUserGrams > 0) {
         try {
           await sql`SELECT public.record_harvest_weight_sample(
