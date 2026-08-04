@@ -1,0 +1,129 @@
+name: Migration gate invariants (advisory)
+
+# OPS-GATERUNNER-001. Runs the POST-gates of already-applied migrations against
+# live prod and staging as a continuous invariant check.
+#
+# WHY THIS EXISTS
+# ---------------
+# V4-EVENTSOURCE-001 applied cleanly. Its DDL landed, its schema_version rows
+# were written, and every structural gate would have passed. What was wrong was
+# the POST-STATE: the data backfill never ran, leaving event_log.source 100% NULL
+# across 12,100 prod rows for weeks. Its own gates.yml already asserted the
+# correct invariant. Nothing ever executed it.
+#
+# That is the exact class this job catches and that no apply-time check can: the
+# apply was green, and the defect was only visible afterwards, by asking the
+# database whether the invariant still holds.
+#
+# WHY POST-GATES ONLY, AND ONLY --continuous-only
+# -----------------------------------------------
+# PRE-gates assert the migration has NOT yet been applied ("pre_new_columns_absent",
+# "pre_beefsteak_resolves_to_the_bad_number"). On an applied database they fail BY
+# DESIGN — measured 2026-08-04: 38 of 109 prod pre-gates fail purely because the
+# migrations succeeded. Running them here would be pure noise.
+#
+# Among post-gates, some are true only in the apply window and are legitimately
+# invalidated later — v1-2a-2's "no flagged rows" (V4-FLAG-001 later shipped the
+# flag feature; now 72 rows), v4-evtcascade-001's NOW() - INTERVAL '1 hour'
+# freshness check, and the frozen view-column-count gates that each later view
+# widen invalidates. Those carry `continuous: false` and are skipped here.
+# --continuous-only is what keeps this job's red meaningful instead of permanent.
+#
+# ADVISORY BY DESIGN (for now)
+# ----------------------------
+# Exits 0 even on findings, matching staging-drift.yml and schema-audit.yml. The
+# corpus has a known stale-gate backlog (measured 2026-08-04: 18 prod post-gate
+# failures, of which ~10 are superseded-by-design rather than real). Hard-failing
+# before that backlog is annotated would red the build permanently and train
+# everyone to ignore this job — reproducing the original disease in a new form.
+# FLIP `continue-on-error` TO false ONCE THE BACKLOG IS TRIAGED; that is the
+# point of the job, and leaving it advisory forever would be a slow failure.
+#
+# Scheduled rather than per-push: a post-state invariant drifts with DATA and
+# with later migrations, not with each commit. Also fires on migrations/** pushes,
+# the one commit-shaped signal that the invariants may have moved.
+
+on:
+  schedule:
+    # Tuesdays 13:00 UTC — a day after staging-drift.yml so the two findings
+    # streams do not land together and compete for attention.
+    - cron: '0 13 * * 2'
+  push:
+    branches: [dev]
+    paths:
+      - 'migrations/**'
+      - 'scripts/gate_runner.py'
+      - '.github/workflows/gate-invariants.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-invariants-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  invariants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install python deps
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'psycopg[binary]' pyyaml \
+            || python3 -m pip install --quiet --break-system-packages 'psycopg[binary]' pyyaml
+
+      - name: Validate gate schema
+        # Structural first, so a malformed gate file is reported as itself rather
+        # than as a connection-shaped mystery. Hard-fails: exit 2.
+        run: python3 scripts/gate_runner.py --all --env prod --validate-only
+
+      - name: Post-gate invariants — PROD
+        id: prod
+        continue-on-error: true
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${NEON_DATABASE_URL:-}" ]]; then
+            echo "::warning::NEON_DATABASE_URL is not readable by this job — prod invariants UNKNOWN, not clean."
+            exit 0
+          fi
+          python3 scripts/gate_runner.py --all --env prod --phase post --continuous-only \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Post-gate invariants — STAGING
+        id: staging
+        continue-on-error: true
+        env:
+          NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${NEON_STAGING_URL:-}" ]]; then
+            echo "::warning::NEON_STAGING_URL is not readable by this job — staging invariants UNKNOWN, not clean."
+            exit 0
+          fi
+          python3 scripts/gate_runner.py --all --env staging --phase post --continuous-only \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Surface findings
+        # The two steps above are continue-on-error, so this is what makes a
+        # finding visible. An unreachable database already warned above and is
+        # reported as UNKNOWN — never silently folded into "clean".
+        run: |
+          set -euo pipefail
+          fail=0
+          if [[ "${{ steps.prod.outcome }}" != "success" ]]; then
+            echo "::warning::PROD post-gate invariants reported findings — see the job summary."
+            fail=1
+          fi
+          if [[ "${{ steps.staging.outcome }}" != "success" ]]; then
+            echo "::warning::STAGING post-gate invariants reported findings — see the job summary."
+            fail=1
+          fi
+          if [[ "$fail" -eq 0 ]]; then
+            echo "All continuous post-gate invariants hold on both environments."
+          fi

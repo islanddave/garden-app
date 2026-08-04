@@ -60,9 +60,24 @@ jobs:
           set -euo pipefail
           # Plain form is proven on these runners (promote-gate.yml "Install python
           # deps"); the fallback covers a PEP-668 externally-managed image.
-          python3 -m pip install --quiet pytest requests boto3 \
-            || python3 -m pip install --quiet --break-system-packages pytest requests boto3
+          python3 -m pip install --quiet pytest requests boto3 pyyaml \
+            || python3 -m pip install --quiet --break-system-packages pytest requests boto3 pyyaml
           python3 -m pytest -q scripts/test_*.py
+
+      - name: Migration gate schema validation (OPS-GATERUNNER-001)
+        # Every migrations/*/gates.yml must PARSE and satisfy the strict gate
+        # schema. No database is touched — this is a pure structural check, so it
+        # needs no secrets and runs on every push.
+        #
+        # WHY IT IS UNCONDITIONAL: for months these gate files were runbook prose
+        # that nothing executed, and V4-EVENTSOURCE-001's backfill shipped unrun
+        # with two post-gates that would have caught it instantly. A gate file the
+        # runner cannot parse is exactly as inert as those were — so an unparseable
+        # or mis-keyed gate file is a BUILD FAILURE (exit 2), never a skip.
+        # Observed drift this is designed to catch: two in-flight migrations
+        # authored on 2026-08-04 used `pre_gates:`/`post_gates:` and a `mid:`
+        # phase instead of the canonical pre/sweep/post.
+        run: python3 scripts/gate_runner.py --all --env prod --validate-only
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
