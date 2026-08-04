@@ -629,3 +629,120 @@ describe('EventNew — optional harvest weight', () => {
     expect(screen.getByLabelText('Harvest weight unit').value).toBe('g')
   })
 })
+
+// ── V4-LOGPHOTOFIRST-001 (BD-003) — the photo picker leads the form ────────────────────────────
+// Dave: "It should lead. Everything else will follow." Position is the whole deliverable here, so
+// the test has to be about ORDER, not presence — a presence assertion passes with the block in its
+// old second-from-last slot, which is the bug.
+describe('EventNew — photo-first ordering (V4-LOGPHOTOFIRST-001)', () => {
+  function sectionLabels(container) {
+    return Array.from(container.querySelectorAll('form > div > label')).map(el => el.textContent.trim())
+  }
+
+  it('the Photo block is the FIRST section of the form, ahead of the event type', async () => {
+    const { container } = renderEventNew(); await flushLoad()
+    const labels = sectionLabels(container)
+    expect(labels[0]).toMatch(/^Photo/)
+    expect(labels.indexOf('What happened? *')).toBeGreaterThan(0)
+  })
+
+  it('leads on the flag-issue path too (the event-type section is replaced, not the photo one)', async () => {
+    const { container } = renderEventNew('event_type=flag_issue'); await flushLoad()
+    expect(sectionLabels(container)[0]).toMatch(/^Photo/)
+  })
+
+  it('the picker is never gated on a project or planting being chosen first', async () => {
+    // The conformance point of the shipped photo-first model (BUG-PHOTOFIRST-001): picking comes
+    // before attribution. No project selected, no planting selected — both buttons still live.
+    renderEventNew(); await flushLoad()
+    expect(screen.getByRole('button', { name: /Take photo/i }).disabled).toBe(false)
+    expect(screen.getByRole('button', { name: /Choose photo/i }).disabled).toBe(false)
+  })
+
+  it('says the photo is required for a photo event, before Save rather than after', async () => {
+    // Same rule as the BUG-SNAPATTACH-001 submit gate, stated up front.
+    renderEventNew('event_type=photo'); await flushLoad()
+    expect(screen.getByText('Photo *')).toBeTruthy()
+    cleanup()
+    renderEventNew('event_type=watering'); await flushLoad()
+    expect(screen.getByText(/^Photo\s+·\s+optional$/)).toBeTruthy()
+  })
+})
+
+// ── BUG-PLANTMISMATCH-001 — a project switch must drop the planting ───────────────────────────
+// Prod carries 39 events whose plant_id belongs to a different project than their project_id.
+// Nothing on either side validates the pair, so the form is the only place it can be prevented.
+describe('EventNew — project switch clears the planting (BUG-PLANTMISMATCH-001)', () => {
+  const PROJ_A = { id: 'proj-a', name: 'Project A', status: 'growing' }
+  const PROJ_B = { id: 'proj-b', name: 'Project B', status: 'growing' }
+  const PLANT_A = { id: 'plant-a', name: 'Tomato A', project_id: 'proj-a' }
+  const PLANT_B = { id: 'plant-b', name: 'Pepper B', project_id: 'proj-b' }
+
+  // The shared harness answers every /api/plants call with one fixture list; the pair bug is only
+  // observable when each project returns its OWN plantings.
+  function wireTwoProjects() {
+    apiFetchSpy.mockImplementation((path, options = {}) => {
+      if (options.method === 'POST' && path === '/api/events') {
+        postCalls.push(JSON.parse(options.body))
+        return Promise.resolve(dataRef.postResult)
+      }
+      if (path === '/api/projects') return Promise.resolve([PROJ_A, PROJ_B])
+      if (path === '/api/locations/with-path') return Promise.resolve([])
+      if (path === '/api/plants?project_id=proj-a') return Promise.resolve([PLANT_A])
+      if (path === '/api/plants?project_id=proj-b') return Promise.resolve([PLANT_B])
+      if (path.startsWith('/api/plants')) return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+  }
+
+  async function switchTo(projectId) {
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: projectId } })
+    await act(async () => { await Promise.resolve() })
+  }
+
+  it('a hand-picked planting does not survive a switch to another project', async () => {
+    wireTwoProjects()
+    renderEventNew('project=proj-a&plant=plant-a&event_type=watering'); await flushLoad()
+    await act(async () => { await Promise.resolve() })
+    await switchTo('proj-b')
+    // The POST is the assertion that matters: the pair, not the widget state.
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'x' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(postCalls.length).toBe(1))
+    expect(postCalls[0].project_id).toBe('proj-b')
+    expect(postCalls[0].plant_id).toBeNull()
+  })
+
+  it('re-selecting the SAME project is not a silent reset', async () => {
+    wireTwoProjects()
+    renderEventNew('project=proj-a&plant=plant-a&event_type=watering'); await flushLoad()
+    await act(async () => { await Promise.resolve() })
+    await switchTo('proj-a')
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'x' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(postCalls.length).toBe(1))
+    expect(postCalls[0].plant_id).toBe('plant-a')
+  })
+
+  it('the load-effect stale-guard is no longer scoped to the deep-link / remembered ids', async () => {
+    // Regression pin for the actual defect: the two prior guards compared plant_id against
+    // preselectedPlantId / rememberedPlantId by identity, so ANY other id passed through.
+    apiFetchSpy.mockImplementation((path, options = {}) => {
+      if (options.method === 'POST' && path === '/api/events') {
+        postCalls.push(JSON.parse(options.body)); return Promise.resolve(dataRef.postResult)
+      }
+      if (path === '/api/projects') return Promise.resolve([PROJ_A, PROJ_B])
+      if (path === '/api/locations/with-path') return Promise.resolve([])
+      // proj-b never contains plant-a, whatever route selected it.
+      if (path === '/api/plants?project_id=proj-b') return Promise.resolve([PLANT_B])
+      if (path.startsWith('/api/plants')) return Promise.resolve([PLANT_A])
+      return Promise.resolve(null)
+    })
+    renderEventNew('project=proj-b&plant=plant-a&event_type=watering'); await flushLoad()
+    await act(async () => { await Promise.resolve() })
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'x' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(postCalls.length).toBe(1))
+    expect(postCalls[0].plant_id).toBeNull()
+  })
+})

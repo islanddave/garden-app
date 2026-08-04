@@ -498,22 +498,28 @@ export default function EventNew() {
   useEffect(() => {
     if (PROJECTS_HIDDEN) return // V4-PROJHIDE-001: unscoped mode loads ALL plantings in the effect below
     if (!form.project_id) { setPlantsForProject([]); return }
+    // BUG-PLANTMISMATCH-001: a switch fires a second fetch while the first may still be in flight.
+    // Without this flag a late response for the PREVIOUS project can overwrite the current list and
+    // then clear a planting the user legitimately picked from it — i.e. the stale-guard below would
+    // itself become a source of wrong writes. Cancel on re-run.
+    let cancelled = false
     apiFetch('/api/plants?project_id=' + form.project_id)
       .then(data => {
+        if (cancelled) return
         const live = (data ?? []).filter(p => !p.archived_at)
         setPlantsForProject(live)
-        // V3-LOG-001 deep-link safety: clear a ?plant= prefill not in this project.
-        if (preselectedPlantId && !live.some(p => p.id === preselectedPlantId)) {
-          setForm(f => (f.plant_id === preselectedPlantId ? { ...f, plant_id: '' } : f))
-        }
-        // V4-LOGTARGET-001: same stale-guard for the REMEMBERED planting — archived or
-        // no longer in this project's live plants → silently fall back to no planting
-        // (mirrors the remembered-project fallback; no notice, it isn't a deep link).
-        if (rememberedPlantId && !live.some(p => p.id === rememberedPlantId)) {
-          setForm(f => (f.plant_id === rememberedPlantId ? { ...f, plant_id: '' } : f))
-        }
+        // BUG-PLANTMISMATCH-001 — GENERALIZED stale-guard. This used to be two checks, each scoped
+        // to one specific id (the ?plant= deep-link prefill and the remembered planting), which is
+        // why a HAND-PICKED planting survived a project switch untouched and POSTed as a mismatched
+        // (project_id, plant_id) pair with nothing on either side validating it. Prod carries 39
+        // such pairs. The rule is not about where the id came from: any plant_id that is not in this
+        // project's live plantings is not a valid target for this project, full stop. Subsumes both
+        // prior checks (V3-LOG-001 deep-link safety, V4-LOGTARGET-001 remembered-planting fallback)
+        // — same silent fall-back to no planting, no notice, since neither is a user error.
+        setForm(f => (f.plant_id && !live.some(p => p.id === f.plant_id) ? { ...f, plant_id: '' } : f))
       })
-      .catch(() => setPlantsForProject([]))
+      .catch(() => { if (!cancelled) setPlantsForProject([]) })
+    return () => { cancelled = true }
   }, [apiFetch, form.project_id, preselectedPlantId, rememberedPlantId])
 
   // V4-PROJHIDE-001: unscoped planting source. With the project chooser hidden, the picker lists
@@ -1125,6 +1131,105 @@ export default function EventNew() {
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
+          {/* ── Photo — V4-LOGPHOTOFIRST-001 (BD-003, Dave 2026-08-04): "It should lead. Everything
+               else will follow." This block used to sit second-from-last, between "Add details" and
+               "When?". Only its POSITION moved — the picker, the staging semantics, the preview
+               controls and the submit-time upload are byte-for-byte what they were.
+
+               This is the SAME photo-first model Dave ruled on 2026-07-31 and shipped in v3.88.0 +
+               v3.89.0, not a second one. That ruling's own rationale (PhotoLibrary.jsx:50-58) names
+               THIS form as the reference implementation — "Log Event already works the other way
+               round (pick photo -> then choose planting)" — because EventNew has always staged the
+               File in local state (photoFile/photoPreview) and uploaded it inside handleSubmit
+               rather than on pick. So the mechanics were already conformant and are deliberately
+               untouched; the ordering was the last place the page still read attribute-then-photo.
+               Matching PhotoLibrary's shipped block exactly: photo first, and NEVER gated on a
+               target being chosen first.
+
+               The label is the one behavioural change, and it serves BUG-SNAPATTACH-001 rather than
+               diverging from it: for a `photo` event the submit gate already refuses to save without
+               a photo, so "optional" was a lie told at the top of the form and only corrected by an
+               error after Save. Same rule, said before the mistake instead of after — the shape
+               PhotoLibrary uses for its own one-of-target rule. ── */}
+          <Section label={form.event_type === 'photo' ? 'Photo *' : 'Photo  ·  optional'}>
+            {photoPreview ? (
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <img
+                  src={photoPreview}
+                  alt="Preview"
+                  style={{
+                    maxWidth: '100%', maxHeight: 220, borderRadius: 8,
+                    display: 'block', border: `1px solid ${P.border}`,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={clearPhoto}
+                  aria-label="Remove photo"
+                  style={{
+                    position: 'absolute', top: 8, right: 8,
+                    background: 'rgba(0,0,0,0.55)', color: P.white,
+                    border: 'none', borderRadius: '50%',
+                    width: 28, height: 28, cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >✕</button>
+                <button
+                  type="button"
+                  onClick={() => saveFileToDevice(photoFile)}
+                  aria-label="Save photo to device"
+                  style={{
+                    position: 'absolute', bottom: 8, right: 8,
+                    background: 'rgba(0,0,0,0.55)', color: P.white,
+                    border: 'none', borderRadius: 8, padding: '5px 10px',
+                    cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600,
+                  }}
+                >Save to device</button>
+              </div>
+            ) : (
+              <div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => openPhotoPicker(true)}
+                    style={{
+                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      padding: '18px 12px',
+                      border: `2px dashed ${P.border}`, borderRadius: 8,
+                      cursor: 'pointer', backgroundColor: P.white,
+                      color: P.mid, fontSize: '0.88rem', fontWeight: 600,
+                    }}
+                  >
+                    <span style={{ fontSize: '1.3rem' }}>📷</span>
+                    <span>Take photo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openPhotoPicker(false)}
+                    style={{
+                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      padding: '18px 12px',
+                      border: `2px dashed ${P.border}`, borderRadius: 8,
+                      cursor: 'pointer', backgroundColor: P.white,
+                      color: P.mid, fontSize: '0.88rem', fontWeight: 600,
+                    }}
+                  >
+                    <span style={{ fontSize: '1.3rem' }}>🖼️</span>
+                    <span>Choose photo</span>
+                  </button>
+                </div>
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoChange}
+                  style={{ display: 'none' }}
+                />
+              </div>
+            )}
+          </Section>
+
           {/* ── Event type ── */}
           <Section label="What happened? *">
             {form.event_type === 'flag_issue' ? (
@@ -1184,7 +1289,16 @@ export default function EventNew() {
           <Section label="Project *">
             <Select
               value={form.project_id}
-              onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))}
+              // BUG-PLANTMISMATCH-001: switching project MUST drop the planting, synchronously and
+              // in the same state update. The plants list reloads asynchronously, so leaving the old
+              // plant_id in place means the form spends the whole fetch window holding a planting
+              // from project A under project B — and a fast Save inside that window POSTs the
+              // mismatched pair. Clearing here also makes the picker's disabled/empty state honest
+              // instead of showing a selection that is not in the list it is about to render.
+              // Guarded on an actual change so re-selecting the same project is not a silent reset.
+              onChange={e => setForm(f => (
+                e.target.value === f.project_id ? f : { ...f, project_id: e.target.value, plant_id: '' }
+              ))}
               aria-label="Project"
             >
               <option value="">— Select project —</option>
@@ -1452,85 +1566,7 @@ export default function EventNew() {
             )}
           </div>
 
-          {/* ── Photo ── */}
-          <Section label="Photo  ·  optional">
-            {photoPreview ? (
-              <div style={{ position: 'relative', display: 'inline-block' }}>
-                <img
-                  src={photoPreview}
-                  alt="Preview"
-                  style={{
-                    maxWidth: '100%', maxHeight: 220, borderRadius: 8,
-                    display: 'block', border: `1px solid ${P.border}`,
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={clearPhoto}
-                  aria-label="Remove photo"
-                  style={{
-                    position: 'absolute', top: 8, right: 8,
-                    background: 'rgba(0,0,0,0.55)', color: P.white,
-                    border: 'none', borderRadius: '50%',
-                    width: 28, height: 28, cursor: 'pointer',
-                    fontSize: '0.85rem',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                >✕</button>
-                <button
-                  type="button"
-                  onClick={() => saveFileToDevice(photoFile)}
-                  aria-label="Save photo to device"
-                  style={{
-                    position: 'absolute', bottom: 8, right: 8,
-                    background: 'rgba(0,0,0,0.55)', color: P.white,
-                    border: 'none', borderRadius: 8, padding: '5px 10px',
-                    cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600,
-                  }}
-                >Save to device</button>
-              </div>
-            ) : (
-              <div>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => openPhotoPicker(true)}
-                    style={{
-                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                      padding: '18px 12px',
-                      border: `2px dashed ${P.border}`, borderRadius: 8,
-                      cursor: 'pointer', backgroundColor: P.white,
-                      color: P.mid, fontSize: '0.88rem', fontWeight: 600,
-                    }}
-                  >
-                    <span style={{ fontSize: '1.3rem' }}>📷</span>
-                    <span>Take photo</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openPhotoPicker(false)}
-                    style={{
-                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                      padding: '18px 12px',
-                      border: `2px dashed ${P.border}`, borderRadius: 8,
-                      cursor: 'pointer', backgroundColor: P.white,
-                      color: P.mid, fontSize: '0.88rem', fontWeight: 600,
-                    }}
-                  >
-                    <span style={{ fontSize: '1.3rem' }}>🖼️</span>
-                    <span>Choose photo</span>
-                  </button>
-                </div>
-                <input
-                  ref={photoInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePhotoChange}
-                  style={{ display: 'none' }}
-                />
-              </div>
-            )}
-          </Section>
+          {/* ── Photo moved to the TOP of the form — V4-LOGPHOTOFIRST-001 (BD-003). ── */}
 
           {/* ── Visibility + Private notes moved into "Add details" above (V3-EVENT-008 §8) ── */}
 
