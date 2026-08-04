@@ -3,9 +3,11 @@
 // Mirrors lambda/xp-reconcile: Secrets Manager -> Neon, EventBridge nightly, DRY_RUN-gated, no Fn URL.
 // Pure plan logic is in ./handler (run) + ./engine; the real HTTP fetchers live here (injected into run).
 // ⚠️ GATE-0 before first non-dry run: validate the NWS forecast parsing + zippopotam + Open-Meteo daily
-//    field names/indices against LIVE responses. The daily index assumption [D-2,D-1,D0,D1,D2] (past_days=2,
-//    forecast_days=3) must hold. Confirm @neondatabase/serverless Pool .query() shape matches handler's pg.
+//    field names/indices against LIVE responses. The daily index assumption [D-2,D-1,D0,D1,D2,D3] (past_days=2,
+//    forecast_days=4 since V4-FROST-001 G5) must hold. Confirm @neondatabase/serverless Pool .query() shape
+//    matches handler's pg. openmeteo-indices.test.js guards the indexing against drift.
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
+const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns'); // V4-FROST-001 F3 delivery channel (D1/D3)
 // Lambda nodejs20 has NO global WebSocket. The pinned @neondatabase/serverless@^0.10.0 neon() http client has
 // NO .query(text,params) method (that was added in 1.x), and Pool needs an explicit WebSocket constructor.
 // Fix: Pool + ws via neonConfig.webSocketConstructor. Pool.query(text,params)->{rows} matches handler's pg
@@ -33,6 +35,31 @@ function todayET() {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
+}
+
+// V4-FROST-001 G3 — the ET hour is the ONLY way to tell the three daily runs apart: all three EventBridge
+// targets invoke this function with an empty detail (verified in AWS 2026-08-04, no Input on any target).
+// hourCycle h23 so midnight is 0, not 24. Consumed by frostEval.resolveFrostRun, which is pure.
+function hourET() {
+  return Number(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23',
+  }).format(new Date()));
+}
+
+// V4-FROST-001 F3 — SNS delivery (D1 channel, D3 separate topic). ARNs are env-overridable; the defaults
+// are the live topics in us-east-1 (the account id already appears in .github/workflows, it is not a secret).
+// DELIBERATELY NOT wrapped in try/catch, unlike every other fetcher in this file: design §3-7 makes a
+// swallowed frost publish the one failure this feature cannot have. handler.run catches it, logs at ERROR,
+// finishes writing the plan, then throws so garden-daily-plan-errors (Errors > 0) pages.
+const FROST_TOPIC_ARN = process.env.FROST_TOPIC_ARN || 'arn:aws:sns:us-east-1:769788341849:garden-frost-alerts';
+const OPS_TOPIC_ARN = process.env.OPS_TOPIC_ARN || 'arn:aws:sns:us-east-1:769788341849:garden-ops-alerts';
+let _sns;
+async function publishAlert({ topic, subject, message }) {
+  if (!_sns) _sns = new SNSClient({});
+  const TopicArn = topic === 'ops' ? OPS_TOPIC_ARN : FROST_TOPIC_ARN;
+  const res = await _sns.send(new PublishCommand({ TopicArn, Subject: subject, Message: message }));
+  console.log(JSON.stringify({ msg: 'sns-publish', topic: TopicArn, messageId: res && res.MessageId }));
+  return { topicArn: TopicArn, messageId: res && res.MessageId };
 }
 
 // zip -> {lat,lng} (public, no key). Upstream caches to spaces.weather_lat/lng.
@@ -80,13 +107,27 @@ async function fetchNWS(lat, lng) {
 // Wrapped in try/catch: network failures should not crash the entire run — hydrology degrades gracefully to null.
 async function fetchPrecip(lat, lng) {
   try {
+    // V4-FROST-001 G5: temperature_2m_min added to a call already being made, and forecast_days 3 -> 4 so
+    // the §3-3 48–72h advisory tier can actually see 3 future nights (D1,D2,D3). Both changes are strictly
+    // APPENDING: with past_days=2 the daily arrays stay [D-2,D-1,D0,D1,D2,(D3)], so every existing index
+    // below (ps[0..4], pop[2..3]) means exactly what it meant before. Guarded by openmeteo-indices.test.js.
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
-      `&daily=precipitation_sum,precipitation_probability_max&precipitation_unit=inch&timezone=America/New_York&past_days=2&forecast_days=3`;
+      `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=America/New_York&past_days=2&forecast_days=4`;
     const j = await (await fetch(url, { signal: AbortSignal.timeout(6000) })).json();
-    const ps = (j.daily && j.daily.precipitation_sum) || [];   // [D-2, D-1, D0, D1, D2]
+    const ps = (j.daily && j.daily.precipitation_sum) || [];   // [D-2, D-1, D0, D1, D2, D3]
     const pop = (j.daily && j.daily.precipitation_probability_max) || [];
+    const tmin = (j.daily && j.daily.temperature_2m_min) || [];  // same indexing as ps
+    const times = (j.daily && j.daily.time) || [];
     const tomorrow = ps[3] || 0;
+    // Absence is NEVER coerced to a temperature: a missing entry stays null so evalAdvisory skips it
+    // rather than reading it as 0°F. Same rule as yesterday_precip_actual_in below.
+    const lowOrNull = (v) => (Number.isFinite(v) ? v : null);
     return {
+      // V4-FROST-001 §3-3 Tier 1 — the D1..D3 forecast-low window + its date labels. Consumed ONLY by
+      // handler's frost evaluation; engine.generatePlan copies named hydrology keys, so neither field
+      // enters the stored plan payload (flag-OFF byte-parity holds).
+      forecast_lows: [lowOrNull(tmin[3]), lowOrNull(tmin[4]), lowOrNull(tmin[5])],
+      forecast_dates: [times[3] || null, times[4] || null, times[5] || null],
       recent_precip_in: round2((ps[0] || 0) + (ps[1] || 0)),
       today_precip_in: round2(ps[2] || 0),                 // D0 — rain falling TODAY (was fetched but dropped; DRG-WX-TODAY-FIX)
       today_pop: pop[2] != null ? pop[2] : null,
@@ -172,7 +213,7 @@ exports.handler = async (event) => {
   const { NEON_DATABASE_URL } = await getSecrets();
   const pool = new Pool({ connectionString: NEON_DATABASE_URL });
   try {
-    const res = await run({ pg: pool, today, dryRun, geocodeZip, fetchNWS, fetchPrecip, fetchStation });
+    const res = await run({ pg: pool, today, dryRun, geocodeZip, fetchNWS, fetchPrecip, fetchStation, publishAlert, etHour: hourET(), event });
     console.log(JSON.stringify({ msg: 'daily-plan', today, dryRun, rows: res.rows, ms: Date.now() - started }));
     // A0.3-DRY-PLANS sentinel — DRY responses carry the computed plans so scripts/rerun-daily-plan.sh
     // --diff can compare a zero-write replay against the stored rows (it preflight-greps the deployed zip

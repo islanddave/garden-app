@@ -3,8 +3,10 @@
 // Pattern mirrors garden-xp-reconcile: EventBridge nightly (midnight ET), DRY_RUN-gated, no Fn URL, kill-switchable.
 // Reads Neon (conn from Secrets Manager SECRET_ARN_NEON — NEVER hardcode), resolves weather from each Space's
 // postal_code (zip-driven, not hardcoded), runs ./engine per CARETAKER, idempotent upsert into daily_plan.
-const { generatePlan, PLAN_SCHEMA_VERSION } = require('./engine');
+const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine');
 const { deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather } = require('./station'); // DRG-WXSTATION-001
+const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
+const { frostEval, isFrostSeason, resolveFrostRun } = require('./frostEval');    // V4-FROST-001 F1/F3
 const cadence = require('./cadence-data-v2.json'); // per-variety research cadence (161). Swap to v_resolved_care once care_profile is seeded (CARE-CADENCE-001).
 const fertModel = require('./fertilization-model.json'); // substrate-aware feed model. REQUIRED by engine.generatePlan (it derefs fertModel.water_quality / .amendments_in_inventory); omitting it crashes every run.
 
@@ -109,7 +111,39 @@ async function backfillYesterdayActual(pg, userId, today, hy) {
   }
 }
 
-async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchStation }) {
+// ── V4-FROST-001 F3 — alert dedup store (§3-5) ────────────────────────────────────────────────────
+// Cheapest durable home per §3-5: an additive `alerts_sent` key on the daily-plan items payload that is
+// already written per run. No DDL, no PLAN_SCHEMA_VERSION bump (every reader selects named keys), and the
+// key is written ONLY when FROST_ALERT_ENABLED is on — so the flag-OFF plan stays byte-identical.
+const ALERTS_SENT_MAX = 12;   // one night can legitimately produce advisory + protect + a hard-freeze escalation
+
+// Fail-open, exactly like readPriorRuns: an unreadable dedup store must never block plan generation. The
+// failure direction is deliberate — on a read error we return [] and may RE-SEND an alert. A duplicate
+// frost SMS is a nuisance; a suppressed one is the failure this feature exists to prevent (§3-7).
+async function readAlertsSent(pg, userId, planDate) {
+  try {
+    const { rows } = await pg.query(
+      `select items from daily_plan where user_id = $1 and plan_date = $2`, [userId, planDate]);
+    if (!rows.length) return [];
+    const prev = (rows[0].items || {}).alerts_sent;
+    return Array.isArray(prev) ? prev : [];
+  } catch (e) {
+    console.warn(JSON.stringify({ msg: 'alerts_sent read failed — continuing (may re-send)', error: e?.message }));
+    return [];
+  }
+}
+
+// SNS Subject is email-only (SMS ignores it) and is capped at 100 ASCII chars with no newlines, so it is
+// built separately from the message body rather than sliced off it.
+function frostSubject(d) {
+  const label = d.tier === 'imminent'
+    ? (d.level === 'hard_freeze' ? 'HARD FREEZE tonight' : 'Frost protect tonight')
+    : (d.tier === 'advisory' ? 'Frost advisory' : 'Heat advisory');
+  const low = d.observability && d.observability.tonightLowF != null ? ` (low ${d.observability.tonightLowF}F)` : '';
+  return `Garden alert - ${label}${low}`.replace(/[^\x20-\x7E]/g, '').slice(0, 100);
+}
+
+async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchStation, publishAlert, etHour, event }) {
   // DRG-NIGHTLYTIMEOUT-001 — cheap nightly progress markers (db-ready / station-fetched / space-wx)
   // pin the stall site (Neon cold-resume vs fetch hang) in CloudWatch in one night. ms = since run() start.
   const t0 = Date.now();
@@ -117,6 +151,11 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   const { rows: plantings } = await pg.query(`
     select p.id, p.name, p.project_id, p.status, p.container_type, p.container_size, p.rain_exposed,
            pv.name as variety, pv.genus, pj.name as project, pj.status as project_status, p.workspace_id,
+           -- V4-FROST-001 F2: frost sensitivity is derived from the crop type (frostClass.js), NEVER reused
+           -- from engine.coldFor (design G2 — coldFor emits no cold task at all for basil/melon/tomatillo/
+           -- bean/cucurbits on a 30°F night). Additive SELECT only: engine.generatePlan copies named keys,
+           -- so this never enters the stored plan payload.
+           pv.crop_type_slug,
            -- DRG-WATERCREDIT-001 V1: 'covered' (under cover -> no rain credit) is location-derived from Dave's
            -- classification (2026-06-21): the Stable potting shed + the House + indoor shelves/racks/trays are
            -- covered; all other locations (and no-location) are outdoor. V1.1 replaces this with an editable
@@ -220,11 +259,65 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // followed by scripts/rerun-daily-plan.sh --live: about two minutes, no promote.
   // Mirror any flip in src/lib/featureFlags.js -- the CJS Lambda cannot import that ESM module.
   const todayAwareEnabled = process.env.CARE_TODAY_AWARE_ENABLED === 'true';
+  // ── V4-FROST-001 F3 — frost alert channel (design §3, decisions D1–D6) ──────────────────────────
+  // F6 kill switch, default OFF. Flag OFF still EVALUATES and LOGS (§3-8 wants the 2026 corpus started
+  // before anything reads it) but never publishes and never writes alerts_sent — so the stored plan is
+  // byte-identical to pre-frost. Flipping it is the whole of F6.
+  const frostAlertEnabled = process.env.FROST_ALERT_ENABLED === 'true';
+  // G3: tonightLow means three different nights depending on which run reads it. Only the 15:30 ET
+  // intraday-pm run may evaluate. resolveFrostRun is pure; index.js supplies the ET hour.
+  const frostRun = resolveFrostRun(event, { etHour });
+  const frostSeason = isFrostSeason(today);                       // §3-7 Sep 1 – Nov 15
+  // cadence cold.tender is a PROMOTION-ONLY signal into frostClass (it can lift an unknown slug to tender,
+  // never override an explicit one) — see frostClass.js for the by_variety['Peach'] pepper/peach-tree collision.
+  const cadenceTenderFor = (p) => { const c = resolveCadence(p, cadence); return !!(c && c.cold && c.cold.tender); };
+  const frostPublished = new Set();       // one publish per dedup key per invocation, across users
+  const frostFailures = [];               // §3-7: collected, then THROWN after the plan is durable
   const plans = [];
   const bySpace = {};
   for (const p of plantings) (bySpace[p.workspace_id] ||= []).push(p);
   for (const [spaceId, rows] of Object.entries(bySpace)) {
     const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled });
+    // Frost is a SITE-level event (§3-3): evaluated once per Space, then annotated with the affected crop
+    // types. D6: one coalesced alert naming every crop type that tripped ITS OWN threshold; plantings
+    // already under cover are excluded (frostClass.summarize's covered filter).
+    let frostDecision = null;
+    if (frostRun.evaluate) {
+      const wx = wxBySpace[spaceId] || null;
+      const hy = hyBySpace[spaceId] || null;
+      const prov = stationProvBySpace[spaceId] || {};
+      const exposure = summarize(rows, { cadenceTenderFor });
+      frostDecision = frostEval({
+        tonightLow: wx ? wx.tonightLow : null,
+        highToday: wx ? wx.highToday : null,
+        forecastLows: hy ? hy.forecast_lows : null,          // G5 — index.js:fetchPrecip temperature_2m_min
+        forecastDates: hy ? hy.forecast_dates : null,
+        lowSource: prov.low_source || (wx ? 'forecast' : 'forecast_absent'),
+        exposure, spaceId, eventDate: today,
+      }, { frostSeason });
+      // §3-8 — emitted on EVERY evaluation, alert or not. This log is also the 2026 corpus for the 2027
+      // learned microclimate offset (G4): nightly station minimum vs NWS forecast low.
+      console.log(JSON.stringify({ msg: 'frost-eval', space: spaceId, plan_date: today, run: frostRun.slot,
+        enabled: frostAlertEnabled, dry_run: dryRun, season: frostSeason, alert: frostDecision.alert,
+        degraded: frostDecision.degraded, dedup_key: frostDecision.dedupKey, ...frostDecision.observability }));
+      // §3-7 loud degradation: inside frost season, a missing tonightLow is NOT "no frost tonight". Silence
+      // must never be indistinguishable from safety. Routed to garden-ops-alerts, not the frost topic.
+      if (frostDecision.degradedAlert && frostAlertEnabled && !dryRun && publishAlert) {
+        const dk = `${spaceId}|${today}|frost_eval_degraded`;
+        if (!frostPublished.has(dk)) {
+          try {
+            // ASCII-only Subject, same constraint frostSubject enforces (SNS rejects non-printable/non-ASCII).
+            await publishAlert({ topic: 'ops', subject: 'Garden ops - frost evaluation DEGRADED',
+              message: `frost_eval_degraded — no tonight low available for space ${spaceId} on ${today} during frost season. ` +
+                'The frost alert could not be evaluated; treat tonight as UNKNOWN, not safe.' });
+            frostPublished.add(dk);
+          } catch (e) {
+            console.error(JSON.stringify({ msg: 'frost degraded-alert publish FAILED', space: spaceId, error: e?.message }));
+            frostFailures.push({ kind: 'frost_degraded_publish_failed', spaceId, error: e?.message });
+          }
+        }
+      }
+    }
     for (const [user_id, userPlan] of Object.entries(plan.users)) {
       // hydrology rides along for the A0.3-DRY-PLANS dry-replay diff (rerun-daily-plan.sh --diff needs the
       // decision inputs, not just the verdicts). Additive: live-path consumers read res.rows only.
@@ -240,16 +333,53 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
         // wave, so bumping it opens a mismatch window. Hydrology + counts only, capped at PRIOR_RUNS_MAX:
         // enough to reconstruct the decision, small enough that a day of re-runs cannot bloat the row.
         const priorRuns = await readPriorRuns(pg, user_id, today);
+        // V4-FROST-001 F3 §3-5 — read the dedup store, publish, THEN persist. Publishing before the write
+        // is deliberate: recording "sent" for a publish that never happened would silently suppress the
+        // real alert on the next pass, which is the exact failure mode §3-7 forbids.
+        // Carried forward even on a non-evaluating run so an earlier pm send is never wiped by a re-run.
+        let alertsSent = null;
+        if (frostAlertEnabled) {
+          alertsSent = await readAlertsSent(pg, user_id, today);
+          const dk = frostDecision && frostDecision.dedupKey;
+          if (frostDecision && frostDecision.alert && dk && !frostPublished.has(dk)
+              && !alertsSent.some((a) => a && a.key === dk)) {
+            if (!publishAlert) {
+              console.warn(JSON.stringify({ msg: 'frost alert SUPPRESSED — no publisher injected', space: spaceId, dedup_key: dk }));
+            } else {
+              try {
+                await publishAlert({ topic: 'frost', subject: frostSubject(frostDecision), message: frostDecision.message });
+                frostPublished.add(dk);
+                alertsSent = [...alertsSent, { key: dk, tier: frostDecision.tier, level: frostDecision.level, at: new Date().toISOString() }].slice(-ALERTS_SENT_MAX);
+                console.log(JSON.stringify({ msg: 'frost alert PUBLISHED', space: spaceId, user: user_id, dedup_key: dk, tier: frostDecision.tier, level: frostDecision.level }));
+              } catch (e) {
+                // §3-7: a swallowed frost alert is the failure mode this feature exists to prevent. Log at
+                // ERROR here, and THROW after the plan writes complete so the invocation is marked failed
+                // and the existing garden-daily-plan-errors CloudWatch alarm (Errors > 0 -> garden-alerts)
+                // surfaces it. Explicitly NOT continue-on-error, unlike integrity-weekly.
+                console.error(JSON.stringify({ msg: 'frost alert publish FAILED', space: spaceId, user: user_id, dedup_key: dk, error: e?.message }));
+                frostFailures.push({ kind: 'frost_publish_failed', spaceId, userId: user_id, dedupKey: dk, error: e?.message });
+              }
+            }
+          }
+        }
         await pg.query(
           `insert into daily_plan (user_id, plan_date, items, generated_at)
            values ($1,$2,$3, now())
            on conflict (user_id, plan_date) do update set items=excluded.items, generated_at=now()`,
-          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...userPlan.tasks })]);
+          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...(alertsSent ? { alerts_sent: alertsSent } : {}), ...userPlan.tasks })]);
         // BUG-TODAYWATER-001: record yesterday's observed rain on yesterday's row. Fail-open (returns
         // false, never throws) and touches ONLY (user_id, prevPlanDate) — today's upsert above is final.
         await backfillYesterdayActual(pg, user_id, today, hyBySpace[spaceId]);
       }
     }
+  }
+  // §3-7 fail LOUD, after every plan row is durably written. The daily plan itself must not be lost to an
+  // SNS outage, but the invocation MUST be marked failed so garden-daily-plan-errors pages. Throwing here
+  // (rather than at the publish site) is what gets both.
+  if (frostFailures.length) {
+    const err = new Error(`frost alert publish failed (${frostFailures.length}) — see ERROR logs; the daily plan was written`);
+    err.frostFailures = frostFailures;
+    throw err;
   }
   return { today, dryRun, rows: plans.length, plans };
 }
@@ -273,4 +403,4 @@ function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   return { dryRun, today, ping: !!(event && event.ping === true) };
 }
 
-module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate };
+module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, ALERTS_SENT_MAX };
