@@ -254,7 +254,12 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     // BUG-RAINACTUAL-001: the two buckets that now drive today + the yesterday actual, so a wrong number is
     // diagnosable from CloudWatch alone (design §7 — "gauge = truth" must not become "gauge = infallible").
     todayPrecipIn: station && station.todayPrecipIn, yesterdayPrecipIn: station && station.yesterdayPrecipIn,
-    planDay: today, stationDay0: station && station.day0,
+    planDay: today, stationDay0: station && station.day0, stationHour0: station && station.hour0,
+    // H5: which basis produced today_remaining_in, and (on the fallback) why the hourly path was refused.
+    // Without this a silent slide back to the whole-day subtraction — the exact defect H5 corrects — would
+    // be invisible in CloudWatch.
+    remainingBasis: Object.values(stationProvBySpace).map((p) => p && p.today_remaining_basis).filter(Boolean),
+    remainingFallback: Object.values(stationProvBySpace).map((p) => p && p.today_remaining_fallback).filter(Boolean),
     coversLookback: station && station.coversLookback, uncertainty: station && station.uncertainty }));
   const owner = process.env.OWNER_FALLBACK_SUB || null;     // unassigned -> Space owner (Dave); NEVER leaks to Jen.
   // DRG-WXWATER-001 coarse-v1: SINGLE flag read-site (spec I2 — plan is computed once nightly, all readers consume

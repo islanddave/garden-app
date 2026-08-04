@@ -68,6 +68,29 @@ describe('Open-Meteo daily indexing must not drift (G5)', () => {
     expect(fetchPrecipBody).not.toMatch(/tmin\[\d\] \|\| 0/);
   });
 
+  // ── BUG-RAINACTUAL-001 H5 — the hourly append, guarded by exactly the same rule as G5's ────────
+  it('requests hourly precipitation on the SAME call (one request, not two)', () => {
+    expect(fetchPrecipBody).toMatch(/hourly=precipitation/);
+    expect((fetchPrecipBody.match(/api\.open-meteo\.com/g) || []).length).toBe(1);
+  });
+
+  it('the hourly append does not disturb the daily list — `daily=` still starts with precipitation_sum', () => {
+    // `hourly` is a separate response object from `daily`, so appending it cannot shift ps[]/pop[]/tmin[].
+    // This pins the URL shape so a future edit cannot fold hourly INTO the daily list and silently slide them.
+    expect(fetchPrecipBody).toMatch(/daily=precipitation_sum,precipitation_probability_max,temperature_2m_min/);
+    expect(fetchPrecipBody).not.toMatch(/daily=[^&`'"]*hourly/);
+  });
+
+  it('hourly_precip is carried VERBATIM with its timezone — the day-boundary guard depends on it', () => {
+    expect(fetchPrecipBody).toMatch(/hourly_precip:/);
+    expect(fetchPrecipBody).toMatch(/time: j\.hourly\.time, precipitation: j\.hourly\.precipitation, timezone: j\.timezone/);
+  });
+
+  it('an absent hourly block becomes null, NEVER [] — absence must not read as "no rain coming"', () => {
+    expect(fetchPrecipBody).toMatch(/Array\.isArray\(j\.hourly\.time\) && Array\.isArray\(j\.hourly\.precipitation\)/);
+    expect(fetchPrecipBody).toMatch(/:\s*null,\s*\n\s*\};/);
+  });
+
   it('fetchPrecip keeps its null-fallback catch — hydrology degrades, it does not crash the run', () => {
     expect(fetchPrecipBody).toMatch(/catch[\s\S]*return null/);
   });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import station from './station.js';
-const { deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather } = station;
+const { deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, remainingHourlyIn, effectiveHour } = station;
 
 const MAC = 'F8:B3:B7:82:1F:0D';
 // ET is EDT (-04:00) for all July fixtures. rec(day,'HH',dailyrainin,tempf) at that ET wall-clock.
@@ -286,6 +286,193 @@ describe('mergeStationHydrology — today split + yesterday actual (BUG-RAINACTU
     expect(merged.today_observed_in).toBe(0);
     expect(merged.today_precip_in).toBe(0);
     expect(prov.today_source).toBe('station');
+  });
+});
+
+// ── H5: remaining = the forecast for the hours NOT YET ELAPSED ────────────────────────────────────
+// The H2 form (`max(0, wholeDay - observed)`) made today_precip_in unable to drop BELOW the whole-day
+// forecast, so on the very event that started this work — gauge 2.22", forecast 4.63" — it reproduced the
+// broken number exactly. Every number in the REAL fixture below is live Open-Meteo/AWN data for 2026-08-03.
+describe('H5 remaining-from-hourly (BUG-RAINACTUAL-001)', () => {
+  // Live Open-Meteo hourly `precipitation` (inch) for 2026-08-03 at 42.5089,-72.6466, fetched 2026-08-04.
+  // Sums to 4.635 == the 4.634 daily total the app recorded as "actual" for a day the gauge measured at 2.22.
+  const AUG3_HOURLY = { 2: 0.028, 3: 0.016, 4: 0.169, 5: 3.358, 6: 0.028, 7: 0.016, 8: 0.665, 12: 0.028, 16: 0.327 };
+  const AUG3_DAILY = 4.634;
+  const H2_NUMBER = 4.63;          // what the shipped whole-day subtraction produces: the broken number
+  const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+  const GAUGE_AUG3 = 2.22;
+  // Build the verbatim Open-Meteo hourly shape for a run of days (24 rows/day, local ISO strings).
+  const hourly = (days, perDay, tz = 'America/New_York') => {
+    const time = [], precipitation = [];
+    for (const d of days) for (let h = 0; h < 24; h++) {
+      time.push(`${d}T${String(h).padStart(2, '0')}:00`);
+      precipitation.push((perDay[d] && perDay[d][h]) || 0);
+    }
+    return { time, precipitation, timezone: tz };
+  };
+  const AUG_HOURLY = hourly(['2026-08-01', '2026-08-02', '2026-08-03', '2026-08-04'], { '2026-08-03': AUG3_HOURLY });
+  const at = (day, hh, dailyrainin) => ({ dateutc: Date.parse(`${day}T${hh}:00-04:00`), dailyrainin, tempf: 70 });
+  // Gauge payload with `d0` inches accumulated so far on 08-03, newest record at `hh` ET.
+  const aug3Station = (d0, hh) => deriveStation({ mac: MAC, records: [
+    at('2026-08-03', hh, d0), at('2026-08-02', '18:00', 0.0), at('2026-08-01', '18:00', 0.0), at('2026-07-31', '18:00', 0.0),
+  ] }, { nowMs: Date.parse(`2026-08-03T${hh}:00-04:00`) });
+  // Open-Meteo as it actually was for an 08-03 plan: 4.634" claimed for the day.
+  const om = (over = {}) => ({ recent_precip_in: 0.0, today_precip_in: AUG3_DAILY, today_pop: 90,
+    upcoming_precip_in: 0.0, tomorrow_precip_in: 0.0, tomorrow_pop: 5, yesterday_precip_actual_in: 0.0,
+    hourly_precip: AUG_HOURLY, ...over });
+
+  it('THE FIX, real 08-03 numbers at 15:30: the gauge drives the total DOWN off the busted forecast', () => {
+    const st = aug3Station(GAUGE_AUG3, '15:30');
+    expect(st.hour0).toBe(15);
+    const { merged, prov } = mergeStationHydrology(om(), st, { planDay: '2026-08-03' });
+    expect(merged.today_observed_in).toBe(2.22);
+    expect(merged.today_remaining_in).toBe(0.33);          // only the 16:00 hour is still ahead
+    expect(merged.today_precip_in).toBe(2.55);             // NOT 4.63
+    expect(prov.today_remaining_basis).toBe('hourly');
+    expect(prov.today_remaining_from_hour).toBe(15);
+    // The regression this test exists for: H2 produced observed + (4.634 - 2.22) == the whole-day forecast.
+    expect(merged.today_precip_in).toBeLessThan(AUG3_DAILY);
+    expect(Math.abs(merged.today_precip_in - GAUGE_AUG3)).toBeLessThan(0.4);   // lands near the gauge
+  });
+
+  it('02:00 nightly keeps parity: nearly the whole day is still ahead, so remaining ~= the forecast', () => {
+    const st = aug3Station(0.0, '02:05');
+    expect(st.hour0).toBe(2);
+    const { merged, prov } = mergeStationHydrology(om(), st, { planDay: '2026-08-03' });
+    expect(merged.today_observed_in).toBe(0);
+    expect(merged.today_remaining_in).toBe(4.61);          // 4.635 less the 0.028 that fell in hour 02
+    expect(Math.abs(merged.today_precip_in - AUG3_DAILY)).toBeLessThan(0.05);  // the nightly baseline is unmoved
+    expect(prov.today_remaining_basis).toBe('hourly');
+  });
+
+  it('decays monotonically through the day — the whole point of driving it hourly', () => {
+    const totals = ['02:05', '05:30', '09:30', '15:30', '21:30'].map((hh, i) => {
+      const observed = [0, 0.2, 2.2, GAUGE_AUG3, GAUGE_AUG3][i];   // gauge as it would have read at that hour
+      const st = aug3Station(observed, hh);
+      return mergeStationHydrology(om(), st, { planDay: '2026-08-03' }).merged.today_remaining_in;
+    });
+    for (let i = 1; i < totals.length; i++) expect(totals[i]).toBeLessThanOrEqual(totals[i - 1]);
+    expect(totals[totals.length - 1]).toBe(0);              // after the last wet hour nothing is left to come
+  });
+
+  it('late-day: with no hours left, today_precip_in IS the gauge, exactly', () => {
+    const st = aug3Station(GAUGE_AUG3, '21:30');
+    const { merged, prov } = mergeStationHydrology(om(), st, { planDay: '2026-08-03' });
+    expect(merged.today_remaining_in).toBe(0);
+    expect(merged.today_precip_in).toBe(GAUGE_AUG3);
+    expect(prov.today_source).toBe('station');
+  });
+
+  it('FALLBACK no hourly array -> H2 whole-day behaviour, LABELLED, never a silent zero', () => {
+    const st = aug3Station(GAUGE_AUG3, '15:30');
+    const { merged, prov } = mergeStationHydrology(om({ hourly_precip: null }), st, { planDay: '2026-08-03' });
+    expect(merged.today_remaining_in).toBe(round2(AUG3_DAILY - GAUGE_AUG3));  // 2.41 — exactly what ships today
+    expect(merged.today_precip_in).toBe(H2_NUMBER);        // the pre-H5 number, reproduced exactly
+    expect(prov.today_remaining_basis).toBe('wholeday');
+    expect(prov.today_remaining_fallback).toBe('no_hourly');
+  });
+
+  it('FALLBACK plan day outside the hourly window -> whole-day, NOT remaining=0', () => {
+    const st = aug3Station(GAUGE_AUG3, '15:30');
+    const short = hourly(['2026-08-05', '2026-08-06'], {});   // hourly window misses 08-03 entirely
+    const { merged, prov } = mergeStationHydrology(om({ hourly_precip: short }), st, { planDay: '2026-08-03' });
+    expect(merged.today_remaining_in).toBeGreaterThan(0);
+    expect(prov.today_remaining_fallback).toBe('hourly_unusable');
+  });
+
+  it('FALLBACK day present but every future value null -> whole-day, NOT remaining=0', () => {
+    const st = aug3Station(GAUGE_AUG3, '15:30');
+    const nulled = hourly(['2026-08-03'], { '2026-08-03': AUG3_HOURLY });
+    nulled.precipitation = nulled.precipitation.map((v, i) => (Number(nulled.time[i].slice(11, 13)) > 15 ? null : v));
+    const { merged, prov } = mergeStationHydrology(om({ hourly_precip: nulled }), st, { planDay: '2026-08-03' });
+    expect(merged.today_remaining_in).toBe(round2(AUG3_DAILY - GAUGE_AUG3));
+    expect(prov.today_remaining_fallback).toBe('hourly_unusable');
+  });
+
+  it('FALLBACK hourly tz != station tz -> refuse to read a misaligned day boundary', () => {
+    const st = aug3Station(GAUGE_AUG3, '15:30');
+    const other = { ...AUG_HOURLY, timezone: 'America/Denver' };
+    const { merged, prov } = mergeStationHydrology(om({ hourly_precip: other }), st, { planDay: '2026-08-03' });
+    expect(merged.today_precip_in).toBe(H2_NUMBER);
+    expect(prov.today_remaining_fallback).toBe('tz_mismatch');
+  });
+
+  it('the fallback is never WORSE than what ships today (identical to the H2 number)', () => {
+    const st = aug3Station(0.10, '15:30');
+    const base = om({ today_precip_in: 0.40, hourly_precip: null });
+    const { merged } = mergeStationHydrology(base, st, { planDay: '2026-08-03' });
+    expect(merged.today_observed_in).toBe(0.1);
+    expect(merged.today_remaining_in).toBe(0.3);
+    expect(merged.today_precip_in).toBe(0.4);
+  });
+
+  it('replay of a PAST plan day: fully elapsed, so remaining is 0 and the gauge stands alone', () => {
+    const st = aug3Station(0.0, '15:30');                                  // station clock is on 08-03
+    const withAug2 = om({ hourly_precip: hourly(['2026-08-02', '2026-08-03'], { '2026-08-02': { 14: 0.9 } }) });
+    const { merged, prov } = mergeStationHydrology(withAug2, st, { planDay: '2026-08-02' });
+    expect(prov.today_remaining_basis).toBe('hourly');
+    expect(prov.today_remaining_from_hour).toBe(23);
+    expect(merged.today_remaining_in).toBe(0);
+  });
+
+  describe('remainingHourlyIn — pure window math', () => {
+    it('sums strictly AFTER the current hour; the current hour is already in the gauge', () => {
+      const h = hourly(['2026-08-03'], { '2026-08-03': { 15: 1.0, 16: 0.5, 17: 0.25 } });
+      expect(remainingHourlyIn(h, '2026-08-03', 15)).toBe(0.75);
+      expect(remainingHourlyIn(h, '2026-08-03', 14)).toBe(1.75);
+      expect(remainingHourlyIn(h, '2026-08-03', 23)).toBe(0);
+    });
+
+    it('DST fall-back (25 rows, two 01:00): BOTH repeated hours count — both are still ahead', () => {
+      const time = [], precipitation = [];
+      for (const [hh, v] of [['00', 0], ['01', 0.2], ['01', 0.3], ['02', 0.1], ['03', 0.4]]) {
+        time.push(`2026-11-01T${hh}:00`); precipitation.push(v);
+      }
+      const h = { time, precipitation, timezone: 'America/New_York' };
+      expect(remainingHourlyIn(h, '2026-11-01', 0)).toBe(1);       // 0.2 + 0.3 + 0.1 + 0.4
+      expect(remainingHourlyIn(h, '2026-11-01', 1)).toBe(0.5);     // both 01:00 rows drop out together
+    });
+
+    it('DST spring-forward (23 rows, no 02:00) needs no special case', () => {
+      const time = [], precipitation = [];
+      for (const hh of [0, 1, 3, 4, 5]) { time.push(`2026-03-08T${String(hh).padStart(2, '0')}:00`); precipitation.push(0.1); }
+      const h = { time, precipitation, timezone: 'America/New_York' };
+      expect(remainingHourlyIn(h, '2026-03-08', 1)).toBe(0.3);     // hours 3,4,5
+    });
+
+    it('matches by DATE STRING, so an hourly array starting on a different day than daily is fine', () => {
+      // daily starts D-2 (08-01) but hourly here starts a day later — index math would read the wrong day.
+      const h = hourly(['2026-08-02', '2026-08-03'], { '2026-08-02': { 20: 9.9 }, '2026-08-03': { 20: 0.4 } });
+      expect(remainingHourlyIn(h, '2026-08-03', 15)).toBe(0.4);    // NOT 9.9
+    });
+
+    it('returns null (never 0) for every unusable input — absence is not "no rain coming"', () => {
+      const h = hourly(['2026-08-03'], { '2026-08-03': { 20: 0.4 } });
+      expect(remainingHourlyIn(null, '2026-08-03', 15)).toBeNull();
+      expect(remainingHourlyIn({ time: [], precipitation: [] }, '2026-08-03', 15)).toBeNull();
+      expect(remainingHourlyIn({ time: ['x'] }, '2026-08-03', 15)).toBeNull();
+      expect(remainingHourlyIn(h, '2026-08-09', 15)).toBeNull();   // day not in window
+      expect(remainingHourlyIn(h, '2026-08-03', NaN)).toBeNull();
+      const allNull = { ...h, precipitation: h.precipitation.map(() => null) };
+      expect(remainingHourlyIn(allNull, '2026-08-03', 15)).toBeNull();
+    });
+
+    it('a partially-null day still sums the values it does have', () => {
+      const h = hourly(['2026-08-03'], { '2026-08-03': { 18: 0.2, 20: 0.4 } });
+      h.precipitation[h.time.indexOf('2026-08-03T18:00')] = null;
+      expect(remainingHourlyIn(h, '2026-08-03', 15)).toBe(0.4);
+    });
+  });
+
+  describe('effectiveHour — replay awareness', () => {
+    const st = { day0: '2026-08-04', hour0: 9 };
+    it('same day -> the station clock', () => expect(effectiveHour(st, '2026-08-04')).toBe(9));
+    it('past day -> fully elapsed', () => expect(effectiveHour(st, '2026-08-03')).toBe(23));
+    it('future day -> entirely ahead', () => expect(effectiveHour(st, '2026-08-05')).toBe(-1));
+    it('no station clock -> null, routing to the fallback', () => {
+      expect(effectiveHour({ day0: '2026-08-04' }, '2026-08-04')).toBeNull();
+      expect(effectiveHour(null, '2026-08-04')).toBeNull();
+    });
   });
 });
 

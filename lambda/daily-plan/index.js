@@ -111,8 +111,11 @@ async function fetchPrecip(lat, lng) {
     // the §3-3 48–72h advisory tier can actually see 3 future nights (D1,D2,D3). Both changes are strictly
     // APPENDING: with past_days=2 the daily arrays stay [D-2,D-1,D0,D1,D2,(D3)], so every existing index
     // below (ps[0..4], pop[2..3]) means exactly what it meant before. Guarded by openmeteo-indices.test.js.
+    // BUG-RAINACTUAL-001 H5: `hourly=precipitation` is appended to THE SAME call (one request, not two).
+    // `hourly` is a SEPARATE response object from `daily`, so this cannot shift ps[]/pop[]/tmin[] by even one
+    // slot — the same append-only discipline G5 used, and openmeteo-indices.test.js pins both halves.
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
-      `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=America/New_York&past_days=2&forecast_days=4`;
+      `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min&hourly=precipitation&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=America/New_York&past_days=2&forecast_days=4`;
     const j = await (await fetch(url, { signal: AbortSignal.timeout(6000) })).json();
     const ps = (j.daily && j.daily.precipitation_sum) || [];   // [D-2, D-1, D0, D1, D2, D3]
     const pop = (j.daily && j.daily.precipitation_probability_max) || [];
@@ -141,6 +144,15 @@ async function fetchPrecip(lat, lng) {
       // enters the current day's stored plan (byte-parity safe). null, NEVER 0, when Open-Meteo omits the
       // value — absence of data must not be recorded as "no rain fell".
       yesterday_precip_actual_in: Number.isFinite(ps[1]) ? round2(ps[1]) : null,
+      // BUG-RAINACTUAL-001 H5 — the hour-resolution forecast, carried VERBATIM (local ISO timestamps + the tz
+      // they are expressed in) so station.remainingHourlyIn can scope "still to come" to the hours that have
+      // not elapsed. Passed through untransformed on purpose: the date-string matching in that helper is what
+      // makes the window DST-safe and immune to the hourly array starting on a different day than the daily
+      // one. null (never []) when Open-Meteo omits it, so the merge falls back to the whole-day behaviour and
+      // labels it, rather than reading "no more rain coming".
+      hourly_precip: (j.hourly && Array.isArray(j.hourly.time) && Array.isArray(j.hourly.precipitation))
+        ? { time: j.hourly.time, precipitation: j.hourly.precipitation, timezone: j.timezone || null }
+        : null,
     };
   } catch (e) {
     console.warn(JSON.stringify({ msg: 'fetchPrecip failed — hydrology null', lat, lng, error: e.message }));

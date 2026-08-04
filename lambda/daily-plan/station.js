@@ -27,6 +27,13 @@ const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 function civilDay(ms, tz) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
 }
+// Civil HOUR (0-23) of an instant in a named tz. h23 so midnight is 0, not 24. Same tz as civilDay, so the
+// (day, hour) pair the H5 hourly scope is built from is internally consistent — the hour can never be read
+// against a different day than the buckets are. Returns null rather than NaN on a bad input.
+function civilHour(ms, tz) {
+  const n = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }).format(new Date(ms)));
+  return Number.isFinite(n) ? n : null;
+}
 // Previous civil-day LABEL (pure string/date-label math; noon-UTC anchor dodges DST edges — labels only).
 function dayBefore(dayStr) {
   const d = new Date(dayStr + 'T12:00:00Z');
@@ -77,7 +84,7 @@ function deriveStation(raw, { nowMs }) {
   const yesterdayPrecipIn = Number.isFinite(buckets[D1]) ? round2(buckets[D1]) : null;
 
   return { mac: raw.mac, lat: cfg.lat, lng: cfg.lng, tz, fresh, dataAgeMin, tempF, recentPrecipIn, coversLookback, buckets, uncertainty,
-    day0: D0, day1: D1, day2: D2, todayPrecipIn, yesterdayPrecipIn };
+    day0: D0, day1: D1, day2: D2, hour0: civilHour(nowMs, tz), todayPrecipIn, yesterdayPrecipIn };
 }
 
 // Gauge totals addressed by CIVIL-DAY LABEL rather than by the fetch instant. deriveStation's D0/D1/D2 are
@@ -96,6 +103,71 @@ function gaugeWindow(st, planDay) {
   const earliest = Object.keys(b).sort()[0];
   const covers = !!earliest && earliest < d2 && Number.isFinite(b[d1]) && Number.isFinite(b[d2]);
   return { day: d0, observed: at(d0), yesterday: at(d1), recent: covers ? round2(b[d1] + b[d2]) : null, coversLookback: covers };
+}
+
+// ── H5 (BUG-RAINACTUAL-001, supersedes the H2 whole-day subtraction) ──────────────────────────────
+// Sum the HOURLY forecast for the hours of `day` that have NOT YET ELAPSED, i.e. strictly after `hourNow`.
+//
+// Why this replaces `max(0, wholeDayForecast - observed)`: that subtraction made today_precip_in
+// (= observed + remaining) UNABLE TO FALL BELOW the whole-day forecast. On the real 2026-08-03 event the
+// gauge measured 2.22" against a 4.63" forecast, so remaining came out 2.41" and the total landed right back
+// on 4.63" — identical to the pre-fix bug. The gauge could only ever move the number when it EXCEEDED the
+// forecast, which is the opposite of the failure being fixed. Scoping remaining to the unelapsed hours makes
+// a forecast that busted HIGH in the morning decay out of the number as the day passes.
+//
+// Matching is by DATE-STRING PREFIX on the local ISO timestamps, never by array index. That is what makes it
+// safe against (a) an hourly array whose first day differs from the daily array's first day, and (b) DST:
+// spring-forward days carry 23 rows (no 02:00) and fall-back days carry 25 (two 01:00 rows, both counted —
+// both are genuinely still ahead). An index-based window would silently slide on either.
+//
+// Returns null — never 0 — whenever the data cannot support an answer, so the caller falls back to the H2
+// whole-day behaviour rather than reporting "no more rain coming" and over-watering into an incoming storm.
+function remainingHourlyIn(hourly, day, hourNow) {
+  if (!hourly || !Array.isArray(hourly.time) || !Array.isArray(hourly.precipitation)) return null;
+  if (typeof day !== 'string' || !Number.isFinite(hourNow)) return null;
+  const t = hourly.time, p = hourly.precipitation;
+  let dayRows = 0, futureRows = 0, finiteRows = 0, sum = 0;
+  for (let i = 0; i < t.length; i++) {
+    const s = t[i];
+    if (typeof s !== 'string' || s.slice(0, 10) !== day) continue;
+    dayRows++;
+    const h = Number(s.slice(11, 13));
+    if (!Number.isFinite(h) || h <= hourNow) continue;
+    futureRows++;
+    const v = p[i];
+    if (!Number.isFinite(v)) continue;
+    finiteRows++;
+    sum += v;
+  }
+  if (!dayRows) return null;                   // the plan day is not inside the hourly window at all
+  if (futureRows && !finiteRows) return null;  // hours remain but every value is null/absent -> unusable
+  return round2(sum);                          // futureRows === 0 (late-day / replay) legitimately sums to 0
+}
+
+// Which hour of `day` we are standing in, from the STATION's own clock (same tz as its buckets).
+// Replay-aware: a plan day in the past is fully elapsed (nothing left to come); a plan day in the future has
+// its whole day ahead. Returns null when the station cannot say, which routes the caller to the fallback.
+function effectiveHour(st, day) {
+  if (!st || !day || !st.day0 || !Number.isFinite(st.hour0)) return null;
+  if (day === st.day0) return st.hour0;
+  return day < st.day0 ? 23 : -1;
+}
+
+// Resolve remaining-for-today from the hourly forecast, or say why it could not be. `why` is carried into
+// provenance: a fallback to the whole-day number is allowed, but — like every other substitution here — it
+// is never silent.
+function remainingForecast(base, st, day) {
+  const hourly = base && base.hourly_precip;
+  if (!hourly) return { in: null, why: 'no_hourly' };
+  // The hourly timestamps are LOCAL to whatever tz Open-Meteo was asked for. Reading them against a station
+  // in a different tz would misalign the day boundary, so refuse rather than guess (single-station today;
+  // this is the guard for the V200 §3 multi-station evolution).
+  if (hourly.timezone && st && st.tz && hourly.timezone !== st.tz) return { in: null, why: 'tz_mismatch' };
+  const hour = effectiveHour(st, day);
+  if (hour == null) return { in: null, why: 'no_hour' };
+  const v = remainingHourlyIn(hourly, day, hour);
+  if (v == null) return { in: null, why: 'hourly_unusable' };
+  return { in: v, hour, why: null };
 }
 
 // Bind a station to a Space by coordinate proximity (coords live in spaces.weather_lat/lng — no DDL). Exact
@@ -129,25 +201,46 @@ function mergeStationHydrology(hy, st, opts) {
     if (st && st.uncertainty) prov.station_uncertainty = st.uncertainty;
   }
 
-  // ── H2 (design §3-1) — split TODAY into what the gauge has already MEASURED and what the forecast still
-  // expects. `today_precip_in` keeps its name AND its meaning (the day's total), so every downstream
-  // consumer — windowPrecip, rainCreditDays, rainCreditDaysTiered, saturationSuppressed, todayQualifies,
-  // computeCallout, hydrologyStatus — is untouched. The two new fields are additive observability.
-  // This is what makes the gauge "drive throughout the day": at the 02:00 run observed is ~0 and remaining
-  // is ~the whole forecast (behaviour identical to before); by the 15:30 run observed is nearly the entire
-  // day and the forecast contributes only the tail.
+  // ── H2 (design §3-1) as CORRECTED BY H5 — split TODAY into what the gauge has already MEASURED and what
+  // the forecast still expects. `today_precip_in` keeps its name AND its meaning (the day's total), so every
+  // downstream consumer — windowPrecip, rainCreditDays, rainCreditDaysTiered, saturationSuppressed,
+  // todayQualifies, computeCallout, hydrologyStatus — is untouched. The two new fields are additive
+  // observability.
+  //
+  // H5: `remaining` is the HOURLY forecast for the hours not yet elapsed (see remainingHourlyIn), NOT the
+  // whole-day forecast minus the gauge. The subtraction form shipped in H2 could never let the gauge pull the
+  // total DOWN — it floored today_precip_in at the whole-day forecast — which left the original bug intact
+  // whenever the forecast busted high. The hourly form is what actually makes the gauge drive the number
+  // through the day: at 02:00 nearly the whole day is still ahead so remaining ~= the full forecast (parity
+  // with the nightly baseline); by 15:30 only the evening tail is left and the number is essentially the gauge.
+  //
+  // FALLBACK: no hourly data / wrong tz / day outside the hourly window -> the H2 whole-day subtraction, so
+  // the degraded path is never WORSE than what already ships, and is LABELLED in prov.today_remaining_basis.
+  // A missing hourly array must never resolve to remaining=0 — that would under-report incoming rain and
+  // over-water into a storm (remainingHourlyIn returns null, never 0, for unusable data).
+  //
   // Gated on `fresh` ONLY, not coversLookback: a station that came online this morning still reports today's
   // accumulator truthfully (warm-up is a statement about the 2-day LOOKBACK, not about today).
   const fToday = Number.isFinite(base.today_precip_in) ? base.today_precip_in : null;
   if (st && st.fresh && gw.observed != null) {
     const observed = gw.observed;
-    // CLAMPED AT ZERO. When the gauge already exceeds the forecast the remainder is 0, never negative — a
-    // busted-LOW forecast must never be able to SUBTRACT water that has physically fallen.
-    const remaining = fToday != null ? Math.max(0, round2(fToday - observed)) : 0;
+    const rf = remainingForecast(base, st, gw.day);
+    let remaining;
+    if (rf.in != null) {
+      remaining = rf.in;
+      prov.today_remaining_basis = 'hourly';
+      prov.today_remaining_from_hour = rf.hour;
+    } else {
+      // H2 legacy path. CLAMPED AT ZERO: when the gauge already exceeds the forecast the remainder is 0,
+      // never negative — a busted-LOW forecast must never be able to SUBTRACT water that has physically fallen.
+      remaining = fToday != null ? Math.max(0, round2(fToday - observed)) : 0;
+      prov.today_remaining_basis = 'wholeday';
+      prov.today_remaining_fallback = rf.why;
+    }
     merged.today_observed_in = observed;
     merged.today_remaining_in = remaining;
     merged.today_precip_in = round2(observed + remaining);
-    prov.today_source = (fToday == null || remaining === 0) ? 'station' : 'station+forecast';
+    prov.today_source = remaining > 0 ? 'station+forecast' : 'station';
   } else {
     prov.today_source = fToday != null ? 'forecast' : 'unavailable';
   }
@@ -190,4 +283,4 @@ function mergeStationWeather(wx, st) {
   return { merged: { ...wx, tonightLow: low }, prov };
 }
 
-module.exports = { stationConfig, deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, dayBefore, FRESHNESS_MAX_MIN, COORD_TOL };
+module.exports = { stationConfig, deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, COORD_TOL };
