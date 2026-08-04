@@ -35,6 +35,19 @@ const HAS_CAL1 = (await directSql`
                  WHERE table_name='crop_types' AND column_name='unit_weights')
     AND to_regclass('public.cultivar_weight_sample') IS NOT NULL) AS ok`)[0].ok
 
+// V4-HARVBASIS-SAMPLE-001 phase 2 — resolver v4 reports 'cultivar_sample' for the two SAMPLE-backed
+// tiers (3 corroborated, 5 provisional) and keeps 'cultivar' for the CURATED catalogue tier (4).
+// Only ONE assertion in this file is affected: the corroborated-sample case below. The tier-4 and
+// tier-6 assertions are correct as literals and stay that way.
+//
+// Detected rather than hardcoded because integration-test.yml branches CI off `staging` and does
+// NOT apply migrations, so the schema moves independently of this file. Either literal would
+// red-line unrelated dev pushes for the whole window between the staging apply and this commit.
+const HAS_V4 = (await directSql`
+  SELECT EXISTS (SELECT 1 FROM public.schema_version
+                  WHERE version='4.20.8-harvbasis-sample-001-resolver-v4') AS ok`)[0].ok
+const SAMPLE_BASIS = HAS_V4 ? 'cultivar_sample' : 'cultivar'
+
 describe.skipIf(!HAS_CAL1)('CAL-1 harvest weight derivation — POST /api/events (V4-HARVDUAL-001)', () => {
   const RUN = testRunId()
   const USER = `cal1_user_${RUN}`
@@ -214,7 +227,9 @@ describe.skipIf(!HAS_CAL1)('CAL-1 harvest weight derivation — POST /api/events
       + `${(2 * (300 / 14)).toFixed(3)} g, got ${body.harvest.weight_grams} g`)
       .toBeCloseTo(2 * (300 / 14), 3)
     expect(body.harvest.weight_estimated).toBe(true)
-    expect(body.harvest.weight_basis).toBe('cultivar')
+    // Tier 3 — sample-backed. Under v4 this reports 'cultivar_sample'; the gram value is identical
+    // either way, so a failure here is a LABEL regression, not a ranking one.
+    expect(body.harvest.weight_basis).toBe(SAMPLE_BASIS)
   })
 
   it('SAMPLE TIER: an UNCORROBORATED (n=1) weighing does NOT outrank the reference', async () => {

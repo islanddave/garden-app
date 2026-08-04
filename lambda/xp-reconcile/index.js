@@ -68,12 +68,20 @@ export const handler = async (event) => {
       return { ok: true, dry_run: true, users_with_drift: drift.length, total_abs_drift: totalAbsDrift };
     }
 
+    // BUG-XPPROGRESSION-001 — `level` is deliberately NOT in this SET list, and that is the whole
+    // argument for having made it a trigger rather than a caller obligation. This function rewrites
+    // xp behind the Lambda's back at 04:00 daily; if level were computed at write time by the six
+    // XP writers in lambda/events, every reconciliation that moved xp across a threshold would
+    // leave level stale until the user happened to log again. trg_user_stats_level fires on this
+    // UPDATE like any other and re-derives level from the healed xp, for free and with no edit to
+    // this file's logic. `level` is added to RETURNING so a reconciliation that also moved someone's
+    // level is visible in the CloudWatch log rather than silent.
     const updated = await sql`
       UPDATE user_stats us
       SET xp = COALESCE((SELECT SUM(amount)::int FROM xp_events xe WHERE xe.user_id = us.user_id), 0),
           updated_at = NOW()
       WHERE us.xp <> COALESCE((SELECT SUM(amount)::int FROM xp_events xe WHERE xe.user_id = us.user_id), 0)
-      RETURNING user_id, xp
+      RETURNING user_id, xp, level
     `;
 
     console.log(JSON.stringify({

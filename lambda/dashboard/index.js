@@ -8,7 +8,8 @@
 //   - recent_events: last 20 collapsed feed entries (V3-FEED-001: Log Many batches fold to one)
 //   - active_projects: all non-deleted projects + entity_memory state
 //   - counts: projects, plants, locations, favorites
-//   - user_stats: current_streak, longest_streak, last_active_date, total_events, xp
+//   - user_stats: current_streak, longest_streak, last_active_date, total_events, xp,
+//                 level, xp_into_level, xp_to_next_level, next_level_at  (BUG-XPPROGRESSION-001)
 //   - water_due: projects with entity_memory.next_water_at < NOW() (Tile 2)
 //   - harvest_ready: projects with status='harvesting' ordered by oldest last_observed_at (Tile 3, §4)
 //   - heads_up: Hybrid A+C union — flagged-unresolved + active-growth stale (Tile 4, §5)
@@ -76,6 +77,17 @@ export const handler = async (event) => {
     console.error('verifyToken failed:', err?.message ?? String(err));
     return resp(401, { error: 'Unauthorized' });
   }
+  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): the scope helper maps '' to [''],
+  // and `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
+  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
+  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
+  // THIS WRAPPER IS THE ONE THAT HID: it does no scoping itself — it forwards userId to
+  // ./handlers.js, which does the scoping and interpolates ${userId} into 19 query sites. Scanning
+  // this file alone does not reveal it as an owner-scoped surface, which is exactly how it was
+  // missed; the CI guard in lambda/authz-write-fk.test.js now derives that set from the whole dir.
+  // (Deliberately avoids naming the helper — lambda/household-isolation.test.js asserts the literal
+  // token appears nowhere in this wrapper, since handlers.js is the in-scope surface.)
+  if (!userId) return resp(401, { error: 'Unauthorized' });
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/dashboard';

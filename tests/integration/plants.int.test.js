@@ -37,12 +37,19 @@ afterAll(async () => {
   // Order matters — three separate FK behaviours have to be unwound by hand before the
   // fixture plantings can be hard-deleted.
   //
-  // event_log.plant_id is ON DELETE SET NULL, and event_log_has_anchor requires
-  // (plant_id IS NOT NULL OR project_id IS NOT NULL). For a PROJECT-LESS planting both are
-  // then NULL, so the cascade's own UPDATE violates the check and the DELETE fails with
-  // 23514. Any event row on a project-less planting has to go first. (This is a real schema
-  // hazard, not just a teardown detail — see BUG-EVTANCHORDEL-001. The app never hits it
-  // because plant DELETE is soft, but admin SQL and this teardown do.)
+  // event_log.plant_id is ON DELETE RESTRICT (V4-EVTANCHORDEL-001, 2026-08-04), so every event
+  // anchored to a fixture planting has to go before the planting does.
+  //
+  // NOTE — this line is NOT a workaround any more, and must NOT be removed. It was originally
+  // added to dodge BUG-EVTANCHORDEL-001: plant_id was ON DELETE SET NULL while
+  // event_log_has_anchor requires (plant_id IS NOT NULL OR project_id IS NOT NULL), so for a
+  // PROJECT-LESS planting the cascade's own UPDATE produced a row violating the table's own
+  // CHECK and the DELETE died with 23514. The fix removed that contradiction by making the FK
+  // RESTRICT — which means the DB now REQUIRES this ordering rather than merely punishing you
+  // for getting it wrong, and it requires it for EVERY planting, not just project-less ones.
+  // Deleting this line turns a green teardown into a 23503. It is enforced ordering, not a
+  // band-aid. The supported non-test path is archive_plant_events(); tests delete outright
+  // because fixture events are not history worth keeping.
   await directSql`DELETE FROM event_log WHERE plant_id IN (SELECT id FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
   // entity_memory.plant_id is ON DELETE RESTRICT — a status change writes a plant-keyed row.
   await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER}))`

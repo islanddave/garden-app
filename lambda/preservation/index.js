@@ -167,18 +167,42 @@ export { reconcilePlantAttribution, plantingLabel };
 // tests can import them without this file's neon/clerk/aws imports (which are NOT in the root
 // package.json and so are absent under `npm ci` in CI). See that file's header.
 
+// A malformed id must answer the SAME generic null/400 these loaders give a foreign id — never a
+// 22P02 ("invalid input syntax for type uuid") falling through this handler's catch to an opaque
+// 500. Same literal as household.js / authz-parents.js; declared locally because the four loaders
+// below are module-private to this handler. (V4-AUTHZRESIDUE-001.)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Load the planting behind a plant_id, HOUSEHOLD-SCOPED. garden_node is the canonical plantings
 // view (plants.name → display_name, plants.variety_id → cultivar_id); cultivar carries crop_type_slug.
 // SCOPE (required — without it any authenticated user could attach another household's plant_id,
 // which both leaks that planting's name/variety back through the read surface and writes a
-// cross-household FK). A planting is in scope when EITHER its own created_by or its container's
-// is in the household: lambda/plants scopes through container.created_by, but garden_node carries
-// created_by too, and container-less plantings exist (the integration fixture creates them). Both
-// columns are populated on all 240 live plantings, so this is belt-and-braces, not a widening —
+// cross-household FK). A planting is in scope through its container's created_by, or — for
+// container-less plantings, which exist (the integration fixture creates them) — its own.
+// Both columns are populated on all 240 live plantings, so this is belt-and-braces, not a widening —
 // every branch still terminates in `= ANY(householdIds)`.
 // Returning null makes reconcilePlantAttribution reject with the generic "does not match a
 // planting you can log against" — no existence oracle for out-of-household ids.
+//
+// V4-AUTHZRESIDUE-001 — RECONCILED TO THE STRICT DIALECT (household.js loadOwnedPlanting /
+// authz-parents.js loadOwnedPlantingRef). The ownership arms previously read
+// `gn.created_by = ANY(h) OR pp.created_by = ANY(h)`; the bare own-created_by arm reaches a planting
+// the caller created INSIDE another household's container. The `container_id IS NULL` conjunct that
+// now guards it is LOAD-BEARING — container-less plantings still resolve through that arm, it is
+// narrowed rather than removed. (`garden_node.container_id` is the view's name for
+// `plants.project_id`; this loader stays on the views because it also reads cultivar columns.)
+//
+// MEASURED, NOT ASSUMED, on BOTH environments: for the configured household the strict predicate
+// accepts the identical planting set as the loose one (prod 269 = 269, staging 1 = 1, newly-rejected
+// = 0), and 0 of the live preservation_log rows carrying a plant_id would fail it. No legitimate
+// flow regresses.
+//
+// The UUID pre-check keeps a malformed plant_id on the SAME generic 400 as a foreign one. Without it
+// a non-uuid string reached Postgres, raised 22P02, and fell through this handler's catch to an
+// opaque 500 — a worse contract and a weak "is this even a uuid" side channel. validateCreate /
+// validateUpdate do NOT shape-check plant_id, so that path was genuinely reachable.
 async function loadPlanting(sql, plantId, householdIds) {
+  if (!UUID_RE.test(String(plantId))) return null;
   const rows = await sql`
     SELECT gn.id, gn.display_name, gn.sown_at, gn.succession_order, gn.succession_group_id,
            gn.cultivar_id AS variety_id, cv.crop_type_slug, cv.display_name AS variety_name
@@ -187,7 +211,8 @@ async function loadPlanting(sql, plantId, householdIds) {
     LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
     WHERE gn.id = ${plantId}
       AND gn.deleted_at IS NULL
-      AND (gn.created_by = ANY(${householdIds}) OR pp.created_by = ANY(${householdIds}))
+      AND ( pp.created_by = ANY(${householdIds})
+            OR (gn.container_id IS NULL AND gn.created_by = ANY(${householdIds})) )
   `;
   return rows.length ? rows[0] : null;
 }
@@ -198,6 +223,7 @@ async function loadPlanting(sql, plantId, householdIds) {
 // EXISTENCE, not ownership; this predicate is the ownership half. Mirrors storage_location's own
 // scope (lambda/storage-location/index.js): user_id = ANY(householdIds) AND deleted_at IS NULL.
 async function loadStorageLocation(sql, storageLocationId, householdIds) {
+  if (!UUID_RE.test(String(storageLocationId))) return null;
   const rows = await sql`
     SELECT id, kind FROM storage_location
     WHERE id = ${storageLocationId}
@@ -214,9 +240,36 @@ async function loadStorageLocation(sql, storageLocationId, householdIds) {
 // JOINs harvest_log today, so this is defense-in-depth — it stops a cross-household harvest_log_id
 // from being stored before any future read can leak it (the storage_location_id class, pre-empted).
 async function loadHarvestLog(sql, harvestLogId, householdIds) {
+  if (!UUID_RE.test(String(harvestLogId))) return null;
   const rows = await sql`
     SELECT id FROM harvest_log
     WHERE id = ${harvestLogId}
+      AND created_by = ANY(${householdIds})
+      AND deleted_at IS NULL
+  `;
+  return rows.length ? rows[0] : null;
+}
+
+// Verify a photo_id belongs to the caller's household. Returns { id } or null.
+//
+// V4-AUTHZRESIDUE-001 — THIS GATE WAS MISSING ENTIRELY. preservation_log.photo_id has a
+// `REFERENCES photos(id)` FK (verified live) which enforces EXISTENCE and says nothing about
+// OWNERSHIP, and body.photo_id was written verbatim on BOTH verbs while the sibling FKs
+// (plant_id / storage_location_id / harvest_log_id) were all gated. photo_id is in projectRow(), so
+// it is echoed back through all four GET routes — this is the same read-surface class as
+// storage_location_id, not merely a bad FK.
+//
+// Anchored on photos.created_by (TEXT NOT NULL), NOT the nullable legacy uploaded_by — the same
+// convention every other featured-photo validator uses, and the divergence
+// lambda/authz-write-fk.test.js already forbids for locations.
+//
+// MEASURED: 0 live preservation_log rows carry a photo_id on prod, so this gate rejects nothing that
+// exists today.
+async function loadOwnedPhoto(sql, photoId, householdIds) {
+  if (!UUID_RE.test(String(photoId))) return null;
+  const rows = await sql`
+    SELECT id FROM photos
+    WHERE id = ${photoId}
       AND created_by = ANY(${householdIds})
       AND deleted_at IS NULL
   `;
@@ -284,6 +337,13 @@ export const handler = async (event) => {
     console.error('verifyToken failed:', err?.message ?? String(err));
     return resp(401, { error: 'Unauthorized' });
   }
+  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
+  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
+  // ownership value rather than a no-match — every `= ANY(householdIds)` predicate in this file
+  // would then match rows whose owner column is ''. verifyToken rejects such a token first, so this
+  // is defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon
+  // from one layer up.
+  if (!userId) return resp(401, { error: 'Unauthorized' });
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   const householdIds = householdScope(userId);
@@ -456,6 +516,12 @@ export const handler = async (event) => {
           const hl = await loadHarvestLog(sql, body.harvest_log_id, householdIds);
           if (!hl) return resp(400, { error: 'harvest_log_id does not match a harvest you can log against' });
         }
+        // V4-AUTHZRESIDUE-001: photo_id was the one body-settable FK on this handler with no
+        // ownership gate, on either verb — and it IS a read surface (projectRow echoes it back).
+        if (body.photo_id) {
+          const ph = await loadOwnedPhoto(sql, body.photo_id, householdIds);
+          if (!ph) return resp(400, { error: 'photo_id does not match a photo you can use' });
+        }
 
         const packageCount = body.package_count ?? 1;
         const remaining = body.remaining_count ?? null;
@@ -587,6 +653,11 @@ export const handler = async (event) => {
       if (body.harvest_log_id) {
         const hl = await loadHarvestLog(sql, body.harvest_log_id, householdIds);
         if (!hl) return resp(400, { error: 'harvest_log_id does not match a harvest you can log against' });
+      }
+      // V4-AUTHZRESIDUE-001: mirrors the PUT gate above — see loadOwnedPhoto.
+      if (body.photo_id) {
+        const ph = await loadOwnedPhoto(sql, body.photo_id, householdIds);
+        if (!ph) return resp(400, { error: 'photo_id does not match a photo you can use' });
       }
 
       const packageCount = body.package_count ?? 1;

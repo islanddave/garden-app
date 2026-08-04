@@ -101,8 +101,19 @@ export async function applyBatchSideEffects({
     total_events: null,
     xp_gained: 0,
     daily_xp_remaining: dailyXpCap,
+    // BUG-XPPROGRESSION-001 — mirrors the single path's response contract. Null means "unknown"
+    // (Step 2 threw), never level 0.
+    level: null,
+    leveled_up: false,
   };
   const eventId = anchorEventId(events);
+  // The action's FINAL level, threaded through Steps 3 and 4 — both of which move XP. Every
+  // assignment is a value trg_user_stats_level wrote; NO level is ever computed in this file.
+  // That is the point of the trigger: this function stays a reward orchestrator and never becomes
+  // a second copy of the curve, which is how the batch path diverged from the single path in the
+  // first place (BUG-BATCHSIDEEFFECTS-001).
+  let levelBefore = null;
+  let levelAfter = null;
 
   // ── Step 1: critters (pre-existing behaviour, now also reached on an idempotent re-hit) ──────
   try {
@@ -153,17 +164,80 @@ export async function applyBatchSideEffects({
         longest_streak   = GREATEST(user_stats.longest_streak, ${longest}),
         last_active_date = ${latestDay}::date,
         updated_at       = NOW()
-      RETURNING current_streak, total_events
+      RETURNING current_streak, total_events, level
     `;
     if (statsRows.length) {
       out.updated_streak = statsRows[0].current_streak;
       out.total_events   = statsRows[0].total_events;
+      // Read back, never computed. This upsert touches no XP column, but the trigger runs on it
+      // anyway, so it is a free and current reading of the level BEFORE this batch's grants.
+      levelBefore = statsRows[0].level;
+      levelAfter  = statsRows[0].level;
     }
   } catch (statsErr) {
     console.warn('batch user_stats/streak upsert failed (non-fatal)', statsErr.message);
   }
 
-  // ── Step 3: achievement evaluation ──────────────────────────────────────────────────────────
+  // ── Step 3: flat XP grant, ONE per logging action, against the daily cap ────────────────────
+  // BUG-XPPROGRESSION-001 — THIS BLOCK MOVED (it was Step 4, after the achievement evaluation that
+  // is now Step 4). Same reorder, same reason, as the single path: level is derived from xp, so a
+  // WHEN level branch evaluated BEFORE this grant would judge the user against their XP as of
+  // before the action they just took, and level_5 / level_9 would fire one logging action late.
+  // The batch path is where that matters MOST: a batch IS the whole session for the bulk workflow
+  // ("log all" over 157 plantings is one tap), so "one action late" can mean the next gardening
+  // day, or never. Verified no data dependency in either direction — this grant reads only
+  // (user, tz, today event_logged sum) and the cap filters reason = event_logged, so achievement
+  // XP has never counted toward it (F16) and still does not.
+  // source_id = the BATCH id, not an event id. That is what makes the grant idempotent under the
+  // new UNIQUE (user_id, reason, source_id) index: the same batch can only ever hold one
+  // 'event_logged' grant, no matter how many times this function runs.
+  let flatGranted = 0;
+  let flatTodayTotal = 0;
+  try {
+    const rows = await sql`
+      WITH today_xp AS (
+        SELECT COALESCE(SUM(amount), 0)::int AS today_sum
+        FROM xp_events
+        WHERE user_id = ${userId}
+          AND reason = 'event_logged'
+          AND (created_at AT TIME ZONE ${userTz})::date = (NOW() AT TIME ZONE ${userTz})::date
+      ),
+      flat_grant AS (
+        INSERT INTO xp_events (user_id, amount, reason, source_id)
+        SELECT ${userId}, ${flatXpPerAction}, 'event_logged', ${batchId}::uuid
+        FROM today_xp
+        WHERE today_sum < ${dailyXpCap}
+        ON CONFLICT (user_id, reason, source_id) WHERE source_id IS NOT NULL DO NOTHING
+        RETURNING amount
+      ),
+      stats AS (
+        UPDATE user_stats
+          SET xp = user_stats.xp + COALESCE((SELECT amount FROM flat_grant), 0),
+              updated_at = NOW()
+        WHERE user_id = ${userId}
+        -- level is deliberately absent from this SET list: trg_user_stats_level derives it from the
+        -- NEW xp in this same statement, so it comes back already-correct and this file never holds
+        -- a second copy of the curve.
+        RETURNING xp, level
+      )
+      SELECT
+        COALESCE((SELECT amount FROM flat_grant), 0)::int AS granted,
+        ((SELECT today_sum FROM today_xp) + COALESCE((SELECT amount FROM flat_grant), 0))::int AS today_total,
+        (SELECT level FROM stats) AS level_after_flat
+    `;
+    if (rows.length) {
+      flatGranted    = rows[0].granted;
+      flatTodayTotal = rows[0].today_total;
+      out.daily_xp_remaining = Math.max(0, dailyXpCap - flatTodayTotal);
+      if (rows[0].level_after_flat != null) levelAfter = rows[0].level_after_flat;
+    }
+  } catch (xpErr) {
+    console.warn('batch flat XP grant failed (non-fatal)', xpErr.message);
+  }
+
+  // ── Step 4: achievement evaluation ──────────────────────────────────────────────────────────
+  // BUG-XPPROGRESSION-001 — was Step 3; now runs after the flat grant (see Step 3 header above),
+  // so the level branch reads a post-grant level.
   // Byte-for-byte the single path's evaluator (index.js Step 3b), with the batch's anchor event as
   // trigger_event_id. Evaluated ONCE per batch, not per row — but its INPUTS are per-event counts
   // read straight from event_log, so a 157-planting watering advances water_keeper by 157. That is
@@ -173,6 +247,9 @@ export async function applyBatchSideEffects({
     if (out.updated_streak != null && eventId) {
       const streakVal = out.updated_streak;
       const totalVal  = out.total_events;
+      // Post-flat-grant level, read from user_stats — never computed here. Falls back to Step 2's
+      // readback if the flat grant failed or was capped out.
+      const levelVal  = levelAfter;
       const earnedRows = await sql`
         WITH today_in_tz AS (
           SELECT (NOW() AT TIME ZONE ${userTz})::date AS today_date,
@@ -198,6 +275,10 @@ export async function applyBatchSideEffects({
             AND CASE a.trigger_type
               WHEN 'streak'           THEN ${streakVal}::int >= (a.trigger_value->>'days')::int
               WHEN 'event_count'      THEN ${totalVal}::int  >= (a.trigger_value->>'count')::int
+              -- BUG-XPPROGRESSION-001. Must stay byte-identical to index.js Step 3c's CASE — these
+              -- two copies diverging is the failure mode event-source.test.js exists to catch.
+              -- Unlocks level_5 / level_9, zero-earner since 2026-04-21.
+              WHEN 'level'            THEN ${levelVal}::int   >= (a.trigger_value->>'level')::int
               WHEN 'event_type_count' THEN
                 (a.trigger_value->>'type') = ${eventType}
                 AND ec.type_events >= (a.trigger_value->>'count')::int
@@ -229,7 +310,9 @@ export async function applyBatchSideEffects({
                 updated_at = NOW()
           WHERE user_id = ${userId}
             AND EXISTS (SELECT 1 FROM xp_grants)
-          RETURNING xp
+          -- Achievement XP can itself cross a level boundary; returning the trigger-derived level
+          -- lets out.level report the FINAL level of the batch rather than the mid-batch one.
+          RETURNING xp, level
         )
         SELECT COALESCE(
           (SELECT json_agg(
@@ -238,55 +321,20 @@ export async function applyBatchSideEffects({
            )
            FROM xp_grants xg JOIN achievements a ON a.id = xg.source_id),
           '[]'::json
-        ) AS newly_earned
+        ) AS newly_earned,
+        (SELECT level FROM stats_xp) AS level_after_achievements
       `;
-      if (earnedRows.length) out.newly_earned_achievements = earnedRows[0].newly_earned ?? [];
+      if (earnedRows.length) {
+        out.newly_earned_achievements = earnedRows[0].newly_earned ?? [];
+        // NULL when no achievement XP was granted (stats_xp is guarded on EXISTS) — the
+        // post-flat-grant level is then already final.
+        if (earnedRows[0].level_after_achievements != null) {
+          levelAfter = earnedRows[0].level_after_achievements;
+        }
+      }
     }
   } catch (achErr) {
     console.warn('batch achievement eval failed (non-fatal)', achErr.message);
-  }
-
-  // ── Step 4: flat XP grant, ONE per logging action, against the daily cap ────────────────────
-  // source_id = the BATCH id, not an event id. That is what makes the grant idempotent under the
-  // new UNIQUE (user_id, reason, source_id) index: the same batch can only ever hold one
-  // 'event_logged' grant, no matter how many times this function runs.
-  let flatGranted = 0;
-  let flatTodayTotal = 0;
-  try {
-    const rows = await sql`
-      WITH today_xp AS (
-        SELECT COALESCE(SUM(amount), 0)::int AS today_sum
-        FROM xp_events
-        WHERE user_id = ${userId}
-          AND reason = 'event_logged'
-          AND (created_at AT TIME ZONE ${userTz})::date = (NOW() AT TIME ZONE ${userTz})::date
-      ),
-      flat_grant AS (
-        INSERT INTO xp_events (user_id, amount, reason, source_id)
-        SELECT ${userId}, ${flatXpPerAction}, 'event_logged', ${batchId}::uuid
-        FROM today_xp
-        WHERE today_sum < ${dailyXpCap}
-        ON CONFLICT (user_id, reason, source_id) WHERE source_id IS NOT NULL DO NOTHING
-        RETURNING amount
-      ),
-      stats AS (
-        UPDATE user_stats
-          SET xp = user_stats.xp + COALESCE((SELECT amount FROM flat_grant), 0),
-              updated_at = NOW()
-        WHERE user_id = ${userId}
-        RETURNING xp
-      )
-      SELECT
-        COALESCE((SELECT amount FROM flat_grant), 0)::int AS granted,
-        ((SELECT today_sum FROM today_xp) + COALESCE((SELECT amount FROM flat_grant), 0))::int AS today_total
-    `;
-    if (rows.length) {
-      flatGranted    = rows[0].granted;
-      flatTodayTotal = rows[0].today_total;
-      out.daily_xp_remaining = Math.max(0, dailyXpCap - flatTodayTotal);
-    }
-  } catch (xpErr) {
-    console.warn('batch flat XP grant failed (non-fatal)', xpErr.message);
   }
 
   // ── Step 5: app_events telemetry ────────────────────────────────────────────────────────────
@@ -326,5 +374,13 @@ export async function applyBatchSideEffects({
 
   const xpFromAchievements = out.newly_earned_achievements.reduce((s, a) => s + (a.xp_reward ?? 0), 0);
   out.xp_gained = flatGranted + xpFromAchievements;
+  // BUG-XPPROGRESSION-001 — two READINGS of user_stats.level compared, never a recomputation.
+  // IDEMPOTENT UNDER RETRY, which the fast-path caller depends on: on a re-hit the flat grant and
+  // the achievement grants both no-op (ON CONFLICT DO NOTHING), so levelBefore and levelAfter are
+  // read as the SAME already-final level and leveled_up correctly reports false. A retry cannot
+  // re-announce a level-up, and — because level is an absolute function of xp rather than an
+  // increment — it cannot inflate the level either.
+  out.level = levelAfter;
+  out.leveled_up = levelAfter != null && levelBefore != null && levelAfter > levelBefore;
   return out;
 }

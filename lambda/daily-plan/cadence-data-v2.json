@@ -1,6 +1,7 @@
 {
  "schema": "garden.care_cadence.v2",
  "note": "Per-variety research-grade watering+care (161 varieties, 8 parallel research agents 2026-06-17). Operative interval = container (grow-bag) unless plant known in-ground. Cold protect_below_F per-variety; canonical pepper/tomato rule still governs those two via engine. Flags: dormant_skip (don't water now), exclude (test).",
+ "alias_keys_note": "engine.js resolveCadence() looks by_variety up on the LITERAL DB name ([p.variety, p.name] = plant_varieties.name, plants.name) with no normalization, so a cultivar rename in the DB and a key rename here can never be made atomic. The discipline is WIDEN-then-RENAME-then-NARROW: ship the new key as a duplicate FIRST (this file deploys with the Lambda, ahead of the migration), rename the DB second, drop the legacy key in a LATER deploy only after the rename is confirmed in prod. Renaming a key in the same change as the DB leaves a window in which neither spelling resolves and the planting silently degrades to the genus fallback — no error, wrong watering interval. Live aliases: 'Czech Bush Slicer' is the legacy duplicate of \"Czech's Bush\" (V4-CULTIVARNAME-001, 2026-08-04); it is also the rollback path for that migration and must outlive it.",
  "by_variety": {
   "1884": {
    "crop": "tomato",
@@ -666,6 +667,23 @@
    "notes": "Tropical; partial shade recommended in 6a summer"
   },
   "Czech Bush Slicer": {
+   "crop": "tomato",
+   "water_interval_days_container": 1,
+   "water_interval_days_inground": 3,
+   "water_method": "deep_soak",
+   "water_volume_note": "Water until drainage; 1-2 gal in heat; check daily",
+   "soil_moisture_target": "evenly moist; top 1-2in may dry slightly",
+   "drought_tolerance": "low",
+   "heat_response": "determinate handles heat; fruit set drops >95F",
+   "cold": {
+    "tender": true,
+    "protect_below_F": 50
+   },
+   "fertilize_interval_days": 14,
+   "confidence": "high",
+   "notes": "Determinate; concentrate watering during fruit set"
+  },
+  "Czech's Bush": {
    "crop": "tomato",
    "water_interval_days_container": 1,
    "water_interval_days_inground": 3,

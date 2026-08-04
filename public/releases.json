@@ -1,5 +1,18 @@
 [
   {
+    "version": "3.98.0",
+    "date": "2026-08-04",
+    "highlights": [
+      "Logging an event against a location was failing outright. Any event you saved with a location attached hit an internal error and was silently dropped \u2014 the app reported a failure and nothing was written. This is the most important fix in the release.",
+      "Levels finally work. Your level has read 1 since the app launched because nothing ever computed it, which also meant the level 5 and level 9 achievements could never fire no matter how much you logged. There is now a real progression curve, your existing XP is backfilled into it, and the ladder continues past 9 instead of ending there.",
+      "Renaming a variety now updates it everywhere. Renames were only changing one of the three places a name is stored, so the old spelling kept showing up elsewhere \u2014 every rename made through the app since launch has done this. Floradade and Czech\u2019s Bush are corrected, and the gap that caused it is closed so it cannot happen again.",
+      "Harvest weights now say where they came from. A weight backed by fruit you actually weighed is recorded differently from one taken from a catalogue, so it is clear which numbers are yours.",
+      "Deleting a planting can no longer orphan its history. A hard delete could strip the last link from a logged event and leave it unreachable. Events are now archived deliberately rather than silently detached, and the same hole in photos \u2014 which had live records exposed to it \u2014 is closed too.",
+      "More security hardening. Every remaining place that loaded a record without fully checking household ownership now does, the malformed-request behaviour is consistent instead of leaking internal errors, and tests were added that fail the build if any of it regresses.",
+      "Behind the scenes: every event in the app now records how it was written, migration safety checks are actually executed rather than sitting unread in files, and the reward tallies that had drifted are corrected."
+    ]
+  },
+  {
     "version": "3.97.0",
     "date": "2026-08-04",
     "highlights": [

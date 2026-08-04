@@ -19,6 +19,14 @@ import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
 
+// V4-EVENTSOURCE-001 — event_log.source value written by THIS Lambda. lambda/events/index.js
+// declares 'app'/'app_batch' and explicitly delegates 'app_status' here; the full value set and
+// why 'direct' is reserved-but-never-inferred live in
+// migrations/v4-eventsource-001/0a-additive-ddl.sql. The column carries a NOT VALID CHECK, so an
+// unlisted value 23514s on write. 0a is applied to prod AND staging, so including the column in
+// the INSERT below cannot 42703.
+const EVENT_SOURCE_STATUS = 'app_status';
+
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
   region: process.env.AWS_REGION ?? 'us-east-1',
@@ -461,9 +469,9 @@ export const handler = async (event) => {
           const _meta = buildStatusChangeMetadata(_oldStatus, _newStatus, 'plant');
           _stmts.push(sql`
             INSERT INTO event_log
-              (project_id, plant_id, event_type, event_date, notes, metadata, logged_by, created_by)
+              (project_id, plant_id, event_type, event_date, notes, metadata, logged_by, created_by, source)
             VALUES
-              (${_projectId}, ${plantId}, ${STATUS_CHANGE_EVENT_TYPE}, NOW(), ${_note}, ${_meta}, ${userId}, ${userId})
+              (${_projectId}, ${plantId}, ${STATUS_CHANGE_EVENT_TYPE}, NOW(), ${_note}, ${_meta}, ${userId}, ${userId}, ${EVENT_SOURCE_STATUS})
           `);
           // BUG-EMPROJGUARD-001: self-guard on _projectId exactly as the plant-keyed sibling below
           // guards on plantId. garden_node.container_id is NULLABLE (project-less plantings are a

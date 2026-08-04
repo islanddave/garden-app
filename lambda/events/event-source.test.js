@@ -91,7 +91,21 @@ describe('daily flat-XP cap (packet item 3)', () => {
     const capUses = [...SRC.matchAll(/DAILY_FLAT_XP_CAP/g)].length;
     expect(capUses).toBeGreaterThan(0);
     // The achievement CTE must not consult the cap.
-    const achBlock = SRC.slice(SRC.indexOf('WITH today_in_tz AS'), SRC.indexOf('AS newly_earned'));
+    //
+    // ⚠ THIS ASSERTION WAS VACUOUS AND PASSED ON AN EMPTY STRING (found while reordering these two
+    // blocks for BUG-XPPROGRESSION-001). It sliced from the first `WITH today_in_tz AS` (the POST
+    // evaluator, ~char 108,670) to the first `AS newly_earned` — but the PATCH-resolve evaluator
+    // also ends in `AS newly_earned` and sits ~50,000 chars EARLIER in the file, so start > end and
+    // String.slice returned ''. `''.not.toContain(…)` is trivially true, so the F16 guarantee has
+    // never actually been checked. Anchoring forward from the evaluator's own start fixes it, and
+    // the length assertion below stops it silently emptying out again.
+    const achStart = SRC.indexOf('WITH today_in_tz AS');
+    expect(achStart).toBeGreaterThan(-1);
+    const achEnd = SRC.indexOf('AS newly_earned', achStart);
+    expect(achEnd).toBeGreaterThan(achStart);
+    const achBlock = SRC.slice(achStart, achEnd);
+    expect(achBlock.length).toBeGreaterThan(500);
+    expect(achBlock).toContain('achievements a');   // we really are inside the evaluator
     expect(achBlock).not.toContain('DAILY_FLAT_XP_CAP');
   });
 

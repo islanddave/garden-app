@@ -7,6 +7,14 @@ import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.j
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
 
+// V4-EVENTSOURCE-001 — event_log.source value written by THIS Lambda. lambda/events/index.js
+// declares 'app'/'app_batch' and explicitly delegates 'app_status' here; the full value set and
+// why 'direct' is reserved-but-never-inferred live in
+// migrations/v4-eventsource-001/0a-additive-ddl.sql. The column carries a NOT VALID CHECK, so an
+// unlisted value 23514s on write. 0a is applied to prod AND staging, so including the column in
+// the INSERT below cannot 42703.
+const EVENT_SOURCE_STATUS = 'app_status';
+
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // S3 client for featured-photo view URL enrichment.
 // Matches lambda/photos checksum hardening (3.679+ presign-URL incompatibility).
@@ -242,6 +250,11 @@ export const handler = async (event) => {
     console.error('verifyToken failed:', err?.message ?? String(err));
     return resp(401, { error: 'Unauthorized' });
   }
+  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
+  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
+  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
+  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
+  if (!userId) return resp(401, { error: 'Unauthorized' });
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/projects';
@@ -603,9 +616,9 @@ export const handler = async (event) => {
           const _meta = buildStatusChangeMetadata(_oldStatus, _newStatus, 'project');
           _stmts.push(sql`
             INSERT INTO event_log
-              (project_id, plant_id, event_type, event_date, notes, metadata, logged_by, created_by)
+              (project_id, plant_id, event_type, event_date, notes, metadata, logged_by, created_by, source)
             VALUES
-              (${projectId}, ${null}, ${STATUS_CHANGE_EVENT_TYPE}, NOW(), ${_note}, ${_meta}, ${userId}, ${userId})
+              (${projectId}, ${null}, ${STATUS_CHANGE_EVENT_TYPE}, NOW(), ${_note}, ${_meta}, ${userId}, ${userId}, ${EVENT_SOURCE_STATUS})
           `);
           _stmts.push(sql`
             INSERT INTO entity_memory (project_id, last_event_at)

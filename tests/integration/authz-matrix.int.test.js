@@ -235,8 +235,14 @@ async function seedAllParents(user) {
 // behaviours have to be unwound by hand (mirrors the afterAll in plants.int.test.js):
 //   • photos.project_id is ON DELETE CASCADE and *.featured_photo_id points BACK at photos, so the
 //     featured pointers must be nulled before photos go (auto-promote sets them on the own-parent arms).
-//   • event_log.plant_id is ON DELETE SET NULL and event_log_has_anchor requires an anchor, so an
-//     event on a PROJECT-LESS planting makes the cascade's own UPDATE violate the CHECK → 23514.
+//   • event_log.plant_id is ON DELETE RESTRICT (V4-EVTANCHORDEL-001), so any event anchored to a
+//     fixture planting blocks the delete outright — the event_log sweeps below are REQUIRED, not
+//     defensive, and the plant_id-scoped one cannot be folded into the created_by one (an event
+//     logged by a different user still anchors to the planting). It was SET NULL until 2026-08-04,
+//     which contradicted event_log_has_anchor and made a project-less planting undeletable with a
+//     23514 that named a CHECK rather than the DELETE that caused it.
+//   • photos.plant_id and photos.location_id are ON DELETE RESTRICT for the same reason
+//     (photos_must_have_parent), so the photos sweep must precede plants AND locations.
 //   • entity_memory.plant_id and entity.planting_ref_id are ON DELETE RESTRICT.
 //   • plants.source_inventory_item_id is ON DELETE RESTRICT → inventory_items AFTER plants.
 async function purgeParentFixtures(subs) {

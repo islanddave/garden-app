@@ -203,9 +203,28 @@ export function queryActiveProjects(sql, userId) {
     `;
 }
 
+// BUG-XPPROGRESSION-001 — `level` and `xp_to_next_level` added. Before this, the column was not
+// selected at all, so even a correct level would have been invisible to every client: the app's
+// only XP pixel is a bare number two taps deep in the streak modal, while /achievements has been
+// printing "Reach level 5" as a locked hint the whole time.
+// The two derived fields are computed by public.xp_level_floor() rather than in JS on purpose —
+// one definition of the curve, server-side, shared with the trigger that maintains user_stats.level
+// (migrations/v4-xpprogression-001/0a). The client renders a bar; it does not own the maths.
+// xp_into_level / xp_to_next_level are both relative to the CURRENT band, so a progress bar is
+// xp_into_level / (xp_into_level + xp_to_next_level) with no client-side threshold table.
 export function queryUserStats(sql, userId) {
   return sql`
-      SELECT current_streak, longest_streak, last_active_date, total_events, xp
+      SELECT current_streak, longest_streak, last_active_date, total_events, xp,
+             level,
+             -- Read from the STORED level, not recomputed from xp, so the bar the user sees is the
+             -- same level the achievement evaluator judges "Reach level 5" against. GREATEST(0, …)
+             -- is the only concession: if the stored level ever drifted below xp the bar would
+             -- otherwise render negative. It cannot drift (trg_user_stats_level + the
+             -- post_every_user_stats_row_satisfies_level_equals_xp_level gate), and the clamp is
+             -- here so a drift degrades to a full bar rather than to a broken one.
+             GREATEST(0, xp - public.xp_level_floor(level))::int     AS xp_into_level,
+             GREATEST(0, public.xp_level_floor(level + 1) - xp)::int AS xp_to_next_level,
+             public.xp_level_floor(level + 1)::int                   AS next_level_at
       FROM user_stats
       WHERE user_id = ${userId}
     `;

@@ -12,6 +12,7 @@ import HarvestReadyTile from '../components/HarvestReadyTile.jsx'
 import HeadsUpTile from '../components/HeadsUpTile.jsx'
 import NotifyButton from '../components/NotifyButton.jsx'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { levelProgress } from '../lib/xpLevel.js'
 
 // First-name extraction (I10-greeting fix, L-063, 2026-05-18). profile.display_name may be a full
 // name like "Dave Nichols"; we render greetings with first name only.
@@ -81,7 +82,7 @@ export default function Dashboard() {
   const [projects,      setProjects]      = useState([])
   const [nextAttention, setNextAttention] = useState(null)
   const [recentEvents,  setRecentEvents]  = useState([])
-  const [userStats,     setUserStats]     = useState({ current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0 })
+  const [userStats,     setUserStats]     = useState({ current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0, level: 1 })
   const [waterDue,      setWaterDue]      = useState([])
   const [inactiveCount, setInactiveCount] = useState(0)
   const [harvestReady,  setHarvestReady]  = useState(undefined)
@@ -104,7 +105,7 @@ export default function Dashboard() {
       )
       setProjects(activeProjects)
       setRecentEvents(dashData.recent_events ?? [])  // V3-FEED-001: arrives batch-collapsed + capped at 20
-      setUserStats(dashData.user_stats ?? { current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0 })
+      setUserStats(dashData.user_stats ?? { current_streak: 0, longest_streak: 0, last_active_date: null, total_events: 0, xp: 0, level: 1 })
       setWaterDue(dashData.water_due ?? [])
       setInactiveCount(dashData.inactive_projects_count ?? 0)
       setHarvestReady(dashData.harvest_ready ?? [])
@@ -451,7 +452,12 @@ function StreakModal({ stats, onClose }) {
           <Row label="Longest streak"  value={`${stats.longest_streak ?? 0} day${(stats.longest_streak ?? 0) === 1 ? '' : 's'}`} />
           <Row label="Last active"     value={formatLastActive(stats.last_active_date)} />
           <Row label="Total events"    value={`${stats.total_events ?? 0}`} />
-          <Row label="XP"              value={`${stats.xp ?? 0}`} />
+          {/* BUG-XPPROGRESSION-001. XP used to sit here as a bare number with nothing to spend it
+              on. Level + a bar give it a destination, and make /achievements' long-standing
+              "Reach level 5" hint answerable. Deliberately QUIET and in-place: reward toasts are
+              barred on this path (ToastContext.jsx, reward-ux-conformance-audit V001 §V-1), so
+              this is a row in a modal the user opened, not a celebration fired at them. */}
+          <LevelRow stats={stats} />
         </div>
 
         <div style={{
@@ -476,6 +482,49 @@ function StreakModal({ stats, onClose }) {
         }}>
           Close
         </button>
+      </div>
+    </div>
+  )
+}
+
+// BUG-XPPROGRESSION-001 — Level + XP, with the band the user is inside.
+// Reads the server-derived fields (level / xp_into_level / xp_to_next_level / next_level_at) that
+// /api/dashboard now returns from the canonical SQL curve; levelProgress() falls back to the local
+// mirror only for a response predating that change. Renders as a Row so it sits in the existing
+// rhythm of the stats modal rather than announcing itself.
+function LevelRow({ stats }) {
+  const p = levelProgress(stats)
+  return (
+    <div style={{
+      padding: '8px 12px',
+      backgroundColor: P.cream,
+      border: `1px solid ${P.border}`,
+      borderRadius: 8,
+      fontSize: '0.85rem',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ color: P.mid }}>Level</span>
+        <span style={{ color: P.dark, fontWeight: 600 }}>{p.level} · {p.xp} XP</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label={`Progress to level ${p.level + 1}`}
+        aria-valuemin={0}
+        aria-valuemax={p.xpIntoLevel + p.xpToNextLevel}
+        aria-valuenow={p.xpIntoLevel}
+        style={{
+          marginTop: 6, height: 6, borderRadius: 3,
+          backgroundColor: P.border, overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          width: `${Math.round(p.fraction * 100)}%`,
+          height: '100%',
+          backgroundColor: P.green,
+        }} />
+      </div>
+      <div style={{ fontSize: '0.72rem', color: P.light, marginTop: 4 }}>
+        {p.xpToNextLevel} XP to level {p.level + 1}
       </div>
     </div>
   )

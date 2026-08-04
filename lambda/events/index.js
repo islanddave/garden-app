@@ -175,6 +175,11 @@ export const handler = async (event) => {
     console.error('verifyToken failed:', err?.message ?? String(err));
     return resp(401, { error: 'Unauthorized' });
   }
+  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
+  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
+  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
+  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
+  if (!userId) return resp(401, { error: 'Unauthorized' });
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown (event ENTITY reads/writes only; achievement/XP/streak queries stay per-user)
@@ -940,6 +945,14 @@ export const handler = async (event) => {
                 RETURNING amount, source_id
               ),
               stats_xp AS (
+                -- BUG-XPPROGRESSION-001: the literal 1 in the level position is now a SEED, not
+                -- a value. trg_user_stats_level (migrations/v4-xpprogression-001/0a) fires BEFORE
+                -- both the INSERT and the ON CONFLICT UPDATE and overwrites it with xp_level(NEW.xp),
+                -- so resolving an issue that crosses a threshold moves the level here too — a path
+                -- with no Step-3b/3c equivalent that a per-caller level computation would have
+                -- missed. The column stays in the list because this upsert must initialize the
+                -- NOT-NULL set for a user with no row yet (pinned by resolve-stats-upsert.test.js);
+                -- it is the trigger, not this literal, that makes the value correct.
                 INSERT INTO user_stats (user_id, xp, level, current_streak, longest_streak, total_events, updated_at)
                 SELECT ${userId}, COALESCE((SELECT SUM(amount) FROM xp_grants), 0), 1, 0, 0, 0, NOW()
                 WHERE EXISTS (SELECT 1 FROM xp_grants)
@@ -1434,12 +1447,18 @@ export const handler = async (event) => {
         }
       }
       if (body.location_id) {
-        // household.js loadOwnedLocation has no UUID pre-check (a known gap noted in
-        // lambda/authz-parents.js), so a malformed id would 22P02 into the catch and answer an
-        // opaque 500 while the other two gates answer 400. Guard it here so all three behave
-        // identically; drop this line when the loaders merge and gain their own guard.
-        if (!AUTHZ_UUID_RE.test(String(body.location_id))
-            || !await loadOwnedLocation(sql, body.location_id, householdIds)) {
+        // V4-AUTHZRESIDUE-001 — P0 FIX. This read `!AUTHZ_UUID_RE.test(String(body.location_id)) ||`
+        // against a constant that exists NOWHERE in the repo (the file imports UUID_RE, not
+        // AUTHZ_UUID_RE), so every POST /api/events carrying a location_id threw ReferenceError,
+        // fell to the generic catch, and answered 500 — the ownership gate never ran and the write
+        // never happened. Nothing caught it: eslint.config.js is a scoped design-token ruleset that
+        // never runs no-undef over lambda/, and the events tests are static source-regex scans.
+        // The local guard is now redundant rather than merely fixed: household.js loadOwnedLocation
+        // carries its own UUID pre-check, so a malformed id answers the same 400 as a foreign one.
+        // That completes this block's original "drop this line when the loaders merge and gain their
+        // own guard" note. A new lambda/authz-write-fk.test.js block now fails CI on any undeclared
+        // SCREAMING_CASE constant in a handler, which is what would have caught this.
+        if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
           warnRejectedFk(userId, 'event_log', 'location_id', body.location_id);
           return resp(400, { error: 'Invalid location_id' });
         }
@@ -1764,7 +1783,13 @@ export const handler = async (event) => {
       // ladder tops out at 500 (five_hundred) and all four rungs are already earned by the only
       // user with batch history. The extra aggregate rides inside the query that was already
       // scanning these exact rows, so it costs no additional round trip.
-      let achievementResult = { newly_earned: [], current_streak: null, total_events: null };
+      let achievementResult = { newly_earned: [], current_streak: null, total_events: null, level_before: null };
+      // BUG-XPPROGRESSION-001 — the action's FINAL level, threaded forward through the three blocks
+      // that can move XP (3a readback, 3b flat grant, 3c achievement grant). Every assignment is a
+      // value trg_user_stats_level wrote; nothing here computes a level. Kept separate from
+      // `level_before` so `leveled_up` is a comparison of two distinct readings, not of a variable
+      // with itself.
+      let levelAfter = null;
       try {
         const actRows = await sql`
           WITH z AS (SELECT ${userTz}::text AS tz)
@@ -1798,26 +1823,102 @@ export const handler = async (event) => {
             longest_streak   = GREATEST(user_stats.longest_streak, ${longest}),
             last_active_date = ${latestDay}::date,
             updated_at       = NOW()
-          RETURNING current_streak, total_events
+          RETURNING current_streak, total_events, level
         `;
         if (statsRows.length) {
           achievementResult.current_streak = statsRows[0].current_streak;
           achievementResult.total_events   = statsRows[0].total_events;
+          // BUG-XPPROGRESSION-001 — `level` is read back, never computed here. It is derived from
+          // `xp` by trg_user_stats_level (migrations/v4-xpprogression-001/0a) on every write to
+          // this table, so this upsert gets the current level for free even though it touches no
+          // XP column. This is `level_before` for the level-up comparison at the end of the block.
+          achievementResult.level_before = statsRows[0].level;
+          levelAfter = statsRows[0].level;
         }
       } catch (statsErr) {
         console.warn('user_stats streak upsert failed (non-fatal)', statsErr.message);
       }
 
-      // ── Step 3b: inline achievement evaluation for existing trigger types ────────────────────
+      // ── Step 3b: flat XP grant with daily cap (timezone-aware) ───────────────────────────────
+      // BUG-XPPROGRESSION-001 — THIS BLOCK MOVED. It used to be Step 4, i.e. it ran AFTER the
+      // achievement evaluation that is now Step 3c. The order is now: move the XP, then judge
+      // against it. That is a hard requirement of the `level` trigger branch, not a tidy-up:
+      // `level` is derived from `xp`, so evaluating `WHEN 'level'` before this grant lands would
+      // judge the user against their XP as of BEFORE the action they just took, and level_5 /
+      // level_9 would fire one logging action late. For the main user (20 median actions/day) that
+      // lag is seconds; for the second user (8 active days in 120, 2 median actions) the crossing
+      // action is very often the LAST of a session, so "one action late" is "weeks late, or never
+      // if they stop" — the same unreachable-content failure this ticket exists to kill, in
+      // miniature. Every other trigger type is unaffected: the evaluator's other inputs (streak,
+      // total_events, event counts) come from Step 3a and event_log, not from XP.
+      // SAFE TO REORDER — verified, not assumed: the two blocks have no data dependency in either
+      // direction. This grant reads only (user, tz, today's event_logged sum) and the daily cap
+      // deliberately filters `reason = 'event_logged'`, so achievement XP has never counted toward
+      // it (F16) and still does not. Step 5's telemetry still runs after both.
+      let flatXpResult = { granted: 0, today_total: 0, daily_xp_remaining: DAILY_FLAT_XP_CAP, level: null };
+      try {
+        const rows = await sql`
+          WITH today_xp AS (
+            SELECT COALESCE(SUM(amount), 0)::int AS today_sum
+            FROM xp_events
+            WHERE user_id = ${userId}
+              AND reason = 'event_logged'
+              AND (created_at AT TIME ZONE ${userTz})::date = (NOW() AT TIME ZONE ${userTz})::date
+          ),
+          flat_grant AS (
+            INSERT INTO xp_events (user_id, amount, reason, source_id)
+            SELECT ${userId}, ${FLAT_XP_PER_EVENT}, 'event_logged', ${eventId}::uuid
+            FROM today_xp
+            WHERE today_sum < ${DAILY_FLAT_XP_CAP}
+            -- eventId is brand new on every single-event POST, so this cannot conflict today. It is
+            -- here so the single and batch grants carry the SAME retry semantics: at most one
+            -- 'event_logged' grant per logging action, enforced by 0c rather than by convention.
+            ON CONFLICT (user_id, reason, source_id) WHERE source_id IS NOT NULL DO NOTHING
+            RETURNING amount
+          ),
+          stats AS (
+            UPDATE user_stats
+              SET xp = user_stats.xp + COALESCE((SELECT amount FROM flat_grant), 0),
+                  updated_at = NOW()
+            WHERE user_id = ${userId}
+            -- level is absent from this SET list ON PURPOSE. trg_user_stats_level derives it from
+            -- the NEW xp in the same statement, so it is returned already-correct below. Assigning
+            -- it here would be a second, driftable copy of the curve — the exact defect
+            -- V4-CAL1-HARVWEIGHT-002 extracted a SQL function to kill.
+            RETURNING xp, level
+          )
+          SELECT
+            COALESCE((SELECT amount FROM flat_grant), 0)::int AS granted,
+            ((SELECT today_sum FROM today_xp) + COALESCE((SELECT amount FROM flat_grant), 0))::int AS today_total,
+            (SELECT level FROM stats) AS level_after_flat
+        `;
+        if (rows.length) {
+          flatXpResult.granted     = rows[0].granted;
+          flatXpResult.today_total = rows[0].today_total;
+          flatXpResult.daily_xp_remaining = Math.max(0, DAILY_FLAT_XP_CAP - rows[0].today_total);
+          if (rows[0].level_after_flat != null) {
+            flatXpResult.level = rows[0].level_after_flat;
+            levelAfter = rows[0].level_after_flat;
+          }
+        }
+      } catch (xpErr) {
+        console.warn('flat XP grant failed (non-fatal)', xpErr.message);
+      }
+
+      // ── Step 3c: inline achievement evaluation for existing trigger types ────────────────────
       // F17 brief override: harvest_quantity / harvest_quality CASE branches DEFERRED to V4.
       // issue_resolve_count is resolve-path-only by design — intentional no-op on POST.
       // harvest_century works automatically via the existing event_type_count evaluator (count of
       // event_type='harvest' events); no special handling needed for V1.2a-2 ship.
       // F16: no daily cap on achievement XP — encouragement-class grants stay uncapped.
+      // BUG-XPPROGRESSION-001 — was Step 3b; now runs after the flat grant (see Step 3b's header).
       try {
         if (achievementResult.current_streak != null) {
           const streakVal = achievementResult.current_streak;
           const totalVal  = achievementResult.total_events;
+          // Post-grant level, falling back to the Step-3a readback if the flat grant failed or was
+          // capped out. NOT computed in JS — both sources are values trg_user_stats_level wrote.
+          const levelVal  = levelAfter;
           const earnedRows = await sql`
             WITH today_in_tz AS (
               SELECT (NOW() AT TIME ZONE ${userTz})::date AS today_date,
@@ -1843,6 +1944,14 @@ export const handler = async (event) => {
                 AND CASE a.trigger_type
                   WHEN 'streak'           THEN ${streakVal}::int >= (a.trigger_value->>'days')::int
                   WHEN 'event_count'      THEN ${totalVal}::int  >= (a.trigger_value->>'count')::int
+                  -- BUG-XPPROGRESSION-001. Unlocks level_5 (True Gardener, 100 XP, {"level":5}) and
+                  -- level_9 (Master, 500 XP, {"level":9}) — both live, both is_active, both with
+                  -- ZERO earners since 2026-04-21 because this branch did not exist and every
+                  -- level trigger_type fell through to ELSE false. src/pages/Achievements.jsx has
+                  -- been printing "Reach level 5" as a locked hint the whole time.
+                  -- levelVal is READ from user_stats (trg_user_stats_level owns it), never computed
+                  -- in JS, and is post-flat-grant — see Step 3b's reorder note.
+                  WHEN 'level'            THEN ${levelVal}::int   >= (a.trigger_value->>'level')::int
                   WHEN 'event_type_count' THEN
                     (a.trigger_value->>'type') = ${eventType}
                     AND ec.type_events >= (a.trigger_value->>'count')::int
@@ -1875,7 +1984,10 @@ export const handler = async (event) => {
                     updated_at = NOW()
               WHERE user_id = ${userId}
                 AND EXISTS (SELECT 1 FROM xp_grants)
-              RETURNING xp
+              -- Achievement XP can itself cross a level boundary. level is not in the SET list
+              -- (the trigger owns it); returning it lets the response report the FINAL level of the
+              -- action rather than the mid-action one.
+              RETURNING xp, level
             )
             SELECT COALESCE(
               (SELECT json_agg(
@@ -1884,56 +1996,20 @@ export const handler = async (event) => {
                )
                FROM xp_grants xg JOIN achievements a ON a.id = xg.source_id),
               '[]'::json
-            ) AS newly_earned
+            ) AS newly_earned,
+            (SELECT level FROM stats_xp) AS level_after_achievements
           `;
           if (earnedRows.length) {
             achievementResult.newly_earned = earnedRows[0].newly_earned ?? [];
+            // NULL whenever no achievement XP was granted (stats_xp is guarded on EXISTS) — in that
+            // case the level after the flat grant is already final.
+            if (earnedRows[0].level_after_achievements != null) {
+              levelAfter = earnedRows[0].level_after_achievements;
+            }
           }
         }
       } catch (achErr) {
         console.warn('achievement eval failed (non-fatal)', achErr.message);
-      }
-
-      // ── Step 4: flat XP grant with daily cap (timezone-aware) ────────────────────────────────
-      let flatXpResult = { granted: 0, today_total: 0, daily_xp_remaining: DAILY_FLAT_XP_CAP };
-      try {
-        const rows = await sql`
-          WITH today_xp AS (
-            SELECT COALESCE(SUM(amount), 0)::int AS today_sum
-            FROM xp_events
-            WHERE user_id = ${userId}
-              AND reason = 'event_logged'
-              AND (created_at AT TIME ZONE ${userTz})::date = (NOW() AT TIME ZONE ${userTz})::date
-          ),
-          flat_grant AS (
-            INSERT INTO xp_events (user_id, amount, reason, source_id)
-            SELECT ${userId}, ${FLAT_XP_PER_EVENT}, 'event_logged', ${eventId}::uuid
-            FROM today_xp
-            WHERE today_sum < ${DAILY_FLAT_XP_CAP}
-            -- eventId is brand new on every single-event POST, so this cannot conflict today. It is
-            -- here so the single and batch grants carry the SAME retry semantics: at most one
-            -- 'event_logged' grant per logging action, enforced by 0c rather than by convention.
-            ON CONFLICT (user_id, reason, source_id) WHERE source_id IS NOT NULL DO NOTHING
-            RETURNING amount
-          ),
-          stats AS (
-            UPDATE user_stats
-              SET xp = user_stats.xp + COALESCE((SELECT amount FROM flat_grant), 0),
-                  updated_at = NOW()
-            WHERE user_id = ${userId}
-            RETURNING xp
-          )
-          SELECT
-            COALESCE((SELECT amount FROM flat_grant), 0)::int AS granted,
-            ((SELECT today_sum FROM today_xp) + COALESCE((SELECT amount FROM flat_grant), 0))::int AS today_total
-        `;
-        if (rows.length) {
-          flatXpResult.granted     = rows[0].granted;
-          flatXpResult.today_total = rows[0].today_total;
-          flatXpResult.daily_xp_remaining = Math.max(0, DAILY_FLAT_XP_CAP - rows[0].today_total);
-        }
-      } catch (xpErr) {
-        console.warn('flat XP grant failed (non-fatal)', xpErr.message);
       }
 
       // ── Step 5: app_events telemetry ────────────────────────────────────────────────────────
@@ -1966,6 +2042,15 @@ export const handler = async (event) => {
         updated_streak: achievementResult.current_streak,
         xp_gained: flatXpResult.granted + xpFromAchievements,
         daily_xp_remaining: flatXpResult.daily_xp_remaining,
+        // BUG-XPPROGRESSION-001. `level` was previously absent from every response, so even a
+        // correct level would have been invisible to the client. `leveled_up` is a comparison of
+        // two READINGS of user_stats.level (before Step 3a's upsert vs after the last XP grant),
+        // never a JS recomputation — so it stays true to whatever the trigger decided.
+        // Both are null in the degraded case where Step 3a itself threw; the client must treat
+        // null as "unknown", not as level 0.
+        level: levelAfter,
+        leveled_up: levelAfter != null && achievementResult.level_before != null
+          && levelAfter > achievementResult.level_before,
       });
     }
 

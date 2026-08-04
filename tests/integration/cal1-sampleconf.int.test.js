@@ -34,6 +34,29 @@ const HAS_V3 = (await directSql`
     AND EXISTS (SELECT 1 FROM public.schema_version
                  WHERE version='4.20.6-cal1-sampleconf-001')) AS ok`)[0].ok
 
+// V4-HARVBASIS-SAMPLE-001 phase 2 — resolver v4 splits the basis vocabulary: the two SAMPLE-backed
+// tiers (3 corroborated, 5 provisional) report 'cultivar_sample'; the CURATED catalogue tier (4)
+// keeps 'cultivar'. Ranking and gram values are identical to v3, so only the LABEL is version-
+// dependent here.
+//
+// This is detected rather than hardcoded on purpose. integration-test.yml branches CI off `staging`
+// and does NOT apply migrations, so the schema moves independently of this file. Hardcoding either
+// label red-lines every unrelated dev push for the whole window between the staging apply and this
+// commit landing — and the fix cannot be landed first either, because the new label fails against a
+// v3 staging. Capability detection is the only form of this assertion that is green on BOTH sides
+// of the apply, in either order.
+const HAS_V4 = (await directSql`
+  SELECT EXISTS (SELECT 1 FROM public.schema_version
+                  WHERE version='4.20.8-harvbasis-sample-001-resolver-v4') AS ok`)[0].ok
+
+// The basis a SAMPLE-backed resolution reports (tiers 3 and 5). Tier 4 is always 'cultivar'.
+const SAMPLE_BASIS = HAS_V4 ? 'cultivar_sample' : 'cultivar'
+
+// The vocabulary the CHECK admits at this schema version. Used by the contract guard below.
+const BASIS_VOCAB = HAS_V4
+  ? ['measured', 'cultivar', 'crop_type', 'cultivar_sample']
+  : ['measured', 'cultivar', 'crop_type']
+
 // Fails loudly rather than skipping if the migration is missing on a branch that HAS the rest of
 // CAL-1 — a silent skip is how a resolver regression reaches prod unnoticed. Skips only where the
 // whole CAL-1 surface is absent.
@@ -171,27 +194,27 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
   })
 
   it('PROVISIONAL: the sample is demoted, not discarded — it still resolves where no reference exists', async () => {
-    await expectResolves('provisionalNoRef', 3, 99, 'cultivar',
+    await expectResolves('provisionalNoRef', 3, 99, SAMPLE_BASIS,
       'no curated reference, so the single 33 g weighing is still the best available estimate')
   })
 
   it('PROVISIONAL: a real weighing still beats a crop-level average the crop would have permitted', async () => {
     // variety_grams_required=false would allow the 500 g crop number; a weighing of THIS cultivar
     // is better evidence than a crop-wide average, so tier 5 sits above tier 6.
-    await expectResolves('provisionalNoRefOpenCrop', 3, 99, 'cultivar',
+    await expectResolves('provisionalNoRefOpenCrop', 3, 99, SAMPLE_BASIS,
       'tier 5 (provisional sample) outranks tier 6 (crop average), so NOT 3 x 500 = 1500 g')
   })
 
   // ── the other half: corroborated samples must KEEP winning ──────────────────
   it('HIGH: n=2 agreeing tightly outranks the reference — CAL-1 working as designed', async () => {
     // pooled 200 g / 3 units = 66.667; the reference says 110. The samples must win.
-    await expectResolves('high', 3, 200, 'cultivar',
+    await expectResolves('high', 3, 200, SAMPLE_BASIS,
       'confidence=high (n=2, cv~1.5%) is corroborated, so the samples beat the 110 g reference')
   })
 
   it('MEDIUM: n=3 outranks the reference', async () => {
     // pooled 300 g / 3 units = 100; the reference says 210.
-    await expectResolves('medium', 3, 300, 'cultivar',
+    await expectResolves('medium', 3, 300, SAMPLE_BASIS,
       'confidence=medium (n=3) is corroborated, so the samples beat the 210 g reference')
   })
 
@@ -205,7 +228,7 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
   it('LOW + n>=5: the sample_n escape hatch promotes a genuinely variable crop', async () => {
     // Same dispersion as above, five weighings: pooled 200/5 = 40 g now beats the 100 g reference.
     // Without this, a crop whose cv never drops below 0.35 could never be corrected by real data.
-    await expectResolves('lowBigN', 4, 160, 'cultivar',
+    await expectResolves('lowBigN', 4, 160, SAMPLE_BASIS,
       'sample_n>=5 promotes despite confidence=low, so the 40 g pooled mean wins')
   })
 
@@ -282,14 +305,42 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
   })
 
   // ── contract guards ─────────────────────────────────────────────────────────
-  it('no new weight_basis value was introduced (chk_harvest_log_weight_basis still holds)', async () => {
+  it('the resolver emits no basis value outside the vocabulary this schema version admits', async () => {
+    // Originally "no new weight_basis value was introduced" — a hardcoded 3-value guard against
+    // someone widening chk_harvest_log_weight_basis ahead of the writer. V4-HARVBASIS-SAMPLE-001
+    // added 'cultivar_sample' the safe way round (widen the CHECK first, then ship the resolver), so
+    // the guard is now stated against the CHECK's ACTUAL vocabulary rather than a frozen list. The
+    // property being defended is unchanged and is the important one: the writer must never emit a
+    // value the constraint does not accept, because that is a 23514 on every harvest save.
     const bad = await directSql`
       SELECT DISTINCT weight_basis FROM harvest_log
        WHERE created_by = ${USER} AND weight_basis IS NOT NULL
-         AND weight_basis NOT IN ('measured','cultivar','crop_type')`
+         AND weight_basis <> ALL(${BASIS_VOCAB}::text[])`
     expect(bad.map(r => r.weight_basis),
-      'v3 must not add a basis value — widening a VALIDATED CHECK ahead of the writer 23514s every '
-      + 'harvest save (see v4-cal1-slicec-001/README-BUILD.md)').toEqual([])
+      `the resolver emitted a basis outside ${JSON.stringify(BASIS_VOCAB)}, which is what this `
+      + 'database\'s chk_harvest_log_weight_basis admits — that combination 23514s every harvest '
+      + 'save (see migrations/v4-harvbasis-sample-001/0a-widen-check.sql)').toEqual([])
+  })
+
+  // The constraint and the writer must agree about the vocabulary. Asserted directly, both ways,
+  // so a half-applied migration (0b without 0a, or 0a rolled back under a live v4) is caught here
+  // rather than by a user losing a harvest save.
+  it('the CHECK vocabulary and the installed resolver version agree', async () => {
+    const admitsSample = (await directSql`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_constraint con
+          JOIN pg_class rel ON rel.oid = con.conrelid AND rel.relkind = 'r'
+         WHERE rel.relname = 'harvest_log'
+           AND con.conname = 'chk_harvest_log_weight_basis'
+           AND pg_get_constraintdef(con.oid) LIKE '%cultivar_sample%') AS ok`)[0].ok
+    if (HAS_V4) {
+      expect(admitsSample,
+        'resolver v4 is installed (schema_version 4.20.8) but chk_harvest_log_weight_basis does NOT '
+        + 'admit cultivar_sample. Every harvest save through tier 3 or 5 is 23514ing right now. '
+        + 'Apply migrations/v4-harvbasis-sample-001/0a-widen-check.sql, or roll back with 0r2.').toBe(true)
+    }
+    // The reverse (CHECK widened, resolver still v3) is the deliberate PHASE 1 parked state and is
+    // safe — nothing emits the value — so it is intentionally not asserted against.
   })
 
   it('no sample was voided or removed by the reranking', async () => {

@@ -206,10 +206,125 @@ describe('non-fatal posture — reward accounting never breaks the user save', (
   it('returns the same reward keys the single-event POST returns', async () => {
     const sql = makeSql(DEFAULTS);
     const out = await run(sql, makeEvents(3));
+    // BUG-XPPROGRESSION-001 added level + leveled_up to BOTH paths' contracts. The whole point of
+    // this assertion is that the two paths stay in step, so it is widened rather than relaxed —
+    // index.js's resp(201, …) must carry these same two keys.
     expect(Object.keys(out).sort()).toEqual(
-      ['daily_xp_remaining', 'newly_earned_achievements', 'total_events', 'updated_streak', 'xp_gained'].sort(),
+      ['daily_xp_remaining', 'level', 'leveled_up', 'newly_earned_achievements',
+        'total_events', 'updated_streak', 'xp_gained'].sort(),
     );
     expect(out.xp_gained).toBe(10);
     expect(out.daily_xp_remaining).toBe(180);
+  });
+});
+
+// ── BUG-XPPROGRESSION-001 — level progression on the batch path ────────────────────────────────
+// Behavioural, not static-source, for the same reason as the rest of this file: "does a retry
+// re-announce a level-up" and "is the level the evaluator sees the pre- or post-grant one" cannot
+// be answered by regexing SQL.
+//
+// The recording mock returns whatever `level` the canned rows carry — i.e. it stands in for
+// trg_user_stats_level. That is deliberate and it is the correct seam: the trigger's own maths is
+// proved against real Postgres in migrations/v4-xpprogression-001/gates.yml (every boundary,
+// levels 1-200) and in tests/integration/xp-level.int.test.js. What THIS file must prove is the
+// wiring — that the Lambda reads the level rather than computing one, in the right order, and
+// reports it honestly.
+describe('level progression (BUG-XPPROGRESSION-001)', () => {
+  // Step 2's upsert returns the level BEFORE this batch's grants; Step 3's flat grant returns the
+  // level AFTER them. Distinct values so a test cannot pass by reading the wrong one.
+  const LEVELLING = {
+    ...DEFAULTS,
+    'INSERT INTO user_stats': [{ current_streak: 37, total_events: 11993, level: 6 }],
+    'AS today_total': [{ granted: 10, today_total: 120, level_after_flat: 7 }],
+  };
+
+  it('reports the post-grant level, not the level the batch started at', async () => {
+    const sql = makeSql(LEVELLING);
+    const out = await run(sql, makeEvents(3));
+    expect(out.level).toBe(7);
+    expect(out.leveled_up).toBe(true);
+  });
+
+  it('does NOT claim a level-up when the batch did not cross a boundary', async () => {
+    const sql = makeSql({
+      ...DEFAULTS,
+      'INSERT INTO user_stats': [{ current_streak: 37, total_events: 11993, level: 7 }],
+      'AS today_total': [{ granted: 10, today_total: 120, level_after_flat: 7 }],
+    });
+    const out = await run(sql, makeEvents(3));
+    expect(out.level).toBe(7);
+    expect(out.leveled_up).toBe(false);
+  });
+
+  it('IDEMPOTENT: a retry (both grants no-op, level already final) does not re-announce', async () => {
+    // On an idempotency re-hit the ON CONFLICT DO NOTHING grants award nothing, so Step 2 and
+    // Step 3 both read the SAME already-final level. leveled_up must be false — otherwise every
+    // retry of a level-crossing batch would re-fire the celebration.
+    const sql = makeSql({
+      ...DEFAULTS,
+      'INSERT INTO user_stats': [{ current_streak: 37, total_events: 11993, level: 7 }],
+      'AS today_total': [{ granted: 0, today_total: 300, level_after_flat: 7 }],
+    });
+    const out = await run(sql, makeEvents(157));
+    expect(out.level).toBe(7);
+    expect(out.leveled_up).toBe(false);
+    expect(out.xp_gained).toBe(0);
+  });
+
+  it('the achievement evaluator receives the POST-flat-grant level, not the pre-grant one', async () => {
+    // THE ORDERING GUARANTEE. If the evaluator ran before the flat grant (the pre-fix order) the
+    // interpolated level would be 6 and a {"level": 7} achievement would fire one action late.
+    const sql = makeSql(LEVELLING);
+    await run(sql, makeEvents(3));
+    const evalCall = sql.matching('AS newly_earned')[0];
+    expect(evalCall).toBeDefined();
+    expect(evalCall.params).toContain(7);
+    expect(evalCall.params).not.toContain(6);
+  });
+
+  it('the flat XP grant is issued BEFORE the achievement evaluation', async () => {
+    const sql = makeSql(LEVELLING);
+    await run(sql, makeEvents(3));
+    const order = sql.calls.map((c) => c.text);
+    const flatIdx = order.findIndex((t) => t.includes('AS today_total'));
+    const achIdx  = order.findIndex((t) => t.includes('AS newly_earned'));
+    expect(flatIdx).toBeGreaterThan(-1);
+    expect(achIdx).toBeGreaterThan(-1);
+    expect(flatIdx).toBeLessThan(achIdx);
+  });
+
+  it('carries a WHEN level branch so level_5 / level_9 can be candidates at all', async () => {
+    const sql = makeSql(LEVELLING);
+    await run(sql, makeEvents(3));
+    const evalCall = sql.matching('AS newly_earned')[0];
+    expect(evalCall.text).toContain("WHEN 'level'");
+    expect(evalCall.text).toContain("(a.trigger_value->>'level')::int");
+  });
+
+  it('NEVER computes a level: no curve arithmetic reaches the DB from this file', async () => {
+    // The curve lives in public.xp_level(). If this file ever grows its own copy, the level would
+    // drift from the trigger's the moment either changed — the drift class this ticket closes.
+    const sql = makeSql(LEVELLING);
+    await run(sql, makeEvents(3));
+    for (const c of sql.calls) {
+      expect(c.text).not.toMatch(/sqrt\s*\(/i);
+      expect(c.text).not.toMatch(/SET\s+level\s*=/i);
+    }
+  });
+
+  it('degrades to level: null (not 0, not 1) when the user_stats upsert throws', async () => {
+    const sql = (strings, ...params) => {
+      const text = strings.raw.join(' ? ');
+      if (text.includes('INSERT INTO user_stats')) return Promise.reject(new Error('boom'));
+      if (text.includes('live_events')) return Promise.resolve(DEFAULTS.live_events);
+      return Promise.resolve([]);
+    };
+    const out = await applyBatchSideEffects({
+      sql, userId: USER, userTz: TZ, batchId: BATCH_ID, eventType: 'watering',
+      events: makeEvents(3), itemCount: 3, tzOffsetMin: 0, dailyXpCap: 300, flatXpPerAction: 10,
+    });
+    // A level of 0 or 1 here would be a lie the UI would render as a demotion.
+    expect(out.level).toBeNull();
+    expect(out.leveled_up).toBe(false);
   });
 });
