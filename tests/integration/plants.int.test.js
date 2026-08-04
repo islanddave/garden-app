@@ -318,3 +318,158 @@ describe('DELETE /api/plants/:id — soft-delete', () => {
     expect(body.ok).toBe(true)
   })
 })
+
+// ── BUG-PLANTLESSWRITE-001 — project-less plantings are writable, and only by their owner ──────
+// Real-Postgres proof of the widened ownership predicate. The static guards in
+// lambda/plants/project-less-write.test.js pin the SOURCE shape; only this block proves the
+// runtime behaviour, and specifically that the widening did NOT open a cross-household hole.
+describe('project-less plantings — full by-id lifecycle (BUG-PLANTLESSWRITE-001)', () => {
+  let plantlessId
+  let foreignPlantlessId
+
+  beforeAll(async () => {
+    setTestUserId(USER)
+    const own = await callHandler(handler, {
+      method: 'POST', path: '/api/plants',
+      body: { name: 'plantless-' + RUN, notes: 'keep-me' },
+    })
+    expect(own.status).toBe(201)
+    expect(own.body.project_id ?? null).toBeNull()
+    plantlessId = own.body.id
+    // Foreign project-less row seeded directly: the attack this predicate must still refuse is
+    // "someone else's container-less planting", which the own-created_by arm could otherwise reach.
+    const f = await directSql`
+      INSERT INTO plants (project_id, name, created_by)
+      VALUES (NULL, ${'foreign-plantless-' + RUN}, ${FOREIGN_USER}) RETURNING id
+    `
+    foreignPlantlessId = f[0].id
+  })
+
+  it('GET /:id → 200 (was 404: the container INNER JOIN dropped it)', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, { method: 'GET', path: `/api/plants/${plantlessId}` })
+    expect(status).toBe(200)
+    expect(body.id).toBe(plantlessId)
+    expect(body.project_id ?? null).toBeNull()
+    expect(body.project_name ?? null).toBeNull() // LEFT JOIN, key still present
+  })
+
+  it('PUT /:id → 200 and persists (the blocker: every PUT 404d before business logic)', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'PUT', path: `/api/plants/${plantlessId}`, body: { name: 'plantless-renamed-' + RUN },
+    })
+    expect(status).toBe(200)
+    expect(body.name).toBe('plantless-renamed-' + RUN)
+    expect(body.notes).toBe('keep-me')
+    const rows = await directSql`SELECT name FROM plants WHERE id = ${plantlessId}`
+    expect(rows[0].name).toBe('plantless-renamed-' + RUN)
+  })
+
+  it('PUT status change → 200 (status_change event_log + entity_memory guard path)', async () => {
+    setTestUserId(USER)
+    const { status } = await callHandler(handler, {
+      method: 'PUT', path: `/api/plants/${plantlessId}`, body: { status: 'growing' },
+    })
+    expect(status).toBe(200)
+    const ev = await directSql`
+      SELECT project_id, plant_id FROM event_log
+       WHERE plant_id = ${plantlessId} AND event_type = 'status_change' AND deleted_at IS NULL
+    `
+    expect(ev.length).toBeGreaterThan(0)
+    expect(ev[0].project_id).toBeNull() // no project to attribute it to; must not 500
+  })
+
+  it('PATCH /:id/archive → 200 and toggles back', async () => {
+    setTestUserId(USER)
+    const on = await callHandler(handler, {
+      method: 'PATCH', path: `/api/plants/${plantlessId}/archive`, body: { archived: true },
+    })
+    expect(on.status).toBe(200)
+    expect(on.body.archived_at).toBeTruthy()
+    const off = await callHandler(handler, {
+      method: 'PATCH', path: `/api/plants/${plantlessId}/archive`, body: { archived: false },
+    })
+    expect(off.status).toBe(200)
+    expect(off.body.archived_at).toBeNull()
+  })
+
+  it('POST /:id/seen → 201', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: `/api/plants/${plantlessId}/seen`, body: {},
+    })
+    expect(status).toBe(201)
+    expect(body.leaf_id).toBe(plantlessId)
+  })
+
+  // ── the negative half: the widening must not reach anyone else's rows ──────────────────────
+  it("DELETE on another user's project-less planting must not delete it", async () => {
+    // DELETE is the ONE route whose response cannot reveal an authz failure — it returns
+    // {ok:true} unconditionally — so it is also the one route where a broken predicate would be
+    // completely silent. Assert the DATABASE, never the echo. (Adversarial review F3.)
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'DELETE', path: `/api/plants/${foreignPlantlessId}`,
+    })
+    expect(status).toBe(200)
+    expect(body.ok).toBe(true) // the misleading part — hence the read-back below
+    const rows = await directSql`SELECT deleted_at FROM plants WHERE id = ${foreignPlantlessId}`
+    expect(rows[0].deleted_at).toBeNull()
+  })
+
+  it("another user's project-less planting → 404 on GET/PUT/archive/seen", async () => {
+    setTestUserId(USER)
+    for (const req of [
+      { method: 'GET', path: `/api/plants/${foreignPlantlessId}` },
+      { method: 'PUT', path: `/api/plants/${foreignPlantlessId}`, body: { name: 'hijack' } },
+      { method: 'PATCH', path: `/api/plants/${foreignPlantlessId}/archive`, body: { archived: true } },
+      { method: 'POST', path: `/api/plants/${foreignPlantlessId}/seen`, body: {} },
+    ]) {
+      const { status } = await callHandler(handler, req)
+      expect(status, `${req.method} ${req.path}`).toBe(404)
+    }
+    const rows = await directSql`SELECT name, archived_at FROM plants WHERE id = ${foreignPlantlessId}`
+    expect(rows[0].name).toBe('foreign-plantless-' + RUN)
+    expect(rows[0].archived_at).toBeNull()
+  })
+
+  it('a planting I created inside SOMEONE ELSE\'S project stays unreachable (the load-bearing conjunct)', async () => {
+    // Without `container_id IS NULL AND` on the own-created_by arm, this row would become writable
+    // by USER — and the plants POST path does not verify that body.project_id is a project you own,
+    // so USER can create exactly this row. This is the case the guard exists for.
+    setTestUserId(USER)
+    const planted = await callHandler(handler, {
+      method: 'POST', path: '/api/plants',
+      body: { name: 'trojan-' + RUN, project_id: foreignProjectId },
+    })
+    // Tolerant on purpose: today POST accepts a foreign project_id (the gap written up in
+    // events-authz-gap-V100-20260804.md §3). If that sweep lands and POST starts rejecting it, this
+    // test should keep passing — the property under test is "the row is unreachable", not "POST allows it".
+    if (planted.status !== 201) {
+      expect(planted.status).toBe(400)
+      return
+    }
+    const trojanId = planted.body.id
+    const get = await callHandler(handler, { method: 'GET', path: `/api/plants/${trojanId}` })
+    expect(get.status).toBe(404)
+    const put = await callHandler(handler, {
+      method: 'PUT', path: `/api/plants/${trojanId}`, body: { name: 'trojan-edit' },
+    })
+    expect(put.status).toBe(404)
+    // DELETE too — it answers 200 either way, so only the read-back proves the predicate held.
+    const del = await callHandler(handler, { method: 'DELETE', path: `/api/plants/${trojanId}` })
+    expect(del.status).toBe(200)
+    const rows = await directSql`SELECT name, deleted_at FROM plants WHERE id = ${trojanId}`
+    expect(rows[0].name).toBe('trojan-' + RUN)
+    expect(rows[0].deleted_at).toBeNull()
+  })
+
+  it('DELETE /:id → 200 and actually soft-deletes the project-less row', async () => {
+    setTestUserId(USER)
+    const { status } = await callHandler(handler, { method: 'DELETE', path: `/api/plants/${plantlessId}` })
+    expect(status).toBe(200)
+    const rows = await directSql`SELECT deleted_at FROM plants WHERE id = ${plantlessId}`
+    expect(rows[0].deleted_at).toBeTruthy() // the DELETE always returns 200; assert the DB, not the echo
+  })
+})

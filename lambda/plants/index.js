@@ -76,6 +76,10 @@ export const handler = async (event) => {
     console.error('verifyToken failed:', err?.message ?? String(err));
     return resp(401, { error: 'Unauthorized' });
   }
+  // Adversarial-review hardening: householdScope('') returns [''] and `'' = ANY(ARRAY[''])` is TRUE
+  // in Postgres, so an empty/absent JWT subject would be a live ownership value rather than a
+  // no-match. Clerk never issues one; this makes that assumption enforced instead of relied upon.
+  if (!userId) return resp(401, { error: 'Unauthorized' });
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
@@ -107,12 +111,18 @@ export const handler = async (event) => {
       // (exactly-3-blocks) stays green. Explicit ::timestamptz cast resolves the
       // 42P18 "could not determine data type" parse failure (L-086). workspace_id is
       // left to the column DEFAULT sentinel (do NOT set it here).
+      // BUG-PLANTLESSWRITE-001: LEFT JOIN + project-less ownership arm (see the canonical
+      // predicate note above the PUT pre-flight). An INNER JOIN here 404s every project-less
+      // planting; the `ln.container_id IS NULL` conjunct keeps own-created_by from ever
+      // reaching a planting that sits inside someone else's container.
       const ins = await sql`
         INSERT INTO seen_event (leaf_id, seen_at, source)
         SELECT ln.id, COALESCE(${seenAt}::timestamptz, now()), ${source}
         FROM public.garden_node ln
-        JOIN public.container pp ON pp.id = ln.container_id
-        WHERE ln.id = ${plantId} AND ln.deleted_at IS NULL AND ln.archived_at IS NULL AND pp.created_by = ANY(${householdIds})
+        LEFT JOIN public.container pp ON pp.id = ln.container_id
+        WHERE ln.id = ${plantId} AND ln.deleted_at IS NULL AND ln.archived_at IS NULL
+          AND (pp.created_by = ANY(${householdIds})
+               OR (ln.container_id IS NULL AND ln.created_by = ANY(${householdIds})))
         RETURNING leaf_id
       `;
       if (!ins.length) return resp(404, { error: 'Not found' });
@@ -130,13 +140,19 @@ export const handler = async (event) => {
       // on base plants, exposed through the updatable garden_node view (V3-ARCHIVE-001 0b-views).
       // deleted_at filter retained: a deleted planting can't be (un)archived. NOT a SELECT...FROM
       // garden_node p block, so select-columns.test.js exactly-3 invariant holds.
+      // BUG-PLANTLESSWRITE-001: the container moved from the UPDATE's FROM list into an EXISTS
+      // arm. `UPDATE ... FROM container pp` is an inner join by construction, so a project-less
+      // planting matched zero rows and 404'd; EXISTS expresses the same container-ownership test
+      // without forcing the row to have a container. Same predicate as the other five sites.
       const rows = await sql`
         UPDATE public.garden_node p
         SET archived_at = CASE WHEN ${archived} THEN NOW() ELSE NULL END
-        FROM public.container pp
         WHERE p.id = ${plantId}
-          AND p.container_id = pp.id
-          AND pp.created_by = ANY(${householdIds})
+          AND (
+            EXISTS (SELECT 1 FROM public.container pp
+                     WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds}))
+            OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
+          )
           AND p.deleted_at IS NULL
         RETURNING p.id, p.archived_at
       `;
@@ -184,7 +200,7 @@ export const handler = async (event) => {
                  parent.display_name AS parent_plant_name, parent.container_id AS parent_project_id,
                  em.next_water_at, em.location_type, em.watering_interval_days, em.last_watered_at
           FROM public.garden_node p
-          JOIN public.container pp ON pp.id = p.container_id
+          LEFT JOIN public.container pp ON pp.id = p.container_id
           LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
           LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
           LEFT JOIN photos fp ON fp.id = p.featured_photo_id
@@ -192,7 +208,8 @@ export const handler = async (event) => {
           LEFT JOIN entity_memory em ON em.project_id = pp.id
           WHERE p.id = ${plantId}
             AND p.deleted_at IS NULL
-            AND pp.created_by = ANY(${householdIds})
+            AND (pp.created_by = ANY(${householdIds})
+                 OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})))
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         const row = rows[0];
@@ -307,12 +324,51 @@ export const handler = async (event) => {
           }
         }
 
+        // ── CANONICAL OWNERSHIP PREDICATE (BUG-PLANTLESSWRITE-001) ────────────────────────────
+        // Every by-id read/write in this Lambda scoped ownership through an INNER JOIN on the
+        // parent container. garden_node.container_id has been NULLABLE since V3-CAPTURE-001, and
+        // Dave's S1 decision makes project-less plantings a SUPPORTED state, so that join silently
+        // 404'd every project-less planting on GET/PUT/DELETE/PATCH-archive/POST-seen — permanently
+        // uneditable rows the moment CaptureFlow starts creating them.
+        //
+        // The predicate mirrors the LIST query proven by project-less.test.js:
+        //     pp.created_by = ANY(householdIds)
+        //     OR (container_id IS NULL AND own created_by = ANY(householdIds))
+        //
+        // Why it is safe for a WRITE path, not just the read path it was proven on:
+        //  1. householdScope() is membership-gated and fail-closed: a caller who is NOT in
+        //     GARDEN_HOUSEHOLD_IDS gets [their own sub], so the new arm resolves to "rows I
+        //     created myself" — strictly narrower than what they can already read.
+        //  2. The `container_id IS NULL` conjunct is LOAD-BEARING, not decoration. Without it,
+        //     own-created_by would reach a planting sitting INSIDE another household's container —
+        //     and the POST path does not verify that body.project_id is a container you own, so a
+        //     foreign user can create such a row today. With the conjunct, the instant a planting
+        //     has a container the caller must own that container. Do not "simplify" it away.
+        //  3. No APPLICATION path re-homes a planting: container_id is absent from the PUT SET-list
+        //     and nothing in the repo writes plants.project_id after INSERT, so a caller cannot move
+        //     a row between the two arms. created_by is equally immutable — the BEFORE UPDATE
+        //     trigger `prevent_ownership_transfer` RAISEs on any change to it.
+        //     CAVEAT (adversarial review F1, pre-existing, NOT closed here): the DB does not
+        //     guarantee that. `plants_project_id_fkey` is ON DELETE SET NULL, so HARD-deleting a
+        //     container silently moves every child planting into the project-less arm — handing
+        //     each one to its own created_by. No app path does that (projects DELETE is a
+        //     soft-delete), but admin SQL, purge/backfill scripts and test teardowns do
+        //     `DELETE FROM plant_projects` literally. Tracked as a separate FK ticket
+        //     (ON DELETE RESTRICT); do not read claim 3 as a DB-level guarantee.
+        //  4. Nothing here loosens the household boundary: members already read each other's
+        //     project-less plantings via the list query and already write each other's projected
+        //     plantings via pp.created_by. This closes a read/write asymmetry rather than opening
+        //     a new surface.
+        //  5. Fail-closed on bad data: a project-less row whose created_by is NULL or a non-Clerk
+        //     sentinel (24 such container-ful rows exist from rescue-intake) matches nobody — it
+        //     becomes unreachable rather than public.
         const cur = await sql`
           SELECT gn.status AS old_status, gn.container_id AS proj_id
           FROM public.garden_node gn
-          JOIN public.container pp ON pp.id = gn.container_id
+          LEFT JOIN public.container pp ON pp.id = gn.container_id
           WHERE gn.id = ${plantId}
-            AND pp.created_by = ANY(${householdIds})
+            AND (pp.created_by = ANY(${householdIds})
+                 OR (gn.container_id IS NULL AND gn.created_by = ANY(${householdIds})))
             AND gn.deleted_at IS NULL
         `;
         if (!cur.length) return resp(404, { error: 'Not found' });
@@ -376,10 +432,12 @@ export const handler = async (event) => {
               WHEN ${hasLocation} THEN ${body.location_id ?? null}
               ELSE p.location_id
             END
-          FROM public.container pp
           WHERE p.id = ${plantId}
-            AND p.container_id = pp.id
-            AND pp.created_by = ANY(${householdIds})
+            AND (
+              EXISTS (SELECT 1 FROM public.container pp
+                       WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds}))
+              OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
+            )
             AND p.deleted_at IS NULL
           RETURNING p.id, p.container_id AS project_id, p.display_name AS name, p.quantity, p.notes, p.status, p.planted_at, p.created_by, p.created_at, p.updated_at, p.deleted_at, p.location_id, p.featured_image_id, p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata, p.featured_photo_id, p.sown_at, p.germinated_at, p.transplanted_at, p.planted_out_at, p.sown_at_approx, p.germinated_at_approx, p.transplanted_at_approx, p.planted_out_at_approx, p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause, p.source_type, p.source_ref, p.source_generation, p.parent_plant_id, p.divergence_type, p.lineage_note, p.succession_group_id, p.succession_order, p.assignee_user_id, p.container_type, p.container_size, p.kind, p.workspace_id, p.last_seen_at, p.attr_override, p.version
         `,
@@ -393,9 +451,17 @@ export const handler = async (event) => {
             VALUES
               (${_projectId}, ${plantId}, ${STATUS_CHANGE_EVENT_TYPE}, NOW(), ${_note}, ${_meta}, ${userId}, ${userId})
           `);
+          // BUG-EMPROJGUARD-001: self-guard on _projectId exactly as the plant-keyed sibling below
+          // guards on plantId. garden_node.container_id is NULLABLE (project-less plantings are a
+          // supported state per V3-CAPTURE-001), so a NULL here would insert a ZERO-parent row,
+          // violate entity_memory_exactly_one_parent, and abort the WHOLE sql.transaction — taking
+          // the status_change event_log write above with it and 500-ing the status change.
+          // ON CONFLICT (project_id) cannot rescue it: NULLs are distinct in a unique index, so a
+          // NULL project_id always takes the INSERT path.
           _stmts.push(sql`
             INSERT INTO entity_memory (project_id, last_event_at)
-            VALUES (${_projectId}, NOW())
+            SELECT ${_projectId}::uuid, NOW()
+            WHERE ${_projectId}::uuid IS NOT NULL
             ON CONFLICT (project_id) DO UPDATE SET
               last_event_at = GREATEST(COALESCE(entity_memory.last_event_at, NOW()), NOW()),
               updated_at = NOW()
@@ -418,13 +484,19 @@ export const handler = async (event) => {
       }
 
       if (method === 'DELETE') {
+        // BUG-PLANTLESSWRITE-001: same EXISTS rewrite as PUT/archive. NOTE (unchanged, flagged not
+        // fixed): this route has always returned {ok:true} regardless of rows affected, so a
+        // not-found / not-owned DELETE reports success. Left as-is to avoid changing the response
+        // contract inside an authz fix — see events-authz-gap-V100-20260804.md §Related.
         await sql`
           UPDATE public.garden_node p
           SET deleted_at = NOW()
-          FROM public.container pp
           WHERE p.id = ${plantId}
-            AND p.container_id = pp.id
-            AND pp.created_by = ANY(${householdIds})
+            AND (
+              EXISTS (SELECT 1 FROM public.container pp
+                       WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds}))
+              OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
+            )
             AND p.deleted_at IS NULL
         `;
         return resp(200, { ok: true });

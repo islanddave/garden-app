@@ -17,7 +17,9 @@ describe('plants Lambda — V3-ARCHIVE-001 archive route + filters', () => {
   it('archive handler is PATCH-only and toggles archived_at symmetrically', () => {
     const i = SRC.indexOf('if (archiveMatch)');
     expect(i).toBeGreaterThan(-1);
-    const block = SRC.slice(i, i + 1300);
+    // window widened 1300->1800 for BUG-PLANTLESSWRITE-001 (the container ownership test moved
+    // from an UPDATE..FROM into an EXISTS arm + its rationale comment, shifting the WHERE clause)
+    const block = SRC.slice(i, i + 1800);
     expect(block).toMatch(/method !== 'PATCH'/);
     expect(block).toMatch(/archived_at = CASE WHEN \$\{archived\} THEN NOW\(\) ELSE NULL END/);
     expect(block).toMatch(/body\.archived !== false/); // default true
