@@ -1,5 +1,18 @@
 [
   {
+    "version": "3.97.0",
+    "date": "2026-08-04",
+    "highlights": [
+      "Logging many plants at once now counts. The \u201cLog all\u201d path saved your events correctly but skipped every reward and tally behind them \u2014 no XP, no streak, no achievements, no calibration. That path carried 9,684 of your 11,992 events, so roughly four fifths of everything you have ever logged earned nothing. It now does, counted once per logging action rather than once per plant, and a retry can no longer double-count.",
+      "The daily XP cap goes from 30 to 300. On the record so far the old cap was binding on 89% of active days \u2014 logging stopped paying by mid-morning. A typical day now finishes uncapped.",
+      "Harvest weights stop being thrown off by a single weighing. One measured fruit was overriding the reference weight for its whole variety no matter how unrepresentative it was: five Beefsteak tomatoes read 140 g instead of 1,750 g. A measured weight now only overrides the reference once it is corroborated \u2014 so the two varieties with several weighings keep theirs, and the fourteen with one do not. Editing an old harvest no longer silently rewrites its weight either.",
+      "Estimated harvest dates are calibrated to this garden, and shown as a range. For crops counted from transplant, catalogue days-to-maturity has been consistently too long here \u2014 of 21 plantings tested, not one was picked inside its predicted window, and the typical miss was 25 days early. Those windows now use a measured site factor and are shown as a range rather than a single date, which puts 16 of the same 21 inside the window.",
+      "Ripeness cues on far more plants. 45 varieties now carry a specific note on how to tell when to pick, up from 10 \u2014 concentrated on the ones where the obvious signal is wrong, like varieties whose green shoulders stay green when ripe, or chiles whose familiar name refers to the dried stage.",
+      "Two long-standing data errors fixed. Pumpkins were being treated as summer squash \u2014 wrong harvest habit and, as of this week, the exactly-inverted ripeness cue. Bunching onions were being treated as bulb onions, which are harvested once rather than cut repeatedly.",
+      "Security hardening: every place the app accepted a parent record chosen by the request \u2014 a project, planting, event, location or inventory item \u2014 now verifies it belongs to your household before writing. Nothing you can reach changes."
+    ]
+  },
+  {
     "version": "3.96.0",
     "date": "2026-08-04",
     "highlights": [
