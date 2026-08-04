@@ -52,13 +52,31 @@ describe('backfillYesterdayActual — unit properties', () => {
     expect(sql).toMatch(/plan_date\s*=\s*\$2/);
     // coalesce guards a NULL items row: jsonb_set(NULL, ...) returns NULL and would DESTROY the row's items.
     expect(sql).toMatch(/coalesce\(items/);
-    expect(params).toEqual([USER, YDAY, '0.73']);
+    expect(params).toEqual([USER, YDAY, '0.73', '"forecast"']);
   });
 
   it('P4 an observed DRY day (0) is real data and IS written', async () => {
     const pg = pgCapture();
     await expect(backfillYesterdayActual(pg, USER, TODAY, HY(0))).resolves.toBe(true);
-    expect(pg.query.mock.calls[0][1]).toEqual([USER, YDAY, '0']);
+    expect(pg.query.mock.calls[0][1]).toEqual([USER, YDAY, '0', '"forecast"']);
+  });
+
+  // ── BUG-RAINACTUAL-001 H3 — the value is worthless without its source ──
+  it('P6 the source label is persisted beside the value, in the SAME statement', async () => {
+    const pg = pgCapture();
+    await expect(backfillYesterdayActual(pg, USER, TODAY, HY(2.22), { yesterday_actual_source: 'station' })).resolves.toBe(true);
+    expect(pg.query).toHaveBeenCalledTimes(1);            // one atomic update, not two
+    const [sql, params] = pg.query.mock.calls[0];
+    expect(sql).toMatch(/today_precip_actual_source/);
+    expect(params).toEqual([USER, YDAY, '2.22', '"station"']);
+  });
+
+  it('P6 an unknown/absent provenance defaults to the honest label, never to "station"', async () => {
+    for (const prov of [undefined, null, {}, { recent_source: 'station' }]) {
+      const pg = pgCapture();
+      await backfillYesterdayActual(pg, USER, TODAY, HY(0.73), prov);
+      expect(pg.query.mock.calls[0][1][3]).toBe('"forecast"');
+    }
   });
 
   it('P4 null / absent / non-numeric actual -> NO write (absence of data is not "no rain")', async () => {
@@ -92,11 +110,13 @@ describe('run() — backfill wired in, current-day plan untouched', () => {
     project_status: 'active', workspace_id: 'sp1', covered: false, assignee_user_id: USER,
     db_cadence: null, last_water: null, last_fert: null, substrate_start: null, transplant_at: null,
   };
-  function mkPg({ failBackfill = false } = {}) {
+  // Default coords are deliberately OUTSIDE station.COORD_TOL of the configured WS-2902, so the pre-existing
+  // fixtures keep their no-station-bound behaviour; `atStation` opts a test into a bound gauge.
+  function mkPg({ failBackfill = false, atStation = false } = {}) {
     const q = vi.fn(async (sql) => {
       if (/^\s*update daily_plan/i.test(sql)) { if (failBackfill) throw new Error('backfill boom'); return { rows: [] }; }
       if (sql.includes('select items, generated_at')) return { rows: [] };
-      if (sql.includes('from spaces')) return { rows: [{ id: 'sp1', postal_code: null, weather_lat: 42.5, weather_lng: -72.6 }] };
+      if (sql.includes('from spaces')) return { rows: [{ id: 'sp1', postal_code: null, ...(atStation ? { weather_lat: 42.5089, weather_lng: -72.6466 } : { weather_lat: 42.5, weather_lng: -72.6 }) }] };
       if (sql.includes('from plants')) return { rows: [PLANT_ROW] };
       return { rows: [] };
     });
@@ -129,7 +149,27 @@ describe('run() — backfill wired in, current-day plan untouched', () => {
     expect(items.hydrology.recent_precip_in).toBe(0.5);   // hydrology itself still stored
     const updates = callsOf(pg, /update daily_plan/i);
     expect(updates).toHaveLength(1);
-    expect(updates[0][1]).toEqual([USER, YDAY, '0.73']);
+    expect(updates[0][1]).toEqual([USER, YDAY, '0.73', '"forecast"']);  // no station bound in this fixture
+  });
+
+  // BUG-RAINACTUAL-001 H3 end-to-end through run(): a bound station makes the backfilled "actual" the
+  // GAUGE's D-1 bucket (2.22), labelled 'station' — not Open-Meteo's hindcast for the same day (4.63).
+  it('H3 a bound station drives the backfilled actual and its label', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    // deriveStation is anchored to Date.now(); pin it so station freshness is deterministic (15:30 ET 08-04).
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-08-04T19:30:00Z'));
+    const at = (day, hh, dailyrainin) => ({ dateutc: Date.parse(`${day}T${hh}:00:00-04:00`), dailyrainin, tempf: 70 });
+    const pg = mkPg({ atStation: true });
+    await run({
+      ...runArgs(pg, { hy: { ...HY(4.63), today_precip_in: 0.4 } }),
+      today: '2026-08-04',
+      fetchStation: async () => ({ mac: 'F8:B3:B7:82:1F:0D', records: [
+        at('2026-08-04', '15', 0.10), at('2026-08-03', '23', 2.22), at('2026-08-02', '18', 0.05), at('2026-08-01', '18', 0.0),
+      ] }),
+    });
+    const updates = callsOf(pg, /update daily_plan/i);
+    expect(updates).toHaveLength(1);
+    expect(updates[0][1]).toEqual([USER, '2026-08-03', '2.22', '"station"']);
   });
 
   it('P3 a failing backfill write leaves the run + upsert intact', async () => {

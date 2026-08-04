@@ -68,7 +68,34 @@ function deriveStation(raw, { nowMs }) {
   const recentPrecipIn = coversLookback ? round2((buckets[D1] || 0) + (buckets[D2] || 0)) : null;
   const uncertainty = !fresh ? 'stale' : (!coversLookback ? 'warmup' : null);
 
-  return { mac: raw.mac, lat: cfg.lat, lng: cfg.lng, tz, fresh, dataAgeMin, tempF, recentPrecipIn, coversLookback, buckets, uncertainty };
+  // BUG-RAINACTUAL-001 H1 — expose the D0 / D-1 buckets that were already being computed and thrown away.
+  // todayPrecipIn needs NO coverage gate: dailyrainin is the STATION's own since-local-midnight accumulator,
+  // so a single record at 15:00 already carries the whole day to that point. It is partial by nature — that
+  // is the point (it grows through the day). yesterdayPrecipIn is a COMPLETED day and is gated by the
+  // caller on coversLookback (design §3-4: reuse the existing gate, no new freshness concept).
+  const todayPrecipIn = Number.isFinite(buckets[D0]) ? round2(buckets[D0]) : null;
+  const yesterdayPrecipIn = Number.isFinite(buckets[D1]) ? round2(buckets[D1]) : null;
+
+  return { mac: raw.mac, lat: cfg.lat, lng: cfg.lng, tz, fresh, dataAgeMin, tempF, recentPrecipIn, coversLookback, buckets, uncertainty,
+    day0: D0, day1: D1, day2: D2, todayPrecipIn, yesterdayPrecipIn };
+}
+
+// Gauge totals addressed by CIVIL-DAY LABEL rather than by the fetch instant. deriveStation's D0/D1/D2 are
+// anchored to `nowMs`; a replay (rerun-daily-plan.sh --today) is about a DIFFERENT day, and reading "today's"
+// bucket for it would attribute the wrong day's rain. In the live nightly/intraday runs planDay is
+// todayET() === st.day0 (same America/New_York tz), so every value below is identical to what deriveStation
+// already exposes — this is a correctness widening for replay, not a behaviour change for the real runs.
+function gaugeWindow(st, planDay) {
+  const none = { day: null, observed: null, yesterday: null, recent: null, coversLookback: false };
+  if (!st || !st.buckets) return none;
+  const d0 = planDay || st.day0;
+  if (!d0) return none;
+  const d1 = dayBefore(d0), d2 = dayBefore(d1);
+  const b = st.buckets;
+  const at = (k) => (Number.isFinite(b[k]) ? round2(b[k]) : null);
+  const earliest = Object.keys(b).sort()[0];
+  const covers = !!earliest && earliest < d2 && Number.isFinite(b[d1]) && Number.isFinite(b[d2]);
+  return { day: d0, observed: at(d0), yesterday: at(d1), recent: covers ? round2(b[d1] + b[d2]) : null, coversLookback: covers };
 }
 
 // Bind a station to a Space by coordinate proximity (coords live in spaces.weather_lat/lng — no DDL). Exact
@@ -81,21 +108,65 @@ function bindStationToSpace(space, station) {
   return null;
 }
 
-// Field-granular merge (V200 B2): station supplies recent_precip_in ONLY; Open-Meteo still fills the forecast
-// fields (tomorrow_/upcoming_) that the gauge can never provide. Covered/indoor credit is handled downstream
-// by the engine's rainClass (B5) — this only sets the space-level recent actual. Returns {merged, prov}.
-function mergeStationHydrology(hy, st) {
+// Field-granular merge (V200 B2, widened by BUG-RAINACTUAL-001): the gauge now supplies every field that is
+// an OBSERVATION — recent (D-2+D-1), the already-fallen part of today, and yesterday's actual — while
+// Open-Meteo keeps the fields a gauge genuinely cannot provide (tomorrow_/upcoming_, PoP, and the part of
+// today that has not fallen yet). Covered/indoor credit is handled downstream by the engine's rainClass (B5).
+// `opts.planDay` is the plan's civil date; omit it and the fetch-day labels are used (see gaugeWindow).
+// Returns {merged, prov}. Every substitution is recorded in prov — a silent fallback is the defect this
+// whole change exists to remove.
+function mergeStationHydrology(hy, st, opts) {
   const base = hy || { recent_precip_in: null, today_precip_in: null, today_pop: null, upcoming_precip_in: null, tomorrow_precip_in: null, tomorrow_pop: null };
   const merged = { ...base };
   const prov = {};
-  const useStation = !!(st && st.fresh && st.coversLookback && st.recentPrecipIn != null);
+  const gw = gaugeWindow(st, opts && opts.planDay);
+  const useStation = !!(st && st.fresh && gw.coversLookback && gw.recent != null);
   if (useStation) {
-    merged.recent_precip_in = st.recentPrecipIn;
+    merged.recent_precip_in = gw.recent;
     prov.recent_source = 'station';
   } else {
     prov.recent_source = base.recent_precip_in != null ? 'forecast' : 'unavailable';
     if (st && st.uncertainty) prov.station_uncertainty = st.uncertainty;
   }
+
+  // ── H2 (design §3-1) — split TODAY into what the gauge has already MEASURED and what the forecast still
+  // expects. `today_precip_in` keeps its name AND its meaning (the day's total), so every downstream
+  // consumer — windowPrecip, rainCreditDays, rainCreditDaysTiered, saturationSuppressed, todayQualifies,
+  // computeCallout, hydrologyStatus — is untouched. The two new fields are additive observability.
+  // This is what makes the gauge "drive throughout the day": at the 02:00 run observed is ~0 and remaining
+  // is ~the whole forecast (behaviour identical to before); by the 15:30 run observed is nearly the entire
+  // day and the forecast contributes only the tail.
+  // Gated on `fresh` ONLY, not coversLookback: a station that came online this morning still reports today's
+  // accumulator truthfully (warm-up is a statement about the 2-day LOOKBACK, not about today).
+  const fToday = Number.isFinite(base.today_precip_in) ? base.today_precip_in : null;
+  if (st && st.fresh && gw.observed != null) {
+    const observed = gw.observed;
+    // CLAMPED AT ZERO. When the gauge already exceeds the forecast the remainder is 0, never negative — a
+    // busted-LOW forecast must never be able to SUBTRACT water that has physically fallen.
+    const remaining = fToday != null ? Math.max(0, round2(fToday - observed)) : 0;
+    merged.today_observed_in = observed;
+    merged.today_remaining_in = remaining;
+    merged.today_precip_in = round2(observed + remaining);
+    prov.today_source = (fToday == null || remaining === 0) ? 'station' : 'station+forecast';
+  } else {
+    prov.today_source = fToday != null ? 'forecast' : 'unavailable';
+  }
+
+  // ── H3 (design §3-2) — THE BUG. yesterday_precip_actual_in was Open-Meteo's own past_days HINDCAST: the
+  // one field built to answer "did we skip on a forecast that busted?" was itself sourced from the forecast
+  // (4.63" recorded for 2026-08-03 against 2.22" on the on-site gauge). The station's D-1 bucket is an
+  // OBSERVATION and wins. Falling back to the forecast is allowed — but it is ALWAYS LABELLED. An "actual"
+  // that is silently a forecast is the entire defect; see also handler.backfillYesterdayActual, which
+  // persists this label alongside the value.
+  // Gated on coversLookback because D-1 is a COMPLETED day: a partial D-1 must never be published as its total.
+  const fYest = Number.isFinite(base.yesterday_precip_actual_in) ? base.yesterday_precip_actual_in : null;
+  if (st && st.fresh && gw.coversLookback && gw.yesterday != null) {
+    merged.yesterday_precip_actual_in = gw.yesterday;
+    prov.yesterday_actual_source = 'station';
+  } else {
+    prov.yesterday_actual_source = fYest != null ? 'forecast' : 'unavailable';
+  }
+
   if (st) { prov.station_age_min = st.dataAgeMin; prov.station_fresh = st.fresh; prov.station_mac = st.mac; }
   return { merged, prov };
 }
@@ -119,4 +190,4 @@ function mergeStationWeather(wx, st) {
   return { merged: { ...wx, tonightLow: low }, prov };
 }
 
-module.exports = { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, dayBefore, FRESHNESS_MAX_MIN, COORD_TOL };
+module.exports = { stationConfig, deriveStation, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, dayBefore, FRESHNESS_MAX_MIN, COORD_TOL };

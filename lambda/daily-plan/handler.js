@@ -94,16 +94,24 @@ function prevPlanDate(iso) {
 // after this run, what actually fell. Same fail-open posture as readPriorRuns — an audit write may NEVER
 // break plan generation. Scope: same user_id + previous plan_date ONLY; the CURRENT day's row is untouched
 // (flag-OFF byte-parity). 0 is real data (an observed dry day); null/absent means unknown -> no write.
-async function backfillYesterdayActual(pg, userId, today, hy) {
+// BUG-RAINACTUAL-001 H3 — the value is now gauge-first (station.mergeStationHydrology), and a SECOND key,
+// today_precip_actual_source, is written beside it in the SAME statement. That label is not decoration: an
+// "actual" that is silently Open-Meteo's own hindcast is exactly how 2026-08-03 came to be recorded as 4.63"
+// against 2.22" on the on-site gauge. `prov` is the Space's station provenance bag; with no station bound
+// there is no ambiguity about what the number is, so the label is 'forecast'.
+async function backfillYesterdayActual(pg, userId, today, hy, prov) {
   try {
     const v = hy ? hy.yesterday_precip_actual_in : null;
     if (typeof v !== 'number' || !Number.isFinite(v)) return false;
     if (typeof today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return false;
+    const src = (prov && prov.yesterday_actual_source) || 'forecast';
     await pg.query(
       `update daily_plan
-         set items = jsonb_set(coalesce(items, '{}'::jsonb), '{today_precip_actual_in}', $3::jsonb, true)
+         set items = jsonb_set(
+               jsonb_set(coalesce(items, '{}'::jsonb), '{today_precip_actual_in}', $3::jsonb, true),
+               '{today_precip_actual_source}', $4::jsonb, true)
        where user_id = $1 and plan_date = $2`,
-      [userId, prevPlanDate(today), JSON.stringify(v)]);  // $3 as jsonb text — sidesteps neon null/numeric param typing
+      [userId, prevPlanDate(today), JSON.stringify(v), JSON.stringify(src)]);  // jsonb text params — sidesteps neon null/numeric param typing
     return true;
   } catch (e) {
     console.warn(JSON.stringify({ msg: 'actuals backfill failed — plan write unaffected', error: e?.message }));
@@ -223,7 +231,10 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     const st = bindStationToSpace(s, station);
     let prov = {};
     if (st) {
-      const mh = mergeStationHydrology(hy, st); hy = mh.merged;
+      // BUG-RAINACTUAL-001: planDay makes the gauge buckets address the day the PLAN is for, not the day the
+      // AWN fetch happened on. Identical in every live run (today === todayET() === the station's civil D0);
+      // it is what makes a `--today` replay read the day it is actually replaying.
+      const mh = mergeStationHydrology(hy, st, { planDay: today }); hy = mh.merged;
       const mw = mergeStationWeather(wx, st);   wx = mw.merged;
       prov = { ...mh.prov, ...mw.prov };
       boundSpaces++;
@@ -240,6 +251,10 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   console.log(JSON.stringify({ msg: 'station', present: !!station, boundSpaces,
     mac: station && station.mac, fresh: station && station.fresh, dataAgeMin: station && station.dataAgeMin,
     tempF: station && station.tempF, recentPrecipIn: station && station.recentPrecipIn,
+    // BUG-RAINACTUAL-001: the two buckets that now drive today + the yesterday actual, so a wrong number is
+    // diagnosable from CloudWatch alone (design §7 — "gauge = truth" must not become "gauge = infallible").
+    todayPrecipIn: station && station.todayPrecipIn, yesterdayPrecipIn: station && station.yesterdayPrecipIn,
+    planDay: today, stationDay0: station && station.day0,
     coversLookback: station && station.coversLookback, uncertainty: station && station.uncertainty }));
   const owner = process.env.OWNER_FALLBACK_SUB || null;     // unassigned -> Space owner (Dave); NEVER leaks to Jen.
   // DRG-WXWATER-001 coarse-v1: SINGLE flag read-site (spec I2 — plan is computed once nightly, all readers consume
@@ -369,7 +384,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...(alertsSent ? { alerts_sent: alertsSent } : {}), ...userPlan.tasks })]);
         // BUG-TODAYWATER-001: record yesterday's observed rain on yesterday's row. Fail-open (returns
         // false, never throws) and touches ONLY (user_id, prevPlanDate) — today's upsert above is final.
-        await backfillYesterdayActual(pg, user_id, today, hyBySpace[spaceId]);
+        await backfillYesterdayActual(pg, user_id, today, hyBySpace[spaceId], stationProvBySpace[spaceId]);
       }
     }
   }
