@@ -1,0 +1,224 @@
+# gates.yml
+# V4-CULTIVARNAME-001 — cultivar rename + entity-mirror name sync.
+#   BUG-FLORADADESYNC-001  Floridade -> Floradade  (propagate an already-done cultivar rename)
+#   BUG-CZECHBUSHID-001    Czech Bush Slicer -> Czech's Bush
+#
+# SEQUENCING (ORDERED — do not reorder, do not skip). The ordering is the whole design; see
+# README-BUILD.md "Why the order is the design".
+#
+#   1. DEPLOY the Lambda carrying the WIDENED lambda/daily-plan/cadence-data-v2.json
+#      (by_variety gains "Czech's Bush" alongside the retained "Czech Bush Slicer").
+#      -> gate `deployed_lambda_resolves`
+#   2. CTAS snapshots (below).
+#   3. pre gates -> 0a-name-sync-triggers.sql -> 0c-verify-triggers.sql
+#   4. 0b-rename.sql -> 0c-verify.sql -> post gates
+#   5. Re-invoke the daily-plan Lambda so the CURRENT day's plan regenerates under the new names.
+#   6. LATER, SEPARATE DEPLOY (not part of this migration): drop the legacy key. Do not do this
+#      while 0r-rollback.sql is still the live rollback path.
+#
+# The step-1-before-step-4 ordering is not a preference. Both halves resolve BY LITERAL NAME, so
+# there is no order in which a single-key rename is safe — only a widen-then-rename is. Renaming
+# the key and the row in the same change leaves a window where NEITHER spelling resolves and the
+# planting drops to the genus fallback: wrong watering interval, no error, no log line. This is the
+# same class as the 2026-08-03 harvest-save incident, where a CHECK was validated ahead of the
+# writer that emitted the new value and 23514'd every prod harvest save. Writer first, then the
+# thing that depends on the writer. Always.
+#
+# CTAS SNAPSHOTS (take before step 3):
+#   CREATE TABLE ctas_20260804_plant_varieties_cvname AS SELECT * FROM public.plant_varieties;
+#   CREATE TABLE ctas_20260804_plants_cvname          AS SELECT * FROM public.plants;
+#   CREATE TABLE ctas_20260804_entity_cvname          AS SELECT * FROM public.entity;
+#
+# BLAST RADIUS.
+#   * 4 rows renamed (1 plant_varieties, 2 plants, 1 entity explicitly; 3 more entity rows follow
+#     via the new triggers). Zero schema change to any table. Two functions + two triggers added.
+#   * NO constraint is created, altered or validated anywhere in this migration. Nothing here can
+#     reject a write that previously succeeded — asserted directly by 0c-verify-triggers checks 5
+#     and 6, which push a blank name through the trigger and require the write to SURVIVE.
+#   * Every FK into these tables is uuid-based (21 audited on prod 2026-08-04). No name is a
+#     foreign key. There IS one uniqueness rule on a name — uq_plant_varieties_name_species, a bare
+#     UNIQUE INDEX on (lower(name), COALESCE(species,'')) WHERE deleted_at IS NULL. It has NO
+#     pg_constraint row, so any audit built on pg_constraint reports clean and proves nothing about
+#     it. It is the one way statement 1 can raise (23505, aborting the transaction). Verified clear
+#     on prod 2026-08-04 and re-checked at apply time by 0b's pre-flight guard.
+#   * User-visible: the two plantings render under their corrected names. The Czech planting's care
+#     cadence is UNCHANGED — it resolves from the DB care_profile tier (engine.js:32 returns early
+#     on db_cadence._seeded), which is keyed by cultivar uuid and never consults by_variety. The
+#     widened JSON is the belt to that braces, not the primary path.
+#   * The Floradade planting DOES use the name-keyed path. Precisely: v_resolved_care returns a
+#     non-NULL resolved_profile for it (the 'system' scope row always merges in), but no
+#     cultivar-scope care_profile exists for variety 7b355b73, so the merged profile carries no
+#     _seeded flag and engine.js:32's `db_cadence && db_cadence._seeded` test falls through. It is
+#     the _seeded test that fails, not row absence — the same live-but-unseeded shape
+#     lambda/daily-plan/nocalwater.test.js already pins. Either way neither spelling has ever had a
+#     by_variety entry, so it resolves via the genus fallback before and after. Unchanged.
+
+pre_gates:
+
+  - name: pre_deployed_lambda_carries_both_keys
+    manual: true
+    note: |
+      BLOCKING — this is the single gate protecting the entire ordering, and it must be checked
+      against the DEPLOYED artifact, not the repo working tree. Mechanical check, not eyeballing:
+
+        aws lambda get-function --region us-east-1 --function-name garden-daily-plan \
+          --query 'Code.Location' --output text \
+        | xargs curl -s -o /tmp/dp.zip
+        unzip -p /tmp/dp.zip cadence-data-v2.json \
+        | python3 -c "import json,sys; k=json.load(sys.stdin)['by_variety']; \
+            new=\"Czech's Bush\" in k; old='Czech Bush Slicer' in k; \
+            print('new',new,'old',old); sys.exit(0 if (new and old) else 1)"
+
+      Both must print True. If only the OLD key is deployed, STOP — running the rename now is the
+      exact silent genus-fallback this sequencing exists to prevent. If only the NEW key is
+      deployed, the NARROW step has already run: STOP, because 0r-rollback.sql is no longer safe
+      (see the NARROW checklist in README-BUILD.md).
+
+      The widen deploys automatically at promote: .github/workflows/deploy-lambda.yml triggers on
+      push to main under paths ['lambda/**'] with daily-plan in the matrix. There is no separate
+      manual deploy step to forget — but there IS a window between promote and this gate passing.
+
+  - name: pre_row_identity
+    sql: |
+      SELECT id, name, crop_type_slug FROM public.plant_varieties
+       WHERE id IN ('b2be3698-b782-4a6b-8879-435effc9fcce','7b355b73-391c-4cdd-b040-f1cd87a447d5');
+    expect: |
+      Exactly 2 rows: b2be3698 = 'Czech Bush Slicer' (tomato), 7b355b73 = 'Floradade' (tomato).
+      7b355b73 ALREADY reads Floradade — that rename happened out-of-band on 2026-08-04 17:34 UTC
+      and is correct. This migration propagates it; it does not redo it.
+
+  - name: pre_mirror_state
+    sql: |
+      SELECT id, entity_type, display_name FROM public.entity
+       WHERE id IN ('f0f36069-0115-451c-9869-d01ec0323c53','88a08b2f-8659-41e8-a622-0c6fcb807b94',
+                    '52ea7182-1c45-4f76-97ae-10fd1c73c57f','07881250-f942-4ffe-8be7-278c168d7c7e');
+    expect: |
+      4 rows. Two say 'Czech Bush Slicer', two say 'Floridade'. Capture this output — it is the
+      before-image the post gates diff against.
+
+  - name: pre_no_name_is_a_foreign_key
+    sql: |
+      SELECT conrelid::regclass AS child, conname, pg_get_constraintdef(oid)
+        FROM pg_constraint
+       WHERE contype='f'
+         AND confrelid IN ('public.plant_varieties'::regclass,'public.plants'::regclass,'public.entity'::regclass);
+    expect: |
+      Every referenced column is a uuid id. If any FK references a NAME column, STOP — the rename
+      becomes a referential change and this migration is wrong. (Audited clean on prod 2026-08-04.)
+
+      THIS GATE DOES NOT COVER UNIQUENESS. pg_constraint cannot see a bare UNIQUE INDEX, and
+      uq_plant_varieties_name_species is exactly that — no pg_constraint row exists for it at any
+      contype. Broadening this query to contype IN ('u','p') would still miss it. Uniqueness has
+      its own gate below; do not treat a clean result here as covering it.
+
+  - name: pre_name_uniqueness
+    sql: |
+      -- (a) every uniqueness rule touching a name on the three tables, from the INDEX catalog
+      SELECT tablename, indexname, indexdef
+        FROM pg_indexes
+       WHERE schemaname='public'
+         AND tablename IN ('plant_varieties','plants','entity')
+         AND indexdef ILIKE '%UNIQUE%'
+         AND (indexdef ILIKE '%name%' OR indexdef ILIKE '%display_name%');
+
+      -- (b) does the target name already exist under that rule?
+      SELECT id, name, species FROM public.plant_varieties
+       WHERE deleted_at IS NULL
+         AND id <> 'b2be3698-b782-4a6b-8879-435effc9fcce'
+         AND lower(name) = lower('Czech''s Bush')
+         AND COALESCE(species,'') = COALESCE(
+               (SELECT species FROM public.plant_varieties WHERE id='b2be3698-b782-4a6b-8879-435effc9fcce'),'');
+    expect: |
+      (a) returns exactly ONE row: uq_plant_varieties_name_species on
+          (lower(name), COALESCE(species,'')) WHERE deleted_at IS NULL. entity has NO unique index
+          on display_name, so the mirror sync cannot 23505.
+          A SECOND row here means a new uniqueness rule landed since 2026-08-04 — re-analyse before
+          proceeding.
+      (b) returns ZERO rows. Any row is BLOCKING: the rename would 23505 and abort. 0b-rename.sql
+          re-runs this same check as a pre-flight guard, so a miss here fails loudly at apply time
+          rather than silently — but catch it here, before the transaction.
+
+post_gates:
+
+  - name: post_verify
+    sql: |
+      \i migrations/v4-cultivarname-001/0c-verify.sql
+    expect: |
+      "V4-CULTIVARNAME-001: all checks passed." Any RAISE EXCEPTION is blocking. Note the final
+      SELECT deliberately prints the OTHER drifted mirror rows — 28 exist on prod, 1 is in scope
+      here, so expect 27 to remain listed. That is a report, not a failure; see README-BUILD.md
+      "What this does not fix".
+
+  - name: post_trigger_mechanism
+    sql: |
+      \i migrations/v4-cultivarname-001/0c-verify-triggers.sql
+    expect: |
+      "all 8 checks passed". Self-rolling-back fixture; leaves nothing behind. Safe on prod.
+
+  - name: post_repo_surfaces
+    sql: |
+      -- not SQL; run from the repo root
+      node scripts/verify-cultivar-rename.mjs
+    expect: |
+      "All 18 checks passed." Covers the surfaces no database query can see: the cadence JSON, the
+      reference-weight authoring source, the generated seed, the measured-sample loop, and the
+      surfaces that must deliberately KEEP the old spelling.
+
+  - name: post_daily_plan_regenerated
+    manual: true
+    note: |
+      Re-invoke the daily-plan Lambda (scripts/rerun-daily-plan.sh, or a direct aws lambda invoke
+      with payload={} in us-east-1) and confirm the CURRENT day's daily_plan row no longer contains
+      'Floridade' or 'Czech Bush Slicer':
+
+        SELECT plan_date FROM public.daily_plan
+         WHERE plan_date = CURRENT_DATE
+           AND (items::text LIKE '%Floridade%' OR items::text LIKE '%Czech Bush Slicer%');
+
+      Expect ZERO rows. PRIOR days keep the old strings and MUST NOT be edited — they are per-day
+      generated snapshots of what was true then.
+
+      Baseline measured on prod 2026-08-04 (use THESE numbers, and re-measure before applying —
+      they grow by one plan-day each night):
+        'Floridade'         21 rows
+        'Czech Bush Slicer' 29 rows
+        total daily_plan    95 rows
+      daily_plan is keyed (user_id, plan_date) and carries TWO rows for the current date, so a
+      successful regeneration drops each count by AT MOST TWO, not one — and only for the rows
+      whose plan actually mentioned that planting. Diff against a freshly measured baseline, not
+      against these literals.
+
+  - name: post_cadence_still_resolves
+    manual: true
+    note: |
+      The regression that stopped this rename on 2026-08-03. After the daily-plan re-run, confirm
+      the Czech planting (ee3fd4c5-5fa3-4202-8044-2c2d19e4835e) still resolves a TOMATO cadence and
+      did not fall back to the genus default. Its plan item's watering interval must be unchanged
+      from the pre-migration capture. A change here means the name-keyed lookup missed and the
+      widened key did not deploy.
+
+  - name: staging_is_a_no_op
+    manual: true
+    note: |
+      Recorded so a green staging run is NOT mistaken for coverage. Staging holds NEITHER cultivar
+      (full-column ILIKE scan of all 922 columns across all 68 staging tables, 2026-08-04: zero
+      occurrences of any spelling). 0b-rename.sql therefore reports UPDATE 0 four times there and
+      exercises nothing about the rename. What staging DOES verify, and did on 2026-08-04:
+        * 0a applies cleanly and is re-runnable (DROP TRIGGER IF EXISTS + CREATE OR REPLACE);
+        * 0c-verify-triggers passes all 8 checks, including the app's real view-based rename path
+          and the blank-name CHECK survival case;
+        * a NEGATIVE CONTROL — dropping the triggers inside a transaction and re-running the same
+          rename — reproduces the original desync on demand, proving the test tests the trigger;
+        * 0b, 0r-rollback and 0r-rollback-triggers all parse, commit, and round-trip;
+        * 0c-verify correctly REFUSES to run there rather than passing vacuously.
+      Staging is deliberately LEFT with 0a + 0b applied, so it carries both schema_version rows and
+      both triggers ahead of prod; the -rename row there records a migration that updated zero rows.
+      Expected, not drift.
+
+      Note also a pre-existing staging oddity found while verifying: care_profile on staging holds
+      a seeded cultivar-scope row for b2be3698 even though no such plant_varieties row exists there
+      (the care-cadence seed is uuid-keyed and was applied to a different dataset). Unrelated to
+      this migration, but it is why 0r-rollback's pre-flight WARNING does not fire on staging.
+
+      The rename itself is first exercised on the PROD apply. Re-run the post gates there rather
+      than treating staging green as sufficient.

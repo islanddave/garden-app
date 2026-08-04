@@ -205,9 +205,15 @@ post:
       GET /api/events/harvest-ready candidate query and diff row-for-row against the pre-gate
       capture. The 9 rows firing on 2026-08-03 (basil/Holy Basil, dill/Mammoth Dill,
       parsley/Italian Parsley, tomatillo/Purple Blush, tomato/Sunray, tomato/Beefsteak Rescue 2,
-      tomato/Bush Early Girl, tomato/Czech Bush Slicer, wineberry/Wild Wineberry) MUST all still
+      tomato/Bush Early Girl, tomato/Czech's Bush, wineberry/Wild Wineberry) MUST all still
       be present. New rows may appear for blackberry and spinach — that is the intended effect.
       A DISAPPEARING row is a blocking regression.
+
+      NAME NOTE (2026-08-04, V4-CULTIVARNAME-001): the row listed above as tomato/Czech's Bush was
+      captured on 2026-08-03 under its then-current spelling "Czech Bush Slicer". Same cultivar,
+      same plant_varieties row (b2be3698-b782-4a6b-8879-435effc9fcce) — renamed, not replaced. The
+      identity to diff on is the id; the name here is updated so a re-run of this gate does not
+      chase a string that no longer exists.
 
   # 9. Staging does NOT exercise the whole migration. Recorded so a green staging run is not
   #    mistaken for full coverage.

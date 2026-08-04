@@ -527,6 +527,23 @@ jobs:
         # harvest_log.event_id→event_log, inventory_items.location_id/event_log.location_id→locations.
         # favorites.entity_id + event_batches.scope_json have no FK — swept by smoke-project id. FK-safe order
         # validated live against the staging Neon branch 2026-05-25 (extended for E/F/G surfaces).
+        #
+        # 2026-08-04 (V4-EVTANCHORDEL-001): event_log.plant_id, photos.plant_id and photos.location_id
+        # became ON DELETE RESTRICT (they were SET NULL, which contradicted the anchor CHECKs on those
+        # tables — see migrations/v4-evtanchordel-001). This sweep is one of the two non-app callers
+        # that hard-delete plantings, so it had to be widened BEFORE that migration is applied:
+        #   • event_log was swept by project_id ONLY, which misses any event anchored solely by
+        #     plant_id — under RESTRICT such a row now BLOCKS "DELETE FROM plants" instead of being
+        #     silently detached. Added a plant_id-scoped sweep (preceded by its harvest_log children,
+        #     whose FK into event_log is RESTRICT).
+        #   • photos were NEVER swept at all. Under SET NULL a smoke photo on a smoke plant was
+        #     quietly orphaned; under RESTRICT it blocks both "DELETE FROM plants" and
+        #     "DELETE FROM locations". Added a photos sweep before plants.
+        # Both additions are no-ops against staging today (0 matching rows, verified 2026-08-04) —
+        # they exist so the sweep stays correct the first time smoke creates such a row.
+        # Every *.featured_photo_id / *.featured_image_id back-pointer into photos is SET NULL, so
+        # deleting photos needs no pre-nulling pass. preservation_log.photo_id is NO ACTION and would
+        # block, but smoke creates no preservation rows.
         if: always()
         env:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
@@ -541,12 +558,15 @@ jobs:
           psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 \
             -c "DELETE FROM harvest_log    WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM event_log      WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM harvest_log    WHERE event_id IN (SELECT id FROM event_log WHERE plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')));" \
+            -c "DELETE FROM event_log      WHERE plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%'));" \
             -c "DELETE FROM entity_memory  WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM entity_memory  WHERE plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%'));" \
             -c "DELETE FROM favorites      WHERE entity_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM event_batches  WHERE scope_json->>'project_id' IN (SELECT id::text FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM critter_state  WHERE species_id = 255 OR created_by IN (SELECT created_by FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM entity         WHERE entity_type='planting' AND planting_ref_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%'));" \
+            -c "DELETE FROM photos         WHERE plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')) OR location_id IN (SELECT id FROM locations WHERE name ILIKE '%smoke%') OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM plants         WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM inventory_items WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM entity         WHERE entity_type='cultivar' AND cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%');" \

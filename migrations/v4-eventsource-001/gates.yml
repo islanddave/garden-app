@@ -12,7 +12,21 @@
 #       1. apply 0a + 0c to STAGING   <-- before the dev push, or integration tests fail on 42703
 #       2. push code to dev
 #       3. apply 0a + 0b + 0c to PROD before the promote reaches prod
-#   0b (data backfill) is not a code dependency and may lag; nothing reads `source` yet.
+#   0b (data backfill) is not a code DEPENDENCY, so it cannot break a deploy by lagging — but the
+#   original wording here ("may lag; nothing reads `source` yet") was read as permission to skip it,
+#   and it WAS skipped: 0a/0c were applied, 0b never ran, and event_log.source shipped in v3.97.0
+#   at 100% NULL. "May lag" is not "may be forgotten". 0b writes its own schema_version row now
+#   (4.21.3-eventsource-001-backfill) and post_backfill_ledger_row_recorded below asserts it, so a
+#   skipped backfill is visible instead of silent. Apply 0b before anything reads `source`.
+#
+# NO RUNNER EXISTS. Nothing in this repo executes these pre/post blocks — they are a runbook, and
+# an operator must run them by hand. That is the second half of why the gap survived: the
+# post-conditions that would have caught it were never executed either.
+#
+# RUN RECORD — 2026-08-04, executed by hand against both environments:
+#   staging 18:50:53Z  0b applied (0 batch / 49 app / 0 status; 53 rows correctly left NULL)
+#   prod    18:53:13Z  0b applied (9,724 batch / 2,025 app / 167 status; 184 left NULL, 166 live)
+#   both    re-run immediately after -> 0/0/0 updated (idempotent); all post gates below return 0/pass.
 #
 # L-058 SWEEP: empty. The only CHECK is created NOT VALID on purpose — see 0a's header. Do NOT add
 #   a VALIDATE step here: validating would arm the constraint against the still-deployed old writer,
@@ -120,3 +134,27 @@ post:
        WHERE version IN ('4.21.0-eventsource-001','4.21.1-eventsource-001-xpidem')
     expect: rowcount_eq
     value: 2
+
+  # SEPARATE from the DDL gate above, on purpose. 0b is data-only, so it creates no object whose
+  # existence proves it ran — and it DIDN'T run, for the whole of v3.97.0, while the DDL gate above
+  # passed the entire time and the header of 0b read like a result. A DDL row and a backfill row
+  # answer different questions and must be assertable separately.
+  - name: post_backfill_ledger_row_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '4.21.3-eventsource-001-backfill'
+    expect: rowcount_eq
+    value: 1
+
+  # The column is only worth having if it stays true. This asserts the FORWARD path, not history:
+  # any status_change row written after the app_status writer deploys must carry the value. Scoped
+  # to rows created after the backfill so it does not re-assert what post_every_status_change_row_
+  # classified already covers. Expect 0 before the deploy too — there is simply nothing in range.
+  - name: post_new_status_rows_carry_source
+    sql: |
+      SELECT 1 FROM public.event_log
+       WHERE deleted_at IS NULL AND event_type = 'status_change'
+         AND created_at > '2026-08-04 17:20:28.211257+00'::timestamptz
+         AND source IS DISTINCT FROM 'app_status'
+    expect: rowcount_eq
+    value: 0

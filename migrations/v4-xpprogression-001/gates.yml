@@ -1,0 +1,247 @@
+# gates.yml
+# V4-XPPROGRESSION-001 — xp_level()/xp_level_floor() + trg_user_stats_level + level backfill.
+#
+# SEQUENCING — this migration does NOT gate the code deploy in either direction, which is unusual
+# here and is the whole reason the design landed on a trigger:
+#   • No column is added, so no deployed statement can 42703.
+#   • No CHECK is created or validated, so no deployed writer can 23514. Compare 2026-08-03, where
+#     validating a CHECK ahead of its writer broke every prod harvest save; there is deliberately
+#     nothing to arm in this migration.
+#   • The one `level` write in the currently-deployed Lambda is a literal `1` inside
+#     `INSERT INTO user_stats (user_id, xp, level, …)`. A BEFORE trigger overwrites it. It cannot
+#     fail. (This is also why `level` was NOT converted to a GENERATED column — that WOULD have
+#     rejected the deployed INSERT with 428C9 and forced a two-deploy writer-first dance.)
+#   • Apply BEFORE the code deploy anyway. The soft, one-directional coupling is that the new
+#     `WHEN 'level'` evaluator branch reads user_stats.level: until 0a/0b land it reads the frozen
+#     1 and grants nothing — i.e. exactly today's behaviour. Degraded, never broken.
+#
+#   CI NOTE (same trap as v4-eventsource-001): integration-test.yml branches off STAGING and does
+#   NOT apply migrations. tests/integration/xp-level.int.test.js calls public.xp_level() directly,
+#   so 0a MUST reach STAGING before the dev push or those tests 42883 on an undefined function.
+#   Order: 1. apply 0a + 0b + 0c to STAGING  2. push code to dev  3. apply 0a + 0b + 0c to PROD
+#   before the promote reaches prod.
+#
+# 0c IS CONTENT, NOT A FIX. 0a/0b repair a defect; 0c seeds four named level achievements above
+#   level_9 so the ladder has somewhere to go after its own capstone. It is separable — dropping it
+#   costs nothing mechanically (the evaluator branch handles any 'level' row generically) — but the
+#   two gates that assert it are here because shipping the branch WITHOUT content re-creates, one
+#   rung higher, exactly the dead-content defect this migration exists to fix.
+#
+# L-058 SWEEP: empty, and empty for a checkable reason rather than by assertion — this migration
+#   creates no constraint of any kind. post_no_check_constraint_on_user_stats proves it, and will
+#   also catch a future edit that quietly adds one.
+#
+# STAGING IS NOT PROD AND WAS CHECKED SEPARATELY. Staging holds ONE user_stats row (xp 2875,
+#   level 3 — not 1, so "level is always 1" is a prod-only fact) carrying a −50 drift against its
+#   ledger that prod does not have. Every gate below is therefore written to be
+#   environment-agnostic: none asserts a specific user_id, xp value, or row count.
+
+pre:
+  - name: pre_user_stats_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='user_stats'
+    expect: rowcount_eq
+    value: 1
+
+  # The column ALREADY EXISTS. This migration is a definition + backfill, not DDL. If this gate
+  # ever fails, someone has changed the premise and 0a must be re-reasoned from scratch.
+  - name: pre_level_column_exists_int_notnull_default_1
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_stats' AND column_name='level'
+         AND data_type='integer' AND is_nullable='NO' AND column_default='1'
+    expect: rowcount_eq
+    value: 1
+
+  # Not a generated column today. 0a's backward-compatibility argument depends on this: a BEFORE
+  # trigger may assign to an ordinary column, and the deployed Lambda may INSERT into it.
+  - name: pre_level_not_generated
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_stats' AND column_name='level'
+         AND is_generated='NEVER'
+    expect: rowcount_eq
+    value: 1
+
+  # xp is the trigger's only input. If it were ever nullable the trigger's COALESCE would be doing
+  # real work rather than being defensive, and the invariant gate below would need rethinking.
+  - name: pre_xp_column_is_not_null
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_stats' AND column_name='xp'
+         AND is_nullable='NO'
+    expect: rowcount_eq
+    value: 1
+
+sweep: []
+
+post:
+  # ── the curve exists, and is IMMUTABLE ──────────────────────────────────────────────────────
+  # provolatile='i' is not cosmetic: a STABLE function cannot be used in an index or a generated
+  # column later, and IMMUTABLE is the contract that makes "same xp always means same level"
+  # true across replicas and plan caches.
+  - name: post_xp_level_present_and_immutable
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname='public' AND p.proname='xp_level' AND p.provolatile='i'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_xp_level_floor_present_and_immutable
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname='public' AND p.proname='xp_level_floor' AND p.provolatile='i'
+    expect: rowcount_eq
+    value: 1
+
+  # ── THE KEYSTONE GATE: the inverse cannot drift from the definition ─────────────────────────
+  # xp_level_floor() is the curve's forward form and definition of record; xp_level() is its
+  # inverse, implemented with sqrt. This proves they agree at EVERY boundary over 200 levels, from
+  # BOTH sides — at the floor the level must be L, one XP below it must be L-1. An off-by-one or a
+  # numeric-rounding error at a perfect square (the exact points where a user levels up) shows up
+  # here and nowhere else. Re-proved on every apply rather than trusted from a one-time check.
+  - name: post_curve_inverse_exact_at_every_boundary_1_to_200
+    sql: |
+      SELECT 1 FROM (
+        SELECT l,
+               public.xp_level(public.xp_level_floor(l))     AS at_floor,
+               public.xp_level(public.xp_level_floor(l) - 1) AS below_floor
+          FROM generate_series(1, 200) AS l
+      ) c
+       WHERE at_floor <> l
+          OR (l > 1 AND below_floor <> l - 1)
+    expect: rowcount_eq
+    value: 0
+
+  # Clamping contract: no level 0, no negative band, NULL tolerated. The evaluator reads this
+  # function inside a non-fatal try/catch, so a raise here would take achievement evaluation down
+  # rather than degrade it.
+  - name: post_curve_clamps_below_zero_and_null_to_level_1
+    sql: |
+      SELECT 1 WHERE public.xp_level(0) = 1
+                 AND public.xp_level(-500) = 1
+                 AND public.xp_level(NULL) = 1
+                 AND public.xp_level(99) = 1
+                 AND public.xp_level(100) = 2
+                 AND public.xp_level_floor(1) = 0
+                 AND public.xp_level_floor(0) = 0
+    expect: rowcount_eq
+    value: 1
+
+  # The named rungs the achievement content depends on. level_5 {"level":5} and level_9
+  # {"level":9} are live, active, zero-earner rows in `achievements`; these two thresholds are what
+  # make them reachable, and they are asserted here so a later curve edit cannot silently move the
+  # goalposts under shipped content.
+  - name: post_level_5_and_level_9_thresholds_are_1600_and_6400
+    sql: |
+      SELECT 1 WHERE public.xp_level_floor(5) = 1600 AND public.xp_level_floor(9) = 6400
+    expect: rowcount_eq
+    value: 1
+
+  # ── the trigger is installed, on the right table, at the right time, for each row ────────────
+  - name: post_level_trigger_present_before_insert_or_update_row_level
+    sql: |
+      SELECT 1 FROM pg_trigger
+       WHERE tgname='trg_user_stats_level'
+         AND tgrelid='public.user_stats'::regclass
+         AND NOT tgisinternal
+         AND (tgtype & 1) = 1     -- ROW level
+         AND (tgtype & 2) = 2     -- BEFORE
+         AND (tgtype & 4) = 4     -- INSERT
+         AND (tgtype & 16) = 16   -- UPDATE
+    expect: rowcount_eq
+    value: 1
+
+  # ── THE INVARIANT — this is also the permanent regression detector ──────────────────────────
+  # Every row satisfies level = xp_level(xp). Because xp-reconcile rewrites xp behind the Lambda's
+  # back at 04:00 daily, this is the gate that proves the trigger — not six well-behaved callers —
+  # is what maintains the column. Worth re-running standalone any time the reward loop is doubted.
+  - name: post_every_user_stats_row_satisfies_level_equals_xp_level
+    sql: |
+      SELECT 1 FROM public.user_stats
+       WHERE level IS DISTINCT FROM public.xp_level(xp)
+    expect: rowcount_eq
+    value: 0
+
+  # THE ORIGINAL DEFECT, stated as a gate. Environment-agnostic on purpose: it names no user and no
+  # XP total, so it holds on prod (two rows at 3,790 and 445, both stuck at 1) and on staging (one
+  # row at 2,875, stuck at 3) alike. Anyone with 100+ XP who is still level 1 means level is dead
+  # again.
+  - name: post_no_row_stuck_at_level_1_while_holding_enough_xp
+    sql: |
+      SELECT 1 FROM public.user_stats
+       WHERE level = 1 AND xp >= public.xp_level_floor(2)
+    expect: rowcount_eq
+    value: 0
+
+  # ── nothing was armed ───────────────────────────────────────────────────────────────────────
+  # user_stats carries only its PK. If a CHECK ever appears here it was added by something that did
+  # not read 0a's header, and "arming a CHECK is a deploy, not a migration" applies to it.
+  - name: post_no_check_constraint_on_user_stats
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.user_stats'::regclass AND contype='c'
+    expect: rowcount_eq
+    value: 0
+
+  # The column's own shape is unchanged — same type, same NOT NULL, same DEFAULT, still not
+  # generated. This is the promise 0a's header makes to the still-deployed Lambda.
+  - name: post_level_column_shape_unchanged
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_stats' AND column_name='level'
+         AND data_type='integer' AND is_nullable='NO' AND column_default='1'
+         AND is_generated='NEVER'
+    expect: rowcount_eq
+    value: 1
+
+  # ── the XP ledger was not touched ───────────────────────────────────────────────────────────
+  # This migration mints no XP and deletes none — including the 10 retired 'photo_bonus' rows,
+  # which stay because xp-reconcile treats SUM(xp_events.amount) as canonical (0a header).
+  # Deleting them would make the reconciler "heal" a balance that was never wrong.
+  - name: post_photo_bonus_history_preserved_not_deleted
+    sql: |
+      SELECT 1 FROM public.xp_events WHERE reason = 'photo_bonus' LIMIT 1
+    expect: rowcount_eq
+    value: 1
+
+  # The idempotency index the batch flat-XP grant depends on is still in place — this migration
+  # runs adjacent to the XP write path and must not have disturbed it.
+  - name: post_xp_idempotency_index_still_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND indexname='uq_xp_events_user_reason_source'
+    expect: rowcount_eq
+    value: 1
+
+  # ── 0c content assertions ───────────────────────────────────────────────────────────────────
+  # The ladder must not die at its own capstone. 0a's header rejects the historical table partly
+  # because it stopped at 9; without these rows 0a stops at 9 too, just with better arithmetic.
+  - name: post_named_level_content_exists_above_level_9
+    sql: |
+      SELECT 1 FROM public.achievements
+       WHERE trigger_type = 'level' AND is_active = true
+         AND (trigger_value->>'level')::int > 9
+    expect: rowcount_eq
+    value: 4
+
+  # Every level achievement must sit on a rung the curve can actually reach, and none may collide.
+  # A trigger_value of, say, 13 alongside a 12 is fine; two rows on the SAME level is content that
+  # can only ever fire together and is almost certainly a typo.
+  - name: post_no_two_level_achievements_share_a_level
+    sql: |
+      SELECT 1 FROM (
+        SELECT (trigger_value->>'level')::int AS lvl
+          FROM public.achievements WHERE trigger_type = 'level'
+         GROUP BY 1 HAVING count(*) > 1) d
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version IN ('4.22.0-xpprogression-001', '4.22.1-xpprogression-001-backfill',
+                         '4.22.2-xpprogression-001-content')
+    expect: rowcount_eq
+    value: 3

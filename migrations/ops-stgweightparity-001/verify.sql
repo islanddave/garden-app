@@ -8,8 +8,14 @@ WITH g AS (
          (SELECT count(*) FROM harvest_log WHERE weight_grams IS NOT NULL) >= 6 AS ok,
          (SELECT count(*)::text FROM harvest_log WHERE weight_grams IS NOT NULL) AS detail
   UNION ALL
-  SELECT 'G2 all three weight_basis values present',
-         (SELECT count(DISTINCT weight_basis) FROM harvest_log WHERE weight_basis IS NOT NULL) = 3,
+  -- Was `count(DISTINCT weight_basis) = 3`. A cardinality equality is the wrong assertion twice
+  -- over: it FAILS on prod today (prod has no crop_type row, so distinct = 2) and it would fail
+  -- again the moment V4-HARVBASIS-SAMPLE-001 introduces a 4th value. What the gate actually wants
+  -- is "the three fixture bases are all present", which is a containment test and is stable under
+  -- any future vocabulary widening.
+  SELECT 'G2 all three seeded weight_basis values present',
+         (SELECT count(DISTINCT weight_basis) FROM harvest_log
+           WHERE weight_basis IN ('measured','cultivar','crop_type')) = 3,
          (SELECT string_agg(DISTINCT weight_basis, ',') FROM harvest_log WHERE weight_basis IS NOT NULL)
   UNION ALL
   SELECT 'G3 NULL-weight control row present',

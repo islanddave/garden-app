@@ -89,7 +89,8 @@ post:
         CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
        WHERE v.deleted_at IS NULL
          AND (d.confidence IN ('high','medium') OR d.sample_n >= 5)
-         AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4) OR r.weight_basis <> 'cultivar')
+         AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4)
+              OR r.weight_basis NOT IN ('cultivar','cultivar_sample'))
     expect: rowcount_eq
     value: 0
 
@@ -113,7 +114,8 @@ post:
        WHERE v.deleted_at IS NULL
          AND d.confidence = 'provisional'
          AND (v.unit_weights ->> d.unit) IS NULL
-         AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4) OR r.weight_basis <> 'cultivar')
+         AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4)
+              OR r.weight_basis NOT IN ('cultivar','cultivar_sample'))
     expect: rowcount_eq
     value: 0
 
@@ -146,14 +148,18 @@ post:
     expect: rowcount_eq
     value: 1
 
-  # No new weight_basis value was introduced, so chk_harvest_log_weight_basis (VALIDATED) still
-  # holds and no deployed writer needs to change. This is the guard against someone "improving"
-  # v3 by adding a 'cultivar_sample' basis without widening the CHECK first.
-  - name: post_basis_vocabulary_unchanged
+  # ORIGINALLY: "no new weight_basis value was introduced" — the guard against someone "improving"
+  # v3 by adding a 'cultivar_sample' basis without widening the CHECK first. V4-HARVBASIS-SAMPLE-001
+  # then added exactly that value, the safe way round: widen the VALIDATED CHECK first (0a), ship the
+  # resolver second (0b). So the gate is restated against the CHECK's real vocabulary instead of a
+  # frozen list. The property defended is unchanged and is still the one that matters — the writer
+  # must never emit a value the constraint rejects. Under v3 this is identical to the old assertion
+  # (nothing emits the 4th value); under v4 it admits it.
+  - name: post_basis_within_check_vocabulary
     sql: |
       SELECT 1 FROM public.harvest_log
        WHERE deleted_at IS NULL AND weight_basis IS NOT NULL
-         AND weight_basis NOT IN ('measured','cultivar','crop_type')
+         AND weight_basis NOT IN ('measured','cultivar','crop_type','cultivar_sample')
     expect: rowcount_eq
     value: 0
 

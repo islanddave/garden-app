@@ -1115,7 +1115,7 @@ UPDATE public.plant_varieties SET unit_weights='{"count":100,"cup":180}'::jsonb,
  WHERE crop_type_slug='tomato' AND name='Cream Sausage' AND deleted_at IS NULL
    AND (weight_source IS NULL OR weight_source <> 'measured');
 UPDATE public.plant_varieties SET unit_weights='{"count":140,"cup":180}'::jsonb, weight_source='catalog', weight_confidence='medium', updated_at=now()
- WHERE crop_type_slug='tomato' AND name='Czech Bush Slicer' AND deleted_at IS NULL
+ WHERE crop_type_slug='tomato' AND name='Czech''s Bush' AND deleted_at IS NULL
    AND (weight_source IS NULL OR weight_source <> 'measured');
 UPDATE public.plant_varieties SET unit_weights='{"count":200,"cup":180}'::jsonb, weight_source='catalog', weight_confidence='low', updated_at=now()
  WHERE crop_type_slug='tomato' AND name='Del Tonet' AND deleted_at IS NULL
@@ -1130,7 +1130,7 @@ UPDATE public.plant_varieties SET unit_weights='{"count":140,"cup":180}'::jsonb,
  WHERE crop_type_slug='tomato' AND name='Eva Purple Ball' AND deleted_at IS NULL
    AND (weight_source IS NULL OR weight_source <> 'measured');
 UPDATE public.plant_varieties SET unit_weights='{"count":200,"cup":180}'::jsonb, weight_source='catalog', weight_confidence='medium', updated_at=now()
- WHERE crop_type_slug='tomato' AND name='Floridade' AND deleted_at IS NULL
+ WHERE crop_type_slug='tomato' AND name='Floradade' AND deleted_at IS NULL
    AND (weight_source IS NULL OR weight_source <> 'measured');
 UPDATE public.plant_varieties SET unit_weights='{"count":70,"cup":180}'::jsonb, weight_source='catalog', weight_confidence='high', updated_at=now()
  WHERE crop_type_slug='tomato' AND name='Glacier' AND deleted_at IS NULL

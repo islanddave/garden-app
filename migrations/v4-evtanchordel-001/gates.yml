@@ -1,0 +1,203 @@
+# gates.yml
+# V4-EVTANCHORDEL-001 — the delete-cascade / anchor-CHECK contradiction on event_log.
+#
+# SEQUENCING (load-bearing — read before applying anything):
+#   0a-additive-ddl.sql  — creates event_log_archive, harvest_log_archive, archive_plant_events().
+#                          Purely additive; touches no existing object; safe at any time. MUST be
+#                          applied BEFORE 0c, because 0c's RESTRICT is only operable if the escape
+#                          hatch exists. Applying 0c first leaves an operator with a blocked delete
+#                          and no supported way through.
+#   0c-constraint.sql    — flips three FKs SET NULL -> RESTRICT. THE FIX.
+#
+# DEPLOY BOUNDARY. 0c changes only the referential action taken on a PARENT DELETE. It does not
+# affect INSERT or UPDATE, so the currently-deployed Lambdas are unaffected and there is NO
+# writer-first requirement of the "arming a CHECK breaks the old writer" kind — no app route hard-
+# deletes a planting or a location (all three DELETE routes soft-delete).
+#
+# The old writers that DO break are the non-app hard-delete callers, and they ship in the same
+# commit as this migration, ahead of it:
+#   1. .github/workflows/deploy-staging.yml smoke purge — widened with a plant_id-scoped event_log
+#      sweep (+ its harvest_log children) and a photos sweep. Both are 0-row no-ops today.
+#   2. tests/integration/** teardowns — verified sufficient as-is by running the FULL suite against a
+#      migrated ephemeral Neon branch (26 files / 385 passed, identical to the pre-migration
+#      baseline). The plants.int.test.js and authz-matrix.int.test.js event_log sweeps become
+#      MANDATORY rather than defensive; their comments were updated to say so.
+# Applying 0c to an environment whose purge has not landed reds the next staging deploy. It cannot
+# corrupt data — RESTRICT only ever refuses.
+#
+# ORDER APPLIED:
+#   STAGING (br-damp-frog-amdfxwrr): 0a -> 0c, with these gates. Done by the authoring session.
+#   PROD: NOT APPLIED by this session. See README.md §Prod runbook.
+#
+# Note both `pre` blocks below assert the CURRENT (broken) state, so a re-run against an already-
+# migrated database fails the pre-gate rather than silently re-applying.
+
+pre:
+  # The defect itself, asserted rather than assumed: an FK column that is an arm of a disjunctive
+  # anchor CHECK, declared ON DELETE SET NULL. If this returns 0 the migration has already been
+  # applied (or the schema is not what it was surveyed to be) — stop and re-survey.
+  - name: pre_three_setnull_anchor_fks_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('event_log_plant_id_fkey','photos_plant_id_fkey','photos_location_id_fkey')
+         AND confdeltype = 'n'
+    expect: rowcount_eq
+    value: 3
+
+  # The invariant the fix preserves. If this is gone, someone has already "fixed" the bug by
+  # relaxing the CHECK and this migration is answering the wrong question.
+  - name: pre_anchor_check_still_exists
+    sql: |
+      SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+       WHERE t.relname = 'event_log' AND t.relkind = 'r' AND c.conname = 'event_log_has_anchor'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_archive_objects_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name IN ('event_log_archive','harvest_log_archive')
+    expect: rowcount_eq
+    value: 0
+
+  # RESTRICT can only be added if every existing child value resolves to a live parent. This is the
+  # scan the ALTER performs; running it first turns a mid-ALTER failure into a clean pre-gate stop.
+  - name: pre_no_dangling_event_plant_refs
+    sql: |
+      SELECT 1 FROM public.event_log e
+       WHERE e.plant_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.plants p WHERE p.id = e.plant_id)
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_dangling_photo_parent_refs
+    sql: |
+      SELECT 1 FROM public.photos ph
+       WHERE (ph.plant_id IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM public.plants p WHERE p.id = ph.plant_id))
+          OR (ph.location_id IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM public.locations l WHERE l.id = ph.location_id))
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_three_fks_are_restrict
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('event_log_plant_id_fkey','photos_plant_id_fkey','photos_location_id_fkey')
+         AND confdeltype = 'r'
+    expect: rowcount_eq
+    value: 3
+
+  # THE CLASS GATE. The reported bug was one instance; this asserts the whole class is empty. Any FK
+  # column that is an arm of a disjunctive "at least one parent" CHECK must not be SET NULL, because
+  # the cascade's own UPDATE can remove the last anchor and the CHECK then rejects the row it just
+  # produced. Mirrors the class guard in tests/integration/evt-anchor-delete.int.test.js.
+  #
+  # chk_preservation_log_source_plant is NOT an offender and is not excluded by hand: its predicate
+  # is (source_kind IS NULL OR source_kind='own_garden' OR plant_id IS NULL), so nulling plant_id
+  # SATISFIES it. The `IS NOT NULL) OR ` pattern below does not match it. Recorded so the next sweep
+  # does not re-litigate the false positive.
+  - name: post_no_setnull_fk_inside_an_anchor_check
+    sql: |
+      WITH setnull_fk AS (
+        SELECT c.conrelid AS reloid, unnest(c.conkey) AS attnum
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid AND t.relkind = 'r'
+          JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+         WHERE c.contype = 'f' AND c.confdeltype IN ('n','d')
+      ), anchor_check AS (
+        SELECT c.conrelid AS reloid, unnest(c.conkey) AS attnum
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid AND t.relkind = 'r'
+          JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+         WHERE c.contype = 'c'
+           AND (pg_get_constraintdef(c.oid) LIKE '%IS NOT NULL) OR %'
+                OR pg_get_constraintdef(c.oid) LIKE '%IS NOT NULL))::integer%')
+      )
+      SELECT 1 FROM setnull_fk f
+        JOIN anchor_check k ON k.reloid = f.reloid AND k.attnum = f.attnum
+    expect: rowcount_eq
+    value: 0
+
+  # The fix preserves the invariant instead of relaxing it. A "green" run with this at 0 would mean
+  # someone dropped the CHECK rather than fixing the cascade.
+  - name: post_anchor_check_survives
+    sql: |
+      SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+       WHERE t.relname = 'event_log' AND t.relkind = 'r' AND c.conname = 'event_log_has_anchor'
+    expect: rowcount_eq
+    value: 1
+
+  # NO ROW WAS TOUCHED. This migration is constraint-only; if event_log lost or gained rows,
+  # something ran that should not have.
+  - name: post_no_anchorless_events_introduced
+    sql: |
+      SELECT 1 FROM public.event_log WHERE plant_id IS NULL AND project_id IS NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_parentless_photos_introduced
+    sql: |
+      SELECT 1 FROM public.photos ph
+       WHERE ph.event_id IS NULL AND ph.project_id IS NULL AND ph.location_id IS NULL
+         AND ph.plant_id IS NULL AND ph.inventory_item_id IS NULL AND ph.space_id IS NULL
+         AND COALESCE(ph.intake_status = 'pending_tag', false) = false
+    expect: rowcount_eq
+    value: 0
+
+  # The archive substrate exists and is EMPTY — 0a creates it, nothing calls it automatically. A
+  # non-zero count straight after apply means something ran archive_plant_events() during the
+  # migration window, which nothing in this migration does.
+  - name: post_archive_tables_exist
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name IN ('event_log_archive','harvest_log_archive')
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_archive_is_empty_on_apply
+    sql: |
+      SELECT 1 FROM public.event_log_archive
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_archive_function_exists
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'archive_plant_events'
+    expect: rowcount_eq
+    value: 1
+
+  # The archive must NOT re-create the coupling this migration removes: no FK on it, and no anchor
+  # CHECK, because archived rows are expected to be anchorless.
+  - name: post_archive_has_no_foreign_keys
+    sql: |
+      SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+       WHERE t.relname IN ('event_log_archive','harvest_log_archive') AND c.contype = 'f'
+    expect: rowcount_eq
+    value: 0
+
+  # NO NEW TRIGGERS. scripts/restore-verify.py builds a table:trigger:function inventory and hard-
+  # fails on prod-vs-restore drift; this migration deliberately adds none, so that inventory is
+  # unchanged and needs no fixture update. If this ever returns > 0, restore-verify must be updated
+  # in the same commit.
+  - name: post_no_new_triggers_on_touched_tables
+    sql: |
+      SELECT 1 FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid
+       WHERE NOT g.tgisinternal
+         AND t.relname IN ('event_log','photos','plants','locations')
+         AND g.tgname NOT IN ('set_updated_at','prevent_ownership_transfer','garden_node_bump',
+                              'plants_entity_ins','plants_entity_softdel','trg_delete_entity_tags_plant',
+                              'trg_delete_entity_tags_location')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version IN ('4.21.3-evtanchordel-001','4.21.3-evtanchordel-001-archive')
+    expect: rowcount_eq
+    value: 2

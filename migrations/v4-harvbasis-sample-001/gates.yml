@@ -1,0 +1,269 @@
+# gates.yml
+# V4-HARVBASIS-SAMPLE-001 — split the harvest weight_basis vocabulary so a SAMPLE-backed weight is
+# distinguishable from a CATALOGUE-backed one.
+#
+# ── SEQUENCING IS THE WHOLE POINT OF THIS MIGRATION. TWO PHASES, TWO TRANSACTIONS. ───────────────
+#   phase 1   0a-widen-check.sql     widen chk_harvest_log_weight_basis to admit cultivar_sample
+#             (run mid gates)        NOTHING emits the value yet — writer untouched
+#   phase 2   0b-resolver-v4.sql     resolve_harvest_weight v4 starts emitting it
+#
+# The 2026-08-03 outage (23514 on every prod harvest save) came from arming a CHECK ahead of the
+# deployed writer. That was a NARROWING. This is a WIDENING, so the safe order is INVERTED:
+# constraint first, writer second. The invariant, at every instant and in both directions:
+#
+#     { values the constraint ACCEPTS }  ⊇  { values the live writer EMITS }
+#
+# Reversing the two phases violates it and 23514s every harvest resolving through tier 3 or 5.
+# Each phase is separately committable and separately parkable. `pre` runs before 0a; `mid` runs
+# between 0a and 0b and is the gate that AUTHORISES phase 2; `post` runs after 0b.
+#
+# ── NO DEPLOY BOUNDARY IS REQUIRED, AND THAT IS A FINDING, NOT AN ASSUMPTION ─────────────────────
+# The value-producing writer is a Postgres FUNCTION, not application code. Both Lambda write paths
+# (lambda/events/index.js — the POST CTE ~1510 and the PUT recompute ~1113) select rw.weight_basis
+# straight out of a LATERAL call and never type a basis literal, and NO JS/TS in the repo branches
+# on the value (no switch, no label map, no filter, no TS union, no zod schema, no request
+# validator — audited exhaustively). So there is no window of mixed app versions to sequence
+# around: both phases are DB-only and the Lambda is version-agnostic across them.
+#
+# ── DELIBERATELY NOT BACKFILLED ──────────────────────────────────────────────────────────────────
+# Historical rows keep weight_basis='cultivar' even where they were sample-backed. A backfill was
+# designed and REJECTED. The original tier is recorded nowhere, so re-running the resolver would not
+# RECOVER each row's provenance, it would INVENT it from today's sample set — and cultivar_weight_
+# derived is a live VIEW over an append-only sample table, so a row's tier legitimately changes as
+# samples accrue. Worse, the only available backfill template (v4-cal1-slicec-001/0c) rewrites
+# weight_grams and weight_estimated too, which would silently re-value every stored prod weight
+# against drifted samples with no snapshot. Forward-only accrual is the honest option. Read
+# pre-2026-08 'cultivar' as "catalogue OR legacy sample", never as "catalogue" — the constraint
+# COMMENT says so on the table itself.
+#
+# ── GATES ARE NOT CI-WIRED ───────────────────────────────────────────────────────────────────────
+# Nothing under .github/workflows or scripts/ references gates.yml; these are run by hand.
+# CI coverage for this change lives in tests/integration/cal1-sampleconf.int.test.js, which
+# capability-detects schema_version 4.20.8 so it is green on BOTH sides of the staging apply.
+
+pre:
+  - name: pre_sampleconf_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.20.6-cal1-sampleconf-001'
+    expect: rowcount_eq
+    value: 1
+
+  # harvest_log is a BASE TABLE and the constraint is on the TABLE. Asserted explicitly (relkind='r')
+  # because a prior session queried pg_constraint against a VIEW, found nothing, and concluded no
+  # constraint existed — it was on the base table and VALIDATED. garden_node, container and cultivar
+  # are views; harvest_log is not, and there are no views over it.
+  - name: pre_constraint_is_on_a_base_table_and_validated
+    sql: |
+      SELECT 1 FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+       WHERE rel.relname = 'harvest_log' AND rel.relkind = 'r'
+         AND con.conname = 'chk_harvest_log_weight_basis'
+         AND con.contype = 'c' AND con.convalidated
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_vocabulary_is_the_three_value_form
+    sql: |
+      SELECT 1 FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid AND rel.relkind = 'r'
+       WHERE rel.relname = 'harvest_log' AND con.conname = 'chk_harvest_log_weight_basis'
+         AND pg_get_constraintdef(con.oid) NOT LIKE '%cultivar_sample%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_resolver_is_v3
+    sql: |
+      SELECT 1 FROM pg_proc p
+       WHERE p.pronamespace = 'public'::regnamespace
+         AND p.proname = 'resolve_harvest_weight'
+         AND p.prosrc NOT LIKE '%cultivar_sample%'
+    expect: rowcount_eq
+    value: 1
+
+  # The desync 0b closes must be absent BEFORE the change, so a post-0b failure is unambiguously a
+  # regression this migration introduced rather than pre-existing damage it inherited.
+  - name: pre_no_corroborated_row_lacks_grams_per_unit
+    sql: |
+      SELECT 1 FROM public.cultivar_weight_derived
+       WHERE (confidence IN ('high','medium') OR sample_n >= 5) AND grams_per_unit IS NULL
+    expect: rowcount_eq
+    value: 0
+
+mid:
+  # ── run AFTER 0a, BEFORE 0b. These authorise phase 2. ──────────────────────────────────────────
+  - name: mid_check_now_admits_cultivar_sample
+    sql: |
+      SELECT 1 FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid AND rel.relkind = 'r'
+       WHERE rel.relname = 'harvest_log' AND con.conname = 'chk_harvest_log_weight_basis'
+         AND con.convalidated
+         AND pg_get_constraintdef(con.oid) LIKE '%cultivar_sample%'
+    expect: rowcount_eq
+    value: 1
+
+  # 0a must be inert to the writer. If anything already emits the value, phase 1 was not the
+  # no-op it claims to be and the phase boundary is not what this migration says it is.
+  - name: mid_writer_still_v3_nothing_emits_the_new_value
+    sql: |
+      SELECT 1 FROM public.harvest_log WHERE weight_basis = 'cultivar_sample'
+    expect: rowcount_eq
+    value: 0
+
+  # 0a touches no rows: the pairing invariant is exactly as it was.
+  - name: mid_no_stored_row_changed
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE deleted_at IS NULL AND (weight_grams IS NULL) <> (weight_basis IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ── run AFTER 0b ───────────────────────────────────────────────────────────────────────────────
+  - name: post_resolver_is_v4
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '4.20.8-harvbasis-sample-001-resolver-v4'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_signature_and_return_type_unchanged
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+       WHERE n.nspname='public' AND p.proname='resolve_harvest_weight'
+         AND pg_get_function_result(p.oid)
+             = 'TABLE(weight_grams numeric, weight_estimated boolean, weight_basis text)'
+    expect: rowcount_eq
+    value: 1
+
+  # ── THE HEADLINE PROPERTY: this migration relabels, it does not re-value. ──────────────────────
+  # Every corroborated group must still resolve to its pooled grams_per_unit, exactly as under v3 —
+  # only the label moved. If a gram value changed, demote-don't-discard has been disturbed.
+  - name: post_corroborated_grams_unchanged_and_now_labelled_sample
+    sql: |
+      SELECT 1
+        FROM public.plant_varieties v
+        JOIN public.plants pl ON pl.variety_id = v.id AND pl.deleted_at IS NULL
+        JOIN public.cultivar_weight_derived d ON d.cultivar_id = v.id
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
+       WHERE v.deleted_at IS NULL
+         AND (d.confidence IN ('high','medium') OR d.sample_n >= 5)
+         AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4)
+              OR r.weight_basis <> 'cultivar_sample')
+    expect: rowcount_eq
+    value: 0
+
+  # Demote-don't-discard, unchanged: a provisional sample still supplies the estimate where no
+  # curated reference exists, still at its own grams, and is now labelled as the sample it is.
+  - name: post_provisional_still_used_when_no_reference
+    sql: |
+      SELECT 1
+        FROM public.plant_varieties v
+        JOIN public.plants pl ON pl.variety_id = v.id AND pl.deleted_at IS NULL
+        JOIN public.cultivar_weight_derived d ON d.cultivar_id = v.id
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
+       WHERE v.deleted_at IS NULL
+         AND d.confidence = 'provisional' AND d.sample_n < 5
+         AND (v.unit_weights ->> d.unit) IS NULL
+         AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4)
+              OR r.weight_basis <> 'cultivar_sample')
+    expect: rowcount_eq
+    value: 0
+
+  # The other side of the split, and the reason the feature exists: an UNCORROBORATED sample must
+  # still lose to the curated reference, and that resolution must still read 'cultivar' — the
+  # catalogue label. If this flips to cultivar_sample the vocabulary is lying in the new direction.
+  - name: post_curated_reference_still_wins_and_still_reads_cultivar
+    sql: |
+      SELECT 1
+        FROM public.plant_varieties v
+        JOIN public.plants pl ON pl.variety_id = v.id AND pl.deleted_at IS NULL
+        JOIN public.cultivar_weight_derived d ON d.cultivar_id = v.id
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
+       WHERE v.deleted_at IS NULL
+         AND d.confidence = 'provisional' AND d.sample_n < 5
+         AND (v.unit_weights ->> d.unit) IS NOT NULL
+         AND (round(r.weight_grams, 4) <> round((v.unit_weights ->> d.unit)::numeric, 4)
+              OR r.weight_basis <> 'cultivar')
+    expect: rowcount_eq
+    value: 0
+
+  # Both sides of the split must be non-vacuous, or the two gates above pass by matching nothing.
+  - name: post_at_least_one_corroborated_row_exists
+    sql: |
+      SELECT 1 FROM public.cultivar_weight_derived
+       WHERE confidence IN ('high','medium') OR sample_n >= 5
+    expect: rowcount_gte
+    value: 1
+
+  # The Beefsteak headline from v3 must survive untouched — it is a tier-4 (catalogue) resolution,
+  # so it keeps BOTH its 1750 g and its 'cultivar' label.
+  - name: post_beefsteak_headline_still_1750_and_still_cultivar
+    sql: |
+      SELECT 1
+        FROM public.plant_varieties v
+        JOIN public.plants pl ON pl.variety_id = v.id AND pl.deleted_at IS NULL
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, 'count', 5, NULL) r
+       WHERE v.name = 'Beefsteak' AND v.deleted_at IS NULL
+         AND (round(r.weight_grams) <> 1750 OR r.weight_basis <> 'cultivar')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_user_weight_still_wins
+    sql: |
+      SELECT 1 FROM public.resolve_harvest_weight(NULL,'count',5,337)
+       WHERE weight_grams=337 AND weight_estimated=false AND weight_basis='measured'
+    expect: rowcount_eq
+    value: 1
+
+  # ── the desync 0b closes: basis must never label a number it did not source ────────────────────
+  # Under v4, basis IS NULL <=> factor IS NULL <=> weight_grams IS NULL by construction. Asserted
+  # over the whole (plant x unit) matrix rather than trusted from the code shape.
+  - name: post_basis_and_grams_null_together_across_the_matrix
+    sql: |
+      SELECT 1
+        FROM public.plants pl
+        CROSS JOIN (
+          SELECT DISTINCT unit FROM public.cultivar_weight_derived
+          UNION SELECT jsonb_object_keys(unit_weights) FROM public.plant_varieties
+                 WHERE unit_weights IS NOT NULL
+          UNION SELECT unnest(ARRAY['count','bunch','__never_seen__'])
+        ) u
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, u.unit, 1, NULL) r
+       WHERE pl.deleted_at IS NULL
+         AND (r.weight_grams IS NULL) <> (r.weight_basis IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # 0b is function-body-only. Not one stored row may have moved.
+  - name: post_no_stored_row_changed
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE deleted_at IS NULL AND (weight_grams IS NULL) <> (weight_basis IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # The deliberate no-backfill decision, asserted so a later session cannot quietly reverse it and
+  # call it a fix. Historical rows keep 'cultivar'; the new value accrues forward-only.
+  - name: post_history_was_not_backfilled
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE weight_basis = 'cultivar_sample' AND created_at < '2026-08-04'
+    expect: rowcount_eq
+    value: 0
+
+  # The coupling CHECK still holds for the new value ('cultivar_sample' <> 'measured' -> estimated
+  # true). Cheap to assert, and it is decided by an inequality rather than an enumeration, so it is
+  # worth confirming rather than reasoning about.
+  - name: post_estimated_coupling_holds_for_the_new_value
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE weight_basis IS NOT NULL
+         AND weight_estimated <> (weight_basis <> 'measured')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_samples_intact
+    sql: |
+      SELECT 1 FROM public.cultivar_weight_sample
+    expect: rowcount_gte
+    value: 1

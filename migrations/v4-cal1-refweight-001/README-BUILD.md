@@ -78,6 +78,26 @@ Regenerate the seed after editing the JSON:
 
     node scripts/cal1/gen-refweight-seed.mjs > migrations/v4-cal1-refweight-001/0b-seed.sql
 
+### Every variety statement resolves BY NAME — re-run ordering matters
+
+`0b-seed.sql` matches varieties on `WHERE crop_type_slug=… AND name=…`, so a cultivar rename in
+`plant_varieties` and an edit to `variety_name` here are two halves of one change. Get the order
+wrong and there is **no error** — the UPDATE matches 0 rows and that variety silently keeps its old
+(or no) reference weight.
+
+Rule: **the JSON and the DB must be renamed in the same change, and this seed must not be re-run
+between them.** Amended 2026-08-04 by `V4-CULTIVARNAME-001`, which renamed two tomato rows:
+
+| was | now |
+|---|---|
+| `Czech Bush Slicer` | `Czech's Bush` |
+| `Floridade` | `Floradade` |
+
+This file was regenerated for those names. **Do not re-run `0b-seed.sql` against a database that has
+not had `V4-CULTIVARNAME-001` applied** — on such a database those two statements no-op. The
+`migrations/v4-cultivarname-001/0c-verify.sql` gate proves both names resolve to exactly one live
+row before any re-run is safe.
+
 Tests: `src/__tests__/cal1RefWeights.test.js` (11) — unit vocab, positive-finite values,
 `grams_per_unit` ↔ `unit_weights[primary_unit]` sync, no duplicate authoring keys, never-claims-
 measured, and a plausibility band that catches a slipped decimal (the failure a shape CHECK cannot
