@@ -34,6 +34,18 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  // Order matters — three separate FK behaviours have to be unwound by hand before the
+  // fixture plantings can be hard-deleted.
+  //
+  // event_log.plant_id is ON DELETE SET NULL, and event_log_has_anchor requires
+  // (plant_id IS NOT NULL OR project_id IS NOT NULL). For a PROJECT-LESS planting both are
+  // then NULL, so the cascade's own UPDATE violates the check and the DELETE fails with
+  // 23514. Any event row on a project-less planting has to go first. (This is a real schema
+  // hazard, not just a teardown detail — see BUG-EVTANCHORDEL-001. The app never hits it
+  // because plant DELETE is soft, but admin SQL and this teardown do.)
+  await directSql`DELETE FROM event_log WHERE plant_id IN (SELECT id FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
+  // entity_memory.plant_id is ON DELETE RESTRICT — a status change writes a plant-keyed row.
+  await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
   // entity registry (DRG-ENGINE-002) FK is ON DELETE RESTRICT — clear the auto-created
   // planting entity rows before hard-deleting fixtures (test-teardown carve-out).
   await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (SELECT id FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
