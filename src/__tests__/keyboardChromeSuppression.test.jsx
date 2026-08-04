@@ -36,6 +36,14 @@ vi.mock('../components/BottomNavDot.jsx', () => ({ default: () => null }))
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchSpy, getToken: () => Promise.resolve(null) }),
 }))
+// V4-HIDETODAYBAND-001 (BD-002): TodayBand now ships hidden behind TODAY_BAND_HIDDEN. This suite is
+// about the KEYBOARD-CHROME mechanism, not about whether the bar ships, so it mocks the hide flag off
+// and keeps proving the one-predicate/one-commit wiring for both chrome components. Partial mock
+// (importOriginal + override) so other flags this tree reads keep their real values.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  TODAY_BAND_HIDDEN: false,
+}))
 vi.mock('../lib/mode.js', () => ({
   useMode: () => ({ mode: 'desk', isField: false, isDesk: true, setMode: vi.fn(), toggleMode: vi.fn() }),
   MODE: { FIELD: 'field', DESK: 'desk' },

@@ -133,3 +133,24 @@ export const SPACE_PHOTOS_ENABLED = true
 // pin on this flag's SHIPPED value lives once, in HarvestQuality.flagOn.test.jsx via importActual, so
 // a future flip is a deliberate decision rather than a test that quietly needs fixing.
 export const HARVEST_QUALITY_HIDDEN = true
+
+// V4-HIDETODAYBAND-001 (BD-002, Dave 2026-08-04): hide the always-on "what needs me today?" bar that
+// TodayBand docks above the bottom nav on EVERY authenticated route except /today itself (49 of the 50
+// routes). HIDE, NOT REMOVE — that distinction is the whole ask. The component, its ranked todayBand()
+// helper, the /api/dashboard signals it reads, the keyboard-chrome inset wiring, and all of its tests
+// stay exactly as they are, because the care engine behind it currently only covers watering + pest
+// checks and the larger Dr. G / care-engine alerting rework is deliberately deferred until after v4
+// settles. When that rework lands, this comes back by flipping one const.
+// What hiding reclaims, measured: the shell's paddingBottom is
+// `calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))`
+// (App.jsx), and TodayBand is the only writer of --today-band-height (BAND_HEIGHT = 56px). Hidden, the
+// component zeroes that var on mount, so every non-/today route gets exactly 56px of viewport back.
+// (Painted card is ~54px: a 48px min-height button + 6px container padding; the 56px reserve carried
+// 2px of slack.) /today already reserved 0px, so it is unaffected.
+// Hiding also stops the per-navigation /api/dashboard refetch the bar issued on mount, in-app nav, focus
+// and visibilitychange — dead weight once nothing renders.
+// Rollback is one const: flip false + redeploy. That flag-OFF path is NOT dead code, it is the lever,
+// and it stays under live test: TodayBand.test.jsx and keyboardChromeSuppression.test.jsx both mock this
+// false (partial importOriginal form) and keep exercising the full component. The pin on the SHIPPED
+// value lives once, in TodayBand.hidden.test.jsx via importActual. Criteria-gated, never date-gated.
+export const TODAY_BAND_HIDDEN = true

@@ -6,7 +6,7 @@ import { P } from '../lib/constants.js'
 import { useKeyboardChromeSuppressed } from '../lib/keyboardChrome.js'
 import { todayBand } from '../lib/todayBand.js'
 import { SEVERITY_STYLES } from '../lib/waterDue.js'
-import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN, TODAY_BAND_HIDDEN } from '../lib/featureFlags.js'
 
 // Today bar — DRG-TODAY-003. The persistent, color-coded "what needs me today?" entry docked
 // directly ABOVE the bottom nav, on every authenticated screen EXCEPT /today itself (redundant
@@ -42,6 +42,9 @@ export default function TodayBand() {
   const inflight = useRef(false)
 
   const load = useCallback(() => {
+    // V4-HIDETODAYBAND-001: nothing renders, so nothing needs fetching. This also removes the bar's
+    // refetch-on-every-in-app-navigation from every route it used to fire on.
+    if (TODAY_BAND_HIDDEN) return
     if (inflight.current) return
     inflight.current = true
     fetch('/api/dashboard')
@@ -61,6 +64,12 @@ export default function TodayBand() {
 
   const { visible, total } = todayBand(dash)
   const onToday = location.pathname === '/today'
+  // V4-HIDETODAYBAND-001 (BD-002) — hidden, not removed. Routed through the SAME suppression path the
+  // /today case already uses, so the inset var and the pixels stay in one commit (see below) and the
+  // rollback is a single const in featureFlags.js. Deliberately NOT a guard at App.jsx's `<TodayBand />`
+  // call site: unmounting would leave --today-band-height at whatever the last mount wrote instead of
+  // explicitly zeroing it, and would take the component out of test coverage entirely.
+  const hidden = TODAY_BAND_HIDDEN || onToday
 
   // V4-KBCHROME-001 — same ONE-predicate wiring as BottomNav: visibility (style prop, DOM
   // mutation pass) + the inset var (this layout effect, synchronously after, pre-paint) flip in
@@ -69,11 +78,11 @@ export default function TodayBand() {
   const kbSuppressed = useKeyboardChromeSuppressed()
   useLayoutEffect(() => {
     const root = document.documentElement
-    root.style.setProperty('--today-band-height', (onToday || kbSuppressed) ? '0px' : BAND_HEIGHT)
+    root.style.setProperty('--today-band-height', (hidden || kbSuppressed) ? '0px' : BAND_HEIGHT)
     return () => root.style.setProperty('--today-band-height', '0px')
-  }, [onToday, kbSuppressed])
+  }, [hidden, kbSuppressed])
 
-  if (onToday) return null
+  if (hidden) return null
 
   const st = barState(visible, total)
   const label = st.tier === 'urgent' ? st.top.label : 'Today'

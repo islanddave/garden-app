@@ -11,6 +11,16 @@ vi.mock('react-router-dom', () => ({
 const fetchMock = vi.fn()
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
 
+// V4-HIDETODAYBAND-001 (BD-002) — the bar SHIPS HIDDEN. This suite is the rollback-lever proof: it
+// mocks TODAY_BAND_HIDDEN false and keeps exercising every tier, the inset var, and the tap-through,
+// so bringing the bar back when the Dr. G / care-engine rework lands is a one-const flip and not an
+// archaeology project. PARTIAL mock (importOriginal + override) so new flags can't arrive undefined
+// here. The pin on the SHIPPED value lives once, in TodayBand.hidden.test.jsx.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  TODAY_BAND_HIDDEN: false,
+}))
+
 import TodayBand from '../components/TodayBand.jsx'
 
 const overdue3 = new Date(Date.now() - 3 * 86400000).toISOString()

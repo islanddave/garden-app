@@ -21,6 +21,27 @@ export function inHarvestWindow(doy, startDoy, endDoy) {
 
 const REPEATING_HABITS = new Set(['repeat', 'cut_and_come_again'])
 
+// STALENESS CEILING (BD-001 / harvest-window crucible V100 §6.1, 2026-08-04).
+// A candidate this far past its own cadence is evidence the MODEL is wrong about that plant — it has
+// gone dormant, finished for the season, been pulled, or carries a mis-set repeat_interval_days — not
+// evidence the plant is urgent. The distinction matters here more than anywhere else because
+// rankHarvestReady sorts by overdue_ratio DESCENDING, so without a ceiling the model promotes its own
+// least-trustworthy rows to the top of a 5-row band.
+//
+// The motivating row, measured on live prod data 2026-08-04: Wild Wineberry, repeat_interval_days=2,
+// 21 days since the last pick => ratio 10.5, rank #1 of 18 candidates — on a bramble Dave had already
+// closed out with a `status_change` to `dormant` on 07-31. Three of the top five were that class.
+// With the ceiling the candidate set goes 18 -> 13 and the top five becomes Aster Blackberry (2.0),
+// Purple Blush Tomatillo (1.67), Bush Early Girl (1.67), Sunray (1.33), Italian Parsley (1.08):
+// five actively-producing plants, all picked in the last 4-13 days.
+//
+// 3 is a deliberately loose ceiling: it keeps a genuinely-missed pick (a 2-day cucumber left 5 days)
+// while rejecting the order-of-magnitude rows. It is a CLIENT-side sanity bound and NOT a substitute
+// for the server-side fix — `lambda/events/index.js` filters `status NOT IN ('failed','ended')`, so
+// `dormant` still sails through into the payload and the row is only stopped here. The payload carries
+// no `status` field, so a client-side dormant filter is not constructible. See the report.
+export const MAX_OVERDUE_RATIO = 3
+
 export function isReadyToPick(c, etDoy) {
   if (!c) return false
   const interval = c.repeat_interval_days
@@ -32,6 +53,9 @@ export function isReadyToPick(c, etDoy) {
   // Clock-skew guard: a future-dated harvest yields a negative age and must never fire.
   if (Number(days) < 0) return false
   if (Number(days) < Number(interval)) return false
+  // Staleness ceiling — see MAX_OVERDUE_RATIO. Placed AFTER the habit/interval/negative guards so the
+  // NULL-means-UNKNOWN and `single`-is-terminal contracts still decide first and this only ever narrows.
+  if (Number(days) / Number(interval) > MAX_OVERDUE_RATIO) return false
   return inHarvestWindow(etDoy, c.harvest_season_start_doy, c.harvest_season_end_doy)
 }
 

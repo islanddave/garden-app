@@ -19,7 +19,9 @@ import HarvestReadyBand from '../components/HarvestReadyBand.jsx'
 
 const cand = (over = {}) => ({
   plant_id: 'p1', project_id: 'proj1', name: 'Wild Wineberry',
-  harvest_habit: 'repeat', repeat_interval_days: 2, days_since_last_harvest: 7,
+  // interval 3 / 7 days = ratio 2.33, deliberately INSIDE the BD-001 staleness ceiling
+  // (MAX_OVERDUE_RATIO = 3) so this shared fixture keeps testing rendering, not the predicate.
+  harvest_habit: 'repeat', repeat_interval_days: 3, days_since_last_harvest: 7,
   harvest_season_start_doy: null, harvest_season_end_doy: null, ...over,
 })
 
@@ -40,7 +42,7 @@ describe('HarvestReadyBand', () => {
   it('orders rows by overdue ratio, most overdue first', async () => {
     payload([
       cand({ plant_id: 'sq', name: 'Zephyr Squash', repeat_interval_days: 2, days_since_last_harvest: 2 }),
-      cand({ plant_id: 'wb', name: 'Wild Wineberry', repeat_interval_days: 2, days_since_last_harvest: 7 }),
+      cand({ plant_id: 'wb', name: 'Wild Wineberry', repeat_interval_days: 3, days_since_last_harvest: 7 }),
       cand({ plant_id: 'br', name: 'Green Magic', repeat_interval_days: 6, days_since_last_harvest: 11 }),
     ])
     render(<HarvestReadyBand />)
@@ -66,11 +68,25 @@ describe('HarvestReadyBand', () => {
   })
 
   it('suppresses an out-of-window DOY planting entirely (asparagus after the window)', async () => {
-    payload([cand({ name: 'Asparagus Bed', repeat_interval_days: 1, days_since_last_harvest: 30,
+    // ratio 2.0 — inside the staleness ceiling on purpose, so DOY suppression is the ONLY reason
+    // this renders nothing (the old interval-1/30-day fixture was ratio 30 and would now be
+    // double-suppressed, passing for the wrong reason).
+    payload([cand({ name: 'Asparagus Bed', repeat_interval_days: 15, days_since_last_harvest: 30,
       harvest_season_start_doy: 115, harvest_season_end_doy: 166 })], 202)
     const { container } = render(<HarvestReadyBand />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/events/harvest-ready'))
     expect(container.querySelector('section')).toBeNull()
+  })
+
+  it('drops a staleness-ceiling row from the band (BD-001: the wineberry at 10.5x)', async () => {
+    payload([
+      cand({ plant_id: 'ok', name: 'Aster Blackberry', repeat_interval_days: 2, days_since_last_harvest: 4 }),
+      cand({ plant_id: 'stale', name: 'Long Gone', repeat_interval_days: 2, days_since_last_harvest: 21 }),
+    ])
+    render(<HarvestReadyBand />)
+    await screen.findByRole('region', { name: /Ready to pick/i })
+    expect(screen.getByRole('button', { name: /Aster Blackberry/i })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Long Gone/i })).toBeNull()
   })
 
   it('swallows a fetch error — renders nothing, never throws', async () => {
