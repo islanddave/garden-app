@@ -89,7 +89,7 @@ pre:
     expect: rowcount_eq
     value: 0
 
-mid:
+sweep:
   # ── run AFTER 0a, BEFORE 0b. These authorise phase 2. ──────────────────────────────────────────
   - name: mid_check_now_admits_cultivar_sample
     sql: |

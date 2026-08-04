@@ -1,3 +1,26 @@
+# HUMAN RUNBOOK -- deliberately NOT named gates.yml, and not machine-runnable.
+#
+# Renamed from gates.yml 2026-08-04. scripts/gate_runner.py executes gates.yml files and compares
+# each gate's SQL result against a machine expectation (rowcount_eq / scalar_eq / rowcount_gte).
+# This file cannot satisfy that contract and should not pretend to:
+#   - 4 of its 11 entries are `manual: true` with no SQL at all (deployed-artifact check,
+#     "re-invoke the daily-plan Lambda", "confirm cadence still resolves", staging no-op).
+#   - 2 use the psql meta-command backslash-i to include a .sql file -- not a statement the
+#     runner can execute or evaluate.
+#   - 1 is not SQL at all; it instructs the operator to run a node script from the repo root.
+#   - Its `expect:` values are prose paragraphs describing what a human should see, not machine
+#     comparisons. Several are outright instructions ("Capture this output -- it is the
+#     before-image the post gates diff against").
+#
+# This is NOT a downgrade in verification. The mechanical checks for this migration are real;
+# they live in executables with genuine exit codes rather than in a declarative gate file:
+#   migrations/v4-cultivarname-001/0c-verify.sql           (RAISEs on failure)
+#   migrations/v4-cultivarname-001/0c-verify-triggers.sql  (8 checks, self-rolling-back fixture)
+#   scripts/verify-cultivar-rename.mjs                     (18 repo-surface checks, exit code)
+#
+# Keeping the gates.yml name would have meant either weakening the corpus schema to admit prose
+# expectations, or red-lining CI forever. Both are worse than calling this what it is.
+
 # gates.yml
 # V4-CULTIVARNAME-001 — cultivar rename + entity-mirror name sync.
 #   BUG-FLORADADESYNC-001  Floridade -> Floradade  (propagate an already-done cultivar rename)
