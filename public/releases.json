@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.100.0",
+    "date": "2026-08-05",
+    "highlights": [
+      "Archive a seed packet on Sow Now when you're done sowing it for the year",
+      "Archived packets collect at the bottom of the page — un-archive any time",
+      "Archives clear themselves next season, so nothing stays hidden"
+    ]
+  },
+  {
     "version": "3.99.0",
     "date": "2026-08-05",
     "highlights": [
