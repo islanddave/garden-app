@@ -1,13 +1,22 @@
 [
   {
+    "version": "3.99.0",
+    "date": "2026-08-05",
+    "highlights": [
+      "Group the Garden tab by Location — nested by zone, area and shelf",
+      "Plantings with no location collect in Unsorted so they're easy to find and fix",
+      "Fixed: items with a type assigned were showing as Unsorted"
+    ]
+  },
+  {
     "version": "3.98.0",
     "date": "2026-08-04",
     "highlights": [
-      "Logging an event against a location was failing outright. Any event you saved with a location attached hit an internal error and was silently dropped \u2014 the app reported a failure and nothing was written. This is the most important fix in the release.",
+      "Logging an event against a location was failing outright. Any event you saved with a location attached hit an internal error and was silently dropped — the app reported a failure and nothing was written. This is the most important fix in the release.",
       "Levels finally work. Your level has read 1 since the app launched because nothing ever computed it, which also meant the level 5 and level 9 achievements could never fire no matter how much you logged. There is now a real progression curve, your existing XP is backfilled into it, and the ladder continues past 9 instead of ending there.",
-      "Renaming a variety now updates it everywhere. Renames were only changing one of the three places a name is stored, so the old spelling kept showing up elsewhere \u2014 every rename made through the app since launch has done this. Floradade and Czech\u2019s Bush are corrected, and the gap that caused it is closed so it cannot happen again.",
+      "Renaming a variety now updates it everywhere. Renames were only changing one of the three places a name is stored, so the old spelling kept showing up elsewhere — every rename made through the app since launch has done this. Floradade and Czech’s Bush are corrected, and the gap that caused it is closed so it cannot happen again.",
       "Harvest weights now say where they came from. A weight backed by fruit you actually weighed is recorded differently from one taken from a catalogue, so it is clear which numbers are yours.",
-      "Deleting a planting can no longer orphan its history. A hard delete could strip the last link from a logged event and leave it unreachable. Events are now archived deliberately rather than silently detached, and the same hole in photos \u2014 which had live records exposed to it \u2014 is closed too.",
+      "Deleting a planting can no longer orphan its history. A hard delete could strip the last link from a logged event and leave it unreachable. Events are now archived deliberately rather than silently detached, and the same hole in photos — which had live records exposed to it — is closed too.",
       "More security hardening. Every remaining place that loaded a record without fully checking household ownership now does, the malformed-request behaviour is consistent instead of leaking internal errors, and tests were added that fail the build if any of it regresses.",
       "Behind the scenes: every event in the app now records how it was written, migration safety checks are actually executed rather than sitting unread in files, and the reward tallies that had drifted are corrected."
     ]
@@ -16,69 +25,69 @@
     "version": "3.97.0",
     "date": "2026-08-04",
     "highlights": [
-      "Logging many plants at once now counts. The \u201cLog all\u201d path saved your events correctly but skipped every reward and tally behind them \u2014 no XP, no streak, no achievements, no calibration. That path carried 9,684 of your 11,992 events, so roughly four fifths of everything you have ever logged earned nothing. It now does, counted once per logging action rather than once per plant, and a retry can no longer double-count.",
-      "The daily XP cap goes from 30 to 300. On the record so far the old cap was binding on 89% of active days \u2014 logging stopped paying by mid-morning. A typical day now finishes uncapped.",
-      "Harvest weights stop being thrown off by a single weighing. One measured fruit was overriding the reference weight for its whole variety no matter how unrepresentative it was: five Beefsteak tomatoes read 140 g instead of 1,750 g. A measured weight now only overrides the reference once it is corroborated \u2014 so the two varieties with several weighings keep theirs, and the fourteen with one do not. Editing an old harvest no longer silently rewrites its weight either.",
-      "Estimated harvest dates are calibrated to this garden, and shown as a range. For crops counted from transplant, catalogue days-to-maturity has been consistently too long here \u2014 of 21 plantings tested, not one was picked inside its predicted window, and the typical miss was 25 days early. Those windows now use a measured site factor and are shown as a range rather than a single date, which puts 16 of the same 21 inside the window.",
-      "Ripeness cues on far more plants. 45 varieties now carry a specific note on how to tell when to pick, up from 10 \u2014 concentrated on the ones where the obvious signal is wrong, like varieties whose green shoulders stay green when ripe, or chiles whose familiar name refers to the dried stage.",
-      "Two long-standing data errors fixed. Pumpkins were being treated as summer squash \u2014 wrong harvest habit and, as of this week, the exactly-inverted ripeness cue. Bunching onions were being treated as bulb onions, which are harvested once rather than cut repeatedly.",
-      "Security hardening: every place the app accepted a parent record chosen by the request \u2014 a project, planting, event, location or inventory item \u2014 now verifies it belongs to your household before writing. Nothing you can reach changes."
+      "Logging many plants at once now counts. The “Log all” path saved your events correctly but skipped every reward and tally behind them — no XP, no streak, no achievements, no calibration. That path carried 9,684 of your 11,992 events, so roughly four fifths of everything you have ever logged earned nothing. It now does, counted once per logging action rather than once per plant, and a retry can no longer double-count.",
+      "The daily XP cap goes from 30 to 300. On the record so far the old cap was binding on 89% of active days — logging stopped paying by mid-morning. A typical day now finishes uncapped.",
+      "Harvest weights stop being thrown off by a single weighing. One measured fruit was overriding the reference weight for its whole variety no matter how unrepresentative it was: five Beefsteak tomatoes read 140 g instead of 1,750 g. A measured weight now only overrides the reference once it is corroborated — so the two varieties with several weighings keep theirs, and the fourteen with one do not. Editing an old harvest no longer silently rewrites its weight either.",
+      "Estimated harvest dates are calibrated to this garden, and shown as a range. For crops counted from transplant, catalogue days-to-maturity has been consistently too long here — of 21 plantings tested, not one was picked inside its predicted window, and the typical miss was 25 days early. Those windows now use a measured site factor and are shown as a range rather than a single date, which puts 16 of the same 21 inside the window.",
+      "Ripeness cues on far more plants. 45 varieties now carry a specific note on how to tell when to pick, up from 10 — concentrated on the ones where the obvious signal is wrong, like varieties whose green shoulders stay green when ripe, or chiles whose familiar name refers to the dried stage.",
+      "Two long-standing data errors fixed. Pumpkins were being treated as summer squash — wrong harvest habit and, as of this week, the exactly-inverted ripeness cue. Bunching onions were being treated as bulb onions, which are harvested once rather than cut repeatedly.",
+      "Security hardening: every place the app accepted a parent record chosen by the request — a project, planting, event, location or inventory item — now verifies it belongs to your household before writing. Nothing you can reach changes."
     ]
   },
   {
     "version": "3.96.0",
     "date": "2026-08-04",
     "highlights": [
-      "The \u201cIt sprouted!\u201d button now only appears on plants that could actually be sprouting. It was keyed on a stamp that exists on 5 of 269 plantings, so it showed up on 264 of them \u2014 including plants already fruiting, already harvested, and every one of the 107 bought as nursery transplants. It now appears on 21.",
-      "Finished plants stop asking to be harvested. Wild wineberries that had gone dormant for the season sat at the top of the harvest list, and the three entries below them were no better. Dormant plants are now excluded, and anything overdue by more than three times its own picking interval drops off as well \u2014 measured against 220 real harvests, that removes 4 of them. The list is now led by plants actually in production.",
-      "Ripeness cues on the plant card. 197 of 200 edible plantings now carry a short note on how to tell when to pick, each one taken from a named extension service or seed vendor and linked so you can check it. Where no source could be found, the card says nothing rather than guessing \u2014 and where a cue was inferred rather than stated outright, it says so on screen. Ornamentals and houseplants show nothing at all.",
+      "The “It sprouted!” button now only appears on plants that could actually be sprouting. It was keyed on a stamp that exists on 5 of 269 plantings, so it showed up on 264 of them — including plants already fruiting, already harvested, and every one of the 107 bought as nursery transplants. It now appears on 21.",
+      "Finished plants stop asking to be harvested. Wild wineberries that had gone dormant for the season sat at the top of the harvest list, and the three entries below them were no better. Dormant plants are now excluded, and anything overdue by more than three times its own picking interval drops off as well — measured against 220 real harvests, that removes 4 of them. The list is now led by plants actually in production.",
+      "Ripeness cues on the plant card. 197 of 200 edible plantings now carry a short note on how to tell when to pick, each one taken from a named extension service or seed vendor and linked so you can check it. Where no source could be found, the card says nothing rather than guessing — and where a cue was inferred rather than stated outright, it says so on screen. Ornamentals and houseplants show nothing at all.",
       "The needs-attention bar no longer sits on every screen. It was pinned to the bottom of 49 of the 50 pages, including when there was nothing to report, taking 56 pixels everywhere. It is hidden for now; the Today page is unaffected.",
       "Logging an event starts with the photo. The photo picker moved to the top of the Log Event form, matching how Snap and the Photos page already work. For photo events the field is also now marked as required at the top of the form instead of failing on save.",
-      "Plantings that aren't in a project can be opened and edited. Previously any planting without a project returned \u201cnot found\u201d on its detail page, on edit, on archive and on delete. Switching projects in the Log Event form also now clears a planting picked from the previous one, instead of saving a mismatched pair."
+      "Plantings that aren't in a project can be opened and edited. Previously any planting without a project returned “not found” on its detail page, on edit, on archive and on delete. Switching projects in the Log Event form also now clears a planting picked from the previous one, instead of saving a mismatched pair."
     ]
   },
   {
     "version": "3.95.0",
     "date": "2026-08-04",
     "highlights": [
-      "Estimated harvest dates now count from the right starting point. Seed catalogues quote 'days to maturity' from the transplant date for crops like tomatoes, peppers and brassicas, but the app was counting from the sowing date \u2014 crediting the whole nursery period against the clock and predicting harvest as much as 64 days early. Nine plantings were reading 'maturity window reached' while genuinely a month out. Where a crop counts from transplant but no transplant date was ever recorded, the date is replaced with a tap-to-add prompt in the same spot rather than a wrong date.",
+      "Estimated harvest dates now count from the right starting point. Seed catalogues quote 'days to maturity' from the transplant date for crops like tomatoes, peppers and brassicas, but the app was counting from the sowing date — crediting the whole nursery period against the clock and predicting harvest as much as 64 days early. Nine plantings were reading 'maturity window reached' while genuinely a month out. Where a crop counts from transplant but no transplant date was ever recorded, the date is replaced with a tap-to-add prompt in the same spot rather than a wrong date.",
       "Fall sowing windows close on time. The same counting error left 14 cool-season indoor-start windows showing as still open when their real deadlines had passed weeks earlier, between late June and mid-July. Sowing against those dates would have produced brassicas that never matured before frost.",
-      "Rain now comes from the weather station in the garden, not only the forecast. The daily plan was recording forecast rainfall as though it were measured \u2014 on 3 August it logged 4.63 inches for a day the on-site gauge measured 2.22. Rain that has already fallen is now read from the gauge, and the forecast is used only for the hours still ahead, so each run through the day gets closer to what actually happened. Watering decisions and the 'let it drain' messages are based on real rainfall."
+      "Rain now comes from the weather station in the garden, not only the forecast. The daily plan was recording forecast rainfall as though it were measured — on 3 August it logged 4.63 inches for a day the on-site gauge measured 2.22. Rain that has already fallen is now read from the gauge, and the forecast is used only for the hours still ahead, so each run through the day gets closer to what actually happened. Watering decisions and the 'let it drain' messages are based on real rainfall."
     ]
   },
   {
     "version": "3.94.0",
     "date": "2026-08-03",
     "highlights": [
-      "The daily plan now respects care profiles that forbid schedule-driven watering (dormancy or growth-gated plants like Lithops living stones). Those plants no longer get calendar watering reminders \u2014 watering a summer-dormant Lithops on a schedule is what rotted and killed one. Skipped plants appear loudly in their own 'watering suppressed' list with the reason and the profile's moisture guidance, so a suppressed plant is visibly suppressed rather than silently missing from the plan."
+      "The daily plan now respects care profiles that forbid schedule-driven watering (dormancy or growth-gated plants like Lithops living stones). Those plants no longer get calendar watering reminders — watering a summer-dormant Lithops on a schedule is what rotted and killed one. Skipped plants appear loudly in their own 'watering suppressed' list with the reason and the profile's moisture guidance, so a suppressed plant is visibly suppressed rather than silently missing from the plan."
     ]
   },
   {
     "version": "3.93.1",
     "date": "2026-08-03",
     "highlights": [
-      "Releases go out reliably when two pieces of work are in flight at once. The release process checks a build against the staging site before promoting it, but it was identifying that build by the wrong marker \u2014 so if a second change landed while a release was mid-flight, the check lost track of its own build and halted a release that had actually passed. It now tracks the exact build it asked for. Nothing about the app itself changes."
+      "Releases go out reliably when two pieces of work are in flight at once. The release process checks a build against the staging site before promoting it, but it was identifying that build by the wrong marker — so if a second change landed while a release was mid-flight, the check lost track of its own build and halted a release that had actually passed. It now tracks the exact build it asked for. Nothing about the app itself changes."
     ]
   },
   {
     "version": "3.93.0",
     "date": "2026-08-03",
     "highlights": [
-      "Your scallions can finally tell you they need picking. Bunching onions sat under the same heading as bulb onions, which the app treats as a one-time harvest \u2014 so a scallion could never appear in \u201cReady to pick,\u201d however long it had been. Two of yours were fifty-seven days overdue with no way to say so. They now have their own heading and are back in the rotation.",
-      "Winter squash is no longer treated like a courgette. One \u201cSquash\u201d heading covered both, so the app expected a pick every two days \u2014 right for a zucchini, wrong for a butternut that is cut once and cured for months. Winter squash and pumpkins now have their own heading, which matters because six of the seven squash packets in your seed box are winter types.",
-      "Rat\u2019s Tail radish is grown for its pods, and the app now knows it. It sits under its own heading rather than with the root radishes, so a crop you pick from repeatedly is not modelled as a single pull.",
-      "Naming things by what they are. \u201cSquash\u201d is now \u201cSummer Squash,\u201d so the two headings read clearly side by side."
+      "Your scallions can finally tell you they need picking. Bunching onions sat under the same heading as bulb onions, which the app treats as a one-time harvest — so a scallion could never appear in “Ready to pick,” however long it had been. Two of yours were fifty-seven days overdue with no way to say so. They now have their own heading and are back in the rotation.",
+      "Winter squash is no longer treated like a courgette. One “Squash” heading covered both, so the app expected a pick every two days — right for a zucchini, wrong for a butternut that is cut once and cured for months. Winter squash and pumpkins now have their own heading, which matters because six of the seven squash packets in your seed box are winter types.",
+      "Rat’s Tail radish is grown for its pods, and the app now knows it. It sits under its own heading rather than with the root radishes, so a crop you pick from repeatedly is not modelled as a single pull.",
+      "Naming things by what they are. “Squash” is now “Summer Squash,” so the two headings read clearly side by side."
     ]
   },
   {
     "version": "3.92.0",
     "date": "2026-08-03",
     "highlights": [
-      "Your harvests now have a weight. Every harvest ever logged \u2014 332 of them \u2014 now carries an estimated weight in grams, so a season that was only ever counted in \u201ccups\u201d and \u201ccount\u201d can finally be totalled. The estimates come from seed-catalog fruit sizes and USDA portion weights, covering all 83 crops and 328 varieties in the garden.",
-      "You can log a count and a weight together. Put the bowl on the scale and enter both \u2014 five tomatoes, 337 grams \u2014 on the same harvest. The weight is optional and never gets in the way of a quick count-only entry; the scale unit can be grams, kilograms, pounds or ounces, and the app remembers which one you use.",
+      "Your harvests now have a weight. Every harvest ever logged — 332 of them — now carries an estimated weight in grams, so a season that was only ever counted in “cups” and “count” can finally be totalled. The estimates come from seed-catalog fruit sizes and USDA portion weights, covering all 83 crops and 328 varieties in the garden.",
+      "You can log a count and a weight together. Put the bowl on the scale and enter both — five tomatoes, 337 grams — on the same harvest. The weight is optional and never gets in the way of a quick count-only entry; the scale unit can be grams, kilograms, pounds or ounces, and the app remembers which one you use.",
       "Weighing one pick teaches the app that variety forever. A harvest logged with both a count and a weight becomes a measurement for that variety, and every other harvest of it switches from a catalog guess to your own number. Weigh a few Cherry Falls once and every Cherry Falls harvest, past and future, gets more accurate.",
-      "Real measurements always beat estimates, and the app knows the difference. Each harvest records whether its weight was measured, derived from your samples, or estimated from reference data \u2014 so a guess can never quietly masquerade as a fact. The first eight varieties weighed came in about 25% lighter than the catalogs claimed, which is exactly why this distinction matters.",
-      "Where a number would be a guess, there is no number. For crops where varieties differ enormously \u2014 a cherry tomato against a beefsteak \u2014 the app will not substitute a crop-wide average for a variety it has not learned. It shows nothing rather than something misleading.",
+      "Real measurements always beat estimates, and the app knows the difference. Each harvest records whether its weight was measured, derived from your samples, or estimated from reference data — so a guess can never quietly masquerade as a fact. The first eight varieties weighed came in about 25% lighter than the catalogs claimed, which is exactly why this distinction matters.",
+      "Where a number would be a guess, there is no number. For crops where varieties differ enormously — a cherry tomato against a beefsteak — the app will not substitute a crop-wide average for a variety it has not learned. It shows nothing rather than something misleading.",
       "Every harvest is attached to the planting that produced it. Twelve harvests had been recorded against a project without saying which planting they came from; they have been assigned, and two plantings that were missing a variety now have one."
     ]
   },
@@ -86,62 +95,62 @@
     "version": "3.91.0",
     "date": "2026-08-03",
     "highlights": [
-      "Deleting an entry now takes its details with it. Undoing a harvest used to leave the quantity behind in the record \u2014 invisible on every screen, but still sitting in the garden log. The same went for other detail attached to an entry. Those leftovers are now removed with the entry, and the ones already in the log have been swept up.",
+      "Deleting an entry now takes its details with it. Undoing a harvest used to leave the quantity behind in the record — invisible on every screen, but still sitting in the garden log. The same went for other detail attached to an entry. Those leftovers are now removed with the entry, and the ones already in the log have been swept up.",
       "A picture is never deleted as collateral. If you delete an entry that had a photo attached, the photo stays in the project gallery instead of disappearing with it.",
-      "Every picker now works the same way. Choosing a planting \u2014 in the event form or when tagging a photo \u2014 behaves exactly like choosing a variety: the list opens with no keyboard in your way, and the small keyboard button brings up typing only when you want to search. One pattern, everywhere.",
-      "You can talk to the pickers. A mic button next to the keyboard button lets you say 'Chili Red' or 'Minnesota Mini' instead of typing it \u2014 the match is forgiving, so 'sun ray' still finds Sunray. First use asks for microphone permission, once.",
+      "Every picker now works the same way. Choosing a planting — in the event form or when tagging a photo — behaves exactly like choosing a variety: the list opens with no keyboard in your way, and the small keyboard button brings up typing only when you want to search. One pattern, everywhere.",
+      "You can talk to the pickers. A mic button next to the keyboard button lets you say 'Chili Red' or 'Minnesota Mini' instead of typing it — the match is forgiving, so 'sun ray' still finds Sunray. First use asks for microphone permission, once.",
       "The bottom navigation and Today band step aside while you type. When the keyboard is up on a full page, both hide so the space goes to what you're doing, and they return a moment after the keyboard closes. Pinch-zooming does not trigger it.",
-      "A half-typed log entry can no longer be destroyed by a stray tap. On the full page your draft is kept and restored when you come back, and in the quick-log overlay a tap on the dimmed background no longer discards typed work \u2014 Close and Escape still do.",
-      "Photo captions can be edited after upload, from the photo's tag dialog \u2014 and an edited caption now reaches the plant's evidence record instead of leaving a stale copy behind.",
-      "The watering engine now writes down the rain that actually fell, next to what the forecast promised. That record is what will let rain-aware watering prove itself before it makes decisions \u2014 and it makes a busted forecast visible instead of silent."
+      "A half-typed log entry can no longer be destroyed by a stray tap. On the full page your draft is kept and restored when you come back, and in the quick-log overlay a tap on the dimmed background no longer discards typed work — Close and Escape still do.",
+      "Photo captions can be edited after upload, from the photo's tag dialog — and an edited caption now reaches the plant's evidence record instead of leaving a stale copy behind.",
+      "The watering engine now writes down the rain that actually fell, next to what the forecast promised. That record is what will let rain-aware watering prove itself before it makes decisions — and it makes a busted forecast visible instead of silent."
     ]
   },
   {
     "version": "3.90.0",
     "date": "2026-08-03",
     "highlights": [
-      "The soft keyboard no longer shoves the page around. The app now tells Chrome to shrink the page when the keyboard opens, so buttons anchored to the bottom sit just above it instead of hiding behind it. This retires a workaround that was lifting the Save button roughly 500px up the screen \u2014 straight into the planting list you were trying to tap.",
+      "The soft keyboard no longer shoves the page around. The app now tells Chrome to shrink the page when the keyboard opens, so buttons anchored to the bottom sit just above it instead of hiding behind it. This retires a workaround that was lifting the Save button roughly 500px up the screen — straight into the planting list you were trying to tap.",
       "Two dialogs could put their own buttons out of reach on a short screen. The photo detail dialog could clip its Save button away with no way to scroll to it, and the variety picker could push its search box off the top. Both now scroll.",
       "The planting list knows the bottom nav is there. It sizes itself to the space actually free, in both directions, and shows the room it really has instead of overflowing off-screen.",
       "Tapping the variety picker no longer throws the keyboard up at you. You get the list of choices; a small keyboard button in the field brings up typing when you actually want to search.",
-      "Watering advice now accounts for rain falling today, not just rain that already fell or rain due tomorrow \u2014 and the day's plan refreshes twice during the day instead of being fixed overnight. Before this, a plan built at 2am from a light forecast could still be telling you to water two hundred plants at breakfast while three inches of rain came down."
+      "Watering advice now accounts for rain falling today, not just rain that already fell or rain due tomorrow — and the day's plan refreshes twice during the day instead of being fixed overnight. Before this, a plan built at 2am from a light forecast could still be telling you to water two hundred plants at breakfast while three inches of rain came down."
     ]
   },
   {
     "version": "3.89.0",
     "date": "2026-08-02",
     "highlights": [
-      "Photos now work photo-first. On the Photos page you can take or choose a picture straight away and decide where it belongs afterwards \u2014 the way Log Event already worked. Before, the camera stayed locked until you'd already picked a project or zone, which meant deciding what a photo was before you'd looked at it."
+      "Photos now work photo-first. On the Photos page you can take or choose a picture straight away and decide where it belongs afterwards — the way Log Event already worked. Before, the camera stayed locked until you'd already picked a project or zone, which meant deciding what a photo was before you'd looked at it."
     ]
   },
   {
     "version": "3.88.0",
     "date": "2026-08-02",
     "highlights": [
-      "A photo event can no longer be saved without a photo. If the photo doesn't come along \u2014 or you picked the Photo event type and hadn't attached one yet \u2014 the form now says so and waits, instead of quietly saving an empty entry you'd never find again."
+      "A photo event can no longer be saved without a photo. If the photo doesn't come along — or you picked the Photo event type and hadn't attached one yet — the form now says so and waits, instead of quietly saving an empty entry you'd never find again."
     ]
   },
   {
     "version": "3.87.0",
     "date": "2026-08-02",
     "highlights": [
-      "Choosing a planting is no longer a trap. While the planting list is open, the Save button steps out of the way \u2014 before, it sat on top of the list and could swallow a tap meant for a result, saving your event without the planting you were picking.",
+      "Choosing a planting is no longer a trap. While the planting list is open, the Save button steps out of the way — before, it sat on top of the list and could swallow a tap meant for a result, saving your event without the planting you were picking.",
       "You can see more of the planting list. It now measures the room it actually has and opens upward when there isn't enough below, instead of always dropping down to a fixed height and getting cut off by the keyboard.",
-      "Planting names read cleaner. A planting named after its variety now shows once instead of twice ('Lemon Thyme' rather than 'Lemon Thyme \u2014 Lemon Thyme'), the project name is hidden when every result is from the same project, and long names now trim with an ellipsis instead of wrapping and shifting the rows below them."
+      "Planting names read cleaner. A planting named after its variety now shows once instead of twice ('Lemon Thyme' rather than 'Lemon Thyme — Lemon Thyme'), the project name is hidden when every result is from the same project, and long names now trim with an ellipsis instead of wrapping and shifting the rows below them."
     ]
   },
   {
     "version": "3.86.0",
     "date": "2026-08-02",
     "highlights": [
-      "Harvest Quality is now hidden. The 1-5 quality rating no longer appears when you log a harvest, or on the Harvests list. Nothing you already rated was deleted \u2014 the ratings are still stored, just out of the way."
+      "Harvest Quality is now hidden. The 1-5 quality rating no longer appears when you log a harvest, or on the Harvests list. Nothing you already rated was deleted — the ratings are still stored, just out of the way."
     ]
   },
   {
     "version": "3.85.0",
     "date": "2026-08-02",
     "highlights": [
-      "You can now correct a harvest after logging it. Open the harvest, tap Edit, and change the amount or the unit \u2014 previously the amount was locked in the moment you saved it, and a typo stayed wrong in your harvest totals forever.",
+      "You can now correct a harvest after logging it. Open the harvest, tap Edit, and change the amount or the unit — previously the amount was locked in the moment you saved it, and a typo stayed wrong in your harvest totals forever.",
       "Editing an event now works at all. The Edit form has always been there, but Save was quietly failing for every kind of event."
     ]
   },
@@ -149,10 +158,10 @@
     "version": "3.84.0",
     "date": "2026-08-02",
     "highlights": [
-      "Your property now has its own page. Open it from More \u2192 Space to see the whole place at a glance, with a feature photo you pick and a gallery of the wide shots that show it as it is.",
-      "Photos you already took can be added to it \u2014 tap \"Add existing photos\", pick as many as you like at once, and they move over together instead of one at a time.",
+      "Your property now has its own page. Open it from More → Space to see the whole place at a glance, with a feature photo you pick and a gallery of the wide shots that show it as it is.",
+      "Photos you already took can be added to it — tap \"Add existing photos\", pick as many as you like at once, and they move over together instead of one at a time.",
       "The six areas of the garden are now called Zones everywhere, so \"Space\" means the property and nothing else. Same places, clearer names.",
-      "Fixed: a photo filed only against a plant could not be edited at all \u2014 opening it and changing the caption was refused. It saves now.",
+      "Fixed: a photo filed only against a plant could not be edited at all — opening it and changing the caption was refused. It saves now.",
       "Signing in now takes you straight to Today instead of the Dashboard."
     ]
   },
@@ -160,21 +169,21 @@
     "version": "3.83.0",
     "date": "2026-08-02",
     "highlights": [
-      "Groundwork only \u2014 nothing changes on screen in this release. Photos of the whole property can now be attached to it after the fact, instead of only at the moment you take them, which is what the Space page will need when it is switched on."
+      "Groundwork only — nothing changes on screen in this release. Photos of the whole property can now be attached to it after the fact, instead of only at the moment you take them, which is what the Space page will need when it is switched on."
     ]
   },
   {
     "version": "3.82.1",
     "date": "2026-07-31",
     "highlights": [
-      "Pop-up confirmation messages and the update banner no longer float in mid-air above the bottom of the sign-in screen \u2014 they only leave room for the navigation bar on screens that actually have one"
+      "Pop-up confirmation messages and the update banner no longer float in mid-air above the bottom of the sign-in screen — they only leave room for the navigation bar on screens that actually have one"
     ]
   },
   {
     "version": "3.82.0",
     "date": "2026-07-31",
     "highlights": [
-      "Today now tells you when its care list was worked out \u2014 the plan is put together overnight, so a 6pm watering suggestion was decided from last night's weather, and the screen now says so instead of letting the live weather stamp above it speak for the whole page",
+      "Today now tells you when its care list was worked out — the plan is put together overnight, so a 6pm watering suggestion was decided from last night's weather, and the screen now says so instead of letting the live weather stamp above it speak for the whole page",
       "Toast messages no longer sit on top of the bottom navigation bar, and longer messages wrap instead of running off the side of the screen"
     ]
   },
@@ -182,30 +191,30 @@
     "version": "3.81.1",
     "date": "2026-07-31",
     "highlights": [
-      "Watering advice now follows each planting's OWN location instead of its project's \u2014 seed trays on Shelf 4 and cuttings in the Stable are no longer told to skip watering because it rained outside, and plants actually out on the Drive or in the Bag Area are now correctly held back after a soak",
-      "Your photos stay fresh when you come back to the app \u2014 photo lists warm up at sign-in and quietly refresh when you return after a while, so pictures load instantly instead of briefly appearing blank"
+      "Watering advice now follows each planting's OWN location instead of its project's — seed trays on Shelf 4 and cuttings in the Stable are no longer told to skip watering because it rained outside, and plants actually out on the Drive or in the Bag Area are now correctly held back after a soak",
+      "Your photos stay fresh when you come back to the app — photo lists warm up at sign-in and quietly refresh when you return after a while, so pictures load instantly instead of briefly appearing blank"
     ]
   },
   {
     "version": "3.80.0",
     "date": "2026-07-31",
     "highlights": [
-      "Revisiting your photos is faster \u2014 the Garden photo wall, a planting's photos, and a location's photos now appear instantly from memory when you tab back to them and refresh quietly in the background, instead of fully reloading every time"
+      "Revisiting your photos is faster — the Garden photo wall, a planting's photos, and a location's photos now appear instantly from memory when you tab back to them and refresh quietly in the background, instead of fully reloading every time"
     ]
   },
   {
     "version": "3.79.0",
     "date": "2026-07-31",
     "highlights": [
-      "Photos across the whole app now heal themselves \u2014 the photo wall, plant and project thumbnails, the growth-compare and full-screen photo viewers, and put-up photos all quietly re-load a fresh image instead of occasionally showing a blank box after the app has been open a while"
+      "Photos across the whole app now heal themselves — the photo wall, plant and project thumbnails, the growth-compare and full-screen photo viewers, and put-up photos all quietly re-load a fresh image instead of occasionally showing a blank box after the app has been open a while"
     ]
   },
   {
     "version": "3.78.0",
     "date": "2026-07-31",
     "highlights": [
-      "Watering advice now recognizes a saturated garden: after a heavy multi-day soak it says \"skip \u2014 let it drain\" instead of recommending water, so your fabric grow-bags aren't over-watered while they're still soaked",
-      "Planting photos heal themselves \u2014 the main photo on a planting now re-loads automatically instead of occasionally showing a blank box after the app has been open a while"
+      "Watering advice now recognizes a saturated garden: after a heavy multi-day soak it says \"skip — let it drain\" instead of recommending water, so your fabric grow-bags aren't over-watered while they're still soaked",
+      "Planting photos heal themselves — the main photo on a planting now re-loads automatically instead of occasionally showing a blank box after the app has been open a while"
     ]
   },
   {
@@ -213,16 +222,16 @@
     "date": "2026-07-30",
     "highlights": [
       "Behind the scenes: put-up (preservation) records now carry tighter household ownership safeguards, so shared-garden data stays correctly scoped",
-      "Groundwork landed for upcoming per-variety harvest weights and a streamlined garden view \u2014 staged now, switching on in a later update"
+      "Groundwork landed for upcoming per-variety harvest weights and a streamlined garden view — staged now, switching on in a later update"
     ]
   },
   {
     "version": "3.76.0",
     "date": "2026-07-30",
     "highlights": [
-      "Choosing a planting is now the same quick, searchable picker everywhere you log \u2014 adding an event, uploading a photo, putting up a harvest, or a quick capture",
+      "Choosing a planting is now the same quick, searchable picker everywhere you log — adding an event, uploading a photo, putting up a harvest, or a quick capture",
       "One tap to mark a seed sprouted: the new \"It sprouted!\" action on a planting stamps the germination date for you (recorded once)",
-      "Harvests now capture an estimated weight in grams when possible \u2014 measured directly when you log in grams, kg, lb or oz, and estimated from a per-crop weight you set \u2014 so yields can be compared over time",
+      "Harvests now capture an estimated weight in grams when possible — measured directly when you log in grams, kg, lb or oz, and estimated from a per-crop weight you set — so yields can be compared over time",
       "Behind the scenes: broader ownership safeguards across tags, locations, events, and members keep shared-garden data correctly scoped"
     ]
   },
@@ -231,8 +240,8 @@
     "date": "2026-07-29",
     "highlights": [
       "Space photos are now findable: every space page has its own photo gallery, the Photo Library can filter by space (including its sub-spaces), and Spaces has a proper entry in the More menu",
-      "Photos can be uploaded to a space on its own \u2014 a project is no longer required, any one home (project, space, or planting) will do",
-      "Every planting and event now has a direct link that works even without a project \u2014 old project-style links keep working and simply forward",
+      "Photos can be uploaded to a space on its own — a project is no longer required, any one home (project, space, or planting) will do",
+      "Every planting and event now has a direct link that works even without a project — old project-style links keep working and simply forward",
       "Behind the scenes: tag endpoints got tighter household protections, and the weekly data-health check corrected a rule that misread event-attached photos"
     ]
   },
@@ -240,7 +249,7 @@
     "version": "3.74.0",
     "date": "2026-07-28",
     "highlights": [
-      "Logging now remembers the exact planting you used last time \u2014 not just the project \u2014 and the picker starts from a clear 'Choose a planting' instead of quietly filing your log at the project level",
+      "Logging now remembers the exact planting you used last time — not just the project — and the picker starts from a clear 'Choose a planting' instead of quietly filing your log at the project level",
       "The save confirmation now names exactly where your log went, and says so plainly when a log is not attached to any planting",
       "Behind the scenes: a weekly data-health check now watches for orphaned records and photo hiccups, and several photo endpoints got tighter household protections"
     ]
@@ -249,15 +258,15 @@
     "version": "3.73.0",
     "date": "2026-07-28",
     "highlights": [
-      "Photo saves now have a backup route \u2014 if the direct upload can't get through, the app automatically sends the photo through the garden server instead, so saves keep working even when the network is having a bad day",
-      "The long frozen screen at app open is fixed \u2014 the app now falls back to its saved copy after 4 seconds instead of staring at a dead connection for 12, and picks up fresh data as soon as the network answers"
+      "Photo saves now have a backup route — if the direct upload can't get through, the app automatically sends the photo through the garden server instead, so saves keep working even when the network is having a bad day",
+      "The long frozen screen at app open is fixed — the app now falls back to its saved copy after 4 seconds instead of staring at a dead connection for 12, and picks up fresh data as soon as the network answers"
     ]
   },
   {
     "version": "3.72.0",
     "date": "2026-07-28",
     "highlights": [
-      "Logging an event with a photo now shows real progress on the Save button \u2014 Preparing, then Uploading with a live percentage, then Saving",
+      "Logging an event with a photo now shows real progress on the Save button — Preparing, then Uploading with a live percentage, then Saving",
       "If a photo fails to upload during an event save, the app now says so clearly instead of silently dropping it"
     ]
   },
@@ -265,7 +274,7 @@
     "version": "3.71.0",
     "date": "2026-07-27",
     "highlights": [
-      "Photo saves can no longer get stuck forever \u2014 if the connection stalls mid-upload, you now get a clear error and can simply try again",
+      "Photo saves can no longer get stuck forever — if the connection stalls mid-upload, you now get a clear error and can simply try again",
       "The save button now shows what it's doing: Preparing, then Uploading with a live percentage, then Saving"
     ]
   },
@@ -273,8 +282,8 @@
     "version": "3.70.0",
     "date": "2026-07-27",
     "highlights": [
-      "The app now tells you when a new version is ready \u2014 a banner with a Refresh button appears instead of silently keeping you on an old version (this is why the app kept showing v3.66)",
-      "Release Notes no longer sits on Loading forever on a weak connection \u2014 it stops after 10 seconds and offers Try again",
+      "The app now tells you when a new version is ready — a banner with a Refresh button appears instead of silently keeping you on an old version (this is why the app kept showing v3.66)",
+      "Release Notes no longer sits on Loading forever on a weak connection — it stops after 10 seconds and offers Try again",
       "The About page now shows the service worker version next to the app version, so a stuck update is visible at a glance"
     ]
   },
@@ -282,7 +291,7 @@
     "version": "3.69.0",
     "date": "2026-07-27",
     "highlights": [
-      "Photos now load everywhere \u2014 the featured photo and planting photos were never being requested at all",
+      "Photos now load everywhere — the featured photo and planting photos were never being requested at all",
       "The Garden tab loads a screenful at a time instead of trying to load every planting's photo at once",
       "New photo uploads now get a thumbnail, so they load as fast as older ones"
     ]
@@ -291,7 +300,7 @@
     "version": "3.68.0",
     "date": "2026-07-27",
     "highlights": [
-      "Fixed the Photos tab sitting blank and then filling all at once. The photos were never actually being requested \u2014 the browser's built-in lazy loading was silently not firing on that grid, so nothing downloaded until something else forced it",
+      "Fixed the Photos tab sitting blank and then filling all at once. The photos were never actually being requested — the browser's built-in lazy loading was silently not firing on that grid, so nothing downloaded until something else forced it",
       "Photos now load a screenful at a time as you scroll, with a Show more button"
     ]
   },
@@ -307,7 +316,7 @@
     "version": "3.66.0",
     "date": "2026-07-27",
     "highlights": [
-      "Photos are now shrunk on your device before they upload, so saving a photo no longer stalls on a phone connection \u2014 a typical camera photo goes from several megabytes to a few hundred kilobytes",
+      "Photos are now shrunk on your device before they upload, so saving a photo no longer stalls on a phone connection — a typical camera photo goes from several megabytes to a few hundred kilobytes",
       "The Photos tab loads fewer photos at a time so the grid can actually finish loading while a proper thumbnail size is built"
     ]
   },
@@ -329,7 +338,7 @@
     "version": "3.65.0",
     "date": "2026-07-26",
     "highlights": [
-      "Sow Now no longer tells you to direct-sow biennials and perennials \"through Sep 28\" \u2014 hollyhock, honesty and blackberry lily now close Aug 24 and are labelled as flowering next year",
+      "Sow Now no longer tells you to direct-sow biennials and perennials \"through Sep 28\" — hollyhock, honesty and blackberry lily now close Aug 24 and are labelled as flowering next year",
       "Seeds with no days-to-maturity recorded now say \"Add days to maturity to place this\" instead of showing an invented sowing date"
     ]
   },
@@ -337,7 +346,7 @@
     "version": "3.64.1",
     "date": "2026-07-26",
     "highlights": [
-      "Put-Up now accepts bulk units \u2014 bushels, half-bushels, pecks and flats \u2014 so a farm-stand box can be logged as bought rather than guess-converted to pounds",
+      "Put-Up now accepts bulk units — bushels, half-bushels, pecks and flats — so a farm-stand box can be logged as bought rather than guess-converted to pounds",
       "Thirteen fruits added to the crop list (apple, pear, plum, cherry, tart cherry, apricot, nectarine, cranberry, grape, raspberry, blackberry, elderberry, rhubarb) so bought and foraged produce can be named"
     ]
   },
@@ -345,8 +354,8 @@
     "version": "3.64.0",
     "date": "2026-07-26",
     "highlights": [
-      "Put-Up now records where produce came from \u2014 log bought or gifted food (farm stand, u-pick, CSA, store, gift, foraged) without tying it to a planting you never grew",
-      "Name the place it came from \u2014 \"Warner Farms\", \"Clarkdale Fruit Farm\" \u2014 and see it on your stores list",
+      "Put-Up now records where produce came from — log bought or gifted food (farm stand, u-pick, CSA, store, gift, foraged) without tying it to a planting you never grew",
+      "Name the place it came from — \"Warner Farms\", \"Clarkdale Fruit Farm\" — and see it on your stores list",
       "New \"Bought already preserved\" method for things like store-bought frozen fruit, which no longer have to be logged as \"Other\""
     ]
   },
@@ -354,7 +363,7 @@
     "version": "3.63.0",
     "date": "2026-07-26",
     "highlights": [
-      "Sow Now no longer suggests bulb onions or shallots outside their spring planting window \u2014 they wait under Hold with a note explaining why, and a Sow anyway option if you disagree",
+      "Sow Now no longer suggests bulb onions or shallots outside their spring planting window — they wait under Hold with a note explaining why, and a Sow anyway option if you disagree",
       "New \"For next year\" section for seeds you sow this summer that flower the following spring"
     ]
   },
@@ -405,7 +414,7 @@
     "version": "3.60.0",
     "date": "2026-07-23",
     "highlights": [
-      "New Harvests page \u2014 everything your garden has given you, grouped by day, with per-crop season totals",
+      "New Harvests page — everything your garden has given you, grouped by day, with per-crop season totals",
       "Filter your harvest log by crop or project, and tap any total to jump to those entries",
       "After you log a harvest, the confirmation shows your running season total for that crop"
     ]
@@ -421,15 +430,15 @@
     "version": "3.58.1",
     "date": "2026-07-22",
     "highlights": [
-      "The save confirmation now includes a View planting shortcut \u2014 jump straight to the planting you just logged"
+      "The save confirmation now includes a View planting shortcut — jump straight to the planting you just logged"
     ]
   },
   {
     "version": "3.58.0",
     "date": "2026-07-22",
     "highlights": [
-      "Saving an event now shows a lasting confirmation with Close, View event, Undo, and Log another \u2014 no more disappearing banner",
-      "Overnight care-plan generation is now reliable \u2014 it had been silently retrying every night",
+      "Saving an event now shows a lasting confirmation with Close, View event, Undo, and Log another — no more disappearing banner",
+      "Overnight care-plan generation is now reliable — it had been silently retrying every night",
       "Behind the scenes: photo upload security hardening"
     ]
   },
@@ -445,14 +454,14 @@
     "date": "2026-07-21",
     "highlights": [
       "Each planting now shows the stretch you've been picking over, not just the last pick",
-      "A planting whose only harvest was logged as a first harvest now counts toward what's ready to pick \u2014 before, it was invisible"
+      "A planting whose only harvest was logged as a first harvest now counts toward what's ready to pick — before, it was invisible"
     ]
   },
   {
     "version": "3.56.0",
     "date": "2026-07-21",
     "highlights": [
-      "See how much you've picked from each planting \u2014 recent totals and the running total for this year",
+      "See how much you've picked from each planting — recent totals and the running total for this year",
       "Today now shows what's ready to pick again, based on how often each crop actually needs picking",
       "Knows the difference between crops you pick over and over and crops you harvest once, so finished plantings stop asking",
       "Won't nudge you to cut asparagus outside its window, when cutting would set the plant back"
@@ -462,7 +471,7 @@
     "version": "3.55.0",
     "date": "2026-07-21",
     "highlights": [
-      "Add a new crop type right when you add a planting \u2014 no more plants stuck as 'no crop type'",
+      "Add a new crop type right when you add a planting — no more plants stuck as 'no crop type'",
       "Backfilled every untyped variety, so nothing is hidden from the type-grouped views",
       "Photo intake groundwork: tagging a bulk photo now clears it from the inbox and can set the plant's featured photo",
       "Re-uploading the same photo is recognised as a duplicate instead of erroring"
@@ -472,28 +481,28 @@
     "version": "3.54.0",
     "date": "2026-07-21",
     "highlights": [
-      "Put-Up now ties to a specific planting \u2014 pick the wave a put-up came from, see it on the planting page, and attach a photo."
+      "Put-Up now ties to a specific planting — pick the wave a put-up came from, see it on the planting page, and attach a photo."
     ]
   },
   {
     "version": "3.53.2",
     "date": "2026-07-21",
     "highlights": [
-      "Put-Up now asks which variety right next to the crop \u2014 choose Peppers and you'll see your pepper varieties, so you can record that it was Jalape\u00f1os rather than just 'peppers'. The variety list also no longer stops partway through: it's scoped to the crop you picked, and if there are still more than fit it tells you instead of quietly cutting off."
+      "Put-Up now asks which variety right next to the crop — choose Peppers and you'll see your pepper varieties, so you can record that it was Jalapeños rather than just 'peppers'. The variety list also no longer stops partway through: it's scoped to the crop you picked, and if there are still more than fit it tells you instead of quietly cutting off."
     ]
   },
   {
     "version": "3.53.1",
     "date": "2026-07-21",
     "highlights": [
-      "Put-Up is now connected and ready to use \u2014 find it under More, with a gentle 'from your stores' note on Today when something's worth using soon."
+      "Put-Up is now connected and ready to use — find it under More, with a gentle 'from your stores' note on Today when something's worth using soon."
     ]
   },
   {
     "version": "3.53.0",
     "date": "2026-07-20",
     "highlights": [
-      "New Put-Up space for what you preserve after harvest: log what you froze, canned, dried, or cured, how much and where it's stored, and it fills in a rough use-by for you. Find it under More. A gentle 'from your stores' note appears on Today when something's worth using soon \u2014 and right after you log a harvest, it offers to start a put-up with the details carried over."
+      "New Put-Up space for what you preserve after harvest: log what you froze, canned, dried, or cured, how much and where it's stored, and it fills in a rough use-by for you. Find it under More. A gentle 'from your stores' note appears on Today when something's worth using soon — and right after you log a harvest, it offers to start a put-up with the details carried over."
     ]
   },
   {
@@ -507,39 +516,39 @@
     "version": "3.51.0",
     "date": "2026-07-20",
     "highlights": [
-      "Search now opens as a panel over whatever page you're on, instead of jumping you to a separate screen. Open it, find what you're after, and close it \u2014 you land back exactly where you were, on the same tab, with nothing lost. Tapping a result still opens it in full."
+      "Search now opens as a panel over whatever page you're on, instead of jumping you to a separate screen. Open it, find what you're after, and close it — you land back exactly where you were, on the same tab, with nothing lost. Tapping a result still opens it in full."
     ]
   },
   {
     "version": "3.50.0",
     "date": "2026-07-16",
     "highlights": [
-      "Log many now lists your plantings in alphabetical order. It had no set order at all \u2014 the list came back in whatever order the database happened to hand over, so the same scope could look different each time you opened it. It now sorts by name, the same way the single-event form already did.",
-      "Sow from seed is now one tap away. It sits in the + menu under \"Add a planting\" \u2014 previously the only way to reach it was through More, then Inventory, or by typing the address by hand.",
+      "Log many now lists your plantings in alphabetical order. It had no set order at all — the list came back in whatever order the database happened to hand over, so the same scope could look different each time you opened it. It now sorts by name, the same way the single-event form already did.",
+      "Sow from seed is now one tap away. It sits in the + menu under \"Add a planting\" — previously the only way to reach it was through More, then Inventory, or by typing the address by hand.",
       "The watering panel on Today is simpler. The \"Why?\" drop-down under Containers and In-ground beds is gone; it said close to the same thing every day. The advice itself is unchanged, and Doctor Gardener still explains the reasoning when you want it.",
-      "The watering advice now reads properly on a screen reader. Each lane announces what it recommends and how much \u2014 \"Containers: water, 2 of 3 cans\" \u2014 which it never did before, even when the panel was there."
+      "The watering advice now reads properly on a screen reader. Each lane announces what it recommends and how much — \"Containers: water, 2 of 3 cans\" — which it never did before, even when the panel was there."
     ]
   },
   {
     "version": "3.49.0",
     "date": "2026-07-16",
     "highlights": [
-      "Watering advice now fits the plant. Eleven plantings \u2014 hens & chicks, coleus, wishbone flower, petunias, foxglove, okra, cup-and-saucer vine, black-eyed Susan vine and licorice plant \u2014 were all falling back to the same generic every-3-days reminder. Hens & chicks were being asked for water about five times too often, which is the quickest way to rot them; coleus, wishbone flower and Wave petunias weren't being asked often enough for plants that can wilt in a single hot day. Each of them now gets advice matched to what it actually needs.",
-      "Frost-tender plants now speak up on a cold night. Coleus, wishbone flower, okra, cup-and-saucer vine, black-eyed Susan vine, licorice plant and petunias will tell you to bring them in when the overnight low gets near their limit \u2014 previously they said nothing."
+      "Watering advice now fits the plant. Eleven plantings — hens & chicks, coleus, wishbone flower, petunias, foxglove, okra, cup-and-saucer vine, black-eyed Susan vine and licorice plant — were all falling back to the same generic every-3-days reminder. Hens & chicks were being asked for water about five times too often, which is the quickest way to rot them; coleus, wishbone flower and Wave petunias weren't being asked often enough for plants that can wilt in a single hot day. Each of them now gets advice matched to what it actually needs.",
+      "Frost-tender plants now speak up on a cold night. Coleus, wishbone flower, okra, cup-and-saucer vine, black-eyed Susan vine, licorice plant and petunias will tell you to bring them in when the overnight low gets near their limit — previously they said nothing."
     ]
   },
   {
     "version": "3.48.0",
     "date": "2026-07-15",
     "highlights": [
-      "Sowing from a seed packet now carries the packet's source onto the new planting \u2014 the seed vendor fills the Source field, and where/when you got it (the haul + purchase date) is noted automatically."
+      "Sowing from a seed packet now carries the packet's source onto the new planting — the seed vendor fills the Source field, and where/when you got it (the haul + purchase date) is noted automatically."
     ]
   },
   {
     "version": "3.47.0",
     "date": "2026-07-15",
     "highlights": [
-      "Sow from seed now creates a real, findable planting \u2014 tapping Sow opens the full new-planting form so you choose where it goes (project + location) and set its details. No more plantings that seem to vanish after sowing.",
+      "Sow from seed now creates a real, findable planting — tapping Sow opens the full new-planting form so you choose where it goes (project + location) and set its details. No more plantings that seem to vanish after sowing.",
       "Fixed a bug where typing in a pop-up form (like Quantity) bounced your cursor back to the first field after every keystroke."
     ]
   },
@@ -547,10 +556,10 @@
     "version": "3.46.0",
     "date": "2026-07-14",
     "highlights": [
-      "Treatment logging: when you log a Pest treatment or a Doctored/Treated event, a new \u201cTreatment details\u201d section now appears right under the event type \u2014 type any pest or disease (with suggestions, no more being stuck on a fixed list), pick the product you used from your inventory (or type your own), and note the amount.",
-      "Fertilizer and amendment are now separate kinds in Inventory, so feeding and soil amendments don\u2019t get lumped together.",
-      "Doctor Gardener findings now have a \u201cTreated\u2026\u201d link that opens the treatment form already filled in for that plant and marks the finding resolved when you save.",
-      "By-space bulk logging now follows a planting\u2019s own location \u2014 a planting you\u2019ve moved to a sub-spot (like a Trough) is included when you log by that space, instead of only matching its project\u2019s location.",
+      "Treatment logging: when you log a Pest treatment or a Doctored/Treated event, a new “Treatment details” section now appears right under the event type — type any pest or disease (with suggestions, no more being stuck on a fixed list), pick the product you used from your inventory (or type your own), and note the amount.",
+      "Fertilizer and amendment are now separate kinds in Inventory, so feeding and soil amendments don’t get lumped together.",
+      "Doctor Gardener findings now have a “Treated…” link that opens the treatment form already filled in for that plant and marks the finding resolved when you save.",
+      "By-space bulk logging now follows a planting’s own location — a planting you’ve moved to a sub-spot (like a Trough) is included when you log by that space, instead of only matching its project’s location.",
       "Fixed earned-critter badges spilling off a plant card onto the group heading."
     ]
   },
@@ -565,77 +574,77 @@
     "version": "3.44.0",
     "date": "2026-07-12",
     "highlights": [
-      "Logging is faster. On the Today tab, \u201cLog all watering\u201d and \u201cLog all care\u201d now log in a single tap (with undo) instead of a tap-then-confirm. You can still pick a subset with the \u201c\u22ef\u201d control.",
-      "The log forms remember your last choices \u2014 Log One keeps your last project, and Log Many keeps your last event type \u2014 so a repeat entry is a couple of taps instead of re-selecting every time.",
-      "Set a photo as a planting\u2019s featured image in one tap, right from the photo viewer.",
-      "Smarter watering guidance for 15 plants that were stuck on a generic 3-day schedule: succulents, jade, and houseplants stretched to 1\u20132 weeks (no more over-watering), and tomatoes, peppers, nasturtiums, mums, hosta, sages and thyme put on sensible cadences."
+      "Logging is faster. On the Today tab, “Log all watering” and “Log all care” now log in a single tap (with undo) instead of a tap-then-confirm. You can still pick a subset with the “⋯” control.",
+      "The log forms remember your last choices — Log One keeps your last project, and Log Many keeps your last event type — so a repeat entry is a couple of taps instead of re-selecting every time.",
+      "Set a photo as a planting’s featured image in one tap, right from the photo viewer.",
+      "Smarter watering guidance for 15 plants that were stuck on a generic 3-day schedule: succulents, jade, and houseplants stretched to 1–2 weeks (no more over-watering), and tomatoes, peppers, nasturtiums, mums, hosta, sages and thyme put on sensible cadences."
     ]
   },
   {
     "version": "3.43.0",
     "date": "2026-07-10",
     "highlights": [
-      "Your seed packets are now in the app! All 104 packets \u2014 the Botanical Interests order plus the packets from your photos \u2014 live in Inventory under Seeds, each linked to its variety with sowing details (start method, timing, depth, spacing, germination days).",
-      "New \u201cSow now\u201d page (Inventory \u2192 Sow now): every packet you own, sorted into what to start indoors now, what to direct-sow now, windows about to close, and what to hold for later \u2014 tuned to the valley\u2019s May 20 / late-Sept frost dates. One tap on \u201cSow\u201d creates the planting, linked back to the packet it came from.",
-      "New \u201cAdd seeds\u201d flow (Inventory \u2192 Add seeds): snap a photo of packets or paste a vendor order confirmation, review the extracted packets with automatic variety matching, and add them all at once. (The photo/paste extractor needs a one-time key setup \u2014 until then it politely says so, and single-item add still works.)"
+      "Your seed packets are now in the app! All 104 packets — the Botanical Interests order plus the packets from your photos — live in Inventory under Seeds, each linked to its variety with sowing details (start method, timing, depth, spacing, germination days).",
+      "New “Sow now” page (Inventory → Sow now): every packet you own, sorted into what to start indoors now, what to direct-sow now, windows about to close, and what to hold for later — tuned to the valley’s May 20 / late-Sept frost dates. One tap on “Sow” creates the planting, linked back to the packet it came from.",
+      "New “Add seeds” flow (Inventory → Add seeds): snap a photo of packets or paste a vendor order confirmation, review the extracted packets with automatic variety matching, and add them all at once. (The photo/paste extractor needs a one-time key setup — until then it politely says so, and single-item add still works.)"
     ]
   },
   {
     "version": "3.42.0",
     "date": "2026-07-09",
     "highlights": [
-      "The Garden tab now uses clean, consistent icons throughout \u2014 the Snap, Log many, and Favorites buttons, the location and project markers, and the empty-garden art all match the rest of the app instead of a mix of emoji.",
-      "Each planting card now has one tidy \u201cAdd photo\u201d button (a camera icon) instead of two. Tap it and your phone lets you take a new photo or pick one from your library \u2014 the same choice as before, less clutter."
+      "The Garden tab now uses clean, consistent icons throughout — the Snap, Log many, and Favorites buttons, the location and project markers, and the empty-garden art all match the rest of the app instead of a mix of emoji.",
+      "Each planting card now has one tidy “Add photo” button (a camera icon) instead of two. Tap it and your phone lets you take a new photo or pick one from your library — the same choice as before, less clutter."
     ]
   },
   {
     "version": "3.41.0",
     "date": "2026-07-09",
     "highlights": [
-      "The Garden\u2019s \u201cby type\u201d view no longer hides plantings. When you filter to a caretaker (e.g. \u201cMine\u201d), plantings that aren\u2019t assigned to anyone now stay visible instead of disappearing, and a small banner shows the filter is on with a one-tap \u201cShow all\u201d.",
-      "Plantings that aren\u2019t in a project yet now appear too \u2014 grouped under their type, and gathered in a new \u201cNo project\u201d section in the by-project view \u2014 instead of being invisible in the Garden."
+      "The Garden’s “by type” view no longer hides plantings. When you filter to a caretaker (e.g. “Mine”), plantings that aren’t assigned to anyone now stay visible instead of disappearing, and a small banner shows the filter is on with a one-tap “Show all”.",
+      "Plantings that aren’t in a project yet now appear too — grouped under their type, and gathered in a new “No project” section in the by-project view — instead of being invisible in the Garden."
     ]
   },
   {
     "version": "3.40.0",
     "date": "2026-07-09",
     "highlights": [
-      "Photos you\u2019ve attached to a plant now always appear in that plant\u2019s own photo gallery \u2014 even when the photo was filed under a different group. Previously a handful of attached photos were hidden from the plant\u2019s page."
+      "Photos you’ve attached to a plant now always appear in that plant’s own photo gallery — even when the photo was filed under a different group. Previously a handful of attached photos were hidden from the plant’s page."
     ]
   },
   {
     "version": "3.39.0",
     "date": "2026-07-09",
     "highlights": [
-      "On a plant\u2019s page you can now move to the next or previous plant in the same list you opened it from \u2014 swipe left or right on your phone, or use the \u2039 \u203a arrows \u2014 with a \u201c3 of 12\u201d marker so you always know where you are. Back still returns you to the list you came from.",
-      "There\u2019s now just one favorite heart on a plant\u2019s page (a duplicate heart was removed).",
-      "The caretaker picker has moved into its own \u201cCaretaker\u201d section below the plant\u2019s event log, where it\u2019s easier to find."
+      "On a plant’s page you can now move to the next or previous plant in the same list you opened it from — swipe left or right on your phone, or use the ‹ › arrows — with a “3 of 12” marker so you always know where you are. Back still returns you to the list you came from.",
+      "There’s now just one favorite heart on a plant’s page (a duplicate heart was removed).",
+      "The caretaker picker has moved into its own “Caretaker” section below the plant’s event log, where it’s easier to find."
     ]
   },
   {
     "version": "3.38.0",
     "date": "2026-07-08",
     "highlights": [
-      "The Critter collection\u2019s Sort control has a new \u201cBy type\u201d option \u2014 it groups your critters by kind (birds, mammals, insects, amphibians, reptiles, and so on) so you can browse a family at a time."
+      "The Critter collection’s Sort control has a new “By type” option — it groups your critters by kind (birds, mammals, insects, amphibians, reptiles, and so on) so you can browse a family at a time."
     ]
   },
   {
     "version": "3.37.0",
     "date": "2026-07-08",
     "highlights": [
-      "On a plant\u2019s page you can now change its status right on the photo \u2014 just tap the status label. The extra status control below the buttons is gone, so there\u2019s one clear place to do it.",
-      "A plant\u2019s type (Pepper, Tomato, and so on) now shows on its photo, up top, so you can tell what a plant is at a glance.",
-      "The Critter collection has a new Sort control \u2014 view your critters in dex order, A\u2013Z, or by most recently seen."
+      "On a plant’s page you can now change its status right on the photo — just tap the status label. The extra status control below the buttons is gone, so there’s one clear place to do it.",
+      "A plant’s type (Pepper, Tomato, and so on) now shows on its photo, up top, so you can tell what a plant is at a glance.",
+      "The Critter collection has a new Sort control — view your critters in dex order, A–Z, or by most recently seen."
     ]
   },
   {
     "version": "3.36.0",
     "date": "2026-07-08",
     "highlights": [
-      "In the Garden, you can now tap anywhere on a plant\u2019s card to open it \u2014 the whole card is a link, not just the photo.",
-      "When you group the Garden by Heat, Determinacy, or Day Length, the groups now line up in a natural order (Sweet \u2192 Mild \u2192 \u2026 \u2192 Superhot) instead of alphabetically.",
-      "Doctor Gardener\u2019s health cards now show a small caretaker dot when more than one person tends the garden, matching the Garden view.",
-      "The Today screen no longer shows the \u201cfeeding is on hold\u201d explainer on days when there\u2019s nothing to feed."
+      "In the Garden, you can now tap anywhere on a plant’s card to open it — the whole card is a link, not just the photo.",
+      "When you group the Garden by Heat, Determinacy, or Day Length, the groups now line up in a natural order (Sweet → Mild → … → Superhot) instead of alphabetically.",
+      "Doctor Gardener’s health cards now show a small caretaker dot when more than one person tends the garden, matching the Garden view.",
+      "The Today screen no longer shows the “feeding is on hold” explainer on days when there’s nothing to feed."
     ]
   },
   {
@@ -643,15 +652,15 @@
     "date": "2026-07-08",
     "highlights": [
       "Photos you take in the app can now be saved to your device, and you can share an event or planting straight from its page.",
-      "The back button keeps your place now \u2014 no more jumping back to the top of the Garden.",
-      "A plant\u2019s watering badge on its own page now matches the Today screen, so a plant the rain already watered won\u2019t show a false \u201cneeds water.\u201d"
+      "The back button keeps your place now — no more jumping back to the top of the Garden.",
+      "A plant’s watering badge on its own page now matches the Today screen, so a plant the rain already watered won’t show a false “needs water.”"
     ]
   },
   {
     "version": "3.34.0",
     "date": "2026-07-07",
     "highlights": [
-      "The bottom navigation and More menu now use the app's own hand-drawn icons instead of system emoji \u2014 including a new orange butterfly for Critters \u2014 so everything looks consistent across phones and tablets.",
+      "The bottom navigation and More menu now use the app's own hand-drawn icons instead of system emoji — including a new orange butterfly for Critters — so everything looks consistent across phones and tablets.",
       "The active tab is now announced to screen readers."
     ]
   },
@@ -659,7 +668,7 @@
     "version": "3.33.0",
     "date": "2026-07-07",
     "highlights": [
-      "Issue-severity badges now use clear custom icons \u2014 the level is shown by its shape, not just color, so it is easier to tell apart and reads correctly with screen readers.",
+      "Issue-severity badges now use clear custom icons — the level is shown by its shape, not just color, so it is easier to tell apart and reads correctly with screen readers.",
       "Cleaner event and status dropdown menus."
     ]
   },
@@ -675,7 +684,7 @@
     "version": "3.31.0",
     "date": "2026-07-07",
     "highlights": [
-      "The same header is now on every screen \u2014 the search bar and photo banner up top everywhere, so you can search your garden from anywhere.",
+      "The same header is now on every screen — the search bar and photo banner up top everywhere, so you can search your garden from anywhere.",
       "Your Favorites shortcut moved to the Garden tab (look for the heart next to Snap and Log many)."
     ]
   },
@@ -683,17 +692,17 @@
     "version": "3.30.0",
     "date": "2026-07-07",
     "highlights": [
-      "Fresh new app icon and a welcome splash screen \u2014 a garden arbor brimming with the food we grow.",
-      "New \u201cFlag an issue\u201d option when logging an event, with an at-a-glance severity badge.",
-      "More ways to record where a plant came from \u2014 including Rescue and Plant swap, or type your own.",
-      "Log Many now matches Log Event exactly \u2014 same event buttons, same layout; \u201cWeeded\u201d moved to Environmental."
+      "Fresh new app icon and a welcome splash screen — a garden arbor brimming with the food we grow.",
+      "New “Flag an issue” option when logging an event, with an at-a-glance severity badge.",
+      "More ways to record where a plant came from — including Rescue and Plant swap, or type your own.",
+      "Log Many now matches Log Event exactly — same event buttons, same layout; “Weeded” moved to Environmental."
     ]
   },
   {
     "version": "3.29.0",
     "date": "2026-07-07",
     "highlights": [
-      "Log Many now uses the exact same event buttons as Log Event \u2014 one consistent selector across the app"
+      "Log Many now uses the exact same event buttons as Log Event — one consistent selector across the app"
     ]
   },
   {
@@ -725,7 +734,7 @@
     "date": "2026-07-04",
     "highlights": [
       "See who cares for what: filter your Garden and Doctor Gardener by caretaker (Mine / Jen / Everyone), with a small caretaker mark on each planting",
-      "Today can now show the rest of the household's care too \u2014 an opt-in peek at everyone's watering and to-dos, log them with one tap",
+      "Today can now show the rest of the household's care too — an opt-in peek at everyone's watering and to-dos, log them with one tap",
       "A gentle dot by the header heart lets you know when there's something new in What's New"
     ]
   },
@@ -749,7 +758,7 @@
     "date": "2026-07-02",
     "highlights": [
       "Search now reaches your whole garden: projects, events, inventory, and photo captions join plantings, locations, and varieties",
-      "Notes are searchable too \u2014 find a planting by what you wrote about it"
+      "Notes are searchable too — find a planting by what you wrote about it"
     ]
   },
   {
@@ -766,7 +775,7 @@
     "highlights": [
       "Logging an event is now one tap: Save keeps your event type ready for the next plant",
       "Fixed setting a photo as a planting's featured picture",
-      "Fixed the Snap 'Update a photo' error \u2014 photos attach reliably now",
+      "Fixed the Snap 'Update a photo' error — photos attach reliably now",
       "A consistent top bar across every screen, and a cleaner Snap page",
       "Menus and pickers now look and work the same everywhere"
     ]
@@ -775,7 +784,7 @@
     "version": "3.19.0",
     "date": "2026-07-01",
     "highlights": [
-      "New search up top: tap the search bar to instantly find any planting, location, or variety by name \u2014 type it, or use your keyboard's dictation mic to speak it."
+      "New search up top: tap the search bar to instantly find any planting, location, or variety by name — type it, or use your keyboard's dictation mic to speak it."
     ]
   },
   {
@@ -800,7 +809,7 @@
       "Variety picker no longer cuts off alphabetically",
       "Pepper heat (SHU) and tomato determinacy now show on plant profiles",
       "Set any photo as a planting's featured cover photo",
-      "Simpler sharing \u2014 your garden is visible to your household by default",
+      "Simpler sharing — your garden is visible to your household by default",
       "Today's care is grouped by garden location with photo thumbnails"
     ]
   },
@@ -823,7 +832,7 @@
     "version": "3.13.0",
     "date": "2026-07-01",
     "highlights": [
-      "Tap to log care right from Today \u2014 water, feed, or check off a whole spot at once.",
+      "Tap to log care right from Today — water, feed, or check off a whole spot at once.",
       "Skip anything you don't need today, and undo a log if you tap it by mistake.",
       "Doctor Gardener now explains why today's list looks the way it does and flags plants worth a look."
     ]
@@ -832,7 +841,7 @@
     "version": "3.12.0",
     "date": "2026-06-30",
     "highlights": [
-      "Rain forecast on the Today screen is more accurate \u2014 it no longer overstates rain that probably won't fall.",
+      "Rain forecast on the Today screen is more accurate — it no longer overstates rain that probably won't fall.",
       "Adding a photo now lets you choose an existing picture from your library, not just take a new one.",
       "The Today weather card has a fresh look with clearer watering guidance for pots versus garden beds."
     ]
@@ -853,7 +862,7 @@
     "date": "2026-06-30",
     "highlights": [
       "Your garden plants now appear as photo tiles",
-      "New Photos tab \u2014 browse all your garden photos grouped by month",
+      "New Photos tab — browse all your garden photos grouped by month",
       "Tap any photo for a full-screen viewer with pinch-to-zoom and swipe",
       "Favorites are now hearts",
       "Refreshed bottom navigation (Today, Garden, add, Doctor Gardener, More)"
@@ -863,7 +872,7 @@
     "version": "3.9.0",
     "date": "2026-06-29",
     "highlights": [
-      "Groundwork for smarter, evidence-based plant care \u2014 an upgraded internal record of what we know about each plant (no visible changes yet)",
+      "Groundwork for smarter, evidence-based plant care — an upgraded internal record of what we know about each plant (no visible changes yet)",
       "Added an internal safety net that checks the daily watering plan stays correct as the care engine evolves"
     ]
   },
@@ -879,9 +888,9 @@
     "version": "3.5.0",
     "date": "2026-06-26",
     "highlights": [
-      "Lifecycle tags now have their own colors \u2014 annual, perennial, biennial, and tender perennial are easy to tell apart at a glance",
-      "Your Garden 'Group by' choice now follows you across devices \u2014 pick it on your phone, see it on your laptop",
-      "Your Garden sort order (A\u2013Z or most-recent) now syncs across devices too",
+      "Lifecycle tags now have their own colors — annual, perennial, biennial, and tender perennial are easy to tell apart at a glance",
+      "Your Garden 'Group by' choice now follows you across devices — pick it on your phone, see it on your laptop",
+      "Your Garden sort order (A–Z or most-recent) now syncs across devices too",
       "Which Garden sections you've collapsed or expanded now stays consistent across your devices",
       "Critters you've discovered now stay revealed across all your devices"
     ]
@@ -891,7 +900,7 @@
     "date": "2026-06-26",
     "highlights": [
       "Plant pages redesigned: a big photo up top, a life-story timeline, and at-a-glance maturity",
-      "New quick actions on each plant \u2014 log watering, add a photo, or change status in one tap"
+      "New quick actions on each plant — log watering, add a photo, or change status in one tap"
     ]
   },
   {
@@ -906,7 +915,7 @@
     "version": "3.2.1",
     "date": "2026-06-25",
     "highlights": [
-      "Behind the scenes: connected the app to the new tag system's read/write layer \u2014 groundwork for the faceted organize-and-filter views coming next. No visible changes yet."
+      "Behind the scenes: connected the app to the new tag system's read/write layer — groundwork for the faceted organize-and-filter views coming next. No visible changes yet."
     ]
   },
   {
@@ -920,43 +929,43 @@
     "version": "3.1.0",
     "date": "2026-06-25",
     "highlights": [
-      "Plant varieties can now carry a crop type \u2014 pepper, tomato, basil, and 60+ more. When you add a new variety you'll pick its type, which keeps your collection tidy and sets up smarter grouping and care that's coming next."
+      "Plant varieties can now carry a crop type — pepper, tomato, basil, and 60+ more. When you add a new variety you'll pick its type, which keeps your collection tidy and sets up smarter grouping and care that's coming next."
     ]
   },
   {
     "version": "3.0.0",
     "date": "2026-06-24",
     "highlights": [
-      "\ud83c\udf89 Version 3.0 \u2014 the V3 milestone is complete. Everything from this development cycle is now live: the Doctor Gardener daily care plan, the Today view, photo-first capture, native Move/reorganize, household sharing, critters & rewards, and dozens of polish fixes. Next up: the V4 foundation \u2014 smarter tags and grouping, plus a fuller design refresh."
+      "🎉 Version 3.0 — the V3 milestone is complete. Everything from this development cycle is now live: the Doctor Gardener daily care plan, the Today view, photo-first capture, native Move/reorganize, household sharing, critters & rewards, and dozens of polish fixes. Next up: the V4 foundation — smarter tags and grouping, plus a fuller design refresh."
     ]
   },
   {
     "version": "2.16.0",
     "date": "2026-06-24",
     "highlights": [
-      "Snap \u2192 create: a new \ud83d\udcf8 Snap button on Today and your Garden lets you take a photo and turn it straight into a new planting, a quick event log, an updated planting photo, or an inventory item \u2014 with Save & Next for logging several in a row.",
-      "Move plantings and projects safely: a new Move action reorganizes a project under a different parent in one step, with an instant Undo if you change your mind \u2014 and it now guards against accidental loops and two-device conflicts."
+      "Snap → create: a new 📸 Snap button on Today and your Garden lets you take a photo and turn it straight into a new planting, a quick event log, an updated planting photo, or an inventory item — with Save & Next for logging several in a row.",
+      "Move plantings and projects safely: a new Move action reorganizes a project under a different parent in one step, with an instant Undo if you change your mind — and it now guards against accidental loops and two-device conflicts."
     ]
   },
   {
     "version": "2.15.4",
     "date": "2026-06-24",
     "highlights": [
-      "Photos page is sturdier: if something ever goes wrong drawing your photo gallery, the page now shows a clear message with a Retry button instead of going blank \u2014 the rest of the app keeps working."
+      "Photos page is sturdier: if something ever goes wrong drawing your photo gallery, the page now shows a clear message with a Retry button instead of going blank — the rest of the app keeps working."
     ]
   },
   {
     "version": "2.15.3",
     "date": "2026-06-24",
     "highlights": [
-      "Archived plantings can now be brought back: open an archived planting and tap Unarchive to restore it \u2014 the same way archived projects already work. Before this, once the brief Undo window passed an archived planting was hidden with no easy way to recover it."
+      "Archived plantings can now be brought back: open an archived planting and tap Unarchive to restore it — the same way archived projects already work. Before this, once the brief Undo window passed an archived planting was hidden with no easy way to recover it."
     ]
   },
   {
     "version": "2.15.2",
     "date": "2026-06-24",
     "highlights": [
-      "Watering on hot days: on days around 85\u00b0F and up, the daily plan now knows fabric grow bags dry out fast, so a light rain won't make a thirsty bag look like it's been watered.",
+      "Watering on hot days: on days around 85°F and up, the daily plan now knows fabric grow bags dry out fast, so a light rain won't make a thirsty bag look like it's been watered.",
       "Photo Library: if your photos can't load, you now get a clear message with a Retry button instead of the page looking empty as if you had no photos."
     ]
   },
@@ -964,7 +973,7 @@
     "version": "2.15.1",
     "date": "2026-06-24",
     "highlights": [
-      "Reliability: your watering alerts and the Today page are now protected against a rare internal data-format mismatch \u2014 if it ever happened they\u2019d show an honest empty state instead of wrong or missing plants.",
+      "Reliability: your watering alerts and the Today page are now protected against a rare internal data-format mismatch — if it ever happened they’d show an honest empty state instead of wrong or missing plants.",
       "The dashboard is sturdier: if one section has a hiccup loading, the rest of the page still comes up instead of the whole screen failing."
     ]
   },
@@ -972,7 +981,7 @@
     "version": "2.15.0",
     "date": "2026-06-24",
     "highlights": [
-      "Your watering alerts and the Today page now agree \u2014 the alert bar shows the same plants as your daily plan, so a plant won't say it needs water in one place but not the other.",
+      "Your watering alerts and the Today page now agree — the alert bar shows the same plants as your daily plan, so a plant won't say it needs water in one place but not the other.",
       "Plants you've already watered, or that got enough rain today, now drop off the alert bar just like they do on Today.",
       "Established plants in larger pots and bags (about 5 gallons and up) now get credit for recent rain instead of being treated as fragile new transplants that need watering anyway."
     ]
@@ -981,14 +990,14 @@
     "version": "2.14.0",
     "date": "2026-06-23",
     "highlights": [
-      "Today weather: the rain figure now refreshes live through the day instead of staying stuck on the pre-dawn reading \u2014 so showery days show the current amount, not the 2 AM guess"
+      "Today weather: the rain figure now refreshes live through the day instead of staying stuck on the pre-dawn reading — so showery days show the current amount, not the 2 AM guess"
     ]
   },
   {
     "version": "2.13.0",
     "date": "2026-06-23",
     "highlights": [
-      "Today alerts now name the specific plant when a pot holds just one (e.g. \u201cDracaena needs water\u201d) instead of its container",
+      "Today alerts now name the specific plant when a pot holds just one (e.g. “Dracaena needs water”) instead of its container",
       "Weather: on showery days the rain amount is now flagged as a changeable pre-dawn snapshot, so the watering call stays honest"
     ]
   },
@@ -997,7 +1006,7 @@
     "date": "2026-06-23",
     "highlights": [
       "New About tab (app info + version)",
-      "New Release Notes tab \u2014 see what's new right here",
+      "New Release Notes tab — see what's new right here",
       "Removed the bottom footer (its info moved to About)"
     ]
   },
@@ -1006,7 +1015,7 @@
     "date": "2026-06-23",
     "highlights": [
       "Today watering: established/rained-on plants no longer show a false \"water\" reminder",
-      "Log Many \u2192 By space tab fixed (log one event to every planting in a Space, e.g. all of Pasture)",
+      "Log Many → By space tab fixed (log one event to every planting in a Space, e.g. all of Pasture)",
       "Planting edit: container picker now includes trough, whiskey barrel, and soil block",
       "New container option: Solo cup (autofills 0.5 qt)"
     ]
@@ -1025,7 +1034,7 @@
     "version": "2.9.0",
     "date": "2026-06-22",
     "highlights": [
-      "Forms refresh: parent-plant lineage, expand details while adding, Save \u00b7 Next on event logging",
+      "Forms refresh: parent-plant lineage, expand details while adding, Save · Next on event logging",
       "Global undo restored across the app"
     ]
   },
@@ -1076,7 +1085,7 @@
     "highlights": [
       "Alerts scoped to the right caretaker",
       "Check off Today items inline",
-      "\"Harvested\" \u2192 \"Harvesting\""
+      "\"Harvested\" → \"Harvesting\""
     ]
   },
   {
