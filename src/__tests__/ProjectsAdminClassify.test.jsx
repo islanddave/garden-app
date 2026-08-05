@@ -29,10 +29,19 @@ function makeProjects(overrides = {}) {
   ]
 }
 
-function wire({ projects = makeProjects(), patchResult = {}, postResult = {}, patchError = null, postError = null } = {}) {
+// V4-INTAKE-001 — the cultivar branch now requires a crop type, so the vocab endpoint is part
+// of the default wiring. Pass cropTypes: [] to simulate the load failing (useCropTypes swallows
+// errors to an empty list) and assert the page refuses rather than creating an untyped cultivar.
+const CROP_TYPES = [
+  { slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'annual', category: 'vegetable', sort_order: 10 },
+  { slug: 'tomato', display_name: 'Tomato', default_lifecycle: 'annual', category: 'vegetable', sort_order: 20 },
+]
+
+function wire({ projects = makeProjects(), cropTypes = CROP_TYPES, patchResult = {}, postResult = {}, patchError = null, postError = null } = {}) {
   apiFetchSpy.mockImplementation((path, options = {}) => {
     calls.push({ path, method: options.method ?? 'GET', body: options.body })
     if (path === '/api/projects?admin=1') return Promise.resolve(projects)
+    if (path === '/api/varieties/crop-types' && (options.method ?? 'GET') === 'GET') return Promise.resolve(cropTypes)
     if (path === '/api/varieties' && options.method === 'POST') {
       if (postError) return Promise.reject(postError)
       return Promise.resolve({ id: 'v-new-1', ...postResult })
@@ -139,6 +148,9 @@ describe('ProjectsAdminClassify — cultivar inline-create flow', () => {
     const nameInput = screen.getByLabelText(/variety name for Bell/i)
     await act(async () => { fireEvent.change(nameInput, { target: { value: 'Bell Pepper' } }) })
 
+    const cropSelect = screen.getByLabelText(/crop type for Bell/i)
+    await act(async () => { fireEvent.change(cropSelect, { target: { value: 'pepper' } }) })
+
     // Locate the row by the kind select's parent (row container is the select's parent).
     const bellRow = select.parentElement
     const bellSave = within(bellRow).getByRole('button', { name: /Save/i })
@@ -149,6 +161,7 @@ describe('ProjectsAdminClassify — cultivar inline-create flow', () => {
       expect(variety).toBeDefined()
       const body = JSON.parse(variety.body)
       expect(body.name).toBe('Bell Pepper')
+      expect(body.crop_type_slug).toBe('pepper')
       expect(body.source_proj_rescope_project_id).toBe('p-bell')
     })
 
@@ -181,6 +194,60 @@ describe('ProjectsAdminClassify — cultivar inline-create flow', () => {
     })
     const varietyPost = calls.find((c) => c.path === '/api/varieties' && c.method === 'POST')
     expect(varietyPost).toBeUndefined()
+  })
+})
+
+// V4-INTAKE-001 — an untyped cultivar fails by DISAPPEARING from every faceted view, never by
+// erroring, so the only place it can be caught is at the write site. These lock that shut.
+describe('ProjectsAdminClassify — crop type is required for cultivar (V4-INTAKE-001)', () => {
+  it('shows the crop-type select only when kind === cultivar', async () => {
+    wire()
+    await act(async () => { render(<ProjectsAdminClassify />) })
+    await waitFor(() => expect(screen.getAllByText('Bell').length).toBeGreaterThan(0))
+
+    const select = screen.getByLabelText(/kind for Bell/i)
+    expect(screen.queryByLabelText(/crop type for Bell/i)).toBeNull()
+
+    await act(async () => { fireEvent.change(select, { target: { value: 'cultivar' } }) })
+    const cropSelect = screen.getByLabelText(/crop type for Bell/i)
+    expect(cropSelect.innerHTML).toMatch(/Pepper/)
+    expect(cropSelect.innerHTML).toMatch(/Tomato/)
+
+    await act(async () => { fireEvent.change(select, { target: { value: 'category' } }) })
+    expect(screen.queryByLabelText(/crop type for Bell/i)).toBeNull()
+  })
+
+  it('refuses to POST a cultivar with no crop type, and does not PATCH the kind either', async () => {
+    wire()
+    await act(async () => { render(<ProjectsAdminClassify />) })
+    await waitFor(() => expect(screen.getAllByText('Bell').length).toBeGreaterThan(0))
+
+    const select = screen.getByLabelText(/kind for Bell/i)
+    await act(async () => { fireEvent.change(select, { target: { value: 'cultivar' } }) })
+
+    const bellRow = select.parentElement
+    await act(async () => { fireEvent.click(within(bellRow).getByRole('button', { name: /Save/i })) })
+
+    await waitFor(() => expect(within(bellRow).getByRole('alert').textContent).toMatch(/Crop type required/i))
+    expect(calls.find((c) => c.path === '/api/varieties' && c.method === 'POST')).toBeUndefined()
+    // The PATCH must not land either — a row marked kind=cultivar with no variety row behind it
+    // is a different kind of orphan, so the whole save is refused, not just its first half.
+    expect(calls.find((c) => c.path === '/api/projects/p-bell' && c.method === 'PATCH')).toBeUndefined()
+  })
+
+  it('distinguishes an unloadable crop-type vocab from a user who skipped the field', async () => {
+    wire({ cropTypes: [] })
+    await act(async () => { render(<ProjectsAdminClassify />) })
+    await waitFor(() => expect(screen.getAllByText('Bell').length).toBeGreaterThan(0))
+
+    const select = screen.getByLabelText(/kind for Bell/i)
+    await act(async () => { fireEvent.change(select, { target: { value: 'cultivar' } }) })
+
+    const bellRow = select.parentElement
+    await act(async () => { fireEvent.click(within(bellRow).getByRole('button', { name: /Save/i })) })
+
+    await waitFor(() => expect(within(bellRow).getByRole('alert').textContent).toMatch(/Crop types unavailable/i))
+    expect(calls.find((c) => c.path === '/api/varieties' && c.method === 'POST')).toBeUndefined()
   })
 })
 

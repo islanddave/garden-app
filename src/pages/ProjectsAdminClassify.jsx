@@ -6,15 +6,26 @@
 //   - Desktop-only viewport guard (≥1024px). Placard otherwise.
 //   - GET /api/projects?admin=1 — all alive rows regardless of ownership.
 //   - Per-row kind dropdown (campaign | category | cultivar).
-//   - Cultivar row reveals inline variety-name input.
+//   - Cultivar row reveals inline variety-name input + crop-type select.
 //   - Save-per-row: POST /api/varieties (cultivar only, idempotent on
 //     source_proj_rescope_project_id) → PATCH /api/projects/:id with kind.
+//
+// V4-INTAKE-001 (2026-08-05): the cultivar create POSTed only { name,
+// source_proj_rescope_project_id }, so every cultivar born here landed with
+// crop_type_slug = NULL. The varieties Lambda runs applyDerive post-commit, but with a
+// null slug there is no type: tag to derive — the cultivar silently vanishes from every
+// faceted view (the "Unsorted" class, L-239). A null slug errors NOWHERE, which is why
+// this survived: it fails by disappearing, not by complaining. Crop type is now captured
+// and REQUIRED for the cultivar branch. lifecycle is deliberately NOT sent — computeDerivedTags
+// already falls back to the crop type's default_lifecycle, so sending it would freeze a value
+// that should track the crop default.
 //   - Progress bar X of N.
 //   - When all classified: copy-ready apply-prod-migrations
 //     command (Dave runs from terminal — no in-app DDL surface).
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
+import { useCropTypes } from '../hooks/useCropTypes.js'
 import { projectKindOptions } from '../lib/constants.js'
 
 // Admin always includes cultivar (it creates varieties). Values + labels come from
@@ -36,10 +47,11 @@ export default function ProjectsAdminClassify() {
   }, [])
 
   const { fetch } = useApiFetch()
+  const { cropTypes } = useCropTypes()
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  // per-row local state: { [id]: { kind?, varietyName?, saving?, saved?, error? } }
+  // per-row local state: { [id]: { kind?, varietyName?, cropTypeSlug?, saving?, saved?, error? } }
   const [rowState, setRowState] = useState({})
 
   const loadProjects = useCallback(() => {
@@ -104,6 +116,8 @@ export default function ProjectsAdminClassify() {
     setRowState((s) => ({ ...s, [id]: { ...s[id], kind, saved: false, error: null } }))
   const setVarietyName = (id, name) =>
     setRowState((s) => ({ ...s, [id]: { ...s[id], varietyName: name } }))
+  const setRowCropType = (id, slug) =>
+    setRowState((s) => ({ ...s, [id]: { ...s[id], cropTypeSlug: slug, saved: false, error: null } }))
 
   async function saveRow(p) {
     const st = rowState[p.id] ?? {}
@@ -116,9 +130,24 @@ export default function ProjectsAdminClassify() {
           setRowState((s) => ({ ...s, [p.id]: { ...st, saving: false, error: 'Variety name required' } }))
           return
         }
+        // V4-INTAKE-001: block rather than create an untyped cultivar. A blocked save is
+        // visible and recoverable; an untyped cultivar is invisible drift that only a
+        // weekly integrity run would surface. The empty-vocab case gets its own message
+        // because "Crop type required" reads as user error when the list failed to load.
+        if (!st.cropTypeSlug) {
+          const msg = cropTypes.length === 0
+            ? 'Crop types unavailable — reload before creating a cultivar'
+            : 'Crop type required'
+          setRowState((s) => ({ ...s, [p.id]: { ...st, saving: false, error: msg } }))
+          return
+        }
         await fetch('/api/varieties', {
           method: 'POST',
-          body: JSON.stringify({ name: varietyName, source_proj_rescope_project_id: p.id }),
+          body: JSON.stringify({
+            name: varietyName,
+            crop_type_slug: st.cropTypeSlug,
+            source_proj_rescope_project_id: p.id,
+          }),
         })
       }
       await fetch(`/api/projects/${p.id}`, {
@@ -151,8 +180,10 @@ export default function ProjectsAdminClassify() {
             depth={depthOf(p)}
             breadcrumb={breadcrumbOf(p)}
             rowState={rowState[p.id] ?? {}}
+            cropTypes={cropTypes}
             onKindChange={(k) => setRowKind(p.id, k)}
             onVarietyName={(n) => setVarietyName(p.id, n)}
+            onCropType={(s) => setRowCropType(p.id, s)}
             onSave={() => saveRow(p)}
           />
         ))}
@@ -197,7 +228,7 @@ function ProgressBar({ n, total }) {
   )
 }
 
-function RowCard({ project: p, depth, breadcrumb, rowState, onKindChange, onVarietyName, onSave }) {
+function RowCard({ project: p, depth, breadcrumb, rowState, cropTypes = [], onKindChange, onVarietyName, onCropType, onSave }) {
   const isCultivar = rowState.kind === 'cultivar'
   const serverKind = p.kind
   const pickedKind = rowState.kind ?? ''
@@ -245,6 +276,21 @@ function RowCard({ project: p, depth, breadcrumb, rowState, onKindChange, onVari
           onChange={(e) => onVarietyName(e.target.value)}
           style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid #bbb', fontSize: '0.9rem', width: 200 }}
         />
+      )}
+      {isCultivar && (
+        // V4-INTAKE-001 — required. saveRow refuses without it rather than creating an
+        // untyped cultivar that would drop out of every faceted view.
+        <select
+          aria-label={`crop type for ${p.name}`}
+          value={rowState.cropTypeSlug ?? ''}
+          onChange={(e) => onCropType(e.target.value)}
+          style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid #bbb', fontSize: '0.9rem' }}
+        >
+          <option value="">— crop type (required) —</option>
+          {cropTypes.map((ct) => (
+            <option key={ct.slug} value={ct.slug}>{ct.display_name ?? ct.slug}</option>
+          ))}
+        </select>
       )}
       <button
         type="button"
