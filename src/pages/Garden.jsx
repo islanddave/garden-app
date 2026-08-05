@@ -59,6 +59,9 @@ export default function Garden() {
   const setSubtab = useCallback((v) => { lastSubtab = v; setSubtabState(v) }, [])
   const [projects, setProjects] = useState([])
   const [plants,   setPlants]   = useState([])
+  // V4-GARDENLOCFILTER-001: physical locations for the Location group-by. Fetched alongside
+  // projects/plants; failure is non-fatal (the option simply groups everything into Unsorted).
+  const [locations, setLocations] = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
   // V4-NAVSTATE-001: keep Garden's scroll position across a drill-in + back. Save continuously,
@@ -116,11 +119,17 @@ export default function Garden() {
     const opts = PROJECTS_HIDDEN ? [{ value: 'crop_type', label: 'Type' }] : [{ value: 'none', label: 'Projects' }]
     for (const fct of ORDER) {
       if (fct === 'type' && PROJECTS_HIDDEN) continue // crop_type (cultivar join) replaces the tag 'type' facet
+      // V4-GARDENLOCFILTER-001: 'location' is now STRUCTURAL (garden_node.location_id) and is appended
+      // unconditionally below. Skipped here so a stray location-facet tag can't add a duplicate option.
+      if (fct === 'location') continue
       if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
     }
     // 'status' groups by the planting's LIFECYCLE stage (seed->...->ended). Always available
     // (every planting has a status), so appended unconditionally — it is NOT a tag facet.
     opts.push({ value: 'status', label: 'Lifecycle' })
+    // 'location' groups by physical location (zone/area/shelf). Structural like 'status', so it is
+    // always offered — it does not depend on tagMap having anything in it.
+    opts.push({ value: 'location', label: 'Location' })
     return opts
   }, [tagMap])
   // MVP-Critter Session 3: active critters for this household, grouped by plant_id.
@@ -161,11 +170,17 @@ export default function Garden() {
 
   useEffect(() => {
     let on = true
-    Promise.all([fetch('/api/projects'), fetch('/api/plants')])
-      .then(([proj, pl]) => {
+    Promise.all([
+      fetch('/api/projects'),
+      fetch('/api/plants'),
+      // Location grouping is a nicety — never let it fail the whole Garden load.
+      fetch('/api/locations').catch(() => []),
+    ])
+      .then(([proj, pl, locs]) => {
         if (!on) return
         setProjects(proj ?? [])
         setPlants(pl ?? [])
+        setLocations(Array.isArray(locs) ? locs : (locs?.locations ?? []))
         setLoading(false)
       })
       .catch(err => { if (!on) return; setError(err.message); setLoading(false) })
@@ -588,7 +603,7 @@ export default function Garden() {
 
       {subtab === 'plants' && (effectiveGroupBy !== 'none' ? (
         <FacetedGarden
-          plants={visiblePlants} tagMap={tagMap} facet={effectiveGroupBy}
+          plants={visiblePlants} tagMap={tagMap} facet={effectiveGroupBy} locations={locations}
           crittersByPlantId={crittersByPlantId} onSpriteLongPress={onSpriteLongPress}
           onSpriteIntersect={onSpriteIntersect} onPhotoUploaded={refetchPlants} flashId={flashId}
           caretakerFor={caretakerFor} />
@@ -751,14 +766,14 @@ function Shell({ children }) {
 // V4-GARDENIA-001: faceted Garden render. Group-by overlay over the SAME PlantingTile the legacy
 // tree uses, so plantings look identical; the by-project tree (effectiveGroupBy==='none') is
 // untouched and remains golden-gated. A planting may appear under multiple groups (multi-membership).
-function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId, caretakerFor = () => null }) {
+function FacetedGarden({ plants, tagMap, facet, locations = [], crittersByPlantId, onSpriteLongPress, onSpriteIntersect, onPhotoUploaded, flashId, caretakerFor = () => null }) {
   // Sections COLLAPSED by default (Dave 2026-06-26): track the EXPANDED set instead of collapsed,
   // so an empty set = everything collapsed. Toggling a header adds/removes it from expandedGroups.
   const [expandedGroups, setExpandedGroups] = useState(() => loadGroupsExpanded())
   const toggle = useCallback((slug) => setExpandedGroups(prev => {
     const next = new Set(prev); next.has(slug) ? next.delete(slug) : next.add(slug); saveGroupsExpanded(next); return next
   }), [])
-  const groups = buildTagGroupedList(plants, tagMap, facet) || []
+  const groups = buildTagGroupedList(plants, tagMap, facet, SORT_ALPHA, locations) || []
   if (groups.length === 0) return <EmptyState />
   // Expand-all / Collapse-all — complements collapse-by-default so the whole view is one tap away.
   const allExpanded = groups.length > 0 && groups.every(g => expandedGroups.has(g.slug))
@@ -774,11 +789,19 @@ function FacetedGarden({ plants, tagMap, facet, crittersByPlantId, onSpriteLongP
       </div>
       {groups.map(g => {
         const isCollapsed = !expandedGroups.has(g.slug)
+        // V4-GARDENLOCFILTER-001: nested location groups carry `depth`; indent the header so the
+        // zone -> area -> shelf hierarchy reads at a glance. Other facets are flat (depth undefined).
+        const indent = (g.depth || 0) * 16
+        // An empty group (only possible for locations, which are emitted even at count 0) gets no
+        // chevron — there is nothing to disclose, and a toggle that reveals nothing reads as broken.
+        const isEmpty = g.count === 0
         return (
           <div key={g.slug} role="group">
             <FacetGroupHeader label={g.label} count={g.count} facet={g.facet} value={g.slug}
-              isUnsorted={g.isUnsorted} collapsed={isCollapsed} onToggle={() => toggle(g.slug)} />
-            {!isCollapsed && (
+              isUnsorted={g.isUnsorted} collapsed={isCollapsed}
+              onToggle={isEmpty ? undefined : () => toggle(g.slug)}
+              style={indent ? { marginLeft: indent } : undefined} />
+            {!isCollapsed && !isEmpty && (
               <div style={{ marginTop: 8 }}>
                 <TileGrid items={g.plantings} columns={2} gap={12} ariaLabel={g.label} windowSize={24}
                   renderItem={(pl) => (

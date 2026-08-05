@@ -202,11 +202,12 @@ function compareFacetGroups(facet) {
 // a trailing "Unsorted" group. Groups sort by the facet's canonical order (FACET_VALUE_ORDER) when
 // it has one, else alpha by label; Unsorted is always last. Returns null when `facet` is falsy — the
 // caller then renders the legacy by-project tree (golden path).
-export function buildTagGroupedList(plantings, tagMap, facet, order = SORT_ALPHA) {
+export function buildTagGroupedList(plantings, tagMap, facet, order = SORT_ALPHA, locations = []) {
   if (!facet) return null
   const live = (plantings || []).filter(p => p && !p.archived_at)
   if (facet === 'status') return buildStatusGroupedList(live, order)
   if (facet === 'crop_type') return buildCropTypeGroupedList(live, order)
+  if (facet === 'location') return buildLocationGroupedList(live, order, locations)
   const groups = new Map()
   const unsorted = []
   live.forEach(p => {
@@ -224,6 +225,73 @@ export function buildTagGroupedList(plantings, tagMap, facet, order = SORT_ALPHA
   if (unsorted.length) {
     out.push({ slug: UNSORTED_SLUG, label: 'Unsorted', facet, isUnsorted: true,
       plantings: applyNameSort(unsorted, order), count: unsorted.length })
+  }
+  return out
+}
+
+// V4-GARDENLOCFILTER-001: group by PHYSICAL LOCATION. Structural, not tag-based — reads
+// garden_node.location_id directly, same posture as crop_type/status, so it needs no entity_tag rows
+// (there are zero 'location'-facet tags in prod and none are planned). `locations` = GET /api/locations
+// rows ({id, name, parent_id, sort_order}).
+//
+// Owner decisions baked in (Dave 2026-08-05):
+//   • NESTED — groups emit depth-first parent-then-children, each carrying `depth` so the renderer can
+//     indent (zone -> area/rack -> shelf). A parent holds only its OWN direct plantings; children are
+//     separate groups, because a zone like Drive has 9 of its own plus two child areas.
+//   • EMPTY LOCATIONS ARE EMITTED (count 0). An empty shelf is a place to fill, not noise.
+//   • No location_id -> the shared trailing Unsorted bucket, which Dave edits from.
+//
+// Robustness: a planting whose location_id names a missing/deleted location would otherwise vanish from
+// the view entirely (silent data loss in a grouping is worse than a wrong bucket), so those fall through
+// to Unsorted. A parent_id pointing at a missing row makes that location a root rather than dropping it,
+// and `seen` guards against a parent cycle putting the walk into infinite recursion.
+export function buildLocationGroupedList(live, order, locations) {
+  const rows = (locations || []).filter(l => l && l.id)
+  const byParent = new Map()
+  for (const l of rows) {
+    const key = l.parent_id ?? null
+    if (!byParent.has(key)) byParent.set(key, [])
+    byParent.get(key).push(l)
+  }
+  const known = new Set(rows.map(l => l.id))
+  for (const arr of byParent.values()) {
+    arr.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
+      || String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }))
+  }
+  const direct = new Map()
+  const unsorted = []
+  live.forEach(p => {
+    const id = p.location_id
+    // Unknown id -> Unsorted, so the planting stays visible somewhere.
+    if (!id || !known.has(id)) { unsorted.push(p); return }
+    if (!direct.has(id)) direct.set(id, [])
+    direct.get(id).push(p)
+  })
+  const out = []
+  const seen = new Set()
+  const emit = (l, depth) => {
+    seen.add(l.id)
+    const mine = direct.get(l.id) || []
+    out.push({
+      slug: l.id, label: l.name || 'Location', facet: 'location', depth,
+      plantings: applyNameSort(mine, order), count: mine.length,
+    })
+  }
+  const walk = (parentId, depth) => {
+    for (const l of (byParent.get(parentId) || [])) {
+      if (seen.has(l.id)) continue
+      emit(l, depth)
+      walk(l.id, depth + 1)
+    }
+  }
+  walk(null, 0)
+  // Roots by orphaning (parent_id set but that parent is gone) or by cycle — emit flat so nothing is lost.
+  for (const l of rows) if (!seen.has(l.id)) emit(l, 0)
+  if (unsorted.length) {
+    out.push({
+      slug: UNSORTED_SLUG, label: 'Unsorted', facet: 'location', isUnsorted: true, depth: 0,
+      plantings: applyNameSort(unsorted, order), count: unsorted.length,
+    })
   }
   return out
 }

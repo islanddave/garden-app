@@ -106,3 +106,94 @@ describe('tagsForPlanting', () => {
     expect(tagsForPlanting(null, 'p1')).toEqual([])
   })
 })
+
+// V4-GARDENLOCFILTER-001 — structural location grouping (no tags involved).
+// Hierarchy mirrors prod: Pasture(zone) > Bag Area/In-Ground(area), Stable(zone) > Indoor Rack > Shelf 4.
+const LOCS = [
+  { id: 'pasture', name: 'Pasture', parent_id: null, sort_order: 30 },
+  { id: 'bagarea', name: 'Bag Area', parent_id: 'pasture', sort_order: 10 },
+  { id: 'inground', name: 'In-Ground', parent_id: 'pasture', sort_order: 11 },
+  { id: 'stable', name: 'Stable', parent_id: null, sort_order: 10 },
+  { id: 'rack', name: 'Indoor Rack', parent_id: 'stable', sort_order: 1 },
+  { id: 'shelf4', name: 'Shelf 4', parent_id: 'rack', sort_order: 4 },
+  { id: 'shelf5', name: 'Shelf 5', parent_id: 'rack', sort_order: 5 },
+]
+const LP = [
+  P('l1', 'Zucchini', { location_id: 'bagarea' }),
+  P('l2', 'Aji', { location_id: 'bagarea' }),
+  P('l3', 'Garlic', { location_id: 'inground' }),
+  P('l4', 'Basil', { location_id: 'shelf4' }),
+  P('l5', 'Hay', { location_id: 'stable' }),   // a parent zone holds its OWN plantings too
+  P('l6', 'Homeless', {}),                      // no location_id -> Unsorted
+  P('l7', 'Ghost', { location_id: 'deleted-loc' }), // unknown id -> Unsorted, never dropped
+]
+
+describe('buildTagGroupedList — location facet', () => {
+  it('emits depth-first parent-then-children in sort_order, with depth for indentation', () => {
+    const out = buildTagGroupedList(LP, {}, 'location', undefined, LOCS)
+    expect(out.map(g => `${'-'.repeat(g.depth)}${g.label}`)).toEqual([
+      'Stable', '-Indoor Rack', '--Shelf 4', '--Shelf 5',
+      'Pasture', '-Bag Area', '-In-Ground',
+      'Unsorted',
+    ])
+  })
+
+  it('gives a parent only its OWN direct plantings, not its descendants', () => {
+    const out = buildTagGroupedList(LP, {}, 'location', undefined, LOCS)
+    const by = Object.fromEntries(out.map(g => [g.label, g]))
+    expect(by['Stable'].plantings.map(p => p.id)).toEqual(['l5'])
+    expect(by['Indoor Rack'].count).toBe(0)
+    expect(by['Shelf 4'].plantings.map(p => p.id)).toEqual(['l4'])
+    expect(by['Bag Area'].plantings.map(p => p.id)).toEqual(['l2', 'l1']) // alpha: Aji, Zucchini
+  })
+
+  it('emits EMPTY locations (Dave 2026-08-05) rather than hiding them', () => {
+    const out = buildTagGroupedList(LP, {}, 'location', undefined, LOCS)
+    const shelf5 = out.find(g => g.label === 'Shelf 5')
+    expect(shelf5).toBeDefined()
+    expect(shelf5.count).toBe(0)
+    expect(shelf5.plantings).toEqual([])
+  })
+
+  it('routes both no-location AND unknown-location plantings to Unsorted, losing none', () => {
+    const out = buildTagGroupedList(LP, {}, 'location', undefined, LOCS)
+    const last = out.at(-1)
+    expect(last.slug).toBe(UNSORTED_SLUG)
+    expect(last.isUnsorted).toBe(true)
+    expect(last.plantings.map(p => p.id).sort()).toEqual(['l6', 'l7'])
+    // Nothing may vanish: every input planting appears exactly once across all groups.
+    const seen = out.flatMap(g => g.plantings.map(p => p.id))
+    expect(seen.sort()).toEqual(['l1', 'l2', 'l3', 'l4', 'l5', 'l6', 'l7'])
+  })
+
+  it('promotes an orphaned location to a root instead of dropping it', () => {
+    const orphaned = [...LOCS, { id: 'lost', name: 'Lost Corner', parent_id: 'nonexistent', sort_order: 0 }]
+    const out = buildTagGroupedList([P('x', 'Weed', { location_id: 'lost' })], {}, 'location', undefined, orphaned)
+    const lost = out.find(g => g.label === 'Lost Corner')
+    expect(lost).toBeDefined()
+    expect(lost.depth).toBe(0)
+    expect(lost.plantings.map(p => p.id)).toEqual(['x'])
+  })
+
+  it('survives a parent cycle without infinite recursion', () => {
+    const cyclic = [
+      { id: 'a', name: 'A', parent_id: 'b', sort_order: 0 },
+      { id: 'b', name: 'B', parent_id: 'a', sort_order: 0 },
+    ]
+    const out = buildTagGroupedList([], {}, 'location', undefined, cyclic)
+    expect(out.map(g => g.label).sort()).toEqual(['A', 'B'])
+  })
+
+  it('degrades to a single Unsorted group when locations are unavailable (fetch failed)', () => {
+    const out = buildTagGroupedList(LP, {}, 'location', undefined, [])
+    expect(out).toHaveLength(1)
+    expect(out[0].slug).toBe(UNSORTED_SLUG)
+    expect(out[0].count).toBe(7)
+  })
+
+  it('excludes archived plantings, like every other facet', () => {
+    const out = buildTagGroupedList(
+      [...LP, P('l8', 'Old', { location_id: 'bagarea', archived_at: '2026-01-01' })], {}, 'location', undefined, LOCS)
+    expect(out.find(g => g.label === 'Bag Area').count).toBe(2)
+  })
+})
