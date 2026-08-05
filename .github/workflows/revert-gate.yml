@@ -1,7 +1,7 @@
 name: revert-gate
 
 # B2 production revert (spec repo-version-env-spec-V100 §3 B2). Reverts prod to a previously-snapped
-# version vX as a SINGLE Dave-approved, environment:production-gated transaction, restoring code + DB +
+# version vX as a SINGLE transaction gated on environment:production-destructive, restoring code + DB +
 # Lambda versions as a coherent pair via scripts/revert-to.py. Runs AS garden-bot (App 3951762) — the sole
 # actor permitted to advance main (the code leg FF-promotes a forward revert-commit). The revert is itself
 # revertible: revert-to.py takes a PRE-REVERT snap of CURRENT prod first, so a bad revert can be rolled back.
@@ -12,6 +12,23 @@ name: revert-gate
 #
 # Dispatchability: workflow_dispatch requires the workflow on the default branch (main). This file lands on
 # dev now and becomes dispatchable from the Actions UI once it reaches main via the normal promote-gate ship.
+#
+# APPROVAL GATE (2026-08-05, OPS-REVERTGATE-001). This job runs under `environment: production-destructive`,
+# which carries a REQUIRED REVIEWER (islanddave) — the run pauses at the environment gate until that review is
+# granted, so the dispatcher cannot also be the sole approver. Do NOT point this at `environment: production`:
+# that environment carries a branch/tag ref policy ONLY and has had ZERO required reviewers since 2026-06-22,
+# so it is not an approval stop of any kind. Prior versions of this header claimed a "Dave-approved" gate that
+# did not exist in infrastructure; the `confirm_data_loss` dropdown was the only guard and it is selected by
+# whoever is already dispatching. The workflow was disabled via `gh workflow disable` on 2026-08-05 while this
+# environment was created; re-enable with `gh workflow enable revert-gate` once this change reaches main.
+#
+# BLOCKING PREREQ — IAM trust policy. The snap OIDC role (SNAP_AWS_ROLE_ARN =
+# arn:aws:iam::769788341849:role/garden-app-github-snap) trusts EXACTLY ONE subject:
+#   token.actions.githubusercontent.com:sub == "repo:islanddave/garden-app:environment:production"
+# Changing this job's environment changes the subject claim to ...:environment:production-destructive,
+# which does NOT match, so sts:AssumeRoleWithWebIdentity FAILS and the AWS legs die. The trust policy
+# MUST list the production-destructive subject before this workflow is re-enabled or promoted. Keep it
+# an exact-match list (two literal subjects) — do NOT relax it to a StringLike wildcard.
 #
 # Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY, NEON_API_KEY, NEON_PROJECT_ID, NEON_BACKUP_URL.
 # Vars: SNAP_AWS_ROLE_ARN, SNAP_BUCKET, PHOTOS_BUCKET, SNAP_RETENTION.
@@ -46,7 +63,7 @@ permissions:
 jobs:
   revert:
     runs-on: ubuntu-latest
-    environment: production
+    environment: production-destructive
     timeout-minutes: 45
     steps:
       - name: Validate inputs (injection-safe — read from env, never interpolated into run)

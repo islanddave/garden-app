@@ -11,7 +11,12 @@ name: revert rehearsal (staging)
 # Triggered by touching ops/revert-rehearsal.trigger on dev (push), mirroring snap-rehearsal:
 # workflow_dispatch cannot be used because this workflow lives only on dev (dispatch requires
 # the workflow on the default branch). Runs in environment: production ONLY because the snap
-# role's OIDC trust is scoped to environment:production (Dave approves each run there).
+# role's OIDC trust is scoped to environment:production — that is an OIDC SUBJECT-CLAIM dependency,
+# NOT an approval gate. Corrected 2026-08-05: the parenthetical here used to read "(Dave approves each
+# run there)", which has been false since 2026-06-22 when the production environment's required
+# reviewer was removed; it now carries a branch/tag ref policy only. This workflow is deliberately NOT
+# moved to environment:production-destructive — it is staging-only (REHEARSAL_MODE=1 skips every prod
+# leg), so it needs no destructive gate, and moving it would break the OIDC subject match above.
 #
 # The trigger file selects the run via shell-style lines (all optional, defaults shown):
 #   MODE=dump_path            # dump_path | fast_path | abort
