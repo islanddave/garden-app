@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # P0 weekly data-integrity check — garden-app (data-audit plan V100 §P0; authored W3.D 2026-07-28).
 # Repo home when it ships: garden-app/scripts/integrity-weekly-check.sh
-# Five check classes: (1) per-class orphans (checked-edge list + unattached), (2) care-dupe delta,
-# (3) phantom photo-event delta, (4) user_stats-vs-xp_events drift, (5) S3<->DB mismatch.
+# Six check classes: (1) per-class orphans (checked-edge list + unattached), (2) care-dupe delta,
+# (3) phantom photo-event delta, (4) user_stats-vs-xp_events drift, (5) S3<->DB mismatch,
+# (6) cultivar faceting — untyped + missing derived type tag (V4-INTAKE-001, added 2026-08-05).
 # DELTA semantics: ALERT only when current > baseline (growth). Shrinkage = improvement note
 # (baseline refresh rides the repair's own commit). NO tables are created; run snapshots persist
 # as workflow artifacts; the committed baseline lives at scripts/integrity-baselines.json.
@@ -92,6 +93,30 @@ SELECT json_build_object(
      FULL OUTER JOIN user_stats us ON us.user_id = le.user_id
      WHERE (le.user_id IS NOT NULL AND us.user_id IS NULL)
         OR (le.user_id IS NOT NULL AND us.user_id IS NOT NULL AND le.ledger_xp <> us.xp)) d),
+  -- Class 6: cultivar faceting (V4-INTAKE-001, L-239). Two DISTINCT failure shapes, because a
+  -- cultivar can fall out of the by-type view two different ways and the existing scripts only
+  -- ever covered the second one:
+  --   (a) cultivars_untyped — crop_type_slug IS NULL. This IS the "Unsorted" class. NOTHING
+  --       detected it before this metric: check-cultivar-faceting.mjs filters to
+  --       `crop_type_slug IS NOT NULL`, and healthcheck-cultivar-facets.mjs derives the DESIRED
+  --       tag set from the cultivar row, so a null slug yields no desired type tag and therefore
+  --       no gap. Both scripts report OK on precisely the population that is broken. A NULL slug
+  --       does not error anywhere — the cultivar just silently vanishes from every faceted view.
+  --   (b) cultivars_missing_type_tag — has a crop_type_slug but no derived type: tag link, i.e.
+  --       a write that reached plant_varieties without the applyDerive tail (direct-Neon inserts,
+  --       a loader that skipped the heal). This is the check-cultivar-faceting.mjs predicate,
+  --       reproduced verbatim so the weekly job does not depend on anyone remembering to run it.
+  -- Both baseline at 0 and must STAY 0: unlike a census of accumulated debris, any nonzero here
+  -- is a live intake regression. Remediate (b) with scripts/reconcile-cultivar-facets.mjs; (a)
+  -- needs the crop type actually supplied at the write site — the reconciler cannot invent one.
+  'cultivars_untyped', (SELECT count(*) FROM plant_varieties v
+     WHERE v.deleted_at IS NULL AND v.crop_type_slug IS NULL),
+  'cultivars_missing_type_tag', (SELECT count(*) FROM plant_varieties v
+     WHERE v.deleted_at IS NULL AND v.crop_type_slug IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM entity_tag et JOIN tag t ON t.id = et.tag_id
+         WHERE et.entity_type = 'cultivar' AND et.entity_id = v.id AND et.deleted_at IS NULL
+           AND t.source = 'derived' AND t.facet = 'type' AND t.slug = v.crop_type_slug
+           AND t.deleted_at IS NULL)),
   'db_photo_rows_live', (SELECT count(*) FROM photos WHERE deleted_at IS NULL)
 );
 ROLLBACK;
