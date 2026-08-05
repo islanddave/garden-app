@@ -18,6 +18,7 @@ import {
   splitClauses,
   isSpringEstablishmentAllium,
   sowGoal,
+  isArchivedForSeason,
 } from '../lib/sowEngine.js';
 // Imported ONLY to pin the engine's local bunching predicate against the canonical derivation, so
 // the two cannot silently diverge. The engine itself never imports from lambda/.
@@ -122,9 +123,12 @@ describe('exports', () => {
 
   // Every key bucketOne can return must be pre-seeded here — a missing key makes
   // buckets[bucket].push() throw, which propagates out of SowNow's useMemo and white-screens /sow.
-  it('bucketize returns all eight buckets even for empty input', () => {
+  // Every key bucketOne can return MUST be pre-seeded here — `buckets[bucket].push(entry)` throws
+  // on a missing one, which propagates out of SowNow's useMemo and white-screens /sow. `archived`
+  // added by V4-SOWARCHIVE-001 (9th).
+  it('bucketize returns all nine buckets even for empty input', () => {
     expect(Object.keys(bucketize([], TODAY)).sort()).toEqual([
-      'direct_sow_now', 'hold', 'needs_profile', 'sow_inside_anytime',
+      'archived', 'direct_sow_now', 'hold', 'needs_profile', 'sow_inside_anytime',
       'sow_next_year', 'start_indoors_now', 'too_late', 'window_closing',
     ]);
   });
@@ -540,6 +544,10 @@ describe('GOLDEN suite — real packets, today 2026-07-10', () => {
       hold: 3,              // columbine, radicchio, onion (gated bulber)
       too_late: 2,          // biquinho, black krim
       needs_profile: 1,     // california wonder
+      // V4-SOWARCHIVE-001: no golden packet carries sow_archived_season, so this stays 0. That it
+      // is 0 while every other count is UNCHANGED is the evidence the archive path is purely
+      // additive — it diverts packets, it does not re-bucket them.
+      archived: 0,
     });
   });
 });
@@ -1170,5 +1178,106 @@ describe('fall indoor pass — DTM basis (V4-MATURITYBASIS-001 Slice C)', () => 
     const at = (d) => run(belstar, d);
     expect(at('2026-06-20').entry.windowLabel).toContain('Jun 26');
     expect(at('2026-08-04').entry.windowLabel).not.toMatch(/Start indoors/);
+  });
+});
+
+// ── V4-SOWARCHIVE-001 ─────────────────────────────────────────────────────────
+// Archive-for-the-season: a packet Dave is done sowing leaves the ACTIVE buckets for a bottom
+// section, and comes back by itself next season. The invariant under test throughout is that
+// archiving DIVERTS a packet without re-deciding it — bucketOne's verdict is preserved on
+// `archivedFrom`, so un-archiving is a pure restore and the two paths cannot drift.
+describe('V4-SOWARCHIVE-001 archive-for-the-season', () => {
+  const SEASON = 2026; // == the year TODAY ('2026-07-10') resolves to
+
+  it('isArchivedForSeason: only a stamp matching THIS season archives', () => {
+    expect(isArchivedForSeason({ sow_archived_season: 2026 }, 2026)).toBe(true);
+    // Expiry is the whole design: last season's stamp does not hide anything this season.
+    expect(isArchivedForSeason({ sow_archived_season: 2025 }, 2026)).toBe(false);
+    expect(isArchivedForSeason({ sow_archived_season: 2027 }, 2026)).toBe(false);
+  });
+
+  it('isArchivedForSeason: absent/empty/garbage reads as NOT archived', () => {
+    // The safe direction. The failure this guards is a packet silently vanishing from the list,
+    // so anything unparseable must fall back to visible.
+    expect(isArchivedForSeason({ sow_archived_season: null }, 2026)).toBe(false);
+    expect(isArchivedForSeason({ sow_archived_season: '' }, 2026)).toBe(false);
+    expect(isArchivedForSeason({ sow_archived_season: 'nope' }, 2026)).toBe(false);
+    expect(isArchivedForSeason({}, 2026)).toBe(false);
+    expect(isArchivedForSeason(undefined, 2026)).toBe(false);
+  });
+
+  it('isArchivedForSeason: coerces the neon driver string form', () => {
+    // View columns can arrive as strings; a strict === would silently never archive anything.
+    expect(isArchivedForSeason({ sow_archived_season: '2026' }, 2026)).toBe(true);
+  });
+
+  it('PRE-MIGRATION SAFETY: a view without the column behaves exactly as today', () => {
+    // Until 0a lands in an environment, v_sow_candidates has no such column and every row yields
+    // undefined. That must degrade to "nothing is archived", not to an empty page.
+    const rows = [PACKETS.spinachOceanside, PACKETS.cucumberSpacemaster].map((p) => toCandidate(p));
+    const buckets = bucketize(rows, TODAY);
+    expect(buckets.archived).toHaveLength(0);
+    expect(locate(buckets, 'Oceanside').bucket).toBe('direct_sow_now');
+  });
+
+  it('diverts an archived packet out of its natural bucket, recording where it came from', () => {
+    const archived = toCandidate(PACKETS.spinachOceanside, { sow_archived_season: SEASON });
+    const buckets = bucketize([archived], TODAY);
+    expect(buckets.direct_sow_now).toHaveLength(0);
+    expect(buckets.archived).toHaveLength(1);
+    expect(buckets.archived[0].archivedFrom).toBe('direct_sow_now');
+  });
+
+  it('the archived card keeps its real window label, not a blank', () => {
+    // An archived card that loses its context reads as broken rather than as put-away.
+    const plain = run(toCandidate(PACKETS.cucumberSpacemaster), TODAY);
+    const archived = bucketize(
+      [toCandidate(PACKETS.cucumberSpacemaster, { sow_archived_season: SEASON })], TODAY,
+    ).archived[0];
+    expect(archived.windowLabel).toBe(plain.entry.windowLabel);
+    expect(archived.windowLabel).toBeTruthy();
+  });
+
+  it('ROUND TRIP: un-archiving restores the exact original bucket and entry', () => {
+    // The property that makes archive safe to offer on every card — it is reversible with no
+    // residue. Asserted against a window_closing packet because that is the case Dave named
+    // ("things that are closing soon, I've already sown").
+    const before = run(toCandidate(PACKETS.cucumberSpacemaster), TODAY);
+    expect(before.bucket).toBe('window_closing');
+
+    const onArchive = bucketize(
+      [toCandidate(PACKETS.cucumberSpacemaster, { sow_archived_season: SEASON })], TODAY,
+    );
+    expect(onArchive.window_closing).toHaveLength(0);
+    expect(onArchive.archived[0].archivedFrom).toBe('window_closing');
+
+    // Un-archive == clearing the stamp (what the PATCH writes on {archived:false}).
+    const after = run(toCandidate(PACKETS.cucumberSpacemaster, { sow_archived_season: null }), TODAY);
+    expect(after.bucket).toBe('window_closing');
+    expect(after.entry.daysLeft).toBe(before.entry.daysLeft);
+    expect(after.entry.action).toBe(before.entry.action);
+  });
+
+  it('AUTO-RELEASE: last season\'s archive is invisible this season, with no job having run', () => {
+    // Nothing clears the stamp on 1 Jan — the predicate simply stops matching. Same row, same
+    // stamp, one year later, back on the list.
+    const stamped = { sow_archived_season: 2025 };
+    expect(bucketize([toCandidate(PACKETS.spinachOceanside, stamped)], '2025-07-10').archived)
+      .toHaveLength(1);
+    const nextSeason = bucketize([toCandidate(PACKETS.spinachOceanside, stamped)], TODAY);
+    expect(nextSeason.archived).toHaveLength(0);
+    expect(locate(nextSeason, 'Oceanside').bucket).toBe('direct_sow_now');
+  });
+
+  it('archiving one packet does not disturb the others', () => {
+    const rows = [
+      toCandidate(PACKETS.spinachOceanside, { sow_archived_season: SEASON }),
+      toCandidate(PACKETS.cucumberSpacemaster),
+      toCandidate(PACKETS.broccoliBelstar),
+    ];
+    const buckets = bucketize(rows, TODAY);
+    expect(buckets.archived).toHaveLength(1);
+    expect(buckets.window_closing).toHaveLength(1);
+    expect(buckets.start_indoors_now).toHaveLength(1);
   });
 });

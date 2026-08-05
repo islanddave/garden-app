@@ -670,12 +670,31 @@ function bucketOne(candidate, ctx) {
 }
 
 /**
+ * V4-SOWARCHIVE-001. Is this packet archived out of the ACTIVE buckets for `year`?
+ *
+ * Expiry is a property of this read, not of a job: the stamp is a season, so once `year` moves on
+ * the equality stops holding and the packet returns to its normal bucket by itself. Nothing has to
+ * run on 1 Jan, and nothing stays hidden because a cron failed.
+ *
+ * Number()-coerced because view columns can arrive as strings from the neon driver (same defence
+ * depthSpacingLine already applies to sow_depth_in). An unparseable or absent stamp is NOT archived
+ * — the safe direction, since the failure it guards against is a packet silently vanishing from the
+ * list. That also makes the pre-migration view (no such column -> undefined) behave exactly as today.
+ */
+export function isArchivedForSeason(candidate, year) {
+  const raw = candidate?.sow_archived_season;
+  if (raw == null || raw === '') return false;
+  const n = Number(raw);
+  return Number.isFinite(n) && n === year;
+}
+
+/**
  * Bucket v_sow_candidates rows for a given day.
  * @param {Array<object>} candidates v_sow_candidates-shaped rows
  * @param {string} todayISO 'YYYY-MM-DD'; anchors resolve against its year
  * @param {object} [anchors] partial FROST_ANCHORS override
  * @returns {{start_indoors_now:[], direct_sow_now:[], sow_inside_anytime:[],
- *   sow_next_year:[], window_closing:[], hold:[], too_late:[], needs_profile:[]}}
+ *   sow_next_year:[], window_closing:[], hold:[], too_late:[], needs_profile:[], archived:[]}}
  */
 export function bucketize(candidates, todayISO, anchors = {}) {
   const cfg = { ...FROST_ANCHORS, ...anchors };
@@ -702,10 +721,19 @@ export function bucketize(candidates, todayISO, anchors = {}) {
     hold: [],
     too_late: [],
     needs_profile: [],
+    archived: [],
   };
   for (const candidate of candidates || []) {
+    // bucketOne runs FIRST even for archived packets, and the bucket it chose rides along as
+    // `archivedFrom`. Two reasons: the archived card keeps its real window label instead of going
+    // blank, and un-archiving is a pure re-read — the entry it returns to is already computed, so
+    // the two paths cannot drift into disagreeing about where a packet belongs.
     const { bucket, entry } = bucketOne(candidate, ctx);
-    buckets[bucket].push(entry);
+    if (isArchivedForSeason(candidate, year)) {
+      buckets.archived.push({ ...entry, archivedFrom: bucket });
+    } else {
+      buckets[bucket].push(entry);
+    }
   }
   return buckets;
 }

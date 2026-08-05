@@ -181,6 +181,48 @@ export const handler = async (event) => {
       return resp(200, { packets: parsed.packets });
     }
 
+    // V4-SOWARCHIVE-001: archive a seed packet out of the ACTIVE Sow Now buckets for a season.
+    // Checked before idMatch, mirroring the lambda/plants /archive precedent — idMatch's
+    // /([^/]+)$/ cannot match the /sow-archive suffix, but the ordering is kept explicit so a
+    // future loosening of that regex can't silently swallow this route.
+    const sowArchiveMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)\/sow-archive$/);
+    if (sowArchiveMatch) {
+      const itemId = sowArchiveMatch[1];
+      if (method !== 'PATCH') return resp(405, { error: 'Method not allowed' });
+      const body = JSON.parse(event.body ?? '{}');
+      const archived = body.archived !== false; // default true; {archived:false} un-archives
+
+      // The SEASON comes from the client, because sowEngine derives its year from a LOCAL calendar
+      // date (sowEngine.js, getUTCFullYear of localTodayISO). Stamping EXTRACT(YEAR FROM now())
+      // here would write the NEXT year for an archive made late on 31 Dec Eastern, hiding the
+      // packet for all of it. Falling back to the server year only when the client sends none.
+      let season = null;
+      if (archived) {
+        season = Number.isInteger(body.season) ? body.season : new Date().getUTCFullYear();
+        // Range-check rather than trust: this is the user's own data, but an out-of-range stamp
+        // would archive a packet into a season that never arrives, i.e. hide it forever.
+        if (season < 2000 || season > 2100) return resp(400, { error: 'invalid_season' });
+      }
+
+      // Household-scoped like every other read of this table. category='seeds' is asserted so this
+      // route cannot stamp a non-seed inventory row with a Sow-Now-only field. deleted_at filter
+      // retained: a deleted packet can't be (un)archived.
+      // Both columns move together — chk_sow_archive_pair rejects a half-write at the DB.
+      const rows = await sql`
+        UPDATE public.inventory_items
+           SET sow_archived_season = ${season},
+               sow_archived_at = CASE WHEN ${archived} THEN NOW() ELSE NULL END,
+               updated_at = NOW()
+         WHERE id = ${itemId}
+           AND created_by = ANY(${householdIds})
+           AND deleted_at IS NULL
+           AND category = 'seeds'
+        RETURNING id, sow_archived_season, sow_archived_at
+      `;
+      if (!rows.length) return resp(404, { error: 'Not found' });
+      return resp(200, rows[0]);
+    }
+
     const idMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)$/);
 
     if (idMatch) {

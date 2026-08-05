@@ -1,0 +1,136 @@
+# gates.yml
+# V4-SOWARCHIVE-001 — inventory_items.sow_archived_season/_at + v_sow_candidates exposure.
+#
+# SEQUENCING: staging -> rehearse 0r -> re-apply -> dev push -> prod -> promote.
+# The DDL must land in prod BEFORE the promote, but the failure mode if it does not is SOFT, unlike
+# v4-sowfirstyear-001: a view without these columns yields undefined, the client's archived test is
+# `Number(season) === year` which is false for undefined, so every packet reads as un-archived and
+# the page behaves exactly as it does today. Degraded, not wrong. The Archive button would appear to
+# do nothing (the PATCH 500s on the missing column), which is a loud failure rather than a quiet one.
+
+pre:
+  - name: pre_inventory_items_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='inventory_items'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_columns_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='inventory_items'
+         AND column_name IN ('sow_archived_season','sow_archived_at')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_view_column_count_31
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+    expect: scalar_eq
+    value: 31
+
+  # Self-comparison rather than a hardcoded count: the count is environment-specific (prod and
+  # staging hold different seed inventories), so a literal would pass on one and fail on the other
+  # for no real reason.
+  - name: pre_view_equals_filtered_base
+    sql: |
+      SELECT 1 WHERE (SELECT count(*) FROM public.v_sow_candidates)
+                   = (SELECT count(*) FROM inventory_items i
+                        JOIN plant_varieties v ON v.id = i.variety_id
+                       WHERE i.category = 'seeds' AND i.deleted_at IS NULL
+                         AND i.status = 'active' AND v.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_season_column_present_and_nullable
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='inventory_items'
+         AND column_name='sow_archived_season' AND data_type='integer'
+         AND is_nullable='YES' AND column_default IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_at_column_present_and_nullable
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='inventory_items'
+         AND column_name='sow_archived_at' AND data_type='timestamp with time zone'
+         AND is_nullable='YES' AND column_default IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_pair_constraint_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname='chk_sow_archive_pair' AND contype='c'
+         AND conrelid='public.inventory_items'::regclass
+    expect: rowcount_eq
+    value: 1
+
+  # A bare CREATE INDEX leaves NO pg_constraint row at any contype (the standing landmine), so the
+  # index is asserted against pg_indexes, not pg_constraint.
+  - name: post_partial_index_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='inventory_items'
+         AND indexname='idx_inventory_sow_archived'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_view_exposes_both_columns
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+         AND column_name IN ('sow_archived_season','sow_archived_at')
+    expect: scalar_eq
+    value: 2
+
+  - name: post_view_column_count_33
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+    expect: scalar_eq
+    value: 33
+
+  # THE ONE THAT MATTERS. The view's WHERE clause is what makes it "active seed packets"; dropping it
+  # during the CREATE OR REPLACE would flood Sow Now with non-seed and soft-deleted inventory.
+  # Asserted twice, on the definition text AND on the row count, because either alone can be fooled
+  # and CREATE OR REPLACE VIEW is indifferent to predicates.
+  - name: post_view_filter_intact
+    sql: |
+      SELECT 1 FROM pg_views
+       WHERE viewname='v_sow_candidates'
+         AND definition LIKE '%category = ''seeds''%'
+         AND definition LIKE '%i.deleted_at IS NULL%'
+         AND definition LIKE '%status = ''active''%'
+         AND definition LIKE '%v.deleted_at IS NULL%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_view_equals_filtered_base
+    sql: |
+      SELECT 1 WHERE (SELECT count(*) FROM public.v_sow_candidates)
+                   = (SELECT count(*) FROM inventory_items i
+                        JOIN plant_varieties v ON v.id = i.variety_id
+                       WHERE i.category = 'seeds' AND i.deleted_at IS NULL
+                         AND i.status = 'active' AND v.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 1
+
+  # Migration is additive ONLY — it must not archive anything. A non-zero count here means the DDL
+  # acquired a default or a stray UPDATE, which would hide packets Dave never archived.
+  - name: post_nothing_archived_by_the_migration
+    sql: |
+      SELECT count(*) FROM public.inventory_items WHERE sow_archived_season IS NOT NULL
+    expect: scalar_eq
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.17.0-sowarchive-001'
+    expect: rowcount_eq
+    value: 1

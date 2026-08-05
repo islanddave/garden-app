@@ -54,3 +54,56 @@ describe('inventory-items Lambda — SEEDINV literal sub-routes (static-source g
     expect(matches.length).toBe(1);
   });
 });
+
+// V4-SOWARCHIVE-001 static-source guard — PATCH /api/inventory-items/:id/sow-archive.
+// Static for the same reason as the block above (index.js cannot be imported by unit tests).
+//
+// Failure modes guarded here, all of which are silent in prod rather than loud:
+//   - the route drifts below idMatch and stops being reachable;
+//   - the household scope is dropped, letting one household stamp another's packets;
+//   - the category='seeds' guard is dropped, stamping a Sow-Now-only field onto a shovel;
+//   - the season range check is removed, letting a packet be archived into a season that never
+//     arrives — i.e. hidden forever with no UI to recover it.
+describe('inventory-items Lambda — SOWARCHIVE route (static-source guard)', () => {
+  const idMatchIdx = SRC.indexOf('const idMatch = rawPath.match');
+  const archiveIdx = SRC.indexOf('const sowArchiveMatch = rawPath.match');
+  const archiveBranch = SRC.slice(archiveIdx, idMatchIdx);
+
+  it('declares the sow-archive branch BEFORE the idMatch regex', () => {
+    expect(archiveIdx).toBeGreaterThan(-1);
+    expect(archiveIdx, 'sow-archive branch must precede idMatch').toBeLessThan(idMatchIdx);
+  });
+
+  it('is PATCH-only', () => {
+    expect(archiveBranch).toMatch(/method !== 'PATCH'/);
+    expect(archiveBranch).toMatch(/resp\(405/);
+  });
+
+  it('writes both archive columns together and stamps updated_at', () => {
+    // chk_sow_archive_pair rejects a half-write at the DB, but writing both here is what keeps
+    // the constraint from ever being the thing that surfaces the bug.
+    expect(archiveBranch).toContain('sow_archived_season =');
+    expect(archiveBranch).toContain('sow_archived_at =');
+    expect(archiveBranch).toContain('updated_at = NOW()');
+  });
+
+  it('un-archives symmetrically ({archived:false} clears both)', () => {
+    expect(archiveBranch).toMatch(/body\.archived !== false/);
+    expect(archiveBranch).toMatch(/CASE WHEN \$\{archived\} THEN NOW\(\) ELSE NULL END/);
+  });
+
+  it('scopes the UPDATE to the household, to live rows, and to seed packets only', () => {
+    expect(archiveBranch).toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
+    expect(archiveBranch).toContain('deleted_at IS NULL');
+    expect(archiveBranch).toContain("category = 'seeds'");
+  });
+
+  it('range-checks the season rather than trusting the client', () => {
+    expect(archiveBranch).toMatch(/season < 2000 \|\| season > 2100/);
+    expect(archiveBranch).toMatch(/invalid_season/);
+  });
+
+  it('404s when the UPDATE matches nothing (wrong household, or not a seed packet)', () => {
+    expect(archiveBranch).toMatch(/if \(!rows\.length\) return resp\(404/);
+  });
+});

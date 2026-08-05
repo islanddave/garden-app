@@ -28,10 +28,20 @@ const BUCKET_META = [
   ['hold',               'Hold for later'],
   ['needs_profile',      'Needs a sow profile'],
   ['too_late',           'Too late this year'],
+  // V4-SOWARCHIVE-001. Dead last and collapsed, like too_late: the whole point is to get these off
+  // the working list. They are still ON the page and one tap from returning — archiving is a view
+  // preference, not a delete, so it must never look like the packet is gone.
+  ['archived',           'Archived for this season'],
 ]
+
+// Heading text by bucket key, for the archived card's "From: …" provenance line.
+const BUCKET_LABEL = Object.fromEntries(BUCKET_META.map(([k, label]) => [k, label]))
 
 // Sections rendered with the demoted (muted) heading treatment.
 const DEMOTED = new Set(['sow_next_year'])
+
+// Sections rendered as a collapsed disclosure at the bottom rather than an open list.
+const COLLAPSED = new Set(['too_late', 'archived'])
 
 // Buckets whose cards carry a Sow action.
 const ACTIONABLE = new Set(['window_closing', 'start_indoors_now', 'direct_sow_now', 'sow_inside_anytime', 'sow_next_year'])
@@ -76,6 +86,10 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   const [error, setError] = useState(null)
   const [sownIds, setSownIds] = useState(() => new Set())
   const [tooLateOpen, setTooLateOpen] = useState(false)
+  const [archivedOpen, setArchivedOpen] = useState(false)
+  // In-flight archive PATCHes, by inventory_item_id — disables the button so a double-tap on a
+  // slow phone connection cannot fire two writes.
+  const [archiveBusy, setArchiveBusy] = useState(() => new Set())
   const [projects, setProjects] = useState([])
 
   // Sheet target — null when closed, else the bucket entry being sown. The sheet hosts the
@@ -118,11 +132,52 @@ export default function SowNow({ todayISO = localTodayISO() }) {
     setSowTarget(entry)
   }, [])
 
+  // V4-SOWARCHIVE-001. Archive/un-archive a packet for THIS season.
+  //
+  // The season is taken from todayISO rather than from a fresh Date, so the stamp we write is the
+  // exact year the engine is bucketing against (bucketize derives its year the same way). A packet
+  // archived at 11:59pm on 31 Dec is stamped with the year Dave was actually looking at.
+  //
+  // Written OPTIMISTICALLY into `candidates` — not into a side Set — so the single useMemo
+  // re-bucketizes from one source of truth and the archived section cannot disagree with the active
+  // ones. On failure the previous value is restored, because a card that silently stays put after a
+  // tap reads as an unresponsive button rather than as a failed write.
+  const setArchived = useCallback(async (candidate, archived) => {
+    const id = candidate.inventory_item_id
+    const season = Number(todayISO.slice(0, 4))
+    const prevSeason = candidate.sow_archived_season ?? null
+    const nextSeason = archived ? season : null
+
+    setArchiveBusy((b) => new Set(b).add(id))
+    setCandidates((prev) => prev?.map((c) => (
+      c.inventory_item_id === id ? { ...c, sow_archived_season: nextSeason } : c
+    )) ?? prev)
+
+    try {
+      await fetch(`/api/inventory-items/${id}/sow-archive`, {
+        method: 'PATCH',
+        body: JSON.stringify(archived ? { archived: true, season } : { archived: false }),
+      })
+      // Deliberately NOT the section heading's own words: the toast says where the card WENT,
+      // which is the thing that isn't obvious the first time a card disappears from under your
+      // thumb. (It also kept colliding with the heading in the DOM.)
+      show({ message: archived ? 'Archived — moved to the bottom' : 'Back on the list' })
+    } catch (err) {
+      setCandidates((prev) => prev?.map((c) => (
+        c.inventory_item_id === id ? { ...c, sow_archived_season: prevSeason } : c
+      )) ?? prev)
+      show({ message: archived ? "Couldn't archive that" : "Couldn't un-archive that" })
+    } finally {
+      setArchiveBusy((b) => { const n = new Set(b); n.delete(id); return n })
+    }
+  }, [fetch, show, todayISO])
+
   function renderCard(entry, bucketKey) {
     const c = entry.candidate
     const title = c.variety_name || c.item_name
     const line = depthSpacingLine(c)
     const sown = sownIds.has(c.inventory_item_id)
+    const busy = archiveBusy.has(c.inventory_item_id)
     return (
       <div key={c.inventory_item_id} style={cardStyle}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -149,7 +204,13 @@ export default function SowNow({ todayISO = localTodayISO() }) {
           {entry.gateReason && (
             <div style={gateReasonLine}>{entry.gateReason}</div>
           )}
+          {/* Where it sat before it was archived. Answers "why was this on my list?" without making
+              Dave un-archive it to find out. */}
+          {bucketKey === 'archived' && entry.archivedFrom && BUCKET_LABEL[entry.archivedFrom] && (
+            <div style={gateReasonLine}>From: {BUCKET_LABEL[entry.archivedFrom]}</div>
+          )}
         </div>
+        <div style={cardActions}>
         {ACTIONABLE.has(bucketKey) && (
           sown ? (
             <span style={sownChip} role="status">Sown &#10003;</span>
@@ -190,6 +251,20 @@ export default function SowNow({ todayISO = localTodayISO() }) {
             Add sow details
           </button>
         )}
+        {/* V4-SOWARCHIVE-001. Offered on EVERY bucket rather than a curated subset: the reason a
+            packet is not wanted on the list ("already sown all I'm going to") is Dave's, not the
+            engine's, so any card can be the one he wants gone. The archived section offers the
+            inverse. aria-label carries the packet name — 'Archive' alone is ambiguous in a list. */}
+        <button
+          type="button"
+          onClick={() => setArchived(c, bucketKey !== 'archived')}
+          disabled={busy}
+          aria-label={bucketKey === 'archived' ? `Un-archive ${title}` : `Archive ${title} for this season`}
+          style={busy ? { ...archiveBtn, opacity: 0.5 } : archiveBtn}
+        >
+          {bucketKey === 'archived' ? 'Un-archive' : 'Archive'}
+        </button>
+        </div>
       </div>
     )
   }
@@ -198,20 +273,24 @@ export default function SowNow({ todayISO = localTodayISO() }) {
     const entries = buckets[key]
     if (!entries || entries.length === 0) return null // collapsed when empty
 
-    if (key === 'too_late') {
+    // too_late and archived share one disclosure: both are "off the working list but still on the
+    // page". Generalised rather than copied so the two cannot drift apart visually.
+    if (COLLAPSED.has(key)) {
+      const open = key === 'archived' ? archivedOpen : tooLateOpen
+      const toggle = key === 'archived' ? setArchivedOpen : setTooLateOpen
       return (
         <section key={key} style={{ marginBottom: 20 }}>
           <button
             type="button"
-            onClick={() => setTooLateOpen((o) => !o)}
-            aria-expanded={tooLateOpen}
+            onClick={() => toggle((o) => !o)}
+            aria-expanded={open}
             style={disclosureBtn}
           >
-            <span style={{ fontSize: '0.8rem' }}>{tooLateOpen ? '▾' : '▸'}</span>
+            <span style={{ fontSize: '0.8rem' }}>{open ? '▾' : '▸'}</span>
             {label}
             <span style={countBadge}>{entries.length}</span>
           </button>
-          {tooLateOpen && (
+          {open && (
             <div style={sectionList}>{entries.map((e) => renderCard(e, key))}</div>
           )}
         </section>
@@ -370,6 +449,34 @@ const cardStyle = {
   display: 'flex',
   alignItems: 'center',
   gap: 12,
+}
+
+// Action column. Wraps rather than overflows: a card can carry two buttons (Sow + Archive, or
+// Add sow details + Archive) and the narrowest phone Dave uses is 360px, where three side-by-side
+// controls plus the title would squeeze the name to nothing.
+const cardActions = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+  gap: 8,
+  flexWrap: 'wrap',
+  flexShrink: 0,
+}
+
+// Deliberately the quietest control on the card — archiving is housekeeping, not the primary
+// action, and it must never compete with Sow. Text-only, but still a 44px touch target.
+const archiveBtn = {
+  backgroundColor: 'transparent',
+  color: P.mid,
+  border: 'none',
+  borderRadius: 8,
+  padding: '9px 10px',
+  fontSize: '0.8rem',
+  fontWeight: 600,
+  cursor: 'pointer',
+  minHeight: 44,
+  flexShrink: 0,
+  textDecoration: 'underline',
 }
 
 const daysLeftBadge = {

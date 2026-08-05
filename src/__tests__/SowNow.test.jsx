@@ -89,11 +89,23 @@ const BIQUINHO = {
 }
 const FIXTURES = [CUCUMBER, LETTUCE, MYSTERY, BIQUINHO]
 
-function routeFetch({ candidates = FIXTURES, projects = [{ id: 'proj-peppers', name: 'Peppers' }], plantResponse = { id: 'plant-1' } } = {}) {
+function routeFetch({ candidates = FIXTURES, projects = [{ id: 'proj-peppers', name: 'Peppers' }], plantResponse = { id: 'plant-1' }, sowArchiveFails = false } = {}) {
   fetchSpy.mockImplementation((url, opts = {}) => {
     if (url === '/api/inventory-items/sow-candidates') return Promise.resolve({ items: candidates })
     if (url === '/api/projects') return Promise.resolve(projects)
     if (url === '/api/locations/with-path') return Promise.resolve([])
+    // V4-SOWARCHIVE-001. MUST precede the generic /api/inventory-items/ branch below, which would
+    // otherwise swallow the PATCH and return an item payload — the same route-ordering trap
+    // sow-routes.test.js pins on the Lambda side.
+    if (url.includes('/sow-archive')) {
+      if (sowArchiveFails) return Promise.reject(new Error('network'))
+      const body = JSON.parse(opts.body ?? '{}')
+      return Promise.resolve({
+        id: url.split('/')[3],
+        sow_archived_season: body.archived === false ? null : body.season,
+        sow_archived_at: body.archived === false ? null : '2026-07-10T12:00:00Z',
+      })
+    }
     if (url.startsWith('/api/inventory-items/')) {
       const id = url.split('/').pop()
       const c = candidates.find((x) => x.inventory_item_id === id)
@@ -332,5 +344,115 @@ describe('SowNow — allium gate + next-year section', () => {
     // Only the gated card carries these affordances.
     expect(screen.queryAllByText(/need a spring start/)).toHaveLength(1)
     expect(screen.queryAllByLabelText(/anyway$/)).toHaveLength(1)
+  })
+})
+
+// ── V4-SOWARCHIVE-001 ─────────────────────────────────────────────────────────
+// "I've already sown these and I'm not going to sow more, so I don't want to see them on the list.
+// They should still show up somewhere on the page, at the bottom, and I can unarchive them."
+// The through-line of these tests: archived is a VIEW state, never a delete — the packet stays on
+// the page, stays reversible, and never loses its identity.
+describe('SowNow — archive for the season', () => {
+  const patchCalls = () => fetchSpy.mock.calls.filter(([u]) => String(u).includes('/sow-archive'))
+
+  it('offers Archive on an active card', async () => {
+    routeFetch()
+    await renderSowNow()
+    await screen.findByText('Spacemaster 80')
+    expect(screen.getByLabelText('Archive Spacemaster 80 for this season')).toBeDefined()
+  })
+
+  it('archiving PATCHes the packet with THIS season and moves it off the active list', async () => {
+    routeFetch()
+    await renderSowNow()
+    await screen.findByText('Spacemaster 80')
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Archive Spacemaster 80 for this season'))
+    })
+
+    const [url, opts] = patchCalls()[0]
+    expect(url).toBe('/api/inventory-items/inv-cuke/sow-archive')
+    expect(opts.method).toBe('PATCH')
+    // The season is the year of todayISO — the same year the engine buckets against — NOT a fresh
+    // Date(). This is what stops a 31-Dec archive being stamped into next year.
+    expect(JSON.parse(opts.body)).toEqual({ archived: true, season: 2026 })
+
+    // Gone from the active section, and that section collapsed away with it (it held only cucumber).
+    expect(screen.queryByText('Window closing')).toBeNull()
+    expect(screen.getByText('Archived for this season')).toBeDefined()
+  })
+
+  it('the archived section is collapsed by default and expands to reveal the packet', async () => {
+    routeFetch()
+    await renderSowNow()
+    await screen.findByText('Spacemaster 80')
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Archive Spacemaster 80 for this season'))
+    })
+
+    // Off the working list: the card is not rendered while the disclosure is shut.
+    expect(screen.queryByText('Spacemaster 80')).toBeNull()
+
+    await act(async () => { fireEvent.click(screen.getByText('Archived for this season')) })
+
+    // Still on the page, one tap away — and it remembers where it came from.
+    expect(screen.getByText('Spacemaster 80')).toBeDefined()
+    expect(screen.getByText('From: Window closing')).toBeDefined()
+    expect(screen.getByLabelText('Un-archive Spacemaster 80')).toBeDefined()
+  })
+
+  it('ROUND TRIP: un-archiving clears the stamp and restores the original bucket', async () => {
+    routeFetch()
+    await renderSowNow()
+    await screen.findByText('Spacemaster 80')
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Archive Spacemaster 80 for this season'))
+    })
+    await act(async () => { fireEvent.click(screen.getByText('Archived for this season')) })
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Un-archive Spacemaster 80'))
+    })
+
+    // {archived:false} carries no season — the server nulls both columns.
+    expect(JSON.parse(patchCalls()[1][1].body)).toEqual({ archived: false })
+    // Back where it started, badge and all.
+    expect(screen.getByText('Window closing')).toBeDefined()
+    expect(screen.getByText('4 days left')).toBeDefined()
+    expect(screen.queryByText('Archived for this season')).toBeNull()
+  })
+
+  it('a packet already archived for this season loads straight into the archived section', async () => {
+    routeFetch({ candidates: [{ ...CUCUMBER, sow_archived_season: 2026 }, LETTUCE] })
+    await renderSowNow()
+
+    expect(await screen.findByText('Archived for this season')).toBeDefined()
+    expect(screen.queryByText('Window closing')).toBeNull()
+    // Un-archived neighbours are untouched.
+    expect(screen.getByText('Direct sow now')).toBeDefined()
+  })
+
+  it('AUTO-RELEASE: last season\'s stamp does not hide anything this season', async () => {
+    routeFetch({ candidates: [{ ...CUCUMBER, sow_archived_season: 2025 }] })
+    await renderSowNow()
+
+    expect(await screen.findByText('Window closing')).toBeDefined()
+    expect(screen.queryByText('Archived for this season')).toBeNull()
+  })
+
+  it('a failed archive puts the card BACK rather than leaving a lie on screen', async () => {
+    routeFetch({ sowArchiveFails: true })
+    await renderSowNow()
+    await screen.findByText('Spacemaster 80')
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Archive Spacemaster 80 for this season'))
+    })
+
+    // The optimistic move is rolled back: an archived-looking card whose write failed would be a
+    // packet Dave believes is put away and that reappears on his next visit.
+    expect(screen.getByText('Window closing')).toBeDefined()
+    expect(screen.getByText('Spacemaster 80')).toBeDefined()
+    expect(screen.queryByText('Archived for this season')).toBeNull()
   })
 })
