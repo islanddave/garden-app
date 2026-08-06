@@ -1,0 +1,256 @@
+# gates.yml
+# V4-CAL1INDEP-001 — an independence guard before cv is trusted.
+#
+# ── SEQUENCING. TWO FILES, ORDER FORCED, EITHER SIDE SEPARATELY COMMITTABLE ──────────────────────
+#   pre     gates below
+#   0a      0a-derived-v3.sql     cultivar_weight_derived gains independent_n + distinct_ratios and
+#                                 rebuilds the confidence ladder on them; adds the cross-unit
+#                                 review queue. Function untouched.
+#   mid     gates below           AUTHORISES 0b: asserts the column 0b's body will reference exists.
+#   0b      0b-resolver-v5.sql    resolve_harvest_weight's accumulation hatch reads independent_n.
+#   post    gates below
+#
+# 0b MUST follow 0a. Its body references d.independent_n; against a v2 view it fails at parse with
+# 42703 and the function is left at v4 — a safe failure (v4 is valid against both view versions),
+# but a failure. The reverse order is not merely unsupported, it cannot succeed.
+#
+# 0a alone is a coherent, shippable state: the view is stricter, v4 still promotes on confidence
+# high/medium and picks up the fix for free, and only the sample_n>=5 hatch stays unguarded. If 0b
+# has to be parked, park it there — do not park between the two halves of 0a (there is no such
+# point; 0a is one transaction-shaped file).
+#
+# ── NO DEPLOY BOUNDARY IS REQUIRED ───────────────────────────────────────────────────────────────
+# Same finding as v4-harvbasis-sample-001, re-verified for this change. Both Lambda write paths
+# (lambda/events/index.js — the POST CTE ~1542 and the PUT recompute) select weight_basis straight
+# out of a LATERAL resolve_harvest_weight call; the signature, the three return columns and the
+# basis vocabulary are all identical across v4 and v5, so there is no mixed-version window to
+# sequence around. NOTHING in the repo reads cultivar_weight_derived.confidence from JS — the only
+# consumers are SQL (the resolver) and scripts/ (the ratchet and the seed generator, both of which
+# read named columns, never positional). Both phases are DB-only.
+#
+# ── NO CHECK CONSTRAINT IS IN SCOPE ──────────────────────────────────────────────────────────────
+# The 2026-08-03 outage (23514 on every prod harvest save) came from arming a CHECK ahead of the
+# deployed writer. Not applicable here: weight_basis keeps exactly the v4 vocabulary
+# ('measured' | 'cultivar' | 'cultivar_sample' | 'crop_type'), so chk_harvest_log_weight_basis is
+# neither widened nor narrowed and cannot be violated in either direction.
+#
+# ── WHAT DOES *NOT* HAPPEN HERE ──────────────────────────────────────────────────────────────────
+# No stored harvest_log weight is re-derived by this migration. Confidence changing means FUTURE
+# resolutions change; existing rows keep the grams they carry until the ratchet
+# (scripts/harvest-weight-ratchet.sh) is run, which is separately gated and snapshots before it
+# writes. That separation is deliberate — see README-BUILD.md §Interaction with the ratchet.
+#
+# ── GATES ARE NOT CI-WIRED ───────────────────────────────────────────────────────────────────────
+# Nothing under .github/workflows or scripts/ references gates.yml; these are run by hand. CI
+# coverage for this change is src/__tests__/cal1Weights.test.js (the reference implementation, which
+# mirrors the same math) and tests/integration/cal1-indep.int.test.js, which capability-detects
+# schema_version 4.23.0 so it is green on BOTH sides of the apply.
+
+pre:
+  - name: pre_prior_cal1_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.20.8-harvbasis-sample-001-resolver-v4'
+    expect: rowcount_eq
+    value: 1
+
+  # 0a's ladder rebuilds these two columns; if they are absent the view is not the one this
+  # migration was written against.
+  - name: pre_derived_is_v2_shape
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar_weight_derived'
+         AND column_name IN ('confidence','sample_n','usable_for_comparison')
+    expect: rowcount_eq
+    value: 3
+
+  # 0r's rollback does DROP+CREATE on the view, which discards ACLs. Assert there are none to lose.
+  - name: pre_derived_has_no_grants_to_lose
+    sql: |
+      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname='public' AND c.relname='cultivar_weight_derived' AND c.relacl IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  # Same reason: DROP is only safe while nothing depends on the view.
+  - name: pre_derived_has_no_dependents
+    sql: |
+      SELECT 1
+        FROM pg_depend d
+        JOIN pg_rewrite r  ON r.oid = d.objid
+        JOIN pg_class dep  ON dep.oid = r.ev_class
+        JOIN pg_class src  ON src.oid = d.refobjid
+       WHERE src.relname='cultivar_weight_derived' AND dep.relname <> 'cultivar_weight_derived'
+    expect: rowcount_eq
+    value: 0
+
+  # RECORDS THE DEFECT so the post gates are a real before/after rather than assertions about a
+  # value nobody looked at. INFORMATIONAL capture, not pass/fail: the count is a property of the
+  # DATA, and staging holds a different sample set from dev/prod — a hardcoded count here is exactly
+  # the failure V4-CROPTYPE-002's gates were rewritten to remove. Distinct ratios are computed from
+  # the BASE tables because the v2 view does not expose them yet.
+  #
+  # Expect >0 on dev/prod (Pineapple Tomatillo/count: n=2, one distinct ratio, cv=0, 'high' — the
+  # live instance of the defect). Expect 0 on a staging branch that carries no such pair; that is a
+  # thinner exercise of the migration, not a failure. Note the number either way: the same query in
+  # the post section must return 0.
+  - name: pre_degenerate_groups_claiming_high
+    sql: |
+      WITH live AS (
+        SELECT s.cultivar_id, s.unit, round(s.total_grams / s.unit_count, 6) AS ratio_key
+          FROM public.cultivar_weight_sample s
+         WHERE NOT EXISTS (SELECT 1 FROM public.cultivar_weight_void v WHERE v.sample_id = s.id)
+           AND NOT EXISTS (SELECT 1 FROM public.event_log e
+                            WHERE e.id = s.source_event_id AND e.deleted_at IS NOT NULL)
+      ), ratios AS (
+        SELECT cultivar_id, unit, count(DISTINCT ratio_key) AS dr
+          FROM live GROUP BY cultivar_id, unit
+      )
+      SELECT d.cultivar_id, d.unit, d.sample_n, r.dr
+        FROM public.cultivar_weight_derived d
+        JOIN ratios r ON r.cultivar_id = d.cultivar_id AND r.unit = d.unit
+       WHERE d.confidence = 'high' AND r.dr < 2
+    expect: informational
+
+mid:
+  # AUTHORISES 0b. Its body references this column; without it 0b is a 42703.
+  - name: mid_derived_exposes_independent_n
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar_weight_derived'
+         AND column_name IN ('independent_n','distinct_ratios')
+    expect: rowcount_eq
+    value: 2
+
+  - name: mid_view_marker_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.0-cal1-indep-001'
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_resolver_marker_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.1-cal1-indep-001-resolver-v5'
+    expect: rowcount_eq
+    value: 1
+
+  # THE INVARIANT. No group may claim the top tier without having seen two different answers.
+  - name: post_no_high_on_a_single_distinct_ratio
+    sql: |
+      SELECT 1 FROM public.cultivar_weight_derived
+       WHERE confidence = 'high' AND distinct_ratios < 2
+    expect: rowcount_eq
+    value: 0
+
+  # A group whose rows all describe one observation must not be promotable at all.
+  - name: post_single_observation_is_provisional
+    sql: |
+      SELECT 1 FROM public.cultivar_weight_derived
+       WHERE independent_n < 2 AND confidence <> 'provisional'
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_usable_for_comparison_tracks_independent_n
+    sql: |
+      SELECT 1 FROM public.cultivar_weight_derived
+       WHERE usable_for_comparison IS DISTINCT FROM (independent_n >= 2)
+    expect: rowcount_eq
+    value: 0
+
+  # DEMOTE, DO NOT DISCARD — stated as an invariant so it holds in every environment. A group with
+  # real corroboration (>= 2 independent observations) that happens to have seen only one answer
+  # must land on exactly 'medium': demoted out of 'high' because cv=0 is arithmetic, but still
+  # corroborated so the resolver keeps using it. If either half of this drifts, the guard has
+  # overshot into reversing reviewed factors (scripts/harvest-weight-ratchet-ack.json) or undershot
+  # into leaving the defect open.
+  - name: post_degenerate_but_corroborated_is_medium_and_usable
+    sql: |
+      SELECT 1 FROM public.cultivar_weight_derived
+       WHERE independent_n >= 2 AND distinct_ratios < 2
+         AND NOT (confidence = 'medium' AND usable_for_comparison)
+    expect: rowcount_eq
+    value: 0
+
+  # The pre-gate query, after. Whatever it counted must now be 0.
+  - name: post_no_degenerate_group_still_claims_high
+    sql: |
+      WITH live AS (
+        SELECT s.cultivar_id, s.unit, round(s.total_grams / s.unit_count, 6) AS ratio_key
+          FROM public.cultivar_weight_sample s
+         WHERE NOT EXISTS (SELECT 1 FROM public.cultivar_weight_void v WHERE v.sample_id = s.id)
+           AND NOT EXISTS (SELECT 1 FROM public.event_log e
+                            WHERE e.id = s.source_event_id AND e.deleted_at IS NOT NULL)
+      ), ratios AS (
+        SELECT cultivar_id, unit, count(DISTINCT ratio_key) AS dr
+          FROM live GROUP BY cultivar_id, unit
+      )
+      SELECT 1
+        FROM public.cultivar_weight_derived d
+        JOIN ratios r ON r.cultivar_id = d.cultivar_id AND r.unit = d.unit
+       WHERE d.confidence = 'high' AND r.dr < 2
+    expect: rowcount_eq
+    value: 0
+
+  # NON-REGRESSION. Every group with real dispersion must land exactly where the v2 ladder put it —
+  # the guard sits above the cv tiers and must not perturb them.
+  - name: post_cv_ladder_unchanged_where_ratios_differ
+    sql: |
+      SELECT 1 FROM public.cultivar_weight_derived
+       WHERE distinct_ratios >= 2 AND independent_n >= 2
+         AND confidence <> CASE WHEN cv <= 0.15 THEN 'high'
+                                WHEN cv <= 0.35 THEN 'medium' ELSE 'low' END
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_resolver_promotes_on_independent_n
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname='public' AND p.proname='resolve_harvest_weight'
+         AND pg_get_functiondef(p.oid) LIKE '%independent_n >= 5%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_crossunit_review_queue_exists
+    sql: |
+      SELECT 1 WHERE to_regclass('public.cultivar_weight_crossunit_suspect') IS NOT NULL
+    expect: rowcount_eq
+    value: 1
+
+  # NO CORROBORATED GROUP IS SILENTLY DROPPED. Every group the guard still considers corroborated
+  # must actually resolve through the sample tier for a plant of that cultivar — i.e. the promotion
+  # predicate in the function agrees with the confidence column in the view. This is the general
+  # form of "the reviewed Pineapple Tomatillo factor must still be the one the resolver uses"
+  # (3 count -> 4.5 g / cultivar_sample on dev/prod), stated so it also means something on a staging
+  # branch that has never seen that cultivar.
+  - name: post_corroborated_groups_still_win_the_sample_tier
+    sql: |
+      SELECT d.cultivar_id, d.unit, r.weight_basis
+        FROM public.cultivar_weight_derived d
+        JOIN public.plants pl ON pl.variety_id = d.cultivar_id AND pl.deleted_at IS NULL
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
+       WHERE d.confidence IN ('high', 'medium')
+         AND d.grams_per_unit IS NOT NULL
+         AND r.weight_basis IS DISTINCT FROM 'cultivar_sample'
+    expect: rowcount_eq
+    value: 0
+
+  # INFORMATIONAL: the dev/prod instance, named. Expected to return the reviewed 4.5 g /
+  # cultivar_sample there and no rows on a staging branch without that cultivar. A 24 g /
+  # 'cultivar' result on dev/prod means the guard reversed a decision Dave already made.
+  - name: post_reviewed_pineapple_tomatillo_factor
+    sql: |
+      SELECT round(r.weight_grams, 2) AS grams, r.weight_basis
+        FROM public.plants pl
+        CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, 'count', 3, NULL) r
+       WHERE pl.variety_id = '457d4628-1531-4349-8af7-2a114c206599' AND pl.deleted_at IS NULL
+       LIMIT 1
+    expect: informational
+
+  # The basis vocabulary is untouched, so no stored row can have become unrepresentable.
+  - name: post_basis_vocabulary_unchanged
+    sql: |
+      SELECT 1 FROM public.harvest_log
+       WHERE weight_basis IS NOT NULL
+         AND weight_basis NOT IN ('measured','cultivar','cultivar_sample','crop_type')
+    expect: rowcount_eq
+    value: 0

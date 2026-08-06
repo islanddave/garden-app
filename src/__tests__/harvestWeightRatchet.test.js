@@ -61,8 +61,32 @@ describe('it is fail-closed, not fail-open', () => {
   // The outlier scan must look at the factors the resolver ACTUALLY uses. Scanning every derived
   // row would bury the two that matter under single-sample provisionals the resolver already
   // refuses; scanning none would let a 0.12x factor propagate silently.
+  //
+  // The gate tracks resolver v5 (V4-CAL1INDEP-001): the accumulation hatch counts INDEPENDENT
+  // observations, so N duplicate rows describing one weighing cannot promote. coalesce(...) keeps
+  // the job runnable against a database on either side of that migration.
   it('scopes the outlier scan to promoted factors, matching the resolver\'s own gate', () => {
-    expect(SH).toMatch(/confidence IN \('high','medium'\) OR d\.sample_n >= 5/)
+    expect(SH).toMatch(/confidence IN \('high','medium'\) OR coalesce\(i\.independent_n, d\.sample_n\) >= 5/)
+  })
+
+  // V4-CAL1INDEP-001. Independence is recomputed from the BASE tables rather than read off
+  // cultivar_weight_derived.independent_n, because a missing column is a parse error rather than a
+  // branchable condition and this job has to run on both sides of the migration.
+  it('recomputes independence from base tables, not from the view column', () => {
+    expect(SH).toMatch(/count\(DISTINCT \(l\.sampled_at, l\.ratio_key\)\)/)
+    expect(SH).not.toMatch(/FROM cultivar_weight_derived[\s\S]{0,200}d\.independent_n/)
+  })
+
+  // A factor propagating on a single distinct ratio, and one weighing logged under two units, are
+  // both reported. Advisory rather than blocking: neither can propagate a factor the outlier scan
+  // has not already seen, so blocking on them would stall the job over a labelling concern.
+  it('reports one-ratio factors and cross-unit duplicates without blocking on them', () => {
+    expect(SH).toMatch(/degenerate_promoted/)
+    expect(SH).toMatch(/crossunit_suspects/)
+    expect(SH).toMatch(/ONE-RATIO/)
+    expect(SH).toMatch(/CROSS-UNIT/)
+    // BLOCK is set only by the outlier count and the total-move guard.
+    expect(SH).not.toMatch(/degenerate[\s\S]{0,80}BLOCK=1/)
   })
 })
 

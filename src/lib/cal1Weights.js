@@ -10,6 +10,10 @@
 // yield totals), (b) confidence is dispersion-based (a tight n=2 beats a scattered n=6), (c) a cultivar
 // estimate requires min-n and (d) a high-variance crop with no usable samples resolves to NULL, not a
 // crop-type average.
+//
+// (e) since V4-CAL1INDEP-001, min-n and dispersion are both measured over INDEPENDENT observations, not
+// raw rows: duplicated rows describing one weighing used to give cv = 0 and buy the top confidence tier.
+// See migrations/v4-cal1-indep-001/ — keep this file in lockstep with 0a-derived-v3.sql.
 
 export const WEIGHT_UNITS = { g: 1, kg: 1000, lb: 453.592, oz: 28.3495 }
 export const UNIT_VOCAB = ['lb', 'oz', 'kg', 'g', 'count', 'bunch', 'cup', 'head']
@@ -58,10 +62,52 @@ export function dispersionCV(samples) {
   return Math.sqrt(variance) / mean
 }
 
-// Confidence tier from dispersion + min-n. < min-n => 'provisional' (not row-count-based rigor theater).
+// ── INDEPENDENCE GUARD (V4-CAL1INDEP-001) ─────────────────────────────────────────────────────────
+// cv and COUNT(*) are both blind to whether rows describe DIFFERENT OBSERVATIONS. N rows carrying the
+// same ratio give stddev exactly 0, hence cv 0, hence the top confidence tier — on a set that says
+// nothing about dispersion. The two counts below restore the distinction the originals lost.
+
+// Ratio rounded to 6 dp, so numeric-scale artifacts (3/2 vs 9/6) cannot split one ratio into two and
+// silently re-open the hole this guard closes. Mirrors round(total_grams/unit_count, 6) in the view.
+function ratioKey(s) {
+  return Math.round((Number(s.total_grams) / Number(s.unit_count)) * 1e6) / 1e6
+}
+
+// The distinctness key for one sample: same instant AND same ratio => same observation, however many
+// rows recorded it. A sample with no sampled_at keys on 'null', so ratio-identical untimed samples
+// collapse to one — the conservative reading, and the same answer the SQL gives (sampled_at is NOT
+// NULL there). An unparseable sampled_at keys on itself rather than throwing: this is the reference
+// oracle for a view over user data, so bad input must degrade, not crash.
+function observationKey(s) {
+  const t = s?.sampled_at == null ? null : new Date(s.sampled_at).getTime()
+  const at = t == null ? 'null' : Number.isNaN(t) ? `raw:${String(s.sampled_at)}` : String(t)
+  return `${at}|${ratioKey(s)}`
+}
+
+// How many DIFFERENT answers have been seen. At 1 the sample stddev is 0 by construction, so cv
+// carries no information and the top tier must be withheld.
+export function distinctRatios(samples) {
+  return new Set(usableSamples(samples).map(ratioKey)).size
+}
+
+// How many SEPARATE observations are actually held. Samples flagged `crossunit_twin` are excluded:
+// one weighing logged under two units leaves a row in each of two (cultivar,unit) groups, we cannot
+// tell which unit was the mistake, so neither may corroborate its own group — fail closed. That flag
+// is cross-GROUP information and so cannot be derived here; the SQL view computes it and passes it
+// through (see migrations/v4-cal1-indep-001/0a-derived-v3.sql, the `flagged` CTE).
+export function independentN(samples) {
+  const u = usableSamples(samples).filter((s) => !s?.crossunit_twin)
+  return new Set(u.map(observationKey)).size
+}
+
+// Confidence tier from independence + dispersion + min-n. Repetition can no longer raise it:
+//   independent < min-n     => 'provisional'  (one observation, whatever the row count says)
+//   distinct ratios < 2     => 'medium' cap   (cv 0 is arithmetic, not evidence of tightness)
+//   otherwise               => the cv ladder, unchanged
 export function confidenceTier(samples, { minN = DEFAULT_MIN_N } = {}) {
   const usable = usableSamples(samples)
-  if (usable.length < minN) return 'provisional'
+  if (independentN(usable) < minN) return 'provisional'
+  if (distinctRatios(usable) < 2) return 'medium'
   const cv = dispersionCV(usable)
   if (cv == null) return 'provisional'
   if (cv <= CV_HIGH) return 'high'
@@ -71,17 +117,21 @@ export function confidenceTier(samples, { minN = DEFAULT_MIN_N } = {}) {
 
 // Mirrors one row of the cultivar_weight_derived VIEW for a single (cultivar,unit). Null if no usable
 // samples (=> the view emits no row for that key => LEFT JOIN yields NULL => fallback/NULL downstream).
+// sample_n keeps its original meaning (raw usable row count); independent_n is the honest count.
 export function deriveCultivarWeight(samples, { minN = DEFAULT_MIN_N } = {}) {
   const usable = usableSamples(samples)
   const grams_per_unit = pooledGramsPerUnit(usable)
   if (grams_per_unit == null) return null
+  const independent_n = independentN(usable)
   return {
     grams_per_unit,
     sample_n: usable.length,
     total_units: usable.reduce((a, s) => a + Number(s.unit_count), 0),
     cv: dispersionCV(usable),
     confidence: confidenceTier(usable, { minN }),
-    usable_for_comparison: usable.length >= minN,
+    usable_for_comparison: independent_n >= minN,
+    independent_n,
+    distinct_ratios: distinctRatios(usable),
   }
 }
 

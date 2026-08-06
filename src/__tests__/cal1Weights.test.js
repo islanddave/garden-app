@@ -6,6 +6,8 @@ import {
   pooledGramsPerUnit,
   dispersionCV,
   confidenceTier,
+  distinctRatios,
+  independentN,
   deriveCultivarWeight,
   resolveEstimatedWeight,
 } from '../lib/cal1Weights.js'
@@ -73,6 +75,109 @@ describe('cal1Weights — confidenceTier (dispersion + min-n)', () => {
   })
 })
 
+// ── V4-CAL1INDEP-001 ────────────────────────────────────────────────────────────────────────────
+// The defect: cv and COUNT(*) cannot see whether rows describe different observations, so repetition
+// bought the top tier. These lock the guard that separates "more rows" from "more evidence".
+describe('cal1Weights — independence counting', () => {
+  const DAY1 = '2026-08-05T12:00:00Z'
+  const DAY2 = '2026-08-06T12:00:00Z'
+
+  it('distinctRatios sees through count-weighting: 3/2 and 9/6 are one answer', () => {
+    expect(distinctRatios([{ total_grams: 3, unit_count: 2 }, { total_grams: 9, unit_count: 6 }])).toBe(1)
+    expect(distinctRatios([{ total_grams: 3, unit_count: 2 }, { total_grams: 10, unit_count: 6 }])).toBe(2)
+  })
+
+  it('same instant + same ratio is ONE observation however many rows recorded it', () => {
+    const dup = [
+      { total_grams: 50, unit_count: 5, sampled_at: DAY1 },
+      { total_grams: 50, unit_count: 5, sampled_at: DAY1 },
+    ]
+    expect(dup.length).toBe(2)
+    expect(independentN(dup)).toBe(1)
+  })
+
+  it('same ratio on DIFFERENT days is two observations', () => {
+    expect(independentN([
+      { total_grams: 3, unit_count: 2, sampled_at: DAY1 },
+      { total_grams: 9, unit_count: 6, sampled_at: DAY2 },
+    ])).toBe(2)
+  })
+
+  it('a cross-unit twin cannot corroborate its own group (fail closed)', () => {
+    expect(independentN([{ total_grams: 30, unit_count: 2, sampled_at: DAY1, crossunit_twin: true }])).toBe(0)
+  })
+
+  // This is the reference oracle for a view over user data: bad input must degrade, not throw.
+  it('an unparseable sampled_at degrades instead of crashing', () => {
+    expect(() => independentN([{ total_grams: 10, unit_count: 1, sampled_at: 'not-a-date' }])).not.toThrow()
+    // distinct junk timestamps stay distinct rather than all collapsing together
+    expect(independentN([
+      { total_grams: 10, unit_count: 1, sampled_at: 'junk-a' },
+      { total_grams: 10, unit_count: 1, sampled_at: 'junk-b' },
+    ])).toBe(2)
+  })
+
+  // Equal instants expressed differently must still collapse — a key built from the raw string
+  // would treat these as two observations and let the duplicate through.
+  it('normalises timestamp representation before comparing', () => {
+    expect(independentN([
+      { total_grams: 50, unit_count: 5, sampled_at: '2026-08-05T12:00:00Z' },
+      { total_grams: 50, unit_count: 5, sampled_at: '2026-08-05T08:00:00-04:00' },
+    ])).toBe(1)
+  })
+})
+
+describe('cal1Weights — confidence is no longer bought by repetition', () => {
+  const DAY1 = '2026-08-05T12:00:00Z'
+  const DAY2 = '2026-08-06T12:00:00Z'
+
+  // THE DEFECT, as a test. Pre-guard this pair gave cv=0 -> 'high'.
+  it('one weighing written twice is provisional, not high', () => {
+    const dup = [
+      { total_grams: 50, unit_count: 5, sampled_at: DAY1 },
+      { total_grams: 50, unit_count: 5, sampled_at: DAY1 },
+    ]
+    expect(dispersionCV(dup)).toBeCloseTo(0, 6) // cv still says "perfectly tight"...
+    expect(confidenceTier(dup)).toBe('provisional') // ...and is no longer believed
+  })
+
+  it('five duplicate rows do not reach the n>=5 accumulation hatch', () => {
+    const five = Array.from({ length: 5 }, () => ({ total_grams: 20, unit_count: 4, sampled_at: DAY1 }))
+    const d = deriveCultivarWeight(five)
+    expect(d.sample_n).toBe(5)
+    expect(d.independent_n).toBe(1)
+    expect(d.confidence).toBe('provisional')
+    expect(d.usable_for_comparison).toBe(false)
+  })
+
+  // The live Pineapple Tomatillo shape: genuinely separate weighings that agree exactly.
+  it('independent weighings with an identical ratio are capped at medium, never high', () => {
+    const d = deriveCultivarWeight([
+      { total_grams: 3, unit_count: 2, sampled_at: DAY1 },
+      { total_grams: 9, unit_count: 6, sampled_at: DAY2 },
+    ])
+    expect(d.independent_n).toBe(2)
+    expect(d.distinct_ratios).toBe(1)
+    expect(d.cv).toBeCloseTo(0, 6)
+    expect(d.confidence).toBe('medium')
+    // still corroborated: two real weighings of the right cultivar keep their promotion
+    expect(d.usable_for_comparison).toBe(true)
+  })
+
+  it('the cv ladder above the guard is untouched', () => {
+    const tight = [
+      { total_grams: 100, unit_count: 10, sampled_at: DAY1 },
+      { total_grams: 102, unit_count: 10, sampled_at: DAY2 },
+    ]
+    expect(confidenceTier(tight)).toBe('high')
+    const wide = [
+      { total_grams: 100, unit_count: 10, sampled_at: DAY1 },
+      { total_grams: 300, unit_count: 10, sampled_at: DAY2 },
+    ]
+    expect(confidenceTier(wide)).toBe('low')
+  })
+})
+
 describe('cal1Weights — deriveCultivarWeight (mirrors the view row)', () => {
   it('null when no usable samples', () => {
     expect(deriveCultivarWeight([])).toBeNull()
@@ -91,11 +196,19 @@ describe('cal1Weights — deriveCultivarWeight (mirrors the view row)', () => {
     expect(d.usable_for_comparison).toBe(true)
     expect(d.confidence).toBe('high')
     expect(d.total_units).toBe(20)
+    expect(d.independent_n).toBe(2)
+    expect(d.distinct_ratios).toBe(2)
   })
 })
 
 describe('cal1Weights — resolveEstimatedWeight (resolution order; NULL beats a guess)', () => {
-  const usable = deriveCultivarWeight([{ total_grams: 100, unit_count: 10 }, { total_grams: 100, unit_count: 10 }]) // 10 g/unit, usable
+  // 10 g/unit pooled, usable. Two DIFFERENT ratios (9 and 11) on purpose: the original fixture used two
+  // identical rows, which post-V4-CAL1INDEP-001 is one observation, not a usable n=2 — it was testing
+  // the resolution order through a sample set that no longer qualifies to be resolved.
+  const usable = deriveCultivarWeight([
+    { total_grams: 90, unit_count: 10, sampled_at: '2026-08-05T12:00:00Z' },
+    { total_grams: 110, unit_count: 10, sampled_at: '2026-08-06T12:00:00Z' },
+  ])
   it('cultivar basis when a usable derived value is present', () => {
     expect(resolveEstimatedWeight({ quantity: 5, derived: usable })).toEqual({ grams: 50, basis: 'cultivar' })
   })

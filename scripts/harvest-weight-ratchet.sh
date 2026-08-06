@@ -71,8 +71,46 @@ WITH ack AS (
   SELECT coalesce(array_agg(value::text), ARRAY[]::text[]) AS ids
     FROM json_array_elements_text((:'ack')::json -> 'reviewed_cultivar_ids') AS value
 ),
+-- Independence counts, recomputed here from the BASE tables rather than read off
+-- cultivar_weight_derived.independent_n. Two reasons: this job has to run against a database on
+-- either side of v4-cal1-indep-001 (staging lags dev, and a missing column is a parse error, not a
+-- branchable condition), and recomputing keeps the report meaningful even if the view is rolled
+-- back. The definition is copied from that migration's 0a and must stay in step with it.
+live_sample AS (
+  SELECT s.cultivar_id, s.unit, s.sampled_at,
+         round(s.total_grams / s.unit_count, 6) AS ratio_key
+    FROM cultivar_weight_sample s
+   WHERE NOT EXISTS (SELECT 1 FROM cultivar_weight_void v WHERE v.sample_id = s.id)
+     AND NOT EXISTS (SELECT 1 FROM event_log e
+                      WHERE e.id = s.source_event_id AND e.deleted_at IS NOT NULL)
+),
+indep AS (
+  SELECT l.cultivar_id, l.unit,
+         count(DISTINCT l.ratio_key) AS distinct_ratios,
+         count(DISTINCT (l.sampled_at, l.ratio_key)) FILTER (
+           WHERE NOT EXISTS (SELECT 1 FROM live_sample t
+                              WHERE t.cultivar_id = l.cultivar_id AND t.sampled_at = l.sampled_at
+                                AND t.ratio_key = l.ratio_key AND t.unit <> l.unit)) AS independent_n
+    FROM live_sample l GROUP BY l.cultivar_id, l.unit
+),
+-- One physical weighing logged under two units: contradictory claims about two different quantities,
+-- not a duplicate to merge. Reported for review, never auto-voided — correcting one means choosing
+-- which unit was wrong, and cultivar_weight_sample is append-only by trigger.
+crossunit AS (
+  SELECT a.cultivar_id, c.display_name, a.sampled_at::date AS on_date, a.ratio_key,
+         a.unit AS unit_a, b.unit AS unit_b
+    FROM live_sample a
+    JOIN live_sample b ON b.cultivar_id = a.cultivar_id AND b.sampled_at = a.sampled_at
+                      AND b.ratio_key = a.ratio_key AND b.unit < a.unit
+    JOIN cultivar c ON c.id = a.cultivar_id
+),
+-- Mirrors resolver v5's gate (confidence high/medium OR independent_n >= 5) so the outlier scan looks
+-- at exactly the factors the resolver will actually USE. Against a pre-v5 resolver the second
+-- disjunct differs (it reads raw sample_n there), which can only make this scan STRICTER, never
+-- laxer — and no live group has sample_n >= 5, so the two agree today.
 promoted AS (
   SELECT d.cultivar_id, d.unit, d.grams_per_unit, d.sample_n, d.confidence,
+         i.independent_n, i.distinct_ratios,
          c.display_name,
          coalesce((pv.unit_weights ->> d.unit)::numeric,
                   (ct.unit_weights ->> d.unit)::numeric) AS ref_g
@@ -80,7 +118,15 @@ promoted AS (
     JOIN cultivar c ON c.id = d.cultivar_id
     LEFT JOIN plant_varieties pv ON pv.id = d.cultivar_id
     LEFT JOIN crop_types ct ON ct.slug = c.crop_type_slug
-   WHERE d.confidence IN ('high','medium') OR d.sample_n >= 5
+    LEFT JOIN indep i ON i.cultivar_id = d.cultivar_id AND i.unit = d.unit
+   WHERE d.confidence IN ('high','medium') OR coalesce(i.independent_n, d.sample_n) >= 5
+),
+-- A promoted group whose observations all returned the SAME answer. cv reads 0 there by arithmetic,
+-- not by agreement, so its confidence overstates the evidence. Post-v4-cal1-indep-001 the view caps
+-- these at 'medium'; this line reports them either way, because a factor propagating on one distinct
+-- ratio is worth a human glance whatever tier it carries.
+degenerate AS (
+  SELECT p.* FROM promoted p WHERE p.distinct_ratios < 2
 ),
 outliers AS (
   SELECT p.*, round(p.grams_per_unit / nullif(p.ref_g,0), 3) AS ratio
@@ -129,7 +175,14 @@ SELECT json_build_object(
   'unreviewed_outliers', (SELECT coalesce(json_agg(json_build_object(
        'cultivar_id', cultivar_id, 'name', display_name, 'unit', unit,
        'sample_g', round(grams_per_unit,2), 'reference_g', ref_g,
-       'ratio', ratio, 'sample_n', sample_n, 'confidence', confidence)), '[]'::json) FROM unreviewed)
+       'ratio', ratio, 'sample_n', sample_n, 'confidence', confidence)), '[]'::json) FROM unreviewed),
+  'degenerate_promoted', (SELECT coalesce(json_agg(json_build_object(
+       'cultivar_id', cultivar_id, 'name', display_name, 'unit', unit,
+       'sample_g', round(grams_per_unit,2), 'sample_n', sample_n,
+       'independent_n', independent_n, 'confidence', confidence)), '[]'::json) FROM degenerate),
+  'crossunit_suspects', (SELECT coalesce(json_agg(json_build_object(
+       'cultivar_id', cultivar_id, 'name', display_name, 'date', on_date,
+       'grams_per_unit', ratio_key, 'units', unit_a || '/' || unit_b)), '[]'::json) FROM crossunit)
 ) ;
 SQL
 
@@ -148,6 +201,15 @@ print(f"  basis after   : {r['basis_composition_after']}")
 for o in r['unreviewed_outliers']:
     print(f"  OUTLIER {o['name']} ({o['unit']}): {o['sample_g']}g vs ref {o['reference_g']}g "
           f"= {o['ratio']}x  n={o['sample_n']} {o['confidence']}  id={o['cultivar_id']}")
+# Advisory, not blocking. These cannot propagate a factor the outlier scan above has not already
+# seen; they say the CONFIDENCE behind a propagating factor rests on less evidence than n implies.
+for d in r.get('degenerate_promoted', []):
+    print(f"  ONE-RATIO {d['name']} ({d['unit']}): {d['sample_g']}g from {d['sample_n']} row(s) / "
+          f"{d['independent_n']} independent observation(s), all identical — {d['confidence']}")
+for x in r.get('crossunit_suspects', []):
+    print(f"  CROSS-UNIT {x['name']}: {x['grams_per_unit']}g per unit on {x['date']} logged under "
+          f"BOTH {x['units']} — one weighing, two units. Void the wrong one "
+          f"(cultivar_weight_void); do not merge.")
 PY
 
 BLOCK=0

@@ -14,7 +14,7 @@
       "reviewed": "2026-08-06",
       "decision": "ACCEPT — the measurement is right and the reference is wrong for this variety.",
       "why": "Two independent weighings a day apart agree exactly (3g/2 fruit, then 9g/6 fruit). The 8g reference is a generic tomatillo figure; pineapple tomatillo is a ground-cherry-sized fruit, so being 5x under a generic number is what a correct variety-specific measurement looks like here.",
-      "caveat": "A third sample row is the SAME weighing re-logged under unit='bunch' 16 seconds later, so the derived confidence ('high', cv=0) is overstated — one observation counted twice. The FACTOR is still backed by two genuinely independent observations, so accepting it is sound; the confidence inflation is a separate auto-capture defect tracked outside this file."
+      "caveat": "The derived confidence WAS overstated ('high', cv=0), but not for the reason first recorded here. Corrected 2026-08-06 against live: the third sample row (same weighing under unit='bunch', 16 s earlier) is NOT the cause — its source harvest was soft-deleted, so cultivar_weight_derived already excluded it, and it sits in the 'bunch' group anyway, which cannot affect the 'count' group's cv. The real cause is that the two genuinely independent weighings both land on exactly 1.50 g/fruit, giving stddev 0 by arithmetic rather than by agreement; at gram-resolution on a ~1.5 g fruit, agreeing 'exactly' is what the scale's lattice does. Fixed in migrations/v4-cal1-indep-001 (distinct_ratios < 2 caps confidence at 'medium'). The FACTOR is unaffected and this ACCEPT still stands: 'medium' still corroborates, so the resolver keeps using 1.5 g/count."
     },
     {
       "cultivar_id": "d15d22fc-a0ca-4312-b2fb-e9b3a8c602d1",
