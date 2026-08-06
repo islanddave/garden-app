@@ -1138,14 +1138,27 @@ export const handler = async (event) => {
                    -- Keep the whole triple from ONE source so both validated CHECKs still hold:
                    -- ..._pairing needs (grams IS NULL) = (basis IS NULL), and ..._estimated needs
                    -- estimated = (basis <> 'measured'). An explicit clear still clears.
+                   --
+                   -- h.unit is the OLD unit (SET expressions see the pre-UPDATE row). It is the
+                   -- discriminator, because rw.weight_grams IS NULL is OVERLOADED — it means BOTH
+                   -- "no tier can price this variety" (preserve: the Wild Blackberry case above) AND
+                   -- "the quantity is no longer denominated in weight" (RECOMPUTE, i.e. clear).
+                   -- Without it, 3 lb -> 3 count keeps the stale 1360.776 g and silently inflates the
+                   -- harvest totals, breaking BUG-HARVESTEDIT-001 ("CLEARS a stale weight when the
+                   -- unit goes back to a non-weight"). This is the SAME test the carry-forward
+                   -- subquery below already applies for the same reason — the two must agree, or a
+                   -- weight DERIVED from a weight-unit quantity outlives the unit it came from.
                    weight_grams     = CASE WHEN rw.weight_grams IS NULL AND NOT ${hClearWeight}::boolean
+                                            AND h.unit NOT IN ('g','kg','lb','oz')
                                            THEN h.weight_grams ELSE rw.weight_grams END,
                    weight_estimated = CASE WHEN rw.weight_grams IS NULL AND NOT ${hClearWeight}::boolean
+                                            AND h.unit NOT IN ('g','kg','lb','oz')
                                            THEN h.weight_estimated ELSE rw.weight_estimated END,
                    -- Slice C: the third column of the resolver. NOT optional — pervariety-001's
                    -- chk_harvest_log_weight_basis_pairing is VALIDATED, so writing a weight without
                    -- its basis is a hard 23514.
                    weight_basis     = CASE WHEN rw.weight_grams IS NULL AND NOT ${hClearWeight}::boolean
+                                            AND h.unit NOT IN ('g','kg','lb','oz')
                                            THEN h.weight_basis ELSE rw.weight_basis END,
                    updated_at = NOW()
               FROM event_log ne,

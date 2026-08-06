@@ -66,4 +66,34 @@ describe('harvest PUT preserves a stored weight the resolver can no longer price
     const m = UPDATE.match(/weight_grams\s*=\s*CASE WHEN ([\s\S]*?)\s*THEN/);
     expect(m[1]).toMatch(/NOT \$\{hClearWeight\}/);
   });
+
+  // REGRESSION PIN (2026-08-06). The guard above, as first written, keyed ONLY on
+  // `rw.weight_grams IS NULL` — which is overloaded. It means BOTH "no tier can price this
+  // variety" (preserve) AND "the quantity is no longer denominated in weight" (RECOMPUTE).
+  // Without the old-unit test, 3 lb -> 3 count preserved the stale 1360.776 g and silently
+  // inflated the harvest totals, reddening the pre-existing integration test
+  // "CLEARS a stale weight when the unit goes back to a non-weight"
+  // (tests/integration/events.int.test.js). That test is the behavioural half; this is the
+  // static half, so the contract cannot regress again without one of the two going red.
+  //
+  // h.unit is the OLD unit — SET expressions read the pre-UPDATE row. The identical test
+  // already governs the carry-forward subquery below, and the two MUST agree.
+  it.each(['weight_grams', 'weight_estimated', 'weight_basis'])(
+    '%s does NOT preserve a weight that was DERIVED from a weight-unit quantity',
+    (col) => {
+      const m = UPDATE.match(new RegExp(`${col}\\s*=\\s*CASE WHEN ([\\s\\S]*?)\\s*THEN`));
+      expect(
+        m[1].replace(/\s+/g, ' '),
+        `${col} must exclude the old-unit-was-a-weight case, or 3 lb -> 3 count keeps a stale weight`
+      ).toMatch(/h\.unit NOT IN \('g','kg','lb','oz'\)/);
+    }
+  );
+
+  // The outer guard and the inner carry-forward must apply the SAME weight-unit set. If they
+  // ever diverge, one of the two paths resurrects a weight the other just decided to drop.
+  it('the outer guard and the carry-forward subquery use the same weight-unit set', () => {
+    const units = [...UPDATE.matchAll(/unit NOT IN \(([^)]*)\)/g)].map((m) => m[1].replace(/\s+/g, ''));
+    expect(units.length, 'expected the outer guard(s) AND the carry-forward test').toBeGreaterThan(1);
+    expect(new Set(units).size).toBe(1);
+  });
 });
