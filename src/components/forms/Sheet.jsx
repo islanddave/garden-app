@@ -150,7 +150,11 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
   if (!open) return null
 
   // Backdrop tap: dirty guard (§5.2). When dirty a stray backdrop tap no-ops; Escape/Close stay live.
-  const onBackdrop = () => { if (!dirty) onClose?.() }
+  // ALSO guarded on `busy` (V4-BACKNAV-001 Slice 2): moving TransplantDatePrompt from dirty={saving}
+  // to busy={saving} was right semantically — saving is an in-flight write, not unsaved input — but
+  // it silently dropped that surface's backdrop protection, and on mobile a stray backdrop tap is
+  // far likelier than an Escape press. A write in flight must not be dismissable by a stray tap.
+  const onBackdrop = () => { if (!dirty && !busy) onClose?.() }
 
   const maxHeight = size === 'full' ? 'calc(100dvh - env(safe-area-inset-top) - 8px)' : '85vh'
 

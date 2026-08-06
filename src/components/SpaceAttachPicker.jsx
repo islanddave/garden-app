@@ -166,7 +166,6 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
     <div
       role="dialog"
       aria-modal={isTopmost ? 'true' : undefined}
-      aria-modal="true"
       aria-label={`Add existing photos to ${spaceName || 'your space'}`}
       ref={dialogRef}
       data-testid="space-attach-picker"

@@ -77,9 +77,15 @@ export function DismissRegistryProvider({ children }) {
   const topmost = resolveTopmost(entries)
   const topmostId = topmost ? topmost.id : null
 
-  // THE single Escape listener. Topmost-only, exactly one dismissal per press — which is also the
-  // answer to the spec's open "Escape-vs-Back parity" question: Back will route through this same
-  // resolution path with a different trigger, so the two cannot drift.
+  // THE single Escape listener. Topmost-only, exactly one dismissal per press.
+  //
+  // ESCAPE-VS-BACK PARITY IS NOT YET ACHIEVED — stated plainly because an earlier version of this
+  // comment claimed it was. `useBackDismiss` (Slice P) keeps its OWN popstate listener and its own
+  // marker comparison; it does not consult this registry. So Back and Escape can resolve to
+  // DIFFERENT surfaces: with SowNow's Back-wired sow sheet open and VarietyPicker's registry-only
+  // ConflictModal on top, Escape closes the conflict modal (correct) while Back closes the sheet
+  // underneath and tears the modal down with it. Unifying them is the FIRST job of the Slice 3
+  // arbiter, not a nicety — until then, treat parity as an open defect, not a property.
   useEffect(() => {
     if (!DISMISS_REGISTRY_ENABLED) return
     if (typeof document === 'undefined') return

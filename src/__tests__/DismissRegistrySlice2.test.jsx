@@ -156,3 +156,69 @@ describe('Slice 2 — flag OFF restores every legacy handler', () => {
     expect(onSheetClose).toHaveBeenCalledTimes(1)
   })
 })
+
+// Pre-promote regression pass (2026-08-06) findings, pinned so they cannot silently return.
+describe('Slice 2 — pre-promote regression fixes', () => {
+  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = true })
+
+  // A duplicate aria-modal attribute shipped in the built bundle: the later literal won, so this
+  // surface ALWAYS claimed modality and the single-modality invariant was broken on 1 of 10
+  // surfaces. Nothing caught it — eslint has no react plugin, the build is happy with duplicate
+  // JSX attributes, and no test rendered it. A source assertion is the cheapest real guard.
+  it('no source file declares aria-modal twice on one element', async () => {
+    const { readFileSync, readdirSync, statSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const SRC = join(process.cwd(), 'src') + '/'
+    const walk = (d, out = []) => {
+      for (const n of readdirSync(d)) {
+        if (n === '__tests__' || n === 'node_modules') continue
+        const f = join(d, n)
+        statSync(f).isDirectory() ? walk(f, out) : /\.jsx?$/.test(n) && out.push(f)
+      }
+      return out
+    }
+    // Comment lines are excluded first — the same trap modalSurfaceFreeze hit: this codebase
+    // documents heavily and three files DISCUSS aria-modal in prose, which a raw scan reports as
+    // duplicates. A scanner that over-reports gets muted; one that under-reports passes while blind.
+    const isCommentLine = (l) => {
+      const t = l.trim()
+      return t.startsWith('//') || t.startsWith('*') || t.startsWith('/*') || t.startsWith('{/*')
+    }
+    const offenders = walk(SRC).filter((f) => {
+      const src = readFileSync(f, 'utf8').split('\n').filter((l) => !isCommentLine(l)).join('\n')
+      // Two aria-modal attributes inside the same opening tag (no intervening '>').
+      return /aria-modal[^>]*aria-modal/.test(src)
+    })
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('Sheet backdrop — busy guard (pre-promote fix)', () => {
+  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = true })
+
+  // Moving TransplantDatePrompt from dirty={saving} to busy={saving} was semantically right but
+  // silently dropped its backdrop protection: Sheet's no-op was gated on `dirty` alone. On mobile a
+  // stray backdrop tap is far likelier than an Escape press, so that was a net regression on the
+  // surface's dominant interaction.
+  it('a backdrop tap no-ops while a write is in flight', () => {
+    const onClose = vi.fn()
+    const { container } = render(
+      <DismissRegistryProvider>
+        <Sheet open busy onClose={onClose} title="Saving"><button>inner</button></Sheet>
+      </DismissRegistryProvider>
+    )
+    fireEvent.click(container.querySelector('div[style*="position: fixed"]'))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('a backdrop tap still closes when idle', () => {
+    const onClose = vi.fn()
+    const { container } = render(
+      <DismissRegistryProvider>
+        <Sheet open onClose={onClose} title="Idle"><button>inner</button></Sheet>
+      </DismissRegistryProvider>
+    )
+    fireEvent.click(container.querySelector('div[style*="position: fixed"]'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+})
