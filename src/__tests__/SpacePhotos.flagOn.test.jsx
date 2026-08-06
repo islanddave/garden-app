@@ -13,18 +13,13 @@ const { navigateSpy, locationRef } = vi.hoisted(() => ({
 
 // Full flag surface, SPACE_PHOTOS_ENABLED flipped. The other values mirror the shipped defaults so
 // nothing else in App.jsx / BottomNav changes shape under this mock.
-vi.mock('../lib/featureFlags.js', () => ({
+// PARTIAL mock (importOriginal spread): the enumerated form broke on every new flag added
+// anywhere in featureFlags.js — most recently DISMISS_REGISTRY_ENABLED, which Sheet reads.
+// Only SPACE_PHOTOS_ENABLED is actually under test here; the rest now track prod.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   SPACE_PHOTOS_ENABLED: true,
   OVERLAY_ROUTES_ENABLED: true,
-  PROJECTS_HIDDEN: false,
-  CATCH_UP_EDITOR_SHIPPED: false,
-  IMAGE_LIST_CACHE_ENABLED: true,
-  PLANTING_REQUIRED_ENABLED: false,
-  SYSTEM_NOTIFICATIONS_ENABLED: false,
-  EVENTNEW_ADD_DETAILS_EXPANDED: false,
-  CARE_RAIN_CREDIT_ENABLED: false,
-  CARE_RAIN_MAXDAYS_ENABLED: false,
-  VARIETY_REF_UI_SHIPPED: false,
 }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig()),

@@ -14,12 +14,19 @@
 // Lives OUTSIDE src/components/forms/, so it is not in the no-hex ESLint scope; the literal
 // rgba black backdrop / #fff controls are intentional and mirror ZoomableImage.
 //
-// Ships DARK: built + unit-tested, NOT exported from any barrel and NOT wired to any consumer
-// this slice. A later slice swaps the existing ZoomableImage usages over to it.
+// NOTE (corrected 2026-08-06): the "Ships DARK / not wired to any consumer" banner that stood here
+// was STALE by several slices. Lightbox is LIVE at two production render sites — PhotosWall.jsx:187
+// and PlantingDetail.jsx:730. It matters because a stale "dead code" header is exactly what makes a
+// live, un-arbitrated full-screen modal get skipped in a registry migration.
+// (Counting trap for whoever greps next: `rg "<Lightbox"` returns a third hit in ZoomableImage.jsx,
+// which renders a DIFFERENT, locally-declared Lightbox defined in that same file. A JSX tag name is
+// not a component identity — resolve the import binding before counting.)
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import PhotoImg from './PhotoImg.jsx'
+import { useDismissable } from '../context/DismissRegistry.jsx'
+import { LAYER } from '../lib/dismissLayers.js'
 
 // -- Pure, dependency-free math helpers (named exports -> directly unit-testable; jsdom can't
 //    exercise real pointer gestures, so the gesture math is covered here instead). ----------
@@ -121,6 +128,17 @@ export default function Lightbox({
   const len = list.length
   const controlled = typeof onIndexChange === 'function'
 
+  // V4-BACKNAV-001 Slice 1 — join the shared dismiss registry. Lightbox is NOT a Sheet consumer and
+  // never appeared in Sheet.jsx's openStack, so its document keydown below was gated on nothing:
+  // with a Sheet open underneath (PlantingDetail renders both from independent state) ONE Escape
+  // fired BOTH onCloses, and both focus traps ran on the same Tab press with the last focus() call
+  // winning by listener-registration order. Registering at the DIALOG layer puts it above Sheet in
+  // paint order AND in arbitration order, so those now agree. Unregistered (flag off / no provider)
+  // everything below is byte-identical to before.
+  const { registered: dismissRegistered, isTopmost } = useDismissable({
+    open, onDismiss: onClose, layer: LAYER.DIALOG,
+  })
+
   // Uncontrolled internal index, seeded from `index` whenever it changes / on open.
   const [internalIndex, setInternalIndex] = useState(index)
   const curIndex = controlled
@@ -172,6 +190,13 @@ export default function Lightbox({
 
   const close = useCallback(() => { onClose?.() }, [onClose])
 
+  // Latest-value refs so the [open, close, page]-keyed key handler reads the registry signals fresh
+  // without adding them as deps (a re-run would move focus back to the close control mid-view).
+  const dismissRegisteredRef = useRef(dismissRegistered)
+  useEffect(() => { dismissRegisteredRef.current = dismissRegistered }, [dismissRegistered])
+  const isTopmostRef = useRef(isTopmost)
+  useEffect(() => { isTopmostRef.current = isTopmost }, [isTopmost])
+
   // -- Open lifecycle: focus management (move in + restore) and Esc + focus-trap (Sheet style).
   useEffect(() => {
     if (!open) return
@@ -181,7 +206,13 @@ export default function Lightbox({
     closeBtnRef.current?.focus()
 
     function onKey(e) {
-      if (e.key === 'Escape') { e.preventDefault(); close(); return }
+      // Topmost gate (V4-BACKNAV-001 Slice 1). Registered: the registry owns Escape entirely — this
+      // handler returning is what stops the shipped double-close. It also gates the ARROW keys,
+      // which previously paged the gallery while focus sat inside a Sheet stacked above.
+      if (dismissRegisteredRef.current) {
+        if (!isTopmostRef.current) return
+        if (e.key === 'Escape') return          // registry's single listener closes us
+      } else if (e.key === 'Escape') { e.preventDefault(); close(); return }
       if (e.key === 'ArrowRight') { e.preventDefault(); page(1); return }
       if (e.key === 'ArrowLeft') { e.preventDefault(); page(-1); return }
       // Focus trap within the dialog (Sheet pattern).
@@ -201,8 +232,11 @@ export default function Lightbox({
     document.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('keydown', onKey)
+      // Detached-node guard, same as Sheet's (SC 2.4.3): focus() on a node already removed from the
+      // document is a silent no-op that drops focus to <body>. A Back-driven close pops history and
+      // unmounts the trigger in the same commit as this cleanup, so the node is routinely gone.
       const el = restoreFocusRef.current
-      if (el && typeof el.focus === 'function') el.focus()
+      if (el && typeof el.focus === 'function' && el.isConnected) el.focus()
     }
   }, [open, close, page])
 
@@ -322,7 +356,7 @@ export default function Lightbox({
     <div
       ref={dialogRef}
       role="dialog"
-      aria-modal="true"
+      aria-modal={isTopmost ? 'true' : undefined}
       aria-label={accessibleName}
       data-testid="lightbox"
       onClick={(e) => { if (e.target === e.currentTarget) close() }}

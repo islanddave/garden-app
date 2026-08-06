@@ -18,8 +18,17 @@
 // brick the app); Escape TOPMOST-arbitration (§5.5, only the top sheet responds so one Escape does
 // not fire two onCloses); focus-selector hardening (§5.6, :not([disabled]) + hidden/aria-hidden
 // filter). Reduced-motion: the panel still appears; no required motion to operate.
+// V4-BACKNAV-001 Slice 1: Escape arbitration and aria-modal ownership move to the shared
+// DismissRegistry when one is present (see context/DismissRegistry.jsx). openStack STAYS — it still
+// owns the refcounted body scroll-lock, which is a Sheet-visual concern the other eight modal
+// surfaces deliberately do not share. When `registered` is false (flag off, or an isolated test
+// rendered with no provider) every behaviour below is byte-identical to before that slice.
+// New prop: busy — a write is in flight. RECORDED for the arbiter, not yet acted on; `dirty` keeps
+// its existing meaning (unsaved user input) and its existing backdrop-only effect.
 import React, { useEffect, useRef } from 'react'
 import { P } from '../../lib/constants.js'
+import { useDismissable } from '../../context/DismissRegistry.jsx'
+import { LAYER } from '../../lib/dismissLayers.js'
 
 // Module-level stack of OPEN sheets (each mounted-open Sheet pushes an opaque token). Drives two
 // cross-instance concerns that a per-instance effect cannot see: (a) refcounted body scroll-lock
@@ -58,9 +67,10 @@ function focusablesIn(panel) {
   )
 }
 
-export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, closeLabel = 'Close' }) {
+export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close' }) {
   const panelRef = useRef(null)
   const restoreRef = useRef(null)
+  const { registered, isTopmost } = useDismissable({ open, onDismiss: onClose, dirty, busy, layer: LAYER.SHEET })
   // Latest-value refs: keep the keydown handler current WITHOUT making onClose/dirty deps of the
   // focus effect. Callers pass inline closures recreated every render; if their identity drove the
   // effect, every parent re-render (e.g. a keystroke updating form state) would re-run it and yank
@@ -69,6 +79,12 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
   useEffect(() => { onCloseRef.current = onClose }, [onClose])
   const dirtyRef = useRef(dirty)
   useEffect(() => { dirtyRef.current = dirty }, [dirty])
+  // Same latest-value pattern for the registry signals: the key handler below lives in an
+  // [open]-keyed effect and must read these fresh without re-running (re-running yanks focus).
+  const registeredRef = useRef(registered)
+  useEffect(() => { registeredRef.current = registered }, [registered])
+  const isTopmostRef = useRef(isTopmost)
+  useEffect(() => { isTopmostRef.current = isTopmost }, [isTopmost])
 
   useEffect(() => {
     if (!open) return
@@ -86,10 +102,17 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
     initial?.focus()
 
     function onKey(e) {
-      // Escape topmost-arbitration (§5.5, SC 2.1.1): only the TOP sheet responds, so one Escape
-      // never fires two onCloses when sheets are stacked.
-      if (openStack[openStack.length - 1] !== token) return
-      if (e.key === 'Escape') { e.preventDefault(); onCloseRef.current?.(); return }
+      // Topmost gate. When registered, the REGISTRY is the authority (it can see Lightbox and the
+      // other non-Sheet dialogs that openStack cannot); otherwise fall back to openStack, which
+      // arbitrates correctly among Sheets and is what shipped before Slice 1.
+      const top = registeredRef.current ? isTopmostRef.current : openStack[openStack.length - 1] === token
+      if (!top) return
+      // Escape (§5.5, SC 2.1.1). When registered, the registry's single listener owns Escape — this
+      // handler must NOT also fire it, or one press would close the sheet twice over.
+      if (e.key === 'Escape') {
+        if (registeredRef.current) return
+        e.preventDefault(); onCloseRef.current?.(); return
+      }
       if (e.key !== 'Tab' || !panel) return
       const ring = focusablesIn(panel)
       if (!ring.length) return
@@ -104,8 +127,21 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
       const i = openStack.indexOf(token)
       if (i !== -1) openStack.splice(i, 1)
       unlockBodyScroll()
+      // Focus restore, with the DETACHED-NODE guard (V4-BACKNAV-001 Slice 1, SC 2.4.3). The old
+      // check — "holds something with a .focus method" — is satisfied by a node already removed from
+      // the document. A Back-driven close pops history, the router commits, and the trigger unmounts
+      // in the SAME commit as this cleanup, so that case becomes routine once Back is wired.
+      //
+      // SCOPE, STATED HONESTLY: this guard makes the detached case EXPLICIT, it does not repair it.
+      // focus() on a detached node is already a silent no-op, so behaviour is unchanged — focus
+      // still lands on <body>, where TalkBack's reading cursor resets to the top of the page with no
+      // announcement. The real fix needs a stable focus destination, and THE APP HAS NONE: there is
+      // no <main>, no role="main", and no tabIndex={-1} landmark anywhere in the tree. Introducing
+      // one is a real change to the app shell with its own blast radius, so it is deliberately NOT
+      // smuggled into this slice. Do not "fix" this by focusing the panel — the panel is unmounting
+      // too. Follow-up owns adding the landmark and then focusing it here.
       const el = restoreRef.current
-      if (el && typeof el.focus === 'function') el.focus()
+      if (el && typeof el.focus === 'function' && el.isConnected) el.focus()
     }
     // Deps = [open] ONLY (onClose/dirty read via ref): fire on open transitions, never on incidental
     // parent re-renders — the fix for the "keystroke steals focus back to Name" bug.
@@ -127,7 +163,12 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
       <div
         ref={panelRef}
         role="dialog"
-        aria-modal="true"
+        // SINGLE-MODALITY INVARIANT (V4-BACKNAV-001 Slice 1). Two simultaneously-rendered elements
+        // with aria-modal="true" is invalid ARIA — modality is undefined and screen readers resolve
+        // it inconsistently. That state already occurs today: PlantingDetail renders its Details
+        // Sheet and a Lightbox from independent state. Only the topmost claims modality; unregistered
+        // (flag off / no provider) keeps the old unconditional "true".
+        aria-modal={isTopmost ? 'true' : undefined}
         aria-label={title || ariaLabel}
         tabIndex={-1}
         style={{

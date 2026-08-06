@@ -28,6 +28,7 @@ import Icon from '../components/Icon.jsx'
 import { formatQty } from '../lib/format.js'
 import Breadcrumb from '../components/Breadcrumb.jsx'
 import Lightbox from '../components/Lightbox.jsx'
+import { useBackDismiss } from '../hooks/useBackDismiss.js'
 import { useOptionalToast } from '../context/ToastContext.jsx'
 import Sheet from '../components/forms/Sheet.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
@@ -81,6 +82,12 @@ export default function PlantingDetail() {
   const [tab, setTab] = useState('basics')
   const [lightboxIndex, setLightboxIndex] = useState(null)  // null = closed
   const [lbFrozen, setLbFrozen] = useState(null)            // slide snapshot at open (regression I4)
+
+  // V4-BACKNAV-001 Slice P — the system Back closes the Details fly-up instead of walking off this
+  // page. Scoped to Details only: the Lightbox on this same page is deliberately NOT wired yet (it
+  // has its own zoom sub-state, so Back there should arguably reset zoom before closing — a
+  // precedence question that belongs to the Slice 3 arbiter, not to a pilot).
+  useBackDismiss({ open: detailsOpen, onDismiss: () => setDetailsOpen(false), id: 'planting-details' })
 
   // Event log has its OWN lifecycle (DoD: don't conflate filtered-empty with failed-load).
   const [events, setEvents] = useState([])
@@ -693,6 +700,9 @@ export default function PlantingDetail() {
 
       {/* ── V200 Slice 5b — tabbed Details fly-up (Basics / Care / More). The Sheet owns the
           dialog contract (role=dialog/aria-modal/focus-trap+restore/Esc). ──────────────────── */}
+      {/* V4-BACKNAV-001 Slice P — see useBackDismiss: Back closes this sheet instead of walking off
+          the planting page. Close-in-place surface (read-only tabs, no navigation), so the pushed
+          history entry is always consumed on close. */}
       <Sheet open={detailsOpen} title="Details" onClose={() => setDetailsOpen(false)}>
         <div style={{ padding: '0 24px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           <SegmentedControl

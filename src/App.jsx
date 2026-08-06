@@ -58,6 +58,7 @@ import SplashScreen from './components/SplashScreen.jsx'
 import UpdateBanner from './components/UpdateBanner.jsx'
 import Sheet from './components/forms/Sheet.jsx'
 import { OverlayProvider, OverlaySurfaceProvider, OverlayDirtyProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
+import { DismissRegistryProvider } from './context/DismissRegistry.jsx'
 import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED } from './lib/featureFlags.js'
 
 function AppFallback({ error, retry } = {}) {
@@ -258,9 +259,15 @@ function AppRoutes() {
   return (
     <BrowserRouter>
       <ErrorBoundary scope="app" fallback={<AppFallback />}>
-        <OverlayProvider>
-          <AppShell user={user} />
-        </OverlayProvider>
+        {/* V4-BACKNAV-001 Slice 1 — DismissRegistryProvider wraps OverlayProvider so that route
+            overlays (OverlayHost's Sheet) register in the SAME stack as non-route sheets and
+            Lightbox. One stack is the point: two stacks would each believe they own "topmost" and
+            a single Escape (later, a single Back) would resolve against whichever answered first. */}
+        <DismissRegistryProvider>
+          <OverlayProvider>
+            <AppShell user={user} />
+          </OverlayProvider>
+        </DismissRegistryProvider>
       </ErrorBoundary>
     </BrowserRouter>
   )

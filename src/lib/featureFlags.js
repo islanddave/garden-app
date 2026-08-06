@@ -154,3 +154,39 @@ export const HARVEST_QUALITY_HIDDEN = true
 // false (partial importOriginal form) and keep exercising the full component. The pin on the SHIPPED
 // value lives once, in TodayBand.hidden.test.jsx via importActual. Criteria-gated, never date-gated.
 export const TODAY_BAND_HIDDEN = true
+
+// V4-BACKNAV-001 Slice 1 (decision V200 §6) — the shared modal dismiss registry: ONE Escape
+// listener resolving the topmost registered surface, replacing per-instance document keydown
+// handlers that currently double-fire (a Sheet under an open Lightbox gets BOTH onCloses from one
+// Escape). Slice 1 is an ARBITRATION REPAIR, not a behaviour change: the only observable difference
+// is that the correct surface closes.
+//
+// FLAG-OFF IS A TRUE ROLLBACK, and that is load-bearing here in a way it was not for
+// OVERLAY_ROUTES_ENABLED (whose own note concedes it stopped being a real lever once later slices
+// mutated rendering outside its guard). Every global mutation this slice makes sits INSIDE the
+// flag: with it false, useDismissable never registers, the provider binds no listener, and Sheet
+// and Lightbox fall back to their own per-instance handlers via `registered === false`. That same
+// fallback is what keeps ~380 existing tests — which render these components with no provider —
+// passing untouched.
+//
+// This slice is flagged despite shipping no Back behaviour BECAUSE it is the highest-blast-radius
+// change in the program: it touches Sheet.jsx, the primitive behind 8 non-route render sites plus
+// every route overlay through OverlayHost. Revert-only was judged insufficient for a 9-site
+// primitive whose worst failure mode (a stranded body-scroll lock) has no in-app recovery.
+export const DISMISS_REGISTRY_ENABLED = true
+
+// V4-BACKNAV-001 Slice P (decision V200 §6) — the vertical pilot: the two BottomNav sheets (+LOG
+// create menu and More) get a history entry on open, so the Android system Back closes the sheet
+// instead of switching tabs or exiting the app. Deliberately ONE surface pair rather than all nine:
+// it answers GATE-A's platform questions against REAL behaviour on the installed PWA, which is
+// strictly better evidence than a throwaway probe page, and it puts the thing that was actually
+// asked for in reach in the first shipped increment instead of the fifth.
+//
+// Scoped to an opaque history.state marker, NOT a URL. Needing a history entry is not the same as
+// needing a URL: a transient action menu must be poppable by Back but must never be deep-linkable
+// (a bookmarked "+LOG menu open" is incoherent). Conflating those two is what forces a false
+// route-promotion hybrid.
+//
+// Rollback is deleting one hook call. Flag off ⇒ zero pushState calls, zero popstate listeners, and
+// history.length after boot identical to pre-change — pinned by BackNav.flagOff.test.jsx.
+export const BACKNAV_ENABLED = true

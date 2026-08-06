@@ -37,13 +37,16 @@ vi.mock('../components/CatchUpBadge.jsx', () => ({
 // V4-OVERLAY-001 Slice 2: BottomNav's create-menu Log/Log-many rows are now <OverlayLink>s, which
 // read OVERLAY_ROUTES_ENABLED at render; the partial mock must export it (vitest throws on an
 // undefined mocked export). Prod value is true.
-vi.mock('../lib/featureFlags.js', () => ({
+// PARTIAL mock (importOriginal spread), not an enumerated one. The old form listed every flag this
+// tree touches by hand, so each new export elsewhere in featureFlags.js broke this file with
+// "No X export is defined on the mock" — it broke on PROJECTS_HIDDEN, again on SPACE_PHOTOS_ENABLED,
+// and again on DISMISS_REGISTRY_ENABLED when Sheet joined the dismiss registry. Spreading the real
+// module means only the flags this file actually pins are overridden and the rest track prod.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   CATCH_UP_EDITOR_SHIPPED: false,
   OVERLAY_ROUTES_ENABLED: true,
-  // V4-PROJHIDE-001: BottomNav now reads PROJECTS_HIDDEN for the "Add a planting" sub-label; the
-  // partial mock must export it (vitest throws on an undefined mocked export). Prod default is false.
   PROJECTS_HIDDEN: false,
-  // V4-SPACEPHOTO-001: same reason — BottomNav reads it for the Space row. Prod default is false.
   SPACE_PHOTOS_ENABLED: false,
 }))
 

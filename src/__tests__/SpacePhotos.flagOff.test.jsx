@@ -23,18 +23,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 
 // The lever, held OFF. Other values mirror the shipped defaults so nothing else changes shape.
-vi.mock('../lib/featureFlags.js', () => ({
+// PARTIAL mock (importOriginal spread): the enumerated form broke on every new flag added
+// anywhere in featureFlags.js — most recently DISMISS_REGISTRY_ENABLED, which Sheet reads.
+// Only SPACE_PHOTOS_ENABLED is actually under test here; the rest now track prod.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   SPACE_PHOTOS_ENABLED: false,
   OVERLAY_ROUTES_ENABLED: true,
-  PROJECTS_HIDDEN: false,
-  CATCH_UP_EDITOR_SHIPPED: false,
-  IMAGE_LIST_CACHE_ENABLED: true,
-  PLANTING_REQUIRED_ENABLED: false,
-  SYSTEM_NOTIFICATIONS_ENABLED: false,
-  EVENTNEW_ADD_DETAILS_EXPANDED: false,
-  CARE_RAIN_CREDIT_ENABLED: false,
-  CARE_RAIN_MAXDAYS_ENABLED: false,
-  VARIETY_REF_UI_SHIPPED: false,
 }))
 
 const { navigateSpy, locationRef } = vi.hoisted(() => ({

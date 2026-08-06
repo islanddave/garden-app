@@ -12,6 +12,7 @@ import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
 import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
 import { fmtQuantity, unitLabel, formatEntry, etDay } from '../lib/harvestSummary.js'
 import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
+import { useBackDismiss } from '../hooks/useBackDismiss.js'
 
 // Harvests — V4-HARVESTVIEW-001 S2a/S2b. Route + snapshot strip + Log feed + minimal Totals, reading
 // the shipped GET /api/harvests. Retrospective/reflective: never prompts, counts down, or scores
@@ -247,6 +248,12 @@ function FilterPill({ placeholder, value, onOpen, onClear }) {
 // active row checked. Options come from useHarvestFilterOptions (the UNFILTERED universe), so the list
 // never collapses when a filter is applied.
 function PickerSheet({ open, onClose, title, allLabel, emptyText, selected, options, onSelect }) {
+  // V4-BACKNAV-001 Slice P — Android Back closes the picker instead of leaving /harvests. Safe here
+  // because the picker opens and closes IN PLACE: selecting a row sets local filter state and closes,
+  // it never navigates, so the pushed entry is always still on top and is always consumed.
+  // `id` is per-instance (there are two PickerSheets on this page — crop and project) so the two
+  // never mistake each other's marker for their own.
+  useBackDismiss({ open, onDismiss: onClose, id: 'harvests-picker-' + title })
   return (
     <Sheet open={open} onClose={onClose} title={title}>
       <div role="listbox" aria-label={title} style={{ padding: '2px 8px 8px', display: 'flex', flexDirection: 'column' }}>
