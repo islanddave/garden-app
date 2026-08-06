@@ -290,7 +290,10 @@ export default function VarietyPicker({
     // The 'newcrop' form owns its own inputs; only Escape is handled here (back to the chooser).
     // Enter is NOT intercepted — it must reach the form's own submit.
     if (createStage === 'newcrop') {
-      if (e.key === 'Escape') { e.preventDefault(); setCropErr(null); setCreateStage('crop'); setHighlight(0) }
+      // stopPropagation so this Escape never reaches the dismiss registry's document listener and
+      // closes the hosting Sheet on top of stepping the stage back. The registry also guards on
+      // defaultPrevented (DismissRegistry.jsx) — this is the belt to that braces.
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCropErr(null); setCreateStage('crop'); setHighlight(0) }
       return
     }
     if (createStage === 'crop') {
@@ -301,7 +304,7 @@ export default function VarietyPicker({
         if (highlight === 0) submitCreate(false, null, null)
         else if (highlight === newCropRowIndex) beginNewCropType()
         else { const ct = cropTypes[highlight - 1]; if (ct) submitCreate(false, ct.slug, ct.default_lifecycle ?? null) }
-      } else if (e.key === 'Escape') { e.preventDefault(); setCreateStage(null) }
+      } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setCreateStage(null) }
       return
     }
     if (e.key === 'ArrowDown') {
@@ -320,9 +323,16 @@ export default function VarietyPicker({
         beginCreate()
       }
     } else if (e.key === 'Escape') {
-      e.preventDefault()
-      setOpen(false)
-      inputRef.current?.blur()
+      // Only claim the key when the listbox is actually open. With it closed there is nothing for
+      // this Escape to dismiss, so it must fall through to the registry and close the hosting
+      // surface — swallowing it unconditionally would make Escape dead whenever focus sat in the
+      // variety input, which is where it usually sits on the sow sheet.
+      if (open) {
+        e.preventDefault()
+        e.stopPropagation()
+        setOpen(false)
+        inputRef.current?.blur()
+      }
     }
   }
 

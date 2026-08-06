@@ -91,6 +91,19 @@ export function DismissRegistryProvider({ children }) {
     if (typeof document === 'undefined') return
     function onKey(e) {
       if (e.key !== 'Escape') return
+      // A DESCENDANT ALREADY CONSUMED THIS KEY. React 18 delegates synthetic handlers to the root
+      // container, which is a descendant of `document`, so a surface that handles Escape for its
+      // own sub-state still lets the event reach us. Without this guard one Escape does two things:
+      // VarietyPicker steps its create stage back (VarietyPicker.jsx:293/304/322 — all
+      // preventDefault, none stopPropagation) AND we close the Sheet it is sitting in. That was
+      // live in v3.103.0; DismissDefaultPrevented.test.jsx pins it and fails without this line.
+      //
+      // defaultPrevented is the right signal rather than a registry field: it covers descendants
+      // nobody has enumerated, it is what "I handled this" already means in the DOM, and it costs
+      // one comparison. Call sites should ALSO stopPropagation — that is belt and braces, but this
+      // is what makes the class unreachable. Deliberately AFTER the key check so an unrelated
+      // preventDefault on some other key can never make Escape inert.
+      if (e.defaultPrevented) return
       const d = decideDismiss(entries, { blockOnBusy: true })
       if (d.action === 'NONE') return          // nothing registered — let the event through
       // BLOCKED: a write is in flight. Swallow the key rather than discarding the surface. Enabled
