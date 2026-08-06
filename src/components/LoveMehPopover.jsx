@@ -18,6 +18,8 @@
 // Caller wires onPick → patchSpeciesPrefs (love → weight 2.0, meh → weight 0.5, reset → 1.0).
 
 import React, { useEffect, useRef, useState } from 'react'
+import { useDismissable } from '../context/DismissRegistry.jsx'
+import { LAYER } from '../lib/dismissLayers.js'
 
 const PULSE_MS = 300
 
@@ -25,9 +27,12 @@ export default function LoveMehPopover({ open, anchorRef = null, species = null,
   const ref = useRef(null)
   const [pulse, setPulse] = useState(null) // 'love' | 'meh' | null
 
+  // V4-BACKNAV-001 Slice 2 — shared registry owns Escape when present.
+  const { registered, isTopmost } = useDismissable({ open, onDismiss: onClose, layer: LAYER.DIALOG })
+
   // Escape key dismiss.
   useEffect(() => {
-    if (!open) return undefined
+    if (!open || registered) return undefined
     function onKey(e) {
       if (e.key === 'Escape') {
         onClose?.()
@@ -35,7 +40,7 @@ export default function LoveMehPopover({ open, anchorRef = null, species = null,
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onClose, registered])
 
   // Click-outside dismiss.
   useEffect(() => {

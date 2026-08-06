@@ -8,6 +8,7 @@ import GroupByControl from '../forms/GroupByControl.jsx'
 import Sheet from '../forms/Sheet.jsx'
 import Icon from '../Icon.jsx'
 import PhotoImg from '../PhotoImg.jsx'
+import { useBackDismiss } from '../../hooks/useBackDismiss.js'
 import {
   buildCareNeeded, groupRows, bedWaitActive,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ALL_THRESHOLD, splitContainersBeds,
@@ -167,6 +168,7 @@ export default function CareNeeded({ plan }) {
   const [bulkType, setBulkType] = useState(null)          // event_type whose bulk fly-up is open
   const [bulkChecked, setBulkChecked] = useState(() => new Set())
   const [bulkProgress, setBulkProgress] = useState(null)  // { done, total } during fan-out
+  useBackDismiss({ open: !!bulkType, onDismiss: () => setBulkType(null), id: 'care-bulk' })
   const liveRef = useRef(null)
   const [enrichById, setEnrichById] = useState(() => ({}))  // V4-TODAYLOC-001: plantingId -> {locationId,locationName,containerType,thumb}
 
@@ -377,7 +379,8 @@ export default function CareNeeded({ plan }) {
         </>
       )}
 
-      <Sheet open={!!bulkType} onClose={() => setBulkType(null)} title={bulkType ? 'Log all ' + bulkLabel(bulkType) : ''}>
+      {/* V4-BACKNAV-001 Slice P (extended) — close-in-place: setBulkType(null) never navigates. */}
+      <Sheet open={!!bulkType} onClose={() => setBulkType(null)} busy={!!bulkProgress} title={bulkType ? 'Log all ' + bulkLabel(bulkType) : ''}>
         {bulkType && (
           <div style={{ padding: '4px 16px 8px' }}>
             <p style={{ fontSize: '0.82rem', color: P.light, margin: '0 0 10px' }}>

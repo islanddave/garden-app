@@ -64,15 +64,13 @@ function scan() {
 const DIALOG_SURFACES = {
   'components/forms/Sheet.jsx':        { registered: true },
   'components/Lightbox.jsx':           { registered: true },
-  // Not yet registered — Slice 2. Each still binds (or lacks) its own Escape handler, so Back and
-  // Escape are not yet arbitrated for these. Listed so the gap is COUNTED rather than forgotten.
-  'components/ZoomableImage.jsx':      { registered: false, note: 'own embedded lightbox; own Escape' },
-  'components/SpaceAttachPicker.jsx':  { registered: false, note: 'suppresses Escape while saving (a third "blocking" state)' },
-  'components/FacebookShareSheet.jsx': { registered: false, note: 'closable=!posting; the one surface with a non-idempotent in-flight action' },
-  'components/CritterFactsPopover.jsx':{ registered: false, note: 'ungated document keydown — double-fires with a Sheet' },
-  'components/LoveMehPopover.jsx':     { registered: false },
-  'components/VarietyPicker.jsx':      { registered: false, note: 'conflict modal; Escape steps BACK through create-stages rather than closing' },
-  'pages/Dashboard.jsx':               { registered: false, note: 'StreakModal — z1000 and NO Escape handler at all' },
+  'components/ZoomableImage.jsx':      { registered: true },
+  'components/SpaceAttachPicker.jsx':  { registered: true, busy: 'saving' },
+  'components/FacebookShareSheet.jsx': { registered: true, busy: 'posting — non-idempotent' },
+  'components/CritterFactsPopover.jsx':{ registered: true },
+  'components/LoveMehPopover.jsx':     { registered: true },
+  'components/VarietyPicker.jsx':      { registered: true, busy: 'creating' },
+  'pages/Dashboard.jsx':               { registered: true },
 }
 
 // <Sheet render sites. App.jsx is OverlayHost (the route-overlay host), not a page-level sheet.
@@ -126,10 +124,35 @@ describe('modal surface freeze', () => {
     }
   })
 
-  it('records how many modal surfaces remain UNARBITRATED (the Slice 2 backlog)', () => {
+  // BIDIRECTIONAL, and it has to be. The first cut only checked that registered:true surfaces DO
+  // import the registry, so when Slice 2 registered all seven remaining dialogs the frozen list
+  // still claimed 7 were pending and the suite stayed GREEN on a stale list — the freeze test
+  // drifting is precisely the failure a freeze test exists to prevent.
+  it('a surface marked NOT registered must genuinely not use the registry', () => {
+    for (const [file, meta] of Object.entries(DIALOG_SURFACES)) {
+      if (meta.registered) continue
+      const src = readFileSync(join(SRC, file), 'utf8')
+      expect(src, `${file} is marked unregistered but DOES use useDismissable — update the frozen list`)
+        .not.toMatch(/useDismissable/)
+    }
+  })
+
+  it('records how many modal surfaces remain UNARBITRATED — a countdown that must never rise', () => {
     const pending = Object.entries(DIALOG_SURFACES).filter(([, m]) => !m.registered).map(([f]) => f)
-    // Not an aspiration — a countdown. Lower this number as Slice 2 lands; it must never rise
-    // without a new frozen entry explaining why.
-    expect(pending).toHaveLength(7)
+    // Slice 2 took this from 7 to 0: every role="dialog" surface in the app now resolves through
+    // one registry, so Escape (and Back, where wired) closes exactly one surface — the topmost.
+    // The remaining hole is PhotoLibrary's PhotoModal, which has NO role="dialog" at all and is
+    // therefore invisible to this scan; tracked separately, see PHOTOMODAL_GAP below.
+    expect(pending).toHaveLength(0)
+  })
+
+  // The one modal this scanner CANNOT see, recorded so it is not mistaken for covered. PhotoModal
+  // (PhotoLibrary.jsx) is a fixed full-viewport overlay with no role, no aria-modal, no Escape
+  // handler and no focus restore — so it is not a dialog by any machine-checkable definition, and
+  // giving it the contract is what makes it arbitrable. Owned by the Slice 3 follow-up.
+  it('PHOTOMODAL_GAP: PhotoLibrary still has a modal with no dialog contract', () => {
+    const src = readFileSync(join(SRC, 'pages/PhotoLibrary.jsx'), 'utf8')
+    expect(src).toMatch(/PhotoModal/)
+    expect(codeOf(src)).not.toMatch(/role=["']dialog["']/)
   })
 })

@@ -1,5 +1,14 @@
 [
   {
+    "version": "3.103.0",
+    "date": "2026-08-06",
+    "highlights": [
+      "The Back button now closes any open flyover \u2014 photo viewer, filters, bulk log, sow sheet \u2014 instead of leaving the page",
+      "Escape now closes exactly one thing at a time; before, some combinations closed two",
+      "A share or save in progress can no longer be cancelled out from under itself"
+    ]
+  },
+  {
     "version": "3.102.0",
     "date": "2026-08-06",
     "highlights": [

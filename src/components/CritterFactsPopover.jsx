@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { getFlavor } from '../lib/critterFlavor.js'
+import { useDismissable } from '../context/DismissRegistry.jsx'
+import { LAYER } from '../lib/dismissLayers.js'
 
 const REDUCE_MOTION = typeof window !== 'undefined' && window.matchMedia
   && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -15,12 +17,17 @@ export default function CritterFactsPopover({ critter, theme, content, onClose }
   const [tab, setTab] = useState('facts')
   const closeRef = useRef(null)
 
+  // V4-BACKNAV-001 Slice 2 — join the shared registry. This popover is mounted-means-open, and its
+  // keydown below was gated on NOTHING: over an open Sheet, one Escape fired both onCloses.
+  const { registered, isTopmost } = useDismissable({ open: true, onDismiss: onClose, layer: LAYER.DIALOG })
+
   useEffect(() => {
+    if (registered) return   // registry owns Escape
     const onKey = e => { if (e.key === 'Escape') onClose() }
     document.addEventListener('keydown', onKey)
     closeRef.current && closeRef.current.focus()
     return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, registered])
 
   const hasSource = !!(content && content.has_source && content.facts)
   const factsText = hasSource ? content.facts : ''
@@ -33,7 +40,7 @@ export default function CritterFactsPopover({ critter, theme, content, onClose }
     : ''
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="cfp-title" onClick={onClose}
+    <div role="dialog" aria-modal={isTopmost ? 'true' : undefined} aria-labelledby="cfp-title" onClick={onClose}
       style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(28,24,18,0.46)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
         animation: REDUCE_MOTION ? 'none' : 'cfp-fade 160ms ease' }}>

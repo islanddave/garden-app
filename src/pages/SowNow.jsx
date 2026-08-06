@@ -14,6 +14,7 @@ import { formatDate } from '../lib/format.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { Sheet } from '../components/forms'
 import PlantingEditor from '../components/PlantingEditor.jsx'
+import { useBackDismiss } from '../hooks/useBackDismiss.js'
 
 // Section order is FIXED per the panel deltas spec. Third element = optional subtitle.
 // `sow_next_year` sits below every this-season section but above the non-actionable ones. It is
@@ -96,6 +97,8 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   // canonical PlantingEditor (add-from-packet), so a sown planting gets a real place + full
   // details and can never land orphaned (BUG-ORPHANNAV-001, the old mini-form's project_id:null).
   const [sowTarget, setSowTarget] = useState(null)
+  // V4-BACKNAV-001 Slice P (extended) — the sow sheet closes in place (setSowTarget(null)).
+  useBackDismiss({ open: !!sowTarget, onDismiss: () => setSowTarget(null), id: 'sownow-sow' })
 
   useEffect(() => {
     let alive = true

@@ -21,19 +21,26 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useDismissable } from '../context/DismissRegistry.jsx'
+import { LAYER } from '../lib/dismissLayers.js'
 
 function Lightbox({ src, alt, open, onClose }) {
   const [zoomed, setZoomed] = useState(false)
   const closeRef = useRef(null)
 
+  // V4-BACKNAV-001 Slice 2 — this is ZoomableImage's OWN local Lightbox (a different component from
+  // components/Lightbox.jsx despite the shared name — the exact conflation that made an earlier
+  // audit miscount Lightbox's usage 4x). It gets its own registration.
+  const { registered } = useDismissable({ open, onDismiss: onClose, layer: LAYER.DIALOG })
+
   useEffect(() => {
     if (!open) { setZoomed(false); return }
-    function onKey(e) { if (e.key === 'Escape') onClose() }
+    function onKey(e) { if (registered) return; if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
     // Move focus to the close control for keyboard + screen-reader users.
     closeRef.current?.focus()
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onClose, registered])
 
   if (!open || !src) return null
   if (typeof document === 'undefined') return null

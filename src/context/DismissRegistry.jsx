@@ -27,7 +27,7 @@
 // strand that lock and brick body scrolling until reload — the worst failure mode in the program.
 // Going through the owner's setter is what makes that unreachable.
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { LAYER, resolveTopmost } from '../lib/dismissLayers.js'
+import { LAYER, resolveTopmost, decideDismiss } from '../lib/dismissLayers.js'
 import { DISMISS_REGISTRY_ENABLED } from '../lib/featureFlags.js'
 
 // TWO contexts, deliberately. The API context holds register/unregister/update, all of which are
@@ -85,10 +85,17 @@ export function DismissRegistryProvider({ children }) {
     if (typeof document === 'undefined') return
     function onKey(e) {
       if (e.key !== 'Escape') return
-      const target = resolveTopmost(entries)
-      if (!target) return                      // nothing registered — let the event through
+      const d = decideDismiss(entries, { blockOnBusy: true })
+      if (d.action === 'NONE') return          // nothing registered — let the event through
+      // BLOCKED: a write is in flight. Swallow the key rather than discarding the surface. Enabled
+      // in Slice 2 because it is the only way to register the two surfaces that ALREADY hand-rolled
+      // this guard (SpaceAttachPicker suppresses Escape while saving; FacebookShareSheet disables
+      // its Close while posting — the one surface in the app with a non-idempotent in-flight
+      // action) without regressing them. It is inert for every surface that does not set `busy`,
+      // which is all the rest, so turning it on is not a blanket behaviour change.
       e.preventDefault()
-      target.cbRef?.current?.()
+      if (d.action === 'BLOCKED') return
+      d.target.cbRef?.current?.()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)

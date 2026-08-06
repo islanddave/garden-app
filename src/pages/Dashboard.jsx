@@ -13,6 +13,8 @@ import HeadsUpTile from '../components/HeadsUpTile.jsx'
 import NotifyButton from '../components/NotifyButton.jsx'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { levelProgress } from '../lib/xpLevel.js'
+import { useDismissable } from '../context/DismissRegistry.jsx'
+import { LAYER } from '../lib/dismissLayers.js'
 
 // First-name extraction (I10-greeting fix, L-063, 2026-05-18). profile.display_name may be a full
 // name like "Dave Nichols"; we render greetings with first name only.
@@ -410,6 +412,10 @@ function StreakCounter({ streak, pulseKey, onTap }) {
 
 // ─── Streak Modal — current / longest / next milestone ───────────────────────
 function StreakModal({ stats, onClose }) {
+  // V4-BACKNAV-001 Slice 2 — this modal shipped with NO Escape handler at all (backdrop tap was its
+  // only dismissal), while painting at z1000 above every Sheet. Registering gives it Escape for free
+  // and, more importantly, makes it VISIBLE to the arbiter so it stops being silently topmost.
+  const { isTopmost } = useDismissable({ open: true, onDismiss: onClose, layer: LAYER.DIALOG })
   // V-5 cadence-utility framing per reward-ux-conformance-audit-V001-20260522.2150 §V-5.
   // Path (b): no milestone-chase, no "X to go" countdown — streak is a record of consecutive
   // days you logged activity, not a goal you're behind on. Personal longest_streak is the
@@ -420,7 +426,7 @@ function StreakModal({ stats, onClose }) {
   return (
     <div
       role="dialog"
-      aria-modal="true"
+      aria-modal={isTopmost ? 'true' : undefined}
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0,

@@ -27,6 +27,7 @@ import { createPortal } from 'react-dom'
 import PhotoImg from './PhotoImg.jsx'
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
+import { useBackDismiss } from '../hooks/useBackDismiss.js'
 
 // -- Pure, dependency-free math helpers (named exports -> directly unit-testable; jsdom can't
 //    exercise real pointer gestures, so the gesture math is covered here instead). ----------
@@ -138,6 +139,14 @@ export default function Lightbox({
   const { registered: dismissRegistered, isTopmost } = useDismissable({
     open, onDismiss: onClose, layer: LAYER.DIALOG,
   })
+
+  // V4-BACKNAV-001 Slice P (extended) — Android Back closes the viewer instead of leaving the page.
+  // Close-in-place: onClose is a pure state flip at both render sites (PlantingDetail, PhotosWall).
+  // DEFERRED, deliberately: when the image is zoomed, Back arguably ought to reset zoom BEFORE
+  // closing (the Android gallery idiom). That is an intra-surface precedence rule, not a dismissal,
+  // and it belongs with the Slice 3 arbiter alongside the other sub-state cases (BottomNav's
+  // two-step sign-out, VarietyPicker's create stages). Today Back matches Escape: it closes.
+  useBackDismiss({ open, onDismiss: onClose, id: 'lightbox' })
 
   // Uncontrolled internal index, seeded from `index` whenever it changes / on open.
   const [internalIndex, setInternalIndex] = useState(index)

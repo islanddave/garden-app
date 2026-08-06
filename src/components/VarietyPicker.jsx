@@ -29,6 +29,8 @@ import {
   useComboboxInput, looseIncludes, looseKey,
   kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingRight,
 } from '../lib/comboboxInput.js'
+import { useDismissable } from '../context/DismissRegistry.jsx'
+import { LAYER } from '../lib/dismissLayers.js'
 
 const DEBOUNCE_MS = 250
 
@@ -738,15 +740,22 @@ export default function VarietyPicker({
 
 // ── ConflictModal ────────────────────────────────────────────────────────────
 function ConflictModal({ query, existing, onUseExisting, onCreateAnyway, onCancel, creating }) {
-  // Esc closes
+  // V4-BACKNAV-001 Slice 2 — mounted-means-open. This modal can open INSIDE an overlay-hosted /log
+  // form, so its previously ungated window keydown meant one Escape cancelled the conflict AND
+  // dismissed the whole overlay. `busy: creating` blocks the dismiss while the create POST is in
+  // flight — a behaviour change, and the safe direction: previously Escape cancelled mid-write.
+  const { registered, isTopmost } = useDismissable({ open: true, onDismiss: onCancel, busy: !!creating, layer: LAYER.DIALOG })
+
+  // Esc closes (legacy path — only when the registry is not present/enabled)
   useEffect(() => {
+    if (registered) return undefined
     const onKey = (e) => { if (e.key === 'Escape') onCancel() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onCancel])
+  }, [onCancel, registered])
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="vp-conflict-title" style={modalBackdrop}>
+    <div role="dialog" aria-modal={isTopmost ? 'true' : undefined} aria-labelledby="vp-conflict-title" style={modalBackdrop}>
       <div style={modalCard}>
         <h2 id="vp-conflict-title" style={{ margin: '0 0 8px', fontSize: '1.05rem', color: P.green }}>
           Similar variety already exists

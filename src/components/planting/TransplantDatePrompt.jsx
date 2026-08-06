@@ -23,6 +23,7 @@ import Sheet from '../forms/Sheet.jsx'
 import Field from '../forms/Field.jsx'
 import Input from '../forms/Input.jsx'
 import Button from '../forms/Button.jsx'
+import { useBackDismiss } from '../../hooks/useBackDismiss.js'
 
 // Local-calendar today as YYYY-MM-DD. toISOString() would be UTC and can land on the wrong day
 // west of Greenwich, which is exactly where this app is used.
@@ -44,6 +45,8 @@ export default function TransplantDatePrompt({ planting, onSaved }) {
   const [open, setOpen] = useState(false)
   const [date, setDate] = useState('')
   const [saving, setSaving] = useState(false)
+  // V4-BACKNAV-001 Slice P (extended) — close-in-place interrupt prompt.
+  useBackDismiss({ open, onDismiss: () => setOpen(false), id: 'transplant-date' })
   const [err, setErr] = useState(null)
 
   if (!planting?.id) return null
@@ -108,7 +111,7 @@ export default function TransplantDatePrompt({ planting, onSaved }) {
         open={open}
         onClose={() => setOpen(false)}
         title="Transplant date"
-        dirty={saving}
+        busy={saving}
       >
         <div style={{ display: 'grid', gap: 14 }}>
           <p style={{ margin: 0, fontSize: '0.85rem', color: P.mid, lineHeight: 1.5 }}>

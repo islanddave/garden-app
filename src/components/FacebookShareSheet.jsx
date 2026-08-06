@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react'
 import { P } from '../lib/constants.js'
 import PhotoImg from './PhotoImg.jsx'
 import { useShareToFacebook } from '../hooks/useShareToFacebook.js'
+import { useDismissable } from '../context/DismissRegistry.jsx'
+import { LAYER } from '../lib/dismissLayers.js'
 
 // V4-FBSHARE-001 — compose + post sheet for sharing photos to the "Gardens at Mathews" FB Page.
 // Reused for single-photo (from the tag modal) and multi-select (from the selection bar). The bytes
@@ -18,6 +20,13 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
   useEffect(() => {
     if (open) { reset(); setCaption('') }
   }, [open, reset])
+
+  // V4-BACKNAV-001 Slice 2 — this surface had NO Escape handler at all, so registering ADDS
+  // Escape-to-close. `busy: posting` is load-bearing: this is the one surface in the app with a
+  // non-idempotent in-flight action (a Facebook post), and it already disabled its Close button
+  // while posting. blockOnBusy makes Escape respect the same rule.
+  const { registered, isTopmost } = useDismissable({ open, onDismiss: onClose, busy: state === 'posting', layer: LAYER.DIALOG })
+  void registered
 
   if (!open) return null
 
@@ -47,7 +56,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
   }
 
   return (
-    <div role="dialog" aria-label="Share to Facebook" style={overlay}
+    <div role="dialog" aria-label="Share to Facebook" aria-modal={isTopmost ? 'true' : undefined} style={overlay}
       onClick={(e) => { if (e.target === e.currentTarget && closable) onClose() }}>
       <div style={panel}>
         {/* Header */}

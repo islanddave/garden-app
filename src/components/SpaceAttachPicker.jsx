@@ -24,6 +24,8 @@ import { useApiFetch } from '../lib/api.js'
 import { P, T } from '../lib/tokens.js'
 import PhotoImg from './PhotoImg.jsx'
 import Spinner from './forms/Spinner.jsx'
+import { useDismissable } from '../context/DismissRegistry.jsx'
+import { LAYER } from '../lib/dismissLayers.js'
 
 // Bounded concurrency. Each attach is its own PUT (the route is single-photo by design), so a
 // 40-photo selection is 40 requests. Unbounded Promise.all would open 40 sockets at once and, on a
@@ -69,6 +71,11 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
   // "?space_id=null" filter and this deliberately does not add one: the candidate set is "every
   // photo not already on this space", which is a negation the list endpoint has no vocabulary for,
   // and the wall is already capped at the endpoint's row limit (see PAGE_LIMIT above).
+  // V4-BACKNAV-001 Slice 2 — mounted-means-open. `busy: saving` preserves this surface's existing
+  // guard: it already refused Escape mid-save by hand, and the registry's blockOnBusy is what lets
+  // it join without regressing that.
+  const { registered, isTopmost } = useDismissable({ open: true, onDismiss: onClose, busy: saving, layer: LAYER.DIALOG })
+
   useEffect(() => {
     const ac = new AbortController()
     setLoadError(null)
@@ -112,11 +119,12 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
   useEffect(() => {
     closeRef.current?.focus()
     function onKey(e) {
+      if (registered) return   // registry owns Escape (and the busy guard)
       if (e.key === 'Escape' && !saving) { e.preventDefault(); onClose?.() }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onClose, saving])
+  }, [onClose, saving, registered])
 
   async function attach() {
     if (!selected.size || saving || !spaceId) return
@@ -157,6 +165,7 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
   return (
     <div
       role="dialog"
+      aria-modal={isTopmost ? 'true' : undefined}
       aria-modal="true"
       aria-label={`Add existing photos to ${spaceName || 'your space'}`}
       ref={dialogRef}
