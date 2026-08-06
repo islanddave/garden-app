@@ -1,0 +1,84 @@
+# gates.yml
+# V4-RAPINIDTM-001 — Rapini days_to_maturity 60 -> 45 (packet-sourced, Dave 2026-08-06).
+#
+# DATA ONLY. No DDL, no view, no code, no deploy — the estimate is computed client-side from
+# variety_ref, so this takes effect on the next page load with no promote.
+#
+# STAGING IS VACUOUS FOR THIS MIGRATION AND THAT IS EXPECTED. Staging carries zero Rapini rows
+# (established during the v4-dtmbasisvar-001 rehearsal on 2026-08-05). Every gate below is written
+# as a violation-count-must-be-0, so on staging they pass by matching nothing — correct, but it
+# means staging CANNOT prove this migration did anything. The env:prod gate is what proves it, and
+# it is a real scripted gate rather than a manual note precisely so that proof is not left to a
+# human reading runner output.
+
+pre:
+  - name: pre_target_cultivar_exists
+    # Not `1 - count(*)`: that is a prod absolute and would fail on staging, where the row is
+    # absent. Asserts only that we never match MORE than one row, which is the hazard a UUID scope
+    # is already supposed to prevent — belt and braces on the id being well-formed.
+    sql: |
+      SELECT CASE WHEN count(*) <= 1 THEN 0 ELSE 1 END FROM public.plant_varieties
+       WHERE id = '0e33b90d-0dd0-4864-bd37-e9fedd1d3088' AND deleted_at IS NULL
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: post_dtm_is_45
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE id = '0e33b90d-0dd0-4864-bd37-e9fedd1d3088' AND deleted_at IS NULL
+         AND (days_to_maturity_min IS DISTINCT FROM 45 OR days_to_maturity_max IS DISTINCT FROM 45)
+    expect: scalar_eq
+    value: 0
+
+  # env:prod, and scripted. On prod the row exists, so this is the only gate that can distinguish
+  # "applied correctly" from "matched nothing". Its sibling post_dtm_is_45 shares the UUID predicate
+  # with the UPDATE itself and so cannot detect an inert apply.
+  - name: post_prod_dtm_actually_applied
+    env: prod
+    continuous: false
+    sql: |
+      SELECT 1 - count(*) FROM public.plant_varieties
+       WHERE id = '0e33b90d-0dd0-4864-bd37-e9fedd1d3088' AND deleted_at IS NULL
+         AND days_to_maturity_min = 45 AND days_to_maturity_max = 45
+    expect: scalar_eq
+    value: 0
+
+  # The blast-radius bound. This migration must touch exactly one cultivar; the heading broccolis
+  # keep their own (correct, published-from-transplant) figures. Named explicitly because "Rapini"
+  # is a plausible substring of a future cultivar name and a name-scoped edit would have caught them.
+  - name: post_no_other_broccoli_dtm_moved
+    continuous: false
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE deleted_at IS NULL AND crop_type_slug = 'broccoli'
+         AND name IN ('Belstar','Green Magic','Broccoli')
+         AND (days_to_maturity_min = 45 AND days_to_maturity_max = 45)
+    expect: scalar_eq
+    value: 0
+
+  # Guards the pairing with v4-dtmbasisvar-001: the duration correction is only right if the anchor
+  # correction is still in place. If dtm_basis reverted to the crop's from-transplant, a 45-day
+  # count from a transplant date the planting does not have is worse than the state before either fix.
+  - name: post_basis_still_from_sow
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE id = '0e33b90d-0dd0-4864-bd37-e9fedd1d3088' AND deleted_at IS NULL
+         AND dtm_basis IS DISTINCT FROM 'from-sow'
+    expect: scalar_eq
+    value: 0
+
+  - name: post_schema_version_present
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.19.0-rapinidtm-001' LIMIT 1
+    expect: rowcount_gte
+    value: 1
+
+  - name: post_card_shows_the_earlier_date
+    manual: true
+    note: |
+      PROD, user-visible acceptance. Open the Rapini planting's CropCard (hard-reload or a fresh
+      incognito tab — the app ships a service worker). Est. harvest must read ~2026-09-13, roughly
+      two weeks earlier than the 2026-09-28 it showed after v4-dtmbasisvar-001 and before this.
+      Also glance at Sow Now: the Rapini packet's window may widen (a shorter dtm pushes the fall
+      latest-safe-sow date LATER); it must not close.
