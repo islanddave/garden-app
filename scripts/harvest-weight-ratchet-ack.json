@@ -1,0 +1,4 @@
+{
+  "_comment": "V4-HARVRATCHET-001 — cultivars whose sample-derived weight factor diverges sharply from its reference and has been REVIEWED and accepted. Adding an id here tells the ratchet job to propagate that factor. Empty means every outlier still blocks, which is the intended starting state: the job must not silently spread a bad sample. To CORRECT rather than accept a factor, void the offending samples (cultivar_weight_void) instead of listing the cultivar here.",
+  "reviewed_cultivar_ids": []
+}

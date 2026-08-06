@@ -1,0 +1,99 @@
+name: harvest-weight-ratchet (V4-HARVRATCHET-001)
+
+# Propagates improved per-cultivar weight factors into stored harvest weights — the missing third of
+# Dave's ratchet. 0f-autocapture already turns dual count+weight harvests into calibration samples
+# automatically; 0c-backfill-basis is explicitly re-runnable and says so in its own header; nothing
+# ever ran it again, so the samples accumulated and the stored estimates never moved. This is that
+# re-run, with the two guards a blind re-run would have needed (see scripts/harvest-weight-ratchet.sh).
+#
+# ACTIVATION (honest, same as integrity-weekly.yml): on.schedule fires ONLY from the default branch,
+# so this workflow is INERT until it rides a promote (dev -> promote-gate -> main FF).
+# workflow_dispatch works once the file reaches main.
+#
+# WEEKLY, NOT DAILY, AND DELIBERATELY. The input only changes when Dave weighs something, and the
+# output is a number he looks at. A daily job that silently nudges his season total is worse than a
+# weekly one he can associate with an event. Runs Mondays AFTER integrity-weekly so the two findings
+# streams do not compete for the same morning's attention.
+#
+# DRY-RUN ON SCHEDULE BY DEFAULT. The scheduled run REPORTS; it does not write. Writing is an
+# explicit workflow_dispatch with apply=true. Rationale: the first application moves ~146 of 367
+# stored rows, which is a visible change to numbers Dave reads — it should be a decision he makes
+# once, not something that happens to him on a Monday. After he has seen a few clean reports, flip
+# the default here if he wants it unattended.
+#
+# Secrets consumed: secrets.NEON_DATABASE_URL (already present; schema-audit.yml and
+# integrity-weekly.yml both consume it with green history). No AWS, no OIDC, no environment gate —
+# this job must run unattended.
+#
+# ALERT SINK: a blocked run exits 1 -> conclusion=failure, the same signal integrity-weekly.yml
+# already established for the morning brief. The report artifact carries the reason.
+
+on:
+  schedule:
+    - cron: '0 11 * * 1'   # Mondays 11:00 UTC = 07:00 ET, an hour after integrity-weekly
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Write the re-derived weights (default: report only)'
+        type: boolean
+        default: false
+      max_total_drop_pct:
+        description: 'Refuse a one-step total move larger than this percent'
+        default: '25'
+
+permissions:
+  contents: read
+
+jobs:
+  ratchet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Run the ratchet
+        id: run
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          MAX_TOTAL_DROP_PCT: ${{ github.event.inputs.max_total_drop_pct || '25' }}
+          OUT: harvest-ratchet-report.json
+        run: |
+          set +e
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then
+            bash scripts/harvest-weight-ratchet.sh --apply
+          else
+            bash scripts/harvest-weight-ratchet.sh
+          fi
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit $rc
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "### V4-HARVRATCHET-001 — harvest weight ratchet"
+            echo
+            if [ -f harvest-ratchet-report.json ]; then
+              echo '```json'
+              cat harvest-ratchet-report.json
+              echo '```'
+            else
+              echo "_No report produced — the analysis query failed before writing one._"
+            fi
+            echo
+            echo "Mode: **$([ "${{ github.event.inputs.apply }}" = "true" ] && echo APPLY || echo 'REPORT ONLY')**"
+            echo
+            echo "A non-zero exit means the run was BLOCKED and nothing was written — either an"
+            echo "unreviewed outlier among the factors the resolver actually uses, or a one-step"
+            echo "total move beyond the limit. Both want a human decision, not a retry."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: harvest-ratchet-report
+          path: harvest-ratchet-report.json
+          retention-days: 90
