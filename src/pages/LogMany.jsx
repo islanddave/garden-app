@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useOverlaySwap, OverlaySwapLink, useOverlayDismiss, useOverlayBackground, useInOverlaySurface } from '../context/OverlayContext.jsx'
+import { useOverlaySwap, OverlaySwapLink, useOverlayDismiss, useOverlayBackground } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -80,7 +80,6 @@ export default function LogMany() {
   const swap = useOverlaySwap()               // in-overlay cross-nav that preserves the background (§4)
   const dismiss = useOverlayDismiss()          // §4 dismiss — never bare navigate(-1)
   const background = useOverlayBackground()     // preserved through the post-batch critterCheck push
-  const inOverlay = useInOverlaySurface()       // draft stash only applies when rendered as an overlay
   const [params] = useSearchParams()
 
   const [projects, setProjects]   = useState([])
@@ -133,10 +132,16 @@ export default function LogMany() {
         if (seedProject && proj.some(p => p.id === seedProject)) setScope({ type: 'project', project_id: seedProject })
         else if (seedLocation && locs.some(l => l.id === seedLocation)) setScope({ type: 'space', location_id: seedLocation })
         else {
-          // §4 draft stash: a dismissed-while-dirty overlay resumes here (validated against live
-          // data). Takes priority over the localStorage lastScope memory; only when opened as an
-          // overlay with no seed deep-link (a bare "Log many" tap), so a deep-link intent still wins.
-          const draft = inOverlay ? readDraft(DRAFT_KEY) : null
+          // §4 draft stash: a dismissed-while-dirty form resumes here (validated against live data).
+          // Takes priority over the localStorage lastScope memory; only with no seed deep-link (a
+          // bare "Log many" tap), so a deep-link intent still wins.
+          // V4-DRAFTFULLPAGE-001 (c): BOTH surfaces, not overlay-only. Full-page /log/many is reached
+          // by deep link, bookmark and notification; there the stash was inert, so an exit lost the
+          // event type, date, scope AND the persisted idemKey that makes a retry idempotent. Mirrors
+          // the (a) change already shipped for EventNew — same rationale: no router blocker is
+          // possible (useBlocker needs a data router, App uses declarative BrowserRouter), and
+          // persistence beats blocking on mobile.
+          const draft = readDraft(DRAFT_KEY)
           if (draft) {
             if (draft.eventType && BATCH_EVENT_TYPES.includes(draft.eventType)) setEventType(draft.eventType)
             if (typeof draft.eventDate === 'string') setEventDate(draft.eventDate)
@@ -158,10 +163,11 @@ export default function LogMany() {
       })
       .catch(err => { if (on) { setLoadErr(err.message); setReady(true) } })
     return () => { on = false }
-  }, [fetch, params, inOverlay])
+  }, [fetch, params])
 
-  // §4 draft stash: persist the in-progress form while dirty (overlay only), so a dismiss preserves
-  // it; cleared on a successful confirm/undo below. Never persists the pristine default or the
+  // §4 draft stash: persist the in-progress form while dirty (BOTH surfaces, V4-DRAFTFULLPAGE-001 (c)),
+  // so a dismiss OR a full-page exit preserves it; cleared on a successful confirm/undo below.
+  // Never persists the pristine default or the
   // post-result screen (result set = already written to DB, not a resumable draft).
   // Gate on `!ready`: the persist effect runs synchronously on mount, BEFORE the async load's
   // readDraft (which resolves in a later microtask inside the fetch .then). Without the gate, a user
@@ -170,10 +176,10 @@ export default function LogMany() {
   // "All plantings"). Deferring until ready (load resolved) makes readDraft see null and honors the
   // lastScope memory; from then on it persists real edits normally.
   useEffect(() => {
-    if (!inOverlay || result || !ready) return
+    if (result || !ready) return
     const dirty = eventType !== 'watering' || !!eventDate || scope.type !== 'all'
     if (dirty) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, idemKey: idemRef.current })
-  }, [inOverlay, result, ready, eventType, eventDate, scope])
+  }, [result, ready, eventType, eventDate, scope])
 
   // Server dry-run for ScopeChecklist. Stable (deps: fetch) — eventType/eventDate are
   // passed as call args so a vocabulary change retriggers the child's effect, not this fn.
@@ -202,8 +208,10 @@ export default function LogMany() {
     if (committedCount === 0 || saving) return
     if (!idemRef.current) idemRef.current = genKey()
     // §4: persist the idempotency key immediately (a ref change won't re-run the persist effect). If
-    // the POST fails and the user dismisses, re-opening restores THIS key so the retry is idempotent.
-    if (inOverlay) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, idemKey: idemRef.current })
+    // the POST fails and the user dismisses OR exits, re-opening restores THIS key so the retry is
+    // idempotent. V4-DRAFTFULLPAGE-001 (c): both surfaces — this is the byte whose loss on the
+    // full page turned a failed batch into a non-idempotent retry.
+    writeDraft(DRAFT_KEY, { eventType, eventDate, scope, idemKey: idemRef.current })
     setSaving(true); setError(null)
     try {
       const r = await fetch('/api/events/batch', { method: 'POST', body: JSON.stringify({

@@ -39,7 +39,11 @@ import LogMany from '../pages/LogMany.jsx'
 const KEY = 'quicklog.lastEventType'
 
 describe('LogMany — sticky event type (logmany-sticky-eventtype)', () => {
-  beforeEach(() => { navigate.mockClear(); localStorage.clear() })
+  // sessionStorage.clear() added with V4-DRAFTFULLPAGE-001 (c): the draft stash now persists on the
+  // FULL PAGE too, so a dirty form left by an earlier test in this file survives into the next one
+  // and its restored eventType shadows the localStorage sticky value under test. Test pollution,
+  // not a behaviour bug — the stash itself is covered in LogManyDraftFullPage.test.jsx.
+  beforeEach(() => { navigate.mockClear(); localStorage.clear(); sessionStorage.clear() })
 
   it('defaults to Watered on a cold mount with nothing remembered', async () => {
     render(<LogMany />)
