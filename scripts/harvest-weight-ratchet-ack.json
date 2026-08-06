@@ -1,4 +1,30 @@
 {
-  "_comment": "V4-HARVRATCHET-001 — cultivars whose sample-derived weight factor diverges sharply from its reference and has been REVIEWED and accepted. Adding an id here tells the ratchet job to propagate that factor. Empty means every outlier still blocks, which is the intended starting state: the job must not silently spread a bad sample. To CORRECT rather than accept a factor, void the offending samples (cultivar_weight_void) instead of listing the cultivar here.",
-  "reviewed_cultivar_ids": []
+  "_comment": "V4-HARVRATCHET-001 — cultivars whose sample-derived weight factor diverges sharply from its reference and has been REVIEWED and accepted. Adding an id here tells the ratchet job to propagate that factor. To CORRECT rather than accept a factor, void the offending samples (cultivar_weight_void) instead of listing the cultivar here. Dave's standing direction (2026-08-06): his own weighings ARE the target — the catalogue reference is the fallback, not the authority, and it phases out as more harvests get weighed.",
+  "reviewed_cultivar_ids": [
+    "457d4628-1531-4349-8af7-2a114c206599",
+    "d15d22fc-a0ca-4312-b2fb-e9b3a8c602d1"
+  ],
+  "reviews": [
+    {
+      "cultivar_id": "457d4628-1531-4349-8af7-2a114c206599",
+      "name": "Pineapple Tomatillo",
+      "sample_g_per_count": 1.5,
+      "reference_g": 8,
+      "ratio": 0.188,
+      "reviewed": "2026-08-06",
+      "decision": "ACCEPT — the measurement is right and the reference is wrong for this variety.",
+      "why": "Two independent weighings a day apart agree exactly (3g/2 fruit, then 9g/6 fruit). The 8g reference is a generic tomatillo figure; pineapple tomatillo is a ground-cherry-sized fruit, so being 5x under a generic number is what a correct variety-specific measurement looks like here.",
+      "caveat": "A third sample row is the SAME weighing re-logged under unit='bunch' 16 seconds later, so the derived confidence ('high', cv=0) is overstated — one observation counted twice. The FACTOR is still backed by two genuinely independent observations, so accepting it is sound; the confidence inflation is a separate auto-capture defect tracked outside this file."
+    },
+    {
+      "cultivar_id": "d15d22fc-a0ca-4312-b2fb-e9b3a8c602d1",
+      "name": "Aster",
+      "sample_g_per_count": 0.69,
+      "reference_g": 6,
+      "ratio": 0.115,
+      "reviewed": "2026-08-06",
+      "decision": "ACCEPT — Dave's measurement is the target.",
+      "why": "Two genuinely independent samples on consecutive days, consistent: 12g/18 = 0.67 and 15g/21 = 0.71. No duplicate-unit contamination in this pair."
+    }
+  ]
 }

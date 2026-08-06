@@ -171,8 +171,23 @@ if [ "$BLOCK" -eq 1 ]; then echo "BLOCKED — nothing written." >&2; exit 1; fi
 if [ "$APPLY" -eq 0 ]; then echo "DRY RUN — nothing written. Pass --apply to propagate."; exit 0; fi
 
 # ── Apply. Same CTE shape as 0c so the two cannot drift. ──────────────────────────────────────────
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
+#
+# SNAPSHOT FIRST, IN THE SAME TRANSACTION. resolve_harvest_weight is not invertible: once a row is
+# re-derived, the grams it previously carried cannot be reconstructed from the row, and
+# cultivar_weight_derived is a VIEW, so the inputs that produced the old value are not retained
+# either. Without a snapshot this job is a one-way door on numbers Dave reads. With one, a bad run
+# is a single UPDATE ... FROM away from undone.
+SNAP="harvest_log_weight_snapshot_$(date -u +%Y%m%d_%H%M%S)"
+echo "snapshot: $SNAP"
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -v snap="$SNAP" <<'SQL'
 BEGIN;
+-- Every row in scope, not just the changed ones: restoring must be able to put the table back
+-- exactly, and "which rows changed" is a property of the run, not of the table.
+CREATE TABLE :"snap" AS
+  SELECT h.id, h.weight_grams, h.weight_estimated, h.weight_basis, now() AS snapshot_at
+    FROM public.harvest_log h
+   WHERE h.deleted_at IS NULL
+     AND NOT (h.weight_estimated IS FALSE AND h.unit NOT IN ('g','kg','lb','oz'));
 WITH resolved AS (
   SELECT h.id, rw.weight_grams, rw.weight_estimated, rw.weight_basis
     FROM public.harvest_log h
@@ -192,4 +207,5 @@ UPDATE public.harvest_log h
      OR h.weight_basis IS DISTINCT FROM r.weight_basis);
 COMMIT;
 SQL
-echo "APPLIED."
+echo "APPLIED. Undo: UPDATE harvest_log h SET weight_grams=s.weight_grams,"
+echo "  weight_estimated=s.weight_estimated, weight_basis=s.weight_basis FROM $SNAP s WHERE s.id=h.id;"

@@ -1,5 +1,15 @@
 [
   {
+    "version": "3.104.0",
+    "date": "2026-08-06",
+    "highlights": [
+      "The Back button and Escape now always close the same thing \u2014 whichever panel is actually on top",
+      "Fixed: pressing Escape while naming a new variety closed the whole sow sheet as well as stepping back",
+      "Fixed: editing a harvest could quietly wipe the weight already recorded against it",
+      "Harvest weight estimates now improve on their own as you weigh more picks"
+    ]
+  },
+  {
     "version": "3.103.0",
     "date": "2026-08-06",
     "highlights": [

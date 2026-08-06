@@ -16,9 +16,20 @@ const WF = fs.readFileSync(path.join(ROOT, '.github/workflows/harvest-weight-rat
 describe('the ratchet never destroys a real measurement', () => {
   // The one unrecoverable outcome. A weight Dave typed is an independent fact; re-deriving it would
   // replace it with an estimate and there is no way back. Copied verbatim from 0c-backfill-basis.
-  it('carries 0c\'s measured-safe predicate, in both the analysis and the apply', () => {
+  // THREE places, and all three matter: the ANALYSIS (so the report describes the rows that will
+  // actually move), the SNAPSHOT (so a restore can put back exactly the row set that was touched —
+  // a snapshot narrower than the update is a restore that silently misses rows), and the APPLY.
+  it('carries 0c\'s measured-safe predicate in the analysis, the snapshot AND the apply', () => {
     const pred = /NOT \(h\.weight_estimated IS FALSE AND h\.unit NOT IN \('g','kg','lb','oz'\)\)/g
-    expect(SH.match(pred)?.length).toBe(2)
+    expect(SH.match(pred)?.length).toBe(3)
+  })
+
+  // The apply is a one-way door without this: resolve_harvest_weight is not invertible and
+  // cultivar_weight_derived is a VIEW, so the inputs that produced an old value are not retained.
+  it('snapshots before writing, in the same transaction', () => {
+    expect(SH).toMatch(/CREATE TABLE :"snap" AS/)
+    const applyBlock = SH.slice(SH.indexOf('SNAP='))
+    expect(applyBlock.indexOf('CREATE TABLE')).toBeLessThan(applyBlock.indexOf('UPDATE public.harvest_log'))
   })
 
   it('never reimplements the derivation — it calls resolve_harvest_weight', () => {
@@ -55,10 +66,20 @@ describe('it is fail-closed, not fail-open', () => {
   })
 })
 
-describe('the ack file starts empty, and says why', () => {
-  it('no cultivar is pre-accepted — every outlier blocks until reviewed', () => {
+describe('nothing is acked without a recorded reason', () => {
+  // This used to assert the list was EMPTY, which only held on day one. The durable invariant is
+  // that acking is never silent: an id here suppresses a guard on data Dave reads, so each one must
+  // carry the evidence that justified it. An id with no review is how a bad factor gets waved
+  // through months later by someone who does not remember why.
+  it('every acked cultivar has a review with a decision and a rationale', () => {
     expect(Array.isArray(ACK.reviewed_cultivar_ids)).toBe(true)
-    expect(ACK.reviewed_cultivar_ids).toHaveLength(0)
+    const reviewed = new Set((ACK.reviews || []).map((r) => r.cultivar_id))
+    for (const id of ACK.reviewed_cultivar_ids) expect(reviewed.has(id)).toBe(true)
+    for (const r of ACK.reviews || []) {
+      expect(r.decision, `${r.name} needs a decision`).toBeTruthy()
+      expect(r.why, `${r.name} needs a rationale`).toBeTruthy()
+      expect(r.reviewed, `${r.name} needs a review date`).toBeTruthy()
+    }
   })
 
   it('points at void-don\'t-edit as the correction path rather than editing samples', () => {
