@@ -12,6 +12,9 @@ import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import { photoLoadErrorMessage } from '../components/PhotosWall.jsx'
 import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { useDismissable } from '../context/DismissRegistry.jsx'
+import { LAYER } from '../lib/dismissLayers.js'
+import { useBackDismiss } from '../hooks/useBackDismiss.js'
 
 // ---- Photo Library ----
 // Browse all photos, upload standalone photos (event_id = null),
@@ -750,8 +753,20 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
 function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClose, tagging, tagErr, projects, locations, onShare }) {
   const hasEvent = !!photo.event_id
 
+  // V4-BACKNAV-001 Slice 2 follow-up — PHOTOMODAL_GAP closed. This was a fixed full-viewport overlay
+  // with NO role="dialog", NO aria-modal, NO Escape handler and NO focus restore: a backdrop tap was
+  // its only exit, and it was invisible to every machine-checkable definition of "modal" — including
+  // the freeze test's scan, which is why it had to be tracked by hand. `busy: tagging` keeps a
+  // save-in-flight from being dismissed out from under itself, matching the other write surfaces.
+  const { isTopmost } = useDismissable({ open: true, onDismiss: onClose, busy: !!tagging, layer: LAYER.DIALOG })
+  // Close-in-place: onClose just clears the selected photo, it never navigates.
+  useBackDismiss({ open: true, onDismiss: onClose, id: 'photo-modal' })
+
   return (
     <div
+      role="dialog"
+      aria-modal={isTopmost ? 'true' : undefined}
+      aria-label="Photo details"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
       style={{
         position: 'fixed', inset: 0, zIndex: 200,

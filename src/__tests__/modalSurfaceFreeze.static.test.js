@@ -71,6 +71,7 @@ const DIALOG_SURFACES = {
   'components/LoveMehPopover.jsx':     { registered: true },
   'components/VarietyPicker.jsx':      { registered: true, busy: 'creating' },
   'pages/Dashboard.jsx':               { registered: true },
+  'pages/PhotoLibrary.jsx':            { registered: true, busy: 'tagging' },
 }
 
 // <Sheet render sites. App.jsx is OverlayHost (the route-overlay host), not a page-level sheet.
@@ -141,18 +142,18 @@ describe('modal surface freeze', () => {
     const pending = Object.entries(DIALOG_SURFACES).filter(([, m]) => !m.registered).map(([f]) => f)
     // Slice 2 took this from 7 to 0: every role="dialog" surface in the app now resolves through
     // one registry, so Escape (and Back, where wired) closes exactly one surface — the topmost.
-    // The remaining hole is PhotoLibrary's PhotoModal, which has NO role="dialog" at all and is
-    // therefore invisible to this scan; tracked separately, see PHOTOMODAL_GAP below.
+    // PhotoLibrary's PhotoModal — which had NO dialog contract at all and was therefore invisible
+    // to this scan — was given one in the same push, so the scan now sees every modal in the app.
     expect(pending).toHaveLength(0)
   })
 
-  // The one modal this scanner CANNOT see, recorded so it is not mistaken for covered. PhotoModal
-  // (PhotoLibrary.jsx) is a fixed full-viewport overlay with no role, no aria-modal, no Escape
-  // handler and no focus restore — so it is not a dialog by any machine-checkable definition, and
-  // giving it the contract is what makes it arbitrable. Owned by the Slice 3 follow-up.
-  it('PHOTOMODAL_GAP: PhotoLibrary still has a modal with no dialog contract', () => {
-    const src = readFileSync(join(SRC, 'pages/PhotoLibrary.jsx'), 'utf8')
-    expect(src).toMatch(/PhotoModal/)
-    expect(codeOf(src)).not.toMatch(/role=["']dialog["']/)
+  // PHOTOMODAL_GAP — CLOSED. PhotoModal was a fixed full-viewport overlay with no role, no
+  // aria-modal, no Escape and no focus restore: not a dialog by any machine-checkable definition,
+  // which is exactly why it had to be tracked by hand instead of by this scan. Now that it declares
+  // the contract, the scan sees it, and this assertion keeps it declared.
+  it('PhotoModal declares the dialog contract (was the one modal this scan could not see)', () => {
+    const src = codeOf(readFileSync(join(SRC, 'pages/PhotoLibrary.jsx'), 'utf8'))
+    expect(src).toMatch(/role=["']dialog["']/)
+    expect(src).toMatch(/aria-modal/)
   })
 })
