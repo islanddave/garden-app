@@ -101,7 +101,12 @@ const SLUGS_BY_BAND = Object.freeze({
     'kale', 'cabbage', 'broccoli', 'carrot', 'beet', 'leek',
     // brassicas + cool-season greens
     'brussels_sprouts', 'collard', 'bok_choy', 'kohlrabi', 'mustard', 'arugula', 'spinach', 'lettuce',
-    'endive', 'radicchio', 'celery', 'chervil', 'cilantro',
+    'endive', 'radicchio', 'celery', 'chervil', 'cilantro', 'chard',
+    // chard added 2026-08-05 (V4-SLUGCONSIST-001, found by the new cross-surface guard, not by a
+    // user report). It was mentioned in CROP_TYPE_SLUGS and in the ripeness cues but mapped to no
+    // band, so it silently counted as tender (40/38/33). Banded hardy to match 'beet': chard IS
+    // Beta vulgaris — same species, same cold tolerance. Zero live chard plantings at the time of
+    // the change, so no alert behaviour moved for anyone.
     // roots + alliums
     'parsnip', 'radish', 'rat_tail_radish', 'turnip', 'onion', 'bunching_onion', 'garlic', 'shallot', 'pea',
     // hardy perennial herbs

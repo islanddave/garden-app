@@ -1,0 +1,192 @@
+# gates.yml
+# V4-DTMBASISVAR-001 — plant_varieties.dtm_basis + COALESCE resolution in v_sow_candidates.
+#
+# SEQUENCING: staging apply -> gates -> rehearse 0r -> re-apply -> deploy-staging -> prod apply ->
+# gates -> promote. The DDL must land in prod BEFORE the promote.
+#
+# FAILURE MODE IF THE DDL DOES NOT LAND FIRST: SOFT in one direction, HARD in the other.
+#   * New Lambda + old schema = HARD. The plants Lambda selects COALESCE(pv.dtm_basis, ...) and a
+#     missing column 500s every /api/plants read. This is why DDL precedes the promote.
+#   * Old Lambda + new schema = INERT. The old reader selects ct.dtm_basis directly and never looks
+#     at the new column. There is no bad intermediate state in that direction.
+#
+# Every gate is a violation-count-must-be-0 or an environment-agnostic equality, never a
+# prod-derived absolute — staging carries materially fewer crop_types/cultivars than prod, and a
+# prod absolute cannot run where the Migration Authoring Rule says to apply first.
+
+pre:
+  - name: pre_plant_varieties_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plant_varieties'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_column_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties' AND column_name='dtm_basis'
+    expect: rowcount_eq
+    value: 0
+
+  # The view must already be at 33 columns, or CREATE OR REPLACE in 0a is being applied against a
+  # definition this file did not capture and the column-position guarantee does not hold.
+  - name: pre_view_column_count_33
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+    expect: scalar_eq
+    value: 33
+
+  # NOT a `2 - count(*)` absolute. Caught during the staging rehearsal 2026-08-05: staging carries
+  # ZERO Rapini/Kailaan rows (prod has both), so a prod-derived absolute here fails the environment
+  # the Migration Authoring Rule says to apply FIRST. Asserting <=2 keeps it environment-agnostic
+  # while still catching the real hazard this gate exists for — a duplicate/ambiguous name match
+  # that would make 0b update more rows than intended. The "did 0b actually do anything on prod"
+  # question is answered by the prod-only manual gate at the bottom, where it belongs.
+  - name: pre_target_cultivars_unambiguous
+    sql: |
+      SELECT CASE WHEN count(*) <= 2 THEN 0 ELSE 1 END FROM public.plant_varieties
+       WHERE deleted_at IS NULL AND crop_type_slug='broccoli' AND name IN ('Rapini','Kailaan')
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: post_column_present_nullable
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties'
+         AND column_name='dtm_basis' AND is_nullable='YES' AND data_type='text'
+    expect: scalar_eq
+    value: 1
+
+  - name: post_check_constraint_armed
+    sql: |
+      SELECT count(*) FROM pg_constraint
+       WHERE conname='plant_varieties_dtm_basis_chk' AND conrelid='public.plant_varieties'::regclass
+    expect: scalar_eq
+    value: 1
+
+  # The CHECK must permit NULL. If it does not, every existing row is in violation and the
+  # inherit-the-crop resting state is unrepresentable.
+  - name: post_null_is_permitted
+    sql: |
+      SELECT 1 FROM public.plant_varieties WHERE dtm_basis IS NULL LIMIT 1
+    expect: rowcount_gte
+    value: 1
+
+  - name: post_view_still_33_columns
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='v_sow_candidates'
+    expect: scalar_eq
+    value: 33
+
+  # CREATE OR REPLACE VIEW validates names/types/order and is ENTIRELY INDIFFERENT to the WHERE
+  # clause. All four predicates are load-bearing: dropping any one floods Sow Now with archived,
+  # deleted, non-seed, or inactive rows. Assert the predicate text survived, not just the shape.
+  - name: post_view_where_predicates_intact
+    sql: |
+      SELECT count(*) FROM pg_views
+       WHERE schemaname='public' AND viewname='v_sow_candidates'
+         AND definition LIKE '%i.category = ''seeds''::text%'
+         AND definition LIKE '%i.deleted_at IS NULL%'
+         AND definition LIKE '%i.status = ''active''::text%'
+         AND definition LIKE '%v.deleted_at IS NULL%'
+    expect: scalar_eq
+    value: 1
+
+  - name: post_view_resolves_coalesce
+    sql: |
+      SELECT count(*) FROM pg_views
+       WHERE schemaname='public' AND viewname='v_sow_candidates'
+         AND definition LIKE '%COALESCE(v.dtm_basis, ct.dtm_basis)%'
+    expect: scalar_eq
+    value: 1
+
+  # The no-op proof. Every cultivar with a NULL override must still resolve to exactly what the crop
+  # says — this is the assertion that the structural change cannot have moved anyone's harvest date.
+  - name: post_null_override_resolves_to_crop
+    sql: |
+      SELECT count(*) FROM public.v_sow_candidates s
+        JOIN public.plant_varieties v ON v.id = s.variety_id
+        LEFT JOIN public.crop_types ct ON ct.slug = v.crop_type_slug
+       WHERE v.dtm_basis IS NULL AND s.dtm_basis IS DISTINCT FROM ct.dtm_basis
+    expect: scalar_eq
+    value: 0
+
+  # Environment-agnostic violation count, NOT `2 - count(*)`: on staging (zero such cultivars) it
+  # passes vacuously and correctly — there was nothing to set — while on prod it fails loudly if
+  # either row was missed. The complementary "and it was not vacuous on PROD" assertion is the
+  # manual prod-only gate below; that split is deliberate, because one gate cannot be both
+  # environment-agnostic and an absolute.
+  - name: post_no_target_left_unset
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE deleted_at IS NULL AND crop_type_slug='broccoli' AND name IN ('Rapini','Kailaan')
+         AND dtm_basis IS DISTINCT FROM 'from-sow'
+    expect: scalar_eq
+    value: 0
+
+  - name: post_no_stray_overrides
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE deleted_at IS NULL AND dtm_basis IS NOT NULL AND name NOT IN ('Rapini','Kailaan')
+    expect: scalar_eq
+    value: 0
+
+  # The override must actually reach the view, or the whole change is inert where it matters.
+  - name: post_override_wins_in_view
+    sql: |
+      SELECT count(*) FROM public.v_sow_candidates
+       WHERE variety_name IN ('Rapini','Kailaan') AND dtm_basis IS DISTINCT FROM 'from-sow'
+    expect: scalar_eq
+    value: 0
+
+  - name: post_schema_version_present
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version='4.18.0-dtmbasisvar-001' LIMIT 1
+    expect: rowcount_gte
+    value: 1
+
+  # SCOPED TO THE ROWS THIS MIGRATION TOUCHES, deliberately. The first draft asserted a GLOBAL
+  # untyped-cultivar count of 0 and failed on staging with 5 — pre-existing drift (staging carries
+  # 5 untyped cultivars and 76 missing type tags, deferred by Dave 2026-08-05), nothing to do with
+  # this change. A gate that imports an unrelated standing condition cannot distinguish "my
+  # migration broke something" from "this environment was already like that", so it blocks the wrong
+  # thing and trains you to wave it through. Global untyped-cultivar health is owned by the
+  # integrity-weekly class-6 metrics, which is the right home for a standing invariant.
+  - name: post_targets_still_typed
+    sql: |
+      SELECT count(*) FROM public.plant_varieties
+       WHERE deleted_at IS NULL AND name IN ('Rapini','Kailaan') AND crop_type_slug IS NULL
+    expect: scalar_eq
+    value: 0
+  # PROD ONLY. The scripted post gate above is a violation count so it can run on staging, where
+  # both cultivars are absent and it therefore passes vacuously — correct there, but it means the
+  # scripted set alone cannot prove 0b did anything. On PROD, assert the absolute:
+  #   SELECT count(*) FROM plant_varieties
+  #    WHERE deleted_at IS NULL AND name IN ('Rapini','Kailaan') AND dtm_basis='from-sow';
+  # must return exactly 2. If it returns 0, 0b matched nothing and the whole migration is inert.
+  - name: post_prod_overrides_actually_applied
+    manual: true
+    note: |
+      PROD ONLY — expect exactly 2. Staging legitimately has 0 of these cultivars, which is why
+      this cannot be a scripted gate. Skip on staging; it is BLOCKING on prod.
+
+  - name: post_second_apply_noop
+    manual: true
+    note: |
+      Re-run 0a then 0b; both must succeed. 0a: ADD COLUMN IF NOT EXISTS + guarded constraint +
+      CREATE OR REPLACE all no-op, and the schema_version INSERT takes its ON CONFLICT DO UPDATE
+      branch (version is the PRIMARY KEY — without that clause the re-apply dies on a duplicate key
+      with the real work already committed, which is exactly what the staging rollback rehearsal
+      hit on 2026-08-05). 0b: UPDATE 2, same values.
+
+  - name: post_rapini_card_shows_a_date
+    manual: true
+    note: |
+      The user-visible acceptance test, and the reason this migration exists. Before: Rapini's
+      CropCard reads "Est. harvest - set at transplant" with no date. After: it must show a real
+      date anchored on sown_at 2026-07-30. Check on the deployed surface, not locally - the
+      resolution runs in the plants Lambda, so a green DB gate does not prove the card changed.

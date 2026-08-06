@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.101.0",
+    "date": "2026-08-05",
+    "highlights": [
+      "Harvest estimates now work for direct-sown crops that share a crop type with transplanted ones",
+      "Frost alerts: chard is now correctly treated as hardy instead of tender"
+    ]
+  },
+  {
     "version": "3.100.0",
     "date": "2026-08-05",
     "highlights": [
