@@ -25,7 +25,7 @@ export default function FacebookShareSheet({ open, photos = [], onClose, onPoste
   // Escape-to-close. `busy: posting` is load-bearing: this is the one surface in the app with a
   // non-idempotent in-flight action (a Facebook post), and it already disabled its Close button
   // while posting. blockOnBusy makes Escape respect the same rule.
-  const { registered, isTopmost } = useDismissable({ open, onDismiss: onClose, busy: state === 'posting', layer: LAYER.DIALOG })
+  const { registered, isTopmost } = useDismissable({ open, onDismiss: onClose, busy: state === 'posting', layer: LAYER.OVERLAY })
   void registered
 
   if (!open) return null

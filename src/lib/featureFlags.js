@@ -175,15 +175,17 @@ export const TODAY_BAND_HIDDEN = true
 // primitive whose worst failure mode (a stranded body-scroll lock) has no in-app recovery.
 export const DISMISS_REGISTRY_ENABLED = true
 
-// V4-BACKNAV-001 Slice P — close-in-place surfaces get a history entry on open, so the Android
-// system Back closes them instead of switching tabs or exiting the app. Wired to 8 surfaces:
+// V4-BACKNAV-001 Slice 3a — the Android system Back is arbitrated by the dismiss registry, so Back
+// and Escape resolve to the SAME surface. One provider-owned marker per modal session (not one per
+// surface). Opted in via `armsBack` at 8 surfaces:
 // PlantingDetail Details, both Harvests pickers, Lightbox, CareNeeded bulk, TransplantDatePrompt,
 // AddSeeds row edit, SowNow sow sheet, PhotoModal.
 //
 // NOT BottomNav, though an earlier draft of this comment said so: every row in both its sheets
 // closes the sheet AND navigates, which orphans the pushed entry and costs a second Back forever on
-// the app's most frequent path. See useBackDismiss.js for the close-in-place rule that came out of
-// it. Serves as GATE-A: real behaviour on the installed PWA beats a throwaway probe page.
+// the app's most frequent path. As of Slice 3a that exclusion is MECHANISED, not conventional: the
+// `armsBack` prop defaults FALSE, so BottomNav's two Sheets never arm even though they register.
+// See src/lib/backNav.js for the rule.
 //
 // Scoped to an opaque history.state marker, NOT a URL. Needing a history entry is not the same as
 // needing a URL: a transient action menu must be poppable by Back but must never be deep-linkable
@@ -192,6 +194,5 @@ export const DISMISS_REGISTRY_ENABLED = true
 //
 // Rollback is deleting the hook calls. Flag off ⇒ zero pushState calls, zero popstate listeners, and
 // history.length after boot identical to pre-change — pinned by the "flag OFF is provably inert"
-// suite in useBackDismiss.test.jsx. (An earlier version of this comment cited BackNav.flagOff.test.jsx,
-// which does not exist.)
+// suite in BackNav.history.test.jsx, which also carries the real-history harness self-test.
 export const BACKNAV_ENABLED = true

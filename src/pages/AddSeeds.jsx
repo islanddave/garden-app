@@ -20,7 +20,6 @@ import Icon from '../components/Icon.jsx'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 import { Sheet, Field, Input, Textarea, Button } from '../components/forms'
 import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
-import { useBackDismiss } from '../hooks/useBackDismiss.js'
 
 // Canvas downscale ceiling (Anthropic vision long-edge sweet spot) + JPEG quality.
 const MAX_LONG_EDGE = 1568
@@ -122,7 +121,6 @@ export default function AddSeeds() {
   const [banner, setBanner] = useState(null)    // extraction error banner text
   const [rows, setRows] = useState(null)        // null until an extract succeeds
   const [editingIdx, setEditingIdx] = useState(null)
-  useBackDismiss({ open: editingIdx != null, onDismiss: () => setEditingIdx(null), id: 'addseeds-row-edit' })
   const [savingAll, setSavingAll] = useState(false)
   const fileRef = useRef(null)
   // Render-synced mirror of rows so the sequential save loop reads fresh row
@@ -404,6 +402,7 @@ export default function AddSeeds() {
 
       {/* Row edit Sheet */}
       <Sheet
+        armsBack
         open={!!editingRow}
         onClose={() => setEditingIdx(null)}
         title={editingRow ? `Edit ${editingRow.name}` : undefined}

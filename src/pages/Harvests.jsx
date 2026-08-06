@@ -12,7 +12,6 @@ import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
 import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
 import { fmtQuantity, unitLabel, formatEntry, etDay } from '../lib/harvestSummary.js'
 import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
-import { useBackDismiss } from '../hooks/useBackDismiss.js'
 
 // Harvests — V4-HARVESTVIEW-001 S2a/S2b. Route + snapshot strip + Log feed + minimal Totals, reading
 // the shipped GET /api/harvests. Retrospective/reflective: never prompts, counts down, or scores
@@ -253,9 +252,8 @@ function PickerSheet({ open, onClose, title, allLabel, emptyText, selected, opti
   // it never navigates, so the pushed entry is always still on top and is always consumed.
   // `id` is per-instance (there are two PickerSheets on this page — crop and project) so the two
   // never mistake each other's marker for their own.
-  useBackDismiss({ open, onDismiss: onClose, id: 'harvests-picker-' + title })
   return (
-    <Sheet open={open} onClose={onClose} title={title}>
+    <Sheet open={open} onClose={onClose} title={title} armsBack>
       <div role="listbox" aria-label={title} style={{ padding: '2px 8px 8px', display: 'flex', flexDirection: 'column' }}>
         <PickerRow label={allLabel} selected={selected === ''} onClick={() => onSelect('', '')} />
         {options.length === 0 ? (

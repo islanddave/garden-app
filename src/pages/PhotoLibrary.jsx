@@ -14,7 +14,6 @@ import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
-import { useBackDismiss } from '../hooks/useBackDismiss.js'
 
 // ---- Photo Library ----
 // Browse all photos, upload standalone photos (event_id = null),
@@ -758,9 +757,8 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
   // its only exit, and it was invisible to every machine-checkable definition of "modal" — including
   // the freeze test's scan, which is why it had to be tracked by hand. `busy: tagging` keeps a
   // save-in-flight from being dismissed out from under itself, matching the other write surfaces.
-  const { isTopmost } = useDismissable({ open: true, onDismiss: onClose, busy: !!tagging, layer: LAYER.DIALOG })
+  const { isTopmost } = useDismissable({ open: true, onDismiss: onClose, busy: !!tagging, layer: LAYER.SHEET, armsBack: true })
   // Close-in-place: onClose just clears the selected photo, it never navigates.
-  useBackDismiss({ open: true, onDismiss: onClose, id: 'photo-modal' })
 
   return (
     <div

@@ -28,7 +28,7 @@ export default function LoveMehPopover({ open, anchorRef = null, species = null,
   const [pulse, setPulse] = useState(null) // 'love' | 'meh' | null
 
   // V4-BACKNAV-001 Slice 2 — shared registry owns Escape when present.
-  const { registered, isTopmost } = useDismissable({ open, onDismiss: onClose, layer: LAYER.DIALOG })
+  const { registered, isTopmost } = useDismissable({ open, onDismiss: onClose, layer: LAYER.SHEET })
 
   // Escape key dismiss.
   useEffect(() => {

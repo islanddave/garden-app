@@ -20,6 +20,7 @@
 export const Z = {
   sheetBackdrop: 190,
   sheet: 200,
+  overlay: 300,          // FacebookShareSheet paints here — observed, not chosen
   dialog: 1000,
   systemConfirm: 1200,   // reserved: the B3 exit confirm must outrank every ordinary surface
 }
@@ -28,9 +29,21 @@ export const Z = {
 // consumer never invents a z-value that the registry cannot order.
 export const LAYER = {
   SHEET: Z.sheet,
+  OVERLAY: Z.overlay,
   DIALOG: Z.dialog,
   SYSTEM: Z.systemConfirm,
 }
+
+// LAYER MUST MATCH WHAT THE SURFACE ACTUALLY PAINTS. That is this module's whole premise (see the
+// header): an arbiter whose stack order disagrees with paint order dismisses a surface the user
+// cannot see is on top.
+//
+// Four surfaces shipped in v3.103.0 violating it — they registered DIALOG (1000) while painting
+// 200–300: PhotoLibrary's PhotoModal, SpaceAttachPicker, LoveMehPopover (all 200) and
+// FacebookShareSheet (300). With any Sheet open beneath, the registry ranked them above a surface
+// that paints level with or above them, so ESCAPE COULD ALREADY RESOLVE TO THE WRONG SURFACE in
+// prod — independent of Back. Corrected at those four call sites; `layerMatchesPaint.test.js` pins
+// the pairs so the two scales cannot drift apart again.
 
 // Highest layer wins; equal layers break by insertion order (later = on top). Returns null for an
 // empty stack — callers use that to mean "nothing registered, let the event through".

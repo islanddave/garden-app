@@ -57,3 +57,30 @@ beforeEach(() => {
 afterEach(() => {
   console.error = originalConsoleError;
 });
+
+// V4-BACKNAV-001 Slice 3a — GLOBAL SCROLL-LOCK LEAK DETECTOR.
+//
+// Sheet.jsx locks body scroll through a module-level refcount (`openStack`) and restores on the
+// LAST close. A stranded lock is the worst failure mode in the dismiss program: it bricks body
+// scrolling with NO in-app recovery short of a reload. It is also invisible within a single test —
+// `lockBodyScroll` no-ops while the stack is non-empty, so a token leaked in test N silently
+// poisons test N+1's `savedOverflow` capture, and the failure surfaces far from its cause.
+//
+// This afterEach converts every test file that renders a Sheet into a leak detector for free. It
+// asserts BOTH properties, because Sheet sets and clears both and a regression that restores only
+// `overflow` would otherwise pass.
+afterEach(() => {
+  const leakedOverflow = document.body.style.overflow;
+  const leakedOverscroll = document.body.style.overscrollBehavior;
+  // Reset before asserting, so one leaking test fails once rather than cascading into every
+  // subsequent test in the same file.
+  document.body.style.overflow = '';
+  document.body.style.overscrollBehavior = '';
+  if (leakedOverflow !== '' || leakedOverscroll !== '') {
+    throw new Error(
+      `Scroll lock leaked out of this test: body.style.overflow=${JSON.stringify(leakedOverflow)}, ` +
+      `overscrollBehavior=${JSON.stringify(leakedOverscroll)}. A surface was closed by a path that ` +
+      `bypassed Sheet's [open] cleanup — the stranded-lock class. Close through the owner's onDismiss.`
+    );
+  }
+});

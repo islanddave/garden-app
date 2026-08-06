@@ -131,7 +131,7 @@ export function OverlayHost({ ariaLabel, size = 'peek', children }) {
   const dismiss = useOverlayDismiss()
   const [dirty, setDirty] = React.useState(false)
   return (
-    <Sheet open onClose={dismiss} ariaLabel={ariaLabel} size={size} dirty={dirty}>
+    <Sheet open onClose={dismiss} ariaLabel={ariaLabel} size={size} dirty={dirty} kind="route">
       <OverlaySurfaceProvider>
         <OverlayDirtyProvider onDirtyChange={setDirty}>{children}</OverlayDirtyProvider>
       </OverlaySurfaceProvider>

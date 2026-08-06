@@ -57,18 +57,28 @@ describe('Slice 2 — non-Sheet dialogs arbitrate through the one registry', () 
     expect(onSheetClose).not.toHaveBeenCalled()
   })
 
-  it('two non-Sheet popovers: the later one wins (same layer, insertion order)', () => {
-    const first = vi.fn()
-    const second = vi.fn()
+  // CORRECTED 2026-08-06 (Slice 3a layer/paint alignment). This test used to assert that the LATER
+  // popover wins "same layer, insertion order" — but the two are NOT on the same layer and never
+  // were: CritterFactsPopover paints zIndex 1000, LoveMehPopover paints 200. They only tied because
+  // LoveMehPopover was registered at LAYER.DIALOG while painting 200, one of four surfaces whose
+  // registered layer disagreed with its paint. The old expectation therefore pinned the DEFECT:
+  // Escape closed the popover UNDERNEATH while the one the user could see stayed open.
+  //
+  // With the layers corrected, paint order and arbitration order agree and the visibly-topmost
+  // surface is the one that closes. Insertion-order tie-breaking is still exercised — by the
+  // preceding test, where the two surfaces genuinely do share a layer.
+  it('the visibly-topmost popover closes, even though it was inserted FIRST', () => {
+    const facts = vi.fn()
+    const loveMeh = vi.fn()
     render(
       <DismissRegistryProvider>
-        <CritterFactsPopover critter={CRITTER} theme={{}} content={{}} onClose={first} />
-        <LoveMehPopover open onClose={second} />
+        <CritterFactsPopover critter={CRITTER} theme={{}} content={{}} onClose={facts} />
+        <LoveMehPopover open onClose={loveMeh} />
       </DismissRegistryProvider>
     )
     esc()
-    expect(second).toHaveBeenCalledTimes(1)
-    expect(first).not.toHaveBeenCalled()
+    expect(facts).toHaveBeenCalledTimes(1)
+    expect(loveMeh).not.toHaveBeenCalled()
   })
 
   // THE busy CONTRACT. FacebookShareSheet is the one surface in the app with a non-idempotent

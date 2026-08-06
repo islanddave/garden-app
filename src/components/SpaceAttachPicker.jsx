@@ -74,7 +74,7 @@ export default function SpaceAttachPicker({ spaceId, spaceName, onClose, onAttac
   // V4-BACKNAV-001 Slice 2 — mounted-means-open. `busy: saving` preserves this surface's existing
   // guard: it already refused Escape mid-save by hand, and the registry's blockOnBusy is what lets
   // it join without regressing that.
-  const { registered, isTopmost } = useDismissable({ open: true, onDismiss: onClose, busy: saving, layer: LAYER.DIALOG })
+  const { registered, isTopmost } = useDismissable({ open: true, onDismiss: onClose, busy: saving, layer: LAYER.SHEET })
 
   useEffect(() => {
     const ac = new AbortController()

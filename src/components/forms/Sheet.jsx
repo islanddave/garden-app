@@ -67,10 +67,21 @@ function focusablesIn(panel) {
   )
 }
 
-export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close' }) {
+// V4-BACKNAV-001 Slice 3a — `kind` and `armsBack` are EXPLICIT props, not inherited.
+//
+// Sheet calls useDismissable ONCE on behalf of all 9 <Sheet> render sites, so if Back membership
+// were implied by registration it would silently enrol BottomNav's +LOG and More sheets — whose
+// every row closes the sheet AND navigates, orphaning the pushed entry and costing a permanent
+// extra Back on the app's most frequent path. That is exactly the regression the original hook
+// refused to ship. So the arming decision is made at each render site and defaults to OFF.
+//   armsBack — the 6 close-in-place Sheets that carried useBackDismiss before this slice.
+//   kind='route' — App.jsx's OverlayHost only: the router already owns a real entry for it.
+export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close', kind = 'modal', armsBack = false, backIntercept = null }) {
   const panelRef = useRef(null)
   const restoreRef = useRef(null)
-  const { registered, isTopmost } = useDismissable({ open, onDismiss: onClose, dirty, busy, layer: LAYER.SHEET })
+  const { registered, isTopmost } = useDismissable({
+    open, onDismiss: onClose, dirty, busy, layer: LAYER.SHEET, kind, armsBack, backIntercept,
+  })
   // Latest-value refs: keep the keydown handler current WITHOUT making onClose/dirty deps of the
   // focus effect. Callers pass inline closures recreated every render; if their identity drove the
   // effect, every parent re-render (e.g. a keystroke updating form state) would re-run it and yank
