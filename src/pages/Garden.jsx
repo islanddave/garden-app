@@ -30,6 +30,7 @@ import PhotoImg from '../components/PhotoImg.jsx'
 import { useMembers } from '../hooks/useMembers.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
 import { buildProjectsById, effectiveAssignee, buildCaretakerMap, lensOptions, hasMixedCaretakers } from '../lib/caretakers.js'
+import { restoreStep, hasRestoreTarget } from '../lib/scrollRestore.js'
 
 // Garden — Increment 1 of the post-V2 UX overhaul. Unifies the old Projects + Plants
 // tabs into ONE nested accordion: projects form a parent/child tree; each project's
@@ -52,7 +53,7 @@ let lastGardenScrollY = 0
 export default function Garden() {
   const { fetch, getToken } = useApiFetch()
   const { profile } = useAuthOptional()
-  const { members } = useMembers()
+  const { members, loading: membersLoading } = useMembers()
   const [careLens, setCareLens] = useState(() => { try { return localStorage.getItem('garden.careLens') || 'all' } catch { return 'all' } })
   const onCareLensChange = useCallback((v) => { setCareLens(v); try { localStorage.setItem('garden.careLens', v) } catch { /* ignore */ } }, [])
   const [subtab, setSubtabState] = useState(lastSubtab)
@@ -72,14 +73,58 @@ export default function Garden() {
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
-  // Restore once content has loaded (height stable). Inert on first visit / in tests (offset 0).
+  // V4-NAVSTATE-002 — restore ACROSS FRAMES, and latch only once we have actually landed.
+  //
+  // The v1 restore fired one rAF and latched a one-shot BEFORE the attempt. Both halves failed on
+  // the same navigation: every planting grid is windowed at 24 tiles (BUG-PHOTOTHUMB-001), so on
+  // remount a group that was showing 56 comes back showing 24, the document is far shorter than it
+  // was, and Chrome CLAMPS scrollTo to the current max scroll WITHOUT an error. The restore landed
+  // short, which reads as a random jump — and the latch made that miss permanent for the mount.
+  //
+  // Retrying is the cure rather than a workaround: a clamped scrollTo still lands at the bottom of
+  // the short document, which fires a scroll event, which is exactly what useImageWindow's growth
+  // listener keys on. Each attempt therefore lets the next one go further, and it converges. It
+  // also cannot run away — targetY is bounded by the document height that existed when the user
+  // left, so the window can only re-grow to roughly where they already had it.
+  //
+  // The decision itself is in src/lib/scrollRestore.js because src/pages/** is not in
+  // coverage.include; this is only the driver. See backNav.js for the same split.
   const scrollRestoredRef = useRef(false)
   useEffect(() => {
     if (loading || scrollRestoredRef.current) return
-    scrollRestoredRef.current = true
-    if (lastGardenScrollY > 0) {
-      const y = lastGardenScrollY
-      requestAnimationFrame(() => { try { window.scrollTo(0, y) } catch { /* jsdom noop */ } })
+    const targetY = lastGardenScrollY
+    // Checked BEFORE the latch, unlike v1 — an inert mount must not consume the one-shot, or an
+    // offset that arrives late can never be applied.
+    if (!hasRestoreTarget(targetY)) return
+
+    let frames = 0
+    let cancelled = false
+    // NEVER fight the user. If they scroll, swipe or key while we are still converging, they have
+    // taken over: latch and stop. Restoring position is a courtesy; yanking the viewport out from
+    // under a finger already in contact is not.
+    const yield_ = () => { cancelled = true; scrollRestoredRef.current = true }
+    const opts = { passive: true, once: true }
+    window.addEventListener('wheel', yield_, opts)
+    window.addEventListener('touchstart', yield_, opts)
+    window.addEventListener('keydown', yield_, opts)
+
+    const tick = () => {
+      if (cancelled) return
+      try { window.scrollTo(0, targetY) } catch { /* jsdom stubs scrollTo */ }
+      frames += 1
+      const next = restoreStep({ currentY: window.scrollY, targetY, frames })
+      if (next === 'RETRY') { requestAnimationFrame(tick); return }
+      // DONE and EXHAUSTED both latch. They differ in whether we landed, which is what an
+      // anchor-based fallback will branch on once it exists; today both simply stop.
+      scrollRestoredRef.current = true
+    }
+    requestAnimationFrame(tick)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener('wheel', yield_, opts)
+      window.removeEventListener('touchstart', yield_, opts)
+      window.removeEventListener('keydown', yield_, opts)
     }
   }, [loading])
   const [expanded, setExpanded] = useState(() => loadExpanded())
@@ -480,7 +525,16 @@ export default function Garden() {
   const projectsById = useMemo(() => buildProjectsById(projects), [projects])
   const caretakerMap = useMemo(() => buildCaretakerMap(members, profile?.id), [members, profile])
   const careLensOptions = useMemo(() => lensOptions(members, profile?.id), [members, profile])
-  const effectiveLens = careLensOptions.some(o => o.value === careLens) ? careLens : 'all'
+  // V4-NAVSTATE-002: do NOT degrade to 'all' while /api/members is still in flight.
+  // careLensOptions is derived from `members`, so during the load it is empty, `.some()` is false,
+  // and a saved person-lens silently resolved to 'all' — the list painted UNFILTERED and then
+  // SHRANK when members landed. That is a membership reflow on the app's most-used surface,
+  // arriving after the scroll restore has run. Holding the saved value filters correctly from the
+  // first paint instead; the fallback still applies once we can actually tell the lens is stale.
+  // No behaviour change for the default lens ('all'), which is what a fresh device has.
+  const effectiveLens = membersLoading
+    ? careLens
+    : (careLensOptions.some(o => o.value === careLens) ? careLens : 'all')
   // V4-ASSIGNLENS-002: a person lens shows plantings assigned to that person AND UNassigned
   // (unclaimed) plantings. Rationale (Dave 2026-07-09): "Mine" reading as "only rows explicitly
   // stamped with my id" silently swallowed every nobody's-yet planting (e.g. all nasturtiums) from

@@ -150,7 +150,12 @@ export function renderRoutes({ overlay, user }) {
   const routes = [
     { path: '/',              element: <Navigate to="/today" replace /> },
     { path: '/garden/:slug',  element: <ProjectPublic /> },
-    { path: '/garden',        element: <Protected><Garden /></Protected> },
+    // ErrorBoundary is NOT decorative here: /garden was the only data-fetching route without one,
+    // and it is the app's most-used surface. A throw escaped to the app-level boundary and blanked
+    // the whole PWA — and because the service worker serves the bundle cache-first, a reload gets
+    // the same broken bundle, so the user cannot recover without relaunching the installed app.
+    // Scoped like every sibling route so a Garden throw costs Garden, not the application.
+    { path: '/garden',        element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Garden /></ErrorBoundary></Protected> },
     { path: '/feed',          element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><FeedPage /></ErrorBoundary></Protected> },
     { path: '/auth/callback', element: <AuthCallback /> },
     { path: '/login',         element: user ? <Navigate to="/today" replace /> : <Login /> },
