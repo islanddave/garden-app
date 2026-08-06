@@ -380,6 +380,13 @@ export default function EventNew() {
   // Default collapsed unless the feature flag flips it open. Fields stay reachable.
   const [showAddDetails, setShowAddDetails] = useState(EVENTNEW_ADD_DETAILS_EXPANDED)
   const [plantsForProject, setPlantsForProject] = useState([])
+  // BUG-PLANTFETCHSILENT-001 — both loaders below used to .catch into an empty list, which the
+  // picker renders as "No plantings yet.": a network failure was indistinguishable from a project
+  // with nothing planted. Harmless while the field is optional, unfillable the moment
+  // PLANTING_REQUIRED_ENABLED flips. Reload key re-runs whichever loader is live without either
+  // effect having to know the other exists.
+  const [plantsLoadFailed, setPlantsLoadFailed] = useState(false)
+  const [plantsReloadKey, setPlantsReloadKey] = useState(0)
   // V4-PICKERUX-001: the planting picker's listbox opens into the band the sticky Save occupies.
   // (The keyboard lift that used to hoist Save ~500px INTO that band is gone as of
   // V4-KBVIEWPORT-001 — the causal mechanism changed, the overlap did not become impossible.)
@@ -497,12 +504,13 @@ export default function EventNew() {
   // Load plants when project selection changes (project-scoped mode — the default).
   useEffect(() => {
     if (PROJECTS_HIDDEN) return // V4-PROJHIDE-001: unscoped mode loads ALL plantings in the effect below
-    if (!form.project_id) { setPlantsForProject([]); return }
+    if (!form.project_id) { setPlantsForProject([]); setPlantsLoadFailed(false); return }
     // BUG-PLANTMISMATCH-001: a switch fires a second fetch while the first may still be in flight.
     // Without this flag a late response for the PREVIOUS project can overwrite the current list and
     // then clear a planting the user legitimately picked from it — i.e. the stale-guard below would
     // itself become a source of wrong writes. Cancel on re-run.
     let cancelled = false
+    setPlantsLoadFailed(false)
     apiFetch('/api/plants?project_id=' + form.project_id)
       .then(data => {
         if (cancelled) return
@@ -518,19 +526,25 @@ export default function EventNew() {
         // — same silent fall-back to no planting, no notice, since neither is a user error.
         setForm(f => (f.plant_id && !live.some(p => p.id === f.plant_id) ? { ...f, plant_id: '' } : f))
       })
-      .catch(() => { if (!cancelled) setPlantsForProject([]) })
+      .catch(() => { if (!cancelled) { setPlantsForProject([]); setPlantsLoadFailed(true) } })
     return () => { cancelled = true }
-  }, [apiFetch, form.project_id, preselectedPlantId, rememberedPlantId])
+  }, [apiFetch, form.project_id, preselectedPlantId, rememberedPlantId, plantsReloadKey])
 
   // V4-PROJHIDE-001: unscoped planting source. With the project chooser hidden, the picker lists
   // EVERY live planting and project_id is DERIVED from the chosen planting (see PlantingSelect
   // onChange) — preserving the plant_id ⇒ project_id invariant without a user-visible project step.
   useEffect(() => {
     if (!PROJECTS_HIDDEN) return
+    // Cancel guard mirrors the scoped loader above. It had none: this effect re-runs on every
+    // apiFetch identity change and on retry, so two responses can land out of order against one
+    // setter. Same shape as BUG-PLANTMISMATCH-001, just not yet reached in practice.
+    let cancelled = false
+    setPlantsLoadFailed(false)
     apiFetch('/api/plants')
-      .then(data => setPlantsForProject((data ?? []).filter(p => !p.archived_at)))
-      .catch(() => setPlantsForProject([]))
-  }, [apiFetch])
+      .then(data => { if (!cancelled) setPlantsForProject((data ?? []).filter(p => !p.archived_at)) })
+      .catch(() => { if (!cancelled) { setPlantsForProject([]); setPlantsLoadFailed(true) } })
+    return () => { cancelled = true }
+  }, [apiFetch, plantsReloadKey])
 
   // Load projects + locations
   useEffect(() => {
@@ -1332,6 +1346,8 @@ export default function EventNew() {
                 return { ...f, plant_id: id, project_id: derived }
               })}
               required={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type)}
+              loadFailed={plantsLoadFailed}
+              onRetry={() => setPlantsReloadKey(k => k + 1)}
               disabled={PROJECTS_HIDDEN ? false : !form.project_id}
               disabledHint="— select a project first —"
               placeholder="— Choose a planting —"

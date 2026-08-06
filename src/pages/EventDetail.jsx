@@ -15,30 +15,13 @@ import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
 
 
-// Where an ESTIMATED harvest weight came from, in Dave-facing words. Keyed on harvest.weight_basis
-// as produced by public.resolve_harvest_weight (see migrations/v4-harvbasis-sample-001/).
-//
-// Only reached when weight_estimated === true, so 'measured' is deliberately absent.
-//
-// DELIBERATELY NOT A BARE MAP LOOKUP — the fallback is the point. weight_basis is a server-derived
-// enum that has grown twice (v2 introduced it, v4 added 'cultivar_sample') and can grow again; an
-// unhandled value in a switch or a map miss renders `undefined` into the sentence and is exactly
-// the silent read-path failure this feature had to be audited for. Anything unrecognised — a future
-// value, a null, or a legacy row — degrades to the generic wording, which is true of every estimate.
-const ESTIMATE_SOURCE_COPY = {
-  // Derived from Dave's OWN weighings of this cultivar (resolver tiers 3 and 5).
-  cultivar_sample: 'Currently estimated from your own weighings of this variety.',
-  // The CURATED catalogue reference for the variety (tier 4). NOTE: rows written before
-  // v4-harvbasis-sample-001 carry 'cultivar' even where they were sample-backed — history was
-  // deliberately not backfilled, so this wording is approximate for pre-2026-08 harvests. That is
-  // the pre-existing behaviour for those rows, not a regression.
-  cultivar:        'Currently estimated from this variety’s typical weight.',
-  // A crop-level average, used only where the crop permits it (tier 6).
-  crop_type:       'Currently estimated from a typical weight for this crop.',
-}
-const ESTIMATE_SOURCE_FALLBACK = 'Currently estimated.'
-export const estimateSourceCopy = basis =>
-  ESTIMATE_SOURCE_COPY[basis] ?? ESTIMATE_SOURCE_FALLBACK
+// V4-HARVESTSURF-001: the copy map and its deliberate fallback moved to src/lib/harvestWeight.js so
+// every harvest surface says the same thing — this page was the ONLY place a weight rendered, and
+// then only inside the edit form. Re-exported rather than relocated outright because
+// estimateSourceCopy.test.js imports it from here, and that test is a read-path guard worth keeping
+// pointed at the consumer as well as at the module. src/lib is also the instrumented tree.
+export { estimateSourceCopy } from '../lib/harvestWeight.js'
+import { estimateSourceCopy } from '../lib/harvestWeight.js'
 
 // Shared metadata field label map — mirrors EVENT_METADATA_FIELDS keys from EventNew
 const METADATA_LABELS = {

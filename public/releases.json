@@ -1,12 +1,15 @@
 [
   {
-    "version": "3.104.0",
+    "version": "4.0.0",
     "date": "2026-08-06",
     "highlights": [
+      "Version 4 \u2014 the V4 rebuild is now the app you use every day. More of it is still coming.",
       "The Back button and Escape now always close the same thing \u2014 whichever panel is actually on top",
-      "Fixed: pressing Escape while naming a new variety closed the whole sow sheet as well as stepping back",
+      "Harvest weights now show right on the Harvests log \u2014 with \u2248 when it's still an estimate, and where that estimate came from",
+      "Harvest weight estimates now improve on their own as you weigh more picks",
       "Fixed: editing a harvest could quietly wipe the weight already recorded against it",
-      "Harvest weight estimates now improve on their own as you weigh more picks"
+      "Fixed: pressing Escape while naming a new variety closed the whole sow sheet as well as stepping back",
+      "Fixed: when the plantings list failed to load, Log Event said \u201cno plantings yet\u201d instead of offering a retry"
     ]
   },
   {

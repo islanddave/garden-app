@@ -196,6 +196,70 @@ describe('disabled / required / truncation', () => {
   })
 })
 
+// BUG-PLANTFETCHSILENT-001 — controlled mode never fetches, so the self-fetch `failed` flag can
+// never fire there and a site whose own fetch rejected rendered "No plantings yet." The whole point
+// is that the two states must be DISTINGUISHABLE, so every test here asserts the absence of the
+// empty-state copy as well as the presence of the failure copy.
+describe('controlled-mode load failure (loadFailed)', () => {
+  it('renders the failure note, NOT "No plantings yet.", on an empty list', () => {
+    render(<PlantingSelect plants={[]} loadFailed onChange={() => {}} />)
+    openPicker()
+    expect(screen.getByText(/Couldn’t load your plantings/)).toBeTruthy()
+    expect(screen.queryByText(/No plantings yet\./)).toBeNull()
+  })
+
+  it('still says "No plantings yet." when the list is genuinely empty', () => {
+    render(<PlantingSelect plants={[]} onChange={() => {}} />)
+    openPicker()
+    expect(screen.getByText(/No plantings yet\./)).toBeTruthy()
+    expect(screen.queryByText(/Couldn’t load your plantings/)).toBeNull()
+  })
+
+  it('never fetches in controlled mode even while reporting a failure', () => {
+    render(<PlantingSelect plants={[]} loadFailed onChange={() => {}} />)
+    openPicker()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('copy tells a REQUIRED field to retry, not that it can save without one', () => {
+    render(<PlantingSelect plants={[]} loadFailed required onChange={() => {}} />)
+    openPicker()
+    expect(screen.getByText(/required, so retry before saving/)).toBeTruthy()
+    expect(screen.queryByText(/save without one/)).toBeNull()
+  })
+
+  it('copy keeps the non-fatal wording when the field is optional', () => {
+    render(<PlantingSelect plants={[]} loadFailed onChange={() => {}} />)
+    openPicker()
+    expect(screen.getByText(/you can still save without one/)).toBeTruthy()
+  })
+
+  it('exposes Retry only when onRetry is supplied, and fires it', () => {
+    const onRetry = vi.fn()
+    const { rerender } = render(<PlantingSelect plants={[]} loadFailed onChange={() => {}} />)
+    openPicker()
+    expect(screen.queryByTestId('ps-retry')).toBeNull()
+    rerender(<PlantingSelect plants={[]} loadFailed onRetry={onRetry} onChange={() => {}} />)
+    fireEvent.click(screen.getByTestId('ps-retry'))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it('clearing loadFailed restores the normal list — the note is not sticky', () => {
+    const { rerender } = render(<PlantingSelect plants={[]} loadFailed onChange={() => {}} />)
+    openPicker()
+    expect(screen.getByText(/Couldn’t load your plantings/)).toBeTruthy()
+    rerender(<PlantingSelect plants={PLANTS} onChange={() => {}} />)
+    expect(screen.queryByText(/Couldn’t load your plantings/)).toBeNull()
+    expect(screen.getAllByRole('option').length).toBe(PLANTS.length)
+  })
+
+  it('the failure note is announced (role=alert), not silent decoration', () => {
+    render(<PlantingSelect plants={[]} loadFailed onChange={() => {}} />)
+    openPicker()
+    expect(screen.getByRole('alert').textContent).toMatch(/Couldn’t load your plantings/)
+  })
+})
+
 describe('plantingWaveLabel export (PutUp provenance display re-uses it)', () => {
   it('labels waves with ordinal + sown date, falls back to bare name', () => {
     expect(plantingWaveLabel(PLANTS[2])).toMatch(/Zucchini — wave 2, sown/)

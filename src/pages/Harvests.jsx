@@ -11,6 +11,7 @@ import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
 import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
 import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
 import { fmtQuantity, unitLabel, formatEntry, etDay } from '../lib/harvestSummary.js'
+import { describeHarvestWeight, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
 
 // Harvests — V4-HARVESTVIEW-001 S2a/S2b. Route + snapshot strip + Log feed + minimal Totals, reading
@@ -330,6 +331,12 @@ function HarvestEntry({ entry: e }) {
   const countNoun = e.crop_name || e.variety_name || null
   const hasQty = e.harvest_log_id != null && e.quantity != null
   const qtyText = hasQty ? formatEntry({ quantity: e.quantity, unit: e.unit }, countNoun) : 'harvest logged — no amount recorded'
+  // V4-HARVESTSURF-001. The native-unit amount above stays THE headline — grams are a second axis,
+  // not a replacement, because "6 zucchini" is what was picked and 1.4 kg is what it weighed.
+  // The no-weight chip is deliberately suppressed on rows with no amount either: a harvest with
+  // nothing recorded is already saying so on the line above, and repeating it adds noise to the
+  // one row that is least informative.
+  const wt = describeHarvestWeight(e)
 
   const mainTo = !removed && !unassigned && e.project_id && e.plant_id
     ? `/projects/${e.project_id}/plantings/${e.plant_id}`
@@ -351,6 +358,28 @@ function HarvestEntry({ entry: e }) {
         {/* V4-HIDEQUALITY-001: output side of the same hide. The row still CARRIES quality_rating
             from the API — only the rendering is gated, so a rollback needs no data backfill. */}
         {!HARVEST_QUALITY_HIDDEN && <QualityDots value={e.quality_rating} />}
+        {/* The ≈ is the ONLY thing distinguishing an estimate from a weighing at a glance, so it is
+            paired with a title/aria-label carrying the provenance sentence rather than left to
+            carry the meaning alone — a symbol nobody hovers is not a disclosure. */}
+        {wt.state !== 'none' && (
+          <span
+            data-testid="harvest-weight"
+            title={wt.sourceCopy ?? 'Weighed.'}
+            aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
+            style={{ fontSize: '0.74rem', fontWeight: 600, color: wt.estimated ? P.light : P.green, whiteSpace: 'nowrap' }}
+          >
+            {wt.estimated ? `≈ ${wt.text}` : wt.text}
+          </span>
+        )}
+        {wt.state === 'none' && hasQty && (
+          <span
+            data-testid="harvest-weight-none"
+            title={NO_WEIGHT_COPY}
+            style={{ fontSize: '0.74rem', color: P.light, whiteSpace: 'nowrap' }}
+          >
+            no weight yet
+          </span>
+        )}
         {Array.isArray(e.photos) && e.photos.length > 0 && (
           <span style={{ fontSize: '0.74rem', color: P.light }} aria-label={`${e.photos.length} photo${e.photos.length === 1 ? '' : 's'}`}>📷 {e.photos.length}</span>
         )}

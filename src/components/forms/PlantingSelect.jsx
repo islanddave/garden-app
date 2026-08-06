@@ -234,6 +234,14 @@ export default function PlantingSelect({
   id,
   onDerive,     // PutUp back-propagation: ({ crop_type_slug, variety_id, variety }) on selection
   onLoadError,  // PutUp graceful-failure contract: surface load failure, stay non-fatal
+  // BUG-PLANTFETCHSILENT-001 — controlled-mode counterpart to the self-fetch `failed` state below.
+  // In controlled mode the fetch effect returns early, so `failed` can NEVER fire and a site whose
+  // own fetch rejected renders here byte-identically to "No plantings yet." — an unfillable required
+  // field that reads as a legitimately empty project, with no error and no way to retry. The site
+  // owns the fetch in that mode, so the site must own the failure. `onRetry` is optional: a site
+  // that cannot re-run its fetch still gets the honest copy, just without the affordance.
+  loadFailed = false,
+  onRetry,
   // V4-PICKERUX-001 — onOpenChange(open: boolean). OPTIONAL, no-op default: the other six call
   // sites are untouched. It exists because a host page cannot otherwise know not to render a
   // competing control over the open listbox — EventNew's sticky Save was painting over rows 2-3
@@ -273,6 +281,9 @@ export default function PlantingSelect({
 
   const controlled = plants != null
   const rows = controlled ? plants : fetched
+  // One flag for both modes so every downstream branch stays a single condition; the empty-state
+  // row must be gated on THIS, not `failed`, or a controlled failure still prints "No plantings yet."
+  const loadFailedEffective = failed || loadFailed
 
   // V4-PICKERUX-001 — the single notification point for `open`. Keyed on `open` ONLY: keying it on
   // the callback identity would re-fire on every parent render (callers pass inline closures), and
@@ -558,12 +569,32 @@ export default function PlantingSelect({
           onMouseDown={e => e.preventDefault()}
         >
           {loading && <li style={noteRow} role="presentation">Loading plantings…</li>}
-          {failed && !loading && (
-            <li style={noteRow} role="presentation">
-              Couldn’t load your plantings — you can still save without one.
+          {loadFailedEffective && !loading && (
+            <li style={noteRow} role="alert">
+              {/* The old copy was unconditional and became false the moment PLANTING_REQUIRED_ENABLED
+                  flips: telling someone they can save without a planting, on a form that will refuse
+                  exactly that, is worse than saying nothing. Branch on the same prop that drives the
+                  requiredness so the two can never disagree. */}
+              {required
+                ? 'Couldn’t load your plantings — this field is required, so retry before saving.'
+                : 'Couldn’t load your plantings — you can still save without one.'}
+              {onRetry && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  data-testid="ps-retry"
+                  style={{
+                    marginLeft: 8, padding: 0, border: 'none', background: 'none',
+                    color: P.terra, fontSize: '0.8rem', fontWeight: 600,
+                    textDecoration: 'underline', cursor: 'pointer',
+                  }}
+                >
+                  Retry
+                </button>
+              )}
             </li>
           )}
-          {!loading && !failed && visible.length === 0 && (
+          {!loading && !loadFailedEffective && visible.length === 0 && (
             <li style={noteRow} role="presentation">
               {query.trim() ? `No plantings match “${query.trim()}”.` : 'No plantings yet.'}
             </li>
