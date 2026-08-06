@@ -1128,12 +1128,25 @@ export const handler = async (event) => {
                SET quantity         = ${hq}::numeric,
                    unit             = ${hu},
                    quality_rating   = ${hqual}::smallint,
-                   weight_grams     = rw.weight_grams,
-                   weight_estimated = rw.weight_estimated,
+                   -- NEVER let an unrelated edit BLANK a stored weight (2026-08-06).
+                   -- resolve_harvest_weight returns NULL whenever no tier can price the row — e.g.
+                   -- Wild Blackberry, whose plant_varieties.unit_weights is NULL. Four live rows
+                   -- store weight_basis='cultivar' with real grams from a time when a tier did
+                   -- resolve; overwriting unconditionally meant that tapping a QUALITY STAR silently
+                   -- discarded them. The carry-forward below only covers USER-TYPED weights
+                   -- (weight_estimated=false), so estimated rows had no protection at all.
+                   -- Keep the whole triple from ONE source so both validated CHECKs still hold:
+                   -- ..._pairing needs (grams IS NULL) = (basis IS NULL), and ..._estimated needs
+                   -- estimated = (basis <> 'measured'). An explicit clear still clears.
+                   weight_grams     = CASE WHEN rw.weight_grams IS NULL AND NOT ${hClearWeight}::boolean
+                                           THEN h.weight_grams ELSE rw.weight_grams END,
+                   weight_estimated = CASE WHEN rw.weight_grams IS NULL AND NOT ${hClearWeight}::boolean
+                                           THEN h.weight_estimated ELSE rw.weight_estimated END,
                    -- Slice C: the third column of the resolver. NOT optional — pervariety-001's
                    -- chk_harvest_log_weight_basis_pairing is VALIDATED, so writing a weight without
                    -- its basis is a hard 23514.
-                   weight_basis     = rw.weight_basis,
+                   weight_basis     = CASE WHEN rw.weight_grams IS NULL AND NOT ${hClearWeight}::boolean
+                                           THEN h.weight_basis ELSE rw.weight_basis END,
                    updated_at = NOW()
               FROM event_log ne,
               LATERAL public.resolve_harvest_weight(
