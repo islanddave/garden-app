@@ -19,6 +19,60 @@
 
 BEGIN;
 
+-- 1a. NARROW public.cultivar back to its 41 columns FIRST — DROP then CREATE, never REPLACE. The plants Lambda joins this view, and
+-- the DROP COLUMN below cannot proceed while the view still projects dtm_basis -- Postgres refuses
+-- with a dependency error, leaving a half-rolled-back state. Same ordering rationale as the
+-- v_sow_candidates restore below, one dependency further out.
+-- CREATE OR REPLACE CANNOT DROP COLUMNS FROM A VIEW ("cannot drop columns from view"), which is
+-- exactly what narrowing 42 -> 41 requires. Caught on the staging rollback rehearsal 2026-08-05.
+-- DROP is safe here and verified, not assumed: pg_depend/pg_rewrite shows ZERO dependent objects
+-- on public.cultivar, and it carries no triggers or INSTEAD OF rules. Recheck that before
+-- running this in an environment that may have added one.
+DROP VIEW public.cultivar;
+CREATE VIEW public.cultivar AS
+SELECT id,
+    name AS display_name,
+    species,
+    genus,
+    days_to_maturity_min,
+    days_to_maturity_max,
+    care_notes,
+    soil_notes,
+    sun_requirements,
+    common_diseases,
+    expected_yield_notes,
+    photo_id,
+    source_url,
+    created_by,
+    created_at,
+    updated_at,
+    deleted_at,
+    source_proj_rescope_project_id,
+    origin_country,
+    origin_region,
+    model_version,
+    crop_type_slug,
+    lifecycle,
+    scoville_min,
+    scoville_max,
+    growth_habit,
+    produces_scape,
+    determinacy,
+    day_length_response,
+    grown_as,
+    start_method,
+    start_indoor_weeks_min,
+    start_indoor_weeks_max,
+    direct_sow_timing,
+    sow_depth_in,
+    seed_spacing_in,
+    row_spacing_in,
+    days_to_germ_min,
+    days_to_germ_max,
+    sow_season,
+    sow_notes
+   FROM plant_varieties;
+
 -- 1. Restore the view to the pre-migration definition (ct.dtm_basis, no COALESCE). Reproduced
 --    verbatim from pg_get_viewdef captured on prod 2026-08-05, all 33 columns, WHERE unchanged.
 CREATE OR REPLACE VIEW public.v_sow_candidates AS

@@ -76,6 +76,10 @@ post:
     value: 1
 
   - name: post_view_still_33_columns
+    # continuous:false — a frozen absolute. gate_runner's own docstring names frozen view-column-count
+    # gates as THE case requiring this; without it the scheduled prod sweep goes red forever the day
+    # any later migration adds a 34th column.
+    continuous: false
     sql: |
       SELECT count(*) FROM information_schema.columns
        WHERE table_schema='public' AND table_name='v_sow_candidates'
@@ -129,6 +133,10 @@ post:
     value: 0
 
   - name: post_no_stray_overrides
+    # continuous:false — asserts no cultivar OUTSIDE the two targets carries an override, which is
+    # exactly what this migration exists to make possible. Correct as a one-shot post-apply check,
+    # permanently red on the scheduled sweep the first time the feature is used as designed.
+    continuous: false
     sql: |
       SELECT count(*) FROM public.plant_varieties
        WHERE deleted_at IS NULL AND dtm_basis IS NOT NULL AND name NOT IN ('Rapini','Kailaan')
@@ -149,6 +157,59 @@ post:
     expect: rowcount_gte
     value: 1
 
+  # THE GATE THAT WOULD HAVE CAUGHT THE OUTAGE. lambda/plants/index.js joins `public.cultivar pv`,
+  # not plant_varieties, and an explicit-column-list view does NOT inherit new base columns. Without
+  # 0a widening that view, COALESCE(pv.dtm_basis, ...) 500s every GET /api/plants — and deploy.yml's
+  # probe_api counts HTTP 401 as PASS, so the deploy reports green over a dead plants surface.
+  # Found by the mandatory pre-promote regression pass 2026-08-05, not by any gate or test.
+  - name: post_cultivar_view_exposes_dtm_basis
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar' AND column_name='dtm_basis'
+    expect: scalar_eq
+    value: 1
+
+  # Executes the plants Lambda's ACTUAL join shape. The gate above proves the column is projected;
+  # this proves the expression the Lambda emits actually resolves against it.
+  - name: post_lambda_join_shape_resolves
+    sql: |
+      SELECT count(*) FROM public.garden_node p
+        LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
+        LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
+       WHERE COALESCE(pv.dtm_basis, ct.dtm_basis) IS DISTINCT FROM COALESCE(pv.dtm_basis, ct.dtm_basis)
+    expect: scalar_eq
+    value: 0
+
+  # The REAL no-op proof, replacing a tautology. post_null_override_resolves_to_crop re-derives the
+  # view's own joins and asserts COALESCE behaves like COALESCE — it cannot fail, and it filters out
+  # the rows that would show a stray override. This asserts the resolved value equals the OLD value
+  # everywhere except the two intended rows, over the plants Lambda's own tables.
+  - name: post_noop_outside_targets
+    continuous: false
+    sql: |
+      SELECT count(*) FROM public.plant_varieties v
+        LEFT JOIN public.crop_types ct ON ct.slug = v.crop_type_slug
+       WHERE v.deleted_at IS NULL
+         AND v.name NOT IN ('Rapini','Kailaan')
+         AND COALESCE(v.dtm_basis, ct.dtm_basis) IS DISTINCT FROM ct.dtm_basis
+    expect: scalar_eq
+    value: 0
+
+  # env:prod, NOT manual. gate_runner supports env scoping (prod|staging|both) precisely so an
+  # absolute can be asserted where it is true. The previous draft demoted this to a manual note,
+  # which made the migration's single most load-bearing assertion — "0b actually did something" —
+  # depend on a human reading runner output. Its sibling post_no_target_left_unset shares a
+  # byte-identical predicate with 0b's UPDATE, so it is structurally incapable of detecting an inert
+  # 0b; this is the only gate that can.
+  - name: post_prod_overrides_actually_applied
+    env: prod
+    continuous: false
+    sql: |
+      SELECT 2 - count(*) FROM public.plant_varieties
+       WHERE deleted_at IS NULL AND name IN ('Rapini','Kailaan') AND dtm_basis='from-sow'
+    expect: scalar_eq
+    value: 0
+
   # SCOPED TO THE ROWS THIS MIGRATION TOUCHES, deliberately. The first draft asserted a GLOBAL
   # untyped-cultivar count of 0 and failed on staging with 5 — pre-existing drift (staging carries
   # 5 untyped cultivars and 76 missing type tags, deferred by Dave 2026-08-05), nothing to do with
@@ -168,11 +229,6 @@ post:
   #   SELECT count(*) FROM plant_varieties
   #    WHERE deleted_at IS NULL AND name IN ('Rapini','Kailaan') AND dtm_basis='from-sow';
   # must return exactly 2. If it returns 0, 0b matched nothing and the whole migration is inert.
-  - name: post_prod_overrides_actually_applied
-    manual: true
-    note: |
-      PROD ONLY — expect exactly 2. Staging legitimately has 0 of these cultivars, which is why
-      this cannot be a scripted gate. Skip on staging; it is BLOCKING on prod.
 
   - name: post_second_apply_noop
     manual: true

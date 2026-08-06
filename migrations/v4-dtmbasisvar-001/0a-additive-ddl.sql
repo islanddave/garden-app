@@ -97,6 +97,60 @@ CREATE OR REPLACE VIEW public.v_sow_candidates AS
      LEFT JOIN crop_types ct ON ct.slug = v.crop_type_slug
   WHERE i.category = 'seeds'::text AND i.deleted_at IS NULL AND i.status = 'active'::text AND v.deleted_at IS NULL;
 
+-- WIDEN public.cultivar TO EXPOSE THE NEW COLUMN. This is the step whose omission would have taken
+-- the whole plants surface down, caught by the mandatory pre-promote regression pass 2026-08-05.
+-- lambda/plants/index.js joins `LEFT JOIN public.cultivar pv`, NOT plant_varieties -- so
+-- COALESCE(pv.dtm_basis, ...) resolves against THIS view, and a view with an explicit column list
+-- does NOT auto-inherit new base-table columns (its own header states the rule). Without this,
+-- applying the DDL and promoting would 500 every GET /api/plants: dashboard, every CropCard, every
+-- project page. And deploy.yml's probe_api treats HTTP 401 as PASS, so the deploy would have gone
+-- green over a total outage. dtm_basis is appended LAST as a plain pass-through column so the view
+-- stays auto-updatable for lambda/varieties' INSERT INTO public.cultivar.
+CREATE OR REPLACE VIEW public.cultivar AS
+SELECT id,
+    name AS display_name,
+    species,
+    genus,
+    days_to_maturity_min,
+    days_to_maturity_max,
+    care_notes,
+    soil_notes,
+    sun_requirements,
+    common_diseases,
+    expected_yield_notes,
+    photo_id,
+    source_url,
+    created_by,
+    created_at,
+    updated_at,
+    deleted_at,
+    source_proj_rescope_project_id,
+    origin_country,
+    origin_region,
+    model_version,
+    crop_type_slug,
+    lifecycle,
+    scoville_min,
+    scoville_max,
+    growth_habit,
+    produces_scape,
+    determinacy,
+    day_length_response,
+    grown_as,
+    start_method,
+    start_indoor_weeks_min,
+    start_indoor_weeks_max,
+    direct_sow_timing,
+    sow_depth_in,
+    seed_spacing_in,
+    row_spacing_in,
+    days_to_germ_min,
+    days_to_germ_max,
+    sow_season,
+    sow_notes,
+    dtm_basis
+   FROM plant_varieties;
+
 INSERT INTO public.schema_version (version, description, applied_at)
 VALUES ('4.18.0-dtmbasisvar-001',
         'DTMBASISVAR: plant_varieties.dtm_basis text (nullable, CHECK NULL|from-sow|from-transplant) as a per-cultivar override of crop_types.dtm_basis, resolved COALESCE(variety, crop) in v_sow_candidates and in the plants Lambda variety_ref. Fixes a cultivar whose catalogue DTM is quoted on a different basis than its crop: prod Rapini (crop broccoli, from-transplant) is direct-sown with transplanted_at NULL, so plantingMaturity set awaitingTransplant and the card rendered no harvest date at all. Chosen over splitting Rapini/Kailaan into new crop_types slugs: a 7-seat crucible found zero CATEGORICAL columns diverge (harvest_habit=repeat and first_year_harvest=true are correct for both) and that from-transplant misfires for a direct-sown Belstar too, which stays on broccoli under any split - a boundary cannot fix a defect on both sides of it. Structurally a provable no-op: every existing row is NULL so COALESCE returns the crop value unchanged. View column count unchanged at 33; the 4-predicate WHERE is reproduced verbatim.',
