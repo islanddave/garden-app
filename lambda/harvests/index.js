@@ -121,7 +121,7 @@ export const handler = async (event) => {
           cv.crop_type_slug AS crop_slug, cv.display_name AS variety_name,
           ct.display_name AS crop_name,
           h.id AS harvest_log_id, h.quantity, h.unit, h.quality_rating,
-          -- V4-HARVESTSURF-001: the derived weight, additive. 395 of 397 live harvests carry one and
+          -- V4-HARVWEIGHTREAD-001: the derived weight, additive. 395 of 397 live harvests carry one and
           -- this read model was the only surface that never selected it, so the Harvests page could
           -- not show a weight even though every row had one. Nullable by construction (an orphan
           -- harvest with no planting derives nothing), and the client renders that as the ratchet
@@ -176,7 +176,7 @@ export const handler = async (event) => {
           cv.crop_type_slug AS crop_slug, cv.display_name AS variety_name,
           ct.display_name AS crop_name,
           h.id AS harvest_log_id, h.quantity, h.unit,
-          -- V4-HARVESTSURF-001, same addition as the entries SELECT above. Kept in lockstep on
+          -- V4-HARVWEIGHTREAD-001, same addition as the entries SELECT above. Kept in lockstep on
           -- purpose: the two queries feed one page, and a weight present in one view and absent in
           -- the other is the shape that makes a total silently disagree with the rows under it.
           h.weight_grams, h.weight_estimated, h.weight_basis

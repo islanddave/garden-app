@@ -1,4 +1,4 @@
-// V4-HARVESTSURF-001 — the harvest weight on the Harvests log.
+// V4-HARVWEIGHTREAD-001 — the harvest weight on the Harvests log.
 //
 // Weight has been derived server-side for months and rendered in exactly one place: the EventDetail
 // EDIT form. These pin the fan-out's contract at the surface Dave actually reads, and specifically

@@ -15,7 +15,7 @@ import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
 
 
-// V4-HARVESTSURF-001: the copy map and its deliberate fallback moved to src/lib/harvestWeight.js so
+// V4-HARVWEIGHTREAD-001: the copy map and its deliberate fallback moved to src/lib/harvestWeight.js so
 // every harvest surface says the same thing — this page was the ONLY place a weight rendered, and
 // then only inside the edit form. Re-exported rather than relocated outright because
 // estimateSourceCopy.test.js imports it from here, and that test is a read-path guard worth keeping

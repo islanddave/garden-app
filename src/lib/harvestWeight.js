@@ -1,4 +1,4 @@
-// V4-HARVESTSURF-001 — the harvest-weight READ model, as pure functions.
+// V4-HARVWEIGHTREAD-001 — the harvest-weight READ model, as pure functions.
 //
 // Weight has been derived server-side since V4-HARVWEIGHTGAP-001 (395 of 397 live harvests carry
 // weight_grams), but it rendered in exactly one place: the EventDetail EDIT form. You had to tap

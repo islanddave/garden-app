@@ -1,4 +1,4 @@
-// V4-HARVESTSURF-001 — the harvest-weight read model.
+// V4-HARVWEIGHTREAD-001 — the harvest-weight read model.
 //
 // The behaviours pinned here are the ones where a plausible implementation silently lies:
 //   * a missing weight must never render as 0 (a harvest that weighs nothing is missing data)

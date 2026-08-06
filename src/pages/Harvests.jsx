@@ -331,7 +331,7 @@ function HarvestEntry({ entry: e }) {
   const countNoun = e.crop_name || e.variety_name || null
   const hasQty = e.harvest_log_id != null && e.quantity != null
   const qtyText = hasQty ? formatEntry({ quantity: e.quantity, unit: e.unit }, countNoun) : 'harvest logged — no amount recorded'
-  // V4-HARVESTSURF-001. The native-unit amount above stays THE headline — grams are a second axis,
+  // V4-HARVWEIGHTREAD-001. The native-unit amount above stays THE headline — grams are a second axis,
   // not a replacement, because "6 zucchini" is what was picked and 1.4 kg is what it weighed.
   // The no-weight chip is deliberately suppressed on rows with no amount either: a harvest with
   // nothing recorded is already saying so on the line above, and repeating it adds noise to the
