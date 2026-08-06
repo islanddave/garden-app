@@ -124,6 +124,29 @@ Write the result here rather than only telling me in chat — a gate whose outco
 
 ---
 
+## Run log
+
+### 2026-08-06 — BASELINE run against production (pre-Slice-3a)
+
+Operator: Dave. Version tested: **prod as of 2026-08-06 — v3.103.0** (the per-surface `useBackDismiss` implementation; Slice 3a was on `dev`, unshipped).
+
+| Step | Result | Notes |
+|---|---|---|
+| 0 — version check | not recorded | Ran against live prod; see caveat below. |
+| 1 — Back closes the top thing only | **PASS** | "Exactly right on everything I'm seeing… everywhere I've tried it, it works as expected." Not every surface exercised. |
+| 2 — Back doesn't get stuck | **PASS** | "Back doesn't seem to get stuck anywhere." No dead first press observed. |
+| 3 — Back at the very start | **PASS** | Exits cleanly. |
+| 4 — swipe vs Back button | **PASS** | Photo paging behaves; planting-page swipe behaves. Edge-gesture does not steal an intended content swipe. |
+| 5 — scroll still alive | **PASS** | Scrolls after every sequence. No stranded scroll lock. |
+
+**What this run establishes, and what it does not.** It is a **baseline**, not the Slice 3a gate. v3.103.0 shipped with zero functional verification, so the open question was whether the back-nav Dave has today already works — and it does. That matters because it makes any post-3a regression **attributable**: if Back misbehaves after the promote, it is Slice 3a, not a pre-existing fault. Without this run that distinction was unavailable.
+
+**Therefore GATE-A must be run AGAIN after v3.104.0 reaches prod** — same six steps, with Step 0 reading 3.104.0. That second run is the actual gate.
+
+**Caveat carried forward:** Step 0's version was not recorded on this run. It is safe to treat it as v3.103.0 because that was prod all day and nothing else had been promoted, but the next run must capture the number — the whole point of Step 0 is that an unrecorded version makes every later observation unattributable.
+
+---
+
 <!-- Maintainer notes — not for the operator.
      Step 1a exercises topmost-wins across layers (Lightbox DIALOG over a Sheet).
      Step 1b exercises a registry-only surface (armsBack=false) on top of an armed one — the case
