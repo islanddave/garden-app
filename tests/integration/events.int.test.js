@@ -101,7 +101,7 @@ describe('PUT /api/events/:id — BUG-HARVESTEDIT-001', () => {
     return res.body.id ?? res.body.eventId
   }
   const harvestRow = async (eventId) =>
-    (await directSql`SELECT quantity, unit, quality_rating, weight_grams, weight_estimated
+    (await directSql`SELECT quantity, unit, quality_rating, weight_grams, weight_estimated, weight_basis
                        FROM harvest_log WHERE event_id = ${eventId} AND deleted_at IS NULL`)[0]
 
   it('edits the harvest amount — the number the Harvests totals actually read', async () => {
@@ -147,6 +147,66 @@ describe('PUT /api/events/:id — BUG-HARVESTEDIT-001', () => {
     const row = await harvestRow(id)
     expect(row.weight_grams).toBeNull()
     expect(row.weight_estimated).toBeNull()
+  })
+
+  // BUG-HARVWEIGHTBLANK-001, behavioural half. fe75398 guarded the PUT so an unrelated edit could
+  // not blank a stored weight, but shipped with STATIC (SQL-text) coverage only — which is exactly
+  // how it then broke the sibling clear-a-stale-weight test above without either half going red.
+  // The two meanings of "the resolver returned NULL" are opposite instructions, so each needs a
+  // round trip, not an assertion about the shape of the statement.
+  //
+  // plant_id is NULL on these rows, so every resolver tier misses precisely as it does for the live
+  // Wild Blackberry rows (plant_varieties.unit_weights IS NULL). Seeding the weight directly is the
+  // point: it is a weight the resolver CANNOT reproduce, which is what makes preserving it the only
+  // way to keep it.
+  const seedUnpriceableWeight = async ({ unit = 'count', quantity = 1 } = {}) => {
+    const id = await makeHarvest({ quantity, unit })
+    expect((await harvestRow(id)).weight_grams, 'fixture assumes the resolver prices nothing').toBeNull()
+    await directSql`UPDATE harvest_log SET weight_grams = 7.20, weight_estimated = true,
+                      weight_basis = 'cultivar' WHERE event_id = ${id} AND deleted_at IS NULL`
+    return id
+  }
+
+  it('PRESERVES an unpriceable stored weight across an unrelated edit — quality star, unit unchanged', async () => {
+    // The fe75398 case end to end. Mutation: drop the CASE guards and this reds at 7.20 -> null.
+    const id = await seedUnpriceableWeight()
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 1, unit: 'count', quality_rating: 5 },
+    })
+    expect(res.status).toBe(200)
+    const row = await harvestRow(id)
+    expect(Number(row.weight_grams)).toBeCloseTo(7.20, 2)
+    expect(row.weight_estimated).toBe(true)
+    expect(row.weight_basis).toBe('cultivar')
+    expect(row.quality_rating).toBe(5)
+  })
+
+  it('PRESERVES it across a non-weight unit change too — the old unit was never a weight', async () => {
+    // Pins the guard to old-unit WEIGHT-NESS rather than to old-unit EQUALITY: count -> bunch leaves
+    // the resolver just as blind, so there is still nothing better than the stored number.
+    const id = await seedUnpriceableWeight()
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 1, unit: 'bunch', quality_rating: 4 },
+    })
+    expect(res.status).toBe(200)
+    expect(Number((await harvestRow(id)).weight_grams)).toBeCloseTo(7.20, 2)
+  })
+
+  it('an EXPLICIT weight:null still clears an unpriceable stored weight', async () => {
+    // The guard protects against INCIDENTAL blanking, never against the user removing their own
+    // number. Mutation: drop `NOT ${hClearWeight}` from the CASE and the weight becomes unremovable.
+    const id = await seedUnpriceableWeight()
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 1, unit: 'count', quality_rating: 3, weight: null },
+    })
+    expect(res.status).toBe(200)
+    const row = await harvestRow(id)
+    expect(row.weight_grams).toBeNull()
+    expect(row.weight_estimated).toBeNull()
+    expect(row.weight_basis).toBeNull()
   })
 
   it('preserves quality_rating when the client omits it from the sub-object as null', async () => {
