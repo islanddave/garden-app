@@ -28,9 +28,15 @@ const pageSrc = readFileSync(resolve(root, 'src/pages/PutUp.jsx'), 'utf8')
 const SERVER_OWNED = ['id', 'user_id', 'created_at', 'updated_at', 'deleted_at']
 
 describe('lambda/preservation/index.js write + read paths list every editable column', () => {
-  const insertBlock = lambdaSrc.slice(
-    lambdaSrc.indexOf('INSERT INTO preservation_log ('),
-    lambdaSrc.indexOf('RETURNING *', lambdaSrc.indexOf('INSERT INTO preservation_log (')))
+  // Scoped to the COLUMN LIST, not to the whole statement. Slicing through to `RETURNING *`
+  // swallowed the VALUES clause, where every column name reappears as `${body.method}` etc — so the
+  // assertion below was satisfied by the bound parameter even when the column had been deleted from
+  // the list. Verified by mutation: removing `method` from the column list left this file green,
+  // creating put-ups with a NULL method (the record's defining field) while RETURNING * echoed the
+  // request back so a smoke test looked fine. Two independent looseness bugs stacked here — this
+  // span, and a bare toContain that `method_other_text` also satisfied.
+  const insertStart = lambdaSrc.indexOf('INSERT INTO preservation_log (')
+  const insertBlock = lambdaSrc.slice(insertStart, lambdaSrc.indexOf(') VALUES (', insertStart))
   const updateBlock = lambdaSrc.slice(
     lambdaSrc.indexOf('UPDATE preservation_log SET'),
     lambdaSrc.indexOf('updated_at          = NOW()'))
@@ -44,7 +50,13 @@ describe('lambda/preservation/index.js write + read paths list every editable co
   // draft, and this test caught it.)
   it.each(PRESERVATION_EDITABLE_COLUMNS.filter(c => c !== 'consumed_at'))(
     'INSERT writes %s', (col) => {
-      expect(insertBlock).toContain(col)
+      // \b, not toContain: `method` is the ONE name in PRESERVATION_EDITABLE_COLUMNS that is a
+      // substring of another (`method_other_text`), so a bare toContain('method') is satisfied by
+      // method_other_text alone. Verified by mutation — deleting `method` from the INSERT column
+      // list left this file green, and a put-up would be created with a NULL method, its defining
+      // field, while RETURNING * echoed the request back so a smoke test looked fine. The UPDATE
+      // arm (`${col} `) and projectRow arm (`${col}:`) were already anchored; this one was not.
+      expect(insertBlock).toMatch(new RegExp(`\\b${col}\\b`))
     })
 
   it.each(PRESERVATION_EDITABLE_COLUMNS)('full-replace UPDATE sets %s', (col) => {

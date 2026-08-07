@@ -39,10 +39,48 @@ const PROJ_RESCOPE_PROJECT_COLUMNS = ['kind', 'target_end_date', 'kind_set_at'];
 // the view -- so match BOTH the base table (still used by write-path selects) and
 // the view. Matches list shape ("FROM <rel>") and by-id shape ("FROM <rel> pp").
 function extractSelectBlocks(src) {
-  const re = /SELECT\s+([\s\S]*?)\s+FROM\s+(?:plant_projects|public\.container)(?:\s+pp)?/g;
+  // WHY THIS IS A SCANNER AND NOT A REGEX.
+  //
+  // This extractor used to be /SELECT\s+([\s\S]*?)\s+FROM\s+(?:plant_projects|public\.container)/g.
+  // With a lazy `[\s\S]*?`, a match beginning at ANY earlier `SELECT` runs on to the next
+  // `FROM plant_projects`, swallowing everything in between. Three of the six blocks it returned
+  // over-spanned; the worst ran 598->715 (6,252 chars) and contained the entire PUT
+  // `UPDATE public.container SET` list.
+  //
+  // Not cosmetic: deleting kind_set_at from the admin list SELECT — verbatim the S1.A regression
+  // this file exists to prevent — left every assertion GREEN, because the column still appeared
+  // inside the swallowed UPDATE block. The WRITE path was satisfying a READ-path assertion.
+  //
+  // The sibling plants/select-columns.test.js fixes this with a `(?!\bFROM\b)` lookahead, but that
+  // cure does not transplant here: four of the five list variants carry an inner
+  // `COALESCE((SELECT MAX(em.last_event_at) FROM entity_memory em ...))`, so a rule that refuses to
+  // cross any FROM cannot reach their outer FROM at all — applying it dropped the block count from
+  // 6 to 2 and silently stopped covering the very reads this file guards.
+  //
+  // So: find each target FROM, then walk BACKWARDS to the SELECT that owns it, tracking paren depth
+  // so inner subquery SELECTs are skipped. That is the actual grammar, and it is immune to both
+  // failure modes.
+  function ownerSelect(src, fromIdx) {
+    let depth = 0;
+    for (let i = fromIdx - 1; i >= 0; i--) {
+      const ch = src[i];
+      if (ch === ')') depth++;
+      else if (ch === '(') { if (depth === 0) return -1; depth--; }
+      else if (depth === 0 && (ch === 't' || ch === 'T')) {
+        const word = src.slice(i - 5, i + 1);
+        const before = src[i - 6] ?? ' ';
+        if (word.toUpperCase() === 'SELECT' && !/[\w$]/.test(before)) return i + 1;
+      }
+    }
+    return -1;
+  }
+  const re = /\bFROM\s+(?:plant_projects|public\.container)\b/g;
   const blocks = [];
-  let m;
-  while ((m = re.exec(src)) !== null) {
+  let f;
+  while ((f = re.exec(src)) !== null) {
+    const start = ownerSelect(src, f.index);
+    if (start === -1) continue;
+    const m = [null, src.slice(start, f.index)];
     // V3-EVENT-003: skip the internal status pre-fetch (a single-column `AS old_status`
     // read used only to detect a real status change) — NOT a client GET read, so it
     // intentionally does not expose the PROJ-RESCOPE columns.
@@ -65,11 +103,20 @@ function extractSelectBlocks(src) {
 describe('projects Lambda SELECT clauses (S1.A-hotfix regression guard)', () => {
   const selectBlocks = extractSelectBlocks(SRC);
 
-  it('exposes at least 4 SELECT blocks (by-id + 3 list variants)', () => {
-    // 1 by-id + 3 list variants. Other SELECTs in the file (e.g., COUNT(*)
-    // from plants, schema_version probe) target different tables and are
-    // excluded by the FROM plant_projects regex.
-    expect(selectBlocks.length).toBeGreaterThanOrEqual(4);
+  it('extracts exactly the 6 client GET read blocks', () => {
+    // EXACT, not >=. A floor is what let the broken extractor look healthy: it returned 6 blocks
+    // too, but three of them were junk spans that happened to satisfy the floor while the real
+    // reads went uncovered. A count that can only be met by the right blocks is the point.
+    expect(selectBlocks.length).toBe(6);
+  });
+
+  it('no extracted block over-spans its own statement', () => {
+    // The over-spanning failure mode, asserted directly rather than inferred from the count. The
+    // widest legitimate block here is ~820 chars; the broken extractor's worst was 6,252 and
+    // swallowed an entire UPDATE SET list. Any block an order of magnitude over the real ones has
+    // run past its FROM and is matching another statement's text.
+    const widest = Math.max(...selectBlocks.map((b) => b.length));
+    expect(widest).toBeLessThan(1500);
   });
 
   for (const col of PROJ_RESCOPE_PROJECT_COLUMNS) {
