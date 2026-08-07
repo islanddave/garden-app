@@ -1,0 +1,298 @@
+# gates.yml
+# V4-CAREKEY-001 Phase E — VALIDATE event_log_has_anchor, plus the L-058 all-row sweep that must
+# pass before it is armed. Continues migrations/care-rekey-001/ (Phase A additive DDL + Phase C
+# backfill, applied to staging + prod 2026-07-24).
+#
+# DEPLOY BOUNDARY — the falsifiable test, answered per constraint and per destructive step.
+#
+#   QUESTION: would the CURRENTLY DEPLOYED prod code produce a row that violates
+#             event_log_has_anchor (plant_id IS NOT NULL OR project_id IS NOT NULL)?
+#   METHOD: asked of the deployed artifact, not the branch. `main` is ed6cc2b and carries the Step-B
+#           dual-write, so the deployed events Lambda is Step-B code. Its two INSERT paths into
+#           event_log were read: the single POST (index.js, the new_event CTE) and the batch path.
+#           The single POST inserts ${projectId} and ${body.plant_id ?? null}; both can be NULL
+#           independently at the SQL layer, so the SQL alone does not answer the question. The gate
+#           is one layer up, in the DEPLOYED validators.js: validatePostBody returns
+#           400 'project_id or plant_id is required' when both are absent (BUG-CAPTUREFLOW400-001).
+#           The batch path resolves p.id per planting, so plant_id is non-NULL by construction.
+#   ANSWER: NO. No deployed writer can produce an anchorless row, and the sweep below confirms none
+#           exists: 0 of 12,447 event_log rows, counted UNFILTERED (see the sweep note).
+#   COUPLING: none. VALIDATE changes no writer's behaviour and rejects no operation the deployed
+#           code performs; it only refuses a shape the deployed validator already refuses. There is
+#           therefore NO pre-deploy/post-deploy split for this file, and it may be applied before or
+#           after the Step-D read cutover deploys.
+#
+#   The Step-D READ CUTOVER is the part of this ticket that DOES have a deploy boundary, and it runs
+#   the opposite way round from a constraint: it is backward-compatible and forward-DEPENDENT. The
+#   new reads require plant-keyed rows to exist, which Phase A/C already guaranteed and the deployed
+#   Step-B writer maintains. Rolling the read cutover BACK is safe at any time (project-keyed rows
+#   are still dual-written and still current). Rolling it FORWARD before Phase A/C would blank every
+#   care tile. Phase A/C are applied, so the precondition holds. Stated as an artifact property in
+#   README.md §Apply order — never as a date.
+#
+# DESTRUCTIVE STEPS IN THIS FILE: none. Nothing here drops a column, an index, a constraint or a
+# row. Phase F (F1 stop project-keyed writes / F2 drop entity_memory_project_id_key / F3 DELETE the
+# project rows + DROP COLUMN project_id) is DAVE-GATED and is deliberately NOT authored here. The
+# `post_project_arm_survives_phase_f_is_not_run` gate below asserts that absence rather than
+# trusting it.
+#
+# ORDER APPLIED:
+#   NOTHING IS APPLIED. This migration was authored, parse-verified against live prod inside
+#   SET TRANSACTION READ ONLY, and gate-validated only. No DDL has been executed. See README.md.
+#
+# Both informational captures use `rowcount_gte: 0` — they always pass, still run, still report.
+# They exist so the before/after of a data-quality finding is on the record rather than in prose.
+
+pre:
+  # Phase A must already be applied. Asserting the substrate rather than assuming it: applying this
+  # file to a database without the plant arm would VALIDATE a constraint whose premise is absent.
+  - name: pre_phase_a_plant_arm_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'entity_memory' AND column_name = 'plant_id'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_phase_a_partial_unique_index_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname = 'public' AND indexname = 'entity_memory_plant_id_key'
+    expect: rowcount_eq
+    value: 1
+
+  # The 3-way exactly-one-parent CHECK is what keeps the project and location arms alive alongside
+  # the new plant arm (design §2). If this is still the 2-way form, Phase A did not land.
+  - name: pre_phase_a_three_way_parent_check_armed
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'entity_memory_exactly_one_parent'
+         AND convalidated
+         AND pg_get_constraintdef(oid) LIKE '%plant_id IS NOT NULL%'
+    expect: rowcount_eq
+    value: 1
+
+  # The state this migration exists to change. A re-run against an already-validated database fails
+  # here rather than silently re-scanning event_log.
+  - name: pre_has_anchor_is_not_yet_validated
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname = 'event_log_has_anchor' AND NOT convalidated
+    expect: rowcount_eq
+    value: 1
+
+  # Phase C must already be applied, or the Step-D reads have nothing to read. Structural rather than
+  # an absolute count, so it holds on staging (11 rows) and prod (262) alike.
+  - name: pre_phase_c_backfill_has_rows
+    sql: |
+      SELECT 1 FROM public.entity_memory WHERE plant_id IS NOT NULL LIMIT 1
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  # L-058. THE gate for the VALIDATE: every predicate the constraint is about to enforce must ALREADY
+  # hold, so a mid-ALTER failure becomes a clean pre-apply stop.
+  #
+  # DELIBERATELY UNFILTERED. No `deleted_at IS NULL` anywhere in this phase. A CHECK constraint does
+  # not know what a soft delete is — VALIDATE scans every row in the heap, including the 78
+  # soft-deleted ones. Filtering here would hide exactly the rows that break the ALTER. Prod at
+  # authoring time: 12,447 rows scanned, 0 violations.
+  - name: sweep_no_anchorless_event_log_rows
+    sql: |
+      SELECT 1 FROM public.event_log WHERE plant_id IS NULL AND project_id IS NULL
+    expect: rowcount_eq
+    value: 0
+
+  # The design's Phase-E assertion is written as "every non-deleted planting has exactly one
+  # plant-keyed row". That is FALSE AS STATED and asserting it would red the migration on correct
+  # data: entity_memory rows are created LAZILY on first event (design §1.3 — the plants POST writes
+  # no care row), and 0b-backfill.sql INNER JOINs event_log, so a planting with no events correctly
+  # has no care row. Prod at authoring time has exactly one such planting ("San Marzano rescue",
+  # created with 0 events). The real invariant is therefore conditioned on having an event.
+  - name: sweep_every_evented_planting_has_a_care_row
+    sql: |
+      SELECT 1 FROM public.plants p
+       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND EXISTS (SELECT 1 FROM public.event_log e
+                      WHERE e.plant_id = p.id AND e.deleted_at IS NULL)
+         AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.plant_id = p.id)
+    expect: rowcount_eq
+    value: 0
+
+  # "Exactly one" is enforced by entity_memory_plant_id_key, but a UNIQUE index on a NULLable column
+  # is easy to misread. Asserted directly so the claim does not rest on reading an index definition.
+  - name: sweep_no_planting_has_two_care_rows
+    sql: |
+      SELECT plant_id FROM public.entity_memory
+       WHERE plant_id IS NOT NULL GROUP BY plant_id HAVING count(*) > 1
+    expect: rowcount_eq
+    value: 0
+
+  # Design §2's rejected alternative was dual-key-in-one-row. This asserts it never happened.
+  - name: sweep_no_plant_row_carries_another_parent
+    sql: |
+      SELECT 1 FROM public.entity_memory
+       WHERE plant_id IS NOT NULL AND (project_id IS NOT NULL OR location_id IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # Design §8.1: the plant-keyed row is a pure RECENCY cache; the engine owns "is it due". The
+  # legacy last_watered + 4d fiction must never be baked into a plant row. The Step-D reads
+  # reconstitute a fallback at READ time instead, so a non-NULL value here would silently outrank
+  # that COALESCE and reintroduce the fiction the re-key removes.
+  - name: sweep_no_plant_row_bakes_next_water_at
+    sql: |
+      SELECT 1 FROM public.entity_memory WHERE plant_id IS NOT NULL AND next_water_at IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_no_dangling_plant_care_refs
+    sql: |
+      SELECT 1 FROM public.entity_memory em
+       WHERE em.plant_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.plants p WHERE p.id = em.plant_id)
+    expect: rowcount_eq
+    value: 0
+
+  # INFORMATIONAL CAPTURE. Care-cache rows whose recency disagrees with event_log, recorded at apply
+  # time. NOT an assertion: these are PRE-EXISTING and this migration neither causes nor repairs
+  # them, and asserting 0 would red a correct apply. Prod at authoring time: 6 rows, all
+  # last_harvested_at, from TWO distinct causes, both out of scope here —
+  #   (a) 4 rows "cache BEHIND" — direct-to-database harvest writes that skipped the Lambda side
+  #       effects entirely (BUG-DIRECTWRITEDRIFT-001). Re-running 0b-backfill.sql repairs these,
+  #       because its ON CONFLICT uses GREATEST.
+  #   (b) 2 rows "cache AHEAD"/"truth NULL" — an UNDONE harvest. Verified row by row: each cached
+  #       value matches a soft-deleted harvest event exactly. Root cause is that both undo recompute
+  #       paths in lambda/events/index.js recompute last_watered_at ONLY, so undoing a harvest (or a
+  #       fertilizing, pruning, observation) leaves that column stale forever. GREATEST can never
+  #       walk a cache backwards, so 0b does NOT repair these. Tracked separately.
+  - name: sweep_capture_care_cache_drift_vs_event_log
+    note: >
+      Plant-keyed care rows whose cached recency disagrees with the event_log truth. Pre-existing,
+      two causes (direct DB writes; undo recompute covering last_watered_at only). Prod at authoring
+      time: 6 rows, all last_harvested_at, 4 repairable by re-running 0b and 2 not.
+    sql: |
+      WITH truth AS (
+        SELECT p.id AS plant_id,
+               MAX(e.event_date) FILTER (WHERE e.event_type IN ('watering','rain'))       AS t_water,
+               MAX(e.event_date) FILTER (WHERE e.event_type = 'fertilizing')              AS t_fert,
+               MAX(e.event_date) FILTER (WHERE e.event_type = 'pruning')                  AS t_prune,
+               MAX(e.event_date) FILTER (WHERE e.event_type = 'observation')              AS t_obs,
+               MAX(e.event_date) FILTER (WHERE e.event_type IN ('harvest','first_harvest')) AS t_harv
+          FROM public.plants p
+          JOIN public.event_log e ON e.plant_id = p.id AND e.deleted_at IS NULL
+         WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
+         GROUP BY p.id
+      )
+      SELECT t.plant_id
+        FROM truth t
+        JOIN public.entity_memory em ON em.plant_id = t.plant_id
+       WHERE em.last_watered_at    IS DISTINCT FROM t.t_water
+          OR em.last_fertilized_at IS DISTINCT FROM t.t_fert
+          OR em.last_pruned_at     IS DISTINCT FROM t.t_prune
+          OR em.last_observed_at   IS DISTINCT FROM t.t_obs
+          OR em.last_harvested_at  IS DISTINCT FROM t.t_harv
+    expect: rowcount_gte
+    value: 0
+
+  # INFORMATIONAL CAPTURE. The defect the Step-D read cutover actually closes, measured rather than
+  # claimed: plantings whose CONTAINER-keyed care row reports a different last_watered_at from their
+  # own. Every one of these was being shown a sibling's watering date on its detail page. Prod at
+  # authoring time: 51 of 252 live plantings (42 Dave, 9 rescue-intake). Expected to fall to
+  # irrelevance rather than to zero — the project row keeps its own project-level events.
+  - name: sweep_capture_sibling_conflation_closed_by_step_d
+    note: >
+      Live plantings whose container-keyed care row disagrees with their own plant-keyed row on
+      last_watered_at. This is the read defect Step D closes. Prod at authoring time: 51 of 252.
+    sql: |
+      SELECT p.id
+        FROM public.plants p
+        LEFT JOIN public.entity_memory emp  ON emp.plant_id   = p.id
+        LEFT JOIN public.entity_memory empr ON empr.project_id = p.project_id
+       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL AND p.project_id IS NOT NULL
+         AND empr.last_watered_at IS DISTINCT FROM emp.last_watered_at
+    expect: rowcount_gte
+    value: 0
+
+post:
+  - name: post_has_anchor_is_validated
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname = 'event_log_has_anchor' AND convalidated
+    expect: rowcount_eq
+    value: 1
+
+  # The armed constraint, restated as the durable invariant it now enforces. Structural rather than
+  # an absolute count, so it stays true as the garden grows.
+  - name: post_no_anchorless_events
+    sql: |
+      SELECT 1 FROM public.event_log WHERE plant_id IS NULL AND project_id IS NULL
+    expect: rowcount_eq
+    value: 0
+
+  # The fix must not have been "achieved" by relaxing something next door. All three Phase-A objects
+  # survive this migration untouched.
+  - name: post_phase_a_objects_survive
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('entity_memory_exactly_one_parent', 'entity_memory_plant_id_fkey')
+         AND convalidated
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_partial_unique_index_survives
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname = 'public' AND indexname = 'entity_memory_plant_id_key'
+    expect: rowcount_eq
+    value: 1
+
+  # Soft-Delete-Only. The care spine's new parent FK must stay RESTRICT (confdeltype = 'r'), never
+  # CASCADE: entity_memory is durable care memory, and design §8.3 rejected mirroring the existing
+  # project CASCADE precisely because that arm silently deletes care history.
+  - name: post_plant_care_fk_is_restrict_not_cascade
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'entity_memory_plant_id_fkey' AND confdeltype = 'r'
+    expect: rowcount_eq
+    value: 1
+
+  # PHASE F HAS NOT RUN. F1/F2/F3 are Dave-gated and are not authored in this migration; this gate
+  # asserts that absence structurally rather than trusting the file listing. The project arm — the
+  # column, its UNIQUE, and its rows — must all still be here, because the Step-D reads roll it up
+  # for the 55 project-LEVEL events and the 7 containers with no plant-keyed row.
+  #
+  # continuous: false — Phase F is ENTITLED to make this false. Leaving it continuous would turn the
+  # scheduled gate-invariants run permanently red the day F2 or F3 lands, which is the failure mode
+  # that trains everyone to ignore the runner.
+  - name: post_project_arm_survives_phase_f_is_not_run
+    continuous: false
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname = 'public' AND indexname = 'entity_memory_project_id_key'
+    expect: rowcount_eq
+    value: 1
+
+  # NO ROW WAS TOUCHED. This migration is VALIDATE-only. If the plant-row count moved during the
+  # apply window, something else ran.
+  - name: post_no_plant_row_bakes_next_water_at
+    sql: |
+      SELECT 1 FROM public.entity_memory WHERE plant_id IS NOT NULL AND next_water_at IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  # NO NEW TRIGGERS. scripts/restore-verify.py builds a table:trigger:function inventory and hard-
+  # fails on prod-vs-restore drift. A VALIDATE adds none, so that inventory is unchanged and needs no
+  # fixture update. If this ever returns > 0, restore-verify must be revisited in the same commit.
+  - name: post_no_new_triggers_on_touched_tables
+    sql: |
+      SELECT 1 FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid
+       WHERE NOT g.tgisinternal
+         AND t.relname IN ('event_log', 'entity_memory')
+         AND g.tgname NOT IN ('set_updated_at', 'prevent_ownership_transfer',
+                              'trg_event_log_user_stats', 'trg_entity_memory_updated_at')
+    expect: rowcount_gte
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.2-carekey-001-validate'
+    expect: rowcount_eq
+    value: 1

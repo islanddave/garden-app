@@ -649,6 +649,13 @@ export const handler = async (event) => {
     }
 
     // --- /api/projects ---
+    // Care re-key Step D (care-rekey-001 / V4-CAREKEY-001): the four last_activity_at subselects
+    // below read the CONTAINER CARE ROLLUP — the newest last_event_at across { the container's
+    // plantings' entity_memory rows } ∪ { the container's own row } — not the single container-keyed
+    // row they used to read. Same rollup shape as dashboard/handlers.js; the long rationale lives
+    // there. The project arm stays in the OR because project-LEVEL events (no plant_id) are the only
+    // activity 7 live containers have, and 55 live events carry no plant_id at all. MAX ignores NULL,
+    // so a container with only one arm still reports it, and the COALESCE to created_at is unchanged.
     if (method === 'GET') {
       // V1.2a-4 S6: admin extension — ?admin=1 returns ALL alive rows regardless
       // of ownership. Allowlist same as PATCH (ADMIN_CLERK_SUBS). Fail-closed.
@@ -671,7 +678,11 @@ export const handler = async (event) => {
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at,
                  assignee_user_id,
-                 COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
+                 COALESCE((SELECT MAX(em.last_event_at) FROM entity_memory em
+                           WHERE em.project_id = container.id
+                              OR em.plant_id IN (SELECT gp.id FROM public.garden_node gp
+                                                  WHERE gp.container_id = container.id AND gp.deleted_at IS NULL)),
+                          created_at) AS last_activity_at
           FROM public.container
           WHERE deleted_at IS NULL
           ORDER BY parent_id NULLS FIRST, display_name ASC
@@ -695,7 +706,11 @@ export const handler = async (event) => {
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at,
                  assignee_user_id,
-                 COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
+                 COALESCE((SELECT MAX(em.last_event_at) FROM entity_memory em
+                           WHERE em.project_id = container.id
+                              OR em.plant_id IN (SELECT gp.id FROM public.garden_node gp
+                                                  WHERE gp.container_id = container.id AND gp.deleted_at IS NULL)),
+                          created_at) AS last_activity_at
           FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
@@ -711,7 +726,11 @@ export const handler = async (event) => {
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at,
                  assignee_user_id,
-                 COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
+                 COALESCE((SELECT MAX(em.last_event_at) FROM entity_memory em
+                           WHERE em.project_id = container.id
+                              OR em.plant_id IN (SELECT gp.id FROM public.garden_node gp
+                                                  WHERE gp.container_id = container.id AND gp.deleted_at IS NULL)),
+                          created_at) AS last_activity_at
           FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL
@@ -727,7 +746,11 @@ export const handler = async (event) => {
                  classification AS kind, to_char(target_end_date, 'YYYY-MM-DD') AS target_end_date,
                  kind_set_at,
                  assignee_user_id,
-                 COALESCE((SELECT em.last_event_at FROM entity_memory em WHERE em.project_id = container.id), created_at) AS last_activity_at
+                 COALESCE((SELECT MAX(em.last_event_at) FROM entity_memory em
+                           WHERE em.project_id = container.id
+                              OR em.plant_id IN (SELECT gp.id FROM public.garden_node gp
+                                                  WHERE gp.container_id = container.id AND gp.deleted_at IS NULL)),
+                          created_at) AS last_activity_at
           FROM public.container
           WHERE created_by = ANY(${householdIds})
             AND deleted_at IS NULL

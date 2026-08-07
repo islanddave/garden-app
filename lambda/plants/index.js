@@ -219,14 +219,32 @@ export const handler = async (event) => {
                    )
                  ELSE NULL END AS variety_ref,
                  parent.display_name AS parent_plant_name, parent.container_id AS parent_project_id,
-                 em.next_water_at, em.location_type, em.watering_interval_days, em.last_watered_at
+                 -- Care re-key Step D (care-rekey-001 / V4-CAREKEY-001): the care band is keyed on
+                 -- THIS PLANTING, not on its container. This join was em.project_id = pp.id, so a
+                 -- planting inherited whatever its most-recently-tended SIBLING did: measured on live
+                 -- prod at cutover, 51 of 252 plantings (42 Dave, 9 rescue-intake) were shown a
+                 -- last_watered_at that is not their own. Two plantings in the same container now
+                 -- carry independent cadences, which is the grain the daily-plan engine has always
+                 -- used (engine.js derives last_water from event_log WHERE plant_id = p.id).
+                 -- next_water_at is NULL on every plant-keyed row by construction (0b-backfill.sql
+                 -- and the Step-B upsert both omit it deliberately — design §8.1: the engine owns
+                 -- "due", the cache owns "when did this last happen"). The COALESCE below is the
+                 -- read-time fallback that keeps the band from blanking in an engine-skip window:
+                 -- the SAME interval ladder the legacy project row baked in, but anchored on this
+                 -- planting's own last_watered_at instead of the container's. Strictly less wrong
+                 -- than what shipped before, and not baked into the cache.
+                 COALESCE(
+                   em.next_water_at,
+                   em.last_watered_at + (COALESCE(em.watering_interval_days, 4)::int * INTERVAL '1 day')
+                 ) AS next_water_at,
+                 em.location_type, em.watering_interval_days, em.last_watered_at
           FROM public.garden_node p
           LEFT JOIN public.container pp ON pp.id = p.container_id
           LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
           LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
           LEFT JOIN photos fp ON fp.id = p.featured_photo_id
           LEFT JOIN public.garden_node parent ON parent.id = p.parent_plant_id AND parent.deleted_at IS NULL
-          LEFT JOIN entity_memory em ON em.project_id = pp.id
+          LEFT JOIN entity_memory em ON em.plant_id = p.id
           WHERE p.id = ${plantId}
             AND p.deleted_at IS NULL
             -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT above).

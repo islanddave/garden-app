@@ -184,7 +184,7 @@ export function queryCounts(sql, userId) {
           SELECT COUNT(*)::int
           FROM public.garden_node p
           JOIN public.container pp ON pp.id = p.container_id
-          WHERE pp.created_by = ANY(${householdIds}) AND p.deleted_at IS NULL AND p.archived_at IS NULL AND pp.archived_at IS NULL
+          WHERE pp.created_by = ANY(${householdIds}) AND p.deleted_at IS NULL AND p.archived_at IS NULL AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
         ) AS plant_count,
         (
           SELECT COUNT(*)::int
@@ -202,6 +202,30 @@ export function queryFavoriteCount(sql, userId) {
     `;
 }
 
+// ── Care re-key Step D (care-rekey-001 / V4-CAREKEY-001) — the container care rollup ────────────
+//
+// entity_memory is now keyed on the PLANTING (plant_id). Every project-level display in this file
+// used to read a single `entity_memory` row keyed on the container, which is exactly the coarse
+// cache the re-key retires. Repointing those reads at plant_id alone would be wrong in both
+// directions, so each one is rewritten to the same rollup:
+//
+//     the container's care recency = the newest of { its plantings' rows } ∪ { its own row }
+//
+// Both arms are load-bearing, measured on live prod at cutover:
+//   * plant arm  — 262 rows. The real per-planting care history. Without it the tiles go blank.
+//   * project arm — 76 rows. Project-LEVEL events (55 live events carry no plant_id: 11 waterings,
+//     14 observations, 13 photos, all status_changes) never attribute to any planting, and 7
+//     containers have a project row with NO plant rows under them at all. Dropping this arm would
+//     silently erase those containers from the dashboard. The 3-way exactly-one-parent CHECK keeps
+//     this arm alive on purpose (design §2), so the rollup keeps reading it.
+//
+// GREATEST/MAX ignore NULLs in Postgres, so a container with only one arm populated still reports
+// that arm. entity_memory is 344 rows total; the OR in the rollup predicate may not use either
+// index, and at this size that is deliberate — clarity over a plan that saves microseconds.
+//
+// The rollup is written out at each call site rather than shared, because these are neon tagged
+// templates: a `sql` fragment cannot be interpolated into another `sql` template without becoming a
+// bound parameter. The shape is identical everywhere and care-rekey-reads.test.js pins it.
 export function queryActiveProjects(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
@@ -219,7 +243,18 @@ export function queryActiveProjects(sql, userId) {
         em.last_watered_at, em.last_observed_at, em.last_fertilized_at,
         em.last_pruned_at, em.last_harvested_at, em.last_event_at
       FROM public.container pp
-      LEFT JOIN entity_memory em ON em.project_id = pp.id
+      LEFT JOIN LATERAL (
+        SELECT MAX(m.last_watered_at)    AS last_watered_at,
+               MAX(m.last_observed_at)   AS last_observed_at,
+               MAX(m.last_fertilized_at) AS last_fertilized_at,
+               MAX(m.last_pruned_at)     AS last_pruned_at,
+               MAX(m.last_harvested_at)  AS last_harvested_at,
+               MAX(m.last_event_at)      AS last_event_at
+          FROM entity_memory m
+         WHERE m.project_id = pp.id
+            OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
+                               WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+      ) em ON TRUE
       WHERE pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
         AND pp.archived_at IS NULL
@@ -284,9 +319,16 @@ export function queryWaterDue(sql, userId) {
   // V3-ATTN-002: suppress projects with no actionable planting — only alert when the container holds at
   //   least one planting NOT in dormant/ended/failed/rooting (NULL status counts as actionable, fail-open
   //   toward alerting). Empty/all-inactive containers never alert (alerts are planting-driven, not project-driven).
+  // Care re-key Step D: driven off `container` + the rollup instead of `FROM entity_memory` keyed
+  // on the container. next_water_at is NULL on every plant-keyed row (design §8.1), so the rollup
+  // reconstitutes it at READ time with the same interval ladder the project row used to bake in —
+  // and takes the MIN, not the MAX: this bar answers "does anything in here need water", so the
+  // most-overdue planting decides, and the ORDER BY then sorts the worst first. That is a real
+  // behaviour change, and the intended one: one overdue planting in a 66-planting container used to
+  // be invisible behind a single container-wide verdict.
   return sql`
       SELECT
-        em.project_id, pp.display_name AS project_name,
+        pp.id AS project_id, pp.display_name AS project_name,
         em.last_watered_at, em.next_water_at,
         em.location_type, em.watering_interval_days,
         -- V3-ATTN-001: actionable plantings in this container, so the band can alert the PLANTING not the project.
@@ -296,8 +338,19 @@ export function queryWaterDue(sql, userId) {
           WHERE gn.container_id = pp.id AND gn.deleted_at IS NULL AND gn.archived_at IS NULL
             AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
         ), '[]'::json) AS plantings
-      FROM entity_memory em
-      JOIN public.container pp ON pp.id = em.project_id
+      FROM public.container pp
+      LEFT JOIN LATERAL (
+        SELECT MAX(m.last_watered_at)        AS last_watered_at,
+               MAX(m.location_type)          AS location_type,
+               MAX(m.watering_interval_days) AS watering_interval_days,
+               MIN(COALESCE(m.next_water_at,
+                            m.last_watered_at
+                              + (COALESCE(m.watering_interval_days, 4)::int * INTERVAL '1 day'))) AS next_water_at
+          FROM entity_memory m
+         WHERE m.project_id = pp.id
+            OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
+                               WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+      ) em ON TRUE
       WHERE (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
         AND pp.deleted_at IS NULL
         AND pp.archived_at IS NULL
@@ -347,6 +400,16 @@ export function queryWaterDueFromPlan(sql, userId) {
              jsonb_array_elements(
                CASE WHEN jsonb_typeof(plan.items->'water_due') = 'array'
                     THEN plan.items->'water_due' ELSE '[]'::jsonb END) e
+        -- CARE RE-KEY B5 — KNOWN GAP, DELIBERATELY LEFT OPEN AT STEP D. This predicate drops every
+        -- plan item whose project_id is NULL, so a PROJECTLESS planting — the exact state the re-key
+        -- exists to make loggable, and the state V4-PROJHIDE-001 makes ordinary — is silently
+        -- dropped by the bar even when the engine says it needs water. Inert today (live prod: 0
+        -- projectless plantings) but it arms the moment the feature ships.
+        -- Not closed here because the fix is not server-only: the row is keyed and navigated by
+        -- project_id in the client (Dashboard.jsx keys each row on w.project_id and navigates with
+        -- goToLog(w.project_id)), so retaining a NULL-project row collides React keys and navigates
+        -- to a non-route. The server half is ready — plant_name below gives the row its own subject
+        -- — and the client half belongs to whoever lands PROJHIDE. See the V4-CAREKEY-001 report.
         WHERE (e->>'id') IS NOT NULL AND (e->>'project_id') IS NOT NULL
       ),
       fresh AS (
@@ -359,21 +422,36 @@ export function queryWaterDueFromPlan(sql, userId) {
       due AS (SELECT wd.* FROM wd WHERE NOT EXISTS (SELECT 1 FROM fresh f WHERE f.plant_id = wd.plant_id)),
       grouped AS (
         SELECT d.project_id, MAX(d.overdue_by) AS overdue_by,
-               json_agg(json_build_object('id', d.plant_id, 'name', d.name) ORDER BY d.name, d.plant_id) AS plantings
+               json_agg(json_build_object('id', d.plant_id, 'name', d.name) ORDER BY d.name, d.plant_id) AS plantings,
+               -- V4-PROJHIDE-001 unblock (care re-key Step D): the planting-level subject the client
+               -- already reaches for (Dashboard.jsx renders w.plant_name, falling back to the string
+               -- "Water due", under the PROJECTS_HIDDEN branch) and that the server has never
+               -- emitted. NULL when the group holds more than one planting, because then there IS no
+               -- single subject and that fallback is the correct render. Purely additive: no
+               -- existing key changes shape, and the flag-OFF branch never reads it.
+               CASE WHEN count(*) = 1 THEN MIN(d.name) END AS plant_name
         FROM due d GROUP BY d.project_id
       ),
       plan_rows AS (
         SELECT g.project_id, pp.display_name AS project_name,
                em.last_watered_at, em.location_type, em.watering_interval_days,
                (now() - make_interval(days => GREATEST(g.overdue_by, 0)))::timestamptz AS next_water_at,
-               g.plantings, 'plan'::text AS water_due_source
+               g.plantings, g.plant_name, 'plan'::text AS water_due_source
         FROM grouped g
         JOIN public.container pp ON pp.id = g.project_id::uuid
-        LEFT JOIN entity_memory em ON em.project_id = g.project_id::uuid
+        LEFT JOIN LATERAL (
+          SELECT MAX(m.last_watered_at)        AS last_watered_at,
+                 MAX(m.location_type)          AS location_type,
+                 MAX(m.watering_interval_days) AS watering_interval_days
+            FROM entity_memory m
+           WHERE m.project_id = pp.id
+              OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
+                                 WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+        ) em ON TRUE
         WHERE pp.deleted_at IS NULL AND pp.archived_at IS NULL
       ),
       legacy_rows AS (
-        SELECT em.project_id::text AS project_id, pp.display_name AS project_name,
+        SELECT pp.id::text AS project_id, pp.display_name AS project_name,
                em.last_watered_at, em.location_type, em.watering_interval_days,
                em.next_water_at,
                COALESCE((
@@ -382,9 +460,21 @@ export function queryWaterDueFromPlan(sql, userId) {
                  WHERE gn.container_id = pp.id AND gn.deleted_at IS NULL AND gn.archived_at IS NULL
                    AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
                ), '[]'::json) AS plantings,
+               NULL::text AS plant_name,
                CASE WHEN (SELECT present FROM plan_present) THEN 'schema_mismatch' ELSE 'legacy' END AS water_due_source
-        FROM entity_memory em
-        JOIN public.container pp ON pp.id = em.project_id
+        FROM public.container pp
+        LEFT JOIN LATERAL (
+          SELECT MAX(m.last_watered_at)        AS last_watered_at,
+                 MAX(m.location_type)          AS location_type,
+                 MAX(m.watering_interval_days) AS watering_interval_days,
+                 MIN(COALESCE(m.next_water_at,
+                              m.last_watered_at
+                                + (COALESCE(m.watering_interval_days, 4)::int * INTERVAL '1 day'))) AS next_water_at
+            FROM entity_memory m
+           WHERE m.project_id = pp.id
+              OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
+                                 WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+        ) em ON TRUE
         WHERE (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
           AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
           AND em.next_water_at IS NOT NULL AND em.next_water_at < now()
@@ -411,7 +501,13 @@ export function queryHarvestReady(sql, userId) {
              em.last_observed_at,
              (NOW()::date - em.last_observed_at::date)::int AS days_since_obs
       FROM public.container pp
-      LEFT JOIN entity_memory em ON em.project_id = pp.id
+      LEFT JOIN LATERAL (
+        SELECT MAX(m.last_observed_at) AS last_observed_at
+          FROM entity_memory m
+         WHERE m.project_id = pp.id
+            OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
+                               WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+      ) em ON TRUE
       WHERE pp.status = 'harvesting'
         AND pp.created_by = ANY(${householdIds})
         AND pp.deleted_at IS NULL
@@ -460,7 +556,14 @@ export function queryHeadsUp(sql, userId) {
                    AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
                ), '[]'::json) AS plantings
         FROM public.container pp
-        LEFT JOIN entity_memory em ON em.project_id = pp.id
+        LEFT JOIN LATERAL (
+          SELECT MAX(m.last_observed_at) AS last_observed_at,
+                 MAX(m.last_event_at)    AS last_event_at
+            FROM entity_memory m
+           WHERE m.project_id = pp.id
+              OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
+                                 WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+        ) em ON TRUE
         WHERE pp.status IN ('sprouting','growing','flowering','fruiting')
           AND (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
           AND pp.deleted_at IS NULL
@@ -532,7 +635,14 @@ export function queryInactiveList(sql, userId) {
            CASE WHEN d.dismissed_at IS NULL THEN false ELSE true END AS dismissed,
            d.dismissed_at
     FROM public.container pp
-    LEFT JOIN entity_memory em ON em.project_id = pp.id
+    LEFT JOIN LATERAL (
+      SELECT MAX(m.last_event_at)     AS last_event_at,
+             MAX(m.last_harvested_at) AS last_harvested_at
+        FROM entity_memory m
+       WHERE m.project_id = pp.id
+          OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
+                             WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+    ) em ON TRUE
     LEFT JOIN inactive_project_dismissals d
       ON d.project_id = pp.id AND d.user_id = ${userId}
     WHERE pp.status IN ('harvested','ended')
