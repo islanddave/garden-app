@@ -45,6 +45,7 @@ import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
 import { formatBotanical } from '../lib/keyFact.js'
 import { buildLifeStory } from '../lib/lifeStory.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { describeHarvestWeight, sumHarvestWeights, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 
 
 
@@ -196,6 +197,42 @@ export default function PlantingDetail() {
       })
     return () => { cancelled = true }
   }, [planting, fetch, refreshKey])
+
+  // V4-HARVWEIGHTREAD-001 slice 2 — the harvest weight for THIS planting's timeline. GET /api/events
+  // (the event-log source above) does not join harvest_log at all, so an event row carries no
+  // quantity and no weight; the harvests read model already derives both. Self-fetched with
+  // ?plant=<id> and keyed by event_id, so the same describeHarvestWeight() that renders the Harvests
+  // log renders these rows — one read model, not a second derivation that can disagree with it.
+  //
+  // SECONDARY BY DESIGN: a failure here leaves `harvestByEvent` empty and the timeline renders
+  // exactly as it did before, with no error copy. The event log is the page's spine and must not
+  // break because an enhancement fetch did. Note the deliberate asymmetry with the Harvests log:
+  // there, a quantified row with no derivable weight shows "no weight yet"; here, an event with NO
+  // matching entry at all renders NOTHING, because "we did not load it" and "it has no weight" are
+  // different facts and only the second one is safe to tell Dave.
+  const [harvestByEvent, setHarvestByEvent] = useState(null)
+  useEffect(() => {
+    if (!planting?.id) return
+    let cancelled = false
+    setHarvestByEvent(null)
+    fetch(`/api/harvests?plant=${planting.id}&include=entries&timeframe=all`)
+      .then(data => {
+        if (cancelled) return
+        const m = new Map()
+        for (const en of data?.entries ?? []) if (en?.event_id) m.set(en.event_id, en)
+        setHarvestByEvent(m)
+      })
+      .catch(() => { if (!cancelled) setHarvestByEvent(new Map()) })
+    return () => { cancelled = true }
+  }, [planting, fetch, refreshKey])
+
+  // The planting's own weight total, from the same entries. sumHarvestWeights sums estimated and
+  // measured together — the honest arithmetic — and hands back the counts so the line under it can
+  // say how much of the number was inferred instead of implying the whole of it was weighed.
+  const harvestWeightTotal = useMemo(
+    () => sumHarvestWeights(harvestByEvent ? [...harvestByEvent.values()] : []),
+    [harvestByEvent],
+  )
 
   // Planting photos (V1 display-only). V4-PHOTOGALLERY-001: the gallery shows every photo ATTACHED to
   // this planting — directly via plant_id, OR through one of its events — no matter which container the
@@ -568,6 +605,10 @@ export default function PlantingDetail() {
       <SectionHeader>Harvested</SectionHeader>
       <div style={cardStyle}>
         <HarvestFromPlanting planting={pl} fetch={fetch} />
+        {/* V4-HARVWEIGHTREAD-001 slice 2 — the weight axis under the native-unit summary. Rendered
+            only once the entries have landed (null = in flight), so the section never flashes a
+            "no weight yet" that a resolved fetch is about to contradict. */}
+        {harvestByEvent && <PlantingWeightTotal total={harvestWeightTotal} />}
         {/* V4-HARVESTVIEW-001 S4b: crop-filtered jump to the Harvests page (design §2.3). Shown only
             when the crop key resolves, since the destination is filtered by crop_type_slug. */}
         {pl.variety_ref?.crop_type_slug && (
@@ -673,8 +714,11 @@ export default function PlantingDetail() {
                   <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.875rem' }}>
                     {ev.title || (ev.event_type || '').replace(/_/g, ' ')}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: P.light, marginTop: 1 }}>
-                    {fmtDate(ev.event_date) ?? ''}
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginTop: 1 }}>
+                    <span style={{ fontSize: '0.75rem', color: P.light }}>
+                      {fmtDate(ev.event_date) ?? ''}
+                    </span>
+                    <HarvestWeightChip entry={harvestByEvent?.get(ev.id)} />
                   </div>
                   {ev.notes && (
                     <p style={{ margin: '4px 0 0', color: P.mid, fontSize: '0.82rem', lineHeight: 1.5 }}>{ev.notes}</p>
@@ -774,6 +818,74 @@ function deriveFirstHarvest(events) {
   if (!pool.length) return null
   // Events arrive DESC by event_date; the last element is the earliest.
   return pool[pool.length - 1].event_date ?? null
+}
+
+// V4-HARVWEIGHTREAD-001 slice 2 — the timeline's weight chip. Same three states, same wording, same
+// testids and the same ≈-plus-provenance pairing as the Harvests log (src/pages/Harvests.jsx), because
+// a grower reading "≈ 492 g" on one screen and something else on another has to work out whether the
+// two mean the same thing. `entry` is the harvests-read-model row for this event, or undefined when
+// the event is not a harvest / the enhancement fetch has not landed — both render nothing at all.
+function HarvestWeightChip({ entry }) {
+  if (!entry) return null
+  const wt = describeHarvestWeight(entry)
+  // The no-weight chip is suppressed on a row with no amount recorded either, exactly as on the
+  // Harvests log: the least informative row in the log does not need to say "nothing" twice.
+  const hasQty = entry.harvest_log_id != null && entry.quantity != null
+  if (wt.state === 'none') {
+    if (!hasQty) return null
+    return (
+      <span data-testid="harvest-weight-none" title={NO_WEIGHT_COPY} style={{ fontSize: '0.72rem', color: P.light, whiteSpace: 'nowrap' }}>
+        no weight yet
+      </span>
+    )
+  }
+  // The ≈ is the only at-a-glance mark separating an estimate from a weighing, so it never carries
+  // the meaning alone — title + aria-label spell out the provenance for anyone who never hovers.
+  return (
+    <span
+      data-testid="harvest-weight"
+      title={wt.sourceCopy ?? 'Weighed.'}
+      aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
+      style={{ fontSize: '0.72rem', fontWeight: 600, color: wt.estimated ? P.light : P.green, whiteSpace: 'nowrap' }}
+    >
+      {wt.estimated ? `≈ ${wt.text}` : wt.text}
+    </span>
+  )
+}
+
+// The planting's cumulative weight, under HarvestFromPlanting's native-unit summary. Native units
+// stay the headline there — "6 zucchini" is what was picked; this is what it weighed.
+//
+// The qualifier line is not decoration. A bare total implies every gram was measured, which is false
+// for ~all of Dave's rows today, so the counts are printed unconditionally in a fixed order
+// (weighed / estimated / no weight yet), each clause omitted only when its count is zero. That
+// yields "3 weighed · 9 estimated · 2 with no weight yet" and never a phrasing like "0 of 12
+// weighed" that has to be re-read to parse.
+function PlantingWeightTotal({ total }) {
+  const parts = []
+  if (total.measured > 0) parts.push(`${total.measured} weighed`)
+  if (total.estimated > 0) parts.push(`${total.estimated} estimated`)
+  if (total.unweighed > 0) parts.push(`${total.unweighed} with no weight yet`)
+  if (parts.length === 0) return null  // no harvests at all — the section above already says so
+  const anyWeight = total.text != null
+  return (
+    <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${P.border}` }}>
+      {anyWeight ? (
+        <div
+          data-testid="planting-weight-total"
+          aria-label={`${total.estimated > 0 ? 'Estimated total' : 'Total'} harvest weight: ${total.text}`}
+          style={{ fontSize: '0.95rem', fontWeight: 700, color: P.green }}
+        >
+          {total.estimated > 0 ? `≈ ${total.text}` : total.text}
+        </div>
+      ) : (
+        <div data-testid="planting-weight-none" style={{ fontSize: '0.85rem', color: P.light }}>{NO_WEIGHT_COPY}</div>
+      )}
+      <div data-testid="planting-weight-basis" style={{ fontSize: '0.75rem', color: P.light, marginTop: 2 }}>
+        {parts.join(' · ')}
+      </div>
+    </div>
+  )
 }
 
 // Sticky section header — jump affordance for the flat single-column layout. Sticks under the

@@ -52,6 +52,34 @@ function resp(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json', ...CORS }, body: JSON.stringify(body) };
 }
 
+// BUG-HARVWEIGHTWIRE-001 (found reading slice 1 back, SHIPPED in v4.0.0). Slice 1 added
+// weight_grams/weight_estimated/weight_basis to both SELECTs, but the wire projection is
+// projectEntry() in aggregate.js — which predates the columns and lists its output fields
+// EXPLICITLY. All three were fetched from Postgres and then dropped on the floor, so every row on
+// the shipped Harvests log rendered the "no weight yet" ratchet copy no matter what the database
+// held. A SELECT with no matching projection is invisible: nothing 500s, nothing logs, the page
+// just quietly says the wrong thing. The fix belongs in projectEntry itself — see the comment there
+// for why a wrapper at this call site would have widened the same gap instead of closing it.
+
+// Shape one GROUPING-SETS row into the wire weight object. Vocabulary is deliberately IDENTICAL to
+// sumHarvestWeights() in src/lib/harvestWeight.js (grams / measured / estimated / unweighed) so the
+// per-planting client total and the server's season total cannot drift apart in naming or meaning.
+// measured_grams and estimated_grams are carried SEPARATELY on purpose: `grams` is the honest sum
+// (an estimate IS the best available value for its row), but a surface that prints it without
+// saying how much of it was inferred is claiming a precision the number does not have.
+function shapeWeightRow(r) {
+  const measuredGrams = Number(r?.measured_grams ?? 0);
+  const estimatedGrams = Number(r?.estimated_grams ?? 0);
+  return {
+    grams: measuredGrams + estimatedGrams,
+    measured_grams: measuredGrams,
+    estimated_grams: estimatedGrams,
+    measured: Number(r?.measured_count ?? 0),
+    estimated: Number(r?.estimated_count ?? 0),
+    unweighed: Number(r?.unweighed_count ?? 0),
+  };
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────────────────────────
 
 export const handler = async (event) => {
@@ -91,6 +119,12 @@ export const handler = async (event) => {
   if (!tf) return resp(400, { error: 'timeframe must be one of: 7d, month, season:<year>, all' });
   const crop = qp.crop || null;
   const project = qp.project || null;
+  // V4-HARVWEIGHTREAD-001 slice 2: ?plant=<uuid> scopes the read model to ONE planting, which is what
+  // lets PlantingDetail's timeline show the same weight + provenance the Harvests log shows without a
+  // second read model deriving weight its own way. GET /api/events (the timeline's source) never
+  // joins harvest_log at all, so this endpoint is the only place that already knows a harvest's weight.
+  // Nullable exactly like `project` above — same `IS NULL OR` shape, so an absent param is a no-op.
+  const plant = qp.plant || null;
   const seasonYear = tf.kind === 'season' ? tf.year : 0;
 
   const includeRaw = (qp.include ?? 'entries,aggregates').split(',').map((s) => s.trim()).filter(Boolean);
@@ -153,6 +187,7 @@ export const handler = async (event) => {
           )
           AND (${crop}::text IS NULL OR cv.crop_type_slug = ${crop}::text)
           AND (${project}::uuid IS NULL OR e.project_id = ${project}::uuid)
+          AND (${plant}::uuid IS NULL OR e.plant_id = ${plant}::uuid)
           AND (${curDate}::timestamptz IS NULL OR (e.event_date, e.id) < (${curDate}::timestamptz, ${curId}::uuid))
         ORDER BY e.event_date DESC, e.id DESC
         LIMIT ${PAGE_LIMIT + 1}
@@ -201,8 +236,84 @@ export const handler = async (event) => {
           )
           AND (${crop}::text IS NULL OR cv.crop_type_slug = ${crop}::text)
           AND (${project}::uuid IS NULL OR e.project_id = ${project}::uuid)
+          AND (${plant}::uuid IS NULL OR e.plant_id = ${plant}::uuid)
       `;
       out.aggregates = computeAggregates(aggRows);
+
+      // V4-HARVWEIGHTREAD-001 slice 2 — WEIGHT TOTALS, summed in SQL rather than over aggRows in JS.
+      // Two reasons, both load-bearing. (1) weight_grams is `numeric`; the driver returns it as a
+      // string, so a JS reduce over ~400 rows is float arithmetic on parsed decimals and the season
+      // total would not equal the same total computed anywhere else. Postgres sums numeric exactly
+      // and the ONE rounding happens at the ::float8 cast. (2) The provenance split has to be part
+      // of the same pass — measured and estimated grams summed independently in a second traversal
+      // is how the parts stop adding up to the whole.
+      //
+      // The honesty rule, and it is the point of the query: measured and estimated are NEVER
+      // collapsed into a single number with no label. `grams` is their sum (an estimate IS the best
+      // available value for its row, so omitting it would understate the harvest), but the caller
+      // always receives the split and the counts alongside, so no surface can print a total that
+      // silently implies every gram of it was weighed.
+      //
+      // Two predicates mirror src/lib/harvestWeight.js EXACTLY, and a divergence here is a
+      // client/server disagreement about a total:
+      //   * present  = weight_grams > 0. formatGrams() treats <= 0 as missing, because a harvest
+      //     that weighs nothing is not a harvest — 0 is always absent data, never a measurement.
+      //   * measured = weight_estimated IS FALSE. Anything else (true, or a NULL that should not
+      //     exist by construction) counts as estimated: labelling a real weighing as an estimate
+      //     understates harmlessly, the reverse launders a guess into a fact.
+      // GROUPING SETS gets the overall total and the per-crop totals in ONE pass. GROUPING() is
+      // required to read the result: the unattributed bucket (crop_type_slug IS NULL) and the grand
+      // total both come back with a NULL crop_slug, and only the GROUPING bit tells them apart.
+      const weightRows = await sql`
+        SELECT
+          cv.crop_type_slug AS crop_slug,
+          GROUPING(cv.crop_type_slug)::int AS is_total,
+          COALESCE(SUM(h.weight_grams) FILTER (
+            WHERE h.weight_grams > 0 AND h.weight_estimated IS FALSE), 0)::float8 AS measured_grams,
+          COALESCE(SUM(h.weight_grams) FILTER (
+            WHERE h.weight_grams > 0 AND h.weight_estimated IS NOT FALSE), 0)::float8 AS estimated_grams,
+          COUNT(*) FILTER (
+            WHERE h.weight_grams > 0 AND h.weight_estimated IS FALSE)::int AS measured_count,
+          COUNT(*) FILTER (
+            WHERE h.weight_grams > 0 AND h.weight_estimated IS NOT FALSE)::int AS estimated_count,
+          COUNT(*) FILTER (
+            WHERE h.weight_grams IS NULL OR h.weight_grams <= 0)::int AS unweighed_count
+        FROM event_log e
+        JOIN plant_projects pj ON pj.id = e.project_id
+        LEFT JOIN garden_node gn ON gn.id = e.plant_id AND gn.deleted_at IS NULL
+        LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
+        LEFT JOIN harvest_log h ON h.event_id = e.id AND h.deleted_at IS NULL
+        WHERE e.event_type IN ('harvest', 'first_harvest')
+          AND e.deleted_at IS NULL
+          AND pj.created_by = ANY(${householdIds})
+          AND (
+            CASE ${tf.kind}
+              WHEN 'all'   THEN true
+              WHEN '7d'    THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= (now() AT TIME ZONE ${HARVEST_TZ})::date - INTERVAL '6 days'
+              WHEN 'month' THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= date_trunc('month', (now() AT TIME ZONE ${HARVEST_TZ})::date)
+              WHEN 'season' THEN (e.event_date AT TIME ZONE ${HARVEST_TZ})::date >= make_date(${seasonYear}::int - 1, 11, 1)
+                             AND (e.event_date AT TIME ZONE ${HARVEST_TZ})::date <  make_date(${seasonYear}::int, 11, 1)
+              ELSE true
+            END
+          )
+          AND (${crop}::text IS NULL OR cv.crop_type_slug = ${crop}::text)
+          AND (${project}::uuid IS NULL OR e.project_id = ${project}::uuid)
+          AND (${plant}::uuid IS NULL OR e.plant_id = ${plant}::uuid)
+        GROUP BY GROUPING SETS ((), (cv.crop_type_slug))
+      `;
+      // Merge onto the shape computeAggregates already returns. Every crop row gets a weight object
+      // even when nothing under it is weighable: an ABSENT key would make a surface branch on
+      // undefined and print nothing, where a zeroed object with unweighed>0 says the true thing.
+      const weightByCrop = new Map();
+      let weightTotal = null;
+      for (const r of weightRows) {
+        if (Number(r.is_total) === 1) weightTotal = shapeWeightRow(r);
+        else if (r.crop_slug != null) weightByCrop.set(r.crop_slug, shapeWeightRow(r));
+      }
+      out.aggregates.weight = weightTotal ?? shapeWeightRow(null);
+      for (const c of out.aggregates.crops) {
+        c.weight = weightByCrop.get(c.crop_type_slug) ?? shapeWeightRow(null);
+      }
     }
 
     return resp(200, out);

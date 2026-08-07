@@ -11,7 +11,7 @@ import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
 import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
 import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
 import { fmtQuantity, unitLabel, formatEntry, etDay } from '../lib/harvestSummary.js'
-import { describeHarvestWeight, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
+import { describeHarvestWeight, formatGrams, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
 
 // Harvests — V4-HARVESTVIEW-001 S2a/S2b. Route + snapshot strip + Log feed + minimal Totals, reading
@@ -444,6 +444,7 @@ function TotalsView({ aggregates, onSeeInLog }) {
   })
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <TotalsWeight weight={aggregates?.weight} />
       {crops.map((c) => (
         <CropTotalRow
           key={c.crop_type_slug}
@@ -488,6 +489,7 @@ function CropTotalRow({ crop: c, firstPicks, open, onToggle, onSeeInLog }) {
         <span style={{ minWidth: 0 }}>
           <span style={{ display: 'block', fontSize: '0.95rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>{c.crop_name}</span>
           <span style={{ display: 'block', fontSize: '0.88rem', color: P.green, fontWeight: 600 }}>{unitsLine(c.units, c.crop_name)}</span>
+          <CropWeightLine weight={c.weight} />
           {c.unquantified > 0 && (
             <span style={{ display: 'block', fontSize: '0.75rem', color: P.light, marginTop: 2 }}>+{c.unquantified} unrecorded</span>
           )}
@@ -525,6 +527,89 @@ function CropTotalRow({ crop: c, firstPicks, open, onToggle, onSeeInLog }) {
         </div>
       )}
     </div>
+  )
+}
+
+// ── Weight on the aggregates surface (V4-HARVWEIGHTREAD-001) ───────────────────────────────────────
+// The weight objects come off GET /api/harvests already summed — grams are `numeric` in Postgres, so
+// the arithmetic happens there and arrives exact — and they carry the SAME field names
+// sumHarvestWeights() produces client-side (grams/measured/estimated/unweighed), so this surface,
+// PlantingDetail's per-planting total and the log row chip cannot drift apart in meaning.
+//
+// The counts are never optional next to a number. A bare "12 kg" claims every gram was weighed,
+// which is false for nearly every row today; the qualifier prints in a fixed order (weighed /
+// estimated / no weight yet), each clause dropped only when its count is zero — the same phrasing
+// PlantingWeightTotal uses in src/pages/PlantingDetail.jsx.
+function weightParts(w) {
+  const parts = []
+  if (w.measured > 0) parts.push(`${w.measured} weighed`)
+  if (w.estimated > 0) parts.push(`${w.estimated} estimated`)
+  if (w.unweighed > 0) parts.push(`${w.unweighed} with no weight yet`)
+  return parts
+}
+
+// The whole-universe total, above the crop rows. "Total weight", NOT "season weight": the timeframe
+// chips still scope the Totals tab (only crop/project are dropped there), so a Last-7-days number
+// labelled as the season would be wrong four times out of five.
+//
+// `weight` is undefined against a harvests Lambda older than this feature — the frontend can and
+// does deploy ahead of it. That renders NOTHING: the old response cannot distinguish "no weight
+// recorded" from "this API doesn't compute weight", and only the first is safe to tell Dave.
+function TotalsWeight({ weight }) {
+  if (!weight) return null
+  const parts = weightParts(weight)
+  if (parts.length === 0) return null
+  const text = formatGrams(weight.grams)
+  return (
+    <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 14px' }}>
+      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: P.light, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total weight</div>
+      {text ? (
+        <div
+          data-testid="totals-weight"
+          aria-label={`${weight.estimated > 0 ? 'Estimated total' : 'Total'} harvest weight: ${text}`}
+          style={{ fontSize: '1.05rem', fontWeight: 700, color: P.green, marginTop: 2 }}
+        >
+          {weight.estimated > 0 ? `≈ ${text}` : text}
+        </div>
+      ) : (
+        <div data-testid="totals-weight-none" style={{ fontSize: '0.85rem', color: P.light, marginTop: 2 }}>{NO_WEIGHT_COPY}</div>
+      )}
+      <div data-testid="totals-weight-basis" style={{ fontSize: '0.75rem', color: P.light, marginTop: 2 }}>{parts.join(' · ')}</div>
+    </div>
+  )
+}
+
+// The same two lines on a crop row, under its native-unit line — which stays the headline, exactly as
+// on the log: "14 tomatoes" is what was picked, 1.4 kg is what it weighed. Spans, because this
+// renders inside the row's expand button.
+function CropWeightLine({ weight }) {
+  if (!weight) return null
+  const text = formatGrams(weight.grams)
+  if (text == null) {
+    // Nothing weighable under this crop. Row-level, so it borrows the log row's short chip +
+    // title pairing rather than the full sentence, which would repeat once per crop and stop being
+    // read. The counts line goes with it: with no number to qualify, "2 with no weight yet" is the
+    // same fact twice — the same double-negative suppression the log row does.
+    if (weight.unweighed === 0) return null
+    return (
+      <span data-testid="crop-weight-none" title={NO_WEIGHT_COPY} style={{ display: 'block', fontSize: '0.75rem', color: P.light, marginTop: 2 }}>
+        no weight yet
+      </span>
+    )
+  }
+  return (
+    <>
+      <span
+        data-testid="crop-weight"
+        aria-label={`${weight.estimated > 0 ? 'Estimated total' : 'Total'} harvest weight: ${text}`}
+        style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: P.green, marginTop: 2 }}
+      >
+        {weight.estimated > 0 ? `≈ ${text}` : text}
+      </span>
+      <span data-testid="crop-weight-basis" style={{ display: 'block', fontSize: '0.72rem', color: P.light }}>
+        {weightParts(weight).join(' · ')}
+      </span>
+    </>
   )
 }
 

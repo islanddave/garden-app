@@ -73,6 +73,16 @@ export function projectEntry(r) {
     note_excerpt: noteExcerpt(r.notes),
     photos: Array.isArray(r.photos) ? r.photos : [],
     harvest_log_id: r.harvest_log_id ?? null,
+    // V4-HARVWEIGHTREAD-001. These live HERE, in the one shared projector, and not in a wrapper at
+    // the call site: BUG-HARVWEIGHTWIRE-001 happened precisely because the wire shape was listed in
+    // two places (this explicit field list, and the SELECT) and slice 1 updated only one of them. A
+    // third list would widen that gap, not close it. weight_grams is `numeric` -> the driver hands
+    // back a STRING, so Number() here keeps the client's sums out of string concatenation. Null must
+    // survive as null: "no weight yet" is the ratchet state, and Number(null) is 0, which the client
+    // would render as a real measurement of nothing (see src/lib/harvestWeight.js).
+    weight_grams: r.weight_grams == null ? null : Number(r.weight_grams),
+    weight_estimated: r.weight_estimated ?? null,
+    weight_basis: r.weight_basis ?? null,
   };
 }
 
