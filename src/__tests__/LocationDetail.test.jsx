@@ -12,7 +12,7 @@
 // that already bit this codebase twice.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 const { apiFetchSpy, identity } = vi.hoisted(() => ({
@@ -103,9 +103,15 @@ describe('LocationDetail — reaches CACHED mode, and is identity-scoped', () =>
   })
 
   it('a DIFFERENT sub never reads the first sub\'s photos', async () => {
-    renderPage()
+    const first = renderPage()
     await screen.findByRole('heading', { name: 'Greenhouse' })
     await waitFor(() => expect(cache.peek(cache.keyFor('sub-A', PHOTOS_PATH))?.data).toEqual(PHOTOS))
+
+    // Unmount before switching identity — otherwise the first tree's in-flight SWR revalidate
+    // resolves after the fetch spy is swapped and commits sub-B's photos under sub-A's key. That
+    // is a race in the TEST, not in the app; it hides on a fast run and surfaces in CI.
+    first.unmount()
+    await act(async () => { await Promise.resolve() })
 
     const OTHER = [{ id: 'ph2', view_url: 'b.jpg', caption: 'Jen bed' }]
     identity.current = { user: { id: 'sub-B' }, profile: null, loading: false }

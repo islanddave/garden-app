@@ -13,7 +13,7 @@
 // sub=null and PLAIN. That shape is a trap for anyone copying it into a cache-consuming test.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 const { apiFetchSpy, identity } = vi.hoisted(() => ({
@@ -121,11 +121,18 @@ describe('PlantingDetail — reaches CACHED mode (not PLAIN) when an identity is
   })
 
   it('a DIFFERENT sub never reads the first sub\'s photos — page-level identity scoping', async () => {
-    renderPage()
+    const first = renderPage()
     await findLoaded()
     await waitFor(() => {
       expect(cache.peek(cache.keyFor('sub-A', ATTACHED_PATH))?.data).toEqual(PHOTOS_A)
     })
+
+    // UNMOUNT before switching identity. Leaving the first tree mounted made this test flaky:
+    // its SWR revalidate was still in flight, so it resolved AFTER the fetch spy was swapped and
+    // committed sub-B's photos under sub-A's key — a race in the TEST, not in the app. It passed
+    // on a fast local run and failed in CI, where the suite takes ~8x longer.
+    first.unmount()
+    await act(async () => { await Promise.resolve() })
 
     identity.current = { user: { id: 'sub-B' }, profile: null, loading: false }
     apiFetchSpy.mockImplementation(url => {
