@@ -1,6 +1,6 @@
 // V4-MATURITYBASIS-001 — the "add transplant date" affordance that occupies the suppressed
 // Est.-harvest slot (design D3). Covers: low-key-not-headline rendering, the >=44px touch target
-// (Dave is Android/Chrome-only), the PATCH contract, the sow-date floor, and the in-place window
+// (Dave is Android/Chrome-only), the PUT contract, the sow-date floor, and the in-place window
 // correction that is the entire point of the prompt.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -49,7 +49,10 @@ describe('TransplantDatePrompt', () => {
     expect(screen.getByRole('dialog')).toBeTruthy()
   })
 
-  it('PATCHes the planting and reports the date back through onSaved', async () => {
+  it('PUTs the planting on the route the Lambda actually implements', async () => {
+    // Shipped as PATCH /api/plants/:id, which the Lambda does not route — it matches
+    // /^\/api\/plants\/([^/]+)$/ for GET/PUT/DELETE and 405s the rest, so Save failed every time.
+    // This pins the verb AND the route shape; a mocked fetch cannot notice a 405 on its own.
     const onSaved = vi.fn()
     render(<TransplantDatePrompt planting={PLANTING} onSaved={onSaved} />)
     openSheet()
@@ -58,10 +61,15 @@ describe('TransplantDatePrompt', () => {
     await waitFor(() => expect(apiFetchSpy).toHaveBeenCalled())
     const [path, opts] = apiFetchSpy.mock.calls[0]
     expect(path).toBe('/api/plants/plant-1')
-    expect(opts.method).toBe('PATCH')
-    expect(JSON.parse(opts.body)).toEqual({
-      transplanted_at: '2026-06-23', transplanted_at_approx: false,
-    })
+    // Single trailing segment: a /transplant-style suffix would fall past idMatch into the 405.
+    expect(path).toMatch(/^\/api\/plants\/[^/]+$/)
+    expect(opts.method).toBe('PUT')
+    // Exactly these two keys. The PUT SET-list is COALESCE(body.x, p.x) per column, so an omitted
+    // key preserves its column — but a key sent as null would be indistinguishable from omitted,
+    // and any extra key here would be a column this sheet has no business writing.
+    const body = JSON.parse(opts.body)
+    expect(Object.keys(body).sort()).toEqual(['transplanted_at', 'transplanted_at_approx'])
+    expect(body).toEqual({ transplanted_at: '2026-06-23', transplanted_at_approx: false })
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith({
       transplanted_at: '2026-06-23', transplanted_at_approx: false,
     }))

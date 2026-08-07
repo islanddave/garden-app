@@ -12,9 +12,12 @@
 // on an otherwise chrome-less button, so the affordance is thumb-sized on Android/Chrome without
 // gaining any visual weight.
 //
-// Saving PATCHes /api/plants/:id {transplanted_at} (the existing set-only lifecycle write path,
-// lambda/plants/index.js:352) and hands the date back through onSaved so the parent can patch its
-// record in place — the corrected window renders immediately, without a refetch round trip.
+// Saving PUTs /api/plants/:id {transplanted_at} and hands the date back through onSaved so the
+// parent can patch its record in place — the corrected window renders immediately, without a
+// refetch round trip. PUT, not PATCH: /api/plants/:id routes GET/PUT/DELETE only and 405s
+// everything else, and the PUT SET-list is COALESCE(body.x, p.x) per column, so a body carrying
+// only the two transplant keys sets those and preserves every other column. Omitting `status`
+// also keeps isStatusChange false, so a date save emits no status_change event.
 import React, { useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { useApiFetch } from '../../lib/api.js'
@@ -71,7 +74,7 @@ export default function TransplantDatePrompt({ planting, onSaved }) {
     setErr(null)
     try {
       await fetch(`/api/plants/${planting.id}`, {
-        method: 'PATCH',
+        method: 'PUT',
         // approx=false: this is a date the user just typed, not a CAL-8 estimate.
         body: JSON.stringify({ transplanted_at: date, transplanted_at_approx: false }),
       })

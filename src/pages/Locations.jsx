@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, LOCATION_TYPE_LABELS } from '../lib/constants.js'
@@ -122,10 +122,15 @@ export default function Locations() {
     }
   }
 
+  // PUT the collection route, not a /active sub-route: /api/locations/:id routes GET/PUT/DELETE
+  // only and 405s everything else. The PUT SET-list is COALESCE(body.x, x) per column and
+  // is_active is in it, so a body carrying only is_active flips it and preserves the rest — and a
+  // boolean false survives COALESCE, so this works in both directions.
   async function toggleActive(loc) {
+    setOpError(null)
     try {
-      await fetch('/api/locations/' + loc.id + '/active', {
-        method: 'PATCH',
+      await fetch('/api/locations/' + loc.id, {
+        method: 'PUT',
         body: JSON.stringify({ is_active: !loc.is_active }),
       })
       load()
