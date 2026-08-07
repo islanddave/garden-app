@@ -13,18 +13,16 @@
 // SpacePhotos.flagOn.test.jsx. Values mirror the shipped defaults so nothing else changes shape.
 import { describe, it, expect, vi } from 'vitest'
 
-vi.mock('../lib/featureFlags.js', () => ({
+// Converted from an ENUMERATED literal to the partial importOriginal form (the shape the
+// SpacePhotos and *.projhide suites already use). The enumerated form re-broke this file on every
+// new featureFlags export — it did so for PROJECTS_HIDDEN, again for SPACE_PHOTOS_ENABLED
+// (BottomNav.modeSwap.test.jsx:42 records both), and would have again for EVENT_REANCHOR_ENABLED.
+// The two flags this file actually pins are still stated explicitly; everything else now inherits
+// its shipped value instead of silently drifting from one.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   SPACE_PHOTOS_ENABLED: true,
   OVERLAY_ROUTES_ENABLED: true,
-  PROJECTS_HIDDEN: false,
-  CATCH_UP_EDITOR_SHIPPED: false,
-  IMAGE_LIST_CACHE_ENABLED: true,
-  PLANTING_REQUIRED_ENABLED: false,
-  SYSTEM_NOTIFICATIONS_ENABLED: false,
-  EVENTNEW_ADD_DETAILS_EXPANDED: false,
-  CARE_RAIN_CREDIT_ENABLED: false,
-  CARE_RAIN_MAXDAYS_ENABLED: false,
-  VARIETY_REF_UI_SHIPPED: false,
 }))
 
 import { renderRoutes } from '../App.jsx'

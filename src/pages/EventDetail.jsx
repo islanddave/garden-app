@@ -9,7 +9,7 @@ import { EVENT_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
-import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN, EVENT_REANCHOR_ENABLED } from '../lib/featureFlags.js'
 // BUG-HARVESTEDIT-001: the SAME constants the create form uses. The unit list also mirrors
 // harvest_log_unit_check in the database, so an option here that Postgres would reject cannot exist.
 import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
@@ -115,6 +115,19 @@ export default function EventDetail() {
         ? String(event.harvest.weight_grams) : '',
       // stored grams are canonical; the unit the user originally typed is not persisted
       harvest_weight_unit: 'g',
+      // BUG-EVENTEDITFIELDS-001 slice 2. These were creatable and not editable: the PUT never
+      // wrote them and, for the five treatment columns, the GET never even returned them. Seeded
+      // from the SAVED row so an unrelated edit round-trips them unchanged.
+      flagged_as_issue: event.flagged_as_issue === true,
+      severity:         event.severity ?? null,
+      treatment_product_text: event.treatment_product_text ?? '',
+      treatment_category:     event.treatment_category ?? '',
+      treatment_amount:       event.treatment_amount ?? '',
+      pest_target:            event.pest_target ?? '',
+      // slice 4: the re-anchor target. Seeded from the current anchor so "no change" is the
+      // default and an untouched form can never move the event.
+      plant_id:   event.plant_id ?? null,
+      project_id: event.project_id ?? null,
     })
     setSaveErr(null)
     setEditing(true)
@@ -157,6 +170,16 @@ export default function EventDetail() {
     setSaveErr(null)
     try {
       const eventDate = new Date(form.event_date + 'T12:00:00').toISOString()
+      // Derived from the RENDERED field set only. A key enters `clear` when the saved row held a
+      // value and the form is now empty — never merely because the key is absent from state.
+      const isTreatmentType = form.event_type === 'pest_treatment' || form.event_type === 'doctored'
+      const clearKeys = []
+      if (isTreatmentType) {
+        for (const k of ['treatment_product_text', 'treatment_category', 'treatment_amount', 'pest_target']) {
+          if (String(form[k] ?? '').trim() === '' && event[k] != null) clearKeys.push(k)
+        }
+      }
+
       const updated = await fetch('/api/events/' + eventId, {
         method: 'PUT',
         body: JSON.stringify({
@@ -167,6 +190,27 @@ export default function EventDetail() {
           private_notes: form.private_notes.trim() || null,
           quantity:      form.quantity.trim()       || null,
           is_public:     form.is_public,
+          // BUG-EVENTEDITFIELDS-001 slice 2 + 4. Built declaratively rather than as a hand-written
+          // literal: `clear` is derived ONLY from keys this form actually renders, and only when
+          // the field held a value before and is empty now. That is what stops the save from
+          // NULLing a column the form never showed — the mirror-image of the bug being fixed, and
+          // the failure mode the varieties editor avoids by driving render/seed/patch off one table.
+          flagged_as_issue: form.flagged_as_issue,
+          // Sent together with the flag: the server refuses a severity without it and clears the
+          // severity when the flag goes false, so the client must never construct the mismatch.
+          ...(form.flagged_as_issue ? { severity: form.severity } : {}),
+          ...(isTreatmentType ? {
+            treatment_product_text: form.treatment_product_text.trim() || null,
+            treatment_category:     form.treatment_category || null,
+            treatment_amount:       form.treatment_amount.trim() || null,
+            pest_target:            form.pest_target.trim() || null,
+          } : {}),
+          // slice 4, flag-gated. Absent when the flag is off, so the server's re-anchor path is
+          // never entered and EventDetail's save is byte-identical to before.
+          ...(EVENT_REANCHOR_ENABLED && form.plant_id !== (event.plant_id ?? null)
+            ? { plant_id: form.plant_id, project_id: form.project_id }
+            : {}),
+          ...(clearKeys.length ? { clear: clearKeys } : {}),
           // Sent ONLY for a harvest event. Absent means "don't touch harvest_log", which is what
           // keeps every non-harvest edit behaviourally identical to before this route existed.
           ...(isHarvest ? { harvest: {
@@ -363,6 +407,71 @@ export default function EventDetail() {
                 </p>
               )}
             </div>
+          )}
+
+          {/* BUG-EVENTEDITFIELDS-001 slice 2 — flag + severity. Previously SeverityBadge RENDERED
+              the severity and nothing could change it: the user could see the wrong urgency on a
+              flagged issue and had no way to correct it. 72 rows on prod were in that state. */}
+          <Field label="Flag as an issue" htmlFor="ev-flagged" style={{ marginBottom: 14 }}>
+            {/* No nested <label>: Field already renders one bound via htmlFor, and wrapping the
+                input in a second label makes the outer one non-labellable — the control becomes
+                unreachable by its accessible name. Caught by the a11y-shaped query in the test. */}
+            <input
+              id="ev-flagged"
+              type="checkbox"
+              checked={form.flagged_as_issue}
+              onChange={e => setForm(f => ({
+                ...f,
+                flagged_as_issue: e.target.checked,
+                // Un-flagging drops the severity in the same gesture, mirroring the server, so a
+                // stale value can never ride along into a request the server would refuse.
+                severity: e.target.checked ? (f.severity ?? 2) : null,
+              }))}
+            />
+          </Field>
+
+          {form.flagged_as_issue && (
+            <Field label="Severity *" htmlFor="ev-severity" style={{ marginBottom: 14 }}>
+              <Select
+                id="ev-severity"
+                value={form.severity ?? 2}
+                onChange={e => setForm(f => ({ ...f, severity: Number(e.target.value) }))}
+              >
+                <option value={1}>1 — minor</option>
+                <option value={2}>2 — moderate</option>
+                <option value={3}>3 — serious</option>
+              </Select>
+            </Field>
+          )}
+
+          {/* The five treatment columns, rendered only for the two types that own them — matching
+              the server's isTreatment gate exactly. Rendering them on other types would let the
+              form offer edits the server silently discards. */}
+          {(form.event_type === 'pest_treatment' || form.event_type === 'doctored') && (
+            <>
+              <Field label="Product (optional)" htmlFor="ev-treat-product" style={{ marginBottom: 14 }}>
+                <Input id="ev-treat-product" value={form.treatment_product_text}
+                  onChange={e => setForm(f => ({ ...f, treatment_product_text: e.target.value }))} />
+              </Field>
+              <Field label="Category (optional)" htmlFor="ev-treat-category" style={{ marginBottom: 14 }}>
+                <Select id="ev-treat-category" value={form.treatment_category}
+                  onChange={e => setForm(f => ({ ...f, treatment_category: e.target.value }))}>
+                  <option value="">—</option>
+                  <option value="fertilizer">Fertilizer</option>
+                  <option value="amendment">Amendment</option>
+                  <option value="pest_control">Pest control</option>
+                  <option value="other">Other</option>
+                </Select>
+              </Field>
+              <Field label="Amount (optional)" htmlFor="ev-treat-amount" style={{ marginBottom: 14 }}>
+                <Input id="ev-treat-amount" value={form.treatment_amount}
+                  onChange={e => setForm(f => ({ ...f, treatment_amount: e.target.value }))} />
+              </Field>
+              <Field label="Pest / target (optional)" htmlFor="ev-pest-target" style={{ marginBottom: 14 }}>
+                <Input id="ev-pest-target" value={form.pest_target}
+                  onChange={e => setForm(f => ({ ...f, pest_target: e.target.value }))} />
+              </Field>
+            </>
           )}
 
           <Field label="Notes (public)" htmlFor="ev-notes" style={{ marginBottom: 14 }}>
