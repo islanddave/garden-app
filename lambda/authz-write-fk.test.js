@@ -104,27 +104,34 @@ describe('V4-AUTHZSWEEP-001: ownership loaders bind the correct owner column', (
 // Each entry: the handler, the body field it accepts, and the loader that must gate it. Written as a
 // source scan because these are raw SQL handlers with no injectable seam — the same reason
 // household-isolation.test.js and wxcoverloc.test.js are static.
+// The 4th element is the EXACT number of gate call sites expected for that (handler, field).
+// Presence was not enough: the old assertion matched `if (...) ... loader(sql, body.X,` against the
+// whole file flattened to ONE line, so `.` spanned everything and the three tokens needed no
+// structural relationship at all. Neutering the LAST of two gates still passed; so did rewriting a
+// gate as `if (false && body.X != null)`; so did a synthetic `if (body.X != null) { logIt(); }`
+// paired with an unrelated later loader call. A count is what makes a removed gate visible — and a
+// removed gate is a live cross-household FK write plus a read leak through every JOINing surface.
 const SITES = [
-  ['plants/index.js', 'location_id', 'loadOwnedLocation'],
-  ['plants/index.js', 'parent_plant_id', 'loadOwnedPlantingRef'],
-  ['plants/index.js', 'source_inventory_item_id', 'loadOwnedInventoryItem'],
-  ['inventory-items/index.js', 'location_id', 'loadOwnedLocation'],
-  ['projects/index.js', 'location_id', 'loadOwnedLocation'],
+  ['plants/index.js', 'location_id', 'loadOwnedLocation', 2],
+  ['plants/index.js', 'parent_plant_id', 'loadOwnedPlantingRef', 2],
+  ['plants/index.js', 'source_inventory_item_id', 'loadOwnedInventoryItem', 2],
+  ['inventory-items/index.js', 'location_id', 'loadOwnedLocation', 2],
+  ['projects/index.js', 'location_id', 'loadOwnedLocation', 2],
   // V4-SPACEPHOTO-001: photos.space_id is attachable from the POST body, and the ?space_id gallery
   // reads back by it — an ungated attach is a live cross-household READ, not just a bad FK.
-  ['photos/index.js', 'space_id', 'loadOwnedSpace'],
+  ['photos/index.js', 'space_id', 'loadOwnedSpace', 1],
   // BUG-PARENTOWN-001 — the PARENT-id half of the same class, and the reason this table is the
   // enforcement mechanism rather than documentation: the V4-AUTHZSWEEP-001 pass gated the three
   // plants PUT columns above and left every POST column, the whole photos parent set, and
   // succession_group_id (settable on BOTH verbs) out of the table entirely, so nothing failed when
   // they stayed open. Adding a row here is now part of adding a body-settable FK.
-  ['plants/index.js', 'project_id', 'loadOwnedProject'],
-  ['plants/index.js', 'succession_group_id', 'loadOwnedPlantingRef'],
-  ['photos/index.js', 'project_id', 'loadOwnedProject'],
-  ['photos/index.js', 'plant_id', 'loadOwnedPlantingRef'],
-  ['photos/index.js', 'event_id', 'loadOwnedEvent'],
-  ['photos/index.js', 'location_id', 'loadOwnedLocation'],
-  ['photos/index.js', 'inventory_item_id', 'loadOwnedInventoryItem'],
+  ['plants/index.js', 'project_id', 'loadOwnedProject', 1],
+  ['plants/index.js', 'succession_group_id', 'loadOwnedPlantingRef', 2],
+  ['photos/index.js', 'project_id', 'loadOwnedProject', 2],
+  ['photos/index.js', 'plant_id', 'loadOwnedPlantingRef', 2],
+  ['photos/index.js', 'event_id', 'loadOwnedEvent', 1],
+  ['photos/index.js', 'location_id', 'loadOwnedLocation', 2],
+  ['photos/index.js', 'inventory_item_id', 'loadOwnedInventoryItem', 1],
 ];
 // Which module each loader is imported from. Two homes today; authz-parents.js is a temporary one
 // (see its header) and collapses into household.js in the consolidating sweep — at which point this
@@ -139,11 +146,121 @@ const LOADER_MODULE = {
   loadOwnedEvent: './authz-parents.js',
 };
 
+
+// ── THE ENUMERATION RATCHET (BUG-AUTHZFKENUM-001) ───────────────────────────────────────────────
+//
+// SITES is a HAND-MAINTAINED list, and its own comment says "Adding a row here is now part of
+// adding a body-settable FK". Nothing enforced that. Measured 2026-08-07: SITES covers 13 of the
+// **50** distinct (handler, body.*_id) pairs on disk. The other 37 are invisible to this file —
+// not necessarily unsafe, but not seen by the guard that exists to see them, which is the same
+// fail-open-and-silent shape as an unlisted file producing no test.
+//
+// This does NOT claim the 37 are safe. Several are gated inline by predicates this file cannot
+// recognise (locations::parent_id, critter::plant_id, plants::featured_photo_id, and the
+// preservation pair this sweep's header records as already closed); several are plausibly not
+// household-owned at all (variety_id / cultivar_id / species_id are shared vocabulary; session_id
+// / flow_id / op_id are self-owned analytics ids). NONE of them has been audited BY THIS FILE, and
+// writing a per-entry verdict I had not actually derived would be the rubber stamp this codebase
+// keeps getting burned by. Their audit is owned by BUG-AUTHZFKENUM-001.
+//
+// What this ratchet DOES do, and it is the part that matters going forward: it closes the SET. A
+// NEW body.*_id on any handler fails this test until someone puts it in SITES with a gate count or
+// adds it below with a reason. That is exactly the hole through which BUG-PARENTOWN-001 arrived —
+// the V4-AUTHZSWEEP-001 pass gated three plants PUT columns and left every POST column and the
+// whole photos parent set out of the table, so nothing failed when they stayed open.
+const NOT_IN_SITES = [
+  'app-events::session_id',
+  'critter::plant_id',
+  'critter::source_event_id',
+  'critter::species_id',
+  'events::location_id',
+  'events::plant_id',
+  'events::project_id',
+  'events::treatment_product_id',
+  'favorites::entity_id',
+  'inventory-items::featured_image_id',
+  'inventory-items::featured_photo_id',
+  'inventory-items::variety_id',
+  'locations::featured_photo_id',
+  'locations::parent_id',
+  'photos::photo_id',
+  'plants::assignee_user_id',
+  'plants::featured_photo_id',
+  'plants::variety_id',
+  'preservation::harvest_log_id',
+  'preservation::photo_id',
+  'preservation::plant_id',
+  'preservation::storage_location_id',
+  'preservation::variety_id',
+  'projects::assignee_user_id',
+  'projects::featured_photo_id',
+  'projects::new_parent_id',
+  'projects::op_id',
+  'projects::parent_project_id',
+  'projects::source_op_id',
+  'tags::cultivar_id',
+  'tags::entity_id',
+  'tags::into_id',
+  'tags::tag_id',
+  'ux-events::flow_id',
+  'ux-events::session_id',
+  'varieties::photo_id',
+  'varieties::source_proj_rescope_project_id',
+];
+
+describe('BUG-AUTHZFKENUM-001: every body.*_id on disk is either gated or explicitly known', () => {
+  const pairsOnDisk = () => {
+    const dirs = readdirSync(here, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && existsSync(join(here, e.name, 'index.js')))
+      .map((e) => e.name).sort();
+    const out = [];
+    for (const d of dirs) {
+      const src = readFileSync(join(here, d, 'index.js'), 'utf8');
+      const fields = new Set([...src.matchAll(/\bbody\.([A-Za-z_][A-Za-z0-9_]*_id)\b/g)].map((m) => m[1]));
+      for (const f of [...fields].sort()) out.push(`${d}::${f}`);
+    }
+    return out;
+  };
+
+  it('the sweep finds the handler fleet (guards against an empty walk)', () => {
+    // Without this the two assertions below pass vacuously the moment the walk or the regex breaks.
+    expect(pairsOnDisk().length).toBeGreaterThanOrEqual(40);
+  });
+
+  it('no body.*_id exists that is neither in SITES nor explicitly listed', () => {
+    const known = new Set([
+      ...SITES.map(([file, field]) => `${file.replace('/index.js', '')}::${field}`),
+      ...NOT_IN_SITES,
+    ]);
+    const unknown = pairsOnDisk().filter((p) => !known.has(p));
+    expect(unknown,
+      'a body-settable FK appeared with no ownership decision recorded. Either add it to SITES ' +
+      'with its gate count, or add it to NOT_IN_SITES — and if you add it there, say why in the ' +
+      'BUG-AUTHZFKENUM-001 audit rather than only here.').toEqual([]);
+  });
+
+  it('nothing in NOT_IN_SITES has since been gated and left stale', () => {
+    // The mirror of the EXEMPT-staleness rule in clear-channel-coverage.test.js: an entry that has
+    // since been added to SITES would sit here forever pre-authorising a pair that is now covered.
+    const inSites = new Set(SITES.map(([file, field]) => `${file.replace('/index.js', '')}::${field}`));
+    expect(NOT_IN_SITES.filter((p) => inSites.has(p))).toEqual([]);
+  });
+});
+
 describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a loader', () => {
-  for (const [file, field, loader] of SITES) {
-    it(`${file} gates body.${field} with ${loader}`, () => {
-      const src = readFileSync(join(here, file), 'utf8').replace(/\s+/g, ' ');
-      expect(src).toMatch(new RegExp(`if \\(.*body\\.${field} != null\\).*?${loader}\\(sql, body\\.${field},`));
+  for (const [file, field, loader, gates] of SITES) {
+    it(`${file} gates body.${field} with ${loader} at ${gates} site(s)`, () => {
+      const src = readFileSync(join(here, file), 'utf8');
+      // Anchored on the GATE ITSELF — `!await loader(sql, body.X,` — not on a loose three-token
+      // sequence spanning the file. The negation matters: it is what makes the call a gate rather
+      // than a lookup, and it sits immediately beside the field it protects.
+      const re = new RegExp(`!\\s*await\\s+${loader}\\s*\\(\\s*sql\\s*,\\s*body\\.${field}\\s*,`, 'g');
+      const found = (src.match(re) || []).length;
+      expect(found,
+        `expected ${gates} ownership gate(s) on body.${field} in ${file}, found ${found}. ` +
+        'A verb that can set this FK without a gate is a cross-household write AND a read leak ' +
+        'through every surface that JOINs the referenced row. If a verb legitimately stopped ' +
+        'accepting this field, lower the count in SITES deliberately.').toBe(gates);
     });
   }
 
