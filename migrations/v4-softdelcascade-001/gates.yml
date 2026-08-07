@@ -1,0 +1,355 @@
+# gates.yml
+# V4-SOFTDELCASCADE-001 — the CONTAINER delete axis left on CASCADE by BUG-EVTANCHORDEL-001.
+#
+# SEQUENCING (load-bearing — read before applying anything):
+#   0a-additive-ddl.sql  — widens the EVTANCHORDEL cold store with archived_project_id and adds
+#                          archive_container_events(). Purely additive; no row data touched. MUST be
+#                          applied BEFORE 0c, because 0c's RESTRICT is only operable if the escape
+#                          hatch exists. Applying 0c first leaves an operator with a blocked delete
+#                          and no supported way through.
+#   0c-constraint.sql    — flips three FKs CASCADE -> RESTRICT. THE FIX.
+#
+# DEPLOY BOUNDARY — the falsifiable test, answered per constraint.
+#   QUESTION: would the CURRENTLY DEPLOYED prod code perform an operation this RESTRICT rejects?
+#   METHOD: the live deployed Lambda bundles were downloaded (aws lambda get-function Code.Location)
+#   for garden-projects, garden-events, garden-plants, garden-photos, garden-harvests and grepped for
+#   `DELETE FROM`. This is the deployed artifact, not the branch in hand.
+#   RESULT: the only `DELETE FROM` in the deployed bundles are `DELETE FROM favorites` (unrelated), a
+#   source COMMENT predicting this ticket, and an assertion STRING forbidding the thing. Zero
+#   deployed writers hard-delete plant_projects, event_log, photos or harvest_log.
+#   ANSWER: NO — for event_log.project_id, for photos.project_id and for photos.event_id alike.
+#   0c changes only the referential action on a parent DELETE; INSERT and UPDATE are untouched, so
+#   no deployed writer's behaviour changes. There is NO writer coupling with the deployed artifact,
+#   and therefore NO pre-deploy/post-deploy split: this ships as one file.
+#
+#   The old writers that DO break are non-app and CI-only, and must land BEFORE 0c reaches the
+#   environment they run against:
+#     1. .github/workflows/deploy-staging.yml smoke purge — deletes event_log (lines 560, 562) BEFORE
+#        photos (line 569), and the photos sweep covers plant_id/location_id/project_id but NOT
+#        event_id. Under flip 3 a smoke photo hanging off a smoke event refuses the event delete and
+#        ON_ERROR_STOP=1 reds the deploy. 0-row no-op against staging today (verified live: zero
+#        smoke photos carry an event_id, zero smoke residue rows), so it is latent, not firing.
+#     2. tests/integration/** teardowns — audited file by file against all three flips. NONE breaks
+#        today. Three are green by property rather than by construction; see README §Required
+#        companion edits. Note that .github/workflows/integration-test.yml branches CI off STAGING
+#        and applies no migrations, so staging apply arms CI on the very next run — there is no
+#        separate window in which to stage the test fixes.
+#   Applying 0c to an environment whose purge has not been reordered reds the next staging deploy.
+#   It cannot corrupt data — RESTRICT only ever refuses.
+#
+# ORDER APPLIED:
+#   NOTHING IS APPLIED. This migration was authored, parse-verified and gate-validated only; no DDL
+#   has been executed against prod or staging. See README.md §Runbook.
+#
+# NO GATE HERE IS MARKED `continuous: true`, deliberately. gate-invariants.yml runs
+# `--phase post --continuous-only` against LIVE prod and staging on a schedule; marking the
+# "constraint is armed" gates continuous before the migration is applied would report a standing
+# failure for a migration that has not run. Zero gates repo-wide use the flag today. Promoting the
+# durable invariants below to continuous is a deliberate follow-up AFTER prod apply, not part of this
+# change.
+#
+# Both `pre` blocks assert the CURRENT (broken) state, so a re-run against an already-migrated
+# database fails the pre-gate rather than silently re-applying.
+
+pre:
+  # The defect itself, asserted rather than assumed. If this returns fewer than 3, the migration has
+  # already been applied (or the schema is not what was surveyed) — stop and re-survey.
+  - name: pre_three_container_fks_are_cascade
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('event_log_project_id_fkey','photos_project_id_fkey','photos_event_id_fkey')
+         AND confdeltype = 'c'
+    expect: rowcount_eq
+    value: 3
+
+  # The premise of the whole ticket: the PLANTING axis is already hardened, so this is finishing a
+  # job rather than starting one. If these are not RESTRICT, EVTANCHORDEL has been rolled back and
+  # this migration is answering the wrong question.
+  - name: pre_evtanchordel_plant_axis_already_restrict
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('event_log_plant_id_fkey','photos_plant_id_fkey','photos_location_id_fkey')
+         AND confdeltype = 'r'
+    expect: rowcount_eq
+    value: 3
+
+  # 0a extends EVTANCHORDEL's cold store rather than inventing a parallel one, so that store must
+  # already exist. Applying this migration to a database without it is a sequencing error.
+  - name: pre_evtanchordel_archive_substrate_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name IN ('event_log_archive','harvest_log_archive')
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_archive_plant_events_present
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'archive_plant_events'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_archive_container_events_absent
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'archive_container_events'
+    expect: rowcount_eq
+    value: 0
+
+  # 0a arms event_log_archive_has_provenance over existing rows. Both tables must be EMPTY for that
+  # to be unconditionally safe. If either is non-empty, stop: the CHECK is still satisfied by
+  # archive_plant_events()' output (archived_plant_id is always set), but that has to be confirmed
+  # rather than assumed. This is the in-database form of "arming a constraint is a deploy".
+  - name: pre_archive_tables_empty_before_check_is_armed
+    sql: |
+      SELECT 1 FROM public.event_log_archive
+      UNION ALL
+      SELECT 1 FROM public.harvest_log_archive
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # L-058: every predicate the constraint is about to enforce must ALREADY hold. RESTRICT can only be
+  # added if every existing child value resolves to a live parent — this is the scan the ALTER
+  # performs, run first so a mid-ALTER failure becomes a clean pre-apply stop.
+  #
+  # DELIBERATELY UNFILTERED. No `deleted_at IS NULL` anywhere below: a foreign key does not know what
+  # a soft delete is. A row pointing at a soft-deleted parent still satisfies the FK; a row pointing
+  # at a row that is GONE does not. Filtering by deleted_at here would hide exactly the rows that
+  # break the ALTER.
+  - name: sweep_no_dangling_event_project_refs
+    sql: |
+      SELECT 1 FROM public.event_log e
+       WHERE e.project_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.plant_projects p WHERE p.id = e.project_id)
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_no_dangling_photo_project_refs
+    sql: |
+      SELECT 1 FROM public.photos ph
+       WHERE ph.project_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.plant_projects p WHERE p.id = ph.project_id)
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_no_dangling_photo_event_refs
+    sql: |
+      SELECT 1 FROM public.photos ph
+       WHERE ph.event_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.event_log e WHERE e.id = ph.event_id)
+    expect: rowcount_eq
+    value: 0
+
+  # INFORMATIONAL CAPTURE (rowcount_gte: 0 — always passes, still runs, still reports). The blast
+  # radius this migration closes, recorded at apply time so the before/after is on the record rather
+  # than in a commit message. Asserting a specific count here would be an environment-specific
+  # assertion that fails on staging for no reason.
+  - name: sweep_capture_unprotected_containers
+    note: >
+      Containers whose hard delete is refused by NOTHING today. A container is incidentally protected
+      only if a harvest_log row (project_id or event_id, both already RESTRICT) or a
+      cultivar_weight_sample (NO ACTION) happens to block it. Prod at authoring time: 76 containers
+      with events, 27 incidentally protected, 49 unprotected, 2432 events one DELETE away.
+    sql: |
+      WITH ev AS (
+        SELECT project_id, array_agg(id) AS ids, count(*) AS n_events
+          FROM public.event_log WHERE project_id IS NOT NULL GROUP BY project_id
+      ), blocked AS (
+        SELECT e.project_id
+          FROM ev e
+         WHERE EXISTS (SELECT 1 FROM public.harvest_log h WHERE h.project_id = e.project_id)
+            OR EXISTS (SELECT 1 FROM public.harvest_log h WHERE h.event_id = ANY(e.ids))
+            OR EXISTS (SELECT 1 FROM public.cultivar_weight_sample s
+                        WHERE s.source_event_id = ANY(e.ids))
+      )
+      SELECT e.project_id, e.n_events
+        FROM ev e
+       WHERE e.project_id NOT IN (SELECT project_id FROM blocked)
+    expect: rowcount_gte
+    value: 0
+
+  # INFORMATIONAL CAPTURE. Photos whose ONLY parent is the container or the event — the rows for
+  # which archive_container_events() must RAISE rather than detach, because detaching would violate
+  # photos_must_have_parent. Prod at authoring time: 10 project-only, 0 event-only. Not an assertion:
+  # their existence is legitimate, it just means those containers need operator action first.
+  - name: sweep_capture_photos_with_a_single_dying_parent
+    sql: |
+      SELECT ph.id, ph.project_id, ph.event_id
+        FROM public.photos ph
+       WHERE ph.plant_id IS NULL AND ph.location_id IS NULL
+         AND ph.inventory_item_id IS NULL AND ph.space_id IS NULL
+         AND COALESCE(ph.intake_status = 'pending_tag', false) = false
+         AND ((ph.project_id IS NOT NULL AND ph.event_id IS NULL)
+              OR (ph.event_id IS NOT NULL AND ph.project_id IS NULL))
+    expect: rowcount_gte
+    value: 0
+
+  # The skew archive_container_events()' Guard 2 exists to catch, checked BEFORE apply rather than
+  # discovered inside the function. A harvest_log row anchored to one container whose event belongs
+  # to another cannot be archived by container without stranding detail off a surviving event. Zero
+  # in prod (harvest_log.project_id is non-null and always equals its event's project_id).
+  - name: sweep_no_harvest_log_container_skew
+    sql: |
+      SELECT 1 FROM public.harvest_log h
+        JOIN public.event_log e ON e.id = h.event_id
+       WHERE h.project_id IS DISTINCT FROM e.project_id
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_three_container_fks_are_restrict
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('event_log_project_id_fkey','photos_project_id_fkey','photos_event_id_fkey')
+         AND confdeltype = 'r'
+    expect: rowcount_eq
+    value: 3
+
+  # THE CLASS GATE. The reported finding was three instances; this asserts the whole class is empty.
+  # No FK carrying USER HISTORY may be ON DELETE CASCADE. "History" is enumerated rather than
+  # inferred: event_log, photos, harvest_log and preservation_log are the four tables that record
+  # something the user did or observed and that cannot be recomputed from anything else.
+  # container_closure, entity_memory and inactive_project_dismissals are deliberately NOT in the list
+  # — they are derived caches, and cascading them is correct.
+  - name: post_no_cascade_fk_out_of_a_user_history_table
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid AND t.relkind = 'r'
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE c.contype = 'f'
+         AND c.confdeltype = 'c'
+         AND t.relname IN ('event_log','photos','harvest_log','preservation_log')
+    expect: rowcount_eq
+    value: 0
+
+  # The fix must not have been "achieved" by relaxing the invariant next door. EVTANCHORDEL's anchor
+  # CHECK and the photos parent CHECK both survive this migration untouched.
+  - name: post_anchor_checks_survive
+    sql: |
+      SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+       WHERE t.relkind = 'r' AND c.contype = 'c'
+         AND c.conname IN ('event_log_has_anchor','photos_must_have_parent')
+    expect: rowcount_eq
+    value: 2
+
+  # And the planting axis this migration completes is still armed. A green run with EVTANCHORDEL
+  # reverted would mean the two axes disagree again.
+  - name: post_plant_axis_still_restrict
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('event_log_plant_id_fkey','photos_plant_id_fkey','photos_location_id_fkey')
+         AND confdeltype = 'r'
+    expect: rowcount_eq
+    value: 3
+
+  # NO ROW WAS TOUCHED. This migration is constraint-and-function only. These are structural
+  # invariants rather than absolute counts, so they stay true as the garden grows.
+  - name: post_no_anchorless_events_introduced
+    sql: |
+      SELECT 1 FROM public.event_log WHERE plant_id IS NULL AND project_id IS NULL
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_parentless_photos_introduced
+    sql: |
+      SELECT 1 FROM public.photos ph
+       WHERE ph.event_id IS NULL AND ph.project_id IS NULL AND ph.location_id IS NULL
+         AND ph.plant_id IS NULL AND ph.inventory_item_id IS NULL AND ph.space_id IS NULL
+         AND COALESCE(ph.intake_status = 'pending_tag', false) = false
+    expect: rowcount_eq
+    value: 0
+
+  # ── 0a substrate ────────────────────────────────────────────────────────────────────────────
+  - name: post_archive_container_events_exists
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'archive_container_events'
+    expect: rowcount_eq
+    value: 1
+
+  # The escape hatch for the OTHER axis must still be there. Both are needed: a container and a
+  # planting are independent delete targets.
+  - name: post_both_archive_functions_exist
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+         AND p.proname IN ('archive_plant_events','archive_container_events')
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_archive_provenance_columns_exist
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name IN ('event_log_archive','harvest_log_archive')
+         AND column_name = 'archived_project_id'
+    expect: rowcount_eq
+    value: 2
+
+  # The relaxation and the CHECK are a PAIR: archived_plant_id may now be NULL only because
+  # archived_project_id can carry the provenance instead. Asserting the nullability alone would pass
+  # in the state where the CHECK was dropped and provenance can silently go missing entirely.
+  - name: post_archived_plant_id_is_nullable
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name IN ('event_log_archive','harvest_log_archive')
+         AND column_name = 'archived_plant_id'
+         AND is_nullable = 'YES'
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_archive_provenance_check_armed
+    sql: |
+      SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+       WHERE c.contype = 'c'
+         AND c.conname IN ('event_log_archive_has_provenance','harvest_log_archive_has_provenance')
+         AND c.convalidated
+    expect: rowcount_eq
+    value: 2
+
+  # The archive must NOT re-create the coupling this migration removes: no FK on it. An FK would make
+  # the cold store refuse the very rows it exists to hold.
+  - name: post_archive_has_no_foreign_keys
+    sql: |
+      SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+       WHERE t.relname IN ('event_log_archive','harvest_log_archive') AND c.contype = 'f'
+    expect: rowcount_eq
+    value: 0
+
+  # Nothing in this migration calls archive_container_events(). A non-zero count straight after apply
+  # means something ran it during the migration window. Re-runnable later only as an informational
+  # note; on apply day it is an assertion.
+  - name: post_archive_is_empty_on_apply
+    sql: |
+      SELECT 1 FROM public.event_log_archive
+      UNION ALL
+      SELECT 1 FROM public.harvest_log_archive
+    expect: rowcount_eq
+    value: 0
+
+  # NO NEW TRIGGERS. scripts/restore-verify.py builds a table:trigger:function inventory and hard-
+  # fails on prod-vs-restore drift. This migration deliberately adds none — the fix is a constraint
+  # action and a function, not a trigger — so that inventory is unchanged and needs no fixture
+  # update. If this ever returns > 0, restore-verify must be revisited in the same commit.
+  - name: post_no_new_triggers_on_touched_tables
+    sql: |
+      SELECT 1 FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid
+       WHERE NOT g.tgisinternal
+         AND t.relname IN ('event_log','photos','plant_projects','harvest_log',
+                           'event_log_archive','harvest_log_archive')
+         AND g.tgname NOT IN ('set_updated_at','prevent_ownership_transfer','container_bump',
+                              'container_closure_after_ins','container_reparent_after',
+                              'trg_delete_entity_tags_project')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version IN ('4.23.2-softdelcascade-001','4.23.2-softdelcascade-001-archive')
+    expect: rowcount_eq
+    value: 2
