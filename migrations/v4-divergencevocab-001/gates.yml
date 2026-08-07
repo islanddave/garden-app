@@ -1,0 +1,176 @@
+# gates.yml
+# BUG-DIVERGENCEVOCAB-001 — plants.divergence_type vocabulary reconciliation.
+#
+# ── SEQUENCING. A DEPLOY BOUNDARY SITS BETWEEN THE TWO FILES. ────────────────────────────────────
+#   pre     gates below           state capture; nothing is asserted about a column that may not
+#                                 exist yet in a fresh environment.
+#   0a      0a-additive-ddl.sql   records divergence_type + plants_divergence_type_check (NOT VALID
+#                                 when newly created) + parent_plant_id FK + lineage_note in-repo
+#                                 for the first time. No-op on prod/staging. NOTHING IS ARMED.
+#   DEPLOY  garden-plants Lambda  carrying the reconciled ALLOWED_DIVERGENCE.
+#   sweep   gates below           AUTHORISES 0c. Includes the manual deployed-artifact gate, which
+#                                 is the actual deploy boundary.
+#   0c      0c-validate.sql       arms/VALIDATEs the constraint.
+#   post    gates below
+#
+# ── WHY THE BOUNDARY IS REAL EVEN THOUGH THIS INSTANCE IS SAFE ──────────────────────────────────
+# Arming a CHECK is a deploy, not a migration (2026-08-03 prod harvest outage: 23514 on every save
+# after a CHECK was validated ahead of the deployed writer). Here the window is empty, because the
+# OLD deployed Lambda's allowlist was mutation/cross/selection/unknown and the CHECK rejects all
+# four -- it has never written the column and cannot produce a violating row. That is a fact about
+# this particular swap, verified against the live databases, NOT a general exemption, so the
+# ordering and the manual gate stay.
+#
+# ── WHAT IS AND IS NOT CHANGING ─────────────────────────────────────────────────────────────────
+# The SCHEMA does not move. prod and staging already carry
+#   CHECK (divergence_type = ANY (ARRAY['division','cutting','saved_seed_from']) OR IS NULL)
+# convalidated = t, and that is the DESIGNED vocabulary (proj-rescope-plan V102 §4.1: "parent_plant_id
+# (narrow semantics: divergence only)", schema map line 54 "narrow: division/cutting/saved-seed").
+# The defect is the Lambda allowlist, fixed in lambda/plants/index.js. This migration exists to give
+# that vocabulary a machine-readable home -- the V1.2a-4 S1 hand-apply never produced a migration
+# file (garden-app-fullstack-audit-20260723.md §M5) -- so lambda/plants/divergence-enum.test.js can
+# parse it and red CI on any future drift.
+#
+# ── SWEEPS ARE FULL-TABLE ───────────────────────────────────────────────────────────────────────
+# Every violator sweep below omits `deleted_at IS NULL` on purpose. VALIDATE CONSTRAINT scans the
+# heap; a soft-deleted row violates just as hard as a live one. A live-rows-only sweep is how a
+# green pre-check turns into a red VALIDATE.
+#
+# ── MEASURED STATE, 2026-08-06 (read-only) ──────────────────────────────────────────────────────
+#   prod    303 rows total / 270 live · divergence_type non-NULL: 0 · parent_plant_id non-NULL: 1
+#   staging  22 rows total             · divergence_type non-NULL: 0
+#   Both: plants_divergence_type_check present, canonical predicate, convalidated = t.
+#
+# ── NOT CI-WIRED ────────────────────────────────────────────────────────────────────────────────
+# Nothing under .github/workflows runs gates.yml; these are run by hand via
+# scripts/gate_runner.py. The CI coverage for this change is lambda/plants/divergence-enum.test.js
+# (the drift guard, parses 0a-additive-ddl.sql) and the divergence case in
+# tests/integration/plants.int.test.js, which exercises a real round-trip against a real database.
+
+pre:
+  # State capture, not an assertion: on prod/staging this returns 1, on a fresh replay 0. Both are
+  # legitimate starting states for 0a, which is why this cannot be rowcount_eq.
+  - name: pre_divergence_column_state
+    sql: |
+      SELECT column_name, data_type, is_nullable
+        FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'plants'
+         AND column_name = 'divergence_type'
+    expect: rowcount_gte
+    value: 0
+    note: informational capture rather than an assertion - always passes, value read from --json
+
+  # Same shape. Expect 1 row with convalidated=t on prod/staging, 0 rows on a fresh replay.
+  - name: pre_divergence_constraint_state
+    sql: |
+      SELECT conname, pg_get_constraintdef(oid) AS def, convalidated
+        FROM pg_constraint
+       WHERE conname = 'plants_divergence_type_check'
+    expect: rowcount_gte
+    value: 0
+    note: informational capture rather than an assertion - always passes, value read from --json
+
+sweep:
+  # 0a must have run. Named explicitly so a missing column fails here with its own name rather than
+  # as a raw 42703 inside a later gate.
+  - name: sweep_divergence_column_exists
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'plants'
+         AND column_name = 'divergence_type'
+    expect: rowcount_eq
+    value: 1
+
+  # THE VOCABULARY ASSERTION. The constraint must encode the canonical three AND must not carry any
+  # member of the dead Lambda set. An environment that armed mutation/cross/selection instead would
+  # otherwise sail through every other gate here.
+  - name: sweep_constraint_encodes_canonical_vocabulary
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'plants_divergence_type_check'
+         AND pg_get_constraintdef(oid) LIKE '%''division''%'
+         AND pg_get_constraintdef(oid) LIKE '%''cutting''%'
+         AND pg_get_constraintdef(oid) LIKE '%''saved_seed_from''%'
+         AND pg_get_constraintdef(oid) NOT LIKE '%mutation%'
+         AND pg_get_constraintdef(oid) NOT LIKE '%selection%'
+    expect: rowcount_eq
+    value: 1
+
+  # L-058. The predicate 0c is about to enforce must ALREADY hold, over every row in the heap.
+  # No deleted_at filter - see the header.
+  - name: sweep_full_table_has_no_violating_row
+    sql: |
+      SELECT 1 FROM public.plants
+       WHERE divergence_type IS NOT NULL
+         AND divergence_type NOT IN ('division', 'cutting', 'saved_seed_from')
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_schema_version_0a_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.24.0-divergencevocab-001'
+    expect: rowcount_eq
+    value: 1
+
+  # THE DEPLOY BOUNDARY. No SQL can answer this - it is a property of the running artifact, which is
+  # exactly why the 2026-08-03 outage was possible.
+  - name: pre_deployed_writer_emits_canonical_vocabulary
+    manual: true
+    note: >
+      BLOCKS 0c-validate.sql. Read ALLOWED_DIVERGENCE out of the DEPLOYED garden-plants Lambda code
+      (aws lambda get-function / the deployed artifact), NOT out of this working tree, and confirm
+      BOTH occurrences (POST path and PUT path) are exactly division, cutting, saved_seed_from.
+      Confirm no other deployed service writes plants.divergence_type. If any deployed writer can
+      still emit mutation, cross, selection or unknown, DO NOT RUN 0c - deploy first. This is a
+      precondition on the artifact, never on a date.
+
+post:
+  - name: post_divergence_constraint_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint WHERE conname = 'plants_divergence_type_check'
+    expect: scalar_eq
+    value: true
+
+  - name: post_parent_fk_validated
+    sql: |
+      SELECT convalidated FROM pg_constraint WHERE conname = 'plants_parent_plant_id_fkey'
+    expect: scalar_eq
+    value: true
+
+  # The sweep query, after. Whatever it counted must still be 0.
+  - name: post_full_table_has_no_violating_row
+    sql: |
+      SELECT 1 FROM public.plants
+       WHERE divergence_type IS NOT NULL
+         AND divergence_type NOT IN ('division', 'cutting', 'saved_seed_from')
+    expect: rowcount_eq
+    value: 0
+
+  # THE DEFECT, NAMED. No row may carry a member of the dead Lambda vocabulary. Distinct from the
+  # gate above only in intent: that one asserts the constraint holds, this one asserts the specific
+  # values BUG-DIVERGENCEVOCAB-001 was about never reached the table.
+  - name: post_dead_lambda_vocabulary_absent_from_data
+    sql: |
+      SELECT 1 FROM public.plants
+       WHERE divergence_type IN ('mutation', 'cross', 'selection', 'unknown')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_schema_version_0c_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '4.24.1-divergencevocab-001-validate'
+    expect: rowcount_eq
+    value: 1
+
+  # Every lineage edge that carries a divergence_type must actually have a parent to diverge FROM.
+  # divergence_type TYPES THE PARENT EDGE (V102 schema map line 54); a value with no
+  # parent_plant_id is meaningless. Stated as a gate rather than a CHECK because it is a new
+  # invariant over a feature that has never been writable, and adding an unproven CHECK is how the
+  # last outage started. Promote it to a constraint once the feature has real rows.
+  - name: post_divergence_type_never_without_a_parent
+    sql: |
+      SELECT 1 FROM public.plants
+       WHERE divergence_type IS NOT NULL AND parent_plant_id IS NULL
+    expect: rowcount_eq
+    value: 0

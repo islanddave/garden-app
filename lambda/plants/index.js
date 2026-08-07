@@ -274,7 +274,19 @@ export const handler = async (event) => {
         // lifecycle/source/lineage fields. Mirrors DB CHECK constraints; NULL allowed.
         const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
         // V4-SOURCEFREE-001: source_type is free-text (like event_type). No server allowlist; DB CHECK dropped. UI dropdownRegistry is the single source of truth.
-        const ALLOWED_DIVERGENCE = ['mutation', 'cross', 'selection', 'unknown'];
+        // V4-SOURCEFREE-001: source_type is free-text (like event_type). No server allowlist; DB CHECK dropped. UI dropdownRegistry is the single source of truth.
+        // BUG-DIVERGENCEVOCAB-001: this list had ZERO overlap with plants_divergence_type_check
+        // ('division','cutting','saved_seed_from'), so every value this allowlist admitted the DB
+        // rejected 23514 -> 400 and the field was unwritable in both directions from V1.2a-4 S1
+        // (commit a265aa6, whose comment claimed to mirror the CHECK) until 2026-08-06. The DB set
+        // is canonical: divergence_type TYPES THE PARENT EDGE — given parent_plant_id, how this
+        // planting was propagated OFF that parent (proj-rescope-plan V102 §4.1 "parent_plant_id
+        // (narrow semantics: divergence only)", schema map "narrow: division/cutting/saved-seed").
+        // The old mutation/cross/selection set is breeding-genetics vocabulary, which V102 defers to
+        // V4 BREEDING-LINES; lineage_note is the interim free-text hatch. No 'unknown' member —
+        // NULL already means "not recorded". Canonical source: migrations/v4-divergencevocab-001/
+        // 0a-additive-ddl.sql; lambda/plants/divergence-enum.test.js parses it and fails on drift.
+        const ALLOWED_DIVERGENCE = ['division', 'cutting', 'saved_seed_from'];
         const ALLOWED_CONTAINER = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','trough','whiskey_barrel','soil_block','solo_cup','other'];
         if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
           return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
@@ -641,7 +653,11 @@ export const handler = async (event) => {
       // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation. NULL allowed.
       const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
       // V4-SOURCEFREE-001: source_type is free-text — no server allowlist (see PUT path).
-      const ALLOWED_DIVERGENCE = ['mutation', 'cross', 'selection', 'unknown'];
+      // V4-SOURCEFREE-001: source_type is free-text — no server allowlist (see PUT path).
+      // BUG-DIVERGENCEVOCAB-001: must stay set-equal to plants_divergence_type_check. Rationale and
+      // canonical source on the PUT path above; the drift guard asserts both copies match the
+      // migration, so editing one without the other reds CI.
+      const ALLOWED_DIVERGENCE = ['division', 'cutting', 'saved_seed_from'];
       const ALLOWED_CONTAINER = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','trough','whiskey_barrel','soil_block','solo_cup','other'];
       if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
         return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });

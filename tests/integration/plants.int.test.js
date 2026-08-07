@@ -108,6 +108,37 @@ describe('POST /api/plants — validation + create', () => {
     expect(rows[0].source_type).toBe('rescued')
   })
 
+  // BUG-DIVERGENCEVOCAB-001. The test that used to live here probed 'spore' — a value invalid in
+  // the Lambda allowlist AND in plants_divergence_type_check. It passed for 15 months while the
+  // field was unwritable in both directions (Lambda admitted mutation|cross|selection|unknown, the
+  // CHECK admits division|cutting|saved_seed_from, zero overlap). A rejection test whose probe is
+  // rejected by every candidate vocabulary cannot distinguish a working feature from a dead one.
+  // The three below can: one round-trips a canonical value THROUGH the database, one pins the
+  // specific dead value that used to be accepted-then-23514'd, and one keeps the junk-input case.
+  it('accepts a canonical divergence_type and it survives the round-trip to the DB', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/plants',
+      body: { name: 'div-' + RUN, project_id: projectId, divergence_type: 'cutting' },
+    })
+    // A 400 here means the Lambda allowlist drifted from the CHECK; a 500/23514 means the CHECK
+    // drifted from the Lambda. Only agreement produces a 201.
+    expect(status).toBe(201)
+    expect(body.divergence_type).toBe('cutting')
+    const rows = await directSql`SELECT divergence_type FROM plants WHERE id = ${body.id}`
+    expect(rows[0].divergence_type).toBe('cutting')
+  })
+
+  it('rejects the retired mutation/cross/selection vocabulary → 400', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/plants',
+      body: { name: 'bad-div-' + RUN, project_id: projectId, divergence_type: 'mutation' },
+    })
+    expect(status).toBe(400)
+    expect(body.error).toMatch(/divergence_type must be one of/i)
+  })
+
   it('invalid divergence_type enum → 400', async () => {
     setTestUserId(USER)
     const { status, body } = await callHandler(handler, {
