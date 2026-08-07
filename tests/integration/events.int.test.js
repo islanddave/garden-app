@@ -194,6 +194,87 @@ describe('PUT /api/events/:id — BUG-HARVESTEDIT-001', () => {
     expect(Number((await harvestRow(id)).weight_grams)).toBeCloseTo(7.20, 2)
   })
 
+  it('SCALES the preserved estimate when the quantity changes — 1 count -> 10 count', async () => {
+    // An estimate is a pure function of the quantity (`quantity * per-unit factor`), so holding it
+    // fixed while the quantity moves understates the row 10x — and since V4-HARVWEIGHTREAD-001 that
+    // number is summed into the Harvests / PlantingDetail totals on screen. Mutation: drop the
+    // ratio and this reds at 7.20.
+    const id = await seedUnpriceableWeight({ quantity: 1 })
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 10, unit: 'count', quality_rating: 3 },
+    })
+    expect(res.status).toBe(200)
+    const row = await harvestRow(id)
+    expect(Number(row.weight_grams)).toBeCloseTo(72.0, 2)   // 7.20 g/count * 10
+    expect(row.weight_estimated).toBe(true)                  // still an estimate, same provenance
+    expect(row.weight_basis).toBe('cultivar')
+  })
+
+  it('scaling is exact in both directions — 4 count -> 1 count divides back down', async () => {
+    // The ratio must not be one-way. Mutation: clamp it to >= 1 and this reds at 7.20.
+    const id = await seedUnpriceableWeight({ quantity: 4 })   // 7.20 g total, i.e. 1.80 g/count
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 1, unit: 'count', quality_rating: 3 },
+    })
+    expect(res.status).toBe(200)
+    expect(Number((await harvestRow(id)).weight_grams)).toBeCloseTo(1.80, 2)
+  })
+
+  it('an unchanged quantity is byte-identical — ratio 1, the fe75398 contract intact', async () => {
+    // Guards the scaling against drifting the quality-star case it must leave alone.
+    const id = await seedUnpriceableWeight({ quantity: 3 })
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 3, unit: 'count', quality_rating: 5 },
+    })
+    expect(res.status).toBe(200)
+    const [row] = await directSql`SELECT weight_grams::text AS g FROM harvest_log
+                                    WHERE event_id = ${id} AND deleted_at IS NULL`
+    expect(Number(row.g)).toBe(7.2)
+  })
+
+  it('a USER-TYPED weight is NOT scaled — a weighing is an independent fact', async () => {
+    // The asymmetry that makes the scaling defensible. The user put 4 picks on a scale and it read
+    // 250 g; correcting the COUNT to 8 must not claim the scale said 500. This row never reaches the
+    // preserve branch at all — the carry-forward feeds it back as p_user_grams — and this test is
+    // what stops a later "simplify" from folding the two paths together.
+    const res0 = await callHandler(handler, {
+      method: 'POST', path: '/api/events', userId: USER,
+      body: { project_id: hProjectId, event_type: 'harvest', event_date: new Date().toISOString(),
+              harvest: { quantity: 4, unit: 'count', quality_rating: 3, weight: 250, weight_unit: 'g' } },
+    })
+    expect(res0.status, JSON.stringify(res0.body)).toBe(201)
+    const id = res0.body.id ?? res0.body.eventId
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 8, unit: 'count', quality_rating: 3 },
+    })
+    expect(res.status).toBe(200)
+    const row = await harvestRow(id)
+    expect(Number(row.weight_grams)).toBeCloseTo(250, 2)
+    expect(row.weight_basis).toBe('measured')
+  })
+
+  it('a zero stored quantity cannot 23514 the save — it keeps its weight instead of dividing by zero', async () => {
+    // quantity carries no positivity CHECK, so 0 is storable. A bare ratio would NULL weight_grams
+    // while weight_basis stayed 'cultivar', which is a hard 23514 on
+    // chk_harvest_log_weight_basis_pairing — a 500 on the save path, the 2026-08-03 outage class.
+    // Mutation: drop the COALESCE(..., 1) and this 500s.
+    const id = await makeHarvest({ quantity: 5, unit: 'count' })
+    await directSql`UPDATE harvest_log SET quantity = 0, weight_grams = 7.20, weight_estimated = true,
+                      weight_basis = 'cultivar' WHERE event_id = ${id} AND deleted_at IS NULL`
+    const res = await put(id, {
+      event_type: 'harvest', event_date: new Date().toISOString(),
+      harvest: { quantity: 6, unit: 'count', quality_rating: 3 },
+    })
+    expect(res.status, JSON.stringify(res.body)).toBe(200)
+    const row = await harvestRow(id)
+    expect(Number(row.weight_grams)).toBeCloseTo(7.20, 2)
+    expect(row.weight_basis).toBe('cultivar')
+  })
+
   it('an EXPLICIT weight:null still clears an unpriceable stored weight', async () => {
     // The guard protects against INCIDENTAL blanking, never against the user removing their own
     // number. Mutation: drop `NOT ${hClearWeight}` from the CASE and the weight becomes unremovable.

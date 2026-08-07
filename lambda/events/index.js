@@ -1173,9 +1173,29 @@ export const handler = async (event) => {
                    -- unit goes back to a non-weight"). This is the SAME test the carry-forward
                    -- subquery below already applies for the same reason — the two must agree, or a
                    -- weight DERIVED from a weight-unit quantity outlives the unit it came from.
+                   --
+                   -- SCALED, not carried verbatim (2026-08-07). Everything reaching this branch is an
+                   -- ESTIMATE — grams the resolver once produced as quantity * per-unit factor. A
+                   -- USER-TYPED weight never lands here: the carry-forward below feeds it back as
+                   -- p_user_grams, so the resolver returns non-NULL and the ELSE arm wins. That
+                   -- asymmetry is the whole point. A weighing is an INDEPENDENT fact — correcting the
+                   -- count from 4 to 8 must not double what the scale actually said — whereas an
+                   -- estimate is a pure function OF the quantity, so holding it fixed while the
+                   -- quantity moves is simply a wrong number. Editing 1 count -> 10 count kept the
+                   -- 1-count grams and understated the row 10x, and since V4-HARVWEIGHTREAD-001 that
+                   -- figure is summed into the Harvests and PlantingDetail totals on screen.
+                   -- Re-deriving through the ratio reconstructs the per-unit factor the resolver can
+                   -- no longer look up. Quantity unchanged -> ratio 1 -> byte-identical to before.
+                   -- NULLIF+COALESCE, never a nested CASE: quantity has no positivity CHECK, and a
+                   -- division by zero here would NULL the grams while basis stayed set — a hard 23514
+                   -- on chk_harvest_log_weight_basis_pairing. An unscalable row keeps its old weight.
+                   -- Left unrounded to match the resolver, which does not round p_qty * f.factor.
+                   -- (No backticks anywhere in here: this SQL is a JS template literal, and one
+                   -- would close the string mid-statement.)
                    weight_grams     = CASE WHEN rw.weight_grams IS NULL AND NOT ${hClearWeight}::boolean
                                             AND h.unit NOT IN ('g','kg','lb','oz')
-                                           THEN h.weight_grams ELSE rw.weight_grams END,
+                                           THEN h.weight_grams * COALESCE(${hq}::numeric / NULLIF(h.quantity, 0), 1)
+                                           ELSE rw.weight_grams END,
                    weight_estimated = CASE WHEN rw.weight_grams IS NULL AND NOT ${hClearWeight}::boolean
                                             AND h.unit NOT IN ('g','kg','lb','oz')
                                            THEN h.weight_estimated ELSE rw.weight_estimated END,
