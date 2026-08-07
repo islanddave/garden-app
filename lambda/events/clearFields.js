@@ -74,9 +74,19 @@ export function validateClear(clear, body = {}) {
 // (`const severity = flagged ? body.severity : null`) is not enough here: an edit that touches only
 // the notes must preserve both, and an edit that unflags must clear the severity IN THE SAME
 // STATEMENT. chk_event_log_severity_requires_flag is VALIDATED, so writing flagged=false beside a
-// surviving severity is a hard 23514 — which, inside sql.transaction, aborts the whole transaction
-// and lands in the generic catch as an opaque 500. Resolving in JS and validating before the write
-// is what keeps that a 400 with a message.
+// surviving severity is a hard 23514, which aborts the whole transaction.
+//
+// CORRECTION (2026-08-07, measured — this comment previously claimed the 23514 "lands in the
+// generic catch as an opaque 500"). It does not. Probed against the neon serverless driver on
+// staging with a real VALIDATED CHECK: an error raised inside `sql.transaction([...])` arrives with
+// `err.code === '23514'` AND `err.constraint` intact, byte-identical to the same statement awaited
+// bare. Nothing is swallowed. So a handler whose catch maps 23514 -> 400 does get its 400 from
+// inside a transaction.
+//
+// Resolving the pair in JS is STILL the right design — a named 400 that says which field is wrong
+// beats surfacing a constraint name to the user, and it keeps the invariant readable in one place.
+// But it is belt, not the only belt, and the justification above was factually wrong. Do not cite
+// it as evidence that transactions swallow error codes; they don't.
 //
 // Returns { flagged, severity, error }. `error` is a string when the resolved pair is invalid.
 export function resolveFlagPair(body, existing, clear = []) {

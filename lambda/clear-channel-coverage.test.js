@@ -46,14 +46,11 @@ const HAS_CLEAR_ARM = /@>\s*ARRAY\[/;
 // EXEMPT — every entry carries its own reason. An empty or reason-less entry is a bug in this file.
 // These are NOT "handlers we gave up on"; each is a deliberate, dated decision.
 const EXEMPT = {
-  // IN FLIGHT on BUG-COALESCECLEAR-001, same batch as plants. plants was fixed first because it
-  // carries 29 of the 42 arms in the fleet and its Tier-2 exclusions (status, container_type,
-  // transplanted_at, planted_out_at) are the ones with a care-engine consequence. projects (8 arms)
-  // and locations (5 arms, of which only `description` is actually clearable — `type_label` is a
-  // load-bearing care-engine input) follow in their own commits so each carries its own
-  // nullable/CHECK audit. REMOVE each entry as its channel lands.
-  projects: 'BUG-COALESCECLEAR-001 in flight: 8 arms, channel lands in its own commit',
-  locations: 'BUG-COALESCECLEAR-001 in flight: 5 arms, only description is clearable; own commit',
+  // projects and locations WERE listed here while their channels were in flight. Both landed
+  // (BUG-COALESCECLEAR-001, 2026-08-07) and their entries are removed, which is the point of the
+  // "no handler is EXEMPT that does not carry a COALESCE arm" assertion below — a stale exemption
+  // silently pre-authorizes a handler that has since been fixed. plants/projects/locations/
+  // varieties/events are now all swept live.
 
   // Scoped OUT of BUG-COALESCECLEAR-001 at authoring time and not yet triaged. Named here so they
   // are visible rather than silently uncovered — the ledger item measured plants/projects/locations
@@ -105,6 +102,36 @@ describe('BUG-COALESCECLEAR-001: every handler with a COALESCE-on-body arm decla
         .toContain(d);
     }
   });
+
+  // PER-COLUMN COVERAGE. The assertions below check that a handler declares *a* validator and *at
+  // least one* clear arm. That is coarser than this file's own header claims: it would pass a
+  // handler whose allowlist names five columns and whose SQL clears one — which is EXACTLY the
+  // drift that shipped in varieties (`care_notes` on the allowlist, no matching SQL arm, entire
+  // suite green, found by mutation rather than by design). Close it at column granularity: every
+  // name in CLEARABLE_FIELDS must appear inside an `@> ARRAY[...]` arm in the sibling index.js.
+  for (const d of lambdaDirs()) {
+    const vPath = join(here, d, 'validate.js');
+    if (!existsSync(vPath)) continue;
+    const vSrc = strip(readFileSync(vPath, 'utf8'));
+    const listMatch = vSrc.match(/CLEARABLE_FIELDS\s*=\s*\[([\s\S]*?)\]/);
+    if (!listMatch) continue;
+    const declared = [...listMatch[1].matchAll(/'([A-Za-z_][A-Za-z0-9_]*)'/g)].map(m => m[1]);
+    const idxSrc = strip(readFileSync(join(here, d, 'index.js'), 'utf8'));
+    const armed = new Set(
+      [...idxSrc.matchAll(/@>\s*ARRAY\[\s*'([A-Za-z_][A-Za-z0-9_]*)'/g)].map(m => m[1]));
+
+    it(`${d}: every column on the allowlist has a matching SQL clear arm`, () => {
+      expect(declared.length, `${d}/validate.js declares an empty CLEARABLE_FIELDS`)
+        .toBeGreaterThan(0);
+      for (const col of declared) {
+        expect(armed.has(col),
+          `${d}/validate.js lists '${col}' as clearable but ${d}/index.js has no ` +
+          `CASE WHEN \${clear} @> ARRAY['${col}'] arm. The validator accepts the key, the SQL ` +
+          'ignores it: the PUT returns 200 and the column keeps its old value — the exact bug ' +
+          'this channel exists to fix, now with a 200 that looks like success.').toBe(true);
+      }
+    });
+  }
 
   for (const d of lambdaDirs()) {
     const src = strip(readFileSync(join(here, d, 'index.js'), 'utf8'));

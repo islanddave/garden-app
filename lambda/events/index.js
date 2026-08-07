@@ -1126,8 +1126,11 @@ export const handler = async (event) => {
         // BUG-EVENTEDITFIELDS-001: same rule and same message the POST applies (validators.js:118).
         // Stated as a shared constant rather than re-typed, because a hand-rolled copy that drifts
         // lets a bad value reach event_log_treatment_category_check — a VALIDATED CHECK, so the
-        // 23514 aborts the transaction and the generic catch returns an opaque 500 instead of this
-        // 400.
+        // 23514 aborts the transaction and the user gets a raw constraint NAME instead of this
+        // sentence. (CORRECTED 2026-08-07: this used to say "an opaque 500". It is not — the catch
+        // at the bottom of this file maps 23514 -> 400, and a transaction does NOT swallow
+        // err.code; both were measured on staging. Pre-validating still buys a readable message,
+        // which is the actual reason to keep it.)
         const catErr = validateTreatmentCategory(body.treatment_category);
         if (catErr) return resp(catErr.status, { error: catErr.error });
 
@@ -1217,8 +1220,9 @@ export const handler = async (event) => {
         }
 
         // event_log_has_anchor admits plant-or-project only (widening it to location is
-        // V4-EVENTANCHOR-001, still blocked). Checked here so a violation is a 400 with a message
-        // rather than a 23514 the generic catch turns into an opaque 500.
+        // V4-EVENTANCHOR-001, still blocked). Checked here so a violation is a 400 naming the
+        // FIELD rather than one naming the CONSTRAINT. (CORRECTED 2026-08-07: previously "an opaque
+        // 500" — the catch maps 23514 -> 400 and transactions preserve err.code; both measured.)
         if (newProjectId == null && newPlantId == null) {
           return resp(400, { error: 'an event must keep a plant_id or a project_id' });
         }

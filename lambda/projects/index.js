@@ -6,6 +6,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
+import { validateClear } from './validate.js';
 
 // V4-EVENTSOURCE-001 — event_log.source value written by THIS Lambda. lambda/events/index.js
 // declares 'app'/'app_batch' and explicitly delegates 'app_status' here; the full value set and
@@ -573,6 +574,19 @@ export const handler = async (event) => {
           return resp(400, { error: 'name cannot be blank' });
         }
 
+        // BUG-COALESCECLEAR-001. `clear` is an explicit array of column keys to set to NULL.
+        // Absent/[] is byte-identical to the prior behaviour, so every existing caller is
+        // unaffected and this ships inert until a client opts in. Validated BEFORE the UPDATE so an
+        // un-clearable key is a 400 with a message, never a constraint violation.
+        //
+        // (Measured this session: `err.code` and `err.constraint` DO survive `sql.transaction`
+        // intact, so the 23514 -> 400 mapping in this file's catch is live on the PUT path, not
+        // dead code as two comments elsewhere in the repo claimed. Pre-validating here is still
+        // right — a named 400 beats a constraint name — but it is belt, not the only belt.)
+        const _cerr = validateClear(body.clear, body);
+        if (_cerr) return resp(400, { error: _cerr });
+        const clear = Array.isArray(body.clear) ? body.clear : [];
+
         const _oldStatus = cur[0].old_status ?? null;
         const _newStatus = body.status != null ? body.status : _oldStatus;
         const _statusChanged = isStatusChange(_oldStatus, _newStatus);
@@ -586,12 +600,12 @@ export const handler = async (event) => {
           UPDATE public.container
           SET
             display_name     = COALESCE(${body.name ?? null}, display_name),
-            description      = COALESCE(${body.description ?? null}, description),
+            description      = CASE WHEN ${clear} @> ARRAY['description'] THEN NULL ELSE COALESCE(${body.description ?? null}, description) END,
             status           = COALESCE(${body.status ?? null}, status),
-            variety          = COALESCE(${body.variety ?? null}, variety),
-            start_date       = COALESCE(${body.start_date ?? null}, start_date),
+            variety          = CASE WHEN ${clear} @> ARRAY['variety'] THEN NULL ELSE COALESCE(${body.variety ?? null}, variety) END,
+            start_date       = CASE WHEN ${clear} @> ARRAY['start_date'] THEN NULL ELSE COALESCE(${body.start_date ?? null}, start_date) END,
             is_public        = COALESCE(${body.is_public ?? null}, is_public),
-            location_id      = COALESCE(${body.location_id ?? null}, location_id),
+            location_id      = CASE WHEN ${clear} @> ARRAY['location_id'] THEN NULL ELSE COALESCE(${body.location_id ?? null}, location_id) END,
             parent_id = CASE
               WHEN ${Object.prototype.hasOwnProperty.call(body, 'parent_project_id')} THEN ${body.parent_project_id ?? null}
               ELSE parent_id
@@ -608,7 +622,7 @@ export const handler = async (event) => {
               WHEN ${hasKind && body.kind != null} AND classification IS NULL THEN NOW()
               ELSE kind_set_at
             END,
-            target_end_date = COALESCE(${body.target_end_date ?? null}, target_end_date),
+            target_end_date = CASE WHEN ${clear} @> ARRAY['target_end_date'] THEN NULL ELSE COALESCE(${body.target_end_date ?? null}, target_end_date) END,
             assignee_user_id = CASE
               WHEN ${hasAssignee} THEN ${body.assignee_user_id ?? null}
               ELSE assignee_user_id

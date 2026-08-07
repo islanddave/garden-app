@@ -5,6 +5,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
+import { validateClear } from './validate.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -177,13 +178,20 @@ export const handler = async (event) => {
           return resp(400, { error: 'name cannot be blank' });
         }
 
+        // BUG-COALESCECLEAR-001. Absent/[] is byte-identical to the prior behaviour, so this ships
+        // inert until a client opts in. Exactly one of the 5 arms is clearable — see validate.js
+        // for why the other four are not, in particular type_label, which is a care-engine input.
+        const _cerr = validateClear(body.clear, body);
+        if (_cerr) return resp(400, { error: _cerr });
+        const clear = Array.isArray(body.clear) ? body.clear : [];
+
         const rows = await sql`
           UPDATE locations
           SET
             name        = COALESCE(${body.name ?? null}, name),
             type_label  = COALESCE(${body.type_label ?? null}, type_label),
             sort_order  = COALESCE(${body.sort_order ?? null}, sort_order),
-            description = COALESCE(${body.description ?? null}, description),
+            description = CASE WHEN ${clear} @> ARRAY['description'] THEN NULL ELSE COALESCE(${body.description ?? null}, description) END,
             is_active   = COALESCE(${body.is_active ?? null}, is_active),
             featured_photo_id = CASE
               WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
@@ -270,6 +278,20 @@ export const handler = async (event) => {
   } catch (err) {
     console.error('locations lambda error', err);
     if (err.code === '23505') return resp(409, { error: 'Slug already exists' });
+    // BUG-COALESCECLEAR-001 audit finding: this catch mapped ONLY 23505. Every sibling handler
+    // (plants, projects, events) maps 23503 and 23514 too; locations was the one surface that never
+    // adopted it, so a caller-provokable constraint violation surfaced as "Internal server error"
+    // with no message. Reachable today: the POST accepts a parent_id it could not verify ownership
+    // of and inserts it anyway, so a non-existent uuid raises 23503 here and the caller learns
+    // nothing. (That ownership hole is its own defect and is NOT fixed by this line — filed
+    // separately. This only stops the failure being unreadable.)
+    //
+    // Nothing on the clear allowlist can reach either code — `description` carries no CHECK and no
+    // FK, and the three CHECKs on this table (chk_lat_lng_co_null, locations_level_check,
+    // locations_zone_level_check) reference no PUT arm. Added for parity, not because the channel
+    // needs it.
+    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
+    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
     return resp(500, { error: 'Internal server error' });
   }
 };
