@@ -1,40 +1,89 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 
-// Guard against the L-086-class bug: a JS `//` comment placed INSIDE a sql`...`
-// tagged template ships literal `//` to Postgres (SQL line comments are `--`),
-// 500-ing at runtime while vitest/vite stay green (static + mock never hit a real DB).
+// Guard against the L-086-class bug: a JS `//` comment placed INSIDE a SQL template
+// ships literal `//` to Postgres (SQL line comments are `--`), 500-ing at runtime
+// while vitest/vite stay green (static + mock never hit a real DB).
 // Caught in household-mode review 2026-05-20 (inventory-items UPDATE SET block).
 const here = dirname(fileURLToPath(import.meta.url));
-const FILES = [
-  'projects/index.js', 'plants/index.js', 'events/index.js',
-  'inventory-items/index.js', 'photos/index.js', 'dashboard/handlers.js',
-  'harvests/index.js', 'facebook-share/index.js',
-  'varieties/index.js', // V4-VARIETYHOUSEHOLD-001 — added when its write predicates gained a household arm
-];
 
-// Match REAL tagged templates only: `sql` as an identifier (not preceded by a word
-// char or a backtick — the latter excludes prose like "calls `sql`..." in JS comments)
-// immediately followed by a backtick. Body is a non-backtick run (templates never
-// contain a literal backtick). Then keep only bodies that actually look like SQL.
+// The FILES list this guard used to carry was hand-maintained and had drifted to 10 of the
+// fleet's 103 handler files, while its commit message claimed it was "fleet-wide". A hand list
+// is the wrong shape: it fails OPEN for every file nobody remembered to add, and silently, since
+// an unlisted file simply produces no test. Enumerate instead — a new handler is covered the day
+// it lands. The vacuity floors below are what keep the enumeration honest.
+function walk(dir, out = []) {
+  for (const entry of readdirSync(dir)) {
+    if (entry === 'node_modules' || entry === '.git' || entry === 'dist') continue;
+    const p = join(dir, entry);
+    if (statSync(p).isDirectory()) walk(p, out);
+    else if (entry.endsWith('.js') && !entry.endsWith('.test.js')) out.push(p);
+  }
+  return out;
+}
+const FILES = walk(here).map((p) => relative(here, p)).sort();
+
+// Two call shapes carry SQL in this fleet and BOTH are template literals, so both hazards below
+// apply to both:
+//   1. `sql`...`` — the neon tagged template (48 files).
+//   2. `pg.query(`...`)` — node-postgres with positional $n params (daily-plan/handler.js).
+// The old matcher only knew shape 1, so daily-plan/handler.js could not be matched AT ALL even
+// though it was the file that produced the 2026-08-07 placeholder incident's sibling hazards.
+//
+// Shape 1 requires `sql` as an identifier: not preceded by a word char or a backtick — the latter
+// excludes JS prose like "calls `sql`...". Bodies are a non-backtick run (a template literal
+// carrying SQL never contains a literal backtick). Then keep only bodies that look like SQL, which
+// is what stops a two-backtick span inside ordinary prose from being treated as a query.
+const SQL_TEMPLATE_RES = [/(?<![\w`])sql`([^`]*)`/g, /\.query\(\s*`([^`]*)`/g];
 function sqlTemplates(src) {
   const out = [];
-  const re = /(?<![\w`])sql`([^`]*)`/g;
-  let m;
-  while ((m = re.exec(src)) !== null) {
-    const body = m[1];
-    if (/\b(SELECT|INSERT|UPDATE|DELETE|WITH)\b/i.test(body)) out.push(body);
+  for (const re of SQL_TEMPLATE_RES) {
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      const body = m[1];
+      if (/\b(SELECT|INSERT|UPDATE|DELETE|WITH)\b/i.test(body)) out.push(body);
+    }
   }
   return out;
 }
 
+const SRC = new Map(FILES.map((rel) => [rel, readFileSync(join(here, rel), 'utf-8')]));
+
+// A guard that enumerates its own inputs can go green by covering NOTHING: break the walk and
+// every `it` below simply stops existing; break the regexes and each one runs against an empty
+// template list and passes. Both failure modes are invisible in a passing suite. Three guards
+// written on 2026-08-07 were green-but-not-covering in exactly this way, so this fleet-wide
+// rewrite pins its own coverage to measured floors (103 files / 50 with SQL / 395 templates as
+// of cc4c7369) rather than trusting that it found anything.
+describe('guard coverage is not vacuous', () => {
+  it('walks the whole handler fleet', () => {
+    expect(FILES.length).toBeGreaterThanOrEqual(90);
+  });
+
+  it('extracts SQL from both call shapes across the fleet', () => {
+    const withSql = FILES.filter((rel) => sqlTemplates(SRC.get(rel)).length > 0);
+    const total = FILES.reduce((n, rel) => n + sqlTemplates(SRC.get(rel)).length, 0);
+    expect(withSql.length).toBeGreaterThanOrEqual(45);
+    expect(total).toBeGreaterThanOrEqual(350);
+  });
+
+  // Named individually because each proves a specific past gap is closed: daily-plan/handler.js
+  // is the `pg.query(` shape the old matcher could not see, and locations/index.js is a file the
+  // hand list omitted while it was being changed.
+  it.each(['daily-plan/handler.js', 'locations/index.js', 'events/index.js', 'projects/index.js'])(
+    'still matches SQL in %s',
+    (rel) => {
+      expect(FILES).toContain(rel);
+      expect(sqlTemplates(SRC.get(rel)).length).toBeGreaterThan(0);
+    });
+});
+
 describe('SQL template comment hygiene', () => {
   for (const rel of FILES) {
-    it(`${rel}: no '//' inside any sql\`...\` template`, () => {
-      const src = readFileSync(join(here, rel), 'utf-8');
-      const offenders = sqlTemplates(src).filter((t) => t.includes('//'));
+    it(`${rel}: no '//' inside any SQL template`, () => {
+      const offenders = sqlTemplates(SRC.get(rel)).filter((t) => t.includes('//'));
       expect(offenders, `'//' found inside a SQL template in ${rel} (use '--' for SQL comments, or move the comment to JS scope)`).toEqual([]);
     });
   }
@@ -58,9 +107,8 @@ describe('SQL template comment hygiene', () => {
 describe('SQL template placeholder hygiene', () => {
   for (const rel of FILES) {
     it(`${rel}: no template placeholder inside a '--' SQL comment`, () => {
-      const src = readFileSync(join(here, rel), 'utf-8');
       const offenders = [];
-      for (const t of sqlTemplates(src)) {
+      for (const t of sqlTemplates(SRC.get(rel))) {
         for (const line of t.split('\n')) {
           const c = line.indexOf('--');
           if (c === -1) continue;
