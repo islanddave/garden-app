@@ -57,9 +57,48 @@ const EXEMPT = {
   // only, and this sweep is what revealed that three more handlers carry the same shape.
   // Each needs its own nullable-column + CHECK audit before an allowlist can be written.
   // REMOVE each entry as its handler is triaged; file a ticket per handler, do not bulk-fix.
-  preservation: 'BUG-COALESCECLEAR-002 (untriaged): 1 arm, needs a nullable/CHECK audit first',
-  'storage-location': 'BUG-COALESCECLEAR-002 (untriaged): 2 arms, needs a nullable/CHECK audit first',
-  tags: 'BUG-COALESCECLEAR-002 (untriaged): 2 arms, needs a nullable/CHECK audit first',
+  preservation: 'BUG-COALESCECLEAR-002: 1 arm on source_kind. Genuinely nullable and NULL is ' +
+    'meaningful, so this one is NOT closed like the two below — but it cannot be a plain allowlist ' +
+    'entry either. source_kind owns a pair: the source_label CASE keys on the REQUEST kind, so a ' +
+    'clear:["source_kind"] leaves source_label set, and provenance.js then refuses that row on ' +
+    'every later save ("source_label needs a source_kind"). Un-re-saveable, the same ordering ' +
+    'hazard as projects.location_id. Needs a pair-clear resolver AND a RowEditor provenance ' +
+    'surface (the pair is create-only today, so there is no box to empty) AND a Dave product call. ' +
+    'Feature-sized; 1 live row and it already reads NULL.',
+};
+
+// AUDITED, NOTHING CLEARABLE — the third state, and the reason this file needed amending.
+//
+// The ratchet was built on a binary: a handler either has a clear channel or is EXEMPT pending
+// triage. That has no way to say "triaged, and the correct answer is that NOTHING here is
+// clearable" — which is the outcome for two of BUG-COALESCECLEAR-002's three handlers. All three
+// exits were closed: writing `CLEARABLE_FIELDS = []` reds the empty-allowlist assertion below,
+// removing the EXEMPT entry reds the must-declare-a-channel assertion, and leaving the entry in
+// place keeps the ticket open forever while the reason string says "untriaged", which is a lie
+// the moment the audit is done. The tempting fourth exit — adding a token clear arm to satisfy
+// the regex — is the worst one, and this file's header already warns against exactly that.
+//
+// An entry here is a STRONGER claim than EXEMPT, not a weaker one: it asserts the columns were
+// checked against live schema and found un-clearable at the DB layer, so no channel should ever be
+// built. It is held to the same staleness rules as EXEMPT (real dir, real reason, still carries a
+// COALESCE arm) plus two more: it may not also be EXEMPT, and it may not declare a SERVER_CLEARABLE
+// key on the client — an empty array there would be a channel with nothing in it.
+const AUDITED_NOTHING_CLEARABLE = {
+  'storage-location':
+    'BUG-COALESCECLEAR-002, audited 2026-08-07 against live prod. Both arms are NOT NULL, so a ' +
+    'clear is a 23502, not a judgment call. kind is additionally CHECK-constrained to a six-value ' +
+    'vocabulary (chk_storage_location_kind), so NULL is outside the taxonomy rather than a member ' +
+    'of it; label is the display string joined into preservation rows as storage_label. 1 live ' +
+    'row. No PUT caller exists in src/ either, so the emptied-box symptom cannot occur today.',
+  tags:
+    'BUG-COALESCECLEAR-002, audited 2026-08-07 against live prod. label, slug and visibility are ' +
+    'all NOT NULL. label cannot be cleared without slug, its derived shadow, and slug participates ' +
+    'in the partial unique index uq_tag_facet_slug_owner. visibility is the one worth writing ' +
+    'down: the scope predicate matches visibility = private OR shared, and a NULL falls out of ' +
+    'EVERY branch, so the tag would vanish from every list surface while its entity_tag rows stayed ' +
+    'live behind an ON DELETE RESTRICT FK. The NOT NULL is load-bearing; do not relax it. The ' +
+    'PATCH also requires source = user and prod has 0 such rows (all 149 live tags are derived), ' +
+    'so this is reasoning for the future, not a live exposure.',
 };
 
 describe('BUG-COALESCECLEAR-001: every handler with a COALESCE-on-body arm declares a clear channel', () => {
@@ -103,6 +142,45 @@ describe('BUG-COALESCECLEAR-001: every handler with a COALESCE-on-body arm decla
     }
   });
 
+  it('every AUDITED_NOTHING_CLEARABLE entry names a real handler, carries a reason, and is not stale', () => {
+    for (const [d, reason] of Object.entries(AUDITED_NOTHING_CLEARABLE)) {
+      expect(dirs, `AUDITED_NOTHING_CLEARABLE names ${d}, which is not a lambda handler dir`)
+        .toContain(d);
+      // Held to a higher bar than EXEMPT's 20 chars: this entry replaces a fix, so it has to carry
+      // the evidence that no fix is wanted. A one-liner here is how "audited" becomes a rubber stamp.
+      expect(typeof reason === 'string' && reason.trim().length > 120,
+        `AUDITED_NOTHING_CLEARABLE['${d}'] must record WHAT was checked and WHY nothing is ` +
+        'clearable — schema facts, not a verdict').toBe(true);
+      expect(withCoalesce,
+        `AUDITED_NOTHING_CLEARABLE['${d}'] is stale — that handler has no COALESCE-on-body arm ` +
+        'any more, so the audit it records no longer describes the code').toContain(d);
+    }
+  });
+
+  it('no handler is both EXEMPT and AUDITED_NOTHING_CLEARABLE', () => {
+    // The two states mean opposite things — "not yet looked at" vs "looked at, nothing to do". A
+    // handler in both would let a real triage debt hide behind a finished-looking entry.
+    for (const d of Object.keys(AUDITED_NOTHING_CLEARABLE)) {
+      expect(EXEMPT[d], `${d} is in both EXEMPT and AUDITED_NOTHING_CLEARABLE — pick one`)
+        .toBeUndefined();
+    }
+  });
+
+  it('a handler with nothing clearable declares no client-side clear channel either', () => {
+    // The client mirror must have NO key for these handlers — not an empty array. An empty array
+    // reads as "a channel exists and currently clears nothing", which invites a later editor to
+    // add the first entry without redoing the audit that says there should never be one.
+    const clearKeys = readFileSync(join(here, '..', 'src', 'lib', 'clearKeys.js'), 'utf8');
+    const block = clearKeys.match(/SERVER_CLEARABLE\s*=\s*\{([\s\S]*?)\}/);
+    expect(block, 'src/lib/clearKeys.js no longer declares SERVER_CLEARABLE — this guard has gone blind')
+      .not.toBeNull();
+    for (const d of Object.keys(AUDITED_NOTHING_CLEARABLE)) {
+      expect(new RegExp(`['"\`]?${d}['"\`]?\\s*:`).test(block[1]),
+        `SERVER_CLEARABLE declares a '${d}' key, but ${d} was audited as having nothing clearable`)
+        .toBe(false);
+    }
+  });
+
   // PER-COLUMN COVERAGE. The assertions below check that a handler declares *a* validator and *at
   // least one* clear arm. That is coarser than this file's own header claims: it would pass a
   // handler whose allowlist names five columns and whose SQL clears one — which is EXACTLY the
@@ -121,8 +199,15 @@ describe('BUG-COALESCECLEAR-001: every handler with a COALESCE-on-body arm decla
       [...idxSrc.matchAll(/@>\s*ARRAY\[\s*'([A-Za-z_][A-Za-z0-9_]*)'/g)].map(m => m[1]));
 
     it(`${d}: every column on the allowlist has a matching SQL clear arm`, () => {
-      expect(declared.length, `${d}/validate.js declares an empty CLEARABLE_FIELDS`)
-        .toBeGreaterThan(0);
+      // An empty allowlist is only legitimate as the recorded outcome of an audit. Anywhere else
+      // it is a half-built channel: validateClear accepts keys the SQL will never act on.
+      if (declared.length === 0) {
+        expect(AUDITED_NOTHING_CLEARABLE[d],
+          `${d}/validate.js declares an empty CLEARABLE_FIELDS. If that is the audited outcome, ` +
+          'record it in AUDITED_NOTHING_CLEARABLE with the schema evidence; otherwise the ' +
+          'allowlist is simply unfinished.').toBeDefined();
+        return;
+      }
       for (const col of declared) {
         expect(armed.has(col),
           `${d}/validate.js lists '${col}' as clearable but ${d}/index.js has no ` +
@@ -138,6 +223,7 @@ describe('BUG-COALESCECLEAR-001: every handler with a COALESCE-on-body arm decla
     const arms = (src.match(COALESCE_BODY) || []).length;
     if (arms === 0) continue;
     if (EXEMPT[d]) continue;
+    if (AUDITED_NOTHING_CLEARABLE[d]) continue;
 
     it(`${d}/index.js has ${arms} COALESCE-on-body arm(s) and must declare a clear channel`, () => {
       expect(src, `${d} binds body fields through COALESCE but never calls validateClear — ` +
