@@ -6,7 +6,10 @@
 // Auth: Clerk JWT verified per request → userId = JWT.sub
 // RLS: enforced in WHERE clauses, not Postgres (vestigial under Neon).
 //   - GET (list/by-id): globally readable (any authenticated user, any non-deleted row)
-//   - POST/PUT/DELETE: owner-only (created_by = JWT.sub)
+//   - POST: owner-stamped (created_by = JWT.sub)
+//   - PUT/DELETE: HOUSEHOLD-scoped + managed-principal arm (V4-VARIETYHOUSEHOLD-001, see ./authz.js).
+//     Was owner-only, which left the 25 cultivars created by offline intake/repair scripts
+//     uneditable by every human. A foreign household still reaches nothing. NOT a general widening.
 //   - GET /api/varieties/crop-types: globally readable controlled vocabulary (V4-PLANTTYPE-001)
 //
 // Audit: trigger trg_audit_plant_varieties writes to audit_events. Lambda sets
@@ -36,6 +39,8 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validateBody, validateCropTypeBody, resolveCropTypeName, validateClear } from './validate.js';
 import { applyDerive } from './crop-derive.js';
+import { householdScope } from './household.js';
+import { managedPrincipalPatterns } from './authz.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -98,9 +103,25 @@ export const handler = async (event) => {
     return resp(401, { error: 'Unauthorized' });
   }
 
+  // V4-AUTHZRESIDUE-001 (mirrors lambda/plants + lambda/photos): householdScope('') returns [''] and
+  // `'' = ANY(ARRAY[''])` is TRUE in Postgres, so an empty/absent JWT subject would be a live
+  // ownership value rather than a no-match. verifyToken rejects such a token first, so this is
+  // defence-in-depth; the point is that the invariant is ENFORCED here rather than relied upon.
+  if (!userId) return resp(401, { error: 'Unauthorized' });
+
   const sql = neon(secrets.NEON_DATABASE_URL);
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/varieties';
+
+  // V4-VARIETYHOUSEHOLD-001 — write scope for PUT/DELETE. `household` is the caller's own id for a
+  // non-member (and whenever GARDEN_HOUSEHOLD_IDS is unset), so the widened predicate degrades to the
+  // exact owner-only behaviour it replaced. `managedPatterns` is [] for anyone who is not a proven
+  // household member. Rationale + the membership subtlety live in ./authz.js.
+  //
+  // The audit actor below is deliberately still ${userId}, never a household id: widening WHO MAY
+  // EDIT must not blur WHO DID EDIT. Every write keeps recording the human that made it.
+  const household = householdScope(userId);
+  const managedPatterns = managedPrincipalPatterns(household);
 
   try {
     // PLANTTYPE: controlled crop-type vocabulary. Globally readable; checked BEFORE the
@@ -277,7 +298,8 @@ export const handler = async (event) => {
               sow_season           = CASE WHEN ${clear} @> ARRAY['sow_season'] THEN NULL ELSE COALESCE(${body.sow_season ?? null}, sow_season) END,
               sow_notes            = CASE WHEN ${clear} @> ARRAY['sow_notes'] THEN NULL ELSE COALESCE(${body.sow_notes ?? null}, sow_notes) END
             WHERE id = ${varietyId}
-              AND created_by = ${userId}
+              AND ( created_by = ANY(${household})
+                    OR created_by LIKE ANY(${managedPatterns}::text[]) )
               AND deleted_at IS NULL
             RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes
           `,
@@ -295,7 +317,8 @@ export const handler = async (event) => {
             UPDATE public.cultivar
             SET deleted_at = NOW()
             WHERE id = ${varietyId}
-              AND created_by = ${userId}
+              AND ( created_by = ANY(${household})
+                    OR created_by LIKE ANY(${managedPatterns}::text[]) )
               AND deleted_at IS NULL
             RETURNING id
           `,

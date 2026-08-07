@@ -30,6 +30,11 @@ const IN_SCOPE = [
   'harvests/index.js', // V4-HARVESTVIEW-001 — Harvests read model, household-scoped (plant_projects.created_by = ANY(householdIds))
   'facebook-share/index.js', // V4-FBSHARE-001 — admin-only FB share; photo fetch scoped to household (photos.created_by = ANY(householdIds))
   'members/index.js', // 0A.6 — caretaker roster filtered to the caller household (Clerk list ∩ householdScope; was every Clerk user w/ email)
+  // V4-VARIETYHOUSEHOLD-001 — MOVED here from OUT_OF_SCOPE (2026-08-07, Dave-approved). PUT/DELETE
+  // /api/varieties/:id were owner-only, which left the 25 cultivars stamped by offline intake/repair
+  // principals uneditable by every human. Writes are now household-scoped plus a membership-gated
+  // managed-principal arm (varieties/authz.js). READS were already global and are unchanged.
+  'varieties/index.js',
 ];
 
 // Out-of-scope: must NOT import householdScope.
@@ -37,7 +42,6 @@ const OUT_OF_SCOPE = [
   'achievements/index.js',
   'favorites/index.js',
   'xp-reconcile/index.js',
-  'varieties/index.js',
   'app-events/index.js',
   'dashboard/index.js', // wrapper — householdScope is computed inside builders, not the wrapper
 ];

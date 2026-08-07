@@ -12,6 +12,7 @@ const FILES = [
   'projects/index.js', 'plants/index.js', 'events/index.js',
   'inventory-items/index.js', 'photos/index.js', 'dashboard/handlers.js',
   'harvests/index.js', 'facebook-share/index.js',
+  'varieties/index.js', // V4-VARIETYHOUSEHOLD-001 — added when its write predicates gained a household arm
 ];
 
 // Match REAL tagged templates only: `sql` as an identifier (not preceded by a word
