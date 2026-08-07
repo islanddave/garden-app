@@ -73,7 +73,27 @@ export function clearPatch(fields, form, saved, opts = {}) {
 // These MUST match lambda/<handler>/validate.js. src/__tests__/clearKeys.test.js reads those files
 // from disk and asserts equality, so a drift here reds rather than silently sending a key the
 // server will reject.
+//
+// NOT every handler with a server allowlist belongs here — only those whose form needs the helper.
+// lambda/varieties has a 31-column allowlist and is deliberately ABSENT: VarietyEditor drives
+// render, seed and patch off one FIELDS table and builds `clear` itself in buildVarietyPatch, which
+// is the pattern this helper imitates rather than replaces. A mirror for it would be a second
+// source of truth for the same fact. src/__tests__/clearKeys.test.js asserts that its FIELDS keys
+// are a SUBSET of the server allowlist, which is the invariant that actually matters there.
 export const SERVER_CLEARABLE = {
   projects: ['description', 'variety', 'start_date', 'target_end_date', 'location_id'],
   locations: ['description'],
+  // Tier 1 of the plants triage — mirrored verbatim from lambda/plants/validate.js. Eleven of these
+  // 21 have no input in PlantForm, so they are inert until some form renders them; that is fine and
+  // is why the manifest, not this list, decides what a given form may clear.
+  plants: [
+    'notes', 'metadata', 'lineage_note',
+    'sown_at', 'sown_at_approx', 'germinated_at', 'germinated_at_approx',
+    'transplanted_at_approx', 'planted_out_at_approx',
+    'qty_initial', 'qty_current', 'loss_cause',
+    'source_type', 'source_ref', 'source_generation',
+    'parent_plant_id', 'divergence_type', 'succession_group_id', 'succession_order',
+    'source_inventory_item_id',
+    'container_size',
+  ],
 };

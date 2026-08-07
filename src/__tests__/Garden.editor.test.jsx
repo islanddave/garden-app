@@ -246,3 +246,92 @@ describe('Garden — V3-ARCHIVE-001 archive a planting (edit editor)', () => {
     expect(JSON.parse(calls[1][1].body).archived).toBe(false)
   })
 })
+
+// BUG-COALESCECLEAR-001 — the clear:[] channel on the planting edit form.
+//
+// The plants PUT binds its optional columns as COALESCE(${body.x ?? null}, x), so `null` and
+// `absent` are the same token on the wire. Every field below already sent `form.x.trim() || null`
+// for an emptied box, which the handler read as "not supplied" and answered with a 200 and no
+// change. The server allowlist has existed since BUG-COALESCECLEAR-001 landed; until this wiring
+// the channel was inert from the UI, which is the exact state the server half shipped in.
+describe('Garden — the planting editor can actually clear a field', () => {
+  // Distinct from PLANT: the channel only fires when the SAVED row held a value, so a fixture with
+  // notes: null could never exercise it.
+  const PLANT_FILLED = {
+    ...PLANT,
+    notes: 'started under the south light',
+    source_ref: "Johnny's Lot 4421",
+    container_size: '4in',
+  }
+
+  function primeFilled() {
+    fetchSpy.mockImplementation((url, opts = {}) => {
+      if (url === '/api/projects') return Promise.resolve(PROJECTS)
+      if (url === '/api/plants' && !opts.method) return Promise.resolve([PLANT_FILLED])
+      if (url.startsWith('/api/plants/') && opts.method === 'PUT') return Promise.resolve(PLANT_FILLED)
+      return Promise.resolve([])
+    })
+  }
+
+  async function openEditorAndSave(mutate) {
+    searchParamsRef.current = new URLSearchParams('edit=plant-2')
+    primeFilled()
+    await renderGarden()
+    await waitFor(() => expect(screen.getByText(/Edit Krim Plant/)).toBeDefined())
+    mutate()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Save$/i })) })
+    const put = fetchSpy.mock.calls.find(c => c[0] === '/api/plants/plant-2' && c[1]?.method === 'PUT')
+    expect(put).toBeDefined()
+    return JSON.parse(put[1].body)
+  }
+
+  it('emptying Notes sends clear:["notes"] alongside the null', async () => {
+    const body = await openEditorAndSave(() => {
+      fireEvent.change(screen.getByLabelText(/Notes/i), { target: { value: '' } })
+    })
+    // Both halves matter: the null is what the old code sent and is now merely inert, and `clear`
+    // is the part the handler actually acts on.
+    expect(body.notes).toBeNull()
+    expect(body.clear).toContain('notes')
+  })
+
+  it('clears several emptied fields in one save', async () => {
+    const body = await openEditorAndSave(() => {
+      fireEvent.change(screen.getByLabelText(/Notes/i), { target: { value: '' } })
+      fireEvent.change(screen.getByLabelText(/Source reference/i), { target: { value: '' } })
+    })
+    expect([...body.clear].sort()).toEqual(['notes', 'source_ref'])
+  })
+
+  it('a save with nothing emptied sends NO clear key at all', async () => {
+    // The byte-identity guarantee that let this ship without re-testing every existing save path.
+    const body = await openEditorAndSave(() => {
+      fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: 'Renamed' } })
+    })
+    expect(body.name).toBe('Renamed')
+    expect('clear' in body).toBe(false)
+  })
+
+  it('does NOT clear a field that was already empty', async () => {
+    // saved[k] == null means there is nothing to clear; without this half every save would
+    // pointlessly re-clear every blank column.
+    const body = await openEditorAndSave(() => {
+      fireEvent.change(screen.getByLabelText(/Generation/i), { target: { value: '' } })
+    })
+    expect('clear' in body).toBe(false)
+  })
+
+  it('drops an emptied field the server refuses to clear rather than sending it', async () => {
+    // status is rendered and IS emptied here, but it is a tier-2 care-engine input: clearing it
+    // resumes calendar watering on a dormant plant and skips the status_change audit row. The
+    // client drops it so the user's OTHER edits still save — sending it would make the server 400
+    // the whole request and the user would lose the lot.
+    const body = await openEditorAndSave(() => {
+      // By id, not by label: several labels on this page match /Status/i.
+      fireEvent.change(document.getElementById('edit-plant-2-status'), { target: { value: '' } })
+      fireEvent.change(screen.getByLabelText(/Notes/i), { target: { value: '' } })
+    })
+    expect(body.clear).toContain('notes')
+    expect(body.clear).not.toContain('status')
+  })
+})

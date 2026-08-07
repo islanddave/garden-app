@@ -105,6 +105,35 @@ describe('SERVER_CLEARABLE mirrors the server allowlists exactly', () => {
       .toEqual(declared('lambda/locations/validate.js').sort());
   });
 
+  it('plants', () => {
+    expect([...SERVER_CLEARABLE.plants].sort())
+      .toEqual(declared('lambda/plants/validate.js').sort());
+  });
+
+  // The tier-2 exclusions are the risk control, so pin the three that would change a care
+  // recommendation on clear. If the server ever adds one, this reds and forces the paired engine
+  // fix to be a decision rather than a side effect of editing a list.
+  it('plants excludes the tier-2 care-engine inputs', () => {
+    for (const col of ['status', 'container_type', 'transplanted_at', 'planted_out_at']) {
+      expect(SERVER_CLEARABLE.plants).not.toContain(col);
+      expect(declared('lambda/plants/validate.js')).not.toContain(col);
+    }
+  });
+
+  // varieties is deliberately NOT in SERVER_CLEARABLE — VarietyEditor builds `clear` itself from
+  // its FIELDS table. The invariant that matters there is containment, not equality: a rendered
+  // field the server will not clear makes the server 400 the WHOLE save, losing every other edit
+  // the user just made. Equality would be wrong — the server allows photo_id, which no form renders.
+  it('every VarietyEditor FIELDS key is server-clearable', () => {
+    const src = readFileSync(repo('src/components/forms/VarietyEditor.jsx'), 'utf8');
+    const fields = [...src.matchAll(/\{\s*key:\s*'([A-Za-z_][A-Za-z0-9_]*)'/g)].map((x) => x[1]);
+    expect(fields.length).toBeGreaterThanOrEqual(25);
+    const allowed = new Set(declared('lambda/varieties/validate.js'));
+    // crop_type_slug is pushed by hand in buildVarietyPatch rather than via FIELDS, so it has to
+    // clear the same bar.
+    expect([...fields, 'crop_type_slug'].filter((k) => !allowed.has(k))).toEqual([]);
+  });
+
   it('locations does NOT include type_label — the care-engine input', () => {
     // Pinned on both sides. If the server ever adds it, this reds and forces a deliberate decision
     // here rather than the client silently gaining the ability to opt 16 plantings into frost alerts.
@@ -119,9 +148,28 @@ describe('the forms actually send it', () => {
   it.each([
     ['src/pages/ProjectDetail.jsx', 'SERVER_CLEARABLE.projects'],
     ['src/pages/Locations.jsx', 'SERVER_CLEARABLE.locations'],
+    ['src/components/PlantingEditor.jsx', 'SERVER_CLEARABLE.plants'],
   ])('%s calls clearPatch with the matching allowlist', (file, allowlist) => {
     const src = readFileSync(repo(file), 'utf8');
     expect(src).toContain('clearPatch(');
     expect(src).toContain(allowlist);
+  });
+
+  // The render manifest is the safety rule made concrete: clearPatch may only be handed keys the
+  // form actually shows. PlantingEditor derives its form from formFromPlant, so the two must agree
+  // key-for-key — a field added to one and not the other either silently keeps the old no-op
+  // behaviour (manifest missing) or hands the helper a key with no input behind it (manifest extra).
+  it('PLANT_FORM_FIELDS matches formFromPlant key-for-key', () => {
+    const src = readFileSync(repo('src/components/PlantingEditor.jsx'), 'utf8');
+    const manifest = src.match(/const PLANT_FORM_FIELDS = \[([\s\S]*?)\]/);
+    expect(manifest, 'PlantingEditor must declare PLANT_FORM_FIELDS').toBeTruthy();
+    const declaredKeys = [...manifest[1].matchAll(/'([A-Za-z_][A-Za-z0-9_]*)'/g)].map((x) => x[1]);
+
+    const fromPlant = src.match(/function formFromPlant\(plant\) \{\s*return \{([\s\S]*?)\n  \}/);
+    expect(fromPlant, 'PlantingEditor must declare formFromPlant').toBeTruthy();
+    const formKeys = [...fromPlant[1].matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*):/gm)].map((x) => x[1]);
+
+    expect(formKeys.length).toBeGreaterThanOrEqual(15);
+    expect([...declaredKeys].sort()).toEqual([...formKeys].sort());
   });
 });

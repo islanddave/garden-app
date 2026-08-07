@@ -11,6 +11,26 @@ import { formatQty } from '../lib/format.js'
 import ProjectOptions from './ProjectOptions.jsx'
 import { PlantForm } from './forms'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
+
+// BUG-COALESCECLEAR-001 — the keys PlantForm RENDERS an input for. This is the render manifest, and
+// it is deliberately the full rendered set rather than the clearable subset: `clearPatch` filters it
+// against the server allowlist itself, so the two lists stay honest independently. Adding a field to
+// PlantForm and forgetting it here means that field silently keeps the old no-op behaviour; adding
+// one here that PlantForm does not render is what the helper's safety rule forbids, because a form
+// must never be able to NULL a column it does not show. Kept next to formFromPlant, whose keys it
+// mirrors exactly.
+//
+// Seven of these (name, variety, varietyText, quantity, status, container_type, location_id) are NOT
+// on the plants allowlist and are dropped client-side rather than sent — status and container_type
+// because clearing them changes a watering or protection recommendation (validate.js tier 2), and
+// location_id because it belongs to BUG-NOLOCOUTDOOR-001's own sentinel, not this channel.
+const PLANT_FORM_FIELDS = [
+  'name', 'variety', 'varietyText', 'quantity', 'notes', 'status',
+  'sown_at', 'sown_at_approx', 'qty_initial',
+  'source_type', 'source_ref', 'source_generation', 'lineage_note',
+  'parent_plant_id', 'container_type', 'container_size', 'location_id',
+]
 
 const EMPTY_FORM = { name: '', variety: null, quantity: '1', notes: '', status: '', project_id: '', sown_at: '', sown_at_approx: false, qty_initial: '', source_type: '', source_ref: '', source_generation: '', lineage_note: '', parent_plant_id: '', container_type: '', container_size: '', location_id: '' }
 
@@ -172,6 +192,11 @@ export default function PlantingEditor({
           container_type:    form.container_type || null,
           container_size:    (form.container_size ?? '').trim() || null,
           location_id:       form.location_id || null,
+          // Every `|| null` above is indistinguishable from "field not supplied" once it reaches the
+          // handler's COALESCE, so an emptied box has always saved as a silent no-op. `clear` is the
+          // only way to say NULL. Spread LAST and only when non-empty, so a save with nothing to
+          // clear stays byte-identical to one from before this channel existed.
+          ...clearPatch(PLANT_FORM_FIELDS, form, plant, { allowed: SERVER_CLEARABLE.plants }),
         }),
       })
       onUpdated?.({ ...data, project_name: data.project_name ?? plant.project_name })
