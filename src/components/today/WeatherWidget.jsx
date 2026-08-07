@@ -142,6 +142,31 @@ export function asOfLabel(generatedAt) {
   const f = (opts) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', ...opts }).format(d)
   return `${f({ month: 'short', day: 'numeric' })} · ${f({ hour: 'numeric', minute: '2-digit' })}`
 }
+// DRG-WXSTATION-002 (V200 §3 "surface source on Today") — turn the hardcoded "Open-Meteo" attribution into
+// the truth. `st` is the stored plan's `hydrology.station` provenance bag written by handler.js:389 from
+// station.mergeStationHydrology/mergeStationWeather; it is ABSENT entirely when no WS-2902 binds to the
+// Space (handler only spreads the key when prov has entries), which is the degrade path: return null, the
+// caller keeps the pre-existing copy, and we never invent a provenance we were not told.
+//
+// Forecast is ALWAYS part of the picture when the gauge is contributing — a rain gauge cannot report
+// tomorrow_/upcoming_ (V200 B2) and those fields drive both the rain note and the lanes — so the gauge case
+// is "rain gauge + forecast", never a bare "rain gauge" that would over-claim the forecast half.
+//
+// Deliberately NOT surfaced here (Jen-invisible rule): station_mac, station_age_min, station_fresh,
+// today_remaining_basis/_from_hour/_fallback, station_temp_f, microclimate_offset, low_source, and the raw
+// enum values themselves. Those are engine internals and belong in the admin-gated Garden Activity view.
+export function hydrologySourceLabel(st) {
+  if (!st) return null
+  const gauged = st.recent_source === 'station' || st.today_source === 'station' || st.today_source === 'station+forecast'
+  if (gauged) return 'rain gauge + forecast'
+  // No gauge contribution. Say so, and say why — a silent fallback is the defect this exists to remove.
+  // 'stale' means the station stopped reporting; 'warmup' means it is reporting but has no lookback yet.
+  // Calling warmup "offline" would be a false statement about the hardware, so the two do not share copy.
+  if (st.recent_source !== 'forecast' && st.today_source !== 'forecast') return null // nothing usable — claim nothing
+  if (st.station_uncertainty === 'stale') return 'forecast · gauge offline'
+  if (st.station_uncertainty === 'warmup') return 'forecast · gauge warming up'
+  return 'forecast'
+}
 function isStaleSnapshot(generatedAt, planDate) {
   if (!generatedAt || !planDate) return false
   const d = new Date(generatedAt)
@@ -181,6 +206,12 @@ export default function WeatherWidget({
   const liveAt = live ? liveTimeLabel(refreshedAt) : null
   const stale = !live && isStaleSnapshot(generatedAt, planDate)
   const uncertain = !live && !!(hydrology && hydrology.status && hydrology.status.uncertainty && hydrology.status.uncertainty.flag) && !stale
+
+  // DRG-WXSTATION-002 — provenance rides on the NIGHTLY hydrology (the live overlay is a client-side
+  // Open-Meteo fetch and carries none), so read it off `hydrology` regardless of the live branch.
+  // Absent bag -> the pre-existing hardcoded copy, unchanged; present bag -> whatever it actually says.
+  const stationProv = (hydrology && typeof hydrology.station === 'object' && hydrology.station) || null
+  const sourceLabel = stationProv ? hydrologySourceLabel(stationProv) : 'Open-Meteo'
 
   const rainSrc = live ? liveHydrology : hydrology
   const todayIn = rainSrc.today_precip_in ?? 0
@@ -297,11 +328,15 @@ export default function WeatherWidget({
 
       {live ? (
         <div style={{ marginTop: tokens.space.sm, textAlign: 'center', fontSize: tokens.type.xs, color: PAL.micro }}>
-          Updated {liveAt} &middot; live
+          {/* DRG-WXSTATION-002 — with a gauge on site the live overlay is forecast-ONLY (client Open-Meteo),
+              so a bare "live" would let a predicted figure read as a measured one directly under a stamp
+              that says "rain gauge" the rest of the day. That masquerade is the BUG-RAINACTUAL-001 defect
+              class. Qualified only when a gauge exists to be confused with; no station -> copy unchanged. */}
+          Updated {liveAt} &middot; {stationProv ? 'live forecast' : 'live'}
         </div>
       ) : asOf ? (
         <div style={{ marginTop: tokens.space.sm, textAlign: 'center', fontSize: tokens.type.xs, color: PAL.micro }}>
-          As of {asOf} &middot; Open-Meteo
+          As of {asOf}{sourceLabel ? <> &middot; {sourceLabel}</> : null}
         </div>
       ) : null}
       {stale && (

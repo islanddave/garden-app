@@ -2,7 +2,7 @@
 import React from 'react'
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import WeatherWidget from '../components/today/WeatherWidget.jsx'
+import WeatherWidget, { hydrologySourceLabel } from '../components/today/WeatherWidget.jsx'
 
 const weather = { tonightLow: 50, highToday: 78, code: 3, hot: false }
 const hydrology = { recent_precip_in: 0.05, today_precip_in: 0.21, today_pop: 88, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
@@ -241,5 +241,117 @@ describe('WeatherWidget — V200 Slice 6 derived no-wrap headline', () => {
     const nodes = screen.getAllByText('Water containers, skip the beds today.')
     const readable = nodes.filter(n => !n.closest('[aria-hidden="true"]'))
     expect(readable.length).toBe(1)
+  })
+})
+
+
+describe('WeatherWidget — DRG-WXSTATION-002 weather-station source on Today (V200 §3)', () => {
+  const w = { tonightLow: 50, highToday: 78, code: 3, hot: false }
+  // Nightly snapshot with no uncertainty flag and no live overlay, so the "As of … · <source>" stamp is
+  // the branch under test. GEN in ET == the plan day, so no stale banner competes.
+  const GEN = '2026-06-22T06:00:41Z'
+  const DAY = '2026-06-22'
+  const AS_OF = 'As of Jun 22 · 2:00 AM'
+  const base = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 10, tomorrow_precip_in: 0.84, tomorrow_pop: 63 }
+  const withProv = (station) => ({ ...base, station })
+  // The stamp is the ONLY node whose own text starts with "As of" (getNodeText reads direct text children).
+  const stamp = () => screen.getByText(/^As of/)
+
+  it('DEGRADES to the shipped copy when the payload carries no station provenance at all', () => {
+    // The frontend may ship before any Lambda change, and Spaces with no bound WS-2902 never get the key.
+    // Nothing is guessed: the stamp is byte-identical to what ships today, and no gauge copy appears.
+    render(<WeatherWidget weather={w} hydrology={base} generatedAt={GEN} planDate={DAY} />)
+    expect(stamp().textContent).toBe(`${AS_OF} · Open-Meteo`)
+    expect(screen.queryByText(/gauge/i)).toBeNull()
+  })
+
+  it('says "rain gauge + forecast" when the gauge supplied the recent total', () => {
+    const h = withProv({ recent_source: 'station', today_source: 'station+forecast', station_fresh: true, station_age_min: 4 })
+    render(<WeatherWidget weather={w} hydrology={h} generatedAt={GEN} planDate={DAY} />)
+    expect(stamp().textContent).toBe(`${AS_OF} · rain gauge + forecast`)
+    expect(screen.queryByText(/Open-Meteo/i)).toBeNull()
+  })
+
+  it('credits the gauge when it supplied only TODAY (recent still on forecast)', () => {
+    // Warm-up window: no 2-day lookback yet, but the station's own since-midnight accumulator is truthful.
+    const h = withProv({ recent_source: 'forecast', today_source: 'station+forecast', station_uncertainty: 'warmup' })
+    render(<WeatherWidget weather={w} hydrology={h} generatedAt={GEN} planDate={DAY} />)
+    expect(stamp().textContent).toBe(`${AS_OF} · rain gauge + forecast`)
+  })
+
+  it('names the fallback REASON when the station went stale (§3: a silent fallback defeats the point)', () => {
+    const h = withProv({ recent_source: 'forecast', today_source: 'forecast', station_uncertainty: 'stale', station_fresh: false, station_age_min: 900 })
+    render(<WeatherWidget weather={w} hydrology={h} generatedAt={GEN} planDate={DAY} />)
+    expect(stamp().textContent).toBe(`${AS_OF} · forecast · gauge offline`)
+    expect(screen.queryByText(/rain gauge/i)).toBeNull()   // never credit a gauge that is not contributing
+  })
+
+  it('does NOT call a warming-up station "offline" (distinct hardware claim, distinct copy)', () => {
+    const h = withProv({ recent_source: 'forecast', today_source: 'forecast', station_uncertainty: 'warmup' })
+    render(<WeatherWidget weather={w} hydrology={h} generatedAt={GEN} planDate={DAY} />)
+    expect(stamp().textContent).toBe(`${AS_OF} · forecast · gauge warming up`)
+    expect(screen.queryByText(/offline/i)).toBeNull()
+  })
+
+  it('claims NO source when the bag says nothing was usable', () => {
+    const h = withProv({ recent_source: 'unavailable', today_source: 'unavailable' })
+    render(<WeatherWidget weather={w} hydrology={h} generatedAt={GEN} planDate={DAY} />)
+    expect(stamp().textContent).toBe(AS_OF)                // no suffix invented
+    expect(screen.queryByText(/Open-Meteo/i)).toBeNull()
+    expect(screen.queryByText(/gauge/i)).toBeNull()
+  })
+
+  it('qualifies the LIVE stamp as forecast when a gauge exists to be confused with', () => {
+    const live = { recent_precip_in: 0.10, today_precip_in: 0.61, today_pop: 92, tomorrow_precip_in: 0.20, tomorrow_pop: 30 }
+    const h = withProv({ recent_source: 'station', today_source: 'station' })
+    render(<WeatherWidget weather={w} hydrology={h} liveHydrology={live}
+      refreshedAt="2026-06-22T17:15:00Z" generatedAt={GEN} planDate={DAY} />)
+    expect(screen.getByText(/^Updated/).textContent).toBe('Updated 1:15 PM · live forecast')
+  })
+
+  it('leaves the LIVE stamp unqualified with no station provenance (no copy churn for gaugeless users)', () => {
+    const live = { recent_precip_in: 0.10, today_precip_in: 0.61, today_pop: 92, tomorrow_precip_in: 0.20, tomorrow_pop: 30 }
+    render(<WeatherWidget weather={w} hydrology={base} liveHydrology={live}
+      refreshedAt="2026-06-22T17:15:00Z" generatedAt={GEN} planDate={DAY} />)
+    expect(screen.getByText(/^Updated/).textContent).toBe('Updated 1:15 PM · live')
+  })
+
+  it('is AMBIENT, not an alert — no role=alert and no warn banner from provenance alone', () => {
+    // Reward UX: an observability chip is ambient information. The offline case is the most alert-shaped
+    // state there is, so it is the one pinned: it must render in the existing muted stamp and nowhere else.
+    const h = withProv({ recent_source: 'forecast', today_source: 'forecast', station_uncertainty: 'stale' })
+    const { container } = render(<WeatherWidget weather={w} hydrology={h} generatedAt={GEN} planDate={DAY} />)
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('[role="status"]')).toBeNull()
+    expect(screen.queryByText(/older snapshot/i)).toBeNull()
+    expect(screen.queryByText(/Showery pattern/i)).toBeNull()
+    expect(screen.getAllByText(/gauge offline/i).length).toBe(1)  // one place, not a banner + a chip
+  })
+
+  it('keeps engine internals OFF Today (Jen-invisible: no MAC, no ages, no raw enums)', () => {
+    const h = withProv({
+      recent_source: 'station', today_source: 'station+forecast', yesterday_actual_source: 'station',
+      today_remaining_basis: 'hourly', today_remaining_from_hour: 14, station_age_min: 4,
+      station_fresh: true, station_mac: 'F8:B3:B7:82:1F:0D', station_temp_f: 61.2, microclimate_offset: -1.4,
+      low_source: 'station_floor',
+    })
+    const { container } = render(<WeatherWidget weather={w} hydrology={h} generatedAt={GEN} planDate={DAY} />)
+    const text = container.textContent
+    for (const leak of ['F8:B3:B7', 'station+forecast', 'station_floor', 'hourly', '61.2', '-1.4', '4 min']) {
+      expect(text).not.toContain(leak)
+    }
+  })
+
+  it('degrades to the shipped copy when the station key is present but malformed', () => {
+    // A non-object bag tells us nothing, so it is treated as absent rather than mined for a source.
+    render(<WeatherWidget weather={w} hydrology={withProv('station')} generatedAt={GEN} planDate={DAY} />)
+    expect(stamp().textContent).toBe(`${AS_OF} · Open-Meteo`)
+  })
+
+  it('hydrologySourceLabel returns null for an absent or empty bag', () => {
+    // The degrade contract at the unit level: the component's fallback only fires on null.
+    expect(hydrologySourceLabel(undefined)).toBeNull()
+    expect(hydrologySourceLabel(null)).toBeNull()
+    expect(hydrologySourceLabel({})).toBeNull()
   })
 })
