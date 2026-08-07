@@ -677,7 +677,7 @@ export const handler = async (event) => {
       });
     }
 
-    // DELETE /api/events/batch/:id — undo a batch (soft-delete its events + recompute watering memory).
+    // DELETE /api/events/batch/:id — undo a batch (soft-delete its events + recompute care memory).
     const batchUndo = rawPath.match(/^\/api\/events\/batch\/([^/]+)$/);
     if (batchUndo && method === 'DELETE') {
       const batchId = batchUndo[1];
@@ -707,17 +707,43 @@ export const handler = async (event) => {
             FROM event_log e
             WHERE e.id = ph.event_id AND e.metadata->>'batch_id' = ${batchId} AND ph.deleted_at IS NULL`,
         sql`
+          -- BUG-CARECACHEUNDO-001 (2026-08-07): recompute EVERY recency column, not just watering.
+          -- Was last_watered_at only, so undoing a harvest / fertilizing / pruning / observation
+          -- left the matching column — and last_event_at — permanently ahead of the event log. The
+          -- forward upserts are all GREATEST(), so the cache can never walk backwards on its own and
+          -- nothing else repaired it. Confirmed on prod: 2 plant rows cached a soft-deleted harvest.
+          --
+          -- The harvest filter here is 'harvest' ONLY, deliberately NOT the plant arm's
+          -- IN ('harvest','first_harvest'): a recompute must be the exact inverse of its OWN arm's
+          -- writer, and the project-keyed upsert maps only 'harvest' (line ~1673). Widening it would
+          -- make an unrelated undo raise last_harvested_at to a first_harvest date no forward write
+          -- ever set. The plant arm below uses the wider set because ITS writer does (0b-backfill).
           WITH affected AS (
             SELECT DISTINCT project_id FROM event_log WHERE metadata->>'batch_id' = ${batchId}
           ),
           surv AS (
             SELECT a.project_id,
               (SELECT MAX(e.event_date) FROM event_log e
-                WHERE e.project_id = a.project_id AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw
+                WHERE e.project_id = a.project_id AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.project_id = a.project_id AND e.deleted_at IS NULL) AS me,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.project_id = a.project_id AND e.event_type = 'fertilizing' AND e.deleted_at IS NULL) AS mf,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.project_id = a.project_id AND e.event_type = 'pruning' AND e.deleted_at IS NULL) AS mp,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.project_id = a.project_id AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.project_id = a.project_id AND e.event_type = 'harvest' AND e.deleted_at IS NULL) AS mh
             FROM affected a
           )
           UPDATE entity_memory em SET
             last_watered_at = surv.mw,
+            last_event_at = surv.me,
+            last_fertilized_at = surv.mf,
+            last_pruned_at = surv.mp,
+            last_observed_at = surv.mo,
+            last_harvested_at = surv.mh,
             next_water_at = CASE WHEN surv.mw IS NULL THEN NULL ELSE
               surv.mw + (COALESCE(em.watering_interval_days,
                 CASE em.location_type
@@ -733,10 +759,14 @@ export const handler = async (event) => {
           FROM surv WHERE em.project_id = surv.project_id
         `,
         sql`
-          -- Care re-key Step B (care-rekey-001): parallel plant-keyed watering recompute after the
-          -- batch soft-delete. Recomputes EACH affected planting's last_watered_at from its OWN
-          -- surviving events (keyed on e.plant_id). Recency-only (no next_water_at). Runs in the
-          -- same tx after the soft-delete, so MAX() excludes the undone rows.
+          -- Care re-key Step B (care-rekey-001): parallel plant-keyed recompute after the batch
+          -- soft-delete. Recomputes EACH affected planting's recency from its OWN surviving events
+          -- (keyed on e.plant_id). Recency-only (no next_water_at — the nightly engine owns "due").
+          -- Runs in the same tx after the soft-delete, so MAX() excludes the undone rows.
+          --
+          -- BUG-CARECACHEUNDO-001 (2026-08-07): was last_watered_at only. Column set and event_type
+          -- mapping now mirror 0b-backfill.sql exactly — which is also exactly the plant-keyed
+          -- forward upsert (line ~1717) — so this is that writer's precise inverse.
           WITH affected AS (
             SELECT DISTINCT plant_id FROM event_log
             WHERE metadata->>'batch_id' = ${batchId} AND plant_id IS NOT NULL
@@ -744,11 +774,26 @@ export const handler = async (event) => {
           surv AS (
             SELECT a.plant_id,
               (SELECT MAX(e.event_date) FROM event_log e
-                WHERE e.plant_id = a.plant_id AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw
+                WHERE e.plant_id = a.plant_id AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = a.plant_id AND e.deleted_at IS NULL) AS me,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = a.plant_id AND e.event_type = 'fertilizing' AND e.deleted_at IS NULL) AS mf,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = a.plant_id AND e.event_type = 'pruning' AND e.deleted_at IS NULL) AS mp,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = a.plant_id AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = a.plant_id AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL) AS mh
             FROM affected a
           )
           UPDATE entity_memory em SET
             last_watered_at = surv.mw,
+            last_event_at = surv.me,
+            last_fertilized_at = surv.mf,
+            last_pruned_at = surv.mp,
+            last_observed_at = surv.mo,
+            last_harvested_at = surv.mh,
             updated_at = NOW()
           FROM surv WHERE em.plant_id = surv.plant_id
         `,
@@ -1350,43 +1395,86 @@ export const handler = async (event) => {
               FROM event_log e
               WHERE e.id = ${eventId} AND ph.event_id = ${eventId} AND ph.deleted_at IS NULL`,
         ];
-        if (owned[0].event_type === 'watering' || owned[0].event_type === 'rain') {
-          // Recompute watering memory from SURVIVING events (runs after the soft-delete in
-          // the same transaction, so MAX() excludes the undone event) — batch-undo parity.
+        // BUG-CARECACHEUNDO-001 (2026-08-07): this recompute used to be gated on
+        // `event_type === 'watering' || 'rain'`, so undoing a harvest / fertilizing / pruning /
+        // observation soft-deleted the event and then updated NOTHING. The forward upserts are all
+        // GREATEST(), so the stale column could never walk backwards on its own and nothing else
+        // repaired it — the drift was permanent. The gate is gone: every undo now recomputes every
+        // recency column from the surviving events.
+        //
+        // next_water_at stays watering-gated, in SQL rather than in JS. It is NOT a recency cache —
+        // the nightly daily-plan engine owns "due" — so recomputing it from last_watered + interval
+        // on an unrelated undo would clobber the engine's value. Binding the undone event's type
+        // keeps that one column's behaviour byte-for-byte what it was.
+        const undoneType = owned[0].event_type;
+        stmts.push(sql`
+          WITH surv AS (
+            SELECT (SELECT MAX(e.event_date) FROM event_log e
+              WHERE e.project_id = ${projectId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw,
+            (SELECT MAX(e.event_date) FROM event_log e
+              WHERE e.project_id = ${projectId} AND e.deleted_at IS NULL) AS me,
+            (SELECT MAX(e.event_date) FROM event_log e
+              WHERE e.project_id = ${projectId} AND e.event_type = 'fertilizing' AND e.deleted_at IS NULL) AS mf,
+            (SELECT MAX(e.event_date) FROM event_log e
+              WHERE e.project_id = ${projectId} AND e.event_type = 'pruning' AND e.deleted_at IS NULL) AS mp,
+            (SELECT MAX(e.event_date) FROM event_log e
+              WHERE e.project_id = ${projectId} AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
+            (SELECT MAX(e.event_date) FROM event_log e
+              WHERE e.project_id = ${projectId} AND e.event_type = 'harvest' AND e.deleted_at IS NULL) AS mh
+          )
+          UPDATE entity_memory em SET
+            last_watered_at = surv.mw,
+            last_event_at = surv.me,
+            last_fertilized_at = surv.mf,
+            last_pruned_at = surv.mp,
+            last_observed_at = surv.mo,
+            last_harvested_at = surv.mh,
+            next_water_at = CASE WHEN ${undoneType}::text NOT IN ('watering','rain') THEN em.next_water_at
+              WHEN surv.mw IS NULL THEN NULL ELSE
+              surv.mw + (COALESCE(em.watering_interval_days,
+                CASE em.location_type
+                  WHEN 'indoor_seedling'   THEN 1
+                  WHEN 'outdoor_container' THEN 2
+                  WHEN 'outdoor_bed'       THEN 4
+                  WHEN 'outdoor_inground'  THEN 5
+                  WHEN 'indoor_mature'     THEN 5
+                  ELSE 4
+                END)::int * INTERVAL '1 day')
+            END,
+            updated_at = NOW()
+          FROM surv WHERE em.project_id = ${projectId}
+        `);
+        if (plantId) {
           stmts.push(sql`
+            -- Care re-key Step B (care-rekey-001): plant-keyed recompute (single undo). Recency
+            -- only (no next_water_at). Recomputes THIS planting's care cache from its own
+            -- surviving events. Guarded on plantId (project-level events have plant_id NULL).
+            -- BUG-CARECACHEUNDO-001: was last_watered_at only; column set and event_type mapping
+            -- now mirror 0b-backfill.sql / the plant-keyed forward upsert exactly.
             WITH surv AS (
               SELECT (SELECT MAX(e.event_date) FROM event_log e
-                WHERE e.project_id = ${projectId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw
+                WHERE e.plant_id = ${plantId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = ${plantId} AND e.deleted_at IS NULL) AS me,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = ${plantId} AND e.event_type = 'fertilizing' AND e.deleted_at IS NULL) AS mf,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = ${plantId} AND e.event_type = 'pruning' AND e.deleted_at IS NULL) AS mp,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = ${plantId} AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = ${plantId} AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL) AS mh
             )
             UPDATE entity_memory em SET
               last_watered_at = surv.mw,
-              next_water_at = CASE WHEN surv.mw IS NULL THEN NULL ELSE
-                surv.mw + (COALESCE(em.watering_interval_days,
-                  CASE em.location_type
-                    WHEN 'indoor_seedling'   THEN 1
-                    WHEN 'outdoor_container' THEN 2
-                    WHEN 'outdoor_bed'       THEN 4
-                    WHEN 'outdoor_inground'  THEN 5
-                    WHEN 'indoor_mature'     THEN 5
-                    ELSE 4
-                  END)::int * INTERVAL '1 day')
-              END,
+              last_event_at = surv.me,
+              last_fertilized_at = surv.mf,
+              last_pruned_at = surv.mp,
+              last_observed_at = surv.mo,
+              last_harvested_at = surv.mh,
               updated_at = NOW()
-            FROM surv WHERE em.project_id = ${projectId}
+            FROM surv WHERE em.plant_id = ${plantId}
           `);
-          if (plantId) {
-            stmts.push(sql`
-              -- Care re-key Step B (care-rekey-001): plant-keyed watering recompute (single undo).
-              -- Recency-only (no next_water_at). Recomputes THIS planting's last_watered_at from its
-              -- own surviving events. Guarded on plantId (project-level events have plant_id NULL).
-              WITH surv AS (
-                SELECT (SELECT MAX(e.event_date) FROM event_log e
-                  WHERE e.plant_id = ${plantId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw
-              )
-              UPDATE entity_memory em SET last_watered_at = surv.mw, updated_at = NOW()
-              FROM surv WHERE em.plant_id = ${plantId}
-            `);
-          }
         }
         await sql.transaction(stmts);
         return resp(200, { undone: true, id: eventId });

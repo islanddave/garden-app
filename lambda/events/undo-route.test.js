@@ -43,9 +43,13 @@ describe('events Lambda — DELETE /api/events/:id (single-event undo)', () => {
 
   it('watering undo recomputes entity_memory from surviving events (parity with batch undo)', () => {
     const idx = SRC.indexOf('/api/events/:id \u2014 single-event undo');
-    const block = SRC.slice(idx, idx + 6000);   // widened 4200 -> 6000, same reason as above
+    const block = SRC.slice(idx, idx + 12000);  // widened 4200 -> 6000 -> 12000, same reason as above
     expect(block).toMatch(/last_watered_at = surv\.mw/);
-    expect(block).toMatch(/next_water_at = CASE WHEN surv\.mw IS NULL THEN NULL/);
+    // BUG-CARECACHEUNDO-001 moved the watering gate from JS into this CASE (the recency columns are
+    // now recomputed on EVERY undo; next_water_at still is not, because the daily-plan engine owns
+    // it). The behaviour this line guards \u2014 a watering undo pushes next_water_at back \u2014 is unchanged.
+    expect(block).toMatch(
+      /next_water_at = CASE WHEN \$\{undoneType\}::text NOT IN \('watering','rain'\) THEN em\.next_water_at\s*\n\s*WHEN surv\.mw IS NULL THEN NULL/);
   });
 
   it('regression guard: batch undo route (DELETE /api/events/batch/:id) still soft-deletes', () => {

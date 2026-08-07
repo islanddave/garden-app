@@ -169,6 +169,13 @@ sweep:
       Plant-keyed care rows whose cached recency disagrees with the event_log truth. Pre-existing,
       two causes (direct DB writes; undo recompute covering last_watered_at only). Prod at authoring
       time: 6 rows, all last_harvested_at, 4 repairable by re-running 0b and 2 not.
+      BOTH CAUSES ARE NOW TICKETED, and they are separate on purpose — they drift in opposite
+      directions and their repairs are exact complements. Cache BEHIND the log (the 4) is
+      BUG-DIRECTWRITEDRIFT-001 and IS repaired by re-running care-rekey-001/0b-backfill.sql, whose
+      GREATEST walks forwards only. Cache AHEAD of the log (the 2) is BUG-CARECACHEUNDO-001 and is
+      NOT — GREATEST cannot lower a value; see migrations/v4-carecacheundo-001/, which walks
+      backwards only and ships with the Lambda fix extending all four undo recompute arms beyond
+      last_watered_at. This gate stays as the combined, direction-agnostic canary.
     sql: |
       WITH truth AS (
         SELECT p.id AS plant_id,
