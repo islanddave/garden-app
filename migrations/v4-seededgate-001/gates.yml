@@ -1,0 +1,189 @@
+# gates.yml
+# BUG-SEEDEDGATE-001 — append resolved_scopes + cadence_scopes to v_resolved_care.
+# VIEW-ONLY DDL. No table is touched; no data is written.
+#
+# DEPLOY BOUNDARY — the falsifiable test.
+#
+#   QUESTION: can the CURRENTLY DEPLOYED prod code be broken by applying this?
+#   ANSWER:   NO. The deployed handler.js selects `vrc.resolved_profile` by name. Appending columns
+#             to a view cannot affect a named select, and nothing in lambda/ or src/ references
+#             resolved_scopes or cadence_scopes at authoring time (grep-verified).
+#   INVERSE:  YES, in the other direction — the code slice that SELECTs the new columns must not be
+#             deployed before this is applied, or the nightly planting query throws and the daily
+#             plan is empty for every user. THIS FILE FIRST, THEN THE CODE. That is the single
+#             ordering constraint in this migration and it is not negotiable.
+#   ROLLBACK: 0r must run only after the reading code is rolled back or flagged off, for the same
+#             reason in reverse.
+#
+# DESTRUCTIVE STEPS: none in 0a. 0r contains a DROP VIEW — deliberate, because CREATE OR REPLACE
+# VIEW cannot remove columns. It is safe only while dependents remain zero, which pre_no_dependents
+# asserts here and which 0r re-checks by failing loudly (no CASCADE).
+#
+# ORDER APPLIED: nothing applied yet. Authored, executed read-only against live prod as a bare
+# SELECT (the view body was run standalone inside SET TRANSACTION READ ONLY to prove it parses and
+# classifies correctly), and gate-validated.
+#
+# The sweep phase measures the four provenance classes BEFORE the change so the post phase can prove
+# the classification is exactly what was predicted — in particular that the Collards row lands in
+# "cultivar row present, NOT cadence-bearing" and therefore keeps falling through to the bundled
+# JSON. Sweeps use rowcount_gte: 0 — they always pass, always run, always report.
+
+pre:
+  # The substrate. care_profile and its scope enum must exist with the shape the view body assumes.
+  - name: pre_care_profile_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'care_profile'
+         AND column_name IN ('scope','scope_id','profile')
+    expect: rowcount_eq
+    value: 3
+
+  # Exactly one system row. The view body uses a scalar subquery with no LIMIT, so two system rows
+  # would raise "more than one row returned by a subquery" at SELECT time — on every nightly run.
+  # care_profile_system_uniq enforces this today; assert it rather than trust it.
+  - name: pre_exactly_one_system_row
+    sql: |
+      SELECT 1 FROM public.care_profile WHERE scope = 'system'
+    expect: rowcount_eq
+    value: 1
+
+  # The view exists and has exactly the two columns we are appending to. If it already has four,
+  # this migration has been applied and pre_not_already_applied should have caught it; if it has
+  # some other shape, CREATE OR REPLACE will refuse and we want to know before trying.
+  - name: pre_view_has_exactly_two_columns
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'v_resolved_care'
+    expect: rowcount_eq
+    value: 2
+
+  # THE PRECONDITION THAT MAKES 0r SAFE. CREATE OR REPLACE VIEW cannot drop columns, so rollback
+  # must DROP and recreate. That is only safe while nothing depends on the view. Any dependent —
+  # a matview, another view, a rule — appearing here means the rollback story is broken and the
+  # migration must not be applied until it is re-designed.
+  - name: pre_no_dependents
+    sql: |
+      SELECT DISTINCT d.refobjid
+        FROM pg_depend d
+        JOIN pg_rewrite r ON r.oid = d.objid
+       WHERE d.refclassid = 'pg_class'::regclass
+         AND d.refobjid = 'public.v_resolved_care'::regclass
+         AND r.ev_class <> 'public.v_resolved_care'::regclass
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.3-seededgate-001'
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # ── the population this migration exists to rescue ───────────────────────────────────────────
+  - name: sweep_capture_unseeded_but_cadence_bearing
+    note: >
+      Cultivar care_profile rows that carry a real watering interval but NO _seeded marker — the
+      profiles the deployed resolver currently ignores, sending their plantings to bundled-JSON
+      guesses. Prod at authoring time: 8 rows — Chives, Christmas Cactus, Crassula ovata/Jade,
+      Dracaena, Echeveria, Garlic Chives, Lithops, Vietnamese Coriander, all carrying
+      _source: cowork_care_audit_20260709. Nine cultivar rows lack _seeded in total; the ninth is
+      Collards (source: dave_confirmed), which this gate correctly EXCLUDES because it carries no
+      watering keys — it is counted by the sibling sweep below, and 8 + 1 = 9 is the check that the
+      two sweeps partition the unseeded population exactly.
+      Of the 8, only 6 map to plantings that are live AND change resolution; Dracaena and
+      Vietnamese Coriander have zero active plantings and the single Lithops planting is status
+      failed. This gate counts PROFILES, not plantings.
+    sql: |
+      SELECT cp.scope_id
+        FROM public.care_profile cp
+       WHERE cp.scope = 'cultivar'
+         AND (cp.profile -> '_seeded') IS NULL
+         AND (   (cp.profile -> 'water_interval_days'           IS NOT NULL AND jsonb_typeof(cp.profile -> 'water_interval_days')           <> 'null')
+              OR (cp.profile -> 'water_interval_days_container' IS NOT NULL AND jsonb_typeof(cp.profile -> 'water_interval_days_container') <> 'null')
+              OR (cp.profile -> 'water_interval_days_inground'  IS NOT NULL AND jsonb_typeof(cp.profile -> 'water_interval_days_inground')  <> 'null'))
+    expect: rowcount_gte
+    value: 0
+
+  # ── the population this migration must NOT rescue ────────────────────────────────────────────
+  - name: sweep_capture_row_present_but_not_cadence_bearing
+    note: >
+      The Collards class — a cultivar care_profile row that exists but deliberately carries no
+      watering keys. Its own _scope_note reads "container-sizing only; watering/thresholds
+      intentionally omitted so resolution still falls to system default (no behavior change)".
+      A naive provenance predicate ("did a non-system scope contribute?") would adopt this row and
+      move Collards from 2 days (genus:Brassica, real horticultural content) to 3 days (the naked
+      system default), AGAINST the row author's written intent — a regression shipped inside the
+      fix. cadence_scopes is what prevents it, and this gate is the measurement that proves the
+      class is non-empty and therefore that the distinction is load-bearing rather than theoretical.
+      Prod at authoring time: 1 row (Collards, d80353c0-45bc-407d-923c-73796acdb486).
+    sql: |
+      SELECT cp.scope_id
+        FROM public.care_profile cp
+       WHERE cp.scope = 'cultivar'
+         AND NOT (   (cp.profile -> 'water_interval_days'           IS NOT NULL AND jsonb_typeof(cp.profile -> 'water_interval_days')           <> 'null')
+                  OR (cp.profile -> 'water_interval_days_container' IS NOT NULL AND jsonb_typeof(cp.profile -> 'water_interval_days_container') <> 'null')
+                  OR (cp.profile -> 'water_interval_days_inground'  IS NOT NULL AND jsonb_typeof(cp.profile -> 'water_interval_days_inground')  <> 'null'))
+    expect: rowcount_gte
+    value: 0
+
+post:
+  # The columns landed, in the right order, with the right types.
+  - name: post_new_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'v_resolved_care'
+         AND column_name IN ('resolved_scopes','cadence_scopes')
+         AND data_type = 'ARRAY'
+    expect: rowcount_eq
+    value: 2
+
+  # The pre-existing contract is untouched. Appending must not rename, retype or reorder the two
+  # original columns — the deployed handler selects resolved_profile by name and would break.
+  - name: post_original_columns_unchanged
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'v_resolved_care'
+         AND (   (column_name = 'leaf_id'          AND ordinal_position = 1 AND data_type = 'uuid')
+              OR (column_name = 'resolved_profile' AND ordinal_position = 2 AND data_type = 'jsonb'))
+    expect: rowcount_eq
+    value: 2
+
+  # STRUCTURAL INVARIANT 1: cadence_scopes is a subset of resolved_scopes. A scope cannot contribute
+  # a cadence key without having a row. If this ever fails, the two ARRAY() expressions have drifted
+  # apart and the resolver is reading a provenance claim the structure does not support.
+  - name: post_cadence_scopes_subset_of_resolved
+    sql: |
+      SELECT leaf_id FROM public.v_resolved_care
+       WHERE NOT (cadence_scopes <@ resolved_scopes)
+    expect: rowcount_eq
+    value: 0
+
+  # STRUCTURAL INVARIANT 2: 'system' is always structurally present and NEVER cadence-bearing.
+  # The system row's water_interval_days: 3 is a house constant, not evidence of knowledge — that
+  # is the entire semantic distinction this migration introduces. A future edit that lets 'system'
+  # into cadence_scopes would make every planting look researched and silently re-create the bug.
+  - name: post_system_always_structural_never_cadence
+    sql: |
+      SELECT leaf_id FROM public.v_resolved_care
+       WHERE NOT ('system' = ANY(resolved_scopes))
+          OR ('system' = ANY(cadence_scopes))
+    expect: rowcount_eq
+    value: 0
+
+  # THE OBSERVABILITY SIGNAL, asserted rather than assumed. The Collards class must survive the
+  # change as "row present, not cadence-bearing" — resolved_scopes strictly larger than {system}
+  # while cadence_scopes is empty. This is the class the _seeded boolean could not name at all, and
+  # a migration that collapsed the two columns into one would send this count to zero.
+  - name: post_collards_class_is_preserved
+    sql: |
+      SELECT leaf_id FROM public.v_resolved_care
+       WHERE cardinality(resolved_scopes) > 1
+         AND cardinality(cadence_scopes) = 0
+    expect: rowcount_gte
+    value: 1
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.3-seededgate-001'
+    expect: rowcount_eq
+    value: 1
