@@ -27,9 +27,47 @@ function daysBetween(today, iso){ if(!iso) return null;
 function weeksSince(today, iso){ const d=daysBetween(today,iso); return d==null?null:Math.floor(d/7); }
 
 function resolveCadence(p, cad){
-  // CARE-CADENCE-001: prefer the DB-resolved per-cultivar/leaf profile (v_resolved_care) when seeded;
-  // falls back to the bundled cadence-data-v2.json for any planting whose variety has no care_profile row.
-  if(p && p.db_cadence && p.db_cadence._seeded) return {...p.db_cadence, _via:'db'};
+  // CARE-CADENCE-001 / BUG-SEEDEDGATE-001: prefer the DB-resolved per-cultivar/leaf profile
+  // (v_resolved_care) when a scope actually CONTRIBUTED A CADENCE KEY; else the bundled
+  // cadence-data-v2.json.
+  //
+  // PROVENANCE IS STRUCTURAL, NOT IN-PAYLOAD. The old test was an in-blob `_seeded` marker, and nine
+  // researched cultivar profiles carry a DIFFERENT marker (_source: cowork_care_audit_20260709 on
+  // eight, source: dave_confirmed on Collards), so their intervals were invisible and six live
+  // plantings watered on bundled guesses while their own high-confidence numbers sat unread.
+  //
+  // p.cadence_scopes is v_resolved_care.cadence_scopes: the scopes that supplied a NON-NULL
+  // water_interval_days{,_container,_inground}. 'system' is deliberately never in it — the house
+  // 3-day constant is not evidence of knowledge — so [] means "nothing in the DB knows how often to
+  // water this", the bundled fallback runs exactly as before, and that empty count IS the
+  // DRG-CADENCEFLOOR-001 unresolved signal (103 of 249 active plantings on prod, 2026-08-07).
+  //
+  // WHY NOT "just delete the _seeded check": v_resolved_care merges system||cultivar||leaf with the
+  // jsonb || operator — a SHALLOW, TOP-LEVEL, RIGHT-WINS merge. The system row carries
+  // water_interval_days, and 146 of 159 cultivar rows express cadence under the DIFFERENT key names
+  // *_container / *_inground, so the system value is never shadowed. Every resolved_profile
+  // therefore carries a plausible 3-day interval whether or not anyone researched the plant, and a
+  // system-only row is indistinguishable from a researched one without this signal.
+  //
+  // READS cadence_scopes, NEVER resolved_scopes. resolved_scopes says a row EXISTS. Verified on prod
+  // 2026-08-07: Collards has resolved_scopes {system,cultivar} and cadence_scopes {} — its cultivar
+  // profile carries container sizing and, by its own _scope_note, DELIBERATELY no watering keys. A
+  // resolved_scopes predicate would adopt it, and because that merged profile has no *_container key
+  // at all it would land on cad.default and move Collards 2d -> 3d against its author's written
+  // intent: a regression shipped inside the fix. That one row is why there are two columns.
+  //
+  // FLAG: the _seeded arm below is the CARE_CADENCE_SCOPES_ENABLED=OFF path ONLY. handler.js nulls
+  // the column on every row when the flag is off, so `cs` is not an array and the legacy marker test
+  // runs -> byte-identical plan. Flag ON does not consult _seeded at all, which is safe because the
+  // 150 seeded cultivar rows are a STRICT SUBSET of the 158 cadence-bearing ones (verified on prod:
+  // zero seeded-but-not-bearing rows), so nothing resolving _via 'db' today stops doing so.
+  //
+  // Array.isArray is also the fail-safe if the driver ever hands text[] back as the raw '{cultivar}'
+  // string: a non-array degrades to the flag-OFF answer, never to a wrong interval.
+  const cs = p && p.cadence_scopes;
+  const adopt = Array.isArray(cs) ? cs.length > 0
+                                  : !!(p && p.db_cadence && p.db_cadence._seeded); // legacy; flag-OFF only
+  if(p && p.db_cadence && adopt) return {...p.db_cadence, _via:'db'};
   const byV=cad.by_variety||{};
   const key=[p.variety, p.name].find(k=>k && byV[k]);
   if(key) return {...byV[key], _via:'variety:'+key};
@@ -310,9 +348,12 @@ function coldFor(p, cad, low){
 // and/or water_rule:'growth_gated'. Until this gate existed NOTHING read those signals, and the nightly plan
 // issued interval watering for a summer-dormant Lithops (watering during dormancy rots it — the plant died).
 // Sources checked IN ORDER: the resolved cadence `c` AND the raw DB profile p.db_cadence. The raw read is
-// load-bearing, not belt-and-braces: resolveCadence only adopts db_cadence when `_seeded` is present, and the
-// LIVE Lithops cultivar profile carries the signals WITHOUT `_seeded` — a c-only check would drop the signal
-// through the exact fallback path that caused the original loss. no_calendar_water (explicit, stronger) wins
+// load-bearing, not belt-and-braces: resolveCadence adopts db_cadence only when a scope CONTRIBUTED A CADENCE
+// KEY (cadence_scopes; `_seeded` on the flag-OFF path), and a profile can declare suppression while carrying
+// no watering interval at all — cadence_scopes = [] -> bundled fallback -> a c-only check would drop the
+// signal through the exact path that caused the original loss. BUG-SEEDEDGATE-001 narrows which profiles are
+// adopted but does NOT make this raw read dead: the Lithops class is exactly "signals present, cadence key
+// absent". no_calendar_water (explicit, stronger) wins
 // the label when both are set. Returns 'no_calendar_water' | 'growth_gated' | null.
 // Suppression is LOUD, never silent: the caller routes the planting to counts.dormancy_suppressed +
 // tasks.dormancy_suppressed with a per-item rule + reason, so a suppressed planting is distinguishable from a

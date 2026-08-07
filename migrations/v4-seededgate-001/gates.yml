@@ -12,8 +12,16 @@
 #             deployed before this is applied, or the nightly planting query throws and the daily
 #             plan is empty for every user. THIS FILE FIRST, THEN THE CODE. That is the single
 #             ordering constraint in this migration and it is not negotiable.
-#   ROLLBACK: 0r must run only after the reading code is rolled back or flagged off, for the same
-#             reason in reverse.
+#   ROLLBACK: 0r must run only after the reading code is REVERTED AND REDEPLOYED. Flagging off is
+#             NOT sufficient, and this line previously said it was.
+#             CARE_CADENCE_SCOPES_ENABLED gates whether the engine TRUSTS cadence_scopes; it does
+#             not gate whether the handler SELECTs it. That SELECT is unconditional (the flag is
+#             applied afterwards, by nulling the column on each row, precisely so all four
+#             resolveCadence call sites get one consistent answer). So once the code is out, 0r
+#             drops a column the nightly planting query still names -> that query throws -> empty
+#             daily plan for every user, flag ON or OFF.
+#             ORDER, strictly: flag OFF -> revert + redeploy the Lambda -> THEN 0r.
+#             0r is not a standalone rollback once the code has shipped.
 #
 # DESTRUCTIVE STEPS: none in 0a. 0r contains a DROP VIEW — deliberate, because CREATE OR REPLACE
 # VIEW cannot remove columns. It is safe only while dependents remain zero, which pre_no_dependents

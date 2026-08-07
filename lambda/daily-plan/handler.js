@@ -205,7 +205,14 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            cov.state is false as rain_exposed_resolved,
            cov.state is true  as frost_covered_resolved,
            coalesce(p.assignee_user_id, pj.assignee_user_id) as assignee_user_id,
-           vrc.resolved_profile as db_cadence,  -- CARE-CADENCE-001: system||cultivar||leaf merged cadence (NULL/_seeded-absent -> engine bundled fallback)
+           vrc.resolved_profile as db_cadence,  -- CARE-CADENCE-001: system||cultivar||leaf merged cadence (NULL/no-cadence-scope -> engine bundled fallback)
+           -- BUG-SEEDEDGATE-001: which scopes supplied a NON-NULL watering interval. [] means nothing
+           -- in the DB knows this plant's cadence. NOT resolved_scopes (row-exists), which would adopt
+           -- Collards' deliberately watering-free profile and move it 2d -> 3d. REQUIRES
+           -- migrations/v4-seededgate-001/0a-view.sql APPLIED: selecting a column that does not exist
+           -- throws on the NIGHTLY PLANTING QUERY, i.e. an empty daily plan for both users. Applied to
+           -- prod and staging 2026-08-07.
+           vrc.cadence_scopes,
            -- Dates returned as 'YYYY-MM-DD' TEXT (UTC): the neon driver hands timestamptz back as JS Date objects, and
            -- engine.daysBetween does iso.slice(0,10) -> a Date object crashes it (TypeError). to_char + AT TIME ZONE 'UTC'
            -- matches the engine's own UTC date math (new Date(iso.slice(0,10)+'T00:00:00Z')). Soft-deleted events excluded.
@@ -320,6 +327,26 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // followed by scripts/rerun-daily-plan.sh --live: about two minutes, no promote.
   // Mirror any flip in src/lib/featureFlags.js -- the CJS Lambda cannot import that ESM module.
   const todayAwareEnabled = process.env.CARE_TODAY_AWARE_ENABLED === 'true';
+  // BUG-SEEDEDGATE-001 — structural cadence provenance replaces the in-payload _seeded marker.
+  // DEFAULT OFF, and OFF is byte-identical.
+  //
+  // The flag is applied by NULLING the column on every row rather than by branching in the engine.
+  // resolveCadence has FOUR call sites — engine.js coldFor, the water loop, owner grouping, and
+  // cadenceTenderFor in this file — and a threaded parameter is one missed site away from the same
+  // planting resolving two different ways in one run. Carrying the flag on the DATA makes that
+  // structurally impossible.
+  //
+  // Expected delta on flip, measured on prod 2026-08-07: exactly 6 plantings. Chives 3->4,
+  // Garlic Chives 3->4, Christmas Cactus 7->8 (inert, dormant), Echeveria x2 10->12, and Jade Plant
+  // 16->12 — the only one that GAINS a task on flip day. Collards stays 2: its cadence_scopes is [].
+  // Rollback is one update-function-configuration plus a rerun; no promote needed.
+  const cadenceScopesEnabled = process.env.CARE_CADENCE_SCOPES_ENABLED === 'true';
+  if (!cadenceScopesEnabled) { for (const p of plantings) p.cadence_scopes = null; }
+  // Loud, not silent: if the driver ever hands text[] back unparsed, resolveCadence's Array.isArray
+  // fails safe to the flag-OFF answer — which is indistinguishable from "the flag did nothing".
+  else console.log(JSON.stringify({ msg: 'cadence-scopes', rows: plantings.length,
+    arrays: plantings.filter((p) => Array.isArray(p.cadence_scopes)).length,
+    bearing: plantings.filter((p) => Array.isArray(p.cadence_scopes) && p.cadence_scopes.length > 0).length }));
   // ── V4-FROST-001 F3 — frost alert channel (design §3, decisions D1–D6) ──────────────────────────
   // F6 kill switch, default OFF. Flag OFF still EVALUATES and LOGS (§3-8 wants the 2026 corpus started
   // before anything reads it) but never publishes and never writes alerts_sent — so the stored plan is
