@@ -152,7 +152,7 @@ reviewed factor still resolves — 3 count → 4.50 g, basis `cultivar_sample`.
 ## Sequencing
 
 ```
-pre gates  ->  0a-derived-v3.sql  ->  mid gates  ->  0b-resolver-v5.sql  ->  post gates
+pre gates  ->  0a-derived-v3.sql  ->  sweep gates  ->  0b-resolver-v5.sql  ->  post gates
 ```
 
 `0b` **must** follow `0a`: its body references `d.independent_n`, and against a v2 view it fails at
@@ -220,4 +220,4 @@ this file will not do it and cannot infer it.
 | `src/__tests__/cal1Weights.test.js` | the reference implementation, kept in lockstep with `0a`: duplicate collapse, the `'medium'` cap, the n≥5 hatch, cv-ladder non-regression |
 | `tests/integration/cal1-indep.int.test.js` | real Postgres: same-unit duplicate, 5-row duplicate vs the hatch, exact-agreement → `medium` + still corroborated, cross-unit twin → both groups provisional, the review queue, cv-ladder non-regression, and a database-wide invariant sweep |
 | `src/__tests__/harvestWeightRatchet.test.js` | the ratchet's gate tracks v5; independence recomputed from base tables; the new lines report without blocking |
-| `gates.yml` | pre/mid/post, expressed as relational invariants (plus two informational captures) so they hold on staging as well as dev/prod |
+| `gates.yml` | pre/sweep/post, expressed as relational invariants (plus two informational captures) so they hold on staging as well as dev/prod |

@@ -109,11 +109,13 @@ pre:
         FROM public.cultivar_weight_derived d
         JOIN ratios r ON r.cultivar_id = d.cultivar_id AND r.unit = d.unit
        WHERE d.confidence = 'high' AND r.dr < 2
-    expect: informational
+    expect: rowcount_gte
+    value: 0
+    note: informational capture rather than an assertion - always passes, value read from --json
 
-mid:
+sweep:
   # AUTHORISES 0b. Its body references this column; without it 0b is a 42703.
-  - name: mid_derived_exposes_independent_n
+  - name: sweep_derived_exposes_independent_n
     sql: |
       SELECT 1 FROM information_schema.columns
        WHERE table_schema='public' AND table_name='cultivar_weight_derived'
@@ -121,7 +123,7 @@ mid:
     expect: rowcount_eq
     value: 2
 
-  - name: mid_view_marker_recorded
+  - name: sweep_view_marker_recorded
     sql: |
       SELECT 1 FROM public.schema_version WHERE version = '4.23.0-cal1-indep-001'
     expect: rowcount_eq
@@ -244,7 +246,9 @@ post:
         CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, 'count', 3, NULL) r
        WHERE pl.variety_id = '457d4628-1531-4349-8af7-2a114c206599' AND pl.deleted_at IS NULL
        LIMIT 1
-    expect: informational
+    expect: rowcount_gte
+    value: 0
+    note: informational capture rather than an assertion - always passes, value read from --json
 
   # The basis vocabulary is untouched, so no stored row can have become unrepresentable.
   - name: post_basis_vocabulary_unchanged
