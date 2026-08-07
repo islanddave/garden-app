@@ -105,10 +105,13 @@ function isSmallVessel(p){
 function rainClass(p){ return p.covered ? 'none' : 'outdoor'; }    // covered/indoor => 'none'; everything else => 'outdoor'
 function windowPrecip(hy){
   if(!hy || hy.recent_precip_in==null) return null;                 // missing precip -> no credit (uncertainty handled in hydrologyStatus)
-  // BUG-TODAYWATER-001: this is D-2..D-1 ACTUALS + D0 FORECAST, not "D-2..D0 actuals" as this comment used
-  // to claim. today_precip_in is Open-Meteo precipitation_sum[2] read at ~02:01 for a day that has not
-  // started (index.js). So SOAK_CAP_IN has ALWAYS acted partly on a prediction — worth knowing before
-  // reasoning about any gate that consumes this.
+  // BUG-TODAYWATER-001: this is D-2..D-1 ACTUALS + D0, not "D-2..D0 actuals" as this comment used to claim.
+  // BUG-RAINACTUAL-001 then changed what the D0 term MEANS: with a bound gauge, station.mergeStationHydrology
+  // sets today_precip_in = today_observed_in + today_remaining_in — rain the WS-2902 has already MEASURED plus
+  // the hourly forecast for the hours not yet elapsed — so by the 15:30 run it is essentially the gauge total.
+  // With no station it is still Open-Meteo precipitation_sum[2] read at ~02:01 for a day that has not started
+  // (index.js). So the D0 term is part-measured/part-predicted, in a ratio that moves through the day, and any
+  // gate that must distinguish the two reads today_observed_in / today_remaining_in — never this sum.
   return (hy.recent_precip_in||0) + (hy.today_precip_in||0);
 }
 // Returns { credit_days, wp, eff } when rain qualifies for credit, else null.
@@ -204,9 +207,15 @@ const SOAK_TODAY_SMALL_IN = 2.0; // today-forecast bar for small vessels (bags/p
 // all — and `fetchPrecip` sets today_pop:null whenever Open-Meteo omits it, so this is a real path, not a
 // theoretical one. Unknown probability means a data problem, not a certainty; the engine's own convention
 // elsewhere (isSmallVessel, rainTierFor) is that unknown fails safe toward WATERING.
+//
+// BUG-TODAYWATER-001 2nd pass — WHAT THIS GATES. A PoP is a probability that rain WILL fall; it is meaningless
+// applied to rain that already HAS. Since BUG-RAINACTUAL-001 today_precip_in is measured + still-expected, so
+// gating it whole made a fail-closed PoP veto water already in the ground. This now reads the still-expected
+// part only; the measured part is judged by the soak cap, which is the branch that owns water in the media.
+function todayForecastIn(hy){ return hy.today_remaining_in ?? hy.today_precip_in; }  // ?? not ||: a real 0 remaining must not fall back to the day total
 function todayQualifies(hy){
   if(!hy) return false;
-  const q = hy.today_precip_in, pop = hy.today_pop;
+  const q = todayForecastIn(hy), pop = hy.today_pop;
   return q != null && q >= SOAK_FCST_QPF_IN && pop != null && pop >= SOAK_FCST_POP_PCT;
 }
 
@@ -224,7 +233,14 @@ function saturationSuppressed(rcls, hy, opts){
   // today-awareness is on, soak judges ACTUALS ONLY and the forecast is judged below, where it has its own
   // bars and is subordinate to the fast-dry carve-outs. Flag OFF keeps the original basis exactly, so the
   // shipped behaviour and every existing fixture are untouched until the flag is flipped.
-  const soakBasis = todayAware ? (hy.recent_precip_in || 0) : wp;
+  //
+  // BUG-TODAYWATER-001 2nd pass — "ACTUALS" MUST INCLUDE TODAY'S GAUGE. recent_precip_in alone was right only
+  // while the D0 term was purely a pre-dawn forecast; BUG-RAINACTUAL-001 made today_precip_in gauge-driven
+  // (observed + unelapsed hourly), so reading recent alone dropped physically MEASURED rain out of the
+  // saturation cap and then re-gated it behind a PoP — a category error that inverts the cap's whole purpose
+  // (a 1.5" measured soak at 45% PoP watered 157 of Dave's plantings instead of 19). today_observed_in is
+  // ABSENT with no bound station, so this term is 0 there and the flag-ON no-gauge path is unchanged.
+  const soakBasis = todayAware ? ((hy.recent_precip_in || 0) + (hy.today_observed_in || 0)) : wp;
   if(soakBasis >= SOAK_CAP_IN) return { wp: Math.round(soakBasis*100)/100, kind: 'soak' };
   const fq = hy && hy.tomorrow_precip_in, pop = hy && hy.tomorrow_pop;
   if(wp >= SOAK_WET_FLOOR_IN && fq!=null && fq >= SOAK_FCST_QPF_IN && (pop==null || pop >= SOAK_FCST_POP_PCT))
@@ -233,10 +249,15 @@ function saturationSuppressed(rcls, hy, opts){
   // and evaluated against the raw forecast, NOT windowPrecip, so today is never counted twice (windowPrecip
   // already contains today_precip_in; using it here would let one 0.6" event satisfy both a "0.5 already
   // wet" floor and a "0.5 more coming" bar, silently halving SOAK_CAP_IN).
+  // BUG-TODAYWATER-001 2nd pass: judged against todayForecastIn — the STILL-EXPECTED part — so the gauge's
+  // measured share is counted once, in soakBasis above, and never a second time here under a PoP. fq reports
+  // the same number the bar was applied to; reporting the day total would make "did we skip on a forecast
+  // that busted?" unanswerable, which is the one question this row exists to answer.
   if(todayAware && todayQualifies(hy)){
     const bar = (opts.smallVessel ? SOAK_TODAY_SMALL_IN : SOAK_FCST_QPF_IN);
-    if(hy.today_precip_in >= bar)
-      return { wp: wpR, fq: hy.today_precip_in, pop: hy.today_pop, kind: 'today' };
+    const tf = todayForecastIn(hy);
+    if(tf >= bar)
+      return { wp: wpR, fq: tf, pop: hy.today_pop, kind: 'today' };
   }
   return null;
 }
@@ -508,5 +529,5 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
       rain_coming:rainComing, rain_horizon:rainHorizon, status:hs} : {status:hs},
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression,
+module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression,
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered};

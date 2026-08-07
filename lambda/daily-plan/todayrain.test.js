@@ -12,8 +12,10 @@
 // them `covered` (Shelf 4 ×15, Stable ×2, Shelf 2 ×1). Those are real figures, used here as fixtures.
 import { describe, it, expect } from 'vitest';
 import engine from './engine.js';
+import station from './station.js';
 
-const { generatePlanForUser, generatePlan, saturationSuppressed, todayQualifies } = engine;
+const { generatePlanForUser, generatePlan, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN } = engine;
+const { deriveStation, mergeStationHydrology } = station;
 
 const TODAY = '2026-08-03';
 // resolveCadence spreads cad.default, and the engine reads the _container/_inground variants — a bare
@@ -246,5 +248,220 @@ describe('BUG-TODAYWATER-001 — invariants', () => {
     expect(v.row.today_in).toBe(0.98);
     expect(v.row.today_pop).toBe(84);
     expect(typeof v.row.sat_wp).toBe('number');
+  });
+});
+
+// ── BUG-TODAYWATER-001 2nd pass — the composition seam with BUG-RAINACTUAL-001 ────────────────────────
+// WHY THIS BLOCK EXISTS, AND WHY IT LOOKS DIFFERENT FROM EVERYTHING ABOVE. Every fixture above (and every
+// one in watercredit-satcap.test.js) builds hydrology BY HAND through H(...), so today_precip_in is always a
+// pure pre-dawn forecast — the exact shape the today branch was designed against. Production stopped looking
+// like that when BUG-RAINACTUAL-001 made station.mergeStationHydrology set
+//   today_precip_in = today_observed_in + today_remaining_in
+// i.e. WS-2902 gauge-MEASURED rain plus the hourly forecast for the hours not yet elapsed. At the 15:30 run
+// that is essentially the on-site gauge total. today_observed_in / today_remaining_in appeared ONLY in
+// station.test.js: each half was covered, the JUNCTION was not, and the defect lived precisely there — the
+// flag-ON soak basis excluded measured rain and then a PoP gate vetoed it. So these fixtures are built the
+// way the Lambda builds them (handler.js: mergeStationHydrology -> generatePlan) and never by hand.
+describe('BUG-TODAYWATER-001 2nd pass — measured rain is water, not a probability', () => {
+  const MAC = 'F8:B3:B7:82:1F:0D';
+  const rec = (day, hh, dailyrainin, tempf = 70) => ({ dateutc: Date.parse(`${day}T${hh}:00:00-04:00`), dailyrainin, tempf });
+  const NOW_PM = Date.parse('2026-08-03T19:30:00Z');   // 15:30 ET on the plan day = the intraday run that STORES the plan
+
+  // A fresh, fully-covering gauge whose D-1 and D-2 buckets are dry, so recent_precip_in is 0 and the ONLY
+  // water in the picture is what fell TODAY. That isolates the term under test.
+  const gauge = observed => deriveStation({ mac: MAC, records: [
+    rec('2026-08-03', '15', observed),
+    rec('2026-08-02', '23', 0),
+    rec('2026-08-01', '23', 0),
+    rec('2026-07-31', '18', 0),   // coverage anchor (day < D-2)
+  ] }, { nowMs: NOW_PM });
+
+  // observed = what the gauge has measured today; dayFcst = Open-Meteo's whole-day number. With no hourly
+  // array the merge takes its documented wholeday fallback, so remaining = max(0, dayFcst - observed).
+  const gaugeHy = (observed, dayFcst, pop) => mergeStationHydrology(
+    { recent_precip_in: 0, today_precip_in: dayFcst, today_pop: pop, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: null },
+    gauge(observed), { planDay: TODAY },
+  ).merged;
+
+  it('C1 the live defect: 1.5" MEASURED at 45% PoP is a soak, not a coin-flip', () => {
+    // This is the shipped 2026-08-04 prod configuration (CARE_TODAY_AWARE_ENABLED=true) meeting the
+    // gauge-driven today field. Pre-fix the soak basis read recent_precip_in alone = 0, so 1.5" of rain
+    // physically in the ground scored zero, and the today branch then refused it for want of a 60% PoP:
+    // 157 of Dave's plantings and 15 of Jen's went to water_due against 19/4 with the flag off.
+    const m = gaugeHy(1.5, 1.5, 45);
+    expect(m.today_observed_in).toBe(1.5);
+    expect(m.today_remaining_in).toBe(0);
+    expect(m.recent_precip_in).toBe(0);
+    const s = saturationSuppressed('outdoor', m, { todayAware: true });
+    expect(s).not.toBe(null);
+    expect(s.kind).toBe('soak');           // NOT 'today' — this water is not a forecast
+    expect(s.wp).toBe(1.5);
+    // MUTATION: restore `const soakBasis = todayAware ? (hy.recent_precip_in || 0) : wp;` -> s is null here.
+  });
+
+  it('C2 the same, with a NULL PoP — the fail-closed path that has no probability to fail on', () => {
+    // fetchPrecip really does emit today_pop:null (2026-07-03 and 06-17 in the stored plans). Fail-closed is
+    // right for a forecast and absurd for a gauge: a missing probability cannot un-fall 1.5" of rain.
+    const m = gaugeHy(1.5, 1.5, null);
+    const s = saturationSuppressed('outdoor', m, { todayAware: true });
+    expect(s.kind).toBe('soak');
+    expect(todayQualifies(m)).toBe(false);   // the PoP gate still (correctly) refuses the forecast half
+    // MUTATION: restore the recent-only soakBasis -> s is null.
+  });
+
+  it('C3 end-to-end through generatePlanForUser, including a hot fabric bag', () => {
+    // saturationSuppressed is only half the path; the bucket is what Dave sees. And 'soak' must outrank
+    // bagHeatGate exactly as it does for recent rain (S9b) — 1.5" measured today is the same class of water.
+    const m = gaugeHy(1.5, 1.5, 45);
+    const bed = verdict({ hy: m, p: BED, high: 92 });
+    expect(bed.bucket).toBe('skip');
+    expect(bed.row.sat_kind).toBe('soak');
+    const bag = verdict({ hy: m, p: { container_type: 'fabric_bag' }, high: 92 });
+    expect(bag.bucket).toBe('skip');
+    expect(bag.row.sat_kind).toBe('soak');
+    // MUTATION: restore the recent-only soakBasis -> both become 'water'.
+  });
+
+  it('C4 hourly basis reaches the same verdict — the fix is not an artifact of the wholeday fallback', () => {
+    // The live 15:30 run resolves `remaining` from the HOURLY array (prov.today_remaining_basis='hourly'),
+    // not the subtraction. Same conclusion, different construction, so the assertion is not pinned to a
+    // fallback path that only fires when hourly data is missing.
+    const hourly = { time: [], precipitation: [] };
+    for (let h = 0; h < 24; h++) { hourly.time.push(`${TODAY}T${String(h).padStart(2, '0')}:00`); hourly.precipitation.push(0); }
+    const { merged, prov } = mergeStationHydrology(
+      { recent_precip_in: 0, today_precip_in: 1.5, today_pop: 45, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: null, hourly_precip: hourly },
+      gauge(1.5), { planDay: TODAY },
+    );
+    expect(prov.today_remaining_basis).toBe('hourly');
+    expect(merged.today_observed_in).toBe(1.5);
+    expect(merged.today_remaining_in).toBe(0);
+    expect(saturationSuppressed('outdoor', merged, { todayAware: true }).kind).toBe('soak');
+  });
+
+  it('C5 INVARIANT: once the gauge alone clears SOAK_CAP_IN, both flag states must agree', () => {
+    // The general statement of the defect, independent of PoP, vessel, heat and forecast: water measured at
+    // or above the cap suppresses, full stop. Flag OFF already got this right (its basis is recent+today, and
+    // today >= observed by construction), so flag-ON/flag-OFF disagreement here IS the bug. Swept rather than
+    // spot-checked, because the pre-fix failure was invisible at every PoP >= 60 and every vessel.
+    for (const observed of [SOAK_CAP_IN, 1.2, 1.5, 3.8]) {
+      for (const dayFcst of [observed, observed + 0.5]) {
+        for (const pop of [null, 0, 45, 59, 60, 92]) {
+          const m = gaugeHy(observed, dayFcst, pop);
+          expect(m.today_observed_in).toBeGreaterThanOrEqual(SOAK_CAP_IN);
+          for (const p of [BED, {}, { container_type: 'fabric_bag' }, { container_type: 'solo_cup' }, { container_type: 'tray_cell', transplant_at: '2026-07-29' }]) {
+            for (const high of [70, 92]) {
+              const on = verdict({ hy: m, p, high, todayAware: true });
+              const off = verdict({ hy: m, p, high, todayAware: false });
+              expect(on.bucket, `obs=${observed} fcst=${dayFcst} pop=${pop} high=${high} ${JSON.stringify(p)}`).toBe(off.bucket);
+              expect(on.bucket).toBe('skip');
+            }
+          }
+        }
+      }
+    }
+    // MUTATION: restore the recent-only soakBasis -> every flag-ON case waters while flag-OFF skips.
+  });
+});
+
+describe('BUG-TODAYWATER-001 2nd pass — the PoP gates the remainder, and only the remainder', () => {
+  const MAC = 'F8:B3:B7:82:1F:0D';
+  const rec = (day, hh, dailyrainin) => ({ dateutc: Date.parse(`${day}T${hh}:00:00-04:00`), dailyrainin, tempf: 70 });
+  const gauge = observed => deriveStation({ mac: MAC, records: [
+    rec('2026-08-03', '15', observed), rec('2026-08-02', '23', 0), rec('2026-08-01', '23', 0), rec('2026-07-31', '18', 0),
+  ] }, { nowMs: Date.parse('2026-08-03T19:30:00Z') });
+  const gaugeHy = (observed, dayFcst, pop) => mergeStationHydrology(
+    { recent_precip_in: 0, today_precip_in: dayFcst, today_pop: pop, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: null },
+    gauge(observed), { planDay: TODAY },
+  ).merged;
+
+  it('C6 does not re-count fallen rain as "still coming": 0.4" down + 0.1" left is not a 0.5" forecast', () => {
+    // Reading the day TOTAL here let the same water satisfy the soak basis and the incoming-forecast bar —
+    // the double-count the disjoint-terms design (S19) exists to prevent, reintroduced through the back door
+    // by the gauge. 0.5" total is under SOAK_CAP_IN and only 0.1" is still expected, so: water it.
+    const m = gaugeHy(0.4, 0.5, 84);
+    expect(m.today_observed_in).toBe(0.4);
+    expect(m.today_remaining_in).toBe(0.1);
+    expect(m.today_precip_in).toBe(0.5);
+    expect(todayQualifies(m)).toBe(false);
+    expect(verdict({ hy: m, p: BED }).bucket).toBe('water');
+    // MUTATION: restore `const q = hy.today_precip_in` in todayQualifies -> qualifies, bucket becomes 'skip'.
+  });
+
+  it('C7 holds the small-vessel bar against the REMAINDER, not the day total', () => {
+    // 0.9" has fallen, 1.2" is still expected, 2.1" for the day. SOAK_TODAY_SMALL_IN is a bar on how much
+    // more is coming — a solo cup that has already caught 0.9" and expects 1.2" more has not met a 2.0" bar,
+    // and the measured 0.9" is under the cap, so it still needs water.
+    const m = gaugeHy(0.9, 2.1, 92);
+    expect(m.today_remaining_in).toBe(1.2);
+    expect(m.today_precip_in).toBeGreaterThan(SOAK_TODAY_SMALL_IN);
+    expect(saturationSuppressed('outdoor', m, { todayAware: true, smallVessel: true })).toBe(null);
+    expect(verdict({ hy: m, p: { container_type: 'solo_cup' } }).bucket).toBe('water');
+    // MUTATION: restore `if(hy.today_precip_in >= bar)` -> 2.1 >= 2.0, bucket becomes 'skip'.
+  });
+
+  it('C8 reports the amount it actually judged, so a busted forecast stays auditable', () => {
+    // 0.3" measured, 0.7" still expected. A row claiming `1" rain falling today` would be doubly wrong: the
+    // 1" is not all forecast, and the 0.7" that could bust is invisible. This is the row that answers
+    // "did we skip on a forecast that never arrived?".
+    const m = gaugeHy(0.3, 1.0, 84);
+    const s = saturationSuppressed('outdoor', m, { todayAware: true });
+    expect(s.kind).toBe('today');
+    expect(s.fq).toBe(0.7);
+    const v = verdict({ hy: m, p: BED });
+    expect(v.row.reason).toMatch(/0\.7" rain falling today/);
+    expect(v.row.reason).not.toMatch(/\b1" rain falling/);
+    // MUTATION: restore `fq: hy.today_precip_in` -> fq is 1 and the reason reads `1" rain falling today`.
+  });
+
+  it('C9 a real remaining of 0 is zero, not a fallback to the day total', () => {
+    // `??` vs `||` in todayForecastIn. 0.9" fell, nothing more is coming, and 0.9" is under SOAK_CAP_IN —
+    // so this waters, exactly as the flag-OFF path does. With `||`, the 0 falls through to today_precip_in
+    // and 0.9" of ALREADY-FALLEN rain gets re-judged as an incoming forecast.
+    const m = gaugeHy(0.9, 0.9, 84);
+    expect(m.today_remaining_in).toBe(0);
+    expect(todayQualifies(m)).toBe(false);
+    expect(verdict({ hy: m, p: BED }).bucket).toBe('water');
+    expect(verdict({ hy: m, p: BED, todayAware: false }).bucket).toBe('water');   // flag parity
+    // MUTATION: `hy.today_remaining_in ?? hy.today_precip_in` -> `||` makes this 'skip'.
+  });
+
+  it('C11 rain_coming follows the remainder too — 1.5" that already fell is not "coming"', () => {
+    // todayQualifies also drives the client-facing rain_coming/rain_horizon (generatePlan). Sharing the fix
+    // is intentional and is a visible change on the gauge path: the Today widget stops announcing incoming
+    // rain for a storm that has already passed. It reaches no engine gate, so it cannot move water_due.
+    const wx = { tonightLow: 60, highToday: 75, code: 0, short: '', unit: 'F' };
+    const run = hy => generatePlan({ plantings: [plant(BED)], cadence: CAD, fertModel: FM, today: TODAY,
+      weather: wx, hydrology: hy, ownerFallback: 'u1' }).hydrology;
+    const fallen = run(gaugeHy(1.5, 1.5, 84));         // all of it measured, nothing left
+    expect(fallen.rain_coming).toBe(false);
+    expect(fallen.rain_horizon).toBe(null);
+    expect(fallen.today_observed_in).toBe(1.5);        // and the split still rides along for the audit
+    expect(fallen.today_remaining_in).toBe(0);
+    const stillComing = run(gaugeHy(0.3, 1.0, 84));    // 0.7" genuinely still expected
+    expect(stillComing.rain_coming).toBe(true);
+    expect(stillComing.rain_horizon).toBe('today');
+  });
+
+  it('C10 no bound station: the observed/remaining keys are absent and nothing changes', () => {
+    // The dominant path if the gauge goes offline, and the back-compat contract for this fix: with no
+    // station the observed term contributes 0 and the forecast term falls back to today_precip_in, so every
+    // hand-built fixture in this file describes behaviour that is still live.
+    const base = H(0, 0.98, 84, 0, null);
+    const { merged } = mergeStationHydrology(base, null, { planDay: TODAY });
+    expect(merged).toEqual(base);
+    expect(merged.today_observed_in).toBeUndefined();
+    expect(merged.today_remaining_in).toBeUndefined();
+    for (const hy of [H(0, 0.98, 84, 0, null), H(0, 0.98, null, 0, null), H(1.2, 0, 0, 0, null),
+      H(0.6, 0.6, 84, 0, null), H(0, 0.6, 40, 0, null), H(0, 3.8, 92, 0, null), H(0.6, 0, 0, 0.6, 70)]) {
+      for (const p of [BED, {}, { container_type: 'fabric_bag' }]) {
+        for (const flag of [true, false]) {
+          const raw = verdict({ hy, p, high: 92, todayAware: flag });
+          const thru = verdict({ hy: mergeStationHydrology(hy, null, { planDay: TODAY }).merged, p, high: 92, todayAware: flag });
+          expect(thru.bucket).toBe(raw.bucket);
+          expect(thru.row?.sat_kind ?? null).toBe(raw.row?.sat_kind ?? null);
+          expect(thru.row?.reason ?? null).toBe(raw.row?.reason ?? null);
+        }
+      }
+    }
   });
 });
