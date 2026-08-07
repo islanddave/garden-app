@@ -1,30 +1,32 @@
 # gates.yml
-# V4-CARECACHEUNDO-001 — repair of entity_memory rows left AHEAD of the event log by event undo.
+# V4-CACHEFWDGAP-001 — repair of entity_memory rows left BEHIND the surviving event log.
 # DATA-ONLY (no DDL on any app table; the one snap_* table is rollback scaffolding).
 #
 # DEPLOY BOUNDARY — the falsifiable test.
 #
 #   QUESTION: can the CURRENTLY DEPLOYED prod code re-create the drift this file repairs, after it
 #             has been repaired?
-#   ANSWER:   YES, until the Lambda fix promotes. The deployed events Lambda still recomputes only
-#             last_watered_at on undo, and its single-event arm still runs no recompute at all
-#             unless the undone event was watering/rain. Any undo of a harvest / fertilizing /
-#             pruning / observation between this repair and the promote re-opens exactly one cell.
-#   CONSEQUENCE: this migration is ORDER-SENSITIVE in one direction only. It is safe to apply at any
-#             time — it never breaks the deployed writer, which does not read these columns before
-#             writing them — but applying it LONG BEFORE the promote wastes the repair. Preferred
-#             order is code first, data second; see README.md §Apply order. The repair is idempotent,
-#             so re-running it after the promote is the cheap, correct remedy if drift reappears.
-#   COUPLING with the Lambda fix: none in the breaking sense. The new recompute arms are correct
-#             against repaired and unrepaired data alike (they compute from event_log, never from
-#             the cache), and the repair is correct against old and new Lambda alike.
+#   ANSWER:   YES for Door A, until the Lambda fix promotes. The deployed events Lambda still gates
+#             its whole entity_memory recompute on `projectChanged || plantChanged`, so a date-only
+#             or type-only edit runs no arm at all. Prod took three such edits in the 72h before
+#             authoring, and each left a cell behind. Doors B, C and D cannot recur from code —
+#             B and C were one-off hand-run SQL, and D needs an out-of-band event_log.plant_id
+#             write.
+#   CONSEQUENCE: ORDER-SENSITIVE in one direction only. Safe to apply at any time — it never breaks
+#             the deployed writer, which does not read these columns before writing them — but
+#             applying it BEFORE the promote wastes part of the repair. Preferred order is code
+#             first, data second; see README.md. The repair is idempotent, so re-running it after
+#             the promote is the cheap, correct remedy.
+#   COUPLING with the Lambda fix: none in the breaking sense. The new recompute arms compute from
+#             event_log, never from the cache, so they are correct against repaired and unrepaired
+#             data alike, and the repair is correct against old and new Lambda alike.
 #
-# DESTRUCTIVE STEPS: none. No DROP, no DELETE, no constraint change. The only mutation is lowering
-# six timestamp columns toward values already present in event_log, snapshotted first and reversible
-# by 0r.
+# DESTRUCTIVE STEPS: none. No DROP, no DELETE, no constraint change. The only mutation is raising
+# seven timestamp columns toward values already present in event_log, snapshotted first and
+# reversible by 0r.
 #
-# ORDER APPLIED: nothing is applied yet. Authored, parse-verified against live prod inside
-# SET TRANSACTION READ ONLY, and gate-validated only.
+# ORDER APPLIED: nothing is applied yet. Authored, gate-validated, and dry-run against live prod
+# inside BEGIN/ROLLBACK.
 #
 # The sweep phase is the L-058 all-row check in its data-repair form: it MEASURES the two drift
 # populations separately before the write, so the post phase can assert that one went to zero while
@@ -33,15 +35,17 @@
 # the record instead of in prose.
 
 pre:
-  # The columns this migration writes. Asserting the substrate rather than assuming it.
+  # The columns this migration writes. Asserting the substrate rather than assuming it. SEVEN here,
+  # not carecacheundo's six: last_issue_at is in scope for this file (see below).
   - name: pre_recency_columns_present
     sql: |
       SELECT 1 FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'entity_memory'
          AND column_name IN ('last_event_at','last_watered_at','last_fertilized_at',
-                             'last_pruned_at','last_observed_at','last_harvested_at')
+                             'last_pruned_at','last_observed_at','last_harvested_at',
+                             'last_issue_at')
     expect: rowcount_eq
-    value: 6
+    value: 7
 
   # Phase A of care-rekey-001 must be applied: without the plant arm there is no plant-keyed row to
   # repair, and this file would silently do half its job.
@@ -52,36 +56,90 @@ pre:
     expect: rowcount_eq
     value: 1
 
+  # NEW relative to carecacheundo, and necessary. This file repairs last_issue_at, whose forward
+  # writer only exists as of BUG-LASTISSUEPLANT-001. Applying to a database without it would
+  # "repair" a column no writer maintains — the cache would be raised once and then drift again
+  # immediately, with the post gate asserting an invariant nothing upholds.
+  - name: pre_last_issue_at_mapping_shipped
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.3-lastissueplant-001'
+    expect: rowcount_eq
+    value: 1
+
   # A pre-existing snapshot means an earlier run already captured state. 0b's CREATE TABLE IF NOT
   # EXISTS would then adopt that older capture rather than the current one — correct for a resumed
   # run, wrong and invisible for a fresh one. Fail loudly and let a human decide which it is.
   - name: pre_snapshot_table_absent
     sql: |
       SELECT 1 FROM information_schema.tables
-       WHERE table_schema = 'public' AND table_name = 'snap_carecacheundo001_entity_memory'
+       WHERE table_schema = 'public' AND table_name = 'snap_cachefwdgap001_entity_memory'
     expect: rowcount_eq
     value: 0
 
-  # Re-run guard. A second application against an already-repaired database is harmless (0b matches
-  # nothing) but should be a deliberate act, not a silent no-op reported as success.
   - name: pre_not_already_applied
     sql: |
-      SELECT 1 FROM public.schema_version WHERE version = '4.23.2-carecacheundo-001'
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.4-cachefwdgap-001'
     expect: rowcount_eq
     value: 0
 
 sweep:
-  # ── population 1: what THIS migration repairs ────────────────────────────────────────────────
-  - name: sweep_capture_cache_ahead_of_event_log
-    note: >
-      entity_memory rows with at least one recency column STRICTLY AHEAD of the surviving event log
-      (including cached-non-NULL against truth-NULL). This is BUG-CARECACHEUNDO-001's blast radius
-      and exactly the set 0b rewrites. Prod at authoring time: 6 rows / 12 cells — 2 plant rows
-      (both last_harvested_at: "Beefsteak Rescue 2" cached 2026-07-31 vs true max 2026-07-14, and
-      "Pineapple Tomato" cached 2026-08-04 with no surviving harvest at all) and 4 project rows
-      ("Basil" E, "Bitter Melon" H, "Build Out" EWPO, "Chilis" EWOH; 3 of the 4 on soft-deleted
-      containers). Every one carries the undo signature — a soft-deleted event at exactly the cached
-      timestamp. Must be 0 after 0b.
+  # This migration's blast radius, measured before the write. Prod at authoring: 15 rows / 28 cells,
+  # all owned by Dave (Jen: 0 rows — a genuine zero, but over a 35-event sample, so it is evidence
+  # of no exposure yet rather than of immunity).
+  - name: sweep_capture_cache_behind_event_log
+    sql: |
+      WITH truth AS (
+        SELECT em.id,
+               em.last_event_at, em.last_watered_at, em.last_fertilized_at,
+               em.last_pruned_at, em.last_observed_at, em.last_harvested_at, em.last_issue_at,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_any,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type IN ('watering','rain')
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_water,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type = 'fertilizing'
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_fert,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type = 'pruning'
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_prune,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type = 'observation'
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_obs,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.event_type IN ('harvest','first_harvest')
+                             ELSE e.event_type = 'harvest' END)
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_harv,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.flagged_as_issue = true
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_issue
+          FROM public.entity_memory em
+         WHERE em.plant_id IS NOT NULL OR em.project_id IS NOT NULL
+      )
+      SELECT id FROM truth
+       WHERE (t_any   IS NOT NULL AND (last_event_at      IS NULL OR last_event_at      < t_any))
+          OR (t_water IS NOT NULL AND (last_watered_at    IS NULL OR last_watered_at    < t_water))
+          OR (t_fert  IS NOT NULL AND (last_fertilized_at IS NULL OR last_fertilized_at < t_fert))
+          OR (t_prune IS NOT NULL AND (last_pruned_at     IS NULL OR last_pruned_at     < t_prune))
+          OR (t_obs   IS NOT NULL AND (last_observed_at   IS NULL OR last_observed_at   < t_obs))
+          OR (t_harv  IS NOT NULL AND (last_harvested_at  IS NULL OR last_harvested_at  < t_harv))
+          OR (t_issue IS NOT NULL AND (last_issue_at      IS NULL OR last_issue_at      < t_issue))
+    expect: rowcount_gte
+    value: 0
+
+  # carecacheundo's predicate, restated verbatim in the opposite direction. This is the
+  # NON-INTERFERENCE MEASUREMENT: whatever it reads before the write, post_no_cache_ahead_of_event_log
+  # must still hold after. Prod at authoring: 0 (carecacheundo was applied 2026-08-07 14:47:59Z).
+  - name: sweep_capture_cache_ahead_of_event_log_left_alone
     sql: |
       WITH truth AS (
         SELECT em.id,
@@ -126,29 +184,29 @@ sweep:
     expect: rowcount_gte
     value: 0
 
-  # ── population 2: what this migration must NOT touch ────────────────────────────────────────
-  - name: sweep_capture_cache_behind_event_log_left_alone
-    note: >
-      The OTHER drift direction — cache BEHIND the log — which is NOT this file's to repair.
-      CORRECTED 2026-08-07 (BUG-CACHEFWDGAP-001 investigation): the attribution and the remedy
-      named here were both wrong. Those 15 rows are not one ticket's — they come from four
-      unrelated doors: the events PUT running no recompute on a forward event_date edit (4 rows),
-      the BUG-DIRECTWRITEDRIFT-001 reversal script INSERTing 5 plant rows with a partial column
-      list and a subset-scoped recompute (5), commit 78419e8 renormalising event_date midnight->
-      noon without recomputing (4), and a harvest acquiring event_log.plant_id out of band (2).
-      And re-running care-rekey-001/0b-backfill.sql repairs at most 5 of the 15: it writes only the
-      plant arm, so all 5 project rows are invisible to it, and its
-      `WHERE p.deleted_at IS NULL AND p.archived_at IS NULL` excludes all 5 reversal-script rows,
-      every one of which was archived 2026-07-20. The actual repair is
-      migrations/v4-cachefwdgap-001. Captured here so the
-      post gate can prove 0b was backwards-only: this count must be UNCHANGED after apply. Prod at
-      authoring time: 15 rows (some overlap population 1 — a row can be ahead on one column and
-      behind on another, which is precisely why the repair is decided per CELL, not per row).
+post:
+  # THE INVARIANT THIS MIGRATION EXISTS TO ESTABLISH, and the sibling of carecacheundo's
+  # post_no_cache_ahead_of_event_log. Together the two say: the cache EQUALS the surviving event log
+  # on every recency column, on both arms.
+  #
+  # Structural, not a pinned count. It never mentions 15, never names a row id, never mentions a
+  # date, never joins the snapshot. It compares two live tables and asserts a relation, so it stays
+  # true as the garden grows and goes red the moment any writer, migration or ad-hoc repair puts a
+  # cell behind again. That is the whole point of filing it: the pre-existing detector tests
+  # `cached > truth` ONLY, so BEHIND drift was structurally undetectable at any volume, and 15 rows
+  # accreted unseen across three months and four unrelated causes.
+  #
+  # The `IS NOT NULL` guards are the load-bearing detail. A plain `cached < truth` would silently
+  # pass on every NULL cell — which is exactly Door B's ten cells, the worst of the population.
+  # Symmetrically, `t_x IS NULL` (an entity with no events of that type) must NOT count as behind.
+  # Both halves are needed, and IS DISTINCT FROM would be direction-agnostic and fold the two
+  # tickets back together.
+  - name: post_no_cache_behind_event_log
     sql: |
       WITH truth AS (
         SELECT em.id,
                em.last_event_at, em.last_watered_at, em.last_fertilized_at,
-               em.last_pruned_at, em.last_observed_at, em.last_harvested_at,
+               em.last_pruned_at, em.last_observed_at, em.last_harvested_at, em.last_issue_at,
                (SELECT MAX(e.event_date) FROM public.event_log e
                  WHERE e.deleted_at IS NULL
                    AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
@@ -174,7 +232,11 @@ sweep:
                    AND (CASE WHEN em.plant_id IS NOT NULL THEN e.event_type IN ('harvest','first_harvest')
                              ELSE e.event_type = 'harvest' END)
                    AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
-                             ELSE e.project_id = em.project_id END)) AS t_harv
+                             ELSE e.project_id = em.project_id END)) AS t_harv,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.flagged_as_issue = true
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_issue
           FROM public.entity_memory em
          WHERE em.plant_id IS NOT NULL OR em.project_id IS NOT NULL
       )
@@ -185,12 +247,12 @@ sweep:
           OR (t_prune IS NOT NULL AND (last_pruned_at     IS NULL OR last_pruned_at     < t_prune))
           OR (t_obs   IS NOT NULL AND (last_observed_at   IS NULL OR last_observed_at   < t_obs))
           OR (t_harv  IS NOT NULL AND (last_harvested_at  IS NULL OR last_harvested_at  < t_harv))
-    expect: rowcount_gte
+          OR (t_issue IS NOT NULL AND (last_issue_at      IS NULL OR last_issue_at      < t_issue))
+    expect: rowcount_eq
     value: 0
 
-post:
-  # The invariant this migration exists to establish. Structural, not a pinned count, so it stays
-  # true as the garden grows: no cached recency value may claim an event the log does not have.
+  # carecacheundo's invariant must SURVIVE this apply. If this file ever annexed one of its rows,
+  # this is where it shows.
   - name: post_no_cache_ahead_of_event_log
     sql: |
       WITH truth AS (
@@ -236,52 +298,38 @@ post:
     expect: rowcount_eq
     value: 0
 
-  # BACKWARDS-ONLY, asserted rather than trusted. Every repaired cell must have MOVED DOWN (or to
-  # NULL) relative to the snapshot. A single upward move would mean 0b's CASE was inverted or a
-  # future edit replaced it with a plain "set to truth", which would silently annex
-  # BUG-DIRECTWRITEDRIFT-001's rows and destroy that ticket's before/after evidence.
-  - name: post_no_repaired_cell_moved_forward
+  # The mirror of carecacheundo's post_no_repaired_cell_moved_forward. This is the gate that catches
+  # a future edit replacing GREATEST with a plain "set to truth", which would silently LOWER any cell
+  # the deployed undo path has put ahead since carecacheundo was applied — annexing the sibling
+  # ticket's population without anyone noticing.
+  - name: post_no_repaired_cell_moved_backward
     sql: |
       SELECT em.id
-        FROM public.snap_carecacheundo001_entity_memory s
+        FROM public.snap_cachefwdgap001_entity_memory s
         JOIN public.entity_memory em ON em.id = s.id
-       WHERE (em.last_event_at      IS NOT NULL AND (s.last_event_at      IS NULL OR em.last_event_at      > s.last_event_at))
-          OR (em.last_watered_at    IS NOT NULL AND (s.last_watered_at    IS NULL OR em.last_watered_at    > s.last_watered_at))
-          OR (em.last_fertilized_at IS NOT NULL AND (s.last_fertilized_at IS NULL OR em.last_fertilized_at > s.last_fertilized_at))
-          OR (em.last_pruned_at     IS NOT NULL AND (s.last_pruned_at     IS NULL OR em.last_pruned_at     > s.last_pruned_at))
-          OR (em.last_observed_at   IS NOT NULL AND (s.last_observed_at   IS NULL OR em.last_observed_at   > s.last_observed_at))
-          OR (em.last_harvested_at  IS NOT NULL AND (s.last_harvested_at  IS NULL OR em.last_harvested_at  > s.last_harvested_at))
+       WHERE (s.last_event_at      IS NOT NULL AND (em.last_event_at      IS NULL OR em.last_event_at      < s.last_event_at))
+          OR (s.last_watered_at    IS NOT NULL AND (em.last_watered_at    IS NULL OR em.last_watered_at    < s.last_watered_at))
+          OR (s.last_fertilized_at IS NOT NULL AND (em.last_fertilized_at IS NULL OR em.last_fertilized_at < s.last_fertilized_at))
+          OR (s.last_pruned_at     IS NOT NULL AND (em.last_pruned_at     IS NULL OR em.last_pruned_at     < s.last_pruned_at))
+          OR (s.last_observed_at   IS NOT NULL AND (em.last_observed_at   IS NULL OR em.last_observed_at   < s.last_observed_at))
+          OR (s.last_harvested_at  IS NOT NULL AND (em.last_harvested_at  IS NULL OR em.last_harvested_at  < s.last_harvested_at))
+          OR (s.last_issue_at      IS NOT NULL AND (em.last_issue_at      IS NULL OR em.last_issue_at      < s.last_issue_at))
     expect: rowcount_eq
     value: 0
 
-  # The rollback path must actually be usable: every row 0b wrote has to be in the snapshot. If the
-  # snapshot predicate and the UPDATE predicate ever drift apart, this catches it while the data is
-  # still recoverable rather than after someone needs 0r.
+  # Every row the repair touched must appear in the snapshot, or 0r cannot restore it.
   - name: post_every_repaired_row_is_snapshotted
     sql: |
       SELECT em.id
         FROM public.entity_memory em
-        LEFT JOIN public.snap_carecacheundo001_entity_memory s ON s.id = em.id
-       WHERE em.updated_at >= (SELECT applied_at FROM public.schema_version
-                                WHERE version = '4.23.2-carecacheundo-001')
-         AND s.id IS NULL
-         AND (em.plant_id IS NOT NULL OR em.project_id IS NOT NULL)
-    expect: rowcount_eq
-    value: 0
-
-  # Out-of-scope columns, asserted untouched. next_water_at belongs to the nightly daily-plan engine
-  # and last_issue_at has no event_type mapping; a future "while we're in here" edit that starts
-  # writing either of them would be caught by comparing against the snapshot's row set.
-  - name: post_no_recency_row_lost_its_parent
-    sql: |
-      SELECT em.id FROM public.snap_carecacheundo001_entity_memory s
-        JOIN public.entity_memory em ON em.id = s.id
-       WHERE em.plant_id IS NULL AND em.project_id IS NULL AND em.location_id IS NULL
+        JOIN public.schema_version sv ON sv.version = '4.23.4-cachefwdgap-001'
+       WHERE em.updated_at >= sv.applied_at
+         AND NOT EXISTS (SELECT 1 FROM public.snap_cachefwdgap001_entity_memory s WHERE s.id = em.id)
     expect: rowcount_eq
     value: 0
 
   - name: post_schema_version_recorded
     sql: |
-      SELECT 1 FROM public.schema_version WHERE version = '4.23.2-carecacheundo-001'
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.4-cachefwdgap-001'
     expect: rowcount_eq
     value: 1

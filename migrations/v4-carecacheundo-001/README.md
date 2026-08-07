@@ -1,6 +1,9 @@
 # V4-CARECACHEUNDO-001 — care cache left ahead of the event log by undo
 
-**Status:** authored + dry-verified against live prod. **Nothing applied.**
+**Status:** **APPLIED to prod 2026-08-07 14:47:59Z** (`schema_version` row present,
+`snap_carecacheundo001_entity_memory` holds its 6 pre-repair rows, AHEAD population now 0).
+Corrected 2026-08-07 — this line previously read "Nothing applied", which had been false since the
+apply and was propagated into a later session's handoff as an outstanding task.
 **Ticket:** BUG-CARECACHEUNDO-001. **schema_version:** `4.23.2-carecacheundo-001`.
 **Found:** while executing V4-CAREKEY-001 Step D/E, via the informational gate
 `sweep_capture_care_cache_drift_vs_event_log` in `migrations/v4-carekey-001/gates.yml`.
