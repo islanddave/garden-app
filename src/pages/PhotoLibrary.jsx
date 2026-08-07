@@ -79,6 +79,16 @@ export default function PhotoLibrary() {
   const [shareOpen,   setShareOpen]   = useState(false)
   const [sharePhotos, setSharePhotos] = useState([])
 
+  // BUG-PICKERCLIP-001 (V4-PICKERUX-001 P0 idiom, EventNew's sticky Save) — select-mode and the
+  // upload form are NOT mutually exclusive: enterSelectMode() closes the form, but the "+ Upload"
+  // button never leaves select mode, so the z150 fixed action bar below can be on screen while the
+  // form's PlantingSelect listbox (z30, in normal flow) is open. The bar wins on z AND on hit
+  // testing, so a tap aimed at a planting row lands on "Post to Facebook" or "Cancel" — a wrong
+  // action, not a cosmetic overlap. Sharing is never the next act while a planting is being chosen,
+  // so suppressing the bar costs nothing and makes the mis-tap structurally impossible.
+  const [uploadPickerOpen, setUploadPickerOpen] = useState(false)
+  const handleUploadPickerOpenChange = useCallback(open => setUploadPickerOpen(open), [])
+
   // BUG-PHOTOTHUMB-001 — EXPLICIT windowing, because neither browser mechanism works here.
   // Measured on the live page (2026-07-27): with loading="lazy", 0 of 120 images were ever
   // REQUESTED — not slow, never fetched — which is why the tab sat blank and then filled all at
@@ -463,6 +473,7 @@ export default function PhotoLibrary() {
                       ? { ...f, plant_id: id, project_id: id ? (plantsForUpload.find(p => p.id === id)?.project_id ?? f.project_id) : f.project_id }
                       : { ...f, plant_id: id })}
                     emptyMeaning={PROJECTS_HIDDEN ? 'none' : 'project-level'}
+                    onOpenChange={handleUploadPickerOpenChange}
                   />
                 </div>
               )}
@@ -657,7 +668,11 @@ export default function PhotoLibrary() {
 
       {/* V4-FBSHARE-001 — selection action bar (only in select-mode) */}
       {selectMode && selected.size > 0 && (
-        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 150, background: P.white, borderTop: `1px solid ${P.border}`, padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, boxShadow: '0 -2px 10px rgba(0,0,0,0.08)' }}>
+        // BUG-PICKERCLIP-001: hidden — NOT unmounted — while the upload form's planting listbox is
+        // open. visibility+pointerEvents keeps the node so the picker's 150ms deferred blur-close
+        // cannot flicker an unmounting bar back under a finger mid-gesture. `visibility: hidden`
+        // already drops the subtree from the a11y tree and the tab order, so no aria-hidden.
+        <div data-testid="pl-select-bar" style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 150, background: P.white, borderTop: `1px solid ${P.border}`, padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, boxShadow: '0 -2px 10px rgba(0,0,0,0.08)', visibility: uploadPickerOpen ? 'hidden' : 'visible', pointerEvents: uploadPickerOpen ? 'none' : 'auto' }}>
           <span style={{ fontSize: '0.9rem', fontWeight: 700, color: P.mid }}>{selected.size} selected</span>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             {selected.size > 10 && <span style={{ fontSize: '0.72rem', color: P.terra }}>Max 10</span>}
@@ -774,24 +789,38 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
         padding: 'env(safe-area-inset-top) 16px env(safe-area-inset-bottom) 16px',
       }}
     >
-      {/* V4-KBVIEWPORT-001: `overflow: hidden` here is for the rounded corners, and until now it was
-          also silently clipping. Once interactive-widget shrinks the layout viewport, 90dvh
-          re-resolves ~731px -> ~460px with the keyboard up -- and the tag form's "Plant · optional"
-          field is a PlantingSelect text input, so the keyboard IS up on this surface. Photo (300) +
-          the optional caption line + Project/Plant/Location + "Save tags" exceeds 460, and with no
-          scrollable descendant the Save button was clipped away unreachably. Flex column: photo
-          pinned, body scrolls.
-          NOTE the two conditions for reproducing it: the tag form renders only when the photo is
+      {/* V4-KBVIEWPORT-001: 90dvh re-resolves ~731px -> ~460px once interactive-widget shrinks the
+          layout viewport, and the tag form's "Plant · optional" field is a PlantingSelect text
+          input, so the keyboard IS up on this surface. Photo (300) + the optional caption line +
+          Project/Plant/Location + "Save tags" exceeds 460, so this card needs a scrollable path or
+          Save is clipped away unreachably.
+          NOTE the two conditions for reproducing that: the tag form renders only when the photo is
           NOT attached to an event (the hasEvent branch replaces it with a pointer to the event
           log), and the static caption line now renders only for event-attached photos — on the tag
-          form the caption is an editable input (V4-PHOTOCAPTION-001; was set-at-upload-only). */}
-      <div style={{
+          form the caption is an editable input (V4-PHOTOCAPTION-001; was set-at-upload-only).
+
+          BUG-PICKERCLIP-001 — that scrollable path used to be a SECOND box: card `overflow: hidden`
+          (hard clip) wrapping a `flexShrink: 0` photo and an `overflowY: auto` body. The picker's
+          listbox is `position: absolute` inside that body, so the body was its nearest clipping
+          ancestor and the usable band was 90dvh MINUS the 300px pinned photo — ~114px with the
+          keyboard up. PlantingSelect measures its room against the VISUAL VIEWPORT (and
+          hasFixedAncestor() zeroes the chrome insets here, correctly, because this card paints over
+          the nav), so it sizes and flips for room this box does not have: flipped up it renders
+          `bottom: 100%` into the photo's area and the body clipped essentially all of it. No z-index
+          can reach that — the listbox was CLIPPED, not overpainted.
+          The fix is e771c94's own idiom taken one step further: ONE scrollport, not two. The card
+          is the scroll container (matching Sheet, the app's canonical overlay — `maxHeight` +
+          `overflowY: auto`, single scrollport) and the photo stays pinned via `position: sticky`
+          rather than by living outside a smaller box. The listbox's nearest clipping ancestor is
+          now the full 90dvh card instead of the leftover band, and a flipped listbox paints OVER
+          the sticky photo (z30 beats the header's z1) instead of being cut at the body's top edge.
+          Explicit white background on the header: content now scrolls UNDER it. */}
+      <div data-testid="pl-modal-card" style={{
         backgroundColor: P.white, borderRadius: 12,
-        maxWidth: 480, width: '100%', maxHeight: '90dvh', overflow: 'hidden',
-        display: 'flex', flexDirection: 'column',
+        maxWidth: 480, width: '100%', maxHeight: '90dvh', overflowY: 'auto',
       }}>
 
-        <div style={{ position: 'relative', flexShrink: 0 }}>
+        <div style={{ position: 'sticky', top: 0, zIndex: 1, backgroundColor: P.white }}>
           {photo.view_url && (
             <PhotoImg
               photoId={photo.id}
@@ -811,9 +840,9 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
           >✕</button>
         </div>
 
-        {/* minHeight:0 is load-bearing: a flex child's default min-height:auto refuses to shrink
-            below its content, which would defeat overflowY on a shrunken viewport. */}
-        <div style={{ padding: '16px 20px 20px', overflowY: 'auto', minHeight: 0 }}>
+        {/* BUG-PICKERCLIP-001: no overflow here. This div being a scroll container is exactly what
+            clipped the picker's listbox; the card above owns the single scrollport now. */}
+        <div data-testid="pl-modal-body" style={{ padding: '16px 20px 20px' }}>
           {/* V4-PHOTOCAPTION-001: static caption only where there is no editable field (event-attached
               photos have no tag form); on the form the input below owns the caption. */}
           {hasEvent && photo.caption && (
