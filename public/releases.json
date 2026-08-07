@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.3.0",
+    "date": "2026-08-07",
+    "highlights": [
+      "Emptying a field in an edit form now actually clears it, instead of silently keeping the old value",
+      "A planting with no location is treated as unknown rather than outdoors, so it keeps its watering and still gets frost alerts",
+      "Corrected the care cache so editing an event's date, type or issue flag updates it"
+    ]
+  },
+  {
     "version": "4.2.0",
     "date": "2026-08-07",
     "highlights": [
