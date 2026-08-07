@@ -214,3 +214,120 @@ describe('the treatment-category rule is shared with the create path, not re-typ
     expect(validateTreatmentCategory('fertilizer')).toBeNull();
   });
 });
+
+// ── Slice 3: the re-anchor ───────────────────────────────────────────────────────────────────────
+//
+// These are static-source because the risk is SHAPE, and because the one failure that matters is
+// invisible to any assertion that reads back the event row: a re-anchor that updates event_log and
+// skips the OLD-anchor recompute moves the event correctly and leaves the vacated planting claiming
+// a watering it no longer has — forever, because every forward upsert is GREATEST. Behavioural
+// coverage for that lives in tests/integration (not in this commit; see the residuals note).
+const putTail = () => {
+  const i = SRC.indexOf('Slice 3: care-cache maintenance for a re-anchor');
+  expect(i, 'the re-anchor block must exist').toBeGreaterThan(-1);
+  return SRC.slice(i, SRC.indexOf('return resp(200, { ...updatedRows[0]', i));
+};
+
+describe('slice 3: the re-anchor maintains the cache on BOTH anchors', () => {
+  it('has four arms with DISTINCT bind names', () => {
+    // undo-recompute.test.js finds its four arms by scanning BACKWARDS from a tail string with
+    // lastIndexOf. Reusing ${projectId} / ${plantId} here would let its assertions silently
+    // retarget onto these statements — a green suite proving nothing about the arms it names.
+    const t = putTail();
+    for (const bind of ['${oldProjectId}', '${newProjectId}', '${oldPlantId}', '${newPlantId}']) {
+      expect(t, `${bind} must appear in the re-anchor block`).toContain(bind);
+    }
+    expect(t, 'must not reuse the undo route bind names')
+      .not.toMatch(/FROM surv WHERE em\.project_id = \$\{projectId\}/);
+    expect(t, 'must not reuse the undo route bind names')
+      .not.toMatch(/FROM surv WHERE em\.plant_id = \$\{plantId\}/);
+  });
+
+  it('the OLD-anchor arms assign from surv and NEVER through GREATEST', () => {
+    // THE test. GREATEST cannot lower a value, so an old-anchor arm written with it would leave
+    // the vacated anchor permanently claiming the moved event. Invisible to every read of the row.
+    const t = putTail();
+    expect(t).toMatch(/FROM surv WHERE em\.project_id = \$\{oldProjectId\}/);
+    expect(t).toMatch(/FROM surv WHERE em\.plant_id = \$\{oldPlantId\}/);
+    for (const col of ['last_watered_at', 'last_event_at', 'last_fertilized_at',
+                       'last_pruned_at', 'last_observed_at', 'last_harvested_at']) {
+      expect(t, `${col} must not be assigned through GREATEST in a re-anchor arm`)
+        .not.toMatch(new RegExp(`${col}\\s*=\\s*GREATEST`));
+    }
+  });
+
+  it('the NEW-anchor arms are upserts, not bare UPDATEs', () => {
+    // A bare UPDATE silently matches zero rows when the destination has never carried an event —
+    // a brand-new planting would get no cache at all, and nothing would report it.
+    const t = putTail();
+    expect(t).toMatch(/INSERT INTO entity_memory[\s\S]*?ON CONFLICT \(project_id\) DO UPDATE SET/);
+    expect(t).toMatch(/INSERT INTO entity_memory[\s\S]*?ON CONFLICT \(plant_id\) WHERE plant_id IS NOT NULL DO UPDATE SET/);
+  });
+
+  it('per-arm writer parity: the harvest filters DIFFER, on purpose', () => {
+    // A recompute must invert ITS OWN arm's writer. The project-keyed forward writer maps
+    // 'harvest'; the plant-keyed one maps IN ('harvest','first_harvest'). A tidy-up refactor that
+    // unifies them would move last_harvested_at to a date no forward write ever produced — and
+    // would pass a laxer test. This asserts they stay different.
+    const t = putTail();
+    expect(t).toMatch(/e\.project_id = \$\{oldProjectId\} AND e\.event_type = 'harvest'/);
+    expect(t).toMatch(/e\.plant_id = \$\{oldPlantId\} AND e\.event_type IN \('harvest','first_harvest'\)/);
+  });
+
+  it('next_water_at is gated on the moved event type and never on a plant-keyed arm', () => {
+    const t = putTail();
+    expect(t).toMatch(/next_water_at = CASE WHEN \$\{movedType\}::text NOT IN \('watering','rain'\) THEN em\.next_water_at/);
+    // The plant arms carry recency only — the nightly daily-plan engine owns "due".
+    const plantArm = t.slice(t.indexOf('${oldPlantId}'));
+    expect(plantArm, 'no plant-keyed arm may touch next_water_at').not.toContain('next_water_at');
+  });
+
+  it('project_id is bound from the resolved local and can never become NULL', () => {
+    const b = putUpdate();
+    expect(b).toMatch(/project_id\s*=\s*\$\{newProjectId\}::uuid/);
+    expect(b, 'the body must not reach project_id unresolved').not.toMatch(/project_id\s*=\s*\$\{body\./);
+    expect(SRC, 'no clear arm may exist for project_id').not.toMatch(/@> ARRAY\['project_id'\]/);
+  });
+
+  it('every id being moved TO is ownership-gated with a generic 400', () => {
+    // The UPDATE's household predicate authorizes the event's CURRENT container and says nothing
+    // about the destination. Without these three gates a caller can move their own event onto
+    // another household's planting. Generic message either way — found-vs-forbidden is a leak.
+    for (const [field, loader] of [['project_id', 'loadOwnedProject'],
+                                   ['plant_id', 'loadOwnedPlantingRef'],
+                                   ['location_id', 'loadOwnedLocation']]) {
+      expect(SRC, `${field} must be gated through ${loader}`)
+        .toMatch(new RegExp(`body\\.${field} != null && !await ${loader}\\(sql, body\\.${field}, householdIds\\)`));
+      expect(SRC).toMatch(new RegExp(`error: 'Invalid ${field}'`));
+    }
+  });
+
+  it('a re-anchor that would strip both anchors is a 400, not a 23514', () => {
+    expect(putTail.toString()).toBeTruthy();
+    expect(SRC).toMatch(/newProjectId == null && newPlantId == null/);
+    expect(SRC).toMatch(/an event must keep a plant_id or a project_id/);
+  });
+
+  it('harvest_log.project_id follows, and carries its own RETURNING', () => {
+    // The RETURNING is not cosmetic: harvest-weight-preserve.test.js finds the weight statement by
+    // scanning forward for the next RETURNING, so a sibling harvest_log UPDATE without one would
+    // extend that slice across two statements and weaken every assertion in it.
+    const t = putTail();
+    expect(t).toMatch(/UPDATE harvest_log hl SET project_id = \$\{newProjectId\}::uuid/);
+    expect(t).toMatch(/RETURNING hl\.id/);
+  });
+
+  it('no stray backtick reaches the re-anchor SQL', () => {
+    // Counted, not searched: putTail() slices from a COMMENT, so it necessarily contains the
+    // sql`...` template delimiters themselves — a bare not.toContain would fail on correct code.
+    // The real invariant is that every backtick in the block is a delimiter: one to open each
+    // sql` template and one to close it, and nothing in between. A stray backtick inside a --
+    // comment closes the template mid-statement and surfaces as a rollup parse error attributed
+    // to the TEST file rather than the handler.
+    const t = putTail();
+    const ticks = (t.match(/`/g) || []).length;
+    const opens = (t.match(/sql`/g) || []).length;
+    expect(opens, 'the re-anchor block must contain sql templates').toBeGreaterThanOrEqual(4);
+    expect(ticks, `${ticks} backticks for ${opens} templates — one is stray`).toBe(opens * 2);
+  });
+});

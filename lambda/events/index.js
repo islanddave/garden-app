@@ -1128,6 +1128,9 @@ export const handler = async (event) => {
                  -- pair needs the row's current values, not just the body's. Read here rather than
                  -- in a second round trip — this SELECT already exists and already runs.
                  el.flagged_as_issue, el.severity,
+                 -- Slice 3: the OLD anchors. Needed after the UPDATE has already overwritten them,
+                 -- to recompute the cache on the anchor the event just LEFT.
+                 el.project_id, el.location_id,
                  (SELECT h.id FROM harvest_log h
                    WHERE h.event_id = el.id AND h.deleted_at IS NULL LIMIT 1) AS harvest_log_id
             FROM event_log el
@@ -1167,6 +1170,46 @@ export const handler = async (event) => {
         const pair = resolveFlagPair(body, existing, clear);
         if (pair.error) return resp(400, { error: pair.error });
 
+        // ── Slice 3: RE-ANCHOR ───────────────────────────────────────────────────────────────
+        // Logging against the wrong planting is the most likely data-entry mistake in a
+        // 12,500-event log, and until now the only remedy was destructive: delete and re-log,
+        // which loses the event id, breaks undo evidence, and re-fires every Lambda side effect.
+        //
+        // The OLD anchors come from `existing` because the UPDATE below overwrites them.
+        const oldProjectId  = existing.project_id;
+        const oldPlantId    = existing.plant_id;
+        // project_id may be CHANGED but never CLEARED — see clearFields.js. `?? old` enforces it
+        // structurally: there is no body that produces null here.
+        const newProjectId  = body.project_id ?? oldProjectId;
+        const newPlantId    = body.plant_id ?? oldPlantId;
+        const newLocationId = body.location_id ?? existing.location_id;
+
+        const projectChanged = newProjectId !== oldProjectId;
+        const plantChanged   = newPlantId !== oldPlantId;
+
+        // Ownership on every id being moved TO. The UPDATE's own household predicate authorizes
+        // the event's CURRENT container and says nothing about the destination — the
+        // BUG-EVENTSOWN-001 shape. Generic 400 either way: found-vs-forbidden is itself a leak.
+        if (body.project_id != null && !await loadOwnedProject(sql, body.project_id, householdIds)) {
+          warnRejectedFk(userId, 'event_log', 'project_id', body.project_id);
+          return resp(400, { error: 'Invalid project_id' });
+        }
+        if (body.plant_id != null && !await loadOwnedPlantingRef(sql, body.plant_id, householdIds)) {
+          warnRejectedFk(userId, 'event_log', 'plant_id', body.plant_id);
+          return resp(400, { error: 'Invalid plant_id' });
+        }
+        if (body.location_id != null && !await loadOwnedLocation(sql, body.location_id, householdIds)) {
+          warnRejectedFk(userId, 'event_log', 'location_id', body.location_id);
+          return resp(400, { error: 'Invalid location_id' });
+        }
+
+        // event_log_has_anchor admits plant-or-project only (widening it to location is
+        // V4-EVENTANCHOR-001, still blocked). Checked here so a violation is a 400 with a message
+        // rather than a 23514 the generic catch turns into an opaque 500.
+        if (newProjectId == null && newPlantId == null) {
+          return resp(400, { error: 'an event must keep a plant_id or a project_id' });
+        }
+
         // V4-TREATLOG-001 parity with the POST (:1584): the five treatment columns are recorded
         // ONLY for these two types. On an edit that changes the type AWAY from a treatment type,
         // this forces them back to NULL rather than leaving orphaned treatment data on, say, a
@@ -1182,6 +1225,12 @@ export const handler = async (event) => {
                  private_notes = ${body.private_notes ?? null},
                  quantity      = ${body.quantity ?? null},
                  is_public     = COALESCE(${body.is_public ?? null}::boolean, el.is_public),
+                 -- Slice 3 re-anchor. Bound from the RESOLVED locals, not from the body: project_id
+                 -- must never become NULL (the ownership SELECT, this UPDATE and the DELETE route
+                 -- all INNER JOIN container on it, so a NULL is a permanently unreachable event).
+                 project_id    = ${newProjectId}::uuid,
+                 plant_id      = ${newPlantId}::uuid,
+                 location_id   = ${newLocationId}::uuid,
                  flagged_as_issue = ${pair.flagged}::boolean,
                  severity         = ${pair.severity}::smallint,
                  treatment_product_id   = CASE WHEN NOT ${isTreatment}::boolean THEN NULL
@@ -1349,6 +1398,149 @@ export const handler = async (event) => {
           } catch (e) {
             console.warn('[cal1] auto-capture of the weight sample failed (edit saved):', e?.message);
           }
+        }
+
+        // ── Slice 3: care-cache maintenance for a re-anchor ──────────────────────────────────
+        //
+        // A re-anchor is, for cache purposes, exactly a DELETE-from-old plus an INSERT-into-new.
+        // So the correct maintenance is ONE uniform rule: recompute from surviving events on BOTH
+        // the old and the new anchor. It runs AFTER the event_log UPDATE has committed the new
+        // anchor, so the surv predicates already see the world as it now is:
+        //   * old anchor — the moved row no longer matches, so surv correctly EXCLUDES it. Because
+        //     these arms assign DIRECTLY from surv and never through GREATEST, the cached value
+        //     can walk BACKWARDS. That is the whole property BUG-CARECACHEUNDO-001 bought.
+        //   * new anchor — the moved row now matches, so surv INCLUDES it.
+        //
+        // Why recompute on the new side rather than reuse the forward GREATEST upsert: GREATEST is
+        // sufficient for the new side alone, but not when the same PUT also moves event_date
+        // BACKWARDS (this route allows that), and not under a move-then-move-back. One uniform
+        // rule beats two conditional ones, and removes any need to reason about direction.
+        //
+        // WITHOUT THIS, the failure is INVISIBLE to every assertion that reads back the event row:
+        // the event moves correctly and the old planting simply keeps claiming a watering it no
+        // longer has, forever, because every forward upsert is GREATEST.
+        //
+        // Per-arm writer parity is deliberate and asserted: the plant-keyed arms map
+        // IN ('harvest','first_harvest') and the project-keyed arms map = 'harvest', because their
+        // forward writers do. A recompute must invert ITS OWN arm's writer; unifying them would
+        // move last_harvested_at to a date no forward write ever produced.
+        //
+        // Bind names are deliberately distinct (oldProjectId / newProjectId / oldPlantId /
+        // newPlantId). undo-recompute.test.js anchors its four arms by scanning BACKWARDS from a
+        // tail string, so reusing ${projectId} / ${plantId} here could silently retarget its
+        // assertions onto these statements.
+        if (projectChanged || plantChanged) {
+          const movedType = body.event_type;
+          const reanchor = [];
+          if (projectChanged) {
+            // OLD project — row is guaranteed to exist (the POST upserted it).
+            reanchor.push(sql`
+              WITH surv AS (
+                SELECT (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.project_id = ${oldProjectId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.project_id = ${oldProjectId} AND e.deleted_at IS NULL) AS me,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.project_id = ${oldProjectId} AND e.event_type = 'fertilizing' AND e.deleted_at IS NULL) AS mf,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.project_id = ${oldProjectId} AND e.event_type = 'pruning' AND e.deleted_at IS NULL) AS mp,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.project_id = ${oldProjectId} AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.project_id = ${oldProjectId} AND e.event_type = 'harvest' AND e.deleted_at IS NULL) AS mh
+              )
+              UPDATE entity_memory em SET
+                last_watered_at = surv.mw, last_event_at = surv.me, last_fertilized_at = surv.mf,
+                last_pruned_at = surv.mp, last_observed_at = surv.mo, last_harvested_at = surv.mh,
+                next_water_at = CASE WHEN ${movedType}::text NOT IN ('watering','rain') THEN em.next_water_at
+                  WHEN surv.mw IS NULL THEN NULL ELSE surv.mw + (COALESCE(em.watering_interval_days, 4)::int * INTERVAL '1 day') END,
+                updated_at = NOW()
+              FROM surv WHERE em.project_id = ${oldProjectId}
+            `);
+            // NEW project — the row may not exist yet, so this is an upsert. A bare UPDATE would
+            // silently match zero rows on a container that has never carried an event.
+            reanchor.push(sql`
+              INSERT INTO entity_memory
+                (project_id, last_event_at, last_watered_at, last_fertilized_at,
+                 last_pruned_at, last_observed_at, last_harvested_at)
+              SELECT ${newProjectId}::uuid,
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type = 'fertilizing' AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type = 'pruning' AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type = 'observation' AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type = 'harvest' AND e.deleted_at IS NULL)
+              ON CONFLICT (project_id) DO UPDATE SET
+                last_event_at = EXCLUDED.last_event_at,
+                last_watered_at = EXCLUDED.last_watered_at,
+                last_fertilized_at = EXCLUDED.last_fertilized_at,
+                last_pruned_at = EXCLUDED.last_pruned_at,
+                last_observed_at = EXCLUDED.last_observed_at,
+                last_harvested_at = EXCLUDED.last_harvested_at,
+                updated_at = NOW()
+            `);
+          }
+          if (plantChanged && oldPlantId) {
+            // OLD planting. Recency only — no next_water_at on a plant-keyed arm, matching the
+            // plant-keyed forward writer, which does not carry that column.
+            reanchor.push(sql`
+              WITH surv AS (
+                SELECT (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.plant_id = ${oldPlantId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL) AS mw,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.plant_id = ${oldPlantId} AND e.deleted_at IS NULL) AS me,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.plant_id = ${oldPlantId} AND e.event_type = 'fertilizing' AND e.deleted_at IS NULL) AS mf,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.plant_id = ${oldPlantId} AND e.event_type = 'pruning' AND e.deleted_at IS NULL) AS mp,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.plant_id = ${oldPlantId} AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.plant_id = ${oldPlantId} AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL) AS mh
+              )
+              UPDATE entity_memory em SET
+                last_watered_at = surv.mw, last_event_at = surv.me, last_fertilized_at = surv.mf,
+                last_pruned_at = surv.mp, last_observed_at = surv.mo, last_harvested_at = surv.mh,
+                updated_at = NOW()
+              FROM surv WHERE em.plant_id = ${oldPlantId}
+            `);
+          }
+          if (plantChanged && newPlantId) {
+            reanchor.push(sql`
+              INSERT INTO entity_memory
+                (plant_id, last_event_at, last_watered_at, last_fertilized_at,
+                 last_pruned_at, last_observed_at, last_harvested_at)
+              SELECT ${newPlantId}::uuid,
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type = 'fertilizing' AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type = 'pruning' AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type = 'observation' AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL)
+              ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL DO UPDATE SET
+                last_event_at = EXCLUDED.last_event_at,
+                last_watered_at = EXCLUDED.last_watered_at,
+                last_fertilized_at = EXCLUDED.last_fertilized_at,
+                last_pruned_at = EXCLUDED.last_pruned_at,
+                last_observed_at = EXCLUDED.last_observed_at,
+                last_harvested_at = EXCLUDED.last_harvested_at,
+                updated_at = NOW()
+            `);
+          }
+          // harvest_log carries a DENORMALIZED project_id, written only by the POST CTE. No read
+          // surface filters on it today (harvest-summary drives from event_log), so a stale value
+          // is hygiene rather than correctness — but it is one statement, and leaving it means the
+          // Harvests totals could one day count a harvest under the container it left.
+          // Its own RETURNING keeps harvest-weight-preserve.test.js's forward
+          // indexOf-until-weight_basis scan from swallowing it into the weight statement's slice.
+          if (projectChanged) {
+            reanchor.push(sql`
+              UPDATE harvest_log hl SET project_id = ${newProjectId}::uuid, updated_at = NOW()
+               WHERE hl.event_id = ${eventId} AND hl.deleted_at IS NULL
+              RETURNING hl.id
+            `);
+          }
+          await sql.transaction(reanchor);
         }
 
         return resp(200, { ...updatedRows[0], harvest: harvestRow });
