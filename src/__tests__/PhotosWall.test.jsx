@@ -46,6 +46,27 @@ describe('PhotosWall — Garden Photos sub-tab', () => {
     expect(imgs[0].getAttribute('decoding')).toBe('async')
   })
 
+  // V4-PHOTOMODEL-001. Until this ticket the wall passed `initialUrl={photo.view_url}`, so this
+  // 3-column grid rendered the FULL 4080x3072 originals — the exact load BUG-PHOTOTHUMB-001 fixed
+  // on PhotoLibrary's grid and never applied here. The fixtures above carry no thumb_url, so the
+  // regression was invisible to every existing assertion; this one supplies thumbs and pins the tier.
+  it('tiles render the THUMB derivative, not the full original', async () => {
+    await renderWall([
+      { id: 'ph1', view_url: 'https://s3.test/full1.jpg', thumb_url: 'https://s3.test/thumb1.jpg', caption: 'a', created_at: '2026-06-20T12:00:00Z' },
+    ])
+    const el = document.querySelector('img[src^="https://s3.test/"]')
+    expect(el.getAttribute('src')).toBe('https://s3.test/thumb1.jpg')
+  })
+
+  it('a tile whose thumb object is missing falls back to the original (BUG-PHOTONEWTHUMB-001)', async () => {
+    await renderWall([
+      { id: 'ph1', view_url: 'https://s3.test/full1.jpg', thumb_url: 'https://s3.test/thumb1.jpg', caption: 'a', created_at: '2026-06-20T12:00:00Z' },
+    ])
+    const el = document.querySelector('img[src^="https://s3.test/"]')
+    await act(async () => { fireEvent.error(el) })
+    expect(document.querySelector('img[src^="https://s3.test/"]').getAttribute('src')).toBe('https://s3.test/full1.jpg')
+  })
+
   it('groups photos under sticky month headers (newest month first)', async () => {
     await renderWall()
     // June 2026 has two photos, May 2026 one. Both headers present.

@@ -3,7 +3,8 @@ import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import PhotoImg from '../components/PhotoImg.jsx'
+import PhotoView from '../components/photo/PhotoView.jsx'
+import { toPhoto, TIER } from '../lib/photoModel.js'
 import { invalidatePrefix as invalidatePhotoLists } from '../lib/dataCache.js'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
@@ -183,7 +184,14 @@ export default function PhotoLibrary() {
       // Fixed server-side 2026-08-02: the list decorates rows with space_id whenever the SERVER gate
       // is open. This arm is now load-bearing rather than decorative — do not "simplify" it away, and
       // do not re-derive its inertness from the row data without checking the wire.
-      if (filterMode === 'untagged')   data = data.filter(p => !p.event_id && !p.project_id && !p.location_id && !p.plant_id && !p.space_id)
+      //
+      // V4-PHOTOMODEL-001: the hand-written predicate here named FIVE parents and omitted
+      // inventory_item_id, so the 6 live inventory-attached photos (measured in prod 2026-08-07)
+      // were reported as unfinished work on every visit — the same six BUG-PHOTOPARENT-001 recorded
+      // as "no parent link at all". They are fully attached; the four/five-way predicate simply
+      // could not see the parent they have. `isAttached` counts all SIX FKs the live
+      // photos_must_have_parent CHECK counts, so a new parent kind cannot silently reopen this.
+      if (filterMode === 'untagged')   data = data.filter(p => !toPhoto(p).isAttached)
       setPhotos(data)
     } catch (err) {
       setPhotos([])
@@ -713,26 +721,19 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
       }}
     >
       <div style={{ position: 'relative', paddingBottom: '100%', backgroundColor: P.photoPlaceholder }}>
-        {(photo.thumb_url || photo.view_url) && (
-          <img
-            // BUG-PHOTOBLANK-001: the GRID takes the ~200KB thumbnail, never the 4080x3072
-            // original (30 originals = ~90MB and the tab sat blank for minutes). thumb_url is a
-            // HINT — a photo uploaded before its thumb exists presigns to a missing object, so
-            // onError swaps to the full image once, guarded so a failing view_url can't loop.
-            src={photo.thumb_url || photo.view_url}
-            alt={photo.caption ?? 'Garden photo'}
-            // NO loading="lazy": measured 0 of 120 images ever requested on this grid (see the
-            // windowing note above). The parent bounds how many cards exist instead, so every
-            // rendered card SHOULD load — deferring that decision to the browser is what broke.
-            decoding="async"
-            onError={(e) => {
-              if (photo.view_url && e.currentTarget.src !== photo.view_url) {
-                e.currentTarget.src = photo.view_url;
-              }
-            }}
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-          />
-        )}
+        {/* V4-PHOTOMODEL-001 — was a bare <img> with a hand-rolled thumb->full onError swap, the
+            last exception in noBareViewUrlImg.static.test.js. The thumb->full degrade is unchanged
+            in behavior (still zero-network, still one-shot) but now lives in the model; the bare
+            <img> is gone, so the grid also gains the 900s-presign self-heal it never had.
+            Still NO loading="lazy" — measured 0 of 120 requested on this grid; `shown` bounds the
+            card count instead. */}
+        <PhotoView
+          photo={photo}
+          tier={TIER.THUMB}
+          alt={photo.caption ?? 'Garden photo'}
+          decoding="async"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+        />
         {selectMode && (
           <span aria-hidden="true" style={{
             position: 'absolute', top: 6, left: 6, width: 22, height: 22, borderRadius: '50%',
@@ -821,13 +822,12 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
       }}>
 
         <div style={{ position: 'sticky', top: 0, zIndex: 1, backgroundColor: P.white }}>
-          {photo.view_url && (
-            <PhotoImg
-              photoId={photo.id}
-              initialUrl={photo.view_url} alt={photo.caption ?? 'Photo'}
-              style={{ width: '100%', borderRadius: '12px 12px 0 0', display: 'block', maxHeight: 300, objectFit: 'cover' }}
-            />
-          )}
+          <PhotoView
+            photo={photo}
+            tier={TIER.FULL}
+            alt={photo.caption ?? 'Photo'}
+            style={{ width: '100%', borderRadius: '12px 12px 0 0', display: 'block', maxHeight: 300, objectFit: 'cover' }}
+          />
           <button
             onClick={onClose}
             style={{

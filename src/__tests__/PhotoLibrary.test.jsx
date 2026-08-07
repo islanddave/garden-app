@@ -213,6 +213,25 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     expect(screen.queryByAltText('the whole place')).toBeNull()
   })
 
+  // V4-PHOTOMODEL-001. The sixth parent. This predicate was written against four parents, then
+  // grown to five (space), and inventory_item_id was never added — so the 6 live inventory photos
+  // measured in prod 2026-08-07 were reported as unfinished work on every visit. Those are the same
+  // six BUG-PHOTOPARENT-001 recorded as having "no parent link at all": they are fully attached,
+  // and only the truncated parent model could not see it.
+  it('untagged filter treats an inventory-only photo as tagged (the BUG-PHOTOPARENT-001 six)', async () => {
+    const invOnly = { id: 'p-inv',  event_id: null, project_id: null, location_id: null, plant_id: null, space_id: null, inventory_item_id: 'inv-1', view_url: 'https://x/i.jpg', caption: 'seed packet' }
+    const bare    = { id: 'p-bare', event_id: null, project_id: null, location_id: null, plant_id: null, space_id: null, inventory_item_id: null,    view_url: 'https://x/b.jpg', caption: 'bare photo' }
+    primeMount({ photos: [invOnly, bare] })
+    render(<PhotoLibrary />)
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
+    fetchSpy.mockResolvedValueOnce([invOnly, bare])
+    await act(async () => {
+      fireEvent.click(screen.getByText('Untagged'))
+    })
+    await waitFor(() => expect(screen.getByAltText('bare photo')).toBeDefined())
+    expect(screen.queryByAltText('seed packet')).toBeNull()
+  })
+
   it('sends the staged file with the chosen linkage, then resets and reloads', async () => {
     primeMount()
     render(<PhotoLibrary />)

@@ -21,7 +21,8 @@ import { P } from '../lib/constants.js'
 import TileGrid from './forms/TileGrid.jsx'
 import AsyncRegion from './forms/AsyncRegion.jsx'
 import Lightbox from './Lightbox.jsx'
-import PhotoImg from './PhotoImg.jsx'
+import PhotoView from './photo/PhotoView.jsx'
+import { TIER } from '../lib/photoModel.js'
 import useImageWindow from '../hooks/useImageWindow.js'
 
 const EMPTY_PHOTOS = []   // stable ref so the sort/section memos don't re-run while data is undefined
@@ -213,15 +214,17 @@ function PhotoTile({ photo, onOpen, footer }) {
         background: P.greenPale, cursor: 'pointer',
       }}
     >
-      {photo.view_url && (
-        <PhotoImg
-          photoId={photo.id}
-          initialUrl={photo.view_url}
-          alt={photo.caption || 'Garden photo'}
-          decoding="async"
-          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-        />
-      )}
+      {/* V4-PHOTOMODEL-001 — was `initialUrl={photo.view_url}`: this 3-column wall was rendering
+          the FULL 4080x3072 originals, the exact load BUG-PHOTOTHUMB-001 fixed on PhotoLibrary's
+          grid and never applied here. tier=THUMB takes the ~200KB derivative (11-23x smaller,
+          measured) and degrades to the original in-hand if the thumb object is missing. */}
+      <PhotoView
+        photo={photo}
+        tier={TIER.THUMB}
+        alt={photo.caption || 'Garden photo'}
+        decoding="async"
+        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+      />
     </button>
   )
   // No footer (the shipped Garden wall) → the tile IS the rendered node, byte-unchanged. A footer

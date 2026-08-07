@@ -20,13 +20,11 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src') + '/'
 // Deliberate exceptions — each carries its reason inline (mirrors the sibling guard's convention).
-const ALLOWED = new Set([
-  // PhotoLibrary GRID renders thumb_url (~200KB) NOT the 4080×3072 original, per BUG-PHOTOBLANK-001
-  // (30 originals ≈ 90MB → blank tab). PhotoImg's mint returns the full view_url, so the grid keeps its
-  // bandwidth-gated hand-rolled thumb→full onError until a thumb-aware PhotoImg mode exists. The MODAL
-  // (full-size, single image) IS migrated. Re-evaluate when PhotoImg gains a thumb variant.
-  'pages/PhotoLibrary.jsx',
-])
+// EMPTY as of V4-PHOTOMODEL-001. The sole entry was pages/PhotoLibrary.jsx, exempted because its
+// grid needed the ~200KB thumb (BUG-PHOTOBLANK-001) and PhotoImg's mint only returns the full
+// view_url — "re-evaluate when PhotoImg gains a thumb variant". That variant now exists as
+// <PhotoView tier="thumb">, so the exemption is retired and the guard is exception-free again.
+const ALLOWED = new Set([])
 
 function walk(dir) {
   const out = []
