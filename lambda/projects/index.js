@@ -834,6 +834,15 @@ export const handler = async (event) => {
 
   } catch (err) {
     console.error('projects lambda error', err);
+    // BUG-PROJKINDCLEAR-001. Mirrors lambda/plants/index.js's catch verbatim. Without this, a
+    // constraint the CLIENT can provoke surfaces as a bare 500 with no message: `classification`
+    // is already CASE-clearable on both PATCH (:492) and PUT (:588), but
+    // plant_projects_kind_not_null_unless_deleted is VALIDATED and forbids NULL on a live row, so
+    // {kind: null} raises 23514 and the user sees "Internal server error". Latent today only
+    // because ProjectsAdminClassify guards the call — unexercised, not fixed. A caller-provokable
+    // constraint violation is a 400; only genuinely unexpected failures are 500s.
+    if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
+    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
     return resp(500, { error: 'Internal server error' });
   }
 };

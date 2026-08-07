@@ -17,6 +17,7 @@ import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejected
 import { loadOwnedProject, loadOwnedPlantingRef } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
+import { validateClear } from './validate.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
 
 // V4-EVENTSOURCE-001 — event_log.source value written by THIS Lambda. lambda/events/index.js
@@ -435,6 +436,16 @@ export const handler = async (event) => {
             AND gn.deleted_at IS NULL
         `;
         if (!cur.length) return resp(404, { error: 'Not found' });
+
+        // BUG-COALESCECLEAR-001. `clear` is an explicit array of column keys to set to NULL.
+        // Absent/[] is byte-identical to the prior behaviour, so every existing caller is
+        // unaffected and this ships inert until a client opts in. Validated BEFORE the UPDATE so an
+        // un-clearable key is a 400 with a message, never a constraint violation the generic catch
+        // turns into an opaque 500.
+        const _cerr = validateClear(body.clear, body);
+        if (_cerr) return resp(400, { error: _cerr });
+        const clear = Array.isArray(body.clear) ? body.clear : [];
+
         const _oldStatus = cur[0].old_status ?? null;
         const _projectId = cur[0].proj_id;
         const _newStatus = body.status != null ? body.status : _oldStatus;
@@ -452,45 +463,45 @@ export const handler = async (event) => {
             display_name             = COALESCE(${body.name ?? null}, p.display_name),
             quantity                 = COALESCE(${body.quantity ?? null}, p.quantity),
             status                   = COALESCE(${body.status ?? null}, p.status),
-            notes                    = COALESCE(${body.notes ?? null}, p.notes),
+            notes                    = CASE WHEN ${clear} @> ARRAY['notes'] THEN NULL ELSE COALESCE(${body.notes ?? null}, p.notes) END,
             cultivar_id              = CASE
               WHEN ${hasVariety} THEN ${body.variety_id ?? null}
               ELSE p.cultivar_id
             END,
-            source_inventory_item_id = COALESCE(${body.source_inventory_item_id ?? null}, p.source_inventory_item_id),
-            metadata                 = COALESCE(${body.metadata ?? null}, p.metadata),
+            source_inventory_item_id = CASE WHEN ${clear} @> ARRAY['source_inventory_item_id'] THEN NULL ELSE COALESCE(${body.source_inventory_item_id ?? null}, p.source_inventory_item_id) END,
+            metadata                 = CASE WHEN ${clear} @> ARRAY['metadata'] THEN NULL ELSE COALESCE(${body.metadata ?? null}, p.metadata) END,
             featured_photo_id        = CASE
               WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
               ELSE p.featured_photo_id
             END,
             -- V1.2a-4 S1 (PROJ-RESCOPE / V102 §4.1): lifecycle / attrition / source / lineage / succession columns.
-            sown_at                  = COALESCE(${body.sown_at ?? null}, p.sown_at),
-            sown_at_approx           = COALESCE(${body.sown_at_approx ?? null}, p.sown_at_approx),
-            germinated_at            = COALESCE(${body.germinated_at ?? null}, p.germinated_at),
-            germinated_at_approx     = COALESCE(${body.germinated_at_approx ?? null}, p.germinated_at_approx),
+            sown_at                  = CASE WHEN ${clear} @> ARRAY['sown_at'] THEN NULL ELSE COALESCE(${body.sown_at ?? null}, p.sown_at) END,
+            sown_at_approx           = CASE WHEN ${clear} @> ARRAY['sown_at_approx'] THEN NULL ELSE COALESCE(${body.sown_at_approx ?? null}, p.sown_at_approx) END,
+            germinated_at            = CASE WHEN ${clear} @> ARRAY['germinated_at'] THEN NULL ELSE COALESCE(${body.germinated_at ?? null}, p.germinated_at) END,
+            germinated_at_approx     = CASE WHEN ${clear} @> ARRAY['germinated_at_approx'] THEN NULL ELSE COALESCE(${body.germinated_at_approx ?? null}, p.germinated_at_approx) END,
             transplanted_at          = COALESCE(${body.transplanted_at ?? null}, p.transplanted_at),
-            transplanted_at_approx   = COALESCE(${body.transplanted_at_approx ?? null}, p.transplanted_at_approx),
+            transplanted_at_approx   = CASE WHEN ${clear} @> ARRAY['transplanted_at_approx'] THEN NULL ELSE COALESCE(${body.transplanted_at_approx ?? null}, p.transplanted_at_approx) END,
             planted_out_at           = COALESCE(${body.planted_out_at ?? null}, p.planted_out_at),
-            planted_out_at_approx    = COALESCE(${body.planted_out_at_approx ?? null}, p.planted_out_at_approx),
-            qty_initial              = COALESCE(${body.qty_initial ?? null}, p.qty_initial),
-            qty_current              = COALESCE(${body.qty_current ?? null}, p.qty_current),
+            planted_out_at_approx    = CASE WHEN ${clear} @> ARRAY['planted_out_at_approx'] THEN NULL ELSE COALESCE(${body.planted_out_at_approx ?? null}, p.planted_out_at_approx) END,
+            qty_initial              = CASE WHEN ${clear} @> ARRAY['qty_initial'] THEN NULL ELSE COALESCE(${body.qty_initial ?? null}, p.qty_initial) END,
+            qty_current              = CASE WHEN ${clear} @> ARRAY['qty_current'] THEN NULL ELSE COALESCE(${body.qty_current ?? null}, p.qty_current) END,
             qty_harvested            = COALESCE(${body.qty_harvested ?? null}, p.qty_harvested),
             qty_lost                 = COALESCE(${body.qty_lost ?? null}, p.qty_lost),
-            loss_cause               = COALESCE(${body.loss_cause ?? null}, p.loss_cause),
-            source_type              = COALESCE(${body.source_type ?? null}, p.source_type),
-            source_ref               = COALESCE(${body.source_ref ?? null}, p.source_ref),
-            source_generation        = COALESCE(${body.source_generation ?? null}, p.source_generation),
-            parent_plant_id          = COALESCE(${body.parent_plant_id ?? null}, p.parent_plant_id),
-            divergence_type          = COALESCE(${body.divergence_type ?? null}, p.divergence_type),
-            lineage_note             = COALESCE(${body.lineage_note ?? null}, p.lineage_note),
-            succession_group_id      = COALESCE(${body.succession_group_id ?? null}, p.succession_group_id),
-            succession_order         = COALESCE(${body.succession_order ?? null}, p.succession_order),
+            loss_cause               = CASE WHEN ${clear} @> ARRAY['loss_cause'] THEN NULL ELSE COALESCE(${body.loss_cause ?? null}, p.loss_cause) END,
+            source_type              = CASE WHEN ${clear} @> ARRAY['source_type'] THEN NULL ELSE COALESCE(${body.source_type ?? null}, p.source_type) END,
+            source_ref               = CASE WHEN ${clear} @> ARRAY['source_ref'] THEN NULL ELSE COALESCE(${body.source_ref ?? null}, p.source_ref) END,
+            source_generation        = CASE WHEN ${clear} @> ARRAY['source_generation'] THEN NULL ELSE COALESCE(${body.source_generation ?? null}, p.source_generation) END,
+            parent_plant_id          = CASE WHEN ${clear} @> ARRAY['parent_plant_id'] THEN NULL ELSE COALESCE(${body.parent_plant_id ?? null}, p.parent_plant_id) END,
+            divergence_type          = CASE WHEN ${clear} @> ARRAY['divergence_type'] THEN NULL ELSE COALESCE(${body.divergence_type ?? null}, p.divergence_type) END,
+            lineage_note             = CASE WHEN ${clear} @> ARRAY['lineage_note'] THEN NULL ELSE COALESCE(${body.lineage_note ?? null}, p.lineage_note) END,
+            succession_group_id      = CASE WHEN ${clear} @> ARRAY['succession_group_id'] THEN NULL ELSE COALESCE(${body.succession_group_id ?? null}, p.succession_group_id) END,
+            succession_order         = CASE WHEN ${clear} @> ARRAY['succession_order'] THEN NULL ELSE COALESCE(${body.succession_order ?? null}, p.succession_order) END,
             assignee_user_id         = CASE
               WHEN ${hasAssignee} THEN ${body.assignee_user_id ?? null}
               ELSE p.assignee_user_id
             END,
             container_type           = COALESCE(${body.container_type ?? null}, p.container_type),
-            container_size           = COALESCE(${body.container_size ?? null}, p.container_size),
+            container_size           = CASE WHEN ${clear} @> ARRAY['container_size'] THEN NULL ELSE COALESCE(${body.container_size ?? null}, p.container_size) END,
             location_id              = CASE
               WHEN ${hasLocation} THEN ${body.location_id ?? null}
               ELSE p.location_id
