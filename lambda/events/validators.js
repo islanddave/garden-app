@@ -7,6 +7,21 @@
 // MAX_PLAUSIBLE values: harvest_log.unit CHECK constraint in
 // migrations/v1-2a-2/0a-additive-ddl.sql — vocabulary drift will break the dual-write CTE.
 
+// V4-TREATLOG-001 / BUG-EVENTEDITFIELDS-001. Exported so the PUT applies the SAME rule and the
+// SAME message the POST does. Previously this list and its message were inline in validatePostBody
+// only, so the edit path had no category check at all — a bad value reached
+// event_log_treatment_category_check, which is VALIDATED, and the 23514 surfaced as an opaque 500.
+export const VALID_TREATMENT_CATEGORIES = ['fertilizer', 'amendment', 'pest_control', 'other'];
+export const TREATMENT_CATEGORY_ERROR =
+  'treatment_category must be fertilizer, amendment, pest_control, or other';
+
+export function validateTreatmentCategory(v) {
+  if (v != null && !VALID_TREATMENT_CATEGORIES.includes(v)) {
+    return { status: 400, error: TREATMENT_CATEGORY_ERROR };
+  }
+  return null;
+}
+
 export const HARVEST_UNITS = ['lb', 'oz', 'kg', 'g', 'count', 'bunch', 'cup', 'head'];
 export const MAX_PLAUSIBLE = {
   count: 10000, lb: 500, oz: 8000, kg: 500, g: 500000,
@@ -115,10 +130,8 @@ export function validatePostBody(body) {
   }
 
   // V4-TREATLOG-001: treatment_category, when present, must be a known kind.
-  if (body.treatment_category != null
-    && !['fertilizer', 'amendment', 'pest_control', 'other'].includes(body.treatment_category)) {
-    return { status: 400, error: 'treatment_category must be fertilizer, amendment, pest_control, or other' };
-  }
+  const catErr = validateTreatmentCategory(body.treatment_category);
+  if (catErr) return catErr;
 
   return null;
 }

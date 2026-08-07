@@ -46,13 +46,6 @@ const HAS_CLEAR_ARM = /@>\s*ARRAY\[/;
 // EXEMPT — every entry carries its own reason. An empty or reason-less entry is a bug in this file.
 // These are NOT "handlers we gave up on"; each is a deliberate, dated decision.
 const EXEMPT = {
-  // BUG-EVENTEDITFIELDS-001 owns this handler's clear channel. It is a separate ledger item with a
-  // separate blast radius (the events PUT additionally re-anchors plant_id/project_id/location_id
-  // and must maintain entity_memory on BOTH anchors), being built in its own slice. Editing
-  // lambda/events/index.js from the COALESCECLEAR lane would collide with that work.
-  // REMOVE THIS ENTRY when BUG-EVENTEDITFIELDS-001 lands its channel.
-  events: 'BUG-EVENTEDITFIELDS-001 owns the events clear channel; separate slice, same grammar',
-
   // IN FLIGHT on BUG-COALESCECLEAR-001, same batch as plants. plants was fixed first because it
   // carries 29 of the 42 arms in the fleet and its Tier-2 exclusions (status, container_type,
   // transplanted_at, planted_out_at) are the ones with a care-engine consequence. projects (8 arms)

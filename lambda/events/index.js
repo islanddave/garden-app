@@ -24,7 +24,8 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight } from './validators.js';
+import { validateClear, resolveFlagPair } from './clearFields.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
 import { FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES } from './statusTransitions.js';
@@ -1109,6 +1110,13 @@ export const handler = async (event) => {
           const harvestErr = validateHarvestFields(body.harvest);
           if (harvestErr) return resp(harvestErr.status, { error: harvestErr.error });
         }
+        // BUG-EVENTEDITFIELDS-001: same rule and same message the POST applies (validators.js:118).
+        // Stated as a shared constant rather than re-typed, because a hand-rolled copy that drifts
+        // lets a bad value reach event_log_treatment_category_check — a VALIDATED CHECK, so the
+        // 23514 aborts the transaction and the generic catch returns an opaque 500 instead of this
+        // 400.
+        const catErr = validateTreatmentCategory(body.treatment_category);
+        if (catErr) return resp(catErr.status, { error: catErr.error });
 
         // Authz + existence in one read, matching the DELETE/GET pattern exactly (container
         // ownership via project_id). Verified safe against live data: 0 of 11,583 undeleted events
@@ -1116,6 +1124,10 @@ export const handler = async (event) => {
         // looser rule invented for this fix — a bug fix is the wrong place to widen authz.
         const owned = await sql`
           SELECT el.id, el.event_type, el.plant_id,
+                 -- BUG-EVENTEDITFIELDS-001: the PUT is PARTIAL, so resolving the flagged/severity
+                 -- pair needs the row's current values, not just the body's. Read here rather than
+                 -- in a second round trip — this SELECT already exists and already runs.
+                 el.flagged_as_issue, el.severity,
                  (SELECT h.id FROM harvest_log h
                    WHERE h.event_id = el.id AND h.deleted_at IS NULL LIMIT 1) AS harvest_log_id
             FROM event_log el
@@ -1144,6 +1156,23 @@ export const handler = async (event) => {
           });
         }
 
+        // BUG-EVENTEDITFIELDS-001. Three groups of columns were creatable but not editable, so
+        // EventDetail could not edit what EventNew had just written. Added here with
+        // preserve-on-absent + an explicit clear channel, NOT with the full-replace grammar the
+        // four columns above use — see clearFields.js for why that distinction is load-bearing.
+        const cerr = validateClear(body.clear, body);
+        if (cerr) return resp(400, { error: cerr });
+        const clear = Array.isArray(body.clear) ? body.clear : [];
+
+        const pair = resolveFlagPair(body, existing, clear);
+        if (pair.error) return resp(400, { error: pair.error });
+
+        // V4-TREATLOG-001 parity with the POST (:1584): the five treatment columns are recorded
+        // ONLY for these two types. On an edit that changes the type AWAY from a treatment type,
+        // this forces them back to NULL rather than leaving orphaned treatment data on, say, a
+        // watering event — the POST would never have produced that row.
+        const isTreatment = body.event_type === 'pest_treatment' || body.event_type === 'doctored';
+
         const updatedRows = await sql`
           UPDATE event_log el
              SET event_type    = ${body.event_type},
@@ -1153,6 +1182,23 @@ export const handler = async (event) => {
                  private_notes = ${body.private_notes ?? null},
                  quantity      = ${body.quantity ?? null},
                  is_public     = COALESCE(${body.is_public ?? null}::boolean, el.is_public),
+                 flagged_as_issue = ${pair.flagged}::boolean,
+                 severity         = ${pair.severity}::smallint,
+                 treatment_product_id   = CASE WHEN NOT ${isTreatment}::boolean THEN NULL
+                                               WHEN ${clear} @> ARRAY['treatment_product_id'] THEN NULL
+                                               ELSE COALESCE(${body.treatment_product_id ?? null}, el.treatment_product_id) END,
+                 treatment_product_text = CASE WHEN NOT ${isTreatment}::boolean THEN NULL
+                                               WHEN ${clear} @> ARRAY['treatment_product_text'] THEN NULL
+                                               ELSE COALESCE(${body.treatment_product_text ?? null}, el.treatment_product_text) END,
+                 treatment_category     = CASE WHEN NOT ${isTreatment}::boolean THEN NULL
+                                               WHEN ${clear} @> ARRAY['treatment_category'] THEN NULL
+                                               ELSE COALESCE(${body.treatment_category ?? null}, el.treatment_category) END,
+                 treatment_amount       = CASE WHEN NOT ${isTreatment}::boolean THEN NULL
+                                               WHEN ${clear} @> ARRAY['treatment_amount'] THEN NULL
+                                               ELSE COALESCE(${body.treatment_amount ?? null}, el.treatment_amount) END,
+                 pest_target            = CASE WHEN NOT ${isTreatment}::boolean THEN NULL
+                                               WHEN ${clear} @> ARRAY['pest_target'] THEN NULL
+                                               ELSE COALESCE(${body.pest_target ?? null}, el.pest_target) END,
                  updated_at    = NOW()
             FROM public.container pp
            WHERE el.id = ${eventId}
@@ -1163,7 +1209,12 @@ export const handler = async (event) => {
           RETURNING el.id, el.project_id, el.location_id, el.plant_id, el.event_type,
                     el.event_date, el.title, el.notes, el.private_notes, el.quantity,
                     el.is_public, el.logged_by, el.created_at, el.updated_at,
-                    el.flagged_as_issue, el.severity, el.resolved_at
+                    el.flagged_as_issue, el.severity, el.resolved_at, el.resolved_by,
+                    -- BUG-EVENTEDITFIELDS-001: returned so the client can re-seed its form from
+                    -- the SAVED row rather than from what it hoped it sent. The isTreatment gate
+                    -- above can null all five, and the client has to be able to see that happen.
+                    el.treatment_product_id, el.treatment_product_text, el.treatment_category,
+                    el.treatment_amount, el.pest_target
         `;
         if (!updatedRows.length) return resp(404, { error: 'Not found' });
 
@@ -1310,7 +1361,14 @@ export const handler = async (event) => {
             e.event_type, e.event_date, e.title, e.notes, e.private_notes,
             e.quantity, e.is_public, e.logged_by, e.created_at,
             e.metadata,
-            e.flagged_as_issue, e.severity, e.resolved_at,
+            e.flagged_as_issue, e.severity, e.resolved_at, e.resolved_by,
+            -- BUG-EVENTEDITFIELDS-001: the five treatment columns were WRITTEN by the POST and
+            -- never READ back by this GET, so EventDetail.startEdit seeded its form without them.
+            -- Adding the PUT write path without this would be strictly worse than the original
+            -- bug: the form would round-trip blanks over five populated columns and every
+            -- client-only test would still pass. Read and write ship together, in one commit.
+            e.treatment_product_id, e.treatment_product_text, e.treatment_category,
+            e.treatment_amount, e.pest_target,
             pp.display_name AS project_name,
             -- BUG-HARVESTEDIT-001: the harvest detail row, so the edit form can SEED itself. Without
             -- this the client cannot render the real quantity/unit at all — it only ever saw
