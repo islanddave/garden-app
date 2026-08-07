@@ -37,12 +37,42 @@ const numEnv = (name, fallback) => {
 // band specifically — that keeps D2's "injectable exactly as prepared" contract intact while the other
 // bands move relative to it via FROST_BAND_THRESHOLDS_JSON or the uniform offset.
 const BAND_THRESHOLDS = Object.freeze({
-  // Indoor-overwintered tropicals + soft succulents. Chilling injury (blackened leaves, rot) starts in the
-  // low 50s, long before frost. These want to be inside days before the first freeze.
-  tropical: Object.freeze({ ADVISORY_LOW_F: 52, IMMINENT_LOW_F: 50, HARD_FREEZE_LOW_F: 40 }),
-  // Chilling-sensitive warm-season crops: visible damage in the 40s, dead at frost. Basil blackens at
-  // ~40°F without any frost at all; cucurbits stall and rot after a 45°F night.
-  chill_sensitive: Object.freeze({ ADVISORY_LOW_F: 47, IMMINENT_LOW_F: 45, HARD_FREEZE_LOW_F: 36 }),
+  // ═══ DAVE DECISION 2026-08-07 — the two most sensitive bands are HELD to the tender baseline ═══
+  //
+  // Horticulturally correct values, preserved here because they are the thing to restore, not
+  // rediscover: tropical 52/50/40 (chilling injury in the low 50s, long before frost) and
+  // chill_sensitive 47/45/36 (basil blackens at ~40F with no frost at all; cucurbits rot after a
+  // 45F night). Both are true.
+  //
+  // They are overridden anyway, on ALERT-FATIGUE grounds. Measured against four years of
+  // Open-Meteo actuals at the site (42.5087N, -72.6471W), Sep 1 - Nov 15:
+  //     <= 50F (tropical imminent)        49 / 44 / 53 / 51 nights of 76   -- first trip Sep 1-4 EVERY year
+  //     <= 45F (chill_sensitive imminent) 33 / 33 / 31 / 38 nights
+  //     <= 38F (tender imminent)          14 / 15 / 16 / 19 nights
+  // while the first night that actually threatens the tender crops is Oct 9-24. Alerting two
+  // nights in three is not a signal; it is how the only operator learns to ignore the channel, and
+  // a muted channel then misses the October night that matters. The failure mode of over-alerting
+  // here is the SAME failure mode as not alerting at all, arrived at more slowly.
+  //
+  // Moving tropical ALONE was considered and rejected: it inverts BAND_ORDER (basil at 45F would
+  // alert BEFORE a pothos at 38F, so the more sensitive plant warns later) and it only removes
+  // about a third of the fatigue, since chill_sensitive keeps firing 31-38 nights. Collapsing both
+  // into the tender line keeps the band table monotonic and gets the ~19-night channel.
+  //
+  // THE ACCEPTED COST, stated plainly: a 40-45F night can damage basil, cucurbits and the potted
+  // tropicals with no alert. The mitigation is a one-time "bring the tropicals in / cut the basil"
+  // task by mid-September, not a nightly page. Revisit if the tropical population grows or if a
+  // per-plant bring-inside surface ever exists.
+  tropical: Object.freeze({
+    ADVISORY_LOW_F: numEnv('FROST_ADVISORY_LOW_F', 40),
+    IMMINENT_LOW_F: numEnv('FROST_IMMINENT_LOW_F', 38),
+    HARD_FREEZE_LOW_F: numEnv('FROST_HARD_FREEZE_LOW_F', 33),
+  }),
+  chill_sensitive: Object.freeze({
+    ADVISORY_LOW_F: numEnv('FROST_ADVISORY_LOW_F', 40),
+    IMMINENT_LOW_F: numEnv('FROST_IMMINENT_LOW_F', 38),
+    HARD_FREEZE_LOW_F: numEnv('FROST_HARD_FREEZE_LOW_F', 33),
+  }),
   // D2 BASELINE. Killed at or just below the first frost. Also the band an unknown slug falls into.
   tender: Object.freeze({
     ADVISORY_LOW_F: numEnv('FROST_ADVISORY_LOW_F', 40),

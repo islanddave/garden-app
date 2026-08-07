@@ -219,13 +219,37 @@ describe('D6 bands — the per-crop-type threshold table', () => {
     expect(frostClassForSlug('kale').thresholds).toBeNull();
   });
 
-  it('bands are strictly ordered by cold tolerance — tropical trips first, light-frost-tolerant last', () => {
+  it('bands are MONOTONIC by cold tolerance — never inverted', () => {
+    // Was STRICTLY decreasing. Relaxed to non-increasing on 2026-08-07, when tropical and
+    // chill_sensitive were held to the tender baseline for alert fatigue, which makes the first
+    // three bands EQUAL rather than descending.
+    //
+    // Monotonic is the invariant that actually matters and it is deliberately still enforced: an
+    // INVERSION would mean a more cold-sensitive plant warns LATER than a hardier one, which is
+    // incoherent regardless of where the numbers sit. That is exactly why moving tropical alone
+    // was rejected — it would have put basil (45) ahead of a pothos (38) and reddened this test.
     const order = ['tropical', 'chill_sensitive', 'tender', 'light_frost_tolerant'];
     for (let i = 1; i < order.length; i++) {
       for (const k of ['ADVISORY_LOW_F', 'IMMINENT_LOW_F', 'HARD_FREEZE_LOW_F']) {
-        expect(BAND_THRESHOLDS[order[i - 1]][k]).toBeGreaterThan(BAND_THRESHOLDS[order[i]][k]);
+        expect(BAND_THRESHOLDS[order[i - 1]][k],
+          `${order[i - 1]}.${k} must not sit BELOW ${order[i]}.${k}`)
+          .toBeGreaterThanOrEqual(BAND_THRESHOLDS[order[i]][k]);
       }
     }
+  });
+
+  it('the three sensitive bands are collapsed onto the tender baseline BY DECISION', () => {
+    // Pins the 2026-08-07 call explicitly, so restoring the horticultural values is a deliberate
+    // act with a failing test to acknowledge rather than a silent drift. The original numbers
+    // (tropical 52/50/40, chill_sensitive 47/45/36) are preserved in frostClass.js's comment.
+    for (const b of ['tropical', 'chill_sensitive']) {
+      expect(BAND_THRESHOLDS[b], `${b} must match the tender baseline`)
+        .toEqual(BAND_THRESHOLDS.tender);
+    }
+    // ...and light_frost_tolerant must NOT be collapsed — the per-crop mechanism has to keep at
+    // least one band that differs, or D6 degenerates into a single global threshold.
+    expect(BAND_THRESHOLDS.light_frost_tolerant.IMMINENT_LOW_F)
+      .toBeLessThan(BAND_THRESHOLDS.tender.IMMINENT_LOW_F);
   });
 
   it('within every band, advisory >= imminent > hard freeze', () => {
@@ -237,11 +261,15 @@ describe('D6 bands — the per-crop-type threshold table', () => {
     }
   });
 
-  it('a crop genuinely more cold-sensitive than a pepper gets a HIGHER trip point (the point of D6)', () => {
+  it('a crop genuinely MORE cold-tolerant than a pepper gets a LOWER trip point (the point of D6)', () => {
+    // Re-expressed after the 2026-08-07 collapse. basil and pothos now share the pepper line, so
+    // the per-crop mechanism is demonstrated by the tolerant end of the table instead of the
+    // sensitive end. The contract under test is unchanged: a crop's band, not a global constant,
+    // decides when it trips.
     expect(frostClassForSlug('basil').thresholds.IMMINENT_LOW_F)
-      .toBeGreaterThan(frostClassForSlug('pepper').thresholds.IMMINENT_LOW_F);
+      .toEqual(frostClassForSlug('pepper').thresholds.IMMINENT_LOW_F);
     expect(frostClassForSlug('pothos').thresholds.IMMINENT_LOW_F)
-      .toBeGreaterThan(frostClassForSlug('basil').thresholds.IMMINENT_LOW_F);
+      .toEqual(frostClassForSlug('basil').thresholds.IMMINENT_LOW_F);
     expect(frostClassForSlug('marigold').thresholds.IMMINENT_LOW_F)
       .toBeLessThan(frostClassForSlug('pepper').thresholds.IMMINENT_LOW_F);
   });
@@ -396,7 +424,9 @@ describe('D6 byCropType — the coalesced alert names crop TYPES, not plantings'
     const byLabel = Object.fromEntries(s.byCropType.map((c) => [c.label, c]));
     expect(byLabel.peppers.thresholds).toEqual(BAND_THRESHOLDS.tender);
     expect(byLabel.basil.thresholds).toEqual(BAND_THRESHOLDS.chill_sensitive);
-    expect(byLabel.basil.thresholds.IMMINENT_LOW_F).toBeGreaterThan(byLabel.peppers.thresholds.IMMINENT_LOW_F);
+    // basil's band now EQUALS tender by decision; the D6 mechanism is proved by the fact that each
+    // crop still carries its own band object, not by the numbers differing.
+    expect(byLabel.basil.thresholds.IMMINENT_LOW_F).toEqual(byLabel.peppers.thresholds.IMMINENT_LOW_F);
   });
 
   it('hardy crop types never enter the list', () => {

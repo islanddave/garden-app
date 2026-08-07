@@ -161,13 +161,16 @@ describe('D6 at the seam — one coalesced alert, covered plantings excluded', (
     expect(publishAlert.mock.calls[0][0].message).not.toMatch(/kale/i);
   });
 
-  it('at 42°F only basil has tripped its own threshold — peppers and tomatoes are not named', async () => {
+  it('at 38°F the sensitive bands are named and the frost-tolerant one is not', async () => {
+    // Was 42F/basil-only. After the 2026-08-07 collapse of tropical + chill_sensitive onto the
+    // tender baseline, 42F trips NOTHING, so the old fixture proved nothing. Re-pointed at 38F,
+    // where the selective-naming contract is carried by marigold (light_frost_tolerant, 34F).
     vi.stubEnv('FROST_ALERT_ENABLED', 'true');
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    const { publishAlert } = await drive({ tonightLow: 42 });
+    const { publishAlert } = await drive({ tonightLow: 38 });
     const { message } = publishAlert.mock.calls[0][0];
     expect(message).toMatch(/basil \(1\)/);
-    expect(message).not.toMatch(/peppers/);
+    expect(message).not.toMatch(/marigolds/);
   });
 
   it('a mild night publishes nothing at all', async () => {
@@ -307,9 +310,11 @@ describe('§3-8 observability — logged on EVERY evaluation, alert or not', () 
 
   it('an alerting evaluation records the per-crop trip list', async () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await drive({ tonightLow: 42 });
+    await drive({ tonightLow: 38 });
     const ev = logLines(spy).find((l) => l.msg === 'frost-eval');
-    expect(ev.cropTypesTripped.map((c) => c.slug)).toEqual(['basil']);
+    // 38F now trips every sensitive band together; marigold (34F) stays out.
+    expect(ev.cropTypesTripped.map((c) => c.slug)).not.toContain('marigold');
+    expect(ev.cropTypesTripped.map((c) => c.slug)).toContain('basil');
   });
 
   it('carries the station provenance through (the 2027 learned-offset corpus, G4)', async () => {

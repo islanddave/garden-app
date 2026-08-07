@@ -328,7 +328,10 @@ const { BAND_THRESHOLDS, summarize } = fclass;
 const crop = (slug, label, band, count, containers = 0) => ({
   slug, label, band, class: 'tender', thresholds: BAND_THRESHOLDS[band], count, containers, fruiting: 0, names: [],
 });
-// A miniature garden spanning three bands: tropicals trip at 50, basil at 45, peppers at 38, marigold at 34.
+// A miniature garden. Since the 2026-08-07 alert-fatigue decision, tropical and chill_sensitive
+// are HELD to the tender baseline, so pothos/basil/pepper all trip at 38 and marigold at 34.
+// The D6 per-crop-threshold contract is now carried by marigold (light_frost_tolerant) vs the
+// rest — the mechanism is unchanged, only which bands differ.
 const CROPS = [
   crop('pepper', 'peppers', 'tender', 58, 56),
   crop('tomato', 'tomatoes', 'tender', 44, 39),
@@ -343,15 +346,16 @@ const cropExposure = (rows = CROPS, extra = {}) => ({
 });
 
 describe('D6 evalImminentCrops — each crop trips against ITS OWN threshold', () => {
-  it('at 48°F only the tropicals have tripped — peppers and tomatoes are untouched', () => {
+  it('at 48°F NOTHING trips — the sensitive bands were held to the tender line', () => {
+    // The load-bearing pin for the 2026-08-07 decision. Restoring tropical 52/50/40 or
+    // chill_sensitive 47/45/36 makes pothos and/or basil reappear here and reds this.
     const r = evalImminentCrops(48, CROPS, T);
-    expect(r.fires).toBe(true);
-    expect(r.tripped.map((c) => c.slug)).toEqual(['pothos']);
-    expect(r.untripped.map((c) => c.slug).sort()).toEqual(['basil', 'marigold', 'pepper', 'tomato']);
+    expect(r.fires).toBe(false);
+    expect(r.tripped).toEqual([]);
   });
 
-  it('at 44°F basil joins; the solanaceous core still has not', () => {
-    expect(evalImminentCrops(44, CROPS, T).tripped.map((c) => c.slug).sort()).toEqual(['basil', 'pothos']);
+  it('at 44°F still nothing — basil no longer trips ahead of the pack', () => {
+    expect(evalImminentCrops(44, CROPS, T).tripped).toEqual([]);
   });
 
   it('at the tender threshold peppers and tomatoes join, marigold does not', () => {
@@ -366,10 +370,10 @@ describe('D6 evalImminentCrops — each crop trips against ITS OWN threshold', (
   it('a crop past its OWN hard-freeze point is marked hard_freeze even when the site is only PROTECT', () => {
     const r = evalImminentCrops(IMM, CROPS, T);
     const byslug = Object.fromEntries(r.tripped.map((c) => [c.slug, c.level]));
-    expect(byslug.pothos).toBe('hard_freeze');   // tropical hard-freeze is 40°F
+    expect(byslug.pothos).toBe('protect');   // tropical now shares tender's 33F hard-freeze
     expect(byslug.pepper).toBe('protect');
     expect(r.siteLevel).toBe('protect');         // the D2 site call: 38 > 33
-    expect(r.cropLevel).toBe('hard_freeze');
+    expect(r.cropLevel).toBe('protect');
   });
 
   it('the SITE level follows the D2 33°F copy split, not "any crop past its own point"', () => {
@@ -402,7 +406,8 @@ describe('D6 evalImminentCrops — each crop trips against ITS OWN threshold', (
 
 describe('D6 evalAdvisoryCrops — the 48–72h tier is per-crop too', () => {
   it('only crops whose OWN advisory point is met are named', () => {
-    expect(evalAdvisoryCrops(46, CROPS, T).tripped.map((c) => c.slug).sort()).toEqual(['basil', 'pothos']);
+    // 46F is above every remaining advisory point (40 for the three sensitive bands).
+    expect(evalAdvisoryCrops(46, CROPS, T).tripped).toEqual([]);
   });
   it('a null forecast minimum does not fire', () => {
     expect(evalAdvisoryCrops(null, CROPS, T)).toMatchObject({ fires: false, tripped: [] });
@@ -425,9 +430,11 @@ describe('D6 — ONE coalesced alert per frost event, never one per crop', () =>
   });
 
   it('crops that have NOT tripped their own threshold are not named', () => {
-    const r = frostEval({ tonightLow: 44, exposure: cropExposure() });
+    // At 38 the three sensitive bands trip together and marigold (34) does not — the same
+    // selective-naming contract, now demonstrated by the band that still differs.
+    const r = frostEval({ tonightLow: IMM, exposure: cropExposure() });
     expect(r.message).toMatch(/basil/);
-    expect(r.message).not.toMatch(/peppers/);
+    expect(r.message).toMatch(/peppers/);
     expect(r.message).not.toMatch(/marigolds/);
   });
 
@@ -436,8 +443,11 @@ describe('D6 — ONE coalesced alert per frost event, never one per crop', () =>
     expect(r.level).toBe('protect');
     expect(r.message).toMatch(/^FROST PROTECT TONIGHT/);
     expect(r.message).not.toMatch(/HARD FREEZE/);
-    // the tropicals are still called out inside the body, with the correct instruction
-    expect(r.message).toMatch(/Too cold to save, harvest now: pothos \(2\)/);
+    // Since the sensitive bands were collapsed to the tender line, NOTHING is past its own
+    // hard-freeze point at 38 — so the "too cold to save" arm is correctly absent and every
+    // tripped crop gets the coverable instruction instead.
+    expect(r.message).not.toMatch(/Too cold to save/);
+    expect(r.message).toMatch(/pothos/);
   });
 
   it('at or below 33°F the headline escalates and the protect-only crops move to "Also cover"', () => {
