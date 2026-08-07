@@ -134,7 +134,13 @@ export const handler = async (event) => {
         FROM public.garden_node ln
         LEFT JOIN public.container pp ON pp.id = ln.container_id
         WHERE ln.id = ${plantId} AND ln.deleted_at IS NULL AND ln.archived_at IS NULL
-          AND (pp.created_by = ANY(${householdIds})
+          -- V4-SOFTDEL-001 F4: a planting whose CONTAINER is soft-deleted is not reachable and
+          -- not writable. DELETE /api/projects/:id soft-deletes the container only and does NOT
+          -- propagate to its child garden_node rows, so without this the child stayed live on
+          -- the Plants page and stayed editable through every by-id path in this file. The
+          -- predicate rides INSIDE the container arm on purpose — a project-less planting
+          -- (container_id IS NULL) has no container to be deleted and must keep working.
+          AND (( pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL )
                OR (ln.container_id IS NULL AND ln.created_by = ANY(${householdIds})))
         RETURNING leaf_id
       `;
@@ -162,8 +168,10 @@ export const handler = async (event) => {
         SET archived_at = CASE WHEN ${archived} THEN NOW() ELSE NULL END
         WHERE p.id = ${plantId}
           AND (
+            -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT above).
             EXISTS (SELECT 1 FROM public.container pp
-                     WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds}))
+                     WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds})
+                       AND pp.deleted_at IS NULL)
             OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
           )
           AND p.deleted_at IS NULL
@@ -221,7 +229,8 @@ export const handler = async (event) => {
           LEFT JOIN entity_memory em ON em.project_id = pp.id
           WHERE p.id = ${plantId}
             AND p.deleted_at IS NULL
-            AND (pp.created_by = ANY(${householdIds})
+            -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT above).
+            AND (( pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL )
                  OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})))
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
@@ -273,7 +282,6 @@ export const handler = async (event) => {
         // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation for the new
         // lifecycle/source/lineage fields. Mirrors DB CHECK constraints; NULL allowed.
         const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
-        // V4-SOURCEFREE-001: source_type is free-text (like event_type). No server allowlist; DB CHECK dropped. UI dropdownRegistry is the single source of truth.
         // V4-SOURCEFREE-001: source_type is free-text (like event_type). No server allowlist; DB CHECK dropped. UI dropdownRegistry is the single source of truth.
         // BUG-DIVERGENCEVOCAB-001: this list had ZERO overlap with plants_divergence_type_check
         // ('division','cutting','saved_seed_from'), so every value this allowlist admitted the DB
@@ -401,7 +409,10 @@ export const handler = async (event) => {
           FROM public.garden_node gn
           LEFT JOIN public.container pp ON pp.id = gn.container_id
           WHERE gn.id = ${plantId}
-            AND (pp.created_by = ANY(${householdIds})
+            -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT above).
+            -- Kept in lockstep with the UPDATE below: this pre-flight decides the 404, so a
+            -- looser predicate here would 200 a write the UPDATE then silently matched 0 rows on.
+            AND (( pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL )
                  OR (gn.container_id IS NULL AND gn.created_by = ANY(${householdIds})))
             AND gn.deleted_at IS NULL
         `;
@@ -468,8 +479,11 @@ export const handler = async (event) => {
             END
           WHERE p.id = ${plantId}
             AND (
+              -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT
+              -- above). Must match the cur pre-flight SELECT exactly.
               EXISTS (SELECT 1 FROM public.container pp
-                       WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds}))
+                       WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds})
+                         AND pp.deleted_at IS NULL)
               OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
             )
             AND p.deleted_at IS NULL
@@ -527,8 +541,14 @@ export const handler = async (event) => {
           SET deleted_at = NOW()
           WHERE p.id = ${plantId}
             AND (
+              -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT
+              -- above). Applied here too so "invisible" and "immutable" stay the same set: after
+              -- the read fix there is no UI path to this row anyway, and the real cleanup for a
+              -- planting stranded under a deleted container is the projects-side propagation fix
+              -- (F4 write side, lambda/projects/index.js — NOT done here), not a per-row DELETE.
               EXISTS (SELECT 1 FROM public.container pp
-                       WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds}))
+                       WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds})
+                         AND pp.deleted_at IS NULL)
               OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
             )
             AND p.deleted_at IS NULL
@@ -588,6 +608,10 @@ export const handler = async (event) => {
             LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
             LEFT JOIN photos fp ON fp.id = p.featured_photo_id
             WHERE pp.created_by = ANY(${householdIds})
+              -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT
+              -- above). Top-level here because this branch INNER JOINs the container — the
+              -- project-less arm cannot reach this query at all.
+              AND pp.deleted_at IS NULL
               AND p.container_id = ${projectId}
               AND p.deleted_at IS NULL
               AND p.archived_at IS NULL
@@ -627,7 +651,10 @@ export const handler = async (event) => {
             LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
             LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
             LEFT JOIN photos fp ON fp.id = p.featured_photo_id
-            WHERE (pp.created_by = ANY(${householdIds})
+            -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT above).
+            -- This is the Plants page list — the surface where a planting stranded under a
+            -- soft-deleted container would have stayed visible.
+            WHERE (( pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL )
                    OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})))
               AND p.deleted_at IS NULL
               AND p.archived_at IS NULL
@@ -652,7 +679,6 @@ export const handler = async (event) => {
 
       // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation. NULL allowed.
       const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown'];
-      // V4-SOURCEFREE-001: source_type is free-text — no server allowlist (see PUT path).
       // V4-SOURCEFREE-001: source_type is free-text — no server allowlist (see PUT path).
       // BUG-DIVERGENCEVOCAB-001: must stay set-equal to plants_divergence_type_check. Rationale and
       // canonical source on the PUT path above; the drift guard asserts both copies match the

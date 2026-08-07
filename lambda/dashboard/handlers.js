@@ -26,6 +26,20 @@ import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 // a LOUD error log (water_due_source='schema_mismatch'), never a silently-empty/garbage verdict.
 export const PLAN_SCHEMA_VERSION = 1;
 
+// V4-SOFTDEL-001 F3 — POLICY SWITCH for events whose PLANTING is soft-deleted but whose
+// CONTAINER is still live. Two defensible products, and this constant is the whole choice:
+//   false (SHIPPED — preserves the pre-fix observable behavior): the event SURVIVES. The
+//     watering/harvest really happened in that container; the user deleted a planting record,
+//     not the history. The feed keeps rendering the deleted planting's name beside it.
+//   true  (the alternative): the event is HIDDEN, symmetric with the container rule below.
+// Deliberately NOT decided by this fix — flipping this one literal switches every event read
+// surface at once (dashboard feed here + the 5 events-Lambda queries carrying the same
+// predicate; softdel-feed.test.js asserts the two files' copies stay equal).
+// Measured on prod 2026-08-06: 56 live events sit under a soft-deleted planting (Dave, of
+// 12,356 live events) and 0 (Jen, of 13); 0 of them carry a harvest_log row.
+// The CONTAINER rule is NOT a switch — a soft-deleted container always hides its events.
+export const HIDE_EVENTS_UNDER_DELETED_PLANTING = false;
+
 export function isValidUuid(s) {
   return typeof s === 'string' && UUID_RE.test(s);
 }
@@ -118,6 +132,16 @@ export function queryRecentEvents(sql, userId) {
       WHERE pp.created_by = ANY(${householdIds})
         AND e.deleted_at IS NULL
         AND pp.archived_at IS NULL
+        -- V4-SOFTDEL-001 F3: a soft-deleted container must take its events off the feed with it.
+        -- Every other container join in this file already carries it (queryWaterDue,
+        -- queryWaterDueFromPlan, queryHeadsUp, searchEvents); the feed was the outlier, so
+        -- undoing a container left its events on the Log with the container's name still
+        -- resolving through this same JOIN.
+        AND pp.deleted_at IS NULL
+        -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING. Disabled today, so
+        -- this OR is TRUE on its first operand and the gn test never runs.
+        AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
+             OR e.plant_id IS NULL OR gn.deleted_at IS NULL)
       ORDER BY e.created_at DESC
       LIMIT 200
     `;

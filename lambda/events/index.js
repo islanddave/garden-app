@@ -152,6 +152,20 @@ const EVENT_SOURCE_BATCH  = 'app_batch';
 // Re-exported here for backward compat with any caller importing from index.js directly.
 export { HARVEST_UNITS, MAX_PLAUSIBLE, validatePostBody, UUID_RE };
 
+// V4-SOFTDEL-001 F3 — POLICY SWITCH for events whose PLANTING is soft-deleted but whose
+// CONTAINER is still live. Two defensible products, and this constant is the whole choice:
+//   false (SHIPPED — preserves the pre-fix observable behavior): the event SURVIVES. The
+//     watering/harvest really happened in that container; the user deleted a planting record,
+//     not the history.
+//   true  (the alternative): the event is HIDDEN, symmetric with the container rule.
+// Deliberately NOT decided by this fix — flipping this one literal switches every event read
+// surface at once (the 5 queries below + dashboard/handlers.js queryRecentEvents, whose copy of
+// this constant is kept equal by lambda/events/softdel-feed.test.js).
+// Measured on prod 2026-08-06: 56 live events sit under a soft-deleted planting (Dave, of
+// 12,356 live events) and 0 (Jen, of 13); 0 of them carry a harvest_log row.
+// The CONTAINER rule is NOT a switch — a soft-deleted container always hides its events.
+export const HIDE_EVENTS_UNDER_DELETED_PLANTING = false;
+
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return { statusCode: 204, headers: CORS, body: '' };
@@ -578,6 +592,17 @@ export const handler = async (event) => {
         WHERE pp.created_by = ANY(${householdIds})
           AND e.deleted_at IS NULL
           AND pp.archived_at IS NULL
+          -- V4-SOFTDEL-001 F3: a soft-deleted container takes its events off every read surface
+          -- with it. The DELETE handler and the harvest-summary queries in this file already
+          -- filtered this; the feed/list/detail reads were the outliers, so undoing a container
+          -- left its events on the feed with the container's name still resolving via this JOIN.
+          AND pp.deleted_at IS NULL
+          -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING. Disabled today, so
+          -- this OR short-circuits on its first operand and the EXISTS never executes.
+          AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
+               OR e.plant_id IS NULL
+               OR EXISTS (SELECT 1 FROM public.garden_node gn
+                           WHERE gn.id = e.plant_id AND gn.deleted_at IS NULL))
           AND (${fProject}::uuid IS NULL OR e.project_id = ${fProject}::uuid)
           AND (${fType}::text IS NULL OR e.event_type = ${fType}::text)
           AND (${fFrom}::timestamptz IS NULL OR e.event_date >= ${fFrom}::timestamptz)
@@ -1237,6 +1262,15 @@ export const handler = async (event) => {
           WHERE e.id = ${eventId}
             AND e.deleted_at IS NULL
             AND pp.created_by = ANY(${householdIds})
+            -- V4-SOFTDEL-001 F3: match the DELETE handler below, which already carries
+            -- pp.deleted_at IS NULL. Without it this GET 200s a detail page for an event whose
+            -- container is in the trash — and the delete button on that page 404s.
+            AND pp.deleted_at IS NULL
+            -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING (disabled today).
+            AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
+                 OR e.plant_id IS NULL
+                 OR EXISTS (SELECT 1 FROM public.garden_node gn
+                             WHERE gn.id = e.plant_id AND gn.deleted_at IS NULL))
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
@@ -1366,6 +1400,13 @@ export const handler = async (event) => {
               AND e.project_id = ${projectId}
               AND e.plant_id = ${plantId}
               AND e.deleted_at IS NULL
+              -- V4-SOFTDEL-001 F3 (container rule; see the /feed route above for the rationale).
+              AND pp.deleted_at IS NULL
+              -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING (disabled today).
+              AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
+                   OR e.plant_id IS NULL
+                   OR EXISTS (SELECT 1 FROM public.garden_node gn
+                               WHERE gn.id = e.plant_id AND gn.deleted_at IS NULL))
             ORDER BY e.event_date DESC, e.created_at DESC
             LIMIT ${limit}
           `
@@ -1382,6 +1423,13 @@ export const handler = async (event) => {
             WHERE pp.created_by = ANY(${householdIds})
               AND e.project_id = ${projectId}
               AND e.deleted_at IS NULL
+              -- V4-SOFTDEL-001 F3 (container rule; see the /feed route above for the rationale).
+              AND pp.deleted_at IS NULL
+              -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING (disabled today).
+              AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
+                   OR e.plant_id IS NULL
+                   OR EXISTS (SELECT 1 FROM public.garden_node gn
+                               WHERE gn.id = e.plant_id AND gn.deleted_at IS NULL))
             ORDER BY e.event_date DESC, e.created_at DESC
             LIMIT ${limit}
           `
@@ -1396,6 +1444,13 @@ export const handler = async (event) => {
             JOIN public.container pp ON pp.id = e.project_id
             WHERE pp.created_by = ANY(${householdIds})
               AND e.deleted_at IS NULL
+              -- V4-SOFTDEL-001 F3 (container rule; see the /feed route above for the rationale).
+              AND pp.deleted_at IS NULL
+              -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING (disabled today).
+              AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
+                   OR e.plant_id IS NULL
+                   OR EXISTS (SELECT 1 FROM public.garden_node gn
+                               WHERE gn.id = e.plant_id AND gn.deleted_at IS NULL))
             ORDER BY e.event_date DESC, e.created_at DESC
             LIMIT ${limit}
           `;
