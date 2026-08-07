@@ -558,6 +558,21 @@ export const handler = async (event) => {
             AND c.deleted_at IS NULL
         `;
         if (!cur.length) return resp(404, { error: 'Not found' });
+
+        // BUG-BLANKNAME-001 (2026-08-07). display_name is NOT NULL, but the COALESCE only guards
+        // NULL and ProjectDetail.jsx:391 sends `form.name.trim()` — so an emptied box sends '',
+        // which is not NULL, passes both the COALESCE and the constraint, and blanks the project
+        // name every card, picker and the unauthenticated /garden/:slug share route renders.
+        // Cosmetic here rather than a care regression (unlike the locations twin, whose name feeds
+        // the daily-plan `covered` predicate), but the same one-line class and the same fix.
+        //
+        // Narrow on purpose: `name: null` and an absent key are this PUT's existing no-op grammar
+        // and every current caller depends on them. Only a present, non-null, whitespace-only
+        // string is refused. Mirrors varieties/validate.js:54.
+        if (body.name != null && (typeof body.name !== 'string' || !body.name.trim())) {
+          return resp(400, { error: 'name cannot be blank' });
+        }
+
         const _oldStatus = cur[0].old_status ?? null;
         const _newStatus = body.status != null ? body.status : _oldStatus;
         const _statusChanged = isStatusChange(_oldStatus, _newStatus);

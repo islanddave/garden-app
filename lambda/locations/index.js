@@ -153,6 +153,30 @@ export const handler = async (event) => {
         }
         const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
 
+        // BUG-BLANKNAME-001 (2026-08-07). `name` is NOT NULL, so it looks protected — but the
+        // COALESCE only guards against NULL, and Locations.jsx:102 sends `editForm.name.trim()`.
+        // An emptied box therefore sends '', which is not NULL, sails past both the COALESCE and
+        // the NOT NULL constraint, and overwrites the name with an empty string.
+        //
+        // On THIS table that is a care regression, not just cosmetics: daily-plan/handler.js
+        // derives `covered` partly from `l.name in ('Stable','House')`. Stable carries 20 live
+        // plantings and House 6, so blanking (or renaming) either one silently reclassifies 26
+        // plantings as OUTDOOR — they start taking rain credit under a roof and drop out of the
+        // frost pass's covered exclusion. Reachable from the edit form today; 0 blank rows on prod.
+        //
+        // Renaming remains possible and is not guarded here — a rename is a legitimate edit whose
+        // care consequence is the name-matching predicate's fault, tracked separately. Blanking is
+        // never legitimate. varieties/validate.js:54 already refuses exactly this shape.
+        //
+        // Deliberately NOT `!body.name` and NOT hasOwnProperty-alone: `name: null` and an absent
+        // key are the EXISTING no-op grammar of this COALESCE PUT, and every current caller relies
+        // on it. Rejecting those would convert a working request into a 400. The defect is
+        // specifically a present, non-null, whitespace-only string, so that is exactly what this
+        // refuses — the narrowest predicate that still closes it.
+        if (body.name != null && (typeof body.name !== 'string' || !body.name.trim())) {
+          return resp(400, { error: 'name cannot be blank' });
+        }
+
         const rows = await sql`
           UPDATE locations
           SET

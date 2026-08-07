@@ -446,6 +446,18 @@ export const handler = async (event) => {
         if (_cerr) return resp(400, { error: _cerr });
         const clear = Array.isArray(body.clear) ? body.clear : [];
 
+        // BUG-BLANKNAME-001 (2026-08-07). The COALESCE guards NULL, not ''. The client sends a
+        // trimmed string, so an emptied name box sends '' and blanks the planting's display name.
+        // garden_node.display_name is NULLABLE, so unlike the locations/projects twins there is not
+        // even a NOT NULL constraint standing behind it — this is the least protected of the four
+        // and the one where a blank silently becomes the planting's identity in every list.
+        //
+        // Narrow on purpose, matching the sibling handlers: `name: null` and an absent key are this
+        // PUT's existing no-op grammar. Only a present, non-null, whitespace-only string is refused.
+        if (body.name != null && (typeof body.name !== 'string' || !body.name.trim())) {
+          return resp(400, { error: 'name cannot be blank' });
+        }
+
         const _oldStatus = cur[0].old_status ?? null;
         const _projectId = cur[0].proj_id;
         const _newStatus = body.status != null ? body.status : _oldStatus;

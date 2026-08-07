@@ -51,7 +51,13 @@ export function validateClear(clear, body = {}) {
 
 export function validateBody(body, { requireName = true } = {}) {
   if (!body || typeof body !== 'object') return 'body required';
-  if (requireName && (!body.name || typeof body.name !== 'string' || !body.name.trim())) return 'name is required';
+  // BUG-BLANKNAME-001 (2026-08-07). These were ONE condition gated entirely on requireName, so the
+  // PUT — which passes requireName:false so it can omit the key — also skipped the BLANK check.
+  // plant_varieties.name is NOT NULL, but the COALESCE binds '' rather than NULL, so '' passed both
+  // the validator and the constraint and blanked the cultivar name. Absence and emptiness are
+  // different questions: only the first is optional on a partial update.
+  if (requireName && body.name == null) return 'name is required';
+  if (body.name != null && (typeof body.name !== 'string' || !body.name.trim())) return 'name cannot be blank';
   if (body.sun_requirements != null && !VALID_SUN.includes(body.sun_requirements)) {
     return `sun_requirements must be one of: ${VALID_SUN.join(', ')}`;
   }
