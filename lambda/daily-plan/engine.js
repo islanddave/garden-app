@@ -102,7 +102,14 @@ function isSmallVessel(p){
   if(s!=null) return s;
   return true;                                                         // unknown vessel in carve-out window -> fail safe (deny credit, water it)
 }
-function rainClass(p){ return p.covered ? 'none' : 'outdoor'; }    // covered/indoor => 'none'; everything else => 'outdoor'
+// BUG-NOLOCOUTDOOR-001: reads the handler's resolved flag, NOT the raw `covered` boolean.
+// Was `p.covered ? 'none' : 'outdoor'`, which is why a NULL tri-state could not be used directly:
+// NULL is FALSY, so an unknown location would have taken the 'outdoor' branch — the very bug — while
+// frostClass's `=== true` test would have handled the same NULL correctly. A tri-state whose
+// correctness depends on which comparison a given consumer happened to write is a coin flip, so the
+// handler resolves it into two plain booleans and each consumer reads its own.
+// rain_exposed_resolved is `state IS FALSE`, so unknown => false => 'none' => never rain-credited.
+function rainClass(p){ return p.rain_exposed_resolved ? 'outdoor' : 'none'; }
 function windowPrecip(hy){
   if(!hy || hy.recent_precip_in==null) return null;                 // missing precip -> no credit (uncertainty handled in hydrologyStatus)
   // BUG-TODAYWATER-001: this is D-2..D-1 ACTUALS + D0, not "D-2..D0 actuals" as this comment used to claim.
@@ -372,9 +379,16 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // BUG-TODAYWATER-001: pass the vessel size so the TODAY branch can hold small vessels to a higher bar.
     const _sat=saturationSuppressed(rcls, hydrology, { todayAware: todayAwareEnabled, smallVessel: isSmallVessel(p) });
     // DRG-WXWATER-001 coarse-v1 (flag-ON only): exposure eligibility. Flag-OFF uses the location-derived class
-    // (rcls==='outdoor'); flag-ON derives exposed = !covered when rain_exposed is unset, honoring a stored
-    // rain_exposed boolean as an explicit override. _creditClass/_iaShown collapse to the flag-OFF values when OFF.
-    const _exposed = rainCreditEnabled ? (p.rain_exposed==null ? !p.covered : !!p.rain_exposed) : null;
+    // (rcls==='outdoor'); flag-ON derives exposure from the location, honoring a stored rain_exposed
+    // boolean as an explicit override. _creditClass/_iaShown collapse to the flag-OFF values when OFF.
+    // NOTE: CARE_RAIN_CREDIT_ENABLED is "true" in live prod config — this branch is LIVE, not dormant.
+    //
+    // BUG-NOLOCOUTDOOR-001: was `!p.covered`, which made an un-located planting exposed=true and
+    // rain-credited. Now reads the handler's resolved flag, so unknown => not exposed => keeps its
+    // water. The rain_exposed override still wins and is now the CORRECT escape hatch for exactly
+    // this case: "no location, but I know it is outdoors" is rain_exposed=true. (0/270 rows set it
+    // today, so it is an escape hatch, not the fix.)
+    const _exposed = rainCreditEnabled ? (p.rain_exposed==null ? !!p.rain_exposed_resolved : !!p.rain_exposed) : null;
     const _creditClass = rainCreditEnabled ? _exposed : (rcls==='outdoor');
     // DRG-WATERCREDIT-002 fix: key the fresh-transplant carve-out on a REAL transplant/potting event
     // (p.transplant_at), NOT substrate_start. substrate_start falls back to created_at (DB row-creation

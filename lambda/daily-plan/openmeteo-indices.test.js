@@ -131,7 +131,13 @@ describe('handler query carries the frost inputs', () => {
   it('selects crop_type_slug — frost class is derived from it, never from coldFor (G2)', () => {
     expect(H).toMatch(/pv\.crop_type_slug/);
   });
-  it('still derives the covered flag the D6 exclusion intersects with', () => {
-    expect(H).toMatch(/coalesce\(l\.type_label in \('shelf','rack','tray'\) or l\.name in \('Stable','House'\), false\) as covered/);
+  it('still derives the coverage flag the D6 exclusion intersects with', () => {
+    // NOTE: this was a byte-identical COPY of wxcoverloc.test.js's derivation guard, and the
+    // duplication was itself a hazard — BUG-NOLOCOUTDOOR-001 changed the SQL and reddened an
+    // assertion in a file that is otherwise about Open-Meteo indices, in a suite nobody would think
+    // to look at. wxcoverloc.test.js owns the full derivation contract (alias arms, the
+    // unknown-is-not-outdoor negative assertion, and the two-flag split).
+    // What THIS file legitimately needs is only that the flag D6 consumes still exists.
+    expect(H).toMatch(/as frost_covered_resolved/);
   });
 });

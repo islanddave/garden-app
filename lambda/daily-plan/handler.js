@@ -171,7 +171,39 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            -- DRG-WXCOVERLOC-001: resolved from the PLANTING's own location (see the join below), NOT the
            -- project's — 78/250 active plantings sit in a location different from their project's, so the
            -- project-derived flag mis-credited both directions (11 wrongly covered, 15 wrongly outdoor).
-           coalesce(l.type_label in ('shelf','rack','tray') or l.name in ('Stable','House'), false) as covered,
+           -- BUG-NOLOCOUTDOOR-001 (2026-08-07): the old form was
+           --   coalesce(<predicate>, false) as covered
+           -- With no location the left-joined l.* is NULL, the predicate evaluates NULL, and the
+           -- coalesce collapsed it to FALSE = OUTDOOR. "I don't know where this is" was rendered as
+           -- "it is outside in the rain." No longer hypothetical: a rescue seedling created
+           -- 2026-08-07 with no location and no project was in that night's plan as outdoor.
+           --
+            -- A SINGLE BOOLEAN CANNOT BE FAIL-SAFE HERE, because 'covered' feeds two consumers whose
+           -- safe directions are OPPOSITE:
+           --   * rain credit + saturation suppression only ever WITHHOLD water. Treating an indoor
+           --     plant as outdoor gives it rain it never got -> it goes unwatered -> drought.
+           --     Unknown must mean NOT EXPOSED.
+           --   * frost alerting only ever SUPPRESSES an alert (frostClass's covered exclusion).
+           --     Treating an outdoor plant as covered drops it from the alert -> it freezes.
+           --     Unknown must mean NOT COVERED.
+           -- So unknown resolves to "no rain credit" AND "still frost-alerted" — which one boolean
+           -- cannot express, and which a NULL tri-state would get wrong the moment a consumer used
+            -- '?' instead of '=== true' (rainClass did exactly that: NULL is falsy -> 'outdoor').
+           --
+           -- Expressed once here as a three-state, then split into two plain booleans so no consumer
+           -- can mis-handle it. IS TRUE / IS FALSE are deliberately NOT complements over NULL —
+           -- that asymmetry IS the fix. For the 248 located plantings both flags are exactly the old
+            -- old 'covered' and NOT-covered, so behaviour is unchanged for every row but the un-located.
+           --
+           -- type_label IS NULL is also unknown, not outdoor: it is the same defect reached through a
+           -- populated location (clearing type_label on Shelf 4 would otherwise flip 15 plantings).
+           -- l.name is NOT NULL, so the Stable/House arm is always decisive when a location exists.
+           --
+            -- The three-state is computed ONCE in the cov lateral below and split here, so the two
+           -- flags cannot drift apart under a later edit to one of them.
+           cov.state as loc_cover_state,
+           cov.state is false as rain_exposed_resolved,
+           cov.state is true  as frost_covered_resolved,
            coalesce(p.assignee_user_id, pj.assignee_user_id) as assignee_user_id,
            vrc.resolved_profile as db_cadence,  -- CARE-CADENCE-001: system||cultivar||leaf merged cadence (NULL/_seeded-absent -> engine bundled fallback)
            -- Dates returned as 'YYYY-MM-DD' TEXT (UTC): the neon driver hands timestamptz back as JS Date objects, and
@@ -200,6 +232,15 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     -- planting has none (0/250 active rows today, but plants.location_id is NULLABLE — coalesce keeps an
     -- un-located planting on its pre-fix classification instead of silently reclassifying it as outdoor).
     left join locations       l  on l.id=coalesce(p.location_id, pj.location_id)
+    -- BUG-NOLOCOUTDOOR-001: the coverage three-state, evaluated once. NULL = unknown, and the two
+    -- resolved flags in the SELECT read it with IS FALSE / IS TRUE — deliberately not complements.
+    left join lateral (select case
+             when l.id is null                            then null
+             when l.name in ('Stable','House')            then true
+             when l.type_label in ('shelf','rack','tray') then true
+             when l.type_label is null                    then null
+             else false
+           end as state) cov on true
     left join v_resolved_care vrc on vrc.leaf_id = p.id
     where p.deleted_at is null and p.archived_at is null
       and (p.status is null or p.status not in ('ended','failed','dead','archived'))

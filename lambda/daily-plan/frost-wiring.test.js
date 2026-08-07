@@ -7,6 +7,8 @@
 // logged on every evaluation whether or not it alerts.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import h from './handler.js';
+import _cf from './_coverFlags.js';
+const { withCoverFlags } = _cf;  // BUG-NOLOCOUTDOOR-001 fixture bridge
 
 const { run, readAlertsSent, frostSubject, ALERTS_SENT_MAX } = h;
 
@@ -15,7 +17,7 @@ const SPACE = 'sp1';
 const DATE = '2026-09-20';        // inside the §3-7 Sep 1 – Nov 15 frost season
 const PM_HOUR = 15;               // the 15:30 ET intraday-pm run (G3)
 
-const planting = (id, slug, extra = {}) => ({
+const planting = (id, slug, extra = {}) => withCoverFlags({
   id, name: `${slug} ${id}`, project_id: 'pj1', status: 'fruiting', container_type: 'pot',
   container_size: '5gal', rain_exposed: null, variety: slug, genus: null, project: 'Garden',
   project_status: 'active', workspace_id: SPACE, crop_type_slug: slug, covered: false,

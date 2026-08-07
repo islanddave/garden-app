@@ -15,6 +15,8 @@
 
 import { describe, it, expect } from 'vitest';
 import engine from './engine.js';
+import _cf from './_coverFlags.js';
+const { withCoverFlags } = _cf;  // BUG-NOLOCOUTDOOR-001 fixture bridge
 const { generatePlanForUser } = engine;
 
 const TODAY = '2026-06-21';
@@ -23,7 +25,7 @@ const cad = { default: { crop: 'tomato', water_interval_days_inground: 5, water_
 const fm = { amendments_in_inventory: { fruiting_feed: { item: 'a', apply: 'b' }, kelp: { item: 'k' }, veg_feed: { item: 'v', apply: 'w' }, castings: { item: 'c', apply: 'd' } }, water_quality: null };
 const wx = { tonightLow: 60, highToday: 75 };
 
-const base = (ov = {}) => ({ id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: ago(2), substrate_start: ago(81), transplant_at: null, ...ov });
+const base = (ov = {}) => withCoverFlags({ id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: ago(2), substrate_start: ago(81), transplant_at: null, ...ov });
 
 function bucket(ov, hy, credit = false, maxdays = false) {
   const out = generatePlanForUser([base(ov)], cad, fm, TODAY, wx, hy, credit, maxdays);

@@ -11,6 +11,8 @@ import { describe, it, expect } from 'vitest'
 import engine from './engine.js'
 import cad from './cadence-data-v2.json'
 import fm from './fertilization-model.json'
+import _cf from './_coverFlags.js';
+const { withCoverFlags } = _cf;  // BUG-NOLOCOUTDOOR-001 fixture bridge
 
 const { generatePlan, waterSuppression } = engine
 
@@ -29,7 +31,7 @@ delete LITHOPS_UNSEEDED._seeded
 const GROWTH_GATED_ONLY = { _seeded: true, crop: 'bulb (summer dormant)', water_rule: 'growth_gated', water_interval_days_container: 7, fertilize_interval_days: 0 }
 const PEPPER = { _seeded: true, crop: 'pepper', water_interval_days_container: 3, water_method: 'deep_even', soil_moisture_target: 'evenly_moist', drought_tolerance: 'medium', fertilize_interval_days: 14 }
 
-const P = (o) => ({
+const P = (o) => withCoverFlags({
   assignee_user_id: 'dave', project: 'Bench', project_id: 'pb', project_status: 'active',
   variety: null, genus: null, container_type: 'pot', container_size: '4 in',
   substrate_start: '2026-01-01', transplant_at: null, last_fert: null, covered: true, ...o,

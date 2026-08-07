@@ -12,6 +12,8 @@
 // normal 1-day credit path.
 import { describe, it, expect } from 'vitest';
 import engine from './engine.js';
+import _cf from './_coverFlags.js';
+const { withCoverFlags } = _cf;  // BUG-NOLOCOUTDOOR-001 fixture bridge
 const { generatePlanForUser } = engine;
 
 const TODAY = '2026-06-21';
@@ -31,7 +33,7 @@ const HS = {
 };
 
 function bucket(ov, hy, flag = false) {
-  const p = { id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81), transplant_at: null, ...ov };
+  const p = withCoverFlags({ id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81), transplant_at: null, ...ov });
   const out = generatePlanForUser([p], cad, fm, TODAY, wx, hy, flag);
   const b = out.tasks.water_due.some(w => w.id === 't') ? 'DUE'
     : out.tasks.rain_skipped.some(w => w.id === 't') ? 'SKIP'

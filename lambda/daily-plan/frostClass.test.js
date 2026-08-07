@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import fc from './frostClass.js';
+import _cf from './_coverFlags.js';
+const { withCoverFlags } = _cf;  // BUG-NOLOCOUTDOOR-001 fixture bridge
 const { frostClassForSlug, summarize, isContainer, CLASS_BY_SLUG, UNCERTAIN_SLUGS } = fc;
 
 // Fixtures mirror the shape the daily-plan handler query returns, plus crop_type_slug from the
 // plant_varieties join. Slugs and counts below are the LIVE prod values read 2026-08-04.
-const p = (id, name, slug, extra = {}) => ({ id, name, crop_type_slug: slug, container_type: 'pot', status: 'vegetative', ...extra });
+const p = (id, name, slug, extra = {}) => withCoverFlags({ id, name, crop_type_slug: slug, container_type: 'pot', status: 'vegetative', ...extra });
 
 describe('frostClassForSlug — the three §3-4 classes', () => {
   it('classifies every slug §3-4 names as tender', () => {
@@ -392,9 +394,35 @@ describe('D6 covered-exclusion — an indoor planting is not named on a frost ni
   });
 
   it('isCoveredDefault reads exactly the handler query flag, and only when strictly true', () => {
-    expect(isCoveredDefault({ covered: true })).toBe(true);
-    for (const v of [false, null, undefined, 'true', 1]) expect(isCoveredDefault({ covered: v })).toBe(false);
+    // BUG-NOLOCOUTDOOR-001: the flag is now frost_covered_resolved (SQL `state IS TRUE`), not the
+    // raw `covered` boolean. Strictly-true is still the rule, and it is what makes an unknown
+    // location resolve to NOT covered — i.e. it keeps its seat in the frost alert.
+    expect(isCoveredDefault({ frost_covered_resolved: true })).toBe(true);
+    for (const v of [false, null, undefined, 'true', 1]) {
+      expect(isCoveredDefault({ frost_covered_resolved: v })).toBe(false);
+    }
     expect(isCoveredDefault(null)).toBe(false);
+  });
+
+  it('isCoveredDefault does NOT read the retired `covered` field', () => {
+    // The rename is the fix. If this consumer silently fell back to `covered`, an un-located
+    // planting (covered:false, and NO resolved flag at all) would look identical to a genuinely
+    // outdoor one — which is the bug — and every assertion above would still pass.
+    expect(isCoveredDefault({ covered: true })).toBe(false);
+  });
+
+  it('an UNKNOWN location is NOT excluded from the frost alert (the fail-safe direction)', () => {
+    // The whole design in one assertion. covered/rain_exposed_resolved/frost_covered_resolved are
+    // ALL false for an unknown location — the two resolved flags are deliberately not complements.
+    // Frost must still name it: suppressing the alert on a plant that turns out to be outdoors is a
+    // freeze with no warning, so unknown resolves to NOT covered here even though the very same
+    // unknown resolves to NOT exposed on the rain side.
+    const unknown = { id: 'u1', name: 'Rescue seedling', crop_type_slug: 'tomato',
+      container_type: 'pot', status: 'seedling',
+      rain_exposed_resolved: false, frost_covered_resolved: false };
+    const s = summarize([unknown]);
+    expect(s.atRisk).toBe(1);
+    expect(s.coveredExcluded).toBe(0);
   });
 });
 
@@ -483,7 +511,7 @@ describe('D6 live-prod gate — the numbers Dave will actually receive (Neon 202
     ['onion', 3, 0, 3], ['oregano', 3, 0, 0], ['potato', 3, 0, 3], ['succulent', 3, 3, 2],
     ['tarragon', 3, 0, 2], ['tomatillo', 3, 0, 3], ['watermelon', 3, 0, 0],
   ];
-  const rows = LIVE.flatMap(([slug, n, covered, containers]) => Array.from({ length: n }, (_, i) => ({
+  const rows = LIVE.flatMap(([slug, n, covered, containers]) => Array.from({ length: n }, (_, i) => withCoverFlags({
     id: `${slug}-${i}`, name: `${slug} ${i}`, crop_type_slug: slug,
     container_type: i < containers ? 'pot' : 'in_ground',
     covered: i < covered, status: 'vegetative',

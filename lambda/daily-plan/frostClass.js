@@ -288,11 +288,18 @@ function isContainer(p) {
   return !!(t && String(t).trim() && String(t).trim().toLowerCase() !== 'in_ground');
 }
 
-// D6 covered-exclusion: the daily-plan query already computes `covered`
-// (locations.type_label in (shelf,rack,tray) OR locations.name in (Stable,House)). 19 at-risk plantings
-// live indoors today and would otherwise be named on every frost night for no action.
+// D6 covered-exclusion: the daily-plan query resolves coverage from the planting's location
+// (locations.type_label in (shelf,rack,tray) OR locations.name in (Stable,House)). 19 at-risk
+// plantings live indoors today and would otherwise be named on every frost night for no action.
+//
+// BUG-NOLOCOUTDOOR-001: reads frost_covered_resolved (`state IS TRUE`) rather than the raw boolean.
+// This consumer's fail-safe runs OPPOSITE to rain credit's: excluding a planting here SUPPRESSES its
+// frost alert, so an unknown location must resolve to NOT covered — it keeps its seat in the alert
+// and Dave gets told about it. Excluding it would be a freeze with no warning, which is the same
+// principle handler.js already encodes for a missing tonight-low: silence must never be
+// indistinguishable from safety.
 function isCoveredDefault(p) {
-  return !!(p && p.covered === true);
+  return !!(p && p.frost_covered_resolved === true);
 }
 
 // Classify a list of plantings and produce the exposure summary frostEval's copy consumes.

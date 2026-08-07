@@ -49,8 +49,31 @@ describe('DRG-WXCOVERLOC-001: covered is derived from the planting\'s own locati
     expect(FLAT).toMatch(/select .*\bp\.rain_exposed\b/);
   });
 
-  it('still derives covered from the joined locations alias', () => {
+  it('still derives coverage from the joined locations alias', () => {
     // Guards the other half: the join can be correct while the derivation drifts off the alias.
-    expect(FLAT).toMatch(/coalesce\(l\.type_label in \('shelf','rack','tray'\) or l\.name in \('Stable','House'\), false\) as covered/);
+    // BUG-NOLOCOUTDOOR-001 replaced the single coalesce(...) with a three-state CASE in the `cov`
+    // lateral. Anchored on the alias-bearing arms so a drift off `l` still reds.
+    expect(FLAT).toMatch(/when l\.name in \('Stable','House'\)\s*then true/);
+    expect(FLAT).toMatch(/when l\.type_label in \('shelf','rack','tray'\)\s*then true/);
+    expect(FLAT).toMatch(/when l\.id is null\s*then null/);
+  });
+
+  it('does NOT collapse an unknown location to outdoor (the pre-fix bug)', () => {
+    // THE REGRESSION GUARD. Pinning the ABSENCE of the broken form is what stops a revert shipping
+    // green: the old expression was
+    //   coalesce(<predicate>, false) as covered
+    // and with no location the predicate is NULL, so the coalesce made it FALSE = outdoor. A rescue
+    // seedling created 2026-08-07 with no location was in that night's plan as outdoor because of it.
+    expect(FLAT).not.toMatch(/or l\.name in \('Stable','House'\), false\) as covered/);
+  });
+
+  it('splits coverage into two flags that are NOT complements', () => {
+    // The design decision, made executable. IS FALSE and IS TRUE both yield FALSE for an unknown
+    // location — that asymmetry is the entire fix, because rain credit and frost alerting fail safe
+    // in opposite directions. Collapsing these back into one boolean (or into `x` and `not x`)
+    // reds here regardless of which direction it collapses.
+    expect(FLAT).toMatch(/cov\.state is false as rain_exposed_resolved/);
+    expect(FLAT).toMatch(/cov\.state is true\s+as frost_covered_resolved/);
+    expect(FLAT).not.toMatch(/not cov\.state as (rain_exposed_resolved|frost_covered_resolved)/);
   });
 });

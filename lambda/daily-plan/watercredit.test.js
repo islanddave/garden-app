@@ -4,6 +4,8 @@
 // 1-day hold), with the transplant carve-out. Exercises the REAL generatePlanForUser decision path.
 import { describe, it, expect } from 'vitest';
 import engine from './engine.js';
+import _cf from './_coverFlags.js';
+const { withCoverFlags } = _cf;  // BUG-NOLOCOUTDOOR-001 fixture bridge
 const { generatePlanForUser, rainClass, rainCreditDays, RAIN_IA, isSmallVessel, vesselSizeSmall } = engine;
 
 const TODAY = '2026-06-21';
@@ -19,7 +21,7 @@ const H = {
   none:   null,
 };
 function bucket(ov, hy) {
-  const p = { id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81), transplant_at: null, ...ov };
+  const p = withCoverFlags({ id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81), transplant_at: null, ...ov });
   const out = generatePlanForUser([p], cad, fm, TODAY, wx, hy);
   const b = out.tasks.water_due.some(w => w.id === 't') ? 'DUE'
     : out.tasks.rain_skipped.some(w => w.id === 't') ? 'SKIP'
@@ -29,8 +31,25 @@ function bucket(ov, hy) {
 
 describe('DRG-WATERCREDIT-001 V1: 2-class keying (covered vs outdoor)', () => {
   it('covered => none (never credited); outdoor => outdoor profile', () => {
-    expect(rainClass({ covered: true })).toBe('none');
-    expect(rainClass({ covered: false })).toBe('outdoor');
+    // BUG-NOLOCOUTDOOR-001: rainClass now keys on rain_exposed_resolved (SQL `state IS FALSE`),
+    // not the raw `covered` boolean. Known-covered and known-outdoor behave exactly as before.
+    expect(rainClass({ rain_exposed_resolved: false })).toBe('none');
+    expect(rainClass({ rain_exposed_resolved: true })).toBe('outdoor');
+  });
+
+  it('an UNKNOWN location is never rain-credited (the fail-safe direction)', () => {
+    // The rain half of the asymmetry. An un-located planting carries rain_exposed_resolved=false,
+    // so it classes as 'none' and can never be credited for rain it may not have received.
+    // Its frost twin runs the OPPOSITE way — see frostClass.test.js's matching case.
+    expect(rainClass({ rain_exposed_resolved: false, frost_covered_resolved: false })).toBe('none');
+  });
+
+  it('rainClass does NOT fall back to the retired `covered` field', () => {
+    // The rename is the fix. A fallback would make an un-located planting (covered:false, no
+    // resolved flag) indistinguishable from a genuinely outdoor one — which is the bug — while
+    // every assertion above still passed. `covered: false` alone must NOT yield 'outdoor'.
+    expect(rainClass({ covered: false })).toBe('none');
+    expect(rainClass({})).toBe('none');
   });
   it('single conservative outdoor initial-abstraction = 0.25in; no in_ground class in V1', () => {
     expect(RAIN_IA.outdoor).toBe(0.25);
@@ -140,7 +159,7 @@ describe('DRG-WATERCREDIT-004: hot-day fabric-bag heat-gate (>=85°F)', () => {
   const wxMild = { tonightLow: 60, highToday: 80 };
   const wxEdge = { tonightLow: 65, highToday: 85 }; // exactly at the gate
   const mk = (ov, hy, weather) => {
-    const p = { id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81), transplant_at: null, ...ov };
+    const p = withCoverFlags({ id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp', container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81), transplant_at: null, ...ov });
     const out = generatePlanForUser([p], cad, fm, TODAY, weather, hy);
     const b = out.tasks.water_due.some(w => w.id === 't') ? 'DUE'
       : out.tasks.rain_skipped.some(w => w.id === 't') ? 'SKIP' : 'OTHER';

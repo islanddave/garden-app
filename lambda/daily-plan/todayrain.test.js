@@ -13,6 +13,8 @@
 import { describe, it, expect } from 'vitest';
 import engine from './engine.js';
 import station from './station.js';
+import _cf from './_coverFlags.js';
+const { withCoverFlags } = _cf;  // BUG-NOLOCOUTDOOR-001 fixture bridge
 
 const { generatePlanForUser, generatePlan, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN } = engine;
 const { deriveStation, mergeStationHydrology } = station;
@@ -31,7 +33,7 @@ const H = (recent, today, todayPop, tomorrow, tomorrowPop) => ({
   tomorrow_precip_in: tomorrow, tomorrow_pop: tomorrowPop, upcoming_precip_in: (tomorrow || 0),
 });
 
-const plant = (over = {}) => ({
+const plant = (over = {}) => withCoverFlags({
   id: 'p1', name: 'Test Planting', project: 'Proj', project_id: 'pr1', workspace_id: 'w1',
   genus: 'generic', status: 'growing', covered: false, container_type: null, container_size: null,
   last_water: '2026-07-24',            // dW = 10 vs interval 3 — comfortably due

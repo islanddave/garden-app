@@ -70,8 +70,26 @@ const TODAY_HEAVY = {
 };
 
 // Helper to keep planting literals terse + uniform.
+//
+// BUG-NOLOCOUTDOOR-001: the handler no longer hands the engine a single `covered` boolean. It
+// resolves a three-state in SQL and splits it into two flags that are DELIBERATELY not complements
+// (rain_exposed_resolved = state IS FALSE; frost_covered_resolved = state IS TRUE) — both false for
+// an unknown location, because rain credit and frost alerting fail safe in OPPOSITE directions.
+// Every scenario below still expresses coverage as the KNOWN `covered: true|false`, which maps onto
+// both flags cleanly, so they are derived here rather than restated 40-odd times.
+//
+// Derived BEFORE the `...o` spread so a scenario can still pin either flag explicitly — which is
+// how an UNKNOWN-location scenario is written: pass both resolved flags false and omit `covered`.
 function P(o) {
-  return { assignee_user_id: 'dave', project_id: o.project_id ?? 'pj1', project: o.project ?? 'Garden', project_status: o.project_status ?? 'active', last_fert: o.last_fert ?? null, covered: o.covered ?? false, ...o };
+  const _covered = o.covered ?? false;
+  return {
+    assignee_user_id: 'dave', project_id: o.project_id ?? 'pj1', project: o.project ?? 'Garden',
+    project_status: o.project_status ?? 'active', last_fert: o.last_fert ?? null,
+    covered: _covered,
+    rain_exposed_resolved: _covered === false,
+    frost_covered_resolved: _covered === true,
+    ...o,
+  };
 }
 
 export const scenarios = [

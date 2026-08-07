@@ -13,6 +13,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import engine from './engine.js';
 import { scenarios } from '../../tests/parity/daily-plan/fixtures.mjs';
+import _cf from './_coverFlags.js';
+const { withCoverFlags } = _cf;  // BUG-NOLOCOUTDOOR-001 fixture bridge
 
 const {
   generatePlan, generatePlanForUser, RAIN_IA, RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER,
@@ -37,9 +39,9 @@ const SEED = (o) => ({ _seeded: true, crop: 'tomato', water_interval_days_contai
 // which is exactly the state F2 will flip prod into (credit ON, ceiling still OFF). Independence of the two
 // flags is proven in watercredit-flagsplit.test.js.
 function bucket(ov, hy, flag, weather = wx, maxdays = false) {
-  const p = { id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp',
+  const p = withCoverFlags({ id: 't', name: 'X', variety: 'v', genus: 'g', status: 'active', project: 'P', project_id: 'pp',
     container_type: null, container_size: null, covered: false, last_water: null, substrate_start: ago(81),
-    transplant_at: ago(400), db_cadence: SEED({}), ...ov };
+    transplant_at: ago(400), db_cadence: SEED({}), ...ov });
   const out = generatePlanForUser([p], cad, fm, TODAY, weather, hy, flag, maxdays);
   const b = out.tasks.water_due.some((w) => w.id === 't') ? 'DUE'
     : out.tasks.rain_skipped.some((w) => w.id === 't') ? 'SKIP'
