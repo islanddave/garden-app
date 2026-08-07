@@ -368,20 +368,24 @@ describe('the invariant, over everything this file touched', () => {
   })
 })
 
-// ── KNOWN GAPS — RED TODAY, DELIBERATELY SKIPPED ────────────────────────────────────────────────
+// ── THE FOUR GAPS — WERE RED, NOW FIXED AND LIVE ────────────────────────────────────────────────
 //
-// These are complete and runnable and they FAIL against dev HEAD. They are skipped so that landing
-// this file does not red the fail-closed `integration-tests` promote gate for defects it did not
-// introduce. Un-skip each in the commit that fixes it. Do NOT "fix" them by weakening the
-// assertion — each was derived exactly the way the passing cases above were.
+// These landed SKIPPED alongside this file, complete and runnable and failing against dev HEAD, so
+// that shipping the file would not red the fail-closed `integration-tests` promote gate for defects
+// it did not introduce. BUG-CACHEGATE-001 fixed the shared root cause and un-skipped all four in
+// the same commit. Do NOT "fix" a future failure here by weakening an assertion — each was derived
+// exactly the way the passing cases above were, and each ran RED before the fix and GREEN after,
+// which is the only evidence that distinguishes a repair from a coincidence.
 //
-// SHARED ROOT CAUSE: index.js:1432 gates the entire recompute on `projectChanged || plantChanged`.
+// SHARED ROOT CAUSE (fixed): index.js gated the entire recompute on `projectChanged ||
+// plantChanged`, and the predicate is now `cacheDirty` over four axes — anchors, event_type,
+// event_date and the resolved flag.
 // Anchor movement is only ONE of the three ways this PUT invalidates the cache. The other two —
 // event_date moving backwards (index.js:1222) and event_type changing (index.js:1221) — run no
 // recompute at all, and every forward upsert is GREATEST(), so the drift is permanent and accretes
 // one cell per edit. That is BUG-CARECACHEUNDO-001's mechanism arriving through a different door,
 // in a route that shipped AFTER the repair.
-describe.skip('GAP 1 — editing an event_date BACKWARDS leaves the cache forward', () => {
+describe('GAP 1 — editing an event_date BACKWARDS leaves the cache forward', () => {
   let projectId, id
   beforeAll(async () => {
     projectId = await newProject('gap1')
@@ -403,8 +407,8 @@ describe.skip('GAP 1 — editing an event_date BACKWARDS leaves the cache forwar
 // its forward writer is GREATEST(). This is the fourth door into the same room, and it is the one
 // that most directly undercuts adding last_issue_at to the six recompute arms: the arms are now
 // correct, but the most likely way a user invalidates the column reaches none of them.
-// Un-skip in the commit that widens the gate at index.js:1445.
-describe.skip('GAP 4 — unflagging an event leaves last_issue_at pointing at it', () => {
+// UN-SKIPPED by that commit: the gate at index.js is now the four-axis cacheDirty predicate.
+describe('GAP 4 — unflagging an event leaves last_issue_at pointing at it', () => {
   let projectId, id
   beforeAll(async () => {
     projectId = await newProject('gap4')
@@ -422,7 +426,7 @@ describe.skip('GAP 4 — unflagging an event leaves last_issue_at pointing at it
   })
 })
 
-describe.skip('GAP 2 — retyping an event AWAY from watering leaves last_watered_at set', () => {
+describe('GAP 2 — retyping an event AWAY from watering leaves last_watered_at set', () => {
   let projectId, id
   beforeAll(async () => {
     projectId = await newProject('gap2')
@@ -437,7 +441,7 @@ describe.skip('GAP 2 — retyping an event AWAY from watering leaves last_watere
   })
 })
 
-describe.skip('GAP 3 — next_water_at is gated on the POST-edit event_type', () => {
+describe('GAP 3 — next_water_at is gated on the POST-edit event_type', () => {
   // index.js:1455 binds ${movedType} = body.event_type, i.e. what the event BECOMES. Re-anchor a
   // watering AND retype it in one save and the CASE takes the NOT IN ('watering','rain') arm, so
   // the vacated container keeps a next_water_at derived from a watering that is now neither its

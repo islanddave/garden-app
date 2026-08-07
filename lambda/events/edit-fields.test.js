@@ -274,12 +274,36 @@ describe('slice 3: the re-anchor maintains the cache on BOTH anchors', () => {
     expect(t).toMatch(/e\.plant_id = \$\{oldPlantId\} AND e\.event_type IN \('harvest','first_harvest'\)/);
   });
 
-  it('next_water_at is gated on the moved event type and never on a plant-keyed arm', () => {
+  it('next_water_at is gated on the OLD-or-NEW watering union, never on a plant-keyed arm', () => {
     const t = putTail();
-    expect(t).toMatch(/next_water_at = CASE WHEN \$\{movedType\}::text NOT IN \('watering','rain'\) THEN em\.next_water_at/);
+    // BUG-CACHEGATE-001 GAP 3. This asserted a gate on the POST-edit event type — a fact about the
+    // EVENT, not about the key it LEFT — so a re-anchor that also retyped left the vacated
+    // container holding a due date derived from a watering that was by then neither its event nor
+    // a watering, while last_watered_at correctly walked backwards in the same statement. The gate
+    // is now the OLD-or-NEW union, derived in JS.
+    expect(t).toMatch(/next_water_at = CASE WHEN NOT \$\{waterTouched\}::boolean THEN em\.next_water_at/);
+    expect(t, "the vacated due date must come from that key's OWN surviving waterings")
+      .toMatch(/WHEN surv\.mw IS NULL THEN NULL ELSE surv\.mw \+/);
+    // Gated, NOT removed: the nightly daily-plan engine owns "due", so an unrelated retitle must
+    // not re-derive it.
+    expect(t, 'next_water_at must still be gated, not unconditional').toContain('CASE WHEN NOT');
     // The plant arms carry recency only — the nightly daily-plan engine owns "due".
     const plantArm = t.slice(t.indexOf('${oldPlantId}'));
     expect(plantArm, 'no plant-keyed arm may touch next_water_at').not.toContain('next_water_at');
+  });
+
+  it('the post-edit event type no longer gates the vacated key', () => {
+    // Pins the ABSENCE so a revert to the old gate cannot ship green.
+    //
+    // Asserts the PLACEHOLDER form, not the bare word: the surrounding comment necessarily NAMES
+    // the removed binding in prose to explain why it went, and a bare-word check trips on that
+    // explanation. The placeholder is also the form that actually matters — inside this template
+    // literal it interpolates even within a `--` SQL comment, so a stale one is a runtime
+    // ReferenceError on every re-anchor, not merely a dead gate. (That is exactly what happened
+    // while making this change; lambda/sql-comment-hygiene.test.js now bans the shape fleet-wide.)
+    const block = SRC.slice(SRC.indexOf('Slice 3: care-cache maintenance'));
+    expect(block, 'the movedType placeholder must be gone from the re-anchor block')
+      .not.toMatch(/\$\{movedType\}/);
   });
 
   it('project_id is bound from the resolved local and can never become NULL', () => {

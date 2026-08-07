@@ -1140,6 +1140,13 @@ export const handler = async (event) => {
         // looser rule invented for this fix — a bug fix is the wrong place to widen authz.
         const owned = await sql`
           SELECT el.id, el.event_type, el.plant_id,
+                 -- BUG-CACHEGATE-001: the PRE-edit event_date. The care-cache trigger predicate has
+                 -- to know whether this PUT actually MOVED the date, and event_date is
+                 -- preserve-on-absent (the COALESCE in the UPDATE below), so "the body sent one" is
+                 -- not "it changed". This column was never selected, which is WHY the date axis was
+                 -- missing from the old gate: the predicate could not be written with the data the
+                 -- route had loaded. Free — this SELECT already runs and already reads this row.
+                 el.event_date,
                  -- BUG-EVENTEDITFIELDS-001: the PUT is PARTIAL, so resolving the flagged/severity
                  -- pair needs the row's current values, not just the body's. Read here rather than
                  -- in a second round trip — this SELECT already exists and already runs.
@@ -1202,6 +1209,38 @@ export const handler = async (event) => {
 
         const projectChanged = newProjectId !== oldProjectId;
         const plantChanged   = newPlantId !== oldPlantId;
+
+        // ── BUG-CACHEGATE-001: the CACHE-DIRTY predicate ──────────────────────────────────────
+        // Anchor movement is only ONE of FOUR ways this PUT invalidates entity_memory. The other
+        // three ran no recompute at all, and every forward upsert is GREATEST(), so the drift was
+        // permanent and accreted one cell per edit — BUG-CARECACHEUNDO-001's exact mechanism
+        // arriving through a different door, in a route that shipped AFTER that repair.
+        //
+        // Each axis has its OWN wire grammar, so "changed" is derived per axis and never from one
+        // uniform "did the body send this key" test:
+        //   event_type  FULL-REPLACE and required (400 above if absent) -> compare to the row.
+        //   event_date  PRESERVE-ON-ABSENT (the COALESCE in the UPDATE) -> an absent key is NOT a
+        //               change. Compared as an INSTANT, not a string: normalizeEventDate rewrites a
+        //               date-only value to noon UTC, so a string compare would report a false
+        //               change on every save from the date picker and destroy the no-op case.
+        //   flag        RESOLVED by resolveFlagPair (body OR the row), so compare pair.flagged.
+        //               Against body.flagged_as_issue an absent key reads as "unflagged" and would
+        //               recompute on every save.
+        //   anchors     already resolved above.
+        // location_id is deliberately NOT an axis: entity_memory has a location-keyed arm, but no
+        // writer in this route has ever touched it.
+        const typeChanged = body.event_type !== existing.event_type;
+        const dateChanged = eventDate != null
+          && new Date(eventDate).getTime() !== new Date(existing.event_date).getTime();
+        const flagChanged = (pair.flagged === true) !== (existing.flagged_as_issue === true);
+        const cacheDirty  = projectChanged || plantChanged || typeChanged || dateChanged || flagChanged;
+
+        // next_water_at is NOT a recency column — the nightly daily-plan engine owns "due" — so it
+        // is re-derived ONLY when this edit could have moved surv.mw on SOME key: the event WAS a
+        // watering/rain, or it NOW is. The union is the point. Gating on the post-edit type alone is
+        // exactly GAP 3; gating on nothing would let an unrelated retitle clobber the engine's value.
+        const waterTouched = ['watering', 'rain'].includes(existing.event_type)
+          || ['watering', 'rain'].includes(body.event_type);
 
         // Ownership on every id being moved TO. The UPDATE's own household predicate authorizes
         // the event's CURRENT container and says nothing about the destination — the
@@ -1446,11 +1485,27 @@ export const handler = async (event) => {
         // newPlantId). undo-recompute.test.js anchors its four arms by scanning BACKWARDS from a
         // tail string, so reusing ${projectId} / ${plantId} here could silently retarget its
         // assertions onto these statements.
-        if (projectChanged || plantChanged) {
-          const movedType = body.event_type;
+        if (cacheDirty) {
           const reanchor = [];
-          if (projectChanged) {
-            // OLD project — row is guaranteed to exist (the POST upserted it).
+          // WHICH ARM RUNS FOR WHICH KEY (BUG-CACHEGATE-001). The four arms are written against
+          // oldProjectId / newProjectId / oldPlantId / newPlantId. When nothing MOVED those are the
+          // SAME key, so running both on it is either redundant or — for the "vacated" arm — a
+          // claim about something that did not happen. Arms are therefore SELECTED per key:
+          //   project unchanged -> OLD arm only. It is the only arm carrying next_water_at, and
+          //                        every event-bearing project has a cache row (the POST upserts
+          //                        it), so its bare UPDATE cannot silently match zero rows.
+          //   project changed   -> OLD (vacated) + NEW upsert (destination may never have had one).
+          //   plant unchanged   -> NEW arm only. Same values either way, and being an upsert it
+          //                        also HEALS a planting that has events but no cache row. The
+          //                        plant arms carry no next_water_at, so nothing is lost.
+          //   plant changed     -> OLD (vacated) + NEW upsert.
+          // Bind names stay distinct: undo-recompute.test.js anchors ITS four arms by scanning
+          // backwards from the ${projectId} / ${plantId} tails and would silently retarget onto
+          // these statements if they were reused.
+          {
+            // OLD project — ALWAYS. When the project did not change, ${oldProjectId} IS the current
+            // project and this is the in-place recompute that GAPs 1, 2 and 4 needed.
+            // Row is guaranteed to exist (the POST upserted it).
             reanchor.push(sql`
               WITH surv AS (
                 SELECT (SELECT MAX(e.event_date) FROM event_log e
@@ -1472,11 +1527,38 @@ export const handler = async (event) => {
                 last_watered_at = surv.mw, last_event_at = surv.me, last_fertilized_at = surv.mf,
                 last_pruned_at = surv.mp, last_observed_at = surv.mo, last_harvested_at = surv.mh,
                 last_issue_at = surv.mi,
-                next_water_at = CASE WHEN ${movedType}::text NOT IN ('watering','rain') THEN em.next_water_at
-                  WHEN surv.mw IS NULL THEN NULL ELSE surv.mw + (COALESCE(em.watering_interval_days, 4)::int * INTERVAL '1 day') END,
+                -- BUG-CACHEGATE-001 GAP 3. This used to bind movedType = body.event_type, the
+                -- POST-edit type (written with a dollar-brace, which is why this sentence does not
+                -- reproduce it: inside this template literal a dollar-brace INTERPOLATES even
+                -- inside a SQL comment, so naming the old binding literally here would throw
+                -- ReferenceError on every re-anchor).
+                -- It was a fact about the EVENT, not about the key it LEFT. So a re-anchor that
+                -- also retyped left the vacated container holding a due date derived from a
+                -- watering that was by then neither its event nor a watering, while
+                -- last_watered_at correctly walked backwards in the same statement: a mutually
+                -- inconsistent pair, which is the tell that made this a distinct defect from GAP 2.
+                -- What matters is only whether THIS edit could have moved surv.mw on SOME key,
+                -- which is the OLD-or-NEW union in waterTouched. The value is now always that key's
+                -- OWN surviving waterings. Gated, not removed: the nightly daily-plan engine owns
+                -- "due", and recomputing on an unrelated retitle would clobber its value.
+                -- Interval default reunified with the other five care-cache writers, which all use
+                -- the location_type CASE; this arm alone used a flat 4 and disagreed for
+                -- outdoor_container (2) and inground/indoor_mature (5).
+                next_water_at = CASE WHEN NOT ${waterTouched}::boolean THEN em.next_water_at
+                  WHEN surv.mw IS NULL THEN NULL ELSE surv.mw + (COALESCE(em.watering_interval_days,
+                    CASE em.location_type
+                      WHEN 'indoor_seedling'   THEN 1
+                      WHEN 'outdoor_container' THEN 2
+                      WHEN 'outdoor_bed'       THEN 4
+                      WHEN 'outdoor_inground'  THEN 5
+                      WHEN 'indoor_mature'     THEN 5
+                      ELSE 4
+                    END)::int * INTERVAL '1 day') END,
                 updated_at = NOW()
               FROM surv WHERE em.project_id = ${oldProjectId}
             `);
+          }
+          if (projectChanged) {
             // NEW project — the row may not exist yet, so this is an upsert. A bare UPDATE would
             // silently match zero rows on a container that has never carried an event.
             reanchor.push(sql`
@@ -1530,7 +1612,12 @@ export const handler = async (event) => {
               FROM surv WHERE em.plant_id = ${oldPlantId}
             `);
           }
-          if (plantChanged && newPlantId) {
+          // Guarded on newPlantId, NOT on plantChanged (BUG-CACHEGATE-001): when the planting did
+          // not change this is the in-place recompute GAPs 1/2/4 need, and preferring the upsert
+          // over the OLD arm additionally CREATES the cache row for a planting that has events but
+          // none. Still guarded non-null — the neon driver cannot type a NULL bound param even with
+          // an explicit ::uuid cast, so an unguarded bind 500s every project-level event.
+          if (newPlantId) {
             reanchor.push(sql`
               INSERT INTO entity_memory
                 (plant_id, last_event_at, last_watered_at, last_fertilized_at,
@@ -1567,7 +1654,24 @@ export const handler = async (event) => {
               RETURNING hl.id
             `);
           }
-          await sql.transaction(reanchor);
+          if (reanchor.length) {
+            try {
+              await sql.transaction(reanchor);
+            } catch (e) {
+              // The event_log UPDATE has ALREADY COMMITTED — it is a separate statement and the
+              // neon HTTP driver auto-commits each one — so on failure the event has moved and the
+              // cache has not, with nothing to reconcile it. That non-atomicity is pre-existing,
+              // but this ticket widens the window from "re-anchors only" to "every type/date/flag
+              // edit", so the failure needs to be greppable rather than invisible. Rethrown: the
+              // caller still gets its 500. Folding the event UPDATE into this transaction is the
+              // real fix and is its own ticket — the route needs its RETURNING before these arms
+              // can even be built.
+              console.error('[cachegate] care-cache recompute FAILED after the event committed',
+                JSON.stringify({ eventId, oldProjectId, newProjectId, oldPlantId, newPlantId,
+                  error: e?.message }));
+              throw e;
+            }
+          }
         }
 
         return resp(200, { ...updatedRows[0], harvest: harvestRow });

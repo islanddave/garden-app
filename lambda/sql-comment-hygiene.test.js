@@ -39,3 +39,40 @@ describe('SQL template comment hygiene', () => {
     });
   }
 });
+
+// The sibling hazard, and a nastier one: a template placeholder inside a `--` SQL comment.
+//
+// The `--` makes it a comment to POSTGRES, but the template literal is evaluated by JAVASCRIPT
+// first — so the placeholder still interpolates. Write a now-deleted binding's name in a comment
+// explaining why you deleted it and you get ReferenceError at runtime, on every request down that
+// path. Hit live 2026-08-07 while removing `movedType` for BUG-CACHEGATE-001: the explanatory
+// comment named the very binding it had just removed.
+//
+// Nothing else catches it. `node --check` is a syntax check and does not resolve scope; ESLint is
+// configured without no-undef here (verified — reintroducing the fault produced zero lint output);
+// and every static-source test reads the file as TEXT, so the placeholder is just characters to
+// them. Only actually executing the route fails, which means CI integration tests or prod.
+//
+// A placeholder in a comment is never load-bearing, so this bans the shape outright rather than
+// trying to decide which identifiers are still in scope.
+describe('SQL template placeholder hygiene', () => {
+  for (const rel of FILES) {
+    it(`${rel}: no template placeholder inside a '--' SQL comment`, () => {
+      const src = readFileSync(join(here, rel), 'utf-8');
+      const offenders = [];
+      for (const t of sqlTemplates(src)) {
+        for (const line of t.split('\n')) {
+          const c = line.indexOf('--');
+          if (c === -1) continue;
+          // Only the comment tail. A placeholder BEFORE the `--` on the same line is real SQL.
+          if (/\$\{/.test(line.slice(c))) offenders.push(line.trim());
+        }
+      }
+      expect(offenders,
+        `a template placeholder appears inside a '--' comment in ${rel}. Postgres ignores the ` +
+        'comment but JavaScript still interpolates it, so a stale or deleted binding throws ' +
+        'ReferenceError at runtime while every static check stays green. Describe the binding in ' +
+        'prose instead of reproducing its placeholder.').toEqual([]);
+    });
+  }
+});
