@@ -1262,6 +1262,13 @@ export const handler = async (event) => {
         // V4-EVENTANCHOR-001, still blocked). Checked here so a violation is a 400 naming the
         // FIELD rather than one naming the CONSTRAINT. (CORRECTED 2026-08-07: previously "an opaque
         // 500" — the catch maps 23514 -> 400 and transactions preserve err.code; both measured.)
+        //
+        // UNREACHABLE as written, deliberately kept (audited 2026-08-07). newProjectId falls back to
+        // oldProjectId, and the ownership SELECT that produced oldProjectId INNER JOINs container on
+        // project_id — so oldProjectId is never null for a row that got this far, and the conjunction
+        // can never be true. Defence-in-depth against a future edit that relaxes that JOIN or lets a
+        // caller null project_id explicitly. Noted so nobody later "proves" the path is reachable and
+        // builds a test around it, and so nobody deletes it as dead without seeing what holds it up.
         if (newProjectId == null && newPlantId == null) {
           return resp(400, { error: 'an event must keep a plant_id or a project_id' });
         }
@@ -1341,9 +1348,13 @@ export const handler = async (event) => {
           // ((weight_grams IS NULL) = (weight_estimated IS NULL)) holds by construction and a
           // half-update can no longer raise 23514.
           //
-          // 0 is the "no user weight" sentinel, NOT null: the neon HTTP driver cannot type a null JS
-          // param even with a ::cast (same constraint the POST CTE documents), so the nullability is
-          // reintroduced in SQL with NULLIF. The validator rejects weight <= 0, so 0 is unambiguous.
+          // 0 is the "no user weight" sentinel, NOT null, and the nullability is reintroduced in SQL
+          // with NULLIF. The reason this comment used to give for that — that the neon HTTP driver
+          // cannot type a null JS param even with a ::cast — is FALSE, probed against prod on 0.10.4
+          // (the pinned version): a ::cast always types a NULL bind, in COALESCE/GREATEST/CASE
+          // alike. The shape is kept because it works and the validator rejects weight <= 0, which
+          // makes 0 unambiguous — but nothing forces it, so a future edit is free to bind NULL
+          // directly. Do not cite the driver as a constraint anywhere; it is not one.
           const hUserGrams = typeof body.harvest.weight === 'number'
             ? toGrams(body.harvest.weight, body.harvest.weight_unit) : 0;
           // Explicit null means "I'm clearing my weight" -> fall back to the reference estimate.
@@ -1615,8 +1626,17 @@ export const handler = async (event) => {
           // Guarded on newPlantId, NOT on plantChanged (BUG-CACHEGATE-001): when the planting did
           // not change this is the in-place recompute GAPs 1/2/4 need, and preferring the upsert
           // over the OLD arm additionally CREATES the cache row for a planting that has events but
-          // none. Still guarded non-null — the neon driver cannot type a NULL bound param even with
-          // an explicit ::uuid cast, so an unguarded bind 500s every project-level event.
+          // none. Still guarded non-null, but NOT for the reason this comment used to give: it
+          // claimed the neon driver cannot type a NULL bound param even with an explicit ::uuid
+          // cast. That is false — probed against prod on 0.10.4 (the version every lambda/*/
+          // package.json pins), 30+ shapes: a cast ALWAYS types a NULL bind. Uncast binds also work
+          // wherever Postgres can infer a type; they fail only in un-inferable positions (a
+          // variadic "any" arg such as jsonb_build_object's), and there a NON-NULL value fails
+          // identically — so that is a cast problem, never a NULL one. The guard earns its place
+          // on MEANING instead: plant_id is
+          // NULL on every project-level event, and an unguarded bind would INSERT an entity_memory
+          // row keyed on a NULL planting whose every MAX() subquery is also NULL — a junk cache row
+          // for a planting that does not exist, not a 500.
           if (newPlantId) {
             reanchor.push(sql`
               INSERT INTO entity_memory
@@ -1765,9 +1785,12 @@ export const handler = async (event) => {
               WHERE id = ${eventId} AND deleted_at IS NULL`,
           sql`UPDATE harvest_log SET deleted_at = NOW(), updated_at = NOW()
               WHERE event_id = ${eventId} AND deleted_at IS NULL`,
-          // Re-parent FROM the event row rather than from JS locals: plant_id is NULL on every
-          // project-level event, and the neon driver cannot type a NULL bound param even with an
-          // explicit ::uuid cast. Reading both parents out of event_log keeps every param typed.
+          // Re-parent FROM the event row rather than from JS locals. The old reason given here —
+          // that the neon driver cannot type a NULL bound param even with an explicit ::uuid cast —
+          // is false; see the correction above (probed on 0.10.4 against prod). The real reason is
+          // provenance: plant_id is NULL on every project-level event, so the JS locals cannot say
+          // which parent is the live one, while the event row always can. Reading both parents out
+          // of event_log lets the COALESCEs below pick the surviving parent without JS deciding.
           sql`UPDATE photos ph SET
                 event_id   = NULL,
                 project_id = COALESCE(ph.project_id, e.project_id),
@@ -2119,8 +2142,9 @@ export const handler = async (event) => {
               -- variety unit_weights > crop unit_weights (gated on variety_grams_required) > NULL.
               -- NULL = UNKNOWN = no estimate, still never guessed. The function returns all THREE
               -- columns together so every harvest_log weight CHECK holds by construction.
-              -- 0 is the "no user weight" sentinel because the neon HTTP driver cannot type a null JS
-              -- param even with a ::cast; NULLIF reintroduces the nullability inside SQL.
+              -- 0 is the "no user weight" sentinel and NULLIF reintroduces the nullability inside
+              -- SQL. NOT because the driver cannot type a null bound param — that claim is false,
+              -- probed on the pinned 0.10.4 against prod. Kept because it works; see the PUT arm.
               rw.weight_grams,
               rw.weight_estimated,
               rw.weight_basis
