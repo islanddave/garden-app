@@ -234,6 +234,20 @@ export default function PlantingDetail() {
     [harvestByEvent],
   )
 
+  // SPLIT-ARTIFACT GUARD. The SPA and the harvests Lambda deploy on separate legs, so this page can
+  // run against a harvests Lambda that predates V4-HARVWEIGHTREAD-001. That old handler ignores the
+  // unknown `plant=` param (returning household-wide entries, capped at PAGE_LIMIT) AND does not
+  // project weight_grams — so every entry reads as unweighed and the total below would announce
+  // "50 with no weight yet" on every planting, including ones with no harvests at all. Wrong is
+  // worse than absent, so we render nothing until the wire actually carries the field.
+  // The discriminator is `undefined` vs `null`: the new wire sends weight_grams: null for a genuinely
+  // unweighed pick, the old wire omits the key entirely. Checked with `in`, not truthiness — a
+  // legitimately-null weight must still count as wire support.
+  const harvestWeightWireReady = useMemo(
+    () => !!harvestByEvent && [...harvestByEvent.values()].some(en => en && 'weight_grams' in en),
+    [harvestByEvent],
+  )
+
   // Planting photos (V1 display-only). V4-PHOTOGALLERY-001: the gallery shows every photo ATTACHED to
   // this planting — directly via plant_id, OR through one of its events — no matter which container the
   // photo lives in. The photos Lambda's ?attachedTo=<plantingId> resolves that union server-side (one
@@ -608,7 +622,7 @@ export default function PlantingDetail() {
         {/* V4-HARVWEIGHTREAD-001 slice 2 — the weight axis under the native-unit summary. Rendered
             only once the entries have landed (null = in flight), so the section never flashes a
             "no weight yet" that a resolved fetch is about to contradict. */}
-        {harvestByEvent && <PlantingWeightTotal total={harvestWeightTotal} />}
+        {harvestWeightWireReady && <PlantingWeightTotal total={harvestWeightTotal} />}
         {/* V4-HARVESTVIEW-001 S4b: crop-filtered jump to the Harvests page (design §2.3). Shown only
             when the crop key resolves, since the destination is filtered by crop_type_slug. */}
         {pl.variety_ref?.crop_type_slug && (

@@ -174,4 +174,32 @@ describe('PlantingDetail — cumulative weight for the planting', () => {
     expect(screen.queryByTestId('planting-weight-none')).toBeNull()
     expect(screen.queryByTestId('planting-weight-basis')).toBeNull()
   })
+
+  // SPLIT-ARTIFACT CONTRACT (pre-promote regression pass, finding I1). The SPA and the harvests
+  // Lambda deploy on separate legs. Against the PREVIOUS harvests Lambda this page gets entries that
+  // (a) ignore the unknown `plant=` param, so they are household-wide and capped at PAGE_LIMIT, and
+  // (b) carry no weight_grams key at all, because the old projectEntry() never projected it. Summed
+  // naively that announces "50 with no weight yet" on EVERY planting — including ones with no
+  // harvests. Wrong is worse than absent, so the whole block must stay dark until the wire carries
+  // the field. Note this is the ONE case that must not reuse the ratchet copy: "no weight yet" is a
+  // claim about the harvest, and we have not yet earned the right to make it.
+  it('renders nothing when the wire predates the weight columns — wrong is worse than absent', async () => {
+    renderWith({ entries: [
+      { ...ENTRY, event_id: 'ev-h2' },
+      { ...ENTRY, event_id: 'ev-h1' },
+    ] })
+    expect(await screen.findByText('Big pick')).toBeTruthy()
+    expect(screen.queryByTestId('planting-weight-total')).toBeNull()
+    expect(screen.queryByTestId('planting-weight-none')).toBeNull()
+    expect(screen.queryByTestId('planting-weight-basis')).toBeNull()
+  })
+
+  // The discriminator is `undefined` vs `null`, not truthiness. A pick the new Lambda reports as
+  // genuinely unweighed sends weight_grams: null, and that MUST still render the ratchet copy —
+  // otherwise the split-artifact guard above would also blank the real "go weigh one" prompt, which
+  // is the entire read-side feature. Pins `'weight_grams' in en` against a `!= null` shortcut.
+  it('a null weight still counts as wire support — the guard must not swallow the ratchet copy', async () => {
+    renderWith({ entries: [{ ...ENTRY, event_id: 'ev-h2', weight_grams: null, weight_estimated: null, weight_basis: null }] })
+    expect(await screen.findByTestId('planting-weight-none')).toBeTruthy()
+  })
 })
