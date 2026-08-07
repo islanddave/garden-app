@@ -257,7 +257,15 @@ post:
   # The rollback path must actually be usable: every row 0b wrote has to be in the snapshot. If the
   # snapshot predicate and the UPDATE predicate ever drift apart, this catches it while the data is
   # still recoverable rather than after someone needs 0r.
+  # continuous: false ADDED 2026-08-07 — this gate was RED AT 88 ROWS on prod when checked, and had
+  # been red since minutes after the 14:47:59Z apply. Not a real failure: it infers "was repaired"
+  # from `updated_at >= applied_at`, which is only a valid proxy DURING the apply window. Ordinary
+  # traffic writes ~264 entity_memory rows a day, and every one of them matches the proxy while
+  # legitimately having no snapshot row. Left continuous, the weekly gate-invariants job carries a
+  # permanent red for a migration that succeeded — precisely the "known stale-gate backlog … train
+  # everyone to ignore this job" failure that workflow's own header warns against.
   - name: post_every_repaired_row_is_snapshotted
+    continuous: false
     sql: |
       SELECT em.id
         FROM public.entity_memory em

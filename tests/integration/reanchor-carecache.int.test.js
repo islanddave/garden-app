@@ -115,7 +115,7 @@ async function staleForward() {
     WITH truth AS (
       SELECT em.id, em.plant_id, em.project_id,
              em.last_event_at, em.last_watered_at, em.last_fertilized_at,
-             em.last_pruned_at, em.last_observed_at, em.last_harvested_at,
+             em.last_pruned_at, em.last_observed_at, em.last_harvested_at, em.last_issue_at,
              (SELECT MAX(e.event_date) FROM public.event_log e
                WHERE e.deleted_at IS NULL
                  AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
@@ -141,7 +141,11 @@ async function staleForward() {
                  AND (CASE WHEN em.plant_id IS NOT NULL THEN e.event_type IN ('harvest','first_harvest')
                            ELSE e.event_type = 'harvest' END)
                  AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
-                           ELSE e.project_id = em.project_id END)) AS t_harv
+                           ELSE e.project_id = em.project_id END)) AS t_harv,
+             (SELECT MAX(e.event_date) FROM public.event_log e
+               WHERE e.deleted_at IS NULL AND e.flagged_as_issue = true
+                 AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                           ELSE e.project_id = em.project_id END)) AS t_issue
         FROM public.entity_memory em
        WHERE em.plant_id IN (SELECT id FROM public.plants WHERE created_by = ${USER})
           OR em.project_id IN (SELECT id FROM public.plant_projects WHERE created_by = ${USER})
@@ -152,7 +156,72 @@ async function staleForward() {
         OR (last_fertilized_at IS NOT NULL AND (t_fert  IS NULL OR last_fertilized_at > t_fert))
         OR (last_pruned_at     IS NOT NULL AND (t_prune IS NULL OR last_pruned_at     > t_prune))
         OR (last_observed_at   IS NOT NULL AND (t_obs   IS NULL OR last_observed_at   > t_obs))
-        OR (last_harvested_at  IS NOT NULL AND (t_harv  IS NULL OR last_harvested_at  > t_harv))`
+        OR (last_harvested_at  IS NOT NULL AND (t_harv  IS NULL OR last_harvested_at  > t_harv))
+        OR (last_issue_at      IS NOT NULL AND (t_issue IS NULL OR last_issue_at      > t_issue))`
+}
+
+// THE STALE-BEHIND DETECTOR — the twin, and the reason BUG-CACHEFWDGAP-001 existed.
+//
+// staleForward() above and the gate it was lifted from both test `cached > truth` ONLY. That is not
+// a sensitivity gap, it is a blind spot: no volume of BEHIND drift can ever trip them. 15 rows
+// accreted on prod across three months and four unrelated causes with every gate green, and this
+// file is exactly where they would have been caught behaviourally — it asserts at length that a
+// VACATED anchor walks down, and never once asserts that a TARGET anchor walks up.
+//
+// The `t_x IS NOT NULL AND (cached IS NULL OR cached < t_x)` shape is load-bearing in both halves.
+// A plain `cached < t_x` silently passes on every NULL cell — and NULL-against-a-populated-log was
+// the worst of the prod population (ten cells, from a repair script whose INSERT column list was
+// short). Symmetrically, `t_x IS NULL` means the entity has no such event and must NOT count as
+// behind. IS DISTINCT FROM would collapse this into staleForward() and lose the direction, which is
+// the whole point: the two directions have different causes and different repairs.
+async function staleBehind() {
+  return directSql`
+    WITH truth AS (
+      SELECT em.id, em.plant_id, em.project_id,
+             em.last_event_at, em.last_watered_at, em.last_fertilized_at,
+             em.last_pruned_at, em.last_observed_at, em.last_harvested_at, em.last_issue_at,
+             (SELECT MAX(e.event_date) FROM public.event_log e
+               WHERE e.deleted_at IS NULL
+                 AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                           ELSE e.project_id = em.project_id END)) AS t_any,
+             (SELECT MAX(e.event_date) FROM public.event_log e
+               WHERE e.deleted_at IS NULL AND e.event_type IN ('watering','rain')
+                 AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                           ELSE e.project_id = em.project_id END)) AS t_water,
+             (SELECT MAX(e.event_date) FROM public.event_log e
+               WHERE e.deleted_at IS NULL AND e.event_type = 'fertilizing'
+                 AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                           ELSE e.project_id = em.project_id END)) AS t_fert,
+             (SELECT MAX(e.event_date) FROM public.event_log e
+               WHERE e.deleted_at IS NULL AND e.event_type = 'pruning'
+                 AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                           ELSE e.project_id = em.project_id END)) AS t_prune,
+             (SELECT MAX(e.event_date) FROM public.event_log e
+               WHERE e.deleted_at IS NULL AND e.event_type = 'observation'
+                 AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                           ELSE e.project_id = em.project_id END)) AS t_obs,
+             (SELECT MAX(e.event_date) FROM public.event_log e
+               WHERE e.deleted_at IS NULL
+                 AND (CASE WHEN em.plant_id IS NOT NULL THEN e.event_type IN ('harvest','first_harvest')
+                           ELSE e.event_type = 'harvest' END)
+                 AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                           ELSE e.project_id = em.project_id END)) AS t_harv,
+             (SELECT MAX(e.event_date) FROM public.event_log e
+               WHERE e.deleted_at IS NULL AND e.flagged_as_issue = true
+                 AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                           ELSE e.project_id = em.project_id END)) AS t_issue
+        FROM public.entity_memory em
+       WHERE em.plant_id IN (SELECT id FROM public.plants WHERE created_by = ${USER})
+          OR em.project_id IN (SELECT id FROM public.plant_projects WHERE created_by = ${USER})
+    )
+    SELECT id, plant_id, project_id FROM truth
+     WHERE (t_any   IS NOT NULL AND (last_event_at      IS NULL OR last_event_at      < t_any))
+        OR (t_water IS NOT NULL AND (last_watered_at    IS NULL OR last_watered_at    < t_water))
+        OR (t_fert  IS NOT NULL AND (last_fertilized_at IS NULL OR last_fertilized_at < t_fert))
+        OR (t_prune IS NOT NULL AND (last_pruned_at     IS NULL OR last_pruned_at     < t_prune))
+        OR (t_obs   IS NOT NULL AND (last_observed_at   IS NULL OR last_observed_at   < t_obs))
+        OR (t_harv  IS NOT NULL AND (last_harvested_at  IS NULL OR last_harvested_at  < t_harv))
+        OR (t_issue IS NOT NULL AND (last_issue_at      IS NULL OR last_issue_at      < t_issue))`
 }
 
 beforeAll(() => { setTestUserId(USER) })
@@ -366,6 +435,14 @@ describe('the invariant, over everything this file touched', () => {
     const offenders = await staleForward()
     expect(offenders.map((r) => r.plant_id ?? r.project_id)).toEqual([])
   })
+
+  it('no cached recency value is BEHIND the surviving event log either', async () => {
+    // BUG-CACHEFWDGAP-001. Everything above this line asserts that a VACATED anchor walks DOWN;
+    // nothing asserted that a TARGET anchor walks UP, and the canonical detector cannot express it.
+    // That asymmetry is why 15 rows sat behind on prod for three months with every gate green.
+    const offenders = await staleBehind()
+    expect(offenders.map((r) => r.plant_id ?? r.project_id)).toEqual([])
+  })
 })
 
 // ── THE FOUR GAPS — WERE RED, NOW FIXED AND LIVE ────────────────────────────────────────────────
@@ -461,5 +538,27 @@ describe('GAP 3 — next_water_at is gated on the POST-edit event_type', () => {
     const p = await projectCache(projectSrc)
     expect(ms(p.last_watered_at)).toBe(ms(T1))          // passes today
     expect(ms(p.next_water_at)).toBe(ms(T1) + 4 * DAY)  // reads T2+4d today
+  })
+})
+
+// ── THE FINAL SWEEP — BOTH DIRECTIONS, OVER EVERY FIXTURE INCLUDING THE FOUR GAPS ───────────────
+//
+// The mid-file invariant block runs BEFORE the GAP describes, so it never sees the rows they
+// produce — the re-anchors, retypes, unflags and date moves that are the most cache-hostile
+// operations in the file. This block runs last and covers everything.
+//
+// Both directions, deliberately as two separate assertions rather than one IS DISTINCT FROM. AHEAD
+// and BEHIND have different causes and different repairs (v4-carecacheundo-001 walks the cache back,
+// v4-cachefwdgap-001 walks it forward), so a single symmetric check would report "drift" without
+// saying which ticket owns it, and would let a fix for one silently mask a regression in the other.
+describe('the invariant, after the four gaps too — both directions', () => {
+  it('nothing is ahead of the event log', async () => {
+    const offenders = await staleForward()
+    expect(offenders.map((r) => r.plant_id ?? r.project_id)).toEqual([])
+  })
+
+  it('nothing is behind the event log', async () => {
+    const offenders = await staleBehind()
+    expect(offenders.map((r) => r.plant_id ?? r.project_id)).toEqual([])
   })
 })

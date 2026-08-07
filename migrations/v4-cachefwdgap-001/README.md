@@ -28,7 +28,7 @@ the door the ticket was filed under.**
 
 | door | rows | cells | cause | recurs? |
 |---|---|---|---|---|
-| **A** | 4 | 6 | the events PUT moved `event_date` **forward**; the deployed gate is `projectChanged \|\| plantChanged`, so a date-only edit runs no arm | **yes — live on prod until `e9d8909` promotes** |
+| **A** | 4 | 6 | the events PUT moved `event_date` **forward**; the gate *was* `projectChanged \|\| plantChanged`, so a date-only edit ran no arm | **no — closed on prod, see below** |
 | **B** | 5 | 15 | the BUG-DIRECTWRITEDRIFT-001 reversal script (2026-08-04 17:16:30) INSERTed five plant rows with only 3 of 6 recency columns in its column list, and computed even those over the direct-write **subset** of the log | only if another ad-hoc repair repeats it |
 | **C** | 4 | 5 | commit `78419e8` (2026-05-25 00:44Z) corrected 13 midnight-UTC `event_date` rows to noon and did not recompute the cache | no — the writer has noon-anchored since May |
 | **D** | 2 | 2 | a harvest was written project-anchored and acquired `event_log.plant_id` out of band afterwards; the POST's plant arm self-guards on `plant_id`, so the project arm is right and the plant arm never saw it | yes, on any out-of-band anchor write |
@@ -83,20 +83,47 @@ nothing and closes the "asserts zero except the column we chose not to look at" 
 `next_water_at` stays out — not a recency cache; the nightly daily-plan engine owns "due".
 Location-keyed rows (6 on prod) stay out — no writer touches them.
 
+**Entities with NO cache row at all stay out, and the invariant is qualified accordingly.** Both
+detectors enumerate `FROM entity_memory`, so a planting with surviving events and no row is neither
+ahead nor behind — it is not a row, and this repair is an `UPDATE` that cannot create one. **14
+plantings on prod (8 not soft-deleted) are in that state, one with 67 surviving events.** So the
+paired invariant reads "for every entity that HAS a cache row, the cache equals the log", not the
+flat "the cache equals the log" an earlier draft claimed. Creating rows is a different change with
+different risk — a new row participates in the care engine immediately. Forward exposure is already
+closed (`e9d8909`'s arm creates the row on the next edit); these 14 are historical and are measured
+by `sweep_capture_plantings_with_events_and_no_cache_row` and owned by **V4-CACHEMISSINGROW-001**.
+Measuring it here rather than leaving it uncounted is the direct lesson of how this ticket was born.
+
 Archived and soft-deleted parents are **in scope**. Ten of the 28 cells belong to five archived
 plantings; excluding them would leave the post gate unable to run as a durable invariant.
 
 ## Apply order
 
-1. **Promote `e9d8909` (BUG-CACHEGATE-001) first.** Door A is the only door still open and it is open
-   *on prod right now* — the deployed events Lambda still gates its whole recompute on
-   `projectChanged || plantChanged`. Prod took three such edits in the 72h before authoring. Applying
-   the repair before the promote wastes part of it. There is no breaking coupling either way: the new
-   arms compute from `event_log`, never from the cache.
-2. **Then prod:** `--phase pre` → `--phase sweep` (records 15 / 0) → `0b-data.sql` → `--phase post`.
-3. **Then staging**, whenever next refreshed.
+**No ordering constraint. Apply whenever convenient.**
+
+An earlier draft of this README opened with "Promote `e9d8909` first" and called Door A "open on prod
+right now". **That was false when written, and it is worth recording why, because the mistake is the
+same one this migration corrects elsewhere.** `e9d8909` is not an unpromoted dev commit — it is one
+of the nine commits *inside* v4.3.0 (`cc4c7369`), which is prod, and the events Lambda deployed from
+it at 2026-08-07 20:59:56Z. `git merge-base --is-ancestor e9d8909 cc4c7369` answers immediately. The
+claim was inherited from a handoff, restated in four files, and never checked against the one command
+that would have settled it — see [[a-wrong-reason-outlives-the-code-it-explains]].
+
+Consequence: all 15 rows are **historical**. No door is open, so the repair cannot be partly wasted
+by fresh drift landing behind it, and there is nothing to sequence against.
+
+1. **Prod:** `--phase pre` → `--phase sweep` (records 15 / 0) → `0b-data.sql` → `--phase post`.
+2. **Then staging**, whenever next refreshed.
 
 Re-running is the cheap, correct remedy if drift reappears — the repair is idempotent.
+
+**Rollback is guarded, not unconditional.** `entity_memory` is live (~264 writes/day), so a blanket
+restore-from-snapshot would be a data-loss path wearing the word "rollback": apply, user waters a
+repaired planting two hours later, roll back, and that real watering is silently replaced by the
+stale pre-repair value. `0r` therefore restores only rows whose `updated_at` is still the repair's
+own and which have had no event activity since, reports the ones it skipped, and restores
+`updated_at` itself from the snapshot. Verified by a full round-trip against prod inside
+`BEGIN`/`ROLLBACK`: `UPDATE 15` → `UPDATE 15` restored, 0 cells mismatched, 0 rows skipped.
 
 ```bash
 export NEON_DATABASE_URL=...   # never on the command line (L-067)

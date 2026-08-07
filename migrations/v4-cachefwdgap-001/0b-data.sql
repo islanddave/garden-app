@@ -6,10 +6,11 @@
 -- that falls behind the log can never catch up on its own. Four distinct doors put 15 rows / 28
 -- cells behind on prod, and NONE of them could ever trip the canonical detector, because that
 -- detector tests `cached > truth` only:
---   A (4 rows/6 cells)  the events PUT moved event_date FORWARD. The DEPLOYED gate is
---                       `projectChanged || plantChanged`; a date-only edit moves nothing, so no arm
---                       runs. Fixed forward by BUG-CACHEGATE-001 (dev e9d8909, cacheDirty over four
---                       axes + direct-assignment arms) -- NOT YET PROMOTED.
+--   A (4 rows/6 cells)  the events PUT moved event_date FORWARD. The gate WAS
+--                       `projectChanged || plantChanged`; a date-only edit moved nothing, so no arm
+--                       ran. CLOSED ON PROD: BUG-CACHEGATE-001 (e9d8909, cacheDirty over four axes
+--                       + direct-assignment arms) shipped INSIDE v4.3.0 (cc4c7369) and the events
+--                       Lambda deployed 2026-08-07 20:59:56Z. All four rows are historical.
 --   B (5 rows/15 cells) the BUG-DIRECTWRITEDRIFT-001 reversal script (2026-08-04 17:16:30) INSERTed
 --                       five plant-keyed rows with only three of the six recency columns in its
 --                       column list, and computed even those over the direct-write SUBSET of the
@@ -126,7 +127,7 @@ WITH truth AS (
     FROM public.entity_memory em
    WHERE em.plant_id IS NOT NULL OR em.project_id IS NOT NULL
 )
-SELECT em.id, t.arm,
+SELECT em.id, t.arm, em.updated_at,
        em.last_event_at, em.last_watered_at, em.last_fertilized_at,
        em.last_pruned_at, em.last_observed_at, em.last_harvested_at, em.last_issue_at
   FROM public.entity_memory em

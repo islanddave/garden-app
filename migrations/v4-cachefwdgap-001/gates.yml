@@ -6,17 +6,17 @@
 #
 #   QUESTION: can the CURRENTLY DEPLOYED prod code re-create the drift this file repairs, after it
 #             has been repaired?
-#   ANSWER:   YES for Door A, until the Lambda fix promotes. The deployed events Lambda still gates
-#             its whole entity_memory recompute on `projectChanged || plantChanged`, so a date-only
-#             or type-only edit runs no arm at all. Prod took three such edits in the 72h before
-#             authoring, and each left a cell behind. Doors B, C and D cannot recur from code —
-#             B and C were one-off hand-run SQL, and D needs an out-of-band event_log.plant_id
-#             write.
-#   CONSEQUENCE: ORDER-SENSITIVE in one direction only. Safe to apply at any time — it never breaks
-#             the deployed writer, which does not read these columns before writing them — but
-#             applying it BEFORE the promote wastes part of the repair. Preferred order is code
-#             first, data second; see README.md. The repair is idempotent, so re-running it after
-#             the promote is the cheap, correct remedy.
+#   ANSWER:   NO, for any of the four doors. CORRECTED 2026-08-07 — an earlier draft of this file
+#             asserted Door A was still open "until the Lambda fix promotes". That was already
+#             false when written: BUG-CACHEGATE-001 (e9d8909) shipped INSIDE v4.3.0 (cc4c7369),
+#             which IS prod, and the events Lambda deployed from it at 2026-08-07 20:59:56Z. The
+#             deployed writer now recomputes over four axes with direct-assignment arms, so a
+#             forward date or type edit repairs the cache instead of stranding it. Doors B and C
+#             were one-off hand-run SQL and cannot recur from code; D needs an out-of-band
+#             event_log.plant_id write.
+#   CONSEQUENCE: NOT order-sensitive. There is no promote to wait for — apply whenever convenient.
+#             All 15 rows are historical, so the repair cannot be "wasted" by drift arriving behind
+#             it. Idempotent, so re-running is the cheap, correct remedy if drift ever reappears.
 #   COUPLING with the Lambda fix: none in the breaking sense. The new recompute arms compute from
 #             event_log, never from the cache, so they are correct against repaired and unrepaired
 #             data alike, and the repair is correct against old and new Lambda alike.
@@ -184,10 +184,42 @@ sweep:
     expect: rowcount_gte
     value: 0
 
+  # THE THIRD POPULATION, measured here so it is owned rather than invisible — the mistake that
+  # created this whole ticket was an informational gate counting a defect population and nobody
+  # treating the number as theirs (see this file's post gate note).
+  #
+  # A planting with surviving events and NO entity_memory row at all is neither ahead nor behind:
+  # both detectors enumerate FROM entity_memory, so it cannot appear in either. This migration does
+  # NOT repair them — it is an UPDATE and creating rows is a different change with different risk
+  # (a new row participates in the care engine immediately). Prod at authoring: 14 plantings, 8 of
+  # them not soft-deleted, the largest carrying 67 surviving events.
+  #
+  # Forward-looking exposure is closed: BUG-CACHEGATE-001's new arm creates the row on the next
+  # edit ("additionally CREATES the cache row for a planting that has events but none"). These 14
+  # are historical and need a backfill of their own. Owned by V4-CACHEMISSINGROW-001.
+  - name: sweep_capture_plantings_with_events_and_no_cache_row
+    sql: |
+      SELECT p.id
+        FROM public.plants p
+       WHERE EXISTS (SELECT 1 FROM public.event_log e
+                      WHERE e.plant_id = p.id AND e.deleted_at IS NULL)
+         AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.plant_id = p.id)
+    expect: rowcount_gte
+    value: 0
+
 post:
   # THE INVARIANT THIS MIGRATION EXISTS TO ESTABLISH, and the sibling of carecacheundo's
-  # post_no_cache_ahead_of_event_log. Together the two say: the cache EQUALS the surviving event log
-  # on every recency column, on both arms.
+  # post_no_cache_ahead_of_event_log. Together the two say: FOR EVERY ENTITY THAT HAS A CACHE ROW,
+  # the cache equals the surviving event log on every recency column, on both arms.
+  #
+  # That qualifier is load-bearing and an earlier draft omitted it, claiming flatly that "the cache
+  # EQUALS the surviving event log". It does not, and cannot, for an entity with NO cache row at
+  # all: this predicate enumerates FROM entity_memory, so a missing row is not "behind" — it is not
+  # a row. 14 plantings on prod (8 not soft-deleted) have surviving events and no plant-keyed
+  # entity_memory row, one with 67 events. The repair is an UPDATE and cannot create them either.
+  # That population is measured by sweep_capture_plantings_with_events_and_no_cache_row below and
+  # owned by its own ledger item — NOT silently folded in here, which is how the BEHIND population
+  # itself went unowned for three months.
   #
   # Structural, not a pinned count. It never mentions 15, never names a row id, never mentions a
   # date, never joins the snapshot. It compares two live tables and asserts a relation, so it stays
@@ -318,12 +350,26 @@ post:
     value: 0
 
   # Every row the repair touched must appear in the snapshot, or 0r cannot restore it.
+  #
+  # `continuous: false` is REQUIRED here and its absence is a bug, not a detail. This gate infers
+  # "was repaired" from `updated_at >= applied_at`, which is only a valid proxy inside the apply
+  # window. entity_memory takes ~264 updates/24h from ordinary traffic, so every one of those rows
+  # matches the proxy while legitimately not being in the snapshot. Left continuous, this goes red
+  # within hours and stays red forever. The sibling gate in v4-carecacheundo-001 was written without
+  # the flag and is red at 88 rows on prod as of 2026-08-07 — exactly the stale-gate backlog
+  # gate-invariants.yml's header warns trains everyone to ignore the job.
+  #
+  # Also scoped to the two arms this migration writes. Without the filter it flags the six
+  # location-keyed rows that 0b explicitly excludes, which would make it red for rows the migration
+  # is documented never to touch.
   - name: post_every_repaired_row_is_snapshotted
+    continuous: false
     sql: |
       SELECT em.id
         FROM public.entity_memory em
         JOIN public.schema_version sv ON sv.version = '4.23.4-cachefwdgap-001'
-       WHERE em.updated_at >= sv.applied_at
+       WHERE (em.plant_id IS NOT NULL OR em.project_id IS NOT NULL)
+         AND em.updated_at >= sv.applied_at
          AND NOT EXISTS (SELECT 1 FROM public.snap_cachefwdgap001_entity_memory s WHERE s.id = em.id)
     expect: rowcount_eq
     value: 0

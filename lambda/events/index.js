@@ -1632,11 +1632,15 @@ export const handler = async (event) => {
           // package.json pins), 30+ shapes: a cast ALWAYS types a NULL bind. Uncast binds also work
           // wherever Postgres can infer a type; they fail only in un-inferable positions (a
           // variadic "any" arg such as jsonb_build_object's), and there a NON-NULL value fails
-          // identically — so that is a cast problem, never a NULL one. The guard earns its place
-          // on MEANING instead: plant_id is
-          // NULL on every project-level event, and an unguarded bind would INSERT an entity_memory
-          // row keyed on a NULL planting whose every MAX() subquery is also NULL — a junk cache row
-          // for a planting that does not exist, not a 500.
+          // identically — so that is a cast problem, never a NULL one.
+          //
+          // The old comment's CONCLUSION was right even though its mechanism was wrong: an
+          // unguarded bind really does 500 every project-level event, just not for driver reasons.
+          // plant_id is NULL on every project-level event; this INSERT (unlike the POST arm below,
+          // ~:2185) carries no IS-NOT-NULL self-guard in its WHERE and supplies no project_id or
+          // location_id, so a NULL bind writes a ZERO-parent row, violates
+          // entity_memory_exactly_one_parent (23514), aborts the transaction, and the catch below
+          // rethrows — a 500. Same fact the POST arm already documents at ~:2165. Keep the guard.
           if (newPlantId) {
             reanchor.push(sql`
               INSERT INTO entity_memory
