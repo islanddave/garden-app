@@ -2,10 +2,10 @@
   "name": "photocdn-derivative",
   "version": "1.0.0",
   "type": "module",
-  "description": "V4-PHOTOCDN-001 derivative repair Lambda. MUST be packaged linux-arm64: npm install --os=linux --cpu=arm64 (Mac/darwin build = module-load failure).",
+  "description": "V4-PHOTOCDN-001 derivative repair Lambda. MUST be packaged linux-arm64: npm install --os=linux --cpu=arm64 (Mac/darwin build = module-load failure). sharp >=0.35 requires node >=20.9.0 and has NO install script — a missing prebuilt now fails at require() instead of building from source, so the deploy's zip hard-assert is the only guard.",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
     "blurhash": "^2.0.5",
-    "sharp": "^0.34.0"
+    "sharp": "^0.35.3"
   }
 }
