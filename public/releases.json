@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.2.0",
+    "date": "2026-08-07",
+    "highlights": [
+      "Edit an event's flag, severity and treatment details after logging it"
+    ]
+  },
+  {
     "version": "4.1.0",
     "date": "2026-08-06",
     "highlights": [
