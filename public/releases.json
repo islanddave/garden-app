@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.3.1",
+    "date": "2026-08-07",
+    "highlights": [
+      "Emptying a field on a planting now actually clears it — the edit form's boxes were still silently keeping the old value"
+    ]
+  },
+  {
     "version": "4.3.0",
     "date": "2026-08-07",
     "highlights": [
