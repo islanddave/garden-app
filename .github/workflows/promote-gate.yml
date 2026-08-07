@@ -2,12 +2,21 @@ name: promote-gate
 
 # Capability-gate promote (cutover spec V1.0, session ce88c0be; snap + deploy-coupling wired 2026-06-03 sleepy-gifted-maxwell).
 # main is ruleset-protected with garden-bot (App 3951762) as the sole bypass actor; this workflow runs AS garden-bot.
-# environment: production pauses the promote job for Dave's approval BEFORE main is touched (gate bound to the push).
+# environment: production does NOT pause for human approval — CORRECTED 2026-08-06 (the previous claim here, that it
+# "pauses the promote job for Dave's approval BEFORE main is touched", was STALE and load-bearingly wrong). VERIFIED
+# LIVE against the environments API (also verified 2026-08-04, OPS-PROMOTEAPPROVAL-001): the `production` environment's
+# protection_rules contain a `branch_policy` entry ONLY — there is NO `required_reviewers` rule, because the required
+# reviewer was REMOVED 2026-06-22 at Dave's direction. That policy gates WHICH refs may deploy (2 branches + the
+# promote-v* tag rule) = MECHANISM, not AUTHORIZATION. Nothing in this workflow waits for a human tap: once it starts,
+# main is fast-forwarded and prod ships. The behavioral dev->main HARD GATE (promote ONLY on an explicit Dave
+# "ship it"/"promote to prod") is therefore the SOLE authorization control. For contrast, the `production-destructive`
+# environment used by revert-gate.yml DOES carry required_reviewers=[islanddave] — do not generalize from it to here.
 # Promote = fast-forward main -> the exact dev SHA (no squash). CI is enforced here (required-checks on main only gate PRs).
 # After the FF, a version-snap (scripts/snap.py) captures a revertible marker (git tag + Neon branch + durable dump +
-# photo/lambda version-ids + manifest) INSIDE the same production-gated job — so a green promote always has a snapshot
+# photo/lambda version-ids + manifest) INSIDE the same promote job — so a green promote always has a snapshot
 # (a snap failure reds the promote). Then the `deploy` job (workflow_call into deploy.yml) builds + deploys the SPA
-# under a SECOND production approval, making promote->deploy deterministic (no reliance on push:main retriggering).
+# under that same approval-free production ref policy, making promote->deploy deterministic (no reliance on
+# push:main retriggering) — it is a second environment binding, NOT a second approval.
 # Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY, NEON_API_KEY, NEON_PROJECT_ID, NEON_BACKUP_URL.
 # Vars: SNAP_AWS_ROLE_ARN, SNAP_BUCKET, PHOTOS_BUCKET, SNAP_RETENTION.
 #
@@ -16,10 +25,33 @@ name: promote-gate
 # (the tail of deploy-lambdas->deploy-frontend->db-schema-check->smoke-tests, so its success implies the whole
 # write-path chain passed) to conclude success. Closes the hole where deploy-staging had no push:[dev] trigger,
 # so the staging write-path smoke only ran on manual dispatch and 7 releases shipped ungated. The dispatch runs AS
-# garden-bot (App tokens reliably trigger workflows; GITHUB_TOKEN does not). integration-tests (M5, 2026-07-24) is now
-# wired into the preflight below behind the `require_integration` dispatch input: ADVISORY by default (logged, never
-# blocking) during the soak window, and fail-closed when dispatched with require_integration=true. Fail-closed: a
-# missing/non-success staging-smoke conclusion blocks the promotion.
+# garden-bot (App tokens reliably trigger workflows; GITHUB_TOKEN does not). Fail-closed: a missing/non-success
+# staging-smoke conclusion blocks the promotion.
+#
+# INTEGRATION-TESTS GATE — SOAK CLOSED, DEFAULT FLIPPED TO true 2026-08-06. integration-tests (M5, 2026-07-24) rode
+# advisory (require_integration default false) through its soak window; the dispatch default is now `true`, so the
+# check is fail-closed exactly like build-and-test unless a dispatcher explicitly opts out. Evidence for the flip:
+#   * integration-test.yml triggers on `push: branches: [dev]`, and its job id `integration-tests` IS the check-run
+#     name the preflight looks up — so the check exists on every dev HEAD a promote can target.
+#   * 845 historical runs: 702 success / 31 failure / 112 cancelled. EVERY sampled failure was in the `Run integration
+#     tests` step — i.e. real test signal. The Neon-branch-create step (the only plausible infra flake, and it carries
+#     its own FATAL guard) has never been the failing step. This is not a flaky check.
+#   * It catches what build-and-test cannot. dev 29c50396 was build-and-test=SUCCESS + integration-tests=FAILURE on a
+#     genuine handler regression (events.int.test.js, BUG-HARVESTEDIT-001, "expected '1360.776' to be null"). That is
+#     the green-tests-broken-prod class this layer was built for, and advisory mode would have let it promote.
+#   * It also catches staging/prod schema drift (dev 90ee5850: `column pv.dtm_basis does not exist`). deploy-staging
+#     does NOT apply migrations, so a promote carrying a new-column migration SHOULD block until the schema is applied
+#     — shipping that code to prod unapplied is a guaranteed 500. Blocking is the correct outcome, not a false alarm.
+#   * No new failure mode vs today: on multi-commit pushes and concurrency-cancelled runs, integration-tests is
+#     MISSING/cancelled on exactly the same SHAs where build-and-test is MISSING/cancelled, and build-and-test is
+#     ALREADY fail-closed — so those promotes are blocked with or without this flag.
+# Known cost (accepted): integration-tests runs longer than build-and-test, so a promote dispatched immediately after
+# a dev push can find build-and-test=success while integration is still in_progress (conclusion null -> prints "None")
+# and fail-closed. Remedy is to wait for the check and re-dispatch. Escape hatch is preserved: dispatch with
+# require_integration=false to deliberately promote past a red/absent integration run.
+# NOTE: the promote-v* TAG trigger still hardcodes require_integration=false in `resolve` below — a tag push carries
+# no inputs, so it has no way to opt out if it were forced true, and that path (ship-garden.sh) is the break-glass
+# remote ship route. That asymmetry is deliberate and flagged for Dave, not an oversight.
 
 on:
   workflow_dispatch:
@@ -33,9 +65,9 @@ on:
         required: true
         type: string
       require_integration:
-        description: 'Enforce the integration-tests check on the dev SHA (M5 soak window: leave false; flip true to make integration blocking)'
+        description: 'Enforce the integration-tests check on the dev SHA (default true = fail-closed; set false ONLY to deliberately promote past a red or absent integration-tests run)'
         required: false
-        default: false
+        default: true
         type: boolean
   # OPS-SHIPTRIGGER-001 (2026-07-09): git-channel promote trigger so a Cowork/remote session
   # can ship WITHOUT api.github.com (which the session egress proxy 403-gates for repos it isn't
@@ -88,7 +120,9 @@ jobs:
           if [ "$EVENT" = "workflow_dispatch" ]; then
             DEV_SHA="$IN_DEV_SHA"
             SNAP="$IN_SNAP"
-            REQINT="${IN_REQINT:-false}"
+            # Fallback MUST mirror the declared input default (true) so an API dispatch that omits the
+            # key entirely cannot silently downgrade the gate to advisory. Fail-closed on absence.
+            REQINT="${IN_REQINT:-true}"
           else
             DEV_SHA="$GH_SHA"
             REQINT="false"
@@ -143,9 +177,11 @@ jobs:
           if [ "$CONC" != "success" ]; then
             echo "::error::build-and-test on $DEV_SHA = $CONC (need success)"; exit 1
           fi
-          # M5: integration-tests gate. Advisory during the soak window (require_integration=false,
-          # the default) — logged but never blocking. Dispatch with require_integration=true to make
-          # a non-success integration-tests check fail-closed, exactly like build-and-test above.
+          # M5: integration-tests gate. FAIL-CLOSED BY DEFAULT since 2026-08-06 (require_integration
+          # defaults to true) — a non-success integration-tests check blocks the promote exactly like
+          # build-and-test above. Soak evidence for the flip is in the header. Dispatch with
+          # require_integration=false to deliberately promote past a red/absent integration run.
+          # The advisory branch below is now the explicit opt-out path, not the normal path.
           INT=$(api "https://api.github.com/repos/$REPO/commits/$DEV_SHA/check-runs?filter=latest&per_page=100" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((c['conclusion'] for c in d['check_runs'] if c['name']=='integration-tests'),'MISSING'))")
           if [ "$REQ_INT" = "true" ]; then
             if [ "$INT" != "success" ]; then
@@ -341,11 +377,13 @@ jobs:
   # It mechanizes the post-promote read of the SPA deploy JOB conclusion (L-161 — a green
   # run can mask a failed deploy job). It NEVER fails the promote: exit code becomes an
   # annotation (notice/warning/error) + a step-summary line, and the job always exits 0.
-  # WHY report-only: deploy-lambda.yml is a SEPARATE push:main workflow under its OWN
-  # production-approval gate (L-141), so when this step runs the Lambda deploy may still be
-  # queued/awaiting approval — a hard red here would be a false alarm on every lambda-
-  # carrying promote. The authoritative Lambda-freshness check is the on-demand
-  # verify-deploy workflow re-run on this SHA AFTER the deploy-lambda gate is approved.
+  # WHY report-only: deploy-lambda.yml is a SEPARATE push:main workflow with its OWN
+  # environment:production binding (L-141), so when this step runs the Lambda deploy may still be
+  # queued or mid-flight — a hard red here would be a false alarm on every lambda-carrying
+  # promote. (Corrected 2026-08-06: that binding is a ref policy, NOT an approval — it does not
+  # "await approval", since production carries no required reviewer. The race is scheduling, not
+  # a human tap.) The authoritative Lambda-freshness check is the on-demand verify-deploy
+  # workflow re-run on this SHA AFTER the deploy-lambda run settles.
   verify:
     needs: [resolve, deploy]
     if: ${{ always() }}
