@@ -34,7 +34,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validateBody, validateCropTypeBody, resolveCropTypeName } from './validate.js';
+import { validateBody, validateCropTypeBody, resolveCropTypeName, validateClear } from './validate.js';
 import { applyDerive } from './crop-derive.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -219,49 +219,63 @@ export const handler = async (event) => {
         const verr = validateBody(body, { requireName: false });
         if (verr) return resp(400, { error: verr });
 
+        const cerr = validateClear(body.clear, body);
+        if (cerr) return resp(400, { error: cerr });
+
         const allowed = await checkRateLimit(sql, userId, 'plant_varieties.update', 120);
         if (!allowed) return resp(429, { error: 'Rate limit exceeded — 120/hour for plant_varieties.update' });
 
         // PUT uses COALESCE pattern: undefined/null in body = keep existing.
-        // Wrap set_config + UPDATE in sql.transaction so SET LOCAL is visible to
-        // the audit trigger (true = LOCAL scope, valid in transaction).
+        //
+        // V4-EDITCOMPLETE-001 — that pattern alone makes every optional column WRITE-ONCE-SETTABLE:
+        // once care_notes holds a value there is no body that returns it to NULL, because null and
+        // absent are the same token on the wire. An edit form rendering such a field either omits it
+        // (incomplete) or renders a box the user can empty and save with no effect (worse). So a
+        // second, EXPLICIT channel: `clear` is an array of column keys to set to NULL. Absent/[] is
+        // byte-identical to the prior behaviour, so every existing caller is unaffected.
+        //
+        // Shaped as CASE WHEN ${clear} @> ARRAY['k'] rather than a dynamically-built SET list because
+        // the neon tagged-template API takes no interpolated identifiers, and rather than a bare null
+        // param because neon cannot type a standalone null (the NULL here is a SQL literal typed by
+        // the CASE's ELSE branch). Three-way behaviour verified against live Postgres.
         const cd = body.common_diseases;
+        const clear = Array.isArray(body.clear) ? body.clear : [];
         const [, updateRows] = await sql.transaction([
           sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
           sql`
             UPDATE public.cultivar SET
               display_name         = COALESCE(${body.name ?? null}, display_name),
-              species              = COALESCE(${body.species ?? null}, species),
-              genus                = COALESCE(${body.genus ?? null}, genus),
-              days_to_maturity_min = COALESCE(${body.days_to_maturity_min ?? null}, days_to_maturity_min),
-              days_to_maturity_max = COALESCE(${body.days_to_maturity_max ?? null}, days_to_maturity_max),
-              care_notes           = COALESCE(${body.care_notes ?? null}, care_notes),
-              soil_notes           = COALESCE(${body.soil_notes ?? null}, soil_notes),
-              sun_requirements     = COALESCE(${body.sun_requirements ?? null}, sun_requirements),
-              common_diseases      = COALESCE(${Array.isArray(cd) ? cd : null}, common_diseases),
-              expected_yield_notes = COALESCE(${body.expected_yield_notes ?? null}, expected_yield_notes),
-              photo_id             = COALESCE(${body.photo_id ?? null}, photo_id),
-              source_url           = COALESCE(${body.source_url ?? null}, source_url),
-              crop_type_slug       = COALESCE(${body.crop_type_slug ?? null}, crop_type_slug),
-              lifecycle            = COALESCE(${body.lifecycle ?? null}, lifecycle),
-              scoville_min         = COALESCE(${body.scoville_min ?? null}, scoville_min),
-              scoville_max         = COALESCE(${body.scoville_max ?? null}, scoville_max),
-              growth_habit         = COALESCE(${body.growth_habit ?? null}, growth_habit),
-              produces_scape       = COALESCE(${body.produces_scape ?? null}, produces_scape),
-              determinacy          = COALESCE(${body.determinacy ?? null}, determinacy),
-              day_length_response  = COALESCE(${body.day_length_response ?? null}, day_length_response),
-              grown_as             = COALESCE(${body.grown_as ?? null}, grown_as),
-              start_method         = COALESCE(${body.start_method ?? null}, start_method),
-              start_indoor_weeks_min = COALESCE(${body.start_indoor_weeks_min ?? null}, start_indoor_weeks_min),
-              start_indoor_weeks_max = COALESCE(${body.start_indoor_weeks_max ?? null}, start_indoor_weeks_max),
-              direct_sow_timing    = COALESCE(${body.direct_sow_timing ?? null}, direct_sow_timing),
-              sow_depth_in         = COALESCE(${body.sow_depth_in ?? null}, sow_depth_in),
-              seed_spacing_in      = COALESCE(${body.seed_spacing_in ?? null}, seed_spacing_in),
-              row_spacing_in       = COALESCE(${body.row_spacing_in ?? null}, row_spacing_in),
-              days_to_germ_min     = COALESCE(${body.days_to_germ_min ?? null}, days_to_germ_min),
-              days_to_germ_max     = COALESCE(${body.days_to_germ_max ?? null}, days_to_germ_max),
-              sow_season           = COALESCE(${body.sow_season ?? null}, sow_season),
-              sow_notes            = COALESCE(${body.sow_notes ?? null}, sow_notes)
+              species              = CASE WHEN ${clear} @> ARRAY['species'] THEN NULL ELSE COALESCE(${body.species ?? null}, species) END,
+              genus                = CASE WHEN ${clear} @> ARRAY['genus'] THEN NULL ELSE COALESCE(${body.genus ?? null}, genus) END,
+              days_to_maturity_min = CASE WHEN ${clear} @> ARRAY['days_to_maturity_min'] THEN NULL ELSE COALESCE(${body.days_to_maturity_min ?? null}, days_to_maturity_min) END,
+              days_to_maturity_max = CASE WHEN ${clear} @> ARRAY['days_to_maturity_max'] THEN NULL ELSE COALESCE(${body.days_to_maturity_max ?? null}, days_to_maturity_max) END,
+              care_notes           = CASE WHEN ${clear} @> ARRAY['care_notes'] THEN NULL ELSE COALESCE(${body.care_notes ?? null}, care_notes) END,
+              soil_notes           = CASE WHEN ${clear} @> ARRAY['soil_notes'] THEN NULL ELSE COALESCE(${body.soil_notes ?? null}, soil_notes) END,
+              sun_requirements     = CASE WHEN ${clear} @> ARRAY['sun_requirements'] THEN NULL ELSE COALESCE(${body.sun_requirements ?? null}, sun_requirements) END,
+              common_diseases      = CASE WHEN ${clear} @> ARRAY['common_diseases'] THEN NULL ELSE COALESCE(${Array.isArray(cd) ? cd : null}, common_diseases) END,
+              expected_yield_notes = CASE WHEN ${clear} @> ARRAY['expected_yield_notes'] THEN NULL ELSE COALESCE(${body.expected_yield_notes ?? null}, expected_yield_notes) END,
+              photo_id             = CASE WHEN ${clear} @> ARRAY['photo_id'] THEN NULL ELSE COALESCE(${body.photo_id ?? null}, photo_id) END,
+              source_url           = CASE WHEN ${clear} @> ARRAY['source_url'] THEN NULL ELSE COALESCE(${body.source_url ?? null}, source_url) END,
+              crop_type_slug       = CASE WHEN ${clear} @> ARRAY['crop_type_slug'] THEN NULL ELSE COALESCE(${body.crop_type_slug ?? null}, crop_type_slug) END,
+              lifecycle            = CASE WHEN ${clear} @> ARRAY['lifecycle'] THEN NULL ELSE COALESCE(${body.lifecycle ?? null}, lifecycle) END,
+              scoville_min         = CASE WHEN ${clear} @> ARRAY['scoville_min'] THEN NULL ELSE COALESCE(${body.scoville_min ?? null}, scoville_min) END,
+              scoville_max         = CASE WHEN ${clear} @> ARRAY['scoville_max'] THEN NULL ELSE COALESCE(${body.scoville_max ?? null}, scoville_max) END,
+              growth_habit         = CASE WHEN ${clear} @> ARRAY['growth_habit'] THEN NULL ELSE COALESCE(${body.growth_habit ?? null}, growth_habit) END,
+              produces_scape       = CASE WHEN ${clear} @> ARRAY['produces_scape'] THEN NULL ELSE COALESCE(${body.produces_scape ?? null}, produces_scape) END,
+              determinacy          = CASE WHEN ${clear} @> ARRAY['determinacy'] THEN NULL ELSE COALESCE(${body.determinacy ?? null}, determinacy) END,
+              day_length_response  = CASE WHEN ${clear} @> ARRAY['day_length_response'] THEN NULL ELSE COALESCE(${body.day_length_response ?? null}, day_length_response) END,
+              grown_as             = CASE WHEN ${clear} @> ARRAY['grown_as'] THEN NULL ELSE COALESCE(${body.grown_as ?? null}, grown_as) END,
+              start_method         = CASE WHEN ${clear} @> ARRAY['start_method'] THEN NULL ELSE COALESCE(${body.start_method ?? null}, start_method) END,
+              start_indoor_weeks_min = CASE WHEN ${clear} @> ARRAY['start_indoor_weeks_min'] THEN NULL ELSE COALESCE(${body.start_indoor_weeks_min ?? null}, start_indoor_weeks_min) END,
+              start_indoor_weeks_max = CASE WHEN ${clear} @> ARRAY['start_indoor_weeks_max'] THEN NULL ELSE COALESCE(${body.start_indoor_weeks_max ?? null}, start_indoor_weeks_max) END,
+              direct_sow_timing    = CASE WHEN ${clear} @> ARRAY['direct_sow_timing'] THEN NULL ELSE COALESCE(${body.direct_sow_timing ?? null}, direct_sow_timing) END,
+              sow_depth_in         = CASE WHEN ${clear} @> ARRAY['sow_depth_in'] THEN NULL ELSE COALESCE(${body.sow_depth_in ?? null}, sow_depth_in) END,
+              seed_spacing_in      = CASE WHEN ${clear} @> ARRAY['seed_spacing_in'] THEN NULL ELSE COALESCE(${body.seed_spacing_in ?? null}, seed_spacing_in) END,
+              row_spacing_in       = CASE WHEN ${clear} @> ARRAY['row_spacing_in'] THEN NULL ELSE COALESCE(${body.row_spacing_in ?? null}, row_spacing_in) END,
+              days_to_germ_min     = CASE WHEN ${clear} @> ARRAY['days_to_germ_min'] THEN NULL ELSE COALESCE(${body.days_to_germ_min ?? null}, days_to_germ_min) END,
+              days_to_germ_max     = CASE WHEN ${clear} @> ARRAY['days_to_germ_max'] THEN NULL ELSE COALESCE(${body.days_to_germ_max ?? null}, days_to_germ_max) END,
+              sow_season           = CASE WHEN ${clear} @> ARRAY['sow_season'] THEN NULL ELSE COALESCE(${body.sow_season ?? null}, sow_season) END,
+              sow_notes            = CASE WHEN ${clear} @> ARRAY['sow_notes'] THEN NULL ELSE COALESCE(${body.sow_notes ?? null}, sow_notes) END
             WHERE id = ${varietyId}
               AND created_by = ${userId}
               AND deleted_at IS NULL

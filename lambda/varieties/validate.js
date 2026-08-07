@@ -14,6 +14,41 @@ export const VALID_GROWN_AS = ['annual', 'tender_perennial', 'perennial', 'bienn
 export const VALID_START_METHOD = ['start_indoors', 'direct_sow', 'both', 'indoors_only'];
 export const VALID_SOW_SEASON = ['cool', 'warm', 'cool_warm'];
 
+// V4-EDITCOMPLETE-001 — the columns a PUT may explicitly set back to NULL via `body.clear`.
+// Deliberately excludes `name`: display_name is the identity every planting, harvest chip and
+// picker row renders, and validateBody already refuses a blank one — a "clear the name" path
+// would be a data-loss affordance, not an edit affordance. Also excludes the system columns
+// (id/created_by/created_at/updated_at/deleted_at/model_version/source_proj_rescope_project_id),
+// which no edit surface owns, and dtm_basis, which has no read path or consumer yet
+// (V4-MATURITYBASIS-001) — exposing a clear for a field nothing renders would be its own trap.
+export const CLEARABLE_FIELDS = [
+  'species', 'genus', 'days_to_maturity_min', 'days_to_maturity_max',
+  'care_notes', 'soil_notes', 'sun_requirements', 'common_diseases', 'expected_yield_notes',
+  'photo_id', 'source_url', 'crop_type_slug', 'lifecycle',
+  'scoville_min', 'scoville_max', 'growth_habit', 'produces_scape',
+  'determinacy', 'day_length_response', 'grown_as',
+  'start_method', 'start_indoor_weeks_min', 'start_indoor_weeks_max',
+  'direct_sow_timing', 'sow_depth_in', 'seed_spacing_in', 'row_spacing_in',
+  'days_to_germ_min', 'days_to_germ_max', 'sow_season', 'sow_notes',
+];
+
+const CLEARABLE_SET = new Set(CLEARABLE_FIELDS);
+
+// Absent/[] is the legacy no-op. A key that is BOTH cleared and given a value is rejected rather
+// than silently resolved — picking a winner for an ambiguous request is the exact failure mode
+// this whole ticket exists to remove.
+export function validateClear(clear, body = {}) {
+  if (clear == null) return null;
+  if (!Array.isArray(clear)) return 'clear must be an array of field names';
+  for (const k of clear) {
+    if (typeof k !== 'string' || !CLEARABLE_SET.has(k)) {
+      return `clear contains a field that cannot be cleared: ${String(k)}`;
+    }
+    if (body[k] != null) return `${k} cannot be both cleared and set in the same request`;
+  }
+  return null;
+}
+
 export function validateBody(body, { requireName = true } = {}) {
   if (!body || typeof body !== 'object') return 'body required';
   if (requireName && (!body.name || typeof body.name !== 'string' || !body.name.trim())) return 'name is required';

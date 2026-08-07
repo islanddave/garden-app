@@ -54,6 +54,7 @@ import AddSeeds from './pages/AddSeeds.jsx'
 import SowNow from './pages/SowNow.jsx'
 import PutUp from './pages/PutUp.jsx'
 import SpaceDetail from './pages/SpaceDetail.jsx'
+import VarietyEdit from './pages/VarietyEdit.jsx'
 import SplashScreen from './components/SplashScreen.jsx'
 import UpdateBanner from './components/UpdateBanner.jsx'
 import Sheet from './components/forms/Sheet.jsx'
@@ -196,6 +197,7 @@ export function renderRoutes({ overlay, user }) {
     { path: '/plants/catch-up', element: <Protected><PlantsCatchUp /></Protected> },
     { path: '/events/:eventId', element: <Protected><EventDetail /></Protected> },
     { path: '/plantings/:plantingId', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected> },
+    { path: '/varieties/:varietyId/edit', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><VarietyEdit /></ErrorBoundary></Protected> },
     { path: '/projects/:id/events/:eventId', element: <ScopedEventRedirect /> },
     { path: '/projects/:id/plantings/:plantingId', element: <ScopedPlantingRedirect /> },
     { path: '/achievements',  element: <Protected><Achievements /></Protected> },

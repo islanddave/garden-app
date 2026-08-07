@@ -12,6 +12,7 @@
 // write->read symmetry silently broken).
 
 import { describe, it, expect } from 'vitest';
+import { CLEARABLE_FIELDS } from './validate.js';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,13 +114,44 @@ describe('varieties Lambda SEEDINV column plumbing (static-source guard)', () =>
     expect(coalesceBlocks.length).toBe(1);
   });
 
+  // V4-EDITCOMPLETE-001 widened each assignment from a bare COALESCE to the three-way
+  //   CASE WHEN ${clear} @> ARRAY['col'] THEN NULL ELSE COALESCE(${body.col ?? null}, col) END
+  // Both halves are pinned: the ELSE branch is the legacy keep-semantics (drop it and every
+  // partial update starts blanking columns), the CASE branch is the only path that can return a
+  // column to NULL (drop it and the edit form silently no-ops on every cleared field).
   for (const col of SEEDINV_COLUMNS) {
-    it(`PUT COALESCE block partial-updates ${col}`, () => {
+    it(`PUT block partial-updates ${col} (COALESCE keep branch)`, () => {
       const block = coalesceBlocks[0] ?? '';
-      const assignment = new RegExp(`\\b${col}\\s*=\\s*COALESCE\\(\\$\\{body\\.${col} \\?\\? null\\}, ${col}\\)`);
-      expect(assignment.test(block), `PUT COALESCE missing ${col} = COALESCE(\${body.${col} ?? null}, ${col})`).toBe(true);
+      const assignment = new RegExp(`ELSE COALESCE\\(\\$\\{body\\.${col} \\?\\? null\\}, ${col}\\) END`);
+      expect(assignment.test(block), `PUT missing ELSE COALESCE(\${body.${col} ?? null}, ${col}) END`).toBe(true);
+    });
+    it(`PUT block can clear ${col} to NULL`, () => {
+      const block = coalesceBlocks[0] ?? '';
+      const clearBranch = new RegExp(`\\b${col}\\s*=\\s*CASE WHEN \\$\\{clear\\} @> ARRAY\\['${col}'\\] THEN NULL`);
+      expect(clearBranch.test(block), `PUT missing clear branch for ${col}`).toBe(true);
     });
   }
+
+  // V4-EDITCOMPLETE-001 — the clear branch must exist for EVERY clearable column, not just the 14
+  // SEEDINV ones enumerated above. Found by mutation: reverting `care_notes` to a bare COALESCE
+  // passed the whole suite, because SEEDINV_COLUMNS does not include the pre-SEEDINV columns and
+  // the UI round-trip test mocks the server. Driven off the exported allowlist so the guard cannot
+  // drift from the set validateClear accepts — a column that is clearable per the API but has no
+  // clear branch in the SQL is a Save button that reports success and changes nothing.
+  for (const col of CLEARABLE_FIELDS) {
+    it(`PUT can clear ${col} to NULL`, () => {
+      const block = coalesceBlocks[0] ?? '';
+      const clearBranch = new RegExp(`\\b${col}\\s*=\\s*CASE WHEN \\$\\{clear\\} @> ARRAY\\['${col}'\\] THEN NULL ELSE COALESCE\\(`);
+      expect(clearBranch.test(block), `PUT missing clear branch for ${col}`).toBe(true);
+    });
+  }
+
+  // The inverse: display_name must NOT gain one. Clearing the identity is not an edit.
+  it('PUT has no clear branch for display_name', () => {
+    const block = coalesceBlocks[0] ?? '';
+    expect(/display_name\s*=\s*COALESCE\(\$\{body\.name \?\? null\}, display_name\)/.test(block)).toBe(true);
+    expect(block.includes("ARRAY['name']")).toBe(false);
+  });
 
   // display_name AS name aliasing must survive the widening in every full-row read
   // and both write RETURNINGs (JSON contract: API key is "name").

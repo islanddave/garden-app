@@ -33,15 +33,17 @@ const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => 
 const overlayPaths = () => renderRoutes({ overlay: true, user: true }).map((r) => r.props.path)
 
 describe('App route table (single source of truth)', () => {
-  it('the page tree has the full 50-route set with no duplicates', () => {
+  it('the page tree has the full 51-route set with no duplicates', () => {
     // 46 → 48: V4-UNSCOPEDROUTES-001 added the canonical un-scoped /plantings/:plantingId and
     // /events/:eventId (the /projects/:id/* forms remain as redirects, still counted).
     // 48 → 50: V4-SPACEPHOTO-001 Lane C adds /space and /space/:spaceId. Counted here because the
     // mock above pins SPACE_PHOTOS_ENABLED true; the flag-OFF table is pinned at 48 in
     // SpacePhotos.flagOff.test.jsx, which mocks it false.
+    // 50 → 51: V4-EDITCOMPLETE-001 V3 adds /varieties/:varietyId/edit — the first and only write
+    // surface for the 32 PUT-writable cultivar columns, which had no edit UI at all.
     const paths = pagePaths()
-    expect(paths).toHaveLength(50)
-    expect(new Set(paths).size).toBe(50)
+    expect(paths).toHaveLength(51)
+    expect(new Set(paths).size).toBe(51)
   })
 
   it('includes the catch-all, index redirect, and every key route', () => {
@@ -74,6 +76,24 @@ describe('App route table (single source of truth)', () => {
     const overlay = renderRoutes({ overlay: true, user: true }).find((r) => r.props.path === '/search')
     // Different element type in each tree: page renders <Protected> directly; overlay wraps in OverlayHost.
     expect(page.props.element.type).not.toBe(overlay.props.element.type)
+  })
+
+  // V102 §5.7 — `title`/`ariaLabel` is REQUIRED on OverlayHost. V100's own sketch passed it to none
+  // of its routes, giving role="dialog" no accessible name: an SC 4.1.2 (Level A) failure. The type
+  // check above passes whether or not the props survive, so the props need their own pin. `size`
+  // rides along because §5.1 is explicit that 85vh ('peek') is the wrong container for a long form.
+  it('every overlayable route gives OverlayHost an accessible name and an explicit size', () => {
+    const expected = {
+      '/search':   { ariaLabel: 'Search your garden', size: 'peek' },
+      '/log':      { ariaLabel: 'Log an event',       size: 'full' },
+      '/log/many': { ariaLabel: 'Log many',           size: 'full' },
+      '/put-up':   { ariaLabel: 'Log a put-up',       size: 'full' },
+    }
+    for (const r of renderRoutes({ overlay: true, user: true })) {
+      const host = r.props.element
+      expect(host.props.ariaLabel).toBe(expected[r.props.path].ariaLabel)
+      expect(host.props.size).toBe(expected[r.props.path].size)
+    }
   })
 
   it('a NON-overlayable route renders the identical element in both trees (page tree only for overlay=true drops it)', () => {

@@ -97,11 +97,16 @@ describe('varieties Lambda — crop-type column plumbing (static guards)', () =>
     const returning = SRC.slice(valuesIdx, SRC.indexOf('`', valuesIdx + 5) + 1);
     for (const col of CROP_COLS) expect(returning, `INSERT RETURNING missing ${col}`).toContain(col);
   });
-  it('PUT UPDATE COALESCEs all 6 crop columns', () => {
+  // V4-EDITCOMPLETE-001 moved the keep-semantics COALESCE into the ELSE arm of a three-way CASE
+  // so a PUT can also return a column to NULL. `name` keeps the bare COALESCE form — display_name
+  // is deliberately not clearable (see CLEARABLE_FIELDS in validate.js).
+  it('PUT UPDATE keeps COALESCE keep-semantics for all 6 crop columns', () => {
     const updIdx = SRC.indexOf('UPDATE public.cultivar SET');
     const updBlock = SRC.slice(updIdx, SRC.indexOf('WHERE id =', updIdx));
     for (const col of CROP_COLS) {
-      expect(updBlock, `UPDATE missing COALESCE for ${col}`).toMatch(new RegExp(`${col}\\s*=\\s*COALESCE`));
+      expect(updBlock, `UPDATE missing COALESCE for ${col}`).toMatch(
+        new RegExp(`${col}\\s*=\\s*(CASE WHEN[^\\n]*ELSE )?COALESCE`)
+      );
     }
   });
 });
