@@ -735,7 +735,13 @@ export const handler = async (event) => {
               (SELECT MAX(e.event_date) FROM event_log e
                 WHERE e.project_id = a.project_id AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
               (SELECT MAX(e.event_date) FROM event_log e
-                WHERE e.project_id = a.project_id AND e.event_type = 'harvest' AND e.deleted_at IS NULL) AS mh
+                WHERE e.project_id = a.project_id AND e.event_type = 'harvest' AND e.deleted_at IS NULL) AS mh,
+              -- BUG-LASTISSUEPLANT-001 (2026-08-07): last_issue_at was missing from this recompute
+              -- even though the forward upsert writes it through GREATEST — i.e. the column the
+              -- CARECACHEUNDO fix above says it repaired was itself still one-way. Keyed on the
+              -- FLAG, not on event_type, because that is what its forward writer keys on.
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.project_id = a.project_id AND e.flagged_as_issue = true AND e.deleted_at IS NULL) AS mi
             FROM affected a
           )
           UPDATE entity_memory em SET
@@ -745,6 +751,7 @@ export const handler = async (event) => {
             last_pruned_at = surv.mp,
             last_observed_at = surv.mo,
             last_harvested_at = surv.mh,
+            last_issue_at = surv.mi,
             next_water_at = CASE WHEN surv.mw IS NULL THEN NULL ELSE
               surv.mw + (COALESCE(em.watering_interval_days,
                 CASE em.location_type
@@ -785,7 +792,12 @@ export const handler = async (event) => {
               (SELECT MAX(e.event_date) FROM event_log e
                 WHERE e.plant_id = a.plant_id AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
               (SELECT MAX(e.event_date) FROM event_log e
-                WHERE e.plant_id = a.plant_id AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL) AS mh
+                WHERE e.plant_id = a.plant_id AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL) AS mh,
+              -- BUG-LASTISSUEPLANT-001 (2026-08-07): the plant-keyed forward upsert now writes
+              -- last_issue_at, so its inverse belongs here or the column becomes one-way the day
+              -- the writer lands. Flag-keyed, matching that writer.
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = a.plant_id AND e.flagged_as_issue = true AND e.deleted_at IS NULL) AS mi
             FROM affected a
           )
           UPDATE entity_memory em SET
@@ -795,6 +807,7 @@ export const handler = async (event) => {
             last_pruned_at = surv.mp,
             last_observed_at = surv.mo,
             last_harvested_at = surv.mh,
+            last_issue_at = surv.mi,
             updated_at = NOW()
           FROM surv WHERE em.plant_id = surv.plant_id
         `,
@@ -1447,11 +1460,14 @@ export const handler = async (event) => {
                 (SELECT MAX(e.event_date) FROM event_log e
                   WHERE e.project_id = ${oldProjectId} AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
                 (SELECT MAX(e.event_date) FROM event_log e
-                  WHERE e.project_id = ${oldProjectId} AND e.event_type = 'harvest' AND e.deleted_at IS NULL) AS mh
+                  WHERE e.project_id = ${oldProjectId} AND e.event_type = 'harvest' AND e.deleted_at IS NULL) AS mh,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.project_id = ${oldProjectId} AND e.flagged_as_issue = true AND e.deleted_at IS NULL) AS mi
               )
               UPDATE entity_memory em SET
                 last_watered_at = surv.mw, last_event_at = surv.me, last_fertilized_at = surv.mf,
                 last_pruned_at = surv.mp, last_observed_at = surv.mo, last_harvested_at = surv.mh,
+                last_issue_at = surv.mi,
                 next_water_at = CASE WHEN ${movedType}::text NOT IN ('watering','rain') THEN em.next_water_at
                   WHEN surv.mw IS NULL THEN NULL ELSE surv.mw + (COALESCE(em.watering_interval_days, 4)::int * INTERVAL '1 day') END,
                 updated_at = NOW()
@@ -1462,14 +1478,15 @@ export const handler = async (event) => {
             reanchor.push(sql`
               INSERT INTO entity_memory
                 (project_id, last_event_at, last_watered_at, last_fertilized_at,
-                 last_pruned_at, last_observed_at, last_harvested_at)
+                 last_pruned_at, last_observed_at, last_harvested_at, last_issue_at)
               SELECT ${newProjectId}::uuid,
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type = 'fertilizing' AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type = 'pruning' AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type = 'observation' AND e.deleted_at IS NULL),
-                (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type = 'harvest' AND e.deleted_at IS NULL)
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.event_type = 'harvest' AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.project_id = ${newProjectId} AND e.flagged_as_issue = true AND e.deleted_at IS NULL)
               ON CONFLICT (project_id) DO UPDATE SET
                 last_event_at = EXCLUDED.last_event_at,
                 last_watered_at = EXCLUDED.last_watered_at,
@@ -1477,6 +1494,7 @@ export const handler = async (event) => {
                 last_pruned_at = EXCLUDED.last_pruned_at,
                 last_observed_at = EXCLUDED.last_observed_at,
                 last_harvested_at = EXCLUDED.last_harvested_at,
+                last_issue_at = EXCLUDED.last_issue_at,
                 updated_at = NOW()
             `);
           }
@@ -1496,11 +1514,14 @@ export const handler = async (event) => {
                 (SELECT MAX(e.event_date) FROM event_log e
                   WHERE e.plant_id = ${oldPlantId} AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
                 (SELECT MAX(e.event_date) FROM event_log e
-                  WHERE e.plant_id = ${oldPlantId} AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL) AS mh
+                  WHERE e.plant_id = ${oldPlantId} AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL) AS mh,
+                (SELECT MAX(e.event_date) FROM event_log e
+                  WHERE e.plant_id = ${oldPlantId} AND e.flagged_as_issue = true AND e.deleted_at IS NULL) AS mi
               )
               UPDATE entity_memory em SET
                 last_watered_at = surv.mw, last_event_at = surv.me, last_fertilized_at = surv.mf,
                 last_pruned_at = surv.mp, last_observed_at = surv.mo, last_harvested_at = surv.mh,
+                last_issue_at = surv.mi,
                 updated_at = NOW()
               FROM surv WHERE em.plant_id = ${oldPlantId}
             `);
@@ -1509,14 +1530,15 @@ export const handler = async (event) => {
             reanchor.push(sql`
               INSERT INTO entity_memory
                 (plant_id, last_event_at, last_watered_at, last_fertilized_at,
-                 last_pruned_at, last_observed_at, last_harvested_at)
+                 last_pruned_at, last_observed_at, last_harvested_at, last_issue_at)
               SELECT ${newPlantId}::uuid,
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type IN ('watering','rain') AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type = 'fertilizing' AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type = 'pruning' AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type = 'observation' AND e.deleted_at IS NULL),
-                (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL)
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL),
+                (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.flagged_as_issue = true AND e.deleted_at IS NULL)
               ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL DO UPDATE SET
                 last_event_at = EXCLUDED.last_event_at,
                 last_watered_at = EXCLUDED.last_watered_at,
@@ -1524,6 +1546,7 @@ export const handler = async (event) => {
                 last_pruned_at = EXCLUDED.last_pruned_at,
                 last_observed_at = EXCLUDED.last_observed_at,
                 last_harvested_at = EXCLUDED.last_harvested_at,
+                last_issue_at = EXCLUDED.last_issue_at,
                 updated_at = NOW()
             `);
           }
@@ -1670,7 +1693,9 @@ export const handler = async (event) => {
             (SELECT MAX(e.event_date) FROM event_log e
               WHERE e.project_id = ${projectId} AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
             (SELECT MAX(e.event_date) FROM event_log e
-              WHERE e.project_id = ${projectId} AND e.event_type = 'harvest' AND e.deleted_at IS NULL) AS mh
+              WHERE e.project_id = ${projectId} AND e.event_type = 'harvest' AND e.deleted_at IS NULL) AS mh,
+            (SELECT MAX(e.event_date) FROM event_log e
+              WHERE e.project_id = ${projectId} AND e.flagged_as_issue = true AND e.deleted_at IS NULL) AS mi
           )
           UPDATE entity_memory em SET
             last_watered_at = surv.mw,
@@ -1679,6 +1704,7 @@ export const handler = async (event) => {
             last_pruned_at = surv.mp,
             last_observed_at = surv.mo,
             last_harvested_at = surv.mh,
+            last_issue_at = surv.mi,
             next_water_at = CASE WHEN ${undoneType}::text NOT IN ('watering','rain') THEN em.next_water_at
               WHEN surv.mw IS NULL THEN NULL ELSE
               surv.mw + (COALESCE(em.watering_interval_days,
@@ -1713,7 +1739,9 @@ export const handler = async (event) => {
               (SELECT MAX(e.event_date) FROM event_log e
                 WHERE e.plant_id = ${plantId} AND e.event_type = 'observation' AND e.deleted_at IS NULL) AS mo,
               (SELECT MAX(e.event_date) FROM event_log e
-                WHERE e.plant_id = ${plantId} AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL) AS mh
+                WHERE e.plant_id = ${plantId} AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL) AS mh,
+              (SELECT MAX(e.event_date) FROM event_log e
+                WHERE e.plant_id = ${plantId} AND e.flagged_as_issue = true AND e.deleted_at IS NULL) AS mi
             )
             UPDATE entity_memory em SET
               last_watered_at = surv.mw,
@@ -1722,6 +1750,7 @@ export const handler = async (event) => {
               last_pruned_at = surv.mp,
               last_observed_at = surv.mo,
               last_harvested_at = surv.mh,
+              last_issue_at = surv.mi,
               updated_at = NOW()
             FROM surv WHERE em.plant_id = ${plantId}
           `);
@@ -2054,17 +2083,26 @@ export const handler = async (event) => {
           -- Care re-key Step B (care-rekey-001): ADDITIVE plant-keyed dual-write (single event).
           -- Self-guards on plant_id — project-level events have plant_id NULL, so the SELECT yields
           -- no row (never violates the 3-way exactly-one-parent CHECK). Columns match 0b-backfill.sql
-          -- (no next_water_at / last_issue_at). Reads still project-keyed (Step D cuts over).
+          -- (no next_water_at). Reads still project-keyed (Step D cuts over).
+          --
+          -- BUG-LASTISSUEPLANT-001 (2026-08-07): last_issue_at was omitted here while the
+          -- project-keyed sibling above has written it since it shipped, so ALL 262 plant rows read
+          -- NULL and 72 of them sat permanently BEHIND the event log — exactly the 72 live flagged
+          -- events. Harmless only while reads stay project-keyed; Step D's cutover would have turned
+          -- it into a silent Findings regression with nothing failing and nothing logging.
+          -- next_water_at stays out on purpose: the nightly engine owns "due", not this writer.
           INSERT INTO entity_memory
             (plant_id, last_event_at,
-             last_watered_at, last_fertilized_at, last_pruned_at, last_observed_at, last_harvested_at)
+             last_watered_at, last_fertilized_at, last_pruned_at, last_observed_at, last_harvested_at,
+             last_issue_at)
           SELECT ${body.plant_id ?? null}::uuid,
             ${eventDate}::timestamptz,
             CASE WHEN ${eventType} IN ('watering','rain')            THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'fertilizing'                   THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'pruning'                       THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${eventType} = 'observation'                   THEN ${eventDate}::timestamptz ELSE NULL END,
-            CASE WHEN ${eventType} IN ('harvest','first_harvest')    THEN ${eventDate}::timestamptz ELSE NULL END
+            CASE WHEN ${eventType} IN ('harvest','first_harvest')    THEN ${eventDate}::timestamptz ELSE NULL END,
+            CASE WHEN ${flagged}::boolean = true                     THEN ${eventDate}::timestamptz ELSE NULL END
           WHERE ${body.plant_id ?? null}::uuid IS NOT NULL
           ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),

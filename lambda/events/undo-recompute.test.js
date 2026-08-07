@@ -56,6 +56,13 @@ const RECENCY_COLUMNS = [
   'last_pruned_at',
   'last_observed_at',
   'last_harvested_at',
+  // BUG-LASTISSUEPLANT-001 (2026-08-07). last_issue_at was absent from all six recompute arms while
+  // the project-keyed forward upsert wrote it through GREATEST — so the column this file's own
+  // header calls "permanently ahead of the event log" was still exactly that, in the very fix that
+  // claimed to have repaired every recency column. It is keyed on the FLAG, not on event_type,
+  // because that is what its forward writer keys on; the flag predicate is asserted separately below
+  // so widening this list can never be satisfied by an event_type-scoped MAX().
+  'last_issue_at',
 ];
 
 const ARMS = [
@@ -82,12 +89,22 @@ describe.each(ARMS)('events Lambda — undo recompute arm: $name', ({ get, name 
 });
 
 describe('events Lambda — the surv CTEs read only surviving events', () => {
-  it.each(ARMS)('$name computes exactly 6 MAX()es, every one scoped to deleted_at IS NULL', ({ all }) => {
+  it.each(ARMS)('$name computes exactly 7 MAX()es, every one scoped to deleted_at IS NULL', ({ all }) => {
     // A MAX() without the deleted_at filter would re-read the row the undo just soft-deleted and
     // write the stale value straight back — the failure would look exactly like no fix at all.
+    // 7 since BUG-LASTISSUEPLANT-001 added the flag-keyed last_issue_at arm.
     const stmt = all();
-    expect((stmt.match(/MAX\(e\.event_date\)/g) ?? []).length).toBe(6);
-    expect((stmt.match(/e\.deleted_at IS NULL/g) ?? []).length).toBe(6);
+    expect((stmt.match(/MAX\(e\.event_date\)/g) ?? []).length).toBe(7);
+    expect((stmt.match(/e\.deleted_at IS NULL/g) ?? []).length).toBe(7);
+  });
+
+  it.each(ARMS)('$name recomputes last_issue_at from the FLAG, not from an event_type', ({ all }) => {
+    // BUG-LASTISSUEPLANT-001. The forward writer keys last_issue_at on flagged_as_issue, so its
+    // inverse must too. An event_type-scoped MAX() here would satisfy the RECENCY_COLUMNS list and
+    // the MAX() count above while recomputing the wrong set of rows — green, and still wrong.
+    const stmt = all();
+    expect(stmt).toMatch(/e\.flagged_as_issue = true AND e\.deleted_at IS NULL\) AS mi/);
+    expect((stmt.match(/e\.flagged_as_issue = true/g) ?? []).length).toBe(1);
   });
 
   it.each(ARMS)('$name leaves last_event_at unfiltered by event_type', ({ all }) => {
