@@ -2115,6 +2115,14 @@ export const handler = async (event) => {
             last_pruned_at     = CASE WHEN ${eventType} = 'pruning'                    THEN GREATEST(COALESCE(entity_memory.last_pruned_at,     ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_pruned_at     END,
             last_observed_at   = CASE WHEN ${eventType} = 'observation'                THEN GREATEST(COALESCE(entity_memory.last_observed_at,   ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_observed_at   END,
             last_harvested_at  = CASE WHEN ${eventType} IN ('harvest','first_harvest') THEN GREATEST(COALESCE(entity_memory.last_harvested_at,  ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_harvested_at  END,
+            -- BUG-LASTISSUEPLANT-001, second pass. The first pass added last_issue_at to the INSERT
+            -- column list and the SELECT above but NOT here, which made the fix a no-op for every
+            -- row that already exists: a brand-new planting whose first event is flagged got a
+            -- value, and all 262 live plant rows could never advance one. The INSERT arm of an
+            -- upsert only runs on first touch — the DO UPDATE is the arm that does the work on a
+            -- mature table, and it is the easier of the two to leave out because the column list
+            -- above reads complete.
+            last_issue_at      = CASE WHEN ${flagged}::boolean = true                  THEN GREATEST(COALESCE(entity_memory.last_issue_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_issue_at      END,
             updated_at = NOW()
         `,
         // V3-FRUITSET-001: logging a `fruit_set` event on a specific planting auto-advances

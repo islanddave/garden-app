@@ -86,13 +86,21 @@ const plantCache = async (id) =>
   (await directSql`
     SELECT id, plant_id, project_id, location_id, next_water_at,
            last_event_at, last_watered_at, last_fertilized_at,
-           last_pruned_at, last_observed_at, last_harvested_at
+           last_pruned_at, last_observed_at, last_harvested_at,
+           -- BUG-LASTISSUEPLANT-001 added this column the same day this file was written, and
+           -- neither helper picked it up. GAP 4 asserts on it, so without this its precondition
+           -- read undefined and the block could never distinguish the defect from the repair.
+           last_issue_at
       FROM entity_memory WHERE plant_id = ${id}`)[0] ?? null
 const projectCache = async (id) =>
   (await directSql`
     SELECT id, plant_id, project_id, location_id, next_water_at,
            last_event_at, last_watered_at, last_fertilized_at,
-           last_pruned_at, last_observed_at, last_harvested_at
+           last_pruned_at, last_observed_at, last_harvested_at,
+           -- BUG-LASTISSUEPLANT-001 added this column the same day this file was written, and
+           -- neither helper picked it up. GAP 4 asserts on it, so without this its precondition
+           -- read undefined and the block could never distinguish the defect from the repair.
+           last_issue_at
       FROM entity_memory WHERE project_id = ${id}`)[0] ?? null
 
 // THE CANONICAL STALE-FORWARD DETECTOR.
@@ -401,7 +409,7 @@ describe.skip('GAP 4 — unflagging an event leaves last_issue_at pointing at it
   beforeAll(async () => {
     projectId = await newProject('gap4')
     id = await newEvent({ project_id: projectId, event_type: 'observation', event_date: T2,
-      flagged_as_issue: true, severity: 'medium' })
+      flagged_as_issue: true, severity: 2 })   // validators.js:107 — severity is 1|2|3, not a word
   })
   it('the container has no flagged event left, so last_issue_at must go NULL', async () => {
     const p0 = await projectCache(projectId)
