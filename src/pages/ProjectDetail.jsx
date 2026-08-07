@@ -21,6 +21,7 @@ import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
 import { PlantForm, Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
+import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
 
 
 function todayLocal() {
@@ -395,6 +396,17 @@ export default function ProjectDetail() {
           is_public:         form.is_public,
           location_id:       form.location_id        || null,
           parent_project_id: form.parent_project_id  || null,
+          // BUG-COALESCECLEAR-001. The `|| null` above is exactly the bug: the server binds these
+          // through COALESCE, where null and absent are the same token, so emptying one of these
+          // boxes returned 200 and silently kept the old value. `clear` is the only way to say NULL.
+          //
+          // Derived from the RENDERED field set only — never from every key of form state — and
+          // only for a field that HELD a value and is now empty. Filtered through the server's own
+          // allowlist so an un-clearable key is dropped here rather than 400-ing the whole save and
+          // losing the user's other edits with it.
+          ...clearPatch(
+            ['description', 'start_date', 'location_id'],
+            form, project, { allowed: SERVER_CLEARABLE.projects }),
         }),
       })
       const loc = locations.find(l => l.id === (form.location_id || null))

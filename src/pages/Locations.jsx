@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, LOCATION_TYPE_LABELS } from '../lib/constants.js'
 import { Field, Input, Select, Button, ErrorBanner } from '../components/forms'
+import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
 
 const LEVEL_LABELS = ['Zone', 'Area', 'Section', 'Sub-Section']
 const LEVEL_ACCENTS = [P.green, P.greenLight, P.gold, P.terra]
@@ -103,6 +104,19 @@ export default function Locations() {
           is_active:   loc.is_active,
           sort_order:  parseInt(editForm.sort_order) || 0,
           description: editForm.description.trim() || null,
+          // BUG-COALESCECLEAR-001. `|| null` above is the bug: the server binds these through
+          // COALESCE, where null and absent are one token, so emptying the description box
+          // returned 200 and kept the old text. `clear` is the only way to say NULL.
+          //
+          // ONLY `description` is on the server's allowlist, and `type_label` is deliberately NOT —
+          // it is a care-engine input (the coverage derivation reads it), so clearing it would opt
+          // up to 16 indoor plantings into every frost alert. The allowed filter below means that
+          // even though this form renders a type_label box, emptying it is dropped here rather than
+          // 400-ing the whole save. Emptying type_label therefore stays a no-op, deliberately and
+          // consistently with the server.
+          ...clearPatch(
+            ['description', 'type_label'],
+            editForm, loc, { allowed: SERVER_CLEARABLE.locations }),
         }),
       })
       setEditingId(null); load()
