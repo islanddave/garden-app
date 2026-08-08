@@ -43,29 +43,17 @@ const COALESCE_BODY = /COALESCE\(\s*\$\{[^}]*\bbody\.[A-Za-z_][A-Za-z0-9_]*/g;
 const HAS_VALIDATOR = /validateClear\s*\(/;
 const HAS_CLEAR_ARM = /@>\s*ARRAY\[/;
 
-// EXEMPT — every entry carries its own reason. An empty or reason-less entry is a bug in this file.
-// These are NOT "handlers we gave up on"; each is a deliberate, dated decision.
-const EXEMPT = {
-  // projects and locations WERE listed here while their channels were in flight. Both landed
-  // (BUG-COALESCECLEAR-001, 2026-08-07) and their entries are removed, which is the point of the
-  // "no handler is EXEMPT that does not carry a COALESCE arm" assertion below — a stale exemption
-  // silently pre-authorizes a handler that has since been fixed. plants/projects/locations/
-  // varieties/events are now all swept live.
-
-  // Scoped OUT of BUG-COALESCECLEAR-001 at authoring time and not yet triaged. Named here so they
-  // are visible rather than silently uncovered — the ledger item measured plants/projects/locations
-  // only, and this sweep is what revealed that three more handlers carry the same shape.
-  // Each needs its own nullable-column + CHECK audit before an allowlist can be written.
-  // REMOVE each entry as its handler is triaged; file a ticket per handler, do not bulk-fix.
-  preservation: 'BUG-COALESCECLEAR-002: 1 arm on source_kind. Genuinely nullable and NULL is ' +
-    'meaningful, so this one is NOT closed like the two below — but it cannot be a plain allowlist ' +
-    'entry either. source_kind owns a pair: the source_label CASE keys on the REQUEST kind, so a ' +
-    'clear:["source_kind"] leaves source_label set, and provenance.js then refuses that row on ' +
-    'every later save ("source_label needs a source_kind"). Un-re-saveable, the same ordering ' +
-    'hazard as projects.location_id. Needs a pair-clear resolver AND a RowEditor provenance ' +
-    'surface (the pair is create-only today, so there is no box to empty) AND a Dave product call. ' +
-    'Feature-sized; 1 live row and it already reads NULL.',
-};
+// EXEMPT — "carries the shape, not yet triaged". Every entry carries its own reason; an empty or
+// reason-less entry is a bug in this file. These are NOT "handlers we gave up on" — each is a
+// deliberate, dated decision to look later.
+//
+// CURRENTLY EMPTY, and that is the finished state rather than an oversight. projects and locations
+// sat here while their channels were in flight and left when they landed (BUG-COALESCECLEAR-001).
+// preservation, storage-location and tags sat here as BUG-COALESCECLEAR-002's untriaged three, and
+// all three have now been audited to a verdict and moved to AUDITED_NOTHING_CLEARABLE below. An
+// entry reappears here only when a NEW handler grows a COALESCE-on-body arm — which is precisely
+// what the must-declare-a-channel assertion at the bottom of this file forces.
+const EXEMPT = {};
 
 // AUDITED, NOTHING CLEARABLE — the third state, and the reason this file needed amending.
 //
@@ -79,11 +67,25 @@ const EXEMPT = {
 // the regex — is the worst one, and this file's header already warns against exactly that.
 //
 // An entry here is a STRONGER claim than EXEMPT, not a weaker one: it asserts the columns were
-// checked against live schema and found un-clearable at the DB layer, so no channel should ever be
-// built. It is held to the same staleness rules as EXEMPT (real dir, real reason, still carries a
-// COALESCE arm) plus two more: it may not also be EXEMPT, and it may not declare a SERVER_CLEARABLE
-// key on the client — an empty array there would be a channel with nothing in it.
+// audited and the answer is that no channel should ever be built. Two grounds qualify, and the
+// entry must say which: UN-CLEARABLE AT THE DB LAYER (NOT NULL / CHECK — clearing is an error,
+// not a choice), or DECLINED AS A PRODUCT CALL (clearing is legal and the answer is still no).
+// The second needs a dated decision, because unlike a NOT NULL it can be revisited.
+//
+// Held to the same staleness rules as EXEMPT (real dir, real reason, still carries a COALESCE
+// arm) plus two more: it may not also be EXEMPT, and it may not declare a SERVER_CLEARABLE key on
+// the client — an empty array there would be a channel with nothing in it.
 const AUDITED_NOTHING_CLEARABLE = {
+  preservation:
+    'BUG-COALESCECLEAR-002 / BUG-PRESERVCLEARPAIR-001. DECLINED AS A PRODUCT CALL, Dave 2026-08-08: ' +
+    'the provenance pair stays CREATE-ONLY. source_kind IS nullable and NULL is meaningful, so unlike ' +
+    'the two below this is a choice, not a constraint — which is exactly why it needed the call. It ' +
+    'cannot be a plain allowlist entry regardless: source_kind owns a pair, and the source_label CASE ' +
+    'keys on the REQUEST kind, so a clear:["source_kind"] leaves source_label set and provenance.js ' +
+    'then refuses that row on every later save — un-re-saveable, the projects.location_id ordering ' +
+    'hazard again. Shipping it would also mean building a RowEditor provenance field, since the pair ' +
+    'is create-only and there is no box to empty. 1 live prod row and it already reads NULL. Reopen ' +
+    'only if a put-up provenance EDIT surface is ever wanted, and then do the pair-clear resolver first.',
   'storage-location':
     'BUG-COALESCECLEAR-002, audited 2026-08-07 against live prod. Both arms are NOT NULL, so a ' +
     'clear is a 23502, not a judgment call. kind is additionally CHECK-constrained to a six-value ' +
