@@ -69,6 +69,12 @@ export { EVENT_TYPES } from './eventTypes.js'
 
 // Location type_label values for UI icons/display
 export const LOCATION_TYPE_LABELS = [
+  // 'area' was MISSING from this list while being the most common value in live data (9 of 21
+  // locations, covering 200 live plantings). A <Select> whose stored value is absent from its
+  // options renders the placeholder, so those nine locations showed "— optional —" and their real
+  // type was invisible and un-editable. Found by on-device verification 2026-08-08, not by any
+  // test — the vocabulary and the data had drifted apart with nothing comparing them.
+  'area',
   'zone',
   'rack',
   'shelf',

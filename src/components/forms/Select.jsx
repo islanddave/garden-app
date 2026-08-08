@@ -16,9 +16,30 @@ function normalizeOptions(options) {
   )
 }
 
+// A stored value that is not in `options` used to render as the PLACEHOLDER — the select showed
+// "— optional —" for a field that was in fact set, so the real value was invisible and could not be
+// preserved by anyone editing the form. Worse than invisible: the obvious user response is to pick
+// a value to fill the apparently-empty box, which silently REPLACES the stored one.
+//
+// Hit live on locations.type_label 2026-08-08: 'area' was the most common value in the data (9 of
+// 21 locations, 200 live plantings) and had never been added to LOCATION_TYPE_LABELS. Because
+// type_label feeds the care engine's covered/outdoor branch, "filling in" one of those boxes with
+// shelf/rack/tray would have flipped a whole yard to covered — no rain credit, no frost alerts.
+//
+// Surfacing the value is strictly more honest than hiding it, so this is fixed in the PRIMITIVE
+// rather than in one caller's option list: the same drift can happen to any select whose vocabulary
+// is a hardcoded list and whose data is not. Appended, not prepended, so it never displaces a real
+// option, and only when the value is non-empty — an empty value must still show the placeholder.
+function withStoredValue(opts, value) {
+  if (!opts || value == null || value === '') return opts
+  return opts.some(o => String(o.value) === String(value))
+    ? opts
+    : [...opts, { value, label: String(value) }]
+}
+
 export default function Select({ value, onChange, error, errorId, options, placeholder, children, style, 'aria-invalid': ariaInvalid, 'aria-describedby': describedBy, ...rest }) {
   const hasError = Boolean(error) || ariaInvalid === true || ariaInvalid === 'true'
-  const opts = normalizeOptions(options)
+  const opts = withStoredValue(normalizeOptions(options), value)
   return (
     <select
       value={value}
