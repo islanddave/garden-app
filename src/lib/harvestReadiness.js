@@ -36,10 +36,16 @@ const REPEATING_HABITS = new Set(['repeat', 'cut_and_come_again'])
 // five actively-producing plants, all picked in the last 4-13 days.
 //
 // 3 is a deliberately loose ceiling: it keeps a genuinely-missed pick (a 2-day cucumber left 5 days)
-// while rejecting the order-of-magnitude rows. It is a CLIENT-side sanity bound and NOT a substitute
-// for the server-side fix — `lambda/events/index.js` filters `status NOT IN ('failed','ended')`, so
-// `dormant` still sails through into the payload and the row is only stopped here. The payload carries
-// no `status` field, so a client-side dormant filter is not constructible. See the report.
+// while rejecting the order-of-magnitude rows. It is a CLIENT-side sanity bound.
+// CORRECTED 2026-08-10 — the paragraph that stood here was STALE and said the opposite of the truth.
+// It claimed `lambda/events/index.js` filters only `status NOT IN ('failed','ended')` so "`dormant`
+// still sails through into the payload". That stopped being true at `b5a347b` (2026-08-04):
+// `lambda/events/index.js:893` now reads `NOT IN ('failed','ended','dormant')`, so dormant is excluded
+// SERVER-side and never reaches this payload. The old text told a future maintainer the server was
+// broken when it was not — worse than no comment. The ratio bound remains useful for its own reason
+// (mis-set repeat_interval_days), not as a dormant backstop.
+// Still true and worth keeping: the payload carries no `status` field, so a client-side dormant filter
+// is not constructible here — which is exactly why the server-side gate is the load-bearing one.
 export const MAX_OVERDUE_RATIO = 3
 
 export function isReadyToPick(c, etDoy) {

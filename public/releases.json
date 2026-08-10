@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.7.0",
+    "date": "2026-08-10",
+    "highlights": [
+      "Dormant plants are now excluded from everything that suggests care. They were already kept out of the daily watering/feeding/pest lists, but three other places still counted them: the frost alert, the Findings list, and the dashboard needs-attention flag. Dormant stock sits in controlled storage and never needs that treatment.",
+      "The frost one mattered most \u2014 it is a real alert that emails you, it fires year-round on a temperature threshold, and nothing would have revealed the problem until the first cold night.",
+      "The Findings list also stopped suggesting care on plantings marked failed (7 of them were doing exactly that)."
+    ]
+  },
+  {
     "version": "4.6.2",
     "date": "2026-08-10",
     "highlights": [

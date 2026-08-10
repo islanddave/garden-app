@@ -580,6 +580,20 @@ export function queryHeadsUp(sql, userId) {
         WHERE el.flagged_as_issue = true
           AND el.resolved_at IS NULL
           AND el.deleted_at IS NULL
+          -- BUG-FLAGGEDDORMANT-001: this arm joins the CONTAINER only and never touched garden_node,
+          -- so a flagged issue on a non-actionable planting still lit the container as needing
+          -- attention. Its stale sibling 20 lines below carries the full predicate three times —
+          -- this was the narrower-exclusion odd one out, not a deliberate difference.
+          -- Gated on the flagged event's OWN planting rather than the sibling "container holds any
+          -- actionable planting" EXISTS, because that is the precise claim: this alert is about THIS
+          -- issue. A project-level issue (plant_id NULL) is unaffected.
+          -- Measured on prod 2026-08-10 before changing: ZERO unresolved flagged rows exist, so this
+          -- closes a latent leak at zero live blast radius rather than moving anything Dave sees today.
+          AND (el.plant_id IS NULL OR EXISTS (
+                SELECT 1 FROM public.garden_node gn
+                WHERE gn.id = el.plant_id AND gn.deleted_at IS NULL AND gn.archived_at IS NULL
+                  AND (gn.status IS NULL OR gn.status NOT IN ('dormant','ended','failed','rooting'))
+              ))
         ORDER BY el.project_id, el.severity DESC NULLS LAST, el.created_at DESC
       ),
       stale AS (

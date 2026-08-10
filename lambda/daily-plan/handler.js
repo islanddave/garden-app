@@ -374,7 +374,22 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       const wx = wxBySpace[spaceId] || null;
       const hy = hyBySpace[spaceId] || null;
       const prov = stationProvBySpace[spaceId] || {};
-      const exposure = summarize(rows, { cadenceTenderFor });
+      // BUG-FROSTDORMANT-001: `rows` is the UNFILTERED per-space planting set. generatePlan above
+      // drops dormant plantings internally (engine.js:387 — `p.status==='dormant' || c.dormant_skip`
+      // then `continue`, before the cold bucket at :493), but that guard lives INSIDE the engine and
+      // does not travel with the array. Handing the same `rows` to summarize() let a dormant planting
+      // into the frost exposure set and therefore into a real outbound alert (FROST_ALERT_ENABLED is
+      // "true" in prod; the topic emails Dave). Dave, 2026-08-10: dormant stock is in temp/humidity-
+      // controlled bins and "never need that treatment".
+      // Filtered HERE rather than inside summarize() so summarize stays a pure classifier, and built
+      // from the engine's own predicate (resolveCadence is already imported for cadenceTenderFor) so
+      // the two cannot drift — one `continue` in the engine was the entire defence and a second
+      // consumer walked straight past it.
+      const careRows = rows.filter(p => {
+        const c = resolveCadence(p, cadence);
+        return !(p.status === 'dormant' || (c && c.dormant_skip));
+      });
+      const exposure = summarize(careRows, { cadenceTenderFor });
       frostDecision = frostEval({
         tonightLow: wx ? wx.tonightLow : null,
         highToday: wx ? wx.highToday : null,

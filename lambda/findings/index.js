@@ -91,6 +91,16 @@ export const handler = async (event) => {
                                 AND ent.deleted_at IS NULL
       WHERE e.deleted_at IS NULL
         AND e.flagged_as_issue = true
+        -- BUG-FINDINGSDORMANT-001: this join carried NO status gate at all — only deleted_at. Findings
+        -- render care copy ("likely needs water", "is likely due for feeding", "may need attention")
+        -- with a Treated action, and unresolved rows never age out, so a non-actionable planting sat
+        -- here indefinitely suggesting treatment. Dave, 2026-08-10: dormant stock lives in temp/humidity-
+        -- controlled bins and never needs that treatment.
+        -- Not theoretical when written: 0 dormant rows but SEVEN failed rows were leaking — dead
+        -- tissue being asked for water. Adopts the same non-actionable set every sibling care surface
+        -- uses (dashboard handlers.js, events/index.js:893) rather than inventing a narrower one;
+        -- NULL status stays actionable, fail-open, matching those siblings.
+        AND (p.status IS NULL OR p.status NOT IN ('dormant','ended','failed','rooting'))
         AND pp.created_by = ANY(${householdIds})
         AND (e.resolved_at IS NULL OR e.resolved_at > NOW() - (${ISSUE_WINDOW_DAYS} || ' days')::interval)
       ORDER BY e.event_date DESC
