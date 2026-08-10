@@ -9,7 +9,17 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const RAW = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+const SRC = decomment(RAW);
 
 describe('inventory-items Lambda — Household Mode scope widening', () => {
   it('imports householdScope + computes householdIds', () => {
@@ -39,7 +49,9 @@ describe('inventory-items Lambda — Household Mode scope widening', () => {
   });
 
   it('documents the concurrent-quantity lost-update window as a fast-follow TODO', () => {
-    expect(SRC).toMatch(/HOUSEHOLD-MODE TODO:[\s\S]*lost-update window/);
+    // The COMMENT is the subject here (this asserts the TODO is documented, not that code exists),
+    // so it is the one assertion in this file that legitimately reads RAW.
+    expect(RAW).toMatch(/HOUSEHOLD-MODE TODO:[\s\S]*lost-update window/);
   });
 
   it('no array spread (42P18 guard)', () => {

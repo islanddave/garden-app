@@ -20,8 +20,18 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
-const DASH = readFileSync(resolve(__dirname, '..', 'dashboard', 'handlers.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const RAW = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+const SRC = decomment(RAW);
+const DASH = decomment(readFileSync(resolve(__dirname, '..', 'dashboard', 'handlers.js'), 'utf8'));
 
 // Real tagged templates only — same extraction as lambda/sql-comment-hygiene.test.js, so prose in
 // JS comments that merely mentions sql cannot be mistaken for a query.
@@ -76,7 +86,8 @@ describe('events Lambda — F3 container soft-delete filter', () => {
 
   // MUTATION: delete `AND pp.deleted_at IS NULL` from the by-id GET WHERE clause -> RED.
   it('GET /api/events/:id filters the deleted container, matching its own DELETE handler', () => {
-    const detail = uncommented(block(SRC, '-- BUG-HARVESTEDIT-001', "if (method === 'DELETE')"));
+    // This start marker is a SQL COMMENT, so the block is located in RAW and decommented after.
+    const detail = decomment(block(RAW, '-- BUG-HARVESTEDIT-001', "if (method === 'DELETE')"));
     expect(detail).toMatch(/AND pp\.deleted_at IS NULL/);
     // The DELETE handler always had it; this is the parity claim the fix rests on.
     const del = uncommented(block(SRC, "if (method === 'DELETE') {", 'return resp(405'));

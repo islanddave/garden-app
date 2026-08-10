@@ -14,7 +14,17 @@ import { validateClear, resolveFlagPair, CLEARABLE_FIELDS, CLEARABLE_SET } from 
 import { VALID_TREATMENT_CATEGORIES, TREATMENT_CATEGORY_ERROR, validateTreatmentCategory } from './validators.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const RAW = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+const SRC = decomment(RAW);
 
 const TREATMENT_COLS = ['treatment_product_id', 'treatment_product_text', 'treatment_category',
                         'treatment_amount', 'pest_target'];
@@ -222,10 +232,12 @@ describe('the treatment-category rule is shared with the create path, not re-typ
 // skips the OLD-anchor recompute moves the event correctly and leaves the vacated planting claiming
 // a watering it no longer has — forever, because every forward upsert is GREATEST. Behavioural
 // coverage for that lives in tests/integration (not in this commit; see the residuals note).
+// The block marker is a COMMENT banner, so the offsets are taken in RAW; the window is decommented
+// before returning so the arm assertions below run against code, not against prose describing it.
 const putTail = () => {
-  const i = SRC.indexOf('Slice 3: care-cache maintenance for a re-anchor');
+  const i = RAW.indexOf('Slice 3: care-cache maintenance for a re-anchor');
   expect(i, 'the re-anchor block must exist').toBeGreaterThan(-1);
-  return SRC.slice(i, SRC.indexOf('return resp(200, { ...updatedRows[0]', i));
+  return decomment(RAW.slice(i, RAW.indexOf('return resp(200, { ...updatedRows[0]', i)));
 };
 
 describe('slice 3: the re-anchor maintains the cache on BOTH anchors', () => {
@@ -301,7 +313,10 @@ describe('slice 3: the re-anchor maintains the cache on BOTH anchors', () => {
     // literal it interpolates even within a `--` SQL comment, so a stale one is a runtime
     // ReferenceError on every re-anchor, not merely a dead gate. (That is exactly what happened
     // while making this change; lambda/sql-comment-hygiene.test.js now bans the shape fleet-wide.)
-    const block = SRC.slice(SRC.indexOf('Slice 3: care-cache maintenance'));
+    // Deliberately RAW, and this is the one assertion in the file that MUST NOT be decommented: a
+    // `${...}` placeholder inside a `--` comment is still interpolated by JavaScript, so stripping
+    // comments here would hide the exact defect this guards. Comments are in scope on purpose.
+    const block = RAW.slice(RAW.indexOf('Slice 3: care-cache maintenance'));
     expect(block, 'the movedType placeholder must be gone from the re-anchor block')
       .not.toMatch(/\$\{movedType\}/);
   });

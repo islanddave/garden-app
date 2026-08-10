@@ -6,7 +6,16 @@ import { dirname, join } from 'node:path';
 // Static-source guard (crucible D-SCOPE): every visibility-scoped read of public.tag must carry the ONE
 // canonical predicate (private→own, shared→household, system→all). A drift here is a cross-user leak.
 const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, 'index.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const src = decomment(readFileSync(join(here, 'index.js'), 'utf8'));
 
 describe('tags lambda visibility predicate is canonical and un-bypassed', () => {
   it('contains the canonical 3-branch predicate', () => {

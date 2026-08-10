@@ -8,7 +8,16 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 
 describe('events Lambda — Household Mode surgical widening', () => {
   it('imports householdScope + computes householdIds', () => {
@@ -49,7 +58,7 @@ describe('events Lambda — Household Mode surgical widening', () => {
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
     expect(matches.length).toBe(16);
     // The moved gate still exists — assert it at its new home so this count can never drop silently.
-    const localAuthz = readFileSync(resolve(__dirname, 'authz-parents.js'), 'utf8');
+    const localAuthz = decomment(readFileSync(resolve(__dirname, 'authz-parents.js'), 'utf8'));
     expect(localAuthz).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\)/);
   });
 

@@ -35,7 +35,14 @@ const lambdaDirs = () => readdirSync(here, { withFileTypes: true })
 // not count as a live arm, and so a handler cannot satisfy the guard by mentioning `@> ARRAY[` in
 // prose. Line comments only; the SQL here is a JS template literal and block comments do not appear
 // inside one (lambda/sql-comment-hygiene.test.js enforces `--` over `//` in the templates).
-const strip = src => src.split('\n').map(l => l.replace(/--.*$/, '').replace(/\/\/.*$/, '')).join('\n');
+// URL-SAFE + decrement-safe (hardened): the previous form was
+//   l.replace(/--.*$/, '').replace(/\/\/.*$/, '')
+// which truncated any line at the `//` of an `https://` URL (varieties/validate.js has one) and at
+// any `--`, including a JS decrement and `--` inside a string literal. Over-stripping is not benign:
+// it silently shrinks the haystack, so a `not.toMatch` can pass because the text it forbids was
+// deleted by the stripper rather than absent from the code. The `[^:]` guard keeps `https://`
+// intact; the `--` arm now requires surrounding space.
+const strip = src => src.split('\n').map(l => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1')).join('\n');
 
 // A "COALESCE-on-a-body-field" arm: the exact shape that conflates null with absent.
 const COALESCE_BODY = /COALESCE\(\s*\$\{[^}]*\bbody\.[A-Za-z_][A-Za-z0-9_]*/g;

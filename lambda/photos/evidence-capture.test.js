@@ -8,7 +8,17 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const RAW = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+const SRC = decomment(RAW);
 
 // Isolate the auto-capture block via its unique comment marker (the gate string
 // `if (inserted.plant_id) {` also opens the earlier auto-promote block, so anchor on
@@ -35,9 +45,12 @@ const blockFrom = (src, marker) => {
   }
   return { start, text: '' };
 };
-const START = SRC.indexOf('auto-capture on photo log');
-const END = SRC.indexOf('evidence auto-capture non-fatal failure', START);
-const BLOCK = blockFrom(SRC, 'auto-capture on photo log').text;
+// Both block anchors are COMMENT markers, so extraction (and the brace-balancing that depends on
+// matched braces) runs over RAW; the extracted text is decommented before any assertion so a
+// construct named only in the block's own explanatory prose cannot satisfy a positive match.
+const START = RAW.indexOf('auto-capture on photo log');
+const END = RAW.indexOf('evidence auto-capture non-fatal failure', START);
+const BLOCK = decomment(blockFrom(RAW, 'auto-capture on photo log').text);
 
 describe('photos Lambda — DRG evidence auto-capture on photo log', () => {
   it('only fires when the photo links to a planting (inserted.plant_id gate)', () => {
@@ -100,24 +113,24 @@ describe('photos Lambda — DRG evidence auto-capture on photo log', () => {
 
 // V4-PHOTOCAPTION-001 — the PUT re-tag route must sync an edited caption into the
 // upload-time evidence snapshot (note + claim), or DrG reads stale evidence forever.
-const SYNC_START = SRC.indexOf('evidence caption sync:');
-const SYNC_END = SRC.indexOf('evidence caption sync non-fatal failure', SYNC_START);
+const SYNC_START = RAW.indexOf('evidence caption sync:');
+const SYNC_END = RAW.indexOf('evidence caption sync non-fatal failure', SYNC_START);
 // Brace-balanced from the block's own `try {` through its matching `}`, for the same reason as
 // BLOCK above: the fixed +60 window stopped inside the statement it was meant to bound, so the
 // `not.toMatch(/DELETE FROM public.evidence/)` below could not see a DELETE added after the catch.
 const SYNC_BLOCK = (() => {
   if (SYNC_START === -1) return '';
-  const open = SRC.indexOf('{', SRC.indexOf('try', SYNC_START));
+  const open = RAW.indexOf('{', RAW.indexOf('try', SYNC_START));
   if (open === -1) return '';
   let depth = 0;
-  for (let i = open; i < SRC.length; i++) {
-    if (SRC[i] === '{') depth++;
-    else if (SRC[i] === '}') {
+  for (let i = open; i < RAW.length; i++) {
+    if (RAW[i] === '{') depth++;
+    else if (RAW[i] === '}') {
       depth--;
       if (depth === 0) {
         // include the sibling catch clause that closes the try/catch pair
-        const close = SRC.indexOf('}', SRC.indexOf('catch (evErr)', i));
-        return SRC.slice(SYNC_START, (close === -1 ? i : close) + 1);
+        const close = RAW.indexOf('}', RAW.indexOf('catch (evErr)', i));
+        return decomment(RAW.slice(SYNC_START, (close === -1 ? i : close) + 1));
       }
     }
   }
@@ -127,7 +140,9 @@ const SYNC_BLOCK = (() => {
 describe('photos Lambda — PUT caption sync into evidence snapshot', () => {
   it('exists in the PUT route (after the photos UPDATE, before the 200)', () => {
     expect(SYNC_START).toBeGreaterThan(-1);
-    const putStart = SRC.indexOf("PUT|PATCH /api/photos/:id");
+    // Also a COMMENT banner, and it is compared against SYNC_START — both offsets must come from
+    // the same string, so both are RAW.
+    const putStart = RAW.indexOf("PUT|PATCH /api/photos/:id");
     expect(putStart).toBeGreaterThan(-1);
     expect(SYNC_START).toBeGreaterThan(putStart);
   });

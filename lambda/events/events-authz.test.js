@@ -13,10 +13,19 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
-const TAGS = readFileSync(resolve(__dirname, '..', 'tags', 'index.js'), 'utf8');
-const CANON = readFileSync(resolve(__dirname, '..', 'authz-parents.js'), 'utf8');
-const LOCAL_COPY = readFileSync(resolve(__dirname, 'authz-parents.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+const TAGS = decomment(readFileSync(resolve(__dirname, '..', 'tags', 'index.js'), 'utf8'));
+const CANON = decomment(readFileSync(resolve(__dirname, '..', 'authz-parents.js'), 'utf8'));
+const LOCAL_COPY = decomment(readFileSync(resolve(__dirname, 'authz-parents.js'), 'utf8'));
 
 // Strip SQL/JS comments and collapse whitespace, so two copies of a predicate compare on what the
 // database actually sees rather than on how each file chose to explain itself.
@@ -98,7 +107,7 @@ describe('events POST — household ownership gate on body-supplied parent ids',
   it('does NOT edit the shared household.js — sibling lane', () => {
     // household.js is copied byte-identical into 17 Lambda dirs (household-copies-sync.test.js).
     // Extending it from this lane would require editing all 17.
-    const shared = readFileSync(resolve(__dirname, 'household.js'), 'utf8');
+    const shared = decomment(readFileSync(resolve(__dirname, 'household.js'), 'utf8'));
     expect(shared).not.toContain('loadOwnedProject');
     // The gate lives in authz-parents.js (imported), never bolted onto the 17-way-copied household.js.
     expect(LOCAL_COPY).toContain('export async function loadOwnedProject(');
@@ -114,7 +123,7 @@ describe('events POST — household ownership gate on body-supplied parent ids',
     // `import { loadOwnedProject, loadOwnedPlantingRef } from './authz-parents.js'`, then delete
     // the byte-identical-in-body test above along with this one's second expectation.
     expect(existsSync(resolve(__dirname, 'authz-parents.js'))).toBe(true);
-    const dirsSrc = readFileSync(resolve(__dirname, '..', 'authz-parents-copies-sync.test.js'), 'utf8');
+    const dirsSrc = decomment(readFileSync(resolve(__dirname, '..', 'authz-parents-copies-sync.test.js'), 'utf8'));
     expect(dirsSrc).toMatch(/const DIRS = \[[^\]]*'events'/);
   });
 });

@@ -3,6 +3,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import h from './handler.js';
+
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
 const { resolveInvokeOptions } = h;
 
 // A0.2-EVENT-OVERRIDES safety contract. The keystone assertions are (a) an EventBridge nightly
@@ -55,9 +64,12 @@ describe('A0.2 resolveInvokeOptions', () => {
 // same constraint as A0.2's nightly-timeout guards). The gated spread is the safety keystone: a LIVE
 // response must NOT bloat, and the sentinel is what the wrapper's preflight greps in the deployed zip.
 describe('A0.3-DRY-PLANS (static source guard)', () => {
-  const SRC = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'index.js'), 'utf8');
+  const RAW = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'index.js'), 'utf8');
+  const SRC = decomment(RAW);
   it('sentinel present + plans returned ONLY on dry runs', () => {
-    expect(SRC).toContain('A0.3-DRY-PLANS sentinel');
+    // The sentinel is a COMMENT by design — rerun-daily-plan.sh greps the deployed zip for it — so
+    // this line reads RAW. The behavioural assertion below runs against decommented source.
+    expect(RAW).toContain('A0.3-DRY-PLANS sentinel');
     expect(SRC).toMatch(/\.\.\.\(dryRun \? \{ plans: res\.plans \} : \{\}\)/);
   });
 });

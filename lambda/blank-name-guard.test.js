@@ -35,7 +35,14 @@ const lambdaDirs = () => readdirSync(here, { withFileTypes: true })
 
 // Line comments stripped so a binding quoted in an explanatory block does not count as live, and so
 // a handler cannot satisfy the guard by describing it in prose.
-const strip = src => src.split('\n').map(l => l.replace(/--.*$/, '').replace(/\/\/.*$/, '')).join('\n');
+// URL-SAFE + decrement-safe (hardened): the previous form was
+//   l.replace(/--.*$/, '').replace(/\/\/.*$/, '')
+// which truncated any line at the `//` of an `https://` URL (varieties/validate.js has one) and at
+// any `--`, including a JS decrement and `--` inside a string literal. Over-stripping is not benign:
+// it silently shrinks the haystack, so a `not.toMatch` can pass because the text it forbids was
+// deleted by the stripper rather than absent from the code. The `[^:]` guard keeps `https://`
+// intact; the `--` arm now requires surrounding space.
+const strip = src => src.split('\n').map(l => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1')).join('\n');
 
 const readAll = d => {
   const idx = strip(readFileSync(join(here, d, 'index.js'), 'utf8'));

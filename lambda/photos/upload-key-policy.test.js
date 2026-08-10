@@ -11,7 +11,16 @@ import { isAllowedUploadKey, UPLOAD_KEY_PREFIXES } from './uploadKeyPolicy.js';
 import { buildPhotoKey, PHOTO_PREFIXES } from '../../src/lib/photoKeys.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(join(here, 'index.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const SRC = decomment(readFileSync(join(here, 'index.js'), 'utf8'));
 
 const UUID = 'a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
 const ID = '11111111-1111-4111-8111-111111111111';

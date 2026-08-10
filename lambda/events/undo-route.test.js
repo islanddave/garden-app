@@ -14,7 +14,17 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const RAW = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+const SRC = decomment(RAW);
 
 describe('events Lambda — DELETE /api/events/:id (single-event undo)', () => {
   it('routes DELETE on /:id and soft-deletes by eventId (deleted_at, never hard-delete)', () => {
@@ -26,13 +36,13 @@ describe('events Lambda — DELETE /api/events/:id (single-event undo)', () => {
   });
 
   it('ownership pre-check is household-widened (event-entity op) and 404s when not owned', () => {
-    const idx = SRC.indexOf('/api/events/:id \u2014 single-event undo');
+    const idx = RAW.indexOf('/api/events/:id \u2014 single-event undo');
     expect(idx).toBeGreaterThan(-1);
     // Window widened 2600 -> 4000 (2026-08-03, BUG-EVTCASCADE-001): the child-row cascade added ~2KB
     // of code+rationale inside this route, leaving the old slice ~70 chars from a false failure. These
     // fixed-offset windows are the fragile part of the L-072 static-source style — size them for the
     // section, not for today's byte count.
-    const block = SRC.slice(idx, idx + 4000);
+    const block = decomment(RAW.slice(idx, idx + 4000));
     expect(block).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\)/);
     expect(block).toMatch(/resp\(404, \{ error: 'Not found' \}\)/);
   });
@@ -42,8 +52,8 @@ describe('events Lambda — DELETE /api/events/:id (single-event undo)', () => {
   });
 
   it('watering undo recomputes entity_memory from surviving events (parity with batch undo)', () => {
-    const idx = SRC.indexOf('/api/events/:id \u2014 single-event undo');
-    const block = SRC.slice(idx, idx + 12000);  // widened 4200 -> 6000 -> 12000, same reason as above
+    const idx = RAW.indexOf('/api/events/:id \u2014 single-event undo');
+    const block = decomment(RAW.slice(idx, idx + 12000));  // widened 4200 -> 6000 -> 12000, same reason as above
     expect(block).toMatch(/last_watered_at = surv\.mw/);
     // BUG-CARECACHEUNDO-001 moved the watering gate from JS into this CASE (the recency columns are
     // now recomputed on EVERY undo; next_water_at still is not, because the daily-plan engine owns

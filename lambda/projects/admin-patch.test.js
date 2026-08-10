@@ -13,7 +13,17 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const RAW = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+const SRC = decomment(RAW);
 
 describe('projects Lambda admin PATCH route (S6 static-source guard)', () => {
   it('declares a PATCH branch inside the idMatch block', () => {
@@ -104,11 +114,11 @@ describe('projects Lambda admin GET extension (S6 ?admin=1 guard)', () => {
   });
 
   it('admin GET returns ALL alive rows (no created_by filter)', () => {
-    const adminStart = SRC.indexOf('const adminMode = qs.admin');
-    const adminEnd = SRC.indexOf('// Optional filter: ?parent_id', adminStart);
+    const adminStart = RAW.indexOf('const adminMode = qs.admin');
+    const adminEnd = RAW.indexOf('// Optional filter: ?parent_id', adminStart);
     expect(adminStart).toBeGreaterThan(-1);
     expect(adminEnd).toBeGreaterThan(adminStart);
-    const adminBlock = SRC.slice(adminStart, adminEnd);
+    const adminBlock = decomment(RAW.slice(adminStart, adminEnd));
     // SELECT FROM <plant_projects|public.container> WHERE deleted_at IS NULL — no created_by
     // filter. Rename-tolerant: admin list read repointed onto the widened canonical view
     // public.container (foundation-migration-V101); the no-owner-filter invariant is unchanged.
@@ -117,9 +127,9 @@ describe('projects Lambda admin GET extension (S6 ?admin=1 guard)', () => {
   });
 
   it('admin GET response includes PROJ-RESCOPE columns kind + target_end_date + kind_set_at', () => {
-    const adminStart = SRC.indexOf('const adminMode = qs.admin');
-    const adminEnd = SRC.indexOf('// Optional filter: ?parent_id', adminStart);
-    const adminBlock = SRC.slice(adminStart, adminEnd);
+    const adminStart = RAW.indexOf('const adminMode = qs.admin');
+    const adminEnd = RAW.indexOf('// Optional filter: ?parent_id', adminStart);
+    const adminBlock = decomment(RAW.slice(adminStart, adminEnd));
     for (const col of ['kind', 'target_end_date', 'kind_set_at']) {
       expect(adminBlock, `admin GET SELECT missing ${col}`).toMatch(new RegExp(`\\b${col}\\b`));
     }

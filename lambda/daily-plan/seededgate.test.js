@@ -22,8 +22,19 @@ import cad from './cadence-data-v2.json';
 
 const { resolveCadence, waterSuppression } = engine;
 const here = dirname(fileURLToPath(import.meta.url));
-const ENGINE = readFileSync(join(here, 'engine.js'), 'utf8');
-const HANDLER = readFileSync(join(here, 'handler.js'), 'utf8').replace(/\s+/g, ' ');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const ENGINE = decomment(readFileSync(join(here, 'engine.js'), 'utf8'));
+// decomment runs BEFORE the whitespace squash — it is line-based, and the squash destroys the
+// line boundaries a `//` comment ends at.
+const HANDLER = decomment(readFileSync(join(here, 'handler.js'), 'utf8')).replace(/\s+/g, ' ');
 
 // Live care_profile payloads. Provenance markers are verbatim — note NONE of them is `_seeded`.
 const CHIVES = { _source: 'cowork_care_audit_20260709', crop: 'herb (chives / Allium schoenoprasum)',

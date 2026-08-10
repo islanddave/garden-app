@@ -7,6 +7,15 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reconcileNextWaterAt, PLAN_SCHEMA_VERSION } from './waterVerdict.js';
 
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const NOW = Date.parse('2026-07-08T18:00:00Z');
 const DAY = 86400000;
@@ -113,7 +122,7 @@ describe('reconcileNextWaterAt — fallback (behavior-preserving)', () => {
 
 describe('anti-drift', () => {
   it('PLAN_SCHEMA_VERSION is pinned to lambda/daily-plan/engine.js', () => {
-    const engineSrc = readFileSync(resolve(__dirname, '../daily-plan/engine.js'), 'utf8');
+    const engineSrc = decomment(readFileSync(resolve(__dirname, '../daily-plan/engine.js'), 'utf8'));
     const m = engineSrc.match(/const\s+PLAN_SCHEMA_VERSION\s*=\s*(\d+)/);
     expect(m, 'PLAN_SCHEMA_VERSION literal not found in engine.js').not.toBeNull();
     expect(Number(m[1])).toBe(PLAN_SCHEMA_VERSION);

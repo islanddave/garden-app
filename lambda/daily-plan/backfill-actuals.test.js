@@ -15,6 +15,15 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import handler from './handler.js';
 
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
 const { run, backfillYesterdayActual, prevPlanDate } = handler;
 
 const USER = 'user_1';
@@ -208,7 +217,7 @@ describe('run() — backfill wired in, current-day plan untouched', () => {
 });
 
 describe('index.js wiring (static source guard — index.js pulls AWS/neon at module load, cannot be imported)', () => {
-  const SRC = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'index.js'), 'utf8');
+  const SRC = decomment(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'index.js'), 'utf8'));
   it('fetchPrecip emits yesterday_precip_actual_in from the D-1 slot, null-guarded (never coerced to 0)', () => {
     expect(SRC).toMatch(/yesterday_precip_actual_in:\s*Number\.isFinite\(ps\[1\]\)\s*\?\s*round2\(ps\[1\]\)\s*:\s*null/);
   });

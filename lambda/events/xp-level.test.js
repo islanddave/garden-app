@@ -18,11 +18,22 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
-const FX  = readFileSync(resolve(__dirname, 'batchSideEffects.js'), 'utf8');
-const RECONCILE = readFileSync(resolve(__dirname, '../xp-reconcile/index.js'), 'utf8');
-const DASH = readFileSync(resolve(__dirname, '../dashboard/handlers.js'), 'utf8');
+const SRC_RAW = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+const FX_RAW  = readFileSync(resolve(__dirname, 'batchSideEffects.js'), 'utf8');
+const SRC = decomment(SRC_RAW);
+const FX  = decomment(FX_RAW);
+const RECONCILE = decomment(readFileSync(resolve(__dirname, '../xp-reconcile/index.js'), 'utf8'));
+const DASH = decomment(readFileSync(resolve(__dirname, '../dashboard/handlers.js'), 'utf8'));
 
 const LEVEL_BRANCH = "WHEN 'level'";
 
@@ -62,16 +73,18 @@ describe('ORDERING: XP moves before the evaluator judges it', () => {
   // This is the difference between level_5 firing on the action that earns it and firing one
   // logging action later — which, for a user who logs on 8 days out of 120, can mean never.
   it('single path: the flat XP grant block precedes the achievement evaluation block', () => {
-    const flat = SRC.indexOf('Step 3b: flat XP grant');
-    const ach  = SRC.indexOf('Step 3c: inline achievement evaluation');
+    // The step banners are COMMENTS, so this ordering check reads RAW offsets (mixing RAW and
+    // decommented offsets would compare positions in two different strings).
+    const flat = SRC_RAW.indexOf('Step 3b: flat XP grant');
+    const ach  = SRC_RAW.indexOf('Step 3c: inline achievement evaluation');
     expect(flat).toBeGreaterThan(-1);
     expect(ach).toBeGreaterThan(-1);
     expect(flat).toBeLessThan(ach);
   });
 
   it('batch path: same order', () => {
-    const flat = FX.indexOf('Step 3: flat XP grant');
-    const ach  = FX.indexOf('Step 4: achievement evaluation');
+    const flat = FX_RAW.indexOf('Step 3: flat XP grant');
+    const ach  = FX_RAW.indexOf('Step 4: achievement evaluation');
     expect(flat).toBeGreaterThan(-1);
     expect(ach).toBeGreaterThan(-1);
     expect(flat).toBeLessThan(ach);
@@ -201,7 +214,9 @@ describe('photo_bonus is RETIRED — no third dead XP reason is left behind', ()
     // here. Reasons are only ever written as a literal in an INSERT INTO xp_events.
     const found = new Set();
     for (const f of jsFiles(LAMBDA_DIR)) {
-      const s = readFileSync(f, 'utf8');
+      // Decommented: this census is an EXACT toEqual, so a reason literal surviving only in a
+      // comment after its INSERT was deleted would keep the set complete and pass vacuously.
+      const s = decomment(readFileSync(f, 'utf8'));
       for (const m of s.matchAll(/'(event_logged|achievement_earned|photo_bonus|[a-z_]+)'\s*,\s*\$\{?\w*\}?[^\n]*\n/g)) {
         void m;
       }

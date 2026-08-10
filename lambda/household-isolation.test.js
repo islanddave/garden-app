@@ -58,6 +58,17 @@ function read(rel) {
   return readFileSync(resolve(LAMBDA_ROOT, rel), 'utf8');
 }
 
+// A construct NAMED IN A COMMENT is not that construct: an `import { householdScope } ...` line
+// left behind in a comment after the real import was deleted satisfies IMPORT_RE and the in-scope
+// guard below passes with the surface unscoped. The `//` arm is URL-safe (the `[^:]` guard keeps
+// `https://` intact); the `--` arm requires surrounding space so a JS decrement is never read as a
+// SQL comment. Used for the POSITIVE assertion only — the out-of-scope census stays on raw text,
+// where a merely-commented mention is still worth flagging.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+const readCode = (rel) => decomment(read(rel));
+
 function exists(rel) {
   try { statSync(resolve(LAMBDA_ROOT, rel)); return true; } catch { return false; }
 }
@@ -65,7 +76,7 @@ function exists(rel) {
 describe('Household Mode — surface isolation (G3)', () => {
   for (const f of IN_SCOPE) {
     it(`${f} imports householdScope (in scope)`, () => {
-      expect(read(f)).toMatch(IMPORT_RE);
+      expect(readCode(f)).toMatch(IMPORT_RE);
     });
   }
 

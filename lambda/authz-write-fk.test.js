@@ -35,6 +35,16 @@ function fakeSql(result = []) {
   fn.calls = calls;
   return fn;
 }
+// A construct NAMED IN A COMMENT is not that construct: deleting a gate, an import, or an INSERT
+// and leaving `// was: <it>` behind made the censuses below count their own epitaphs and pass.
+// Reads that feed a POSITIVE assertion or a call-site COUNT are decommented. Reads that feed only
+// a `not.toMatch` are deliberately left RAW — there a comment can only cause a safe failure, and
+// stripping would relax the guard. The `//` arm is URL-safe (the `[^:]` guard keeps `https://`
+// intact); the `--` arm requires surrounding space so a JS decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
 const textOf = (sql) => sql.calls[0].text.replace(/\s+/g, ' ');
 
 describe('V4-AUTHZSWEEP-001: ownership loaders bind the correct owner column', () => {
@@ -226,7 +236,7 @@ const pairsOnDisk = () => {
   const out = new Set();
   for (const d of dirs) {
     for (const f of handlerModules(d)) {
-      const src = readFileSync(join(here, d, f), 'utf8');
+      const src = decomment(readFileSync(join(here, d, f), 'utf8'));
       // (a) WRITE TARGETS — the column list of an INSERT, and the assignments of a SET clause.
       // Source-of-truth for "this dir can write this FK", independent of how the value is spelled.
       for (const m of src.matchAll(/INSERT\s+INTO\s+[\w."]+\s*\(([^)]*)\)/gis)) {
@@ -333,7 +343,7 @@ describe('BUG-AUTHZFKENUM-001: every FK-shaped column a handler writes is gated 
 describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a loader', () => {
   for (const [file, field, loader, gates] of SITES) {
     it(`${file} gates body.${field} with ${loader} at ${gates} site(s)`, () => {
-      const src = readFileSync(join(here, file), 'utf8');
+      const src = decomment(readFileSync(join(here, file), 'utf8'));
       // Anchored on the GATE ITSELF — `!await loader(sql, <expr ending in the field>,` — not on a
       // loose three-token sequence spanning the file. The negation matters: it is what makes the
       // call a gate rather than a lookup, and it sits immediately beside the field it protects.
@@ -355,7 +365,7 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
   it('projects create gates parent_project_id against container.created_by', () => {
     // Not a shared loader (container is the projects handler's own row type), so assert the inline
     // predicate instead: the create path could otherwise birth a project inside another household's tree.
-    const src = readFileSync(join(here, 'projects/index.js'), 'utf8').replace(/\s+/g, ' ');
+    const src = decomment(readFileSync(join(here, 'projects/index.js'), 'utf8')).replace(/\s+/g, ' ');
     expect(src).toMatch(/body\.parent_project_id != null.*?FROM public\.container.*?created_by = ANY\(\$\{householdIds\}\).*?deleted_at IS NULL/);
   });
 
@@ -367,7 +377,7 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     // because the loader is handed the RESOLVED planting id, not the body field. Asserted here
     // instead of pre-absolved in NOT_IN_SITES, which is what the locations::parent_id entry used to
     // do while the pair was in fact wide open.
-    const src = readFileSync(join(here, 'evidence-ingest/index.js'), 'utf8').replace(/\s+/g, ' ');
+    const src = decomment(readFileSync(join(here, 'evidence-ingest/index.js'), 'utf8')).replace(/\s+/g, ' ');
     expect(src).toMatch(/SELECT id, planting_ref_id FROM public\.entity/);
     expect(src).toMatch(/ent\[0\]\.planting_ref_id != null && !await loadOwnedPlantingRef\(sql, ent\[0\]\.planting_ref_id, householdIds\)/);
     // The rejection must reuse the SAME 404 an absent entity gets — a 400 here would BE the
@@ -382,7 +392,7 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     // predicate, so an attacker could pre-create a cultivar on a key an admin would later use and
     // have /admin/classify's inline-create return the ATTACKER'S row with 200. Owner arms mirror
     // the PUT/DELETE editable set exactly; ORDER BY makes the LIMIT 1 deterministic.
-    const src = readFileSync(join(here, 'varieties/index.js'), 'utf8').replace(/\s+/g, ' ');
+    const src = decomment(readFileSync(join(here, 'varieties/index.js'), 'utf8')).replace(/\s+/g, ' ');
     expect(src).toMatch(/WHERE source_proj_rescope_project_id = \$\{sourceProjId\} AND deleted_at IS NULL AND \( created_by = ANY\(\$\{household\}\) OR created_by LIKE ANY\(\$\{managedPatterns\}::text\[\]\) \) ORDER BY created_at ASC, id ASC LIMIT 1/);
   });
 
@@ -395,7 +405,7 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
 
   it('each gated handler imports the loaders it uses, from the right module', () => {
     for (const file of [...new Set(SITES.map(s => s[0]))]) {
-      const src = readFileSync(join(here, file), 'utf8');
+      const src = decomment(readFileSync(join(here, file), 'utf8'));
       const needed = [...new Set(SITES.filter(s => s[0] === file).map(s => s[2]))];
       const houseImport = src.match(/import \{[^}]*\} from '\.\/household\.js';/);
       expect(houseImport, `${file} must import from ./household.js`).toBeTruthy();
@@ -495,7 +505,7 @@ describe('V4-AUTHZRESIDUE-001: every household-scoped handler rejects an empty J
   const scoped = lambdaDirs().filter(d =>
     existsSync(join(here, d, 'household.js')) ||
     readdirSync(join(here, d)).some(f => f.endsWith('.js') && !f.endsWith('.test.js') &&
-      /householdScope\s*\(/.test(readFileSync(join(here, d, f), 'utf8'))));
+      /householdScope\s*\(/.test(decomment(readFileSync(join(here, d, f), 'utf8')))));
 
   it('finds the household-scoped handler set (guards against an empty match)', () => {
     expect(scoped.length).toBeGreaterThanOrEqual(16);
@@ -504,7 +514,7 @@ describe('V4-AUTHZRESIDUE-001: every household-scoped handler rejects an empty J
 
   for (const d of scoped) {
     it(`${d}/index.js 401s an empty sub before deriving householdIds`, () => {
-      const src = readFileSync(join(here, d, 'index.js'), 'utf8');
+      const src = decomment(readFileSync(join(here, d, 'index.js'), 'utf8'));
       expect(src, `${d} must guard the empty sub`).toMatch(/if \(!userId\) return resp\(401/);
       // Ordering is the substance: a guard placed AFTER householdScope() has already let the empty
       // sub become an ownership array is decoration. Only assertable where the call is in this file
@@ -540,7 +550,7 @@ describe('V4-AUTHZRESIDUE-001: the malformed-id contract is 400 everywhere, neve
     // behavioural test above rather than by this regex — but it means only three private loaders
     // (loadPlanting / loadStorageLocation / loadHarvestLog) remain to scan. The import itself is
     // asserted directly below so the swap cannot silently become "no gate at all".
-    const src = readFileSync(join(here, 'preservation/index.js'), 'utf8');
+    const src = decomment(readFileSync(join(here, 'preservation/index.js'), 'utf8'));
     const loaders = [...src.matchAll(/async function (load\w+)\(sql, (\w+), householdIds\) \{\s*([^\n]*)/g)];
     expect(loaders.length, 'preservation loader set should not be empty').toBeGreaterThanOrEqual(3);
     for (const [, name, arg, firstLine] of loaders) {
@@ -554,7 +564,7 @@ describe('V4-AUTHZRESIDUE-001: the malformed-id contract is 400 everywhere, neve
     // appeared, but preservation kept a private copy — "a third private copy is how dialects are
     // born". The copy is gone; assert the import that replaced it, and that no private redefinition
     // creeps back. A per-dir Lambda zip cannot reach ../, so the module must be './household.js'.
-    const src = readFileSync(join(here, 'preservation/index.js'), 'utf8');
+    const src = decomment(readFileSync(join(here, 'preservation/index.js'), 'utf8'));
     const line = src.match(/import \{[^}]*\} from '\.\/household\.js';/);
     expect(line, 'preservation must import from ./household.js').toBeTruthy();
     expect(line[0], 'preservation must import the SHARED loadOwnedPhoto').toContain('loadOwnedPhoto');
@@ -565,7 +575,7 @@ describe('V4-AUTHZRESIDUE-001: the malformed-id contract is 400 everywhere, neve
   it('no ownership loader anywhere reaches SQL before a UUID guard', () => {
     // Whole-fleet sweep: any `load*(sql, x, householdIds)` in a canonical module must guard first.
     for (const file of ['household.js', 'authz-parents.js', 'preservation/index.js']) {
-      const src = readFileSync(join(here, file), 'utf8');
+      const src = decomment(readFileSync(join(here, file), 'utf8'));
       for (const [, name, arg, firstLine] of src.matchAll(/async function (load\w+)\(sql, (\w+), householdIds\) \{\s*([^\n]*)/g)) {
         expect(firstLine, `${file}:${name} must UUID-guard ${arg} before any await`)
           .toMatch(/if \(!UUID_RE\.test\(String\(\w+\)\)\) return null;/);
@@ -587,7 +597,7 @@ describe('V4-AUTHZRESIDUE-001: one planting predicate, not two dialects', () => 
     // written verbatim from the body on PUT and POST while its three sibling FKs were all gated —
     // and projectRow() echoes photo_id back through all four GET routes, so it is a read surface,
     // not just a bad FK. Both verbs asserted, because gating one is the shape of the original bug.
-    const src = readFileSync(join(here, 'preservation/index.js'), 'utf8');
+    const src = decomment(readFileSync(join(here, 'preservation/index.js'), 'utf8'));
     for (const [field, loader] of [
       ['plant_id', 'loadPlanting'],
       ['storage_location_id', 'loadStorageLocation'],

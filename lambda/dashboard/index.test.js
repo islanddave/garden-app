@@ -700,10 +700,20 @@ describe('DRG-WXWATER-002b — queryActiveProjects carries no naive water verdic
 // (daily-plan-read annotateDone) are two independent reimplementations of the SAME "satisfied today" filter.
 // They MUST keep the same water-done event types or bar and Today silently re-diverge (the 0%-overlap bug class).
 import { readFileSync as __readFileSync } from 'fs';
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. These anti-drift guards read two files and assert they agree, so a
+// comment in EITHER could fake agreement that the code no longer has. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const __decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+const __readSrc = (p) => __decomment(__readFileSync(p, 'utf8'));
 describe('DRG-WATERRECON-001 — bar/Today freshness filters stay in lockstep (anti-drift)', () => {
   it('the bar SQL and Today annotateDone use the same water-done event types + ET-day boundary', () => {
-    const barSrc = __readFileSync('lambda/dashboard/handlers.js', 'utf8');
-    const todaySrc = __readFileSync('lambda/daily-plan-read/index.js', 'utf8');
+    const barSrc = __readSrc('lambda/dashboard/handlers.js');
+    const todaySrc = __readSrc('lambda/daily-plan-read/index.js');
     // bar: SQL literal IN ('watering','rain'); Today: DONE_EVENTS.water_due array ['watering','rain']
     expect(barSrc).toMatch(/event_type IN \('watering','rain'\)/);
     expect(todaySrc).toMatch(/water_due:\s*\[\s*'watering',\s*'rain'\s*\]/);
@@ -735,25 +745,24 @@ describe('DRG-WATERRECON-002 — queryWaterDueFromPlan schema_version guard', ()
   });
 });
 
-import { readFileSync as __rfs2 } from 'fs';
 describe('DRG-WATERRECON-002 — plan schema_version stays in lockstep across engine + readers (anti-drift)', () => {
   const grab = (src) => { const m = src.match(/PLAN_SCHEMA_VERSION\s*=\s*(\d+)/); return m ? m[1] : null; };
   it('engine, dashboard bar, and Today reader pin the SAME PLAN_SCHEMA_VERSION integer', () => {
-    const ev = grab(__rfs2('lambda/daily-plan/engine.js', 'utf8'));
-    const bv = grab(__rfs2('lambda/dashboard/handlers.js', 'utf8'));
-    const tv = grab(__rfs2('lambda/daily-plan-read/index.js', 'utf8'));
+    const ev = grab(__readSrc('lambda/daily-plan/engine.js'));
+    const bv = grab(__readSrc('lambda/dashboard/handlers.js'));
+    const tv = grab(__readSrc('lambda/daily-plan-read/index.js'));
     expect(ev).not.toBeNull();
     expect(bv).toBe(ev);
     expect(tv).toBe(ev);
   });
   it('the engine writer STAMPS schema_version into the stored daily_plan.items jsonb', () => {
-    const handler = __rfs2('lambda/daily-plan/handler.js', 'utf8');
+    const handler = __readSrc('lambda/daily-plan/handler.js');
     expect(handler).toMatch(/schema_version:\s*PLAN_SCHEMA_VERSION/);
     expect(handler).toMatch(/require\('\.\/engine'\)/);
   });
   it('both readers FAIL LOUD on a version mismatch — no silent empty/garbage verdict', () => {
-    const bar = __rfs2('lambda/dashboard/handlers.js', 'utf8');
-    const today = __rfs2('lambda/daily-plan-read/index.js', 'utf8');
+    const bar = __readSrc('lambda/dashboard/handlers.js');
+    const today = __readSrc('lambda/daily-plan-read/index.js');
     expect(bar).toMatch(/schema_mismatch/);
     expect(bar).toMatch(/console\.error\([\s\S]*?schema_version MISMATCH/);
     expect(today).toMatch(/schema_stale/);

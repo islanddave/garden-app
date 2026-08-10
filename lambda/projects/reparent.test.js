@@ -7,7 +7,17 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const RAW = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+const SRC = decomment(RAW);
 
 describe('projects Lambda — V3-REPARENT-001 reparent + restore', () => {
   it('defines the /reparent and /reparent/restore matchers (extra segment, before idMatch)', () => {
@@ -18,7 +28,10 @@ describe('projects Lambda — V3-REPARENT-001 reparent + restore', () => {
     // restore handler must be checked before the bare reparent handler
     expect(SRC.indexOf('if (reparentRestoreMatch)')).toBeLessThan(SRC.indexOf('if (reparentMatch)'));
     // both handlers must run before the by-id block
-    expect(SRC.indexOf('if (reparentMatch)')).toBeLessThan(SRC.indexOf('// --- /api/projects/:id ---'));
+    // The by-id block is delimited by a COMMENT banner, so this ordering check reads RAW offsets
+    // (mixing RAW and decommented offsets would compare positions in two different strings).
+    expect(RAW.indexOf('// --- /api/projects/:id ---')).toBeGreaterThan(-1);
+    expect(RAW.indexOf('if (reparentMatch)')).toBeLessThan(RAW.indexOf('// --- /api/projects/:id ---'));
     expect(idi).toBeGreaterThan(-1);
   });
 

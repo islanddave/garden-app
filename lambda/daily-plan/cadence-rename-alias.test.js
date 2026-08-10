@@ -23,6 +23,14 @@ import { dirname, resolve } from 'node:path'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
 describe('V4-CULTIVARNAME-001 — cadence key aliases survive a rename', () => {
   it('by_variety carries the current DB name for the Czech heirloom', () => {
     expect(cad.by_variety).toHaveProperty("Czech's Bush")
@@ -64,7 +72,7 @@ describe('V4-CULTIVARNAME-001 — cadence key aliases survive a rename', () => {
   })
 
   it('the generated seed matches those names, with the apostrophe SQL-escaped', () => {
-    const sql = readFileSync(resolve(HERE, '../../migrations/v4-cal1-refweight-001/0b-seed.sql'), 'utf8')
+    const sql = decomment(readFileSync(resolve(HERE, '../../migrations/v4-cal1-refweight-001/0b-seed.sql'), 'utf8'))
     expect(sql).toContain("name='Czech''s Bush'")
     expect(sql).toContain("name='Floradade'")
     expect(sql).not.toContain("name='Czech Bush Slicer'")

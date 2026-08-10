@@ -9,7 +9,16 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(join(here, 'photo-access.js'), 'utf8');
+// A construct NAMED IN A COMMENT is not that construct: deleting live code and leaving
+// `// was: <it>` or `TRUE -- dropped: <it>` behind made every raw-source guard below find its
+// own epitaph and pass. Assertions run against decommented source. The `//` arm is URL-safe
+// (the `[^:]` guard keeps `https://` intact); the `--` arm requires surrounding space so a JS
+// decrement is never read as a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+
+const SRC = decomment(readFileSync(join(here, 'photo-access.js'), 'utf8'));
 
 describe('photo-access seam — OFF path is byte-identical presign passthrough', () => {
   it('default/OFF returns the caller presign result with the RAW path (final statement)', () => {
@@ -69,14 +78,14 @@ describe('photo-access seam — all 9 call sites route through the resolver', ()
       .map((e) => e.name)
       .filter((d) => existsSync(join(here, d, 'index.js'))
         && /import \{ resolvePhotoViewUrl \} from '\.\/photo-access\.js';/
-          .test(readFileSync(join(here, d, 'index.js'), 'utf8')))
+          .test(decomment(readFileSync(join(here, d, 'index.js'), 'utf8'))))
       .sort();
     expect(onDisk).toEqual(Object.keys(SITES).sort());
   });
 
   for (const [d, expected] of Object.entries(SITES)) {
     it(`${d}/index.js routes ALL ${expected} of its photo reads through resolvePhotoViewUrl`, () => {
-      const idx = readFileSync(join(here, d, 'index.js'), 'utf8');
+      const idx = decomment(readFileSync(join(here, d, 'index.js'), 'utf8'));
       expect(idx).toMatch(/import \{ resolvePhotoViewUrl \} from '\.\/photo-access\.js';/);
       const calls = idx.match(/resolvePhotoViewUrl\(/g) ?? [];
       // Exact, not >=: dropping a site is the regression, so a shrink must fail. A NEW site is
@@ -93,11 +102,11 @@ describe('photo-access seam — all 9 call sites route through the resolver', ()
 
   it('the seam census is not vacuous (floor across the whole fleet)', () => {
     const total = Object.keys(SITES).reduce((n, d) =>
-      n + (readFileSync(join(here, d, 'index.js'), 'utf8').match(/resolvePhotoViewUrl\(/g) ?? []).length, 0);
+      n + (decomment(readFileSync(join(here, d, 'index.js'), 'utf8')).match(/resolvePhotoViewUrl\(/g) ?? []).length, 0);
     expect(total).toBe(TOTAL_SITES);
   });
   it('photos upload PUT presign path is untouched (still mints its own S3 PUT URL)', () => {
-    const idx = readFileSync(join(here, 'photos', 'index.js'), 'utf8');
+    const idx = decomment(readFileSync(join(here, 'photos', 'index.js'), 'utf8'));
     expect(idx).toMatch(/upload_url = await getSignedUrl\(s3, cmd, \{ expiresIn: 300 \}\)/);
     // upload-url route must NOT route through the read-side resolver
     expect(idx).not.toMatch(/resolvePhotoViewUrl\([^)]*upload/i);

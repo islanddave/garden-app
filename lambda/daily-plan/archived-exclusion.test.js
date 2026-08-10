@@ -17,7 +17,14 @@ const RAW = readFileSync(resolve(__dirname, 'handler.js'), 'utf8')
 // `-- p.archived_at is null` on the line above, same for `pj.archived_at` at :255 — left BOTH
 // tests GREEN with every soft-archived planting back in the nightly plan. This file is only
 // two assertions, so that mutation reduced its coverage to zero.
-const strip = src => src.split('\n').map(l => l.replace(/--.*$/, '').replace(/\/\/.*$/, '')).join('\n')
+// URL-SAFE + decrement-safe (hardened): the previous form was
+//   l.replace(/--.*$/, '').replace(/\/\/.*$/, '')
+// which truncated any line at the `//` of an `https://` URL (varieties/validate.js has one) and at
+// any `--`, including a JS decrement and `--` inside a string literal. Over-stripping is not benign:
+// it silently shrinks the haystack, so a `not.toMatch` can pass because the text it forbids was
+// deleted by the stripper rather than absent from the code. The `[^:]` guard keeps `https://`
+// intact; the `--` arm now requires surrounding space.
+const strip = src => src.split('\n').map(l => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1')).join('\n')
 const SRC = strip(RAW)
 
 // Scope to the plantings query. A bare whole-file match would still pass if the clause moved
