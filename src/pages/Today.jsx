@@ -6,6 +6,7 @@ import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'
 import HarvestReadyBand from '../components/HarvestReadyBand.jsx'
+import ComposeHarvestBand from '../components/ComposeHarvestBand.jsx'
 import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
 import { useMembers } from '../hooks/useMembers.js'
@@ -118,6 +119,12 @@ export default function Today() {
       {/* V4-HARVESTSURF-001 — cadence-evidence "ready to pick" nudge. Same ambient, self-fetching,
           hidden-when-empty posture as the band above; never fires without a prior harvest. */}
       <HarvestReadyBand />
+
+      {/* V4-COMPOSEPOST-001 — compose tonight's harvest post from what was just logged. Same ambient
+          posture again: self-fetching, error swallowed, renders nothing unless there is a batch from
+          the last 18 hours. Deliberately AFTER the ready-to-pick band — that one asks you to go pick
+          something; this one is what you reach for once you already have. */}
+      <ComposeHarvestBand />
 
       {/* V4-ASSIGNLENS-001 — the rest of the household's care (opt-in, ambient, subordinate). Works
           whether or not the current user has their own plan today. Reuses CareNeeded so logging on

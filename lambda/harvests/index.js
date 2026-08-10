@@ -150,6 +150,14 @@ export const handler = async (event) => {
           e.id AS event_id, e.event_type, e.event_date,
           to_char((e.event_date AT TIME ZONE ${HARVEST_TZ})::date, 'YYYY-MM-DD') AS day_key,
           e.plant_id, e.notes, e.project_id,
+          -- V4-COMPOSEPOST-001: the compose surface clusters harvests into the evening BATCH Dave
+          -- actually posts about, and event_date cannot support that — it is date-grained by
+          -- construction (482 of 504 live rows sit at exactly 08:00 ET, a DST-safe date-at-noon
+          -- encoding), so it cannot order two picks within a day. created_at can. created_by rides
+          -- along because Jen is a real second logger, and an overlapping session must not merge
+          -- into a batch that gets published in Dave's first person. Purely additive — no existing
+          -- consumer reads either field, and both are NOT NULL on every row.
+          e.created_at, e.created_by,
           pj.name AS project_name,
           gn.id AS gn_id, gn.display_name AS planting_name, gn.cultivar_id AS variety_id,
           cv.crop_type_slug AS crop_slug, cv.display_name AS variety_name,

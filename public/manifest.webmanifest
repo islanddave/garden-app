@@ -9,6 +9,22 @@
   "id": "/",
   "scope": "/",
   "start_url": "/",
+  "shortcuts": [
+    {
+      "name": "Log a harvest",
+      "short_name": "Harvest",
+      "description": "Jump straight into the harvest log with the type already chosen",
+      "url": "/log?event_type=harvest&fromquick=1",
+      "icons": [{ "src": "pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Snap a photo",
+      "short_name": "Snap",
+      "description": "Open the camera capture flow",
+      "url": "/capture",
+      "icons": [{ "src": "pwa-192x192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
   "icons": [
     {
       "src": "pwa-192x192.png",

@@ -57,6 +57,12 @@ export function projectEntry(r) {
     event_id: r.event_id,
     event_type: r.event_type,
     event_date: r.event_date instanceof Date ? r.event_date.toISOString() : r.event_date,
+    // V4-COMPOSEPOST-001 — the LOGGING instant, distinct from event_date (which is date-grained and
+    // ~1.2% backdated). src/lib/harvestPost.js clusters on (created_by, created_at) to recover the
+    // evening batch; day_key cannot do it. Nullable in the projector only so a hand-built row in a
+    // test never crashes the mapping — the column itself is NOT NULL in prod.
+    created_at: r.created_at instanceof Date ? r.created_at.toISOString() : (r.created_at ?? null),
+    created_by: r.created_by ?? null,
     day_key: r.day_key,
     plant_id: r.plant_id ?? null,
     planting_name: r.planting_name ?? null,
