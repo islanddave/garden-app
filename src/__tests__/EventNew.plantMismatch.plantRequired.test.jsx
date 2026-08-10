@@ -42,6 +42,7 @@ vi.mock('react-router-dom', () => ({
 
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
+  PROJECTS_HIDDEN: false,
   PLANTING_REQUIRED_ENABLED: true,
 }))
 

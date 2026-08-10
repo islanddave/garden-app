@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.8.0",
+    "date": "2026-08-10",
+    "highlights": [
+      "Projects are no longer a thing you have to think about. The project chooser is gone from the logging form, the Garden groups by crop type instead of by project, and project names have been removed from breadcrumbs, the dashboard and the harvest list. Your data is untouched \u2014 every planting still belongs to the same place behind the scenes, and nothing was deleted.",
+      "When you log an event, the app now works out which project it belongs to from the planting you pick, instead of asking you first.",
+      "If you had projects saved as favourites, that section is hidden rather than removed \u2014 it comes back if this is ever reverted."
+    ]
+  },
+  {
     "version": "4.7.0",
     "date": "2026-08-10",
     "highlights": [

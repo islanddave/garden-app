@@ -80,7 +80,21 @@ export const PLANTING_REQUIRED_ENABLED = true
 // project_id); project routes stay reachable-but-unlinked; public /garden/:slug sharing is untouched.
 // Preview by flipping this const on dev. Criteria-gated, never date-gated. Rollback = flip back to
 // false (one client revert, no data to unwind).
-export const PROJECTS_HIDDEN = false
+// FLIPPED TRUE 2026-08-10 on Dave's explicit approval, AFTER the three pre-flip gaps were closed:
+//   1. stale `garden.groupBy.v1 = 'none'` migration — every existing user carries it; the render-time
+//      fallback to crop_type is now covered by tests that SEED the stale value (the prior suite
+//      cleared localStorage, i.e. the one starting state that could not exhibit the bug). The stored
+//      value is deliberately NOT rewritten, so a revert restores the user's original preference.
+//   2. ProjectNew's Cancel/breadcrumb pointed at /projects, which this flag redirects to /garden —
+//      a silent teleport. Both sites now share one flag-aware const.
+//   3. the unscoped /api/plants fetch on every log-form mount — MEASURED on prod rather than left as
+//      a worry: 255 live plantings, 66 kB uncompressed for the columns the picker uses (~10-15 kB
+//      gzipped), vs a scoped median of 1 row. Real but immaterial; not a blocker.
+// Ordering mattered and was respected: PLANTING_REQUIRED_ENABLED was flipped and shipped FIRST,
+// because EventNew.jsx:716 reads (PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) — flipping this one
+// first would have activated the required-planting gate implicitly and contaminated that flag's own
+// D1 telemetry.
+export const PROJECTS_HIDDEN = true
 
 // BUG-EVENTEDITFIELDS-001 slice 4 — the "move this event to a different planting" control.
 // OFF by default. This is the one slice of the ticket that earns a flag: slices 1 and 3 are inert

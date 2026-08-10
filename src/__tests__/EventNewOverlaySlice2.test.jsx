@@ -33,6 +33,7 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 // importActual spread so every other flag (OVERLAY_ROUTES_ENABLED etc.) keeps its real value.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
+  PROJECTS_HIDDEN: false,
   PLANTING_REQUIRED_ENABLED: false,
 }))
 

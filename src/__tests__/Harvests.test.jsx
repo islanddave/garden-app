@@ -3,6 +3,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 const { fetchSpy, searchParamsRef } = vi.hoisted(() => ({ fetchSpy: vi.fn(), searchParamsRef: { current: new URLSearchParams() } }))
+// V4-PROJHIDE-001: the flag flipped TRUE in source on 2026-08-10. This suite predates the flip and
+// its assertions describe the projects-VISIBLE UI (project chooser, project tree, "By project" scope),
+// which remains a live configuration — rollback is a one-line revert. Pinned FALSE so every assertion
+// below keeps covering what it was written to cover, rather than being rewritten to the flag-ON world
+// and silently weakened. Flag-ON is covered by the *.projhide.test.jsx suites.
+// importActual spread so every other flag keeps its real value.
+vi.mock('../lib/featureFlags.js', async (importActual) => ({
+  ...(await importActual()),
+  PROJECTS_HIDDEN: false,
+}))
+
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,

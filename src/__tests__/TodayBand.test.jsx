@@ -18,6 +18,7 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
 // here. The pin on the SHIPPED value lives once, in TodayBand.hidden.test.jsx.
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
+  PROJECTS_HIDDEN: false,
   TODAY_BAND_HIDDEN: false,
 }))
 

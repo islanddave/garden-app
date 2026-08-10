@@ -17,6 +17,7 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
+  PROJECTS_HIDDEN: false,
   HARVEST_QUALITY_HIDDEN: false,
   // V4-PLANTREQUIRED-001 flipped TRUE in source 2026-08-10; this suite asserts the
   // planting-OPTIONAL submit path. Pinned FALSE so it keeps covering that.
