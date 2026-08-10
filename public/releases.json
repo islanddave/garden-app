@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.6.0",
+    "date": "2026-08-10",
+    "highlights": [
+      "Logging a harvest now has quick-pick buttons for 1 through 6 right above the quantity box. Five out of six harvests you log are one of those numbers, so most of the time it is a single tap and the keyboard never opens \u2014 which matters most when you are standing in the garden holding a full bowl.",
+      "The quantity box itself is unchanged and still right there, so anything that is not 1-6 (half a cup, a dozen) costs exactly what it always did."
+    ]
+  },
+  {
     "version": "4.5.0",
     "date": "2026-08-10",
     "highlights": [
