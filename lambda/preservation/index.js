@@ -6,7 +6,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { householdScope } from './household.js';
+import { householdScope, loadOwnedPhoto } from './household.js';
 import { reconcilePlantAttribution, plantingLabel } from './attribution.js';
 import { VALID_SOURCE_KINDS, validateProvenance, normalizeSourceLabel } from './provenance.js';
 
@@ -265,16 +265,6 @@ async function loadHarvestLog(sql, harvestLogId, householdIds) {
 //
 // MEASURED: 0 live preservation_log rows carry a photo_id on prod, so this gate rejects nothing that
 // exists today.
-async function loadOwnedPhoto(sql, photoId, householdIds) {
-  if (!UUID_RE.test(String(photoId))) return null;
-  const rows = await sql`
-    SELECT id FROM photos
-    WHERE id = ${photoId}
-      AND created_by = ANY(${householdIds})
-      AND deleted_at IS NULL
-  `;
-  return rows.length ? rows[0] : null;
-}
 
 // Shared row projection for the read surfaces (single source of columns).
 function projectRow(r) {

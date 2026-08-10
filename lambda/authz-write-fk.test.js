@@ -19,7 +19,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadOwnedLocation, loadOwnedInventoryItem, loadOwnedPlanting, loadOwnedSpace, loadOwnedPhoto, warnRejectedFk } from './household.js';
+import { loadOwnedLocation, loadOwnedInventoryItem, loadOwnedSpace, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -73,24 +73,18 @@ describe('V4-AUTHZSWEEP-001: ownership loaders bind the correct owner column', (
     });
   }
 
-  it('loadOwnedPlanting scopes through the container, or the node itself when it has none', async () => {
-    // V4-AUTHZRESIDUE-001: was `gn.created_by = ANY(h) OR pp.created_by = ANY(h)` — the bare
-    // own-created_by arm reached a planting the caller created INSIDE another household's container.
-    // Container-less plantings still resolve, via the `project_id IS NULL` arm: narrowed, not removed.
-    const PID = '00000000-0000-4000-8000-000000000001';
-    const sql = fakeSql([{ id: PID, name: 'Tomato' }]);
-    expect(await loadOwnedPlanting(sql, PID, HOUSE)).toEqual({ id: PID, name: 'Tomato' });
-    const t = textOf(sql);
-    expect(t).toMatch(/pp\.created_by = ANY\(\?\)/);
-    expect(t).toMatch(/gn\.project_id IS NULL AND gn\.created_by = ANY\(\?\)/);
-    expect(t).toMatch(/gn\.deleted_at IS NULL/i);
-    // Both branches still terminate in the household array.
-    expect(sql.calls[0].values).toEqual([PID, HOUSE, HOUSE]);
-  });
+  // household.js loadOwnedPlanting was DELETED (consolidating sweep, 2026-08-10): it was a
+  // byte-equivalent duplicate of authz-parents.js loadOwnedPlantingRef with ZERO callers, and
+  // "two identical predicates with different names" is the condition that let the LOOSE dialect
+  // survive the first sweep. Its coverage lives on in the loadOwnedPlantingRef tests below; the
+  // "no loose two-arm planting predicate survives anywhere" guard further down is what keeps the
+  // deleted dialect from being reintroduced under any name.
 
-  it('loadOwnedPlanting returns null for an out-of-household id', async () => {
-    // A well-formed uuid, so this exercises the PREDICATE rather than the UUID short-circuit.
-    expect(await loadOwnedPlanting(fakeSql([]), '00000000-0000-4000-8000-000000000001', HOUSE)).toBeNull();
+  it('household.js exports exactly one planting predicate — the duplicate stays deleted', () => {
+    // A regression here means loadOwnedPlanting (or another alias of the same query) came back.
+    // The risk is not the duplicate itself but that the two copies drift and the looser one wins.
+    const src = readFileSync(join(here, 'household.js'), 'utf8');
+    expect(src).not.toMatch(/export async function loadOwnedPlanting\s*\(/);
   });
 
   it('warnRejectedFk logs server-side only and never throws', () => {
@@ -167,7 +161,6 @@ const SITES = [
 const LOADER_MODULE = {
   loadOwnedLocation: './household.js',
   loadOwnedInventoryItem: './household.js',
-  loadOwnedPlanting: './household.js',
   loadOwnedSpace: './household.js',
   loadOwnedPhoto: './household.js',
   loadOwnedProject: './authz-parents.js',
@@ -531,7 +524,7 @@ describe('V4-AUTHZRESIDUE-001: the malformed-id contract is 400 everywhere, neve
   // must therefore short-circuit BEFORE issuing SQL.
 
   it('every exported household.js loader short-circuits a malformed id without touching the DB', async () => {
-    for (const fn of [loadOwnedLocation, loadOwnedInventoryItem, loadOwnedPlanting, loadOwnedSpace, loadOwnedPhoto]) {
+    for (const fn of [loadOwnedLocation, loadOwnedInventoryItem, loadOwnedSpace, loadOwnedPhoto]) {
       const sql = fakeSql([{ id: 'should-never-be-reached' }]);
       expect(await fn(sql, 'not-a-uuid', HOUSE), `${fn.name} must return null`).toBeNull();
       expect(sql.calls, `${fn.name} must short-circuit before issuing SQL`).toHaveLength(0);
@@ -541,13 +534,32 @@ describe('V4-AUTHZRESIDUE-001: the malformed-id contract is 400 everywhere, neve
   it('every module-private preservation loader carries the same pre-check', () => {
     // Not exported, so this arm is static. The regex pins the guard to the FIRST statement of each
     // loader — a guard placed after the await is no guard at all.
+    // Floor lowered 4 -> 3 (consolidating sweep, 2026-08-10): preservation's module-private
+    // loadOwnedPhoto was a byte-equivalent copy of the household.js export and now IMPORTS it
+    // instead. That is a strictly stronger position — the shared one is covered by the real
+    // behavioural test above rather than by this regex — but it means only three private loaders
+    // (loadPlanting / loadStorageLocation / loadHarvestLog) remain to scan. The import itself is
+    // asserted directly below so the swap cannot silently become "no gate at all".
     const src = readFileSync(join(here, 'preservation/index.js'), 'utf8');
     const loaders = [...src.matchAll(/async function (load\w+)\(sql, (\w+), householdIds\) \{\s*([^\n]*)/g)];
-    expect(loaders.length, 'preservation loader set should not be empty').toBeGreaterThanOrEqual(4);
+    expect(loaders.length, 'preservation loader set should not be empty').toBeGreaterThanOrEqual(3);
     for (const [, name, arg, firstLine] of loaders) {
       expect(firstLine, `preservation ${name} must UUID-guard ${arg} first`)
         .toMatch(new RegExp(`if \\(!UUID_RE\\.test\\(String\\(${arg}\\)\\)\\) return null;`));
     }
+  });
+
+  it('preservation gets loadOwnedPhoto from the shared household.js export, not a private copy', () => {
+    // BUG-AUTHZFKENUM-001 lifted this predicate into household.js once a second and third consumer
+    // appeared, but preservation kept a private copy — "a third private copy is how dialects are
+    // born". The copy is gone; assert the import that replaced it, and that no private redefinition
+    // creeps back. A per-dir Lambda zip cannot reach ../, so the module must be './household.js'.
+    const src = readFileSync(join(here, 'preservation/index.js'), 'utf8');
+    const line = src.match(/import \{[^}]*\} from '\.\/household\.js';/);
+    expect(line, 'preservation must import from ./household.js').toBeTruthy();
+    expect(line[0], 'preservation must import the SHARED loadOwnedPhoto').toContain('loadOwnedPhoto');
+    expect(src, 'preservation must not redefine loadOwnedPhoto privately')
+      .not.toMatch(/async function loadOwnedPhoto\s*\(/);
   });
 
   it('no ownership loader anywhere reaches SQL before a UUID guard', () => {
@@ -565,13 +577,10 @@ describe('V4-AUTHZRESIDUE-001: the malformed-id contract is 400 everywhere, neve
 describe('V4-AUTHZRESIDUE-001: one planting predicate, not two dialects', () => {
   // household.js loadOwnedPlanting was the LOOSE outlier: `gn.created_by = ANY(h) OR pp.created_by
   // = ANY(h)`, whose bare own-created_by arm reaches a planting the caller created INSIDE another
-  // household's container. It is now the strict form. It also has ZERO callers — see its comment;
-  // the consolidating sweep should delete it rather than keep two identical predicates.
-  it('household.js loadOwnedPlanting carries the load-bearing project_id IS NULL conjunct', async () => {
-    const sql = fakeSql([{ id: ID, name: 'Tomato' }]);
-    await loadOwnedPlanting(sql, ID, HOUSE);
-    expect(textOf(sql)).toMatch(/gn\.project_id IS NULL AND gn\.created_by = ANY\(\?\)/);
-  });
+  // household's container. It was reconciled to the strict form and then DELETED outright
+  // (consolidating sweep, 2026-08-10) — it had zero callers and was byte-equivalent to
+  // authz-parents.js loadOwnedPlantingRef, which is now the single planting predicate. The
+  // "no loose two-arm planting predicate survives anywhere" test below is the standing guard.
 
   it('preservation gates EVERY body-settable FK, on BOTH verbs', () => {
     // photo_id was the miss: `preservation_log.photo_id REFERENCES photos(id)` (verified live) was

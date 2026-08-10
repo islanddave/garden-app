@@ -75,43 +75,6 @@ export async function loadOwnedInventoryItem(sql, itemId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
-// Verify a planting id (plants.parent_plant_id lineage links).
-//
-// V4-AUTHZRESIDUE-001 — RECONCILED TO THE STRICT DIALECT. This predicate previously read
-// `gn.created_by = ANY(h) OR pp.created_by = ANY(h)` over the garden_node/container VIEWS, which is
-// strictly LOOSER than authz-parents.js loadOwnedPlantingRef: the bare own-created_by arm reaches a
-// planting the caller created INSIDE another household's container — exactly the row the plants
-// by-id predicate exists to keep unreachable. It is now byte-equivalent to loadOwnedPlantingRef.
-//
-// THE `project_id IS NULL` CONJUNCT IS LOAD-BEARING, NOT DECORATION — do not "simplify" it away.
-// Container-less plantings still resolve, via that second arm; the arm is narrowed, not removed.
-//
-// MEASURED, NOT ASSUMED: against live prod and the staging branch, the strict predicate accepts the
-// IDENTICAL planting set as the loose one for the configured household (prod 269 = 269, staging
-// 1 = 1, newly-rejected = 0), and 0 of the existing preservation_log rows carrying a plant_id would
-// fail it. This tightening rejects nothing the app legitimately does.
-//
-// Addresses the BASE TABLES rather than the views, matching loadOwnedPlantingRef: that is also where
-// the CHECK constraints live. `plants.name` is what the garden_node view exposes as display_name.
-//
-// NOTE FOR THE CONSOLIDATING SWEEP: this is now a duplicate of authz-parents.js
-// loadOwnedPlantingRef. It has ZERO callers today (verified repo-wide) and should be DELETED — not
-// merely kept in sync — when authz-parents.js collapses into this file. Two identical predicates
-// with different names is the condition that let the loose one survive the first sweep.
-export async function loadOwnedPlanting(sql, plantId, householdIds) {
-  if (!UUID_RE.test(String(plantId))) return null;
-  const rows = await sql`
-    SELECT gn.id, gn.name
-    FROM public.plants gn
-    LEFT JOIN public.plant_projects pp ON pp.id = gn.project_id
-    WHERE gn.id = ${plantId}
-      AND gn.deleted_at IS NULL
-      AND ( pp.created_by = ANY(${householdIds})
-            OR (gn.project_id IS NULL AND gn.created_by = ANY(${householdIds})) )
-  `;
-  return rows.length ? rows[0] : null;
-}
-
 // Verify a space_id. Consumed by V4-SPACEPHOTO-001 in lambda/photos (attach + set-featured).
 // NO deleted_at predicate — the spaces table has no such column (verified live, V-P2).
 // spaces.created_by is still NULLABLE, but the one live space row IS populated on BOTH prod and
