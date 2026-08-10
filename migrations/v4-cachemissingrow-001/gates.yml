@@ -174,10 +174,13 @@ sweep:
     expect: rowcount_gte
     value: 0
 
-  # THE SAME CLASS ON THE OTHER ARM, never measured anywhere before this file. If it reads 0 the
-  # "for every entity" invariant is true on both arms and post-1 can be widened to say so; if it
-  # reads non-zero, post-1's name is honest about being plant-arm-only and the project arm needs
-  # its own ticket rather than a silent fold-in.
+  # THE SAME CLASS ON THE OTHER ARM, never measured anywhere before this file.
+  #
+  # MEASURED ON PROD 2026-08-10 (dev be610ee): **0**. So the class is plant-arm-only, the "for every
+  # entity" invariant is true on both arms today, and the predicate has been promoted to
+  # post_every_non_deleted_project_with_events_has_a_cache_row below — which is what this sweep's
+  # earlier draft said to do if it read zero. It stays here as the before-picture, so a future
+  # non-zero reading is interpretable as "regressed" rather than "was always like that".
   - name: sweep_capture_projects_with_events_and_no_cache_row
     sql: |
       SELECT pp.id
@@ -232,14 +235,57 @@ post:
   # mandatory partner and the two together are the single definition of done. (ii) someone adds a
   # lifecycle filter to the enumeration — no gate can catch that, only the archived-planting fixture
   # in the integration suite can, which is why that fixture is not optional.
+  #
+  # SELF-ARMING, and that first clause is not a hedge — it is what keeps this gate out of the
+  # standing-red backlog. `.github/workflows/gate-invariants.yml` runs every `continuous` post gate
+  # against live prod AND staging on a schedule, with no skip-if-unapplied logic anywhere in
+  # gate_runner.py. A migration's post gates therefore go red the moment the directory reaches the
+  # branch and STAY red until it is applied — and this one's apply is deliberately blocked behind a
+  # code deploy, so that window is open-ended. That job's own header says `--continuous-only` is
+  # "what keeps this job's red meaningful instead of permanent", and it already carries
+  # `continue-on-error: true` pending a backlog triage. Adding a knowingly-red gate to that backlog
+  # is how an invariant suite decays into noise everyone learns to scroll past.
+  #
+  # Keying on the schema_version row means: before apply the gate is vacuously true, because the
+  # invariant is not yet CLAIMED; after apply it asserts for real, permanently, with no follow-up
+  # edit. The alternative — ship it `continuous: false` and flip it in the apply commit — is a step
+  # that gets forgotten, and this repo has the scar: v4-carecacheundo-001's equivalent gate sits
+  # red at 88 rows on prod because the reverse mistake was made there.
+  #
+  # It cannot rot into permanent vacuity: 0b writes the schema_version row in the SAME transaction
+  # as the INSERT, so "applied" and "armed" are the same event. post_schema_version_recorded proves
+  # the row landed.
   - name: post_every_non_deleted_planting_with_events_has_a_cache_row
     sql: |
       SELECT p.id
         FROM public.plants p
-       WHERE p.deleted_at IS NULL
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.23.5-cachemissingrow-001')
+         AND p.deleted_at IS NULL
          AND EXISTS (SELECT 1 FROM public.event_log e
                       WHERE e.plant_id = p.id AND e.deleted_at IS NULL)
          AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.plant_id = p.id)
+    expect: rowcount_eq
+    value: 0
+
+  # THE OTHER ARM, promoted from its sweep because prod measured 0 (see the sweep's note).
+  # This migration does not repair project-keyed rows and does not need to — the population is
+  # empty. The gate is here because the invariant is worth STATING for both arms rather than
+  # leaving one silently unasserted, which is the exact shape of the qualifier this whole ticket
+  # exists to delete. It goes red the moment a container acquires project-level events with no
+  # cache row, which is a real reachable state: lambda/projects/index.js and lambda/plants/index.js
+  # both upsert a project-keyed row on status change, and 55 live events carry no plant_id at all.
+  #
+  # Scoped `deleted_at IS NULL` for the same reason as post-1 — a cache row on a soft-deleted parent
+  # is what entity_memory_orphans already counts as a defect, so the invariant cannot demand one.
+  - name: post_every_non_deleted_project_with_events_has_a_cache_row
+    sql: |
+      SELECT pp.id
+        FROM public.plant_projects pp
+       WHERE pp.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM public.event_log e
+                      WHERE e.project_id = pp.id AND e.deleted_at IS NULL)
+         AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.project_id = pp.id)
     expect: rowcount_eq
     value: 0
 
@@ -373,7 +419,11 @@ post:
     expect: rowcount_eq
     value: 0
 
+  # continuous:false — this is an APPLY-TIME receipt, not a standing invariant. Left continuous it
+  # would be red from the moment this directory reaches the branch until the apply, which is exactly
+  # the backlog the self-arming note above exists to avoid.
   - name: post_schema_version_recorded
+    continuous: false
     sql: |
       SELECT 1 FROM public.schema_version WHERE version = '4.23.5-cachemissingrow-001'
     expect: rowcount_eq
