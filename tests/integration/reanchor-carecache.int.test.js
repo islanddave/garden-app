@@ -593,8 +593,13 @@ async function missingCache() {
 
 describe('V4-CACHEMISSINGROW-001 — a planting with events and no cache row', () => {
   let plantM, plantN, evtM, evtN, project
-  const T1 = '2026-03-01T12:00:00.000Z'
-  const T2 = '2026-03-05T12:00:00.000Z'
+  // Relative, matching the module-level T1/T2 rather than fixed literals: every other describe in
+  // this file anchors to Date.now(), and a hardcoded date drifts into "months old" as the file ages,
+  // which is a validation surface this block has no business depending on. Shadowing the module
+  // constants deliberately — this describe owns its own timeline.
+  const T1 = new Date(Date.now() - 18 * DAY).toISOString()
+  const T2 = new Date(Date.now() - 14 * DAY).toISOString()
+  const T3 = new Date(Date.now() - 6 * DAY).toISOString()
 
   beforeAll(async () => {
     project = await newProject('missing')
@@ -624,8 +629,16 @@ describe('V4-CACHEMISSINGROW-001 — a planting with events and no cache row', (
   it('the row comes back AT TRUTH, not merely back', async () => {
     // Through the deployed writer, not by hand — the repair must be reachable by the code path
     // that is supposed to maintain this invariant going forward.
-    await put(evtM, { event_type: 'watering', event_date: T2, plant_id: plantM, project_id: project })
-    await put(evtN, { event_type: 'first_harvest', event_date: T1, plant_id: plantN, project_id: project })
+    //
+    // The edit MOVES the event_date. A PUT that resends identical values is a no-op: the events
+    // handler gates its recompute on the edit having actually dirtied the cache over four axes, so
+    // a same-values PUT runs no arm and creates no row. The first draft of this test resent T2/T1
+    // unchanged and failed in CI for exactly that reason — which is the writer behaving correctly
+    // and the test being wrong about it.
+    const rM = await put(evtM, { event_type: 'watering', event_date: T3, plant_id: plantM, project_id: project })
+    expect(rM.status, `PUT M failed: ${JSON.stringify(rM.body)}`).toBe(200)
+    const rN = await put(evtN, { event_type: 'first_harvest', event_date: T3, plant_id: plantN, project_id: project })
+    expect(rN.status, `PUT N failed: ${JSON.stringify(rN.body)}`).toBe(200)
 
     expect((await missingCache()).map((r) => r.plant_id)).toEqual([])
     // Coverage ALONE would pass on two all-NULL rows, which is why this assertion is not optional:
@@ -633,7 +646,7 @@ describe('V4-CACHEMISSINGROW-001 — a planting with events and no cache row', (
     expect((await staleBehind()).map((r) => r.plant_id ?? r.project_id)).toEqual([])
     // The plant arm maps harvest as IN ('harvest','first_harvest'); the PROJECT arm uses
     // = 'harvest'. A backfill or writer that copied the project arm's mapping fails right here.
-    expect(ms((await plantCache(plantN)).last_harvested_at)).toBe(ms(T1))
-    expect(ms((await plantCache(plantM)).last_watered_at)).toBe(ms(T2))
+    expect(ms((await plantCache(plantN)).last_harvested_at)).toBe(ms(T3))
+    expect(ms((await plantCache(plantM)).last_watered_at)).toBe(ms(T3))
   })
 })

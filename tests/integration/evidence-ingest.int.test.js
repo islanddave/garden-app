@@ -12,6 +12,7 @@ const USER = `user_int_evidence_${RUN}`;
 let tableExists = false;
 let v2ColsExist = false;
 let sampleEntityId = null;
+let foreignEntityId = null
 const inserted = [];
 
 beforeAll(async () => {
@@ -24,8 +25,29 @@ beforeAll(async () => {
     // suite stays GREEN pre-migration (L-173). The 400/404/405 tests do not hit the INSERT.
     const c = await directSql`SELECT 1 AS x FROM information_schema.columns WHERE table_name='evidence' AND column_name='evidence_class'`;
     v2ColsExist = c.length > 0;
-    const e = await directSql`SELECT id FROM public.entity WHERE deleted_at IS NULL LIMIT 1`;
+    // BUG-AUTHZFKENUM-001: this used to take `LIMIT 1` over the whole registry, i.e. an ARBITRARY
+    // pre-existing entity inherited from the staging branch this CI database is cut from. Once the
+    // handler gained household authorization that became a coin flip: the registry is MIXED —
+    // cultivar and critter_species rows are ownerless shared vocabulary (`entity` carries no
+    // created_by at all), while planting-typed rows reach household data through planting_ref_id
+    // and ARE gated. A borrowed planting-typed entity belongs to whoever seeded staging, not to
+    // this run's synthetic user, so the 201 case started 404ing.
+    //
+    // Pinned to the ownerless arm, which is the population the gate deliberately does NOT gate —
+    // so this asserts the same thing it always did (a valid entity writes) without weakening the
+    // new check. The gated arm gets its own negative test below rather than being smuggled in here.
+    const e = await directSql`
+      SELECT id FROM public.entity
+       WHERE deleted_at IS NULL AND planting_ref_id IS NULL
+       ORDER BY id LIMIT 1`;
     sampleEntityId = e[0]?.id ?? null;
+    const g = await directSql`
+      SELECT id FROM public.entity
+       WHERE deleted_at IS NULL AND planting_ref_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.plants p
+                          WHERE p.id = planting_ref_id AND p.created_by = ${USER})
+       ORDER BY id LIMIT 1`;
+    foreignEntityId = g[0]?.id ?? null;
   } else {
     console.warn('[evidence-ingest.int] evidence table absent on this branch — skipping (apply the DRG-ENGINE-003 V100 migration to staging/prod Neon to exercise).');
   }
@@ -50,6 +72,15 @@ describe('evidence-ingest write path (integration, real Neon)', () => {
   it('rejects an unknown entity_id (404)', async () => {
     if (!tableExists) return;
     const r = await callHandler(handler, { method: 'POST', path: '/api/evidence', body: validBody({ entity_id: '00000000-0000-0000-0000-0000000000ff' }) });
+    expect(r.status).toBe(404);
+  });
+  // BUG-AUTHZFKENUM-001 — the gated arm. A planting-typed entity belonging to someone else is
+  // rejected with the SAME 404 an absent entity gets, deliberately: a distinct 400 would itself be
+  // the existence oracle this contract forbids (404 = "no such entity", 400 = "exists, not yours").
+  // Skips rather than fails when the branch has no foreign planting-typed entity to borrow.
+  it('rejects a planting-typed entity outside the household (404, not 400)', async () => {
+    if (!tableExists || !foreignEntityId) return;
+    const r = await callHandler(handler, { method: 'POST', path: '/api/evidence', body: validBody({ entity_id: foreignEntityId }) });
     expect(r.status).toBe(404);
   });
   it('writes an append-only evidence row for a valid entity (201) and persists it', async () => {
