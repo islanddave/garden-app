@@ -1,5 +1,16 @@
 [
   {
+    "version": "4.4.0",
+    "date": "2026-08-10",
+    "highlights": [
+      "Water-due and stale alerts no longer count plantings you have archived — a container could sit permanently marked 'water due' because of a planting that finished months ago",
+      "Archived plantings keep their care history on their own page, and containers keep theirs — history surfaces were deliberately left alone",
+      "An 'approximate date' checkbox can no longer be left set on a date you cleared",
+      "Photo multi-select: the 'N selected' count and the Max-10 limit now always match the photos that would actually post",
+      "Hardened cross-household ownership checks on seven more record links, and closed the gap that let a whole handler go unchecked"
+    ]
+  },
+  {
     "version": "4.3.1",
     "date": "2026-08-10",
     "highlights": [
