@@ -45,7 +45,18 @@ post:
 
   # NULL = UNKNOWN = never fires. A non-zero count here means somebody invented harvest behaviour
   # for a tree that is not in this garden — the V4-HARVATTR-001 honesty contract, applied to a seed.
+  #
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). The honesty contract is
+  # right; the LIST is a snapshot. It was built by enumerating the fruits that had no harvest
+  # behaviour at THIS migration's apply (2026-07-26 22:06Z) — the note below records the same
+  # carve-out for peach. V4-CROPTYPE-002 then legitimately gave blackberry harvest_habit='repeat',
+  # repeat_interval_days=2 on 2026-08-03 18:20:35Z, and blackberry is NOT an invented tree: prod
+  # carries one live blackberry planting. Both environments read exactly that one row. The list was
+  # not narrowed to dodge it — narrowing an honesty list to exclude the row that broke it is how a
+  # guard stops being one — so the gate keeps its full slug set and is scoped to the window in which
+  # it was a true statement about what THIS SEED wrote.
   - name: post_no_invented_harvest_behaviour
+    continuous: false
     sql: |
       SELECT 1 FROM public.crop_types
        WHERE slug IN ('apple','pear','plum','cherry','sour_cherry','apricot','nectarine',

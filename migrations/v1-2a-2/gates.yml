@@ -142,12 +142,22 @@ post:
     expect: scalar_eq
     value: 6
 
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). Both gates below assert
+  # that the ISSUE-FLAGGING FEATURE HAS NO DATA — true at this migration's apply, and made false BY
+  # DESIGN by V4-FLAG-001, which shipped the feature. Prod now carries 72 flagged rows and 72 with a
+  # severity, and every one of them is a user correctly using a shipped feature. These are the exact
+  # pair `.github/workflows/gate-invariants.yml` names in its header as legitimately apply-window-
+  # only ("v1-2a-2's 'no flagged rows' … now 72 rows"); the header asserts they already carry
+  # `continuous: false` and they did not. Nothing is weakened: the migration's real invariants (the
+  # columns exist, the vocabulary is constrained, the achievement seeds landed) stay continuous.
   - name: post_no_flagged_true_rows
+    continuous: false
     sql: "SELECT COUNT(*) FROM event_log WHERE flagged_as_issue = true"
     expect: scalar_eq
     value: 0
 
   - name: post_no_severity_set_rows
+    continuous: false
     sql: "SELECT COUNT(*) FROM event_log WHERE severity IS NOT NULL"
     expect: scalar_eq
     value: 0

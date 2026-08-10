@@ -172,7 +172,19 @@ post:
     value: 0
 
   # The samples are Dave's real weighings. v3 reranks them; it must never remove one.
+  #
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). "Never removes one" is a
+  # BEFORE/AFTER claim about this migration's own apply, but it is written as an absolute floor of
+  # 21 — prod's sample count at that moment. That number is not an invariant of anything: it is
+  # environment-specific (staging holds 8 real samples and reads [FAIL] purely for that reason) and
+  # it is pinned, so it also rots on prod the moment a sample is legitimately voided. The rule the
+  # corpus follows is to assert a relation between live relations and never pin a count; there is no
+  # surviving before-picture to compare against here, so the apply-window reading is the only honest
+  # one. The durable half — that a sample is never SILENTLY dropped from the derived view — is
+  # asserted by v4-cal1-slicec-001 :: post_derived_excludes_deleted_sources, which compares the
+  # view's sample_n against the live sample relation.
   - name: post_no_sample_lost
+    continuous: false
     sql: |
       SELECT 1 FROM public.cultivar_weight_sample
     expect: rowcount_gte

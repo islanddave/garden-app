@@ -101,7 +101,16 @@ post:
     value: 0
 
   # The seed must never claim a measurement it does not have.
+  #
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). "Was written by the seed" is
+  # inferred here from `updated_at >= applied_at`, which is a valid proxy only DURING the apply
+  # window — the identical construction that left v4-carecacheundo-001 red at 88 rows. Any later
+  # legitimate write to plant_varieties satisfies the proxy while having nothing to do with the seed.
+  # Measured 2026-08-10 on prod: 1 row, "Allegheny Blackberry" (weight_source='measured',
+  # unit_weights={"cup":144,"count":0.7}), updated 2026-08-06 17:16:37Z — nine days after this seed
+  # applied, by a later data-entry pass, not by this migration.
   - name: post_seed_never_claims_measured
+    continuous: false
     sql: |
       SELECT 1 FROM public.plant_varieties
        WHERE weight_source = 'measured' AND unit_weights IS NOT NULL
@@ -126,12 +135,46 @@ post:
     expect: rowcount_eq
     value: 0
 
-  # The backfill must not have invented a MEASURED row: weight_estimated=false is only legal for a
-  # harvest actually logged in a weight unit.
-  - name: post_measured_only_from_weight_units
+  # The backfill must not have invented a MEASURED row.
+  #
+  # REWRITTEN 2026-08-10 (gate-invariants backlog triage), replacing
+  # `post_measured_only_from_weight_units`. The anti-invention intent is kept; the UNIT premise it
+  # rested on was superseded by a later, deliberate design decision in the same slice.
+  #
+  #   WHAT IT USED TO ASSERT: "weight_estimated=false is only legal for a harvest actually logged in
+  #   a weight unit" — SELECT ... WHERE weight_estimated IS FALSE AND unit NOT IN ('g','kg','lb','oz').
+  #   v4-cal1-slicec-001 then established the opposite rule in its own gates: "A user-supplied weight
+  #   always wins, and always reads as measured", for ANY unit. Logging 10 tomatoes and weighing the
+  #   pile at 2777 g is a real measurement recorded against unit='count'. The evidence that this was
+  #   never a drift signal: on prod the old query returned 135 rows, and prod holds exactly 135
+  #   measured rows in total — it failed 100% of the population it was meant to police, every one of
+  #   them carrying a non-NULL weight_grams. It had become a statement about UNITS, not about
+  #   invention.
+  #
+  #   WHAT IT NOW ASSERTS: the same claim, against the relation that actually decides it. A row may
+  #   not read MEASURED unless it carries the 'measured' basis (which means a user supplied the
+  #   weight) and an actual weight value — and, non-vacuously, the three coupling CHECKs that make
+  #   that implication un-forgeable must still be present AND VALIDATED. The data half alone would
+  #   be implied by those CHECKs and therefore vacuous; the constraint half is what would go red if
+  #   someone dropped or NOT VALID'd them, which is the only way an invented measured row could
+  #   actually be written. Neither pins a count, id, unit vocabulary or date.
+  #   Measured 2026-08-10: 0 rows / 3 constraints on prod, same on staging.
+  - name: post_measured_claim_is_structurally_enforced
     sql: |
-      SELECT 1 FROM public.harvest_log
-       WHERE weight_estimated IS FALSE AND unit NOT IN ('g','kg','lb','oz')
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'public.harvest_log'::regclass
+         AND contype = 'c' AND convalidated
+         AND conname IN ('chk_harvest_log_weight_pairing',
+                         'chk_harvest_log_weight_basis_pairing',
+                         'chk_harvest_log_weight_basis_estimated')
+    expect: rowcount_eq
+    value: 3
+
+  - name: post_no_measured_row_without_a_supplied_weight
+    sql: |
+      SELECT h.id FROM public.harvest_log h
+       WHERE h.weight_estimated IS FALSE
+         AND (h.weight_basis IS DISTINCT FROM 'measured' OR h.weight_grams IS NULL)
     expect: rowcount_eq
     value: 0
 

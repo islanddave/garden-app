@@ -58,7 +58,10 @@ post:
     expect: scalar_eq
     value: true
 
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). Apply-time receipt — see the
+  # note in drg-wxwater-001/gates.yml. Applied on prod 2026-06-18; absent from the staging branch.
   - name: post_schema_version_recorded
+    continuous: false
     sql: |
       SELECT 1 FROM public.schema_version WHERE version='4.0.0-pot-001'
     expect: rowcount_eq

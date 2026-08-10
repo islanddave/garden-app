@@ -199,13 +199,39 @@ sweep:
     value: 0
 
 post:
+  # ═══ SELF-ARMING, ADDED 2026-08-10 (gate-invariants backlog triage) ═══
+  #
+  # THIS MIGRATION IS NOT APPLIED ANYWHERE. Verified 2026-08-10 against live prod and live staging:
+  # neither schema_version row exists on either environment, and all three container FKs still read
+  # confdeltype='c' on prod. The gates below were therefore CORRECTLY red — they were reporting an
+  # unfixed defect, not drift. But `.github/workflows/gate-invariants.yml` runs every continuous post
+  # gate on a schedule with no skip-if-unapplied logic, so this one directory contributed 8 of the 27
+  # prod failures and 8 of the 28 on staging: a third of the entire standing-red backlog, generated
+  # by a migration that has not run yet. That is exactly the noise
+  # migrations/v4-cachemissingrow-001/gates.yml warns about — "adding a knowingly-red gate to that
+  # backlog is how an invariant suite decays into noise everyone learns to scroll past."
+  #
+  # The repair is the pattern that file establishes, NOT a weakening: each gate is keyed on the
+  # schema_version row THIS migration writes in the same transaction as the DDL it asserts. Before
+  # apply the gate is vacuously true, because the invariant is not yet CLAIMED. After apply it
+  # asserts for real, permanently, with no follow-up edit to forget. Two arming rows, used precisely:
+  # 0a-additive-ddl.sql writes '4.23.2-softdelcascade-001-archive' and arms the archive-substrate
+  # gates; 0c-constraint.sql writes '4.23.2-softdelcascade-001' and arms the FK gates. Arming a 0c
+  # gate on the 0a row would let a half-applied migration pass.
+  #
+  # Every original predicate is preserved verbatim inside the OR; nothing was relaxed, rescoped or
+  # deleted, and no gate was given `env:`. The moment the apply lands, all 8 assert at full strength.
   - name: post_three_container_fks_are_restrict
     sql: |
-      SELECT 1 FROM pg_constraint
-       WHERE conname IN ('event_log_project_id_fkey','photos_project_id_fkey','photos_event_id_fkey')
-         AND confdeltype = 'r'
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '4.23.2-softdelcascade-001')
+          OR (SELECT count(*) FROM pg_constraint
+               WHERE conname IN ('event_log_project_id_fkey','photos_project_id_fkey',
+                                 'photos_event_id_fkey')
+                 AND confdeltype = 'r') = 3
     expect: rowcount_eq
-    value: 3
+    value: 1
 
   # THE CLASS GATE. The reported finding was three instances; this asserts the whole class is empty.
   # No FK carrying USER HISTORY may be ON DELETE CASCADE. "History" is enumerated rather than
@@ -213,13 +239,18 @@ post:
   # something the user did or observed and that cannot be recomputed from anything else.
   # container_closure, entity_memory and inactive_project_dismissals are deliberately NOT in the list
   # — they are derived caches, and cascading them is correct.
+  # Self-armed on the 0c row (see the header note). Prod currently reads 4 rows here — the three this
+  # migration flips plus one more in the same class — which is the unfixed defect, faithfully
+  # reported, and it will report it again the instant 0c lands if any of them survives.
   - name: post_no_cascade_fk_out_of_a_user_history_table
     sql: |
       SELECT c.conname
         FROM pg_constraint c
         JOIN pg_class t ON t.oid = c.conrelid AND t.relkind = 'r'
         JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
-       WHERE c.contype = 'f'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.23.2-softdelcascade-001')
+         AND c.contype = 'f'
          AND c.confdeltype = 'c'
          AND t.relname IN ('event_log','photos','harvest_log','preservation_log')
     expect: rowcount_eq
@@ -263,10 +294,15 @@ post:
     value: 0
 
   # ── 0a substrate ────────────────────────────────────────────────────────────────────────────
+  # Self-armed on the 0a row (see the header note) — this and the four gates below assert 0a
+  # substrate, so they must not be armed by the 0c row.
   - name: post_archive_container_events_exists
     sql: |
-      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname = 'public' AND p.proname = 'archive_container_events'
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '4.23.2-softdelcascade-001-archive')
+          OR (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+               WHERE n.nspname = 'public' AND p.proname = 'archive_container_events') = 1
     expect: rowcount_eq
     value: 1
 
@@ -274,42 +310,55 @@ post:
   # planting are independent delete targets.
   - name: post_both_archive_functions_exist
     sql: |
-      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname = 'public'
-         AND p.proname IN ('archive_plant_events','archive_container_events')
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '4.23.2-softdelcascade-001-archive')
+          OR (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+               WHERE n.nspname = 'public'
+                 AND p.proname IN ('archive_plant_events','archive_container_events')) = 2
     expect: rowcount_eq
-    value: 2
+    value: 1
 
   - name: post_archive_provenance_columns_exist
     sql: |
-      SELECT 1 FROM information_schema.columns
-       WHERE table_schema = 'public'
-         AND table_name IN ('event_log_archive','harvest_log_archive')
-         AND column_name = 'archived_project_id'
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '4.23.2-softdelcascade-001-archive')
+          OR (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public'
+                 AND table_name IN ('event_log_archive','harvest_log_archive')
+                 AND column_name = 'archived_project_id') = 2
     expect: rowcount_eq
-    value: 2
+    value: 1
 
   # The relaxation and the CHECK are a PAIR: archived_plant_id may now be NULL only because
   # archived_project_id can carry the provenance instead. Asserting the nullability alone would pass
   # in the state where the CHECK was dropped and provenance can silently go missing entirely.
   - name: post_archived_plant_id_is_nullable
     sql: |
-      SELECT 1 FROM information_schema.columns
-       WHERE table_schema = 'public'
-         AND table_name IN ('event_log_archive','harvest_log_archive')
-         AND column_name = 'archived_plant_id'
-         AND is_nullable = 'YES'
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '4.23.2-softdelcascade-001-archive')
+          OR (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public'
+                 AND table_name IN ('event_log_archive','harvest_log_archive')
+                 AND column_name = 'archived_plant_id'
+                 AND is_nullable = 'YES') = 2
     expect: rowcount_eq
-    value: 2
+    value: 1
 
   - name: post_archive_provenance_check_armed
     sql: |
-      SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
-       WHERE c.contype = 'c'
-         AND c.conname IN ('event_log_archive_has_provenance','harvest_log_archive_has_provenance')
-         AND c.convalidated
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '4.23.2-softdelcascade-001-archive')
+          OR (SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+               WHERE c.contype = 'c'
+                 AND c.conname IN ('event_log_archive_has_provenance',
+                                   'harvest_log_archive_has_provenance')
+                 AND c.convalidated) = 2
     expect: rowcount_eq
-    value: 2
+    value: 1
 
   # The archive must NOT re-create the coupling this migration removes: no FK on it. An FK would make
   # the cold store refuse the very rows it exists to hold.
@@ -347,7 +396,12 @@ post:
     expect: rowcount_eq
     value: 0
 
+  # continuous: false ADDED 2026-08-10. This is the APPLY-TIME RECEIPT — the one gate here that is
+  # not a standing invariant and so cannot be self-armed (arming it on its own subject would make it
+  # tautological). Same call v4-cachemissingrow-001 makes for its own version row. It stays a full
+  # blocking assertion during the apply.
   - name: post_schema_version_recorded
+    continuous: false
     sql: |
       SELECT 1 FROM public.schema_version
        WHERE version IN ('4.23.2-softdelcascade-001','4.23.2-softdelcascade-001-archive')

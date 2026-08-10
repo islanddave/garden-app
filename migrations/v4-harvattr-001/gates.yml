@@ -102,7 +102,14 @@ post:
     expect: rowcount_eq
     value: 1
 
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). A pinned seed count (51).
+  # crop_types legitimately grew afterwards — V4-CROPTYPE-002 and the putupprov fruit seeds among
+  # others — so prod now reads 62 and staging 46, and neither number will ever be 51 again. A count
+  # is exactly the thing the corpus rule says not to pin. Nothing durable is lost: the next gate
+  # asserts every seeded habit value is in vocabulary, which is the invariant that must hold forever
+  # and holds on both environments regardless of how many crop types exist.
   - name: post_seed_row_count
+    continuous: false
     sql: |
       SELECT 1 FROM public.crop_types
        WHERE deleted_at IS NULL AND harvest_habit IS NOT NULL

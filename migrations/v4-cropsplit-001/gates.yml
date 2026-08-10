@@ -126,7 +126,14 @@ post:
     expect: scalar_eq
     value: 0
 
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). An apply-time receipt for a
+  # PROD-SPECIFIC split, pinned to prod cultivar NAMES. Staging is a diverged Neon branch whose
+  # squash cultivars are a different set entirely (Pennsylvania Dutch Crookneck / Pink Banana /
+  # Red Kuri), so the gate reads [FAIL] with 3 there permanently and can never be driven green
+  # without inventing prod's rows on staging. `env: prod` was deliberately NOT used: that would
+  # relabel a rotted apply receipt as a durable prod-only invariant, which it is not.
   - name: post_parents_retained_expected_cultivars
+    continuous: false
     sql: |
       SELECT count(*) FROM public.plant_varieties
        WHERE deleted_at IS NULL
@@ -161,7 +168,12 @@ post:
     expect: scalar_eq
     value: 0
 
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). Pins ten literal prod
+  # cultivar UUIDs and the literal 10. None of the ten exists on staging (measured: 0 of 10) and
+  # staging's entity_tag table is entirely empty (0 live rows), so this is structurally unsatisfiable
+  # there. It is a receipt that 0b-redrive ran against prod's ten rows — an apply-window fact.
   - name: post_moved_cultivars_have_type_tag
+    continuous: false
     sql: |
       SELECT 10 - count(DISTINCT et.entity_id)
         FROM public.entity_tag et
@@ -179,7 +191,11 @@ post:
     value: 0
     note: Catches the silent no-tag case if 0b-redrive was skipped or ran against a dead target row.
 
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). Same shape as
+  # post_moved_cultivars_have_type_tag above: three literal prod cultivar UUIDs and the literal 3,
+  # against a staging entity_tag table with zero live rows.
   - name: post_bunching_onion_allium_facet
+    continuous: false
     sql: |
       SELECT 3 - count(DISTINCT et.entity_id)
         FROM public.entity_tag et

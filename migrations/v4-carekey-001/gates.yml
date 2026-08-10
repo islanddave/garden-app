@@ -220,9 +220,25 @@ sweep:
     value: 0
 
 post:
+  # SELF-ARMING, ADDED 2026-08-10 (gate-invariants backlog triage). This migration's VALIDATE step
+  # has not run on either environment: measured 2026-08-10, `event_log_has_anchor` EXISTS on prod but
+  # reads convalidated = false, and '4.23.2-carekey-001-validate' is absent from schema_version on
+  # prod AND staging. So the gate was correctly red — it was reporting an unfinished migration, not
+  # drift — but the scheduled invariants job has no skip-if-unapplied logic, so it sat in the
+  # standing-red backlog on both environments indefinitely.
+  #
+  # Keyed on the row 0a-validate.sql writes in the same transaction as the VALIDATE, per the pattern
+  # in migrations/v4-cachemissingrow-001/gates.yml. Vacuously true until applied; full strength the
+  # moment it is, with no follow-up edit to forget. The predicate is preserved verbatim — a
+  # constraint that exists but is NOT VALID still fails this gate once armed, which is the whole
+  # point of asserting convalidated rather than mere existence.
   - name: post_has_anchor_is_validated
     sql: |
-      SELECT 1 FROM pg_constraint WHERE conname = 'event_log_has_anchor' AND convalidated
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '4.23.2-carekey-001-validate')
+          OR (SELECT count(*) FROM pg_constraint
+               WHERE conname = 'event_log_has_anchor' AND convalidated) = 1
     expect: rowcount_eq
     value: 1
 
@@ -298,7 +314,10 @@ post:
     expect: rowcount_gte
     value: 0
 
+  # continuous: false ADDED 2026-08-10 — apply-time receipt, not a standing invariant, and the one
+  # gate here that cannot be self-armed without becoming tautological. Blocking during the apply.
   - name: post_schema_version_recorded
+    continuous: false
     sql: |
       SELECT 1 FROM public.schema_version WHERE version = '4.23.2-carekey-001-validate'
     expect: rowcount_eq

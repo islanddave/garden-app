@@ -184,6 +184,21 @@ post:
   # fails on prod-vs-restore drift; this migration deliberately adds none, so that inventory is
   # unchanged and needs no fixture update. If this ever returns > 0, restore-verify must be updated
   # in the same commit.
+  #
+  # ALLOWLIST EXTENDED 2026-08-10 (gate-invariants backlog triage). `plants_entity_rename` was
+  # missing and the gate read [FAIL] with 1 on both environments. It is not an unknown trigger: it
+  # is created by migrations/v4-cultivarname-001/0a-name-sync-triggers.sql (AFTER UPDATE OF name ON
+  # public.plants WHEN old.name IS DISTINCT FROM new.name, EXECUTE gv.entity_planting_rename()),
+  # applied to prod 2026-08-04 20:03:57Z — nineteen minutes AFTER this migration. That file also
+  # ships the matching 0c-verify and 0r-rollback-triggers, so the trigger is fully repo-tracked.
+  # The gate is an allowlist by design and the correct maintenance action for a legitimately-shipped
+  # trigger is to name it here, in the same spirit as the note above: it stays armed against a
+  # trigger nobody declared. It was NOT relaxed to a wildcard or scoped away.
+  #
+  # The restore-verify concern in the note above is discharged, not deferred: scripts/restore-verify.py
+  # builds its table:trigger:function inventory DYNAMICALLY from the live prod database (trigger_set()
+  # at line 234) and diffs it against the restore. It carries no frozen fixture, so a new trigger
+  # needs no update there.
   - name: post_no_new_triggers_on_touched_tables
     sql: |
       SELECT 1 FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid
@@ -191,7 +206,7 @@ post:
          AND t.relname IN ('event_log','photos','plants','locations')
          AND g.tgname NOT IN ('set_updated_at','prevent_ownership_transfer','garden_node_bump',
                               'plants_entity_ins','plants_entity_softdel','trg_delete_entity_tags_plant',
-                              'trg_delete_entity_tags_location')
+                              'trg_delete_entity_tags_location','plants_entity_rename')
     expect: rowcount_eq
     value: 0
 

@@ -60,7 +60,21 @@ post:
   #
   # A real sample must outrank the reference value for the same variety, whatever the sample count:
   # one weighing beats a catalog figure. min-n governs comparison, not best-available-estimate.
+  #
+  # `retired:` ADDED 2026-08-10 (gate-invariants backlog triage). The RETIRED marker above has been
+  # prose since 2026-08-04 and prose cannot stop a runner: the gate kept executing and kept failing
+  # (59 rows prod, 4 staging) on the weekly invariants job. gate_runner.py's own docstring names
+  # this exact gate as the motivating case for the structural `retired` field. It is retired, not
+  # deleted and not weakened — the assertion text stands as the record of what was once believed,
+  # and its replacement in v4-cal1-sampleconf-001 is named below.
   - name: post_sample_tier_outranks_reference
+    retired: >
+      Superseded 2026-08-04 by v4-cal1-sampleconf-001. This gate encodes the defect that migration
+      fixes — that a single weighing outranks a curated reference figure whatever the sample count.
+      At 21 samples the n=1 deltas span -92%..+83%, so it is false by design under v3 and fails on
+      16 of 18 rows. Replaced by v4-cal1-sampleconf-001 ::
+      post_provisional_does_not_outrank_reference and :: post_corroborated_still_outranks_reference,
+      which together preserve the half of this that was right.
     sql: |
       SELECT 1
         FROM public.plant_varieties v
@@ -126,12 +140,43 @@ post:
 
   # The derived view must ignore samples whose source harvest was undone, or an undo would leave a
   # phantom measurement steering every future estimate for that variety.
+  #
+  # REWRITTEN 2026-08-10 (gate-invariants backlog triage). The intent above is exactly right; the
+  # old query could not test it and was a FALSE POSITIVE BY CONSTRUCTION.
+  #
+  #   WHAT IT USED TO ASSERT: it joined cultivar_weight_sample -> event_log (deleted) ->
+  #   cultivar_weight_derived on (cultivar_id, unit) and required zero rows. But that join proves
+  #   only that the cultivar STILL HAS A DERIVED ROW — which it will, and should, as long as any
+  #   surviving sample remains. So the gate fired on precisely the state the migration was built to
+  #   produce: one sample's source harvest undone, the view correctly dropping it, the other samples
+  #   correctly keeping the estimate alive. Measured on prod 2026-08-10: 1 row, cultivar
+  #   6ba9fbda-a9ba-4a39-b238-70e1d3724ddf, whose harvest event was soft-deleted 2026-08-10
+  #   01:16:48Z. That cultivar has 5 samples; cultivar_weight_derived reports sample_n = 4. The view
+  #   HAD excluded it. The gate reported a phantom that was not there.
+  #
+  #   WHAT IT NOW ASSERTS: the view's own sample_n must equal the count of samples that are neither
+  #   voided nor sourced from a soft-deleted event — the two live relations compared directly. That
+  #   is the actual invariant: it goes red if the view's `live` CTE ever stops excluding a voided or
+  #   deleted-source sample (the phantom-measurement regression this gate exists for) AND red if it
+  #   ever starts excluding a sample it should keep (the losing-Dave's-weighings regression that
+  #   v4-cal1-sampleconf-001 :: post_no_sample_lost used to guard with a pinned floor of 21).
+  #   Strictly stronger than the old query in both directions, and it pins no count, id or date.
+  #   Measured 2026-08-10: 0 rows on prod, 0 on staging.
   - name: post_derived_excludes_deleted_sources
     sql: |
-      SELECT 1 FROM public.cultivar_weight_sample s
-       JOIN public.event_log e ON e.id = s.source_event_id AND e.deleted_at IS NOT NULL
-       JOIN public.cultivar_weight_derived d ON d.cultivar_id = s.cultivar_id AND d.unit = s.unit
-       WHERE NOT EXISTS (SELECT 1 FROM public.cultivar_weight_void v WHERE v.sample_id = s.id)
+      SELECT d.cultivar_id
+        FROM public.cultivar_weight_derived d
+        JOIN LATERAL (
+          SELECT count(*) AS n
+            FROM public.cultivar_weight_sample s
+           WHERE s.cultivar_id = d.cultivar_id
+             AND s.unit = d.unit
+             AND NOT EXISTS (SELECT 1 FROM public.cultivar_weight_void v
+                              WHERE v.sample_id = s.id)
+             AND NOT EXISTS (SELECT 1 FROM public.event_log e
+                              WHERE e.id = s.source_event_id AND e.deleted_at IS NOT NULL)
+        ) live ON true
+       WHERE d.sample_n <> live.n
     expect: rowcount_eq
     value: 0
 

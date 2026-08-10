@@ -240,7 +240,17 @@ post:
   # NULL) relative to the snapshot. A single upward move would mean 0b's CASE was inverted or a
   # future edit replaced it with a plain "set to truth", which would silently annex
   # BUG-DIRECTWRITEDRIFT-001's rows and destroy that ticket's before/after evidence.
+  #
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage), for the SAME reason as its
+  # sibling below and one the sibling's note already spells out. This gate joins the APPLY-TIME
+  # SNAPSHOT and asserts no cell has moved forward SINCE it was taken. entity_memory takes ~264
+  # writes/day, and every ordinary watering/observation legitimately moves last_watered_at and
+  # last_event_at forward past the snapshot — so the comparison is only meaningful while the apply
+  # is in flight. Measured 2026-08-10: 3 rows on prod, 1 on staging, all ordinary forward traffic on
+  # snapshotted rows. The 0b-was-backwards-only claim is real but is an APPLY-TIME claim; asserting
+  # it forever converts normal garden use into a permanent red.
   - name: post_no_repaired_cell_moved_forward
+    continuous: false
     sql: |
       SELECT em.id
         FROM public.snap_carecacheundo001_entity_memory s

@@ -27,7 +27,14 @@ post:
     expect: scalar_eq
     value: 0
 
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). Pins four literal project
+  # NAMES and the literal 4. Two of the four ('Build Out' and 'Chilis') were soft-deleted on prod on
+  # 2026-05-20, so the gate reads 2 there and cannot be driven green without un-deleting real user
+  # rows. A user renaming or deleting a container is not a migration defect. The durable invariant
+  # this file exists to establish is the sibling gate above — no live project without a kind — which
+  # passes on both environments (prod: 51 campaign + 23 category, zero NULL) and stays continuous.
   - name: the_four_backfilled_rows_are_campaign
+    continuous: false
     sql: |
       SELECT count(*) FROM public.plant_projects
        WHERE deleted_at IS NULL

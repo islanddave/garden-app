@@ -123,7 +123,15 @@ post:
 
   # Migration is additive ONLY — it must not archive anything. A non-zero count here means the DDL
   # acquired a default or a stray UPDATE, which would hide packets Dave never archived.
+  #
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). The claim is about what THE
+  # MIGRATION wrote, but it is expressed as an absolute global count over a column the FEATURE then
+  # writes to. Prod reads 10 — ten packets Dave has archived himself since the apply, i.e. the
+  # feature working exactly as shipped. Left continuous this gate goes red on its own success and
+  # can only ever be driven green again by un-archiving real user data. The apply-window reading is
+  # the only one that was ever meaningful.
   - name: post_nothing_archived_by_the_migration
+    continuous: false
     sql: |
       SELECT count(*) FROM public.inventory_items WHERE sow_archived_season IS NOT NULL
     expect: scalar_eq

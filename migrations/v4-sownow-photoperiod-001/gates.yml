@@ -75,7 +75,11 @@ post:
     expect: rowcount_eq
     value: 27
 
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). Frozen view-column count —
+  # see the identical note in v4-maturitybasis-001/gates.yml. The view now projects 33 columns on
+  # both environments; 29 was true only at this migration's apply.
   - name: post_view_column_count
+    continuous: false
     sql: |
       SELECT count(*) FROM information_schema.columns
        WHERE table_schema='public' AND table_name='v_sow_candidates'

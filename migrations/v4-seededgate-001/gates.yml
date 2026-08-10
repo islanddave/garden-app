@@ -182,7 +182,16 @@ post:
   # change as "row present, not cadence-bearing" — resolved_scopes strictly larger than {system}
   # while cadence_scopes is empty. This is the class the _seeded boolean could not name at all, and
   # a migration that collapsed the two columns into one would send this count to zero.
+  #
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). The signal is real, but it
+  # is asserted as "this DATA CLASS is non-empty" — a fact about prod's care rules, not an invariant
+  # of the schema. Staging's diverged branch carries no leaf in that class, so it reads [FAIL] with
+  # 0 there permanently, and prod would join it the day Dave gives Collards a cadence — i.e. the
+  # gate goes red on ordinary correct use. The migration's structural claim (resolved_scopes and
+  # cadence_scopes exist as separate columns and are not collapsed) is asserted by the gates above,
+  # which is the part that must hold forever. This one was the apply-time observability proof.
   - name: post_collards_class_is_preserved
+    continuous: false
     sql: |
       SELECT leaf_id FROM public.v_resolved_care
        WHERE cardinality(resolved_scopes) > 1

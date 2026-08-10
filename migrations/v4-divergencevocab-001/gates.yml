@@ -156,7 +156,18 @@ post:
     expect: rowcount_eq
     value: 0
 
+  # continuous: false ADDED 2026-08-10 (gate-invariants backlog triage). Apply-time receipt for 0c.
+  # Measured 2026-08-10: '4.24.1-divergencevocab-001-validate' is absent from schema_version on prod
+  # AND staging, so this gate had been red on both since the directory reached the branch, while
+  # every other post gate in this file passes. It stays a full blocking assertion during the apply —
+  # it is scoped out of the CONTINUOUS sweep only, which is the sweep that cannot know whether a
+  # migration has run yet.
+  #
+  # NOTE FOR WHOEVER APPLIES THIS: `plants_divergence_type_check` already reads convalidated = true
+  # on prod while this receipt row is missing. Either 0c ran without recording itself, or 0a created
+  # the constraint already-valid. Worth resolving before the apply so the ledger matches reality.
   - name: post_schema_version_0c_recorded
+    continuous: false
     sql: |
       SELECT 1 FROM public.schema_version
        WHERE version = '4.24.1-divergencevocab-001-validate'
