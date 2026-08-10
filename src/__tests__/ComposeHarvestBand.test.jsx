@@ -1,6 +1,9 @@
 // V4-COMPOSEPOST-001 — the Today "compose tonight's post" band. Hidden when there is nothing to
 // post, composes from the last logging BATCH (not the calendar day), never publishes anything by
 // itself, and never writes prose on Dave's behalf.
+//
+// The second half of this file is V4-COMPOSEPOST-002: one test per defect that reached dev and was
+// caught by the 2026-08-10 audit. Each is named for what must never happen again.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -11,10 +14,20 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getTok
 const shareMock = vi.fn()
 vi.mock('../lib/shareEntity.js', () => ({ shareEntity: (...a) => shareMock(...a) }))
 vi.mock('../components/Icon.jsx', () => ({ default: () => null }))
+const profileRef = { current: { id: 'user_dave' } }
+vi.mock('../context/AuthContext.jsx', () => ({
+  useAuthOptional: () => ({ user: null, profile: profileRef.current, loading: false }),
+}))
 
 import ComposeHarvestBand from '../components/ComposeHarvestBand.jsx'
 
+// The line picker is collapsed by default on purpose: rendering at 390px showed 17 rows pushing the
+// post and its only action ~1.8 screens down. Tests that touch individual lines open it explicitly,
+// which is also the real user path.
+const openPicker = async (user) => user.click(screen.getByRole('button', { name: /What.s in the post/ }))
+
 const DAVE = 'user_dave'
+const JEN = 'user_jen'
 // Minutes before "now" so the band's 18h freshness window is satisfied deterministically.
 const ago = (mins) => new Date(Date.now() - mins * 60000).toISOString()
 
@@ -44,9 +57,22 @@ const BATCH = [
 ]
 const EARLIER = [{ ...entry(ago(600), 'Blueberries', 'Blueberry', 2), unit: 'cup' }]
 
-const payload = (entries) => fetchMock.mockResolvedValue({ entries })
+// Full-range season totals, as the endpoint's aggregates block returns them.
+const AGGREGATES = {
+  crops: [
+    { crop_name: 'Tomato', crop_type_slug: 'tomato', units: [{ unit: 'count', unit_key: 'count', total: 382, count: 120 }] },
+  ],
+}
 
-beforeEach(() => { fetchMock.mockReset(); shareMock.mockReset(); shareMock.mockResolvedValue('shared') })
+const payload = (entries, aggregates = AGGREGATES) =>
+  fetchMock.mockResolvedValue({ entries, aggregates })
+
+beforeEach(() => {
+  fetchMock.mockReset()
+  shareMock.mockReset()
+  shareMock.mockResolvedValue('shared')
+  profileRef.current = { id: DAVE }
+})
 
 describe('ComposeHarvestBand', () => {
   it('renders nothing when there are no harvests at all', async () => {
@@ -57,7 +83,7 @@ describe('ComposeHarvestBand', () => {
   })
 
   it('renders nothing when the only recent batch is too old to be "tonight"', async () => {
-    payload([entry(ago(19 * 60), 'Moskvich Heirloom', 'Tomato', 2)])
+    payload([entry(ago(19 * 60), 'Moskvich Heirloom', 'Tomato', 2), entry(ago(19 * 60 + 1), 'Big Boy', 'Tomato', 1)])
     const { container } = render(<ComposeHarvestBand />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     expect(container.firstChild).toBeNull()
@@ -73,8 +99,17 @@ describe('ComposeHarvestBand', () => {
   it('counts only the batch, not everything logged that day', async () => {
     payload([...EARLIER, ...BATCH])
     render(<ComposeHarvestBand />)
-    // 6 picks in the batch; the cup-unit berry pick from ten hours earlier is excluded.
     expect(await screen.findByText(/6 picks/)).toBeTruthy()
+  })
+
+  it('asks for recent LOGGING activity and full-range aggregates in one request', async () => {
+    payload(BATCH)
+    render(<ComposeHarvestBand />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const url = fetchMock.mock.calls[0][0]
+    // created_since filters on created_at, so a backdated harvest logged tonight is still included.
+    expect(url).toMatch(/created_since=/)
+    expect(url).toMatch(/include=entries,aggregates/)
   })
 
   it('swallows a fetch error rather than surfacing it onto Today', async () => {
@@ -96,9 +131,7 @@ describe('ComposeHarvestBand', () => {
     expect(ta.value).toContain('  2 Moskvich')      // ' Heirloom' stripped
     expect(ta.value).toContain('  2 San Marzano')   // evidence-backed override applied
     expect(ta.value).toContain('1 Cubanelle pepper')
-    // Two pepper varieties stay flat — a >=2 heading rule would invent "Peppers:".
-    expect(ta.value).not.toContain('Peppers:')
-    // Nothing has left the device.
+    expect(ta.value).not.toContain('Peppers:')      // two varieties stay flat
     expect(shareMock).not.toHaveBeenCalled()
   })
 
@@ -116,9 +149,7 @@ describe('ComposeHarvestBand', () => {
     const user = userEvent.setup()
     render(<ComposeHarvestBand />)
     await user.click(await screen.findByRole('button', { name: /Compose post/i }))
-    // The raw note is shown as context...
     expect(screen.getByText(/Knocked off plant, very green/)).toBeTruthy()
-    // ...and the annotation field is empty, so nothing clinical reaches the post unedited.
     expect(screen.getByLabelText(/Note for Ukrainian Purple/i).value).toBe('')
     expect(screen.getByLabelText('Post text').value).not.toContain('Knocked off plant')
   })
@@ -129,6 +160,7 @@ describe('ComposeHarvestBand', () => {
     render(<ComposeHarvestBand />)
     await user.click(await screen.findByRole('button', { name: /Compose post/i }))
     expect(screen.getByLabelText('Post text').value).toContain('Cubanelle')
+    await openPicker(user)
     await user.click(screen.getByRole('button', { name: /1 Cubanelle/ }))
     await waitFor(() => expect(screen.getByLabelText('Post text').value).not.toContain('Cubanelle'))
   })
@@ -139,6 +171,7 @@ describe('ComposeHarvestBand', () => {
     render(<ComposeHarvestBand />)
     await user.click(await screen.findByRole('button', { name: /Compose post/i }))
     expect(screen.getByLabelText('Post text').value).not.toContain('1st harvest')
+    await openPicker(user)
     await user.click(screen.getAllByRole('button', { name: '1st' })[0])
     await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('(1st harvest!)'))
   })
@@ -151,9 +184,9 @@ describe('ComposeHarvestBand', () => {
     const ta = screen.getByLabelText('Post text')
     await user.clear(ta)
     await user.type(ta, 'my own words')
+    await openPicker(user)
     await user.click(screen.getAllByRole('button', { name: '1st' })[0])
     expect(screen.getByLabelText('Post text').value).toBe('my own words')
-    // ...and there is an explicit way back to the generated version.
     await user.click(screen.getByRole('button', { name: /Rebuild from selections/i }))
     await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('Tomatoes:'))
   })
@@ -168,5 +201,119 @@ describe('ComposeHarvestBand', () => {
     const arg = shareMock.mock.calls[0][0]
     expect(arg.text).toContain('Tomatoes:')
     expect(arg.url).toBeUndefined()
+  })
+})
+
+// ── V4-COMPOSEPOST-002 — one test per defect that reached dev ─────────────────────────────────────
+describe('defects that must never return', () => {
+  it('BUG-COMPOSEOWNER-001: never offers one household member another member’s harvest', async () => {
+    // The read model is HOUSEHOLD-scoped, so Jen's request returns Dave's rows. Without scoping to the
+    // viewer she was shown "Tonight's harvest · 6 picks" built entirely from his batch, in his first
+    // person, with a live share button.
+    profileRef.current = { id: JEN }
+    payload(BATCH)
+    const { container } = render(<ComposeHarvestBand />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(container.firstChild).toBeNull()
+  })
+
+  it('BUG-COMPOSEOWNER-001: composes the viewer’s OWN batch when the household has both', async () => {
+    profileRef.current = { id: JEN }
+    const jenBatch = [
+      { ...entry(ago(5), 'Red Raspberries', 'Raspberry', 4), created_by: JEN },
+      { ...entry(ago(4), 'Wild Wineberry', 'Wineberry', 6), created_by: JEN },
+    ]
+    payload([...BATCH, ...jenBatch])
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    const ta = screen.getByLabelText('Post text')
+    expect(ta.value).toContain('Red Raspberries')
+    expect(ta.value).not.toContain('1884')
+    expect(ta.value).not.toContain('Cubanelle')
+  })
+
+  it('renders nothing at all when the viewer is not identified', async () => {
+    profileRef.current = null
+    payload(BATCH)
+    const { container } = render(<ComposeHarvestBand />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(container.firstChild).toBeNull()
+  })
+
+  it('BUG-COMPOSETOTALS-001: season chips come from aggregates and name their window', async () => {
+    // The defect: leadFacts summed the 50-row paginated entries page and published it as a season
+    // total — "36 tomatoes" against a true 132. The correct figure was already in the same response.
+    payload(BATCH)
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    expect(screen.getByRole('button', { name: '382 tomatoes this season' })).toBeTruthy()
+    // 8 tomatoes are in this batch; nothing may publish that batch figure as a season figure.
+    expect(screen.queryByRole('button', { name: /^8 tomatoes/ })).toBeNull()
+  })
+
+  it('BUG-COMPOSETOTALS-001: emits no season chip when aggregates are absent', async () => {
+    payload(BATCH, null)
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    expect(screen.queryByRole('button', { name: /this season/ })).toBeNull()
+    expect(screen.getByRole('button', { name: '10 picked tonight' })).toBeTruthy()
+  })
+
+  it('a pre-checked "1st" can be turned OFF, not only on', async () => {
+    // The old additive Set could only add. A row pre-checked from Dave's own first_harvest event type
+    // could never be un-checked, which broke the only promise the annotation makes.
+    const marked = BATCH.map((r, i) => (i === 0 ? { ...r, event_type: 'first_harvest' } : r))
+    payload(marked)
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    expect(screen.getByLabelText('Post text').value).toContain('(1st harvest!)')
+    await openPicker(user)
+    const chips = screen.getAllByRole('button', { name: '1st' })
+    const pressed = chips.find((c) => c.getAttribute('aria-pressed') === 'true')
+    expect(pressed).toBeTruthy()
+    await user.click(pressed)
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).not.toContain('1st harvest'))
+  })
+
+  it('does not vanish when every line is excluded, and can be recovered', async () => {
+    payload(BATCH)
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    await openPicker(user)
+    for (const label of [/3 1884/, /2 Moskvich/, /2 San Marzano/, /1 Ukrainian Purple/, /1 Cubanelle/, /1 Piri Piri/]) {
+      await user.click(screen.getByRole('button', { name: label }))
+    }
+    // The band survives with its un-exclude controls intact instead of deleting itself.
+    expect(screen.getByTestId('compose-harvest-band')).toBeTruthy()
+    expect(screen.getByText(/Everything is left out/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /3 1884/ }))
+    await waitFor(() => expect(screen.getByLabelText('Post text').value).toContain('1884'))
+  })
+
+  it('suppresses a one-item batch rather than offering "tonight’s harvest: 1 tomato"', async () => {
+    // N=45 produces a single-item last batch on a straggler evening — the real cost of the threshold.
+    payload([entry(ago(200), 'Moskvich Heirloom', 'Tomato', 2), entry(ago(10), 'Big Boy', 'Tomato', 1)])
+    const { container } = render(<ComposeHarvestBand />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(container.firstChild).toBeNull()
+  })
+
+  it('never puts a bare integer in the post for a harvest with no name and no crop', async () => {
+    const nameless = { ...entry(ago(14), '', '', 2), planting_name: null, variety_name: null, crop_name: null }
+    payload([...BATCH, nameless])
+    const user = userEvent.setup()
+    render(<ComposeHarvestBand />)
+    await user.click(await screen.findByRole('button', { name: /Compose post/i }))
+    await openPicker(user)
+    // Visible in the list so it can be named...
+    expect(screen.getByText(/needs a name/)).toBeTruthy()
+    // ...and absent from the post body.
+    const lines = screen.getByLabelText('Post text').value.split('\n')
+    expect(lines.some((l) => /^\s*2\s*$/.test(l))).toBe(false)
   })
 })

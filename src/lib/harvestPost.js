@@ -9,10 +9,21 @@
 // 10:25, 3 at 12:09, 19 at 23:08 = 31). A "today's harvest" summary is measurably noisier than
 // what he actually writes, which is why this file exists at all.
 //
-// WHY 45 MINUTES: the gap distribution has a near-empty valley from 30–90 min, and BOTH reference
-// batches reproduce identically at every threshold from 20 to 240 min — so this is the middle of a
-// wide plateau, not a tuned constant. 90 was rejected because it merges long grazing sessions (the
-// 08-08 batch spans 131 min held together entirely by sub-90m internal gaps → one 32-item post).
+// WHY 45 MINUTES — corrected 2026-08-10 after an audit found the original justification circular AND
+// factually wrong about the day it cited. Both errors are recorded here rather than deleted, because
+// the wrong version was persuasive and the next reader deserves to know why it does not hold:
+//   * WRONG: "both reference batches reproduce at every N from 20–240, so 45 is on a plateau." They
+//     are bounded by 656-min and 334-min gaps, so ANY N in that range returns them unchanged BY
+//     CONSTRUCTION. That shows the two fixtures carry zero information about N — not that N is safe.
+//     It is also self-refuting: 45 was then chosen over 90 precisely BECAUSE they differ.
+//   * WRONG: "the 08-08 batch is 32 events over 131 min held together by sub-90m gaps." Prod says
+//     08-08 is 31 events in a tight 54-min run plus ONE straggler 76.6 min later. N=90 appends the
+//     straggler; it does not fuse a grazing session.
+// The claim that DOES hold, and the only one this constant now rests on: over 40 days of real gaps
+// there are ZERO observed gaps in the (45, 75] minute band, so 45 sits inside a genuinely empty
+// interval rather than on a slope. The real cost of 45 over 90 is the inverse of what was claimed —
+// on a straggler evening like 08-08 it yields a ONE-ITEM last batch, which is why MIN_POST_LINES
+// exists below.
 //
 // WHY (created_by, created_at) AND NOT created_at ALONE: Jen is a real second logger. Overlapping
 // evening sessions would otherwise merge into one "batch" published in Dave's first person.
@@ -30,6 +41,12 @@ export const DEFAULT_GROUP_THRESHOLD = 3
 // Past ~15 lines the tail falls below Facebook's "See more" fold, so the crops added last become
 // invisible. Advisory only — the UI warns, it never truncates. Never silently drop a harvested item.
 export const LINE_SOFT_CAP = 15
+
+// Below this, the surface offers nothing. N=45 produces a one-item last batch on a straggler evening
+// (see the header), and "tonight's harvest: 1 tomato" is a post nobody writes. This is plan item B10,
+// which was written for the compose surface and then lost when the nightly-draft track was cut —
+// B10's suppression rule lived in the cut track's section but its subject was this one.
+export const MIN_POST_LINES = 2
 
 // Only `count` renders. Weight is 73.5% server-ESTIMATED and must never appear in a public post.
 // 2026 unit distribution: count 404, cup 87, head 5, bunch 3 — and both reference batches are 100%
@@ -93,7 +110,10 @@ export function normalizeVarietyName(raw) {
       }
     }
   }
-  const override = NAME_OVERRIDES[n.toLowerCase()]
+  // Fold curly apostrophes to straight before the lookup. Found by RENDERING the component rather
+  // than by any test: "Czech’s Bush" missed the "czech's bush" key and published unnormalised. Which
+  // form a cultivar carries depends on how it was typed, so the table cannot depend on either.
+  const override = NAME_OVERRIDES[n.toLowerCase().replace(/[‘’]/g, "'")]
   return override || n
 }
 
@@ -150,6 +170,9 @@ export function toLines(items) {
     const rawName = e.planting_name || e.variety_name || ''
     const uncertain = UNCERTAIN_NAME.test(rawName)
     const name = uncertain ? '' : normalizeVarietyName(rawName)
+    // harvest_log.quantity is `numeric`, so the neon driver hands back a STRING. The same coercion the
+    // read model already applies to weight_grams, for the same reason: a string here turns every sum
+    // in leadFacts into concatenation and every comparison into lexical ordering.
     const qty = Number(e.quantity)
     return {
       id: e.event_id,
@@ -167,7 +190,14 @@ export function toLines(items) {
       noteSuggestion: e.note_excerpt || '',
       needsName: !name,
       uncertainName: uncertain,
-      postable: POSTABLE_UNITS.has(e.unit) && Number.isFinite(qty) && qty > 0,
+      // A row with NEITHER a name NOR a crop renders as a bare integer ("2"), which is worse than an
+      // omission because it publishes as a line of the itemised list. All 5 live plant_id-IS-NULL
+      // harvests are exactly this shape — no plant means no cultivar means no crop_types join — and
+      // running this module over 504 prod rows put a naked integer in 3 of 35 historical batches,
+      // including the 08-05 batch this file's own header cites as its reconciliation proof.
+      // Not postable, but still surfaced to the composer as `needsName` so it is visible and namable
+      // rather than silently dropped.
+      postable: POSTABLE_UNITS.has(e.unit) && Number.isFinite(qty) && qty > 0 && !!(name || crop),
     }
   })
 }
@@ -204,7 +234,25 @@ export function renderLine(line, { withCrop } = {}) {
 // several varieties get a heading, everything else is a flat line at the bottom.
 export function buildPostModel(lines, options = {}) {
   const { groupThreshold = DEFAULT_GROUP_THRESHOLD } = options
-  const included = (Array.isArray(lines) ? lines : []).filter((l) => l && l.include !== false && l.postable)
+  const raw = (Array.isArray(lines) ? lines : []).filter((l) => l && l.include !== false && l.postable)
+
+  // Sibling plantings of one cultivar are DISTINCT garden_node rows, so picking from two beds of San
+  // Marzano emits two identical lines. Dave writes "8 San Marzano", not "4 San Marzano / 4 San
+  // Marzano". Measured over prod: 2 of 35 historical batches hit this, worst case 7 duplicated pairs
+  // in one evening. Merge on the RESOLVED name + crop (post identity), not on variety_id or plant_id
+  // — two sibling plantings are different plants and the same thing to a reader.
+  // A merged line keeps the first row's id so annotations and exclusions still address it, and ORs
+  // isFirst so a first-harvest on either sibling survives the merge.
+  const merged = new Map()
+  for (const line of raw) {
+    const key = `${(line.name || '').toLowerCase()}|${(line.crop || '').toLowerCase()}`
+    const prev = merged.get(key)
+    if (!prev) { merged.set(key, { ...line, mergedIds: [line.id] }); continue }
+    prev.quantity = (prev.quantity ?? 0) + (line.quantity ?? 0)
+    prev.isFirst = prev.isFirst || line.isFirst
+    prev.mergedIds.push(line.id)
+  }
+  const included = [...merged.values()]
 
   const byCrop = new Map()
   for (const line of included) {
@@ -268,31 +316,54 @@ export function renderPost(model, options = {}) {
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()
 }
 
+// Per-crop season totals, read from the aggregates block of GET /api/harvests.
+//
+// BUG-COMPOSETOTALS-001 — this function exists because the previous version summed the ENTRIES array,
+// which is keyset-paginated at 50 rows. With 176 harvests in the live 7-day window it published
+// "36 tomatoes so far" against a true figure of 132, and because the page boundary falls inside a day
+// ordered by UUID, the number also changed between loads. The endpoint already computes the correct
+// figure over the FULL range with no cursor and no limit; nothing needed to be paginated, only read
+// from the right place.
+export function seasonCountsByCrop(aggregates) {
+  const out = new Map()
+  for (const c of aggregates?.crops ?? []) {
+    const name = c.crop_name || c.crop_type_slug
+    const counted = (c.units ?? []).find((u) => u.unit_key === 'count')
+    if (name && counted && Number.isFinite(Number(counted.total))) out.set(name, Number(counted.total))
+  }
+  return out
+}
+
 // Facts Dave currently computes in his head, handed to him as material for the lead paragraph.
 // Deliberately NOT prose — a generated sentence in his voice is worse than no lead at all.
-export function leadFacts(batch, allEntries) {
+//
+// `seasonCounts` is a Map(cropName -> count) from seasonCountsByCrop, and `windowLabel` names the
+// span those totals cover. The label is REQUIRED and unabbreviated in the emitted chip, because the
+// previous wording ("N so far") read as season-to-date while the underlying window was at most 7 days
+// and in practice about 2.5 — a chip that ships into a public post has to say what it counted.
+export function leadFacts(batch, seasonCounts, windowLabel = 'this season') {
   const items = batch?.items ?? []
   const counted = items.filter((e) => POSTABLE_UNITS.has(e.unit) && Number(e.quantity) > 0)
   const total = counted.reduce((s, e) => s + Number(e.quantity), 0)
   const varieties = new Set(counted.map((e) => e.planting_name || e.variety_name).filter(Boolean)).size
-  const crops = new Set(counted.map((e) => e.crop_name || e.crop_type_slug).filter(Boolean))
+
+  // Per-crop batch totals, so each season figure is compared against ITS OWN crop rather than against
+  // the cross-crop batch sum — the old guard compared incomparable aggregates, suppressing valid facts
+  // on large batches and admitting misleading ones on small.
+  const batchByCrop = new Map()
+  for (const e of counted) {
+    const c = e.crop_name || e.crop_type_slug
+    if (c) batchByCrop.set(c, (batchByCrop.get(c) || 0) + Number(e.quantity))
+  }
 
   const facts = []
   if (total > 0) facts.push(`${total} picked tonight`)
   if (varieties > 1) facts.push(`${varieties} varieties`)
 
-  // Season totals per crop, from whatever window the caller loaded. Labelled by the caller, not here.
-  const seasonByCrop = new Map()
-  for (const e of Array.isArray(allEntries) ? allEntries : []) {
-    if (!POSTABLE_UNITS.has(e.unit)) continue
-    const c = e.crop_name || e.crop_type_slug
-    const q = Number(e.quantity)
-    if (!c || !Number.isFinite(q)) continue
-    seasonByCrop.set(c, (seasonByCrop.get(c) || 0) + q)
-  }
-  for (const crop of crops) {
-    const n = seasonByCrop.get(crop)
-    if (n && n > total) facts.push(`${n} ${pluralizeCrop(crop, n).toLowerCase()} so far`)
+  const counts = seasonCounts instanceof Map ? seasonCounts : new Map()
+  for (const [crop, batchQty] of batchByCrop) {
+    const n = counts.get(crop)
+    if (n && n > batchQty) facts.push(`${n} ${pluralizeCrop(crop, n).toLowerCase()} ${windowLabel}`)
   }
 
   return facts

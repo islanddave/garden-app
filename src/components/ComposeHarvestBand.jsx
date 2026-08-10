@@ -7,30 +7,45 @@
 // write the post: the lead paragraph, the annotations, and the final wording stay his.
 //
 // WHY ON-DEMAND AND NOT A NIGHTLY JOB (crucible 2026-08-10): a scheduled draft fires ~30 min after
-// the last pick — while he is still holding the phone — so a button on the page he is already
-// looking at reaches him sooner, for none of the infrastructure. It also keeps posting a PULL: a
-// nightly queue with something waiting in it turns a hobby into a chore, which is the likeliest
-// form of "automation making the posting worse".
+// the last pick — while he is still holding the phone — and a nightly queue with something waiting
+// in it turns a hobby into a chore, which is the likeliest form of "automation making the posting
+// worse". Posting stays a PULL.
 //
 // Reward-UX V102: ambient. Self-fetching, error swallowed, renders NOTHING when there is no recent
 // batch — no push, no modal, no toast, no badge, no count chip, no streak, no urgency colour.
+//
+// AUDIT FIXES 2026-08-10 (V4-COMPOSEPOST-002), each one a defect that reached dev:
+//   BUG-COMPOSETOTALS-001 — season chips summed a 50-row paginated page and published it as a season
+//     total (36 vs a true 132). Now read from the aggregates block, which the endpoint computes over
+//     the full range with no cursor.
+//   BUG-COMPOSEOWNER-001 — detectLastBatch ran unscoped against a HOUSEHOLD-scoped read model, so the
+//     second household member was offered the first one's harvest in his first person. Now scoped to
+//     the viewer's own Clerk subject.
+//   Plus: a "1st" chip that could not be un-checked, a band that vanished irrecoverably when every
+//     line was excluded, and no floor on a one-item batch.
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useApiFetch } from '../lib/api.js'
+import { useAuthOptional } from '../context/AuthContext.jsx'
 import { P } from '../lib/constants.js'
 import Icon from './Icon.jsx'
 import { shareEntity } from '../lib/shareEntity.js'
 import {
-  detectLastBatch, toLines, buildPostModel, renderPost, leadFacts, LINE_SOFT_CAP,
+  detectLastBatch, toLines, buildPostModel, renderPost, leadFacts, seasonCountsByCrop,
+  LINE_SOFT_CAP, MIN_POST_LINES,
 } from '../lib/harvestPost.js'
 
 // A batch older than this is history, not "tonight" — offering it invites a post that describes the
 // wrong evening. 18h covers a late-night pick read the next morning without reaching back a full day.
 const MAX_BATCH_AGE_MS = 18 * 60 * 60 * 1000
+// How far back to ask for LOGGING activity. Filters on created_at, so a backdated harvest logged
+// tonight is still included; 24h comfortably covers the 18h freshness window above, and the busiest
+// observed logging day (32 picks) sits well inside the endpoint's 50-row page.
+const LOG_WINDOW_MS = 24 * 60 * 60 * 1000
 
-function ageLabel(iso) {
+function ageLabel(iso, now = Date.now()) {
   const t = new Date(iso).getTime()
   if (!Number.isFinite(t)) return ''
-  const mins = Math.round((Date.now() - t) / 60000)
+  const mins = Math.round((now - t) / 60000)
   if (mins < 60) return mins <= 1 ? 'just now' : `${mins} min ago`
   const hrs = Math.round(mins / 60)
   return hrs === 1 ? 'an hour ago' : `${hrs} hours ago`
@@ -38,27 +53,48 @@ function ageLabel(iso) {
 
 export default function ComposeHarvestBand() {
   const { fetch } = useApiFetch()
-  const [entries, setEntries] = useState(null)
+  const { profile } = useAuthOptional()
+  const viewerId = profile?.id ?? null
+  const [data, setData] = useState(null)
   const [open, setOpen] = useState(false)
+  // Long pickers start collapsed so the post and its action stay above the fold (see the picker block).
+  const [pickerOpen, setPickerOpen] = useState(false)
   const inflight = useRef(false)
 
   const load = useCallback(() => {
     if (inflight.current) return
     inflight.current = true
-    fetch('/api/harvests?include=entries&timeframe=7d')
-      .then((d) => setEntries(Array.isArray(d?.entries) ? d.entries : []))
+    const since = new Date(Date.now() - LOG_WINDOW_MS).toISOString()
+    // entries are narrowed to recent LOGGING activity; aggregates deliberately are not, so the season
+    // chips come from the full-range totals rather than from whatever fits on one page of entries.
+    const qs = `?include=entries,aggregates&timeframe=season&created_since=${encodeURIComponent(since)}`
+    fetch('/api/harvests' + qs)
+      .then((d) => setData({
+        entries: Array.isArray(d?.entries) ? d.entries : [],
+        aggregates: d?.aggregates ?? null,
+      }))
       .catch(() => { /* supplementary glance — never surface a fetch error onto Today */ })
       .finally(() => { inflight.current = false })
   }, [fetch])
 
   useEffect(() => { load() }, [load])
 
-  const batch = useMemo(() => (entries ? detectLastBatch(entries) : null), [entries])
+  const entries = data?.entries ?? null
+  // Scoped to the viewer. The read model is HOUSEHOLD-scoped by design, so without this the most
+  // recent logger in the household wins and the other member is offered someone else's harvest.
+  const batch = useMemo(
+    () => (entries && viewerId ? detectLastBatch(entries, { createdBy: viewerId }) : null),
+    [entries, viewerId],
+  )
   const baseLines = useMemo(() => (batch ? toLines(batch.items) : []), [batch])
+  const seasonCounts = useMemo(() => seasonCountsByCrop(data?.aggregates), [data])
 
-  // Per-line state lives here, keyed by event id, so re-fetches don't clobber Dave's choices.
+  // Per-line state, keyed by event id, so a refetch never clobbers Dave's choices.
   const [excluded, setExcluded] = useState(() => new Set())
-  const [firsts, setFirsts] = useState(() => new Set())
+  // Tri-state, NOT a Set: a Set can only ADD a first-harvest. Rows pre-checked from Dave's own
+  // first_harvest event type could never be turned off, which broke the one promise the design makes
+  // about this annotation — that it is a suggestion he ratifies rather than an emission.
+  const [firstOverride, setFirstOverride] = useState(() => new Map())
   const [annotations, setAnnotations] = useState({})
   const [lead, setLead] = useState('')
   const [draft, setDraft] = useState('')
@@ -68,15 +104,18 @@ export default function ComposeHarvestBand() {
   const lines = useMemo(() => baseLines.map((l) => ({
     ...l,
     include: !excluded.has(l.id),
-    isFirst: l.isFirst || firsts.has(l.id),
-  })), [baseLines, excluded, firsts])
+    isFirst: firstOverride.has(l.id) ? firstOverride.get(l.id) : l.isFirst,
+  })), [baseLines, excluded, firstOverride])
 
   const model = useMemo(() => buildPostModel(lines), [lines])
   const generated = useMemo(() => renderPost(model, { lead, annotations }), [model, lead, annotations])
-  const facts = useMemo(() => (batch ? leadFacts(batch, entries || []) : []), [batch, entries])
+  const facts = useMemo(
+    () => (batch ? leadFacts(batch, seasonCounts, 'this season') : []),
+    [batch, seasonCounts],
+  )
 
-  // The textarea starts from the generated text and stops tracking it once Dave edits — his words
-  // are never overwritten by a toggle. "Rebuild" is the explicit way back.
+  // The textarea starts from the generated text and stops tracking it once Dave edits — his words are
+  // never overwritten by a toggle. "Rebuild" is the explicit way back.
   useEffect(() => { if (!dirty) setDraft(generated) }, [generated, dirty])
 
   const postText = dirty ? draft : generated
@@ -92,9 +131,13 @@ export default function ComposeHarvestBand() {
       : 'Select the text above and copy it.')
   }, [postText])
 
-  if (!batch || !model.lineCount) return null
-  const stale = Date.now() - new Date(batch.endedAt).getTime() > MAX_BATCH_AGE_MS
-  if (stale) return null
+  if (!batch) return null
+  if (Date.now() - new Date(batch.endedAt).getTime() > MAX_BATCH_AGE_MS) return null
+  // Gate on what the BATCH contains, never on the current model: gating on model.lineCount let Dave
+  // exclude every line and delete the surface holding the un-exclude buttons, with no way back short
+  // of a reload that discarded his lead, annotations and draft.
+  const postableCount = baseLines.filter((l) => l.postable).length
+  if (postableCount < MIN_POST_LINES) return null
 
   const S = {
     card: { background: P.white, border: `1px solid ${P.border}`, borderRadius: 12, padding: 14, marginTop: 14 },
@@ -103,7 +146,7 @@ export default function ComposeHarvestBand() {
     sub: { fontSize: '0.78rem', color: P.light, marginTop: 2 },
     btn: { background: P.green, color: P.white, border: 'none', borderRadius: 20, padding: '7px 14px', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
     ghost: { background: 'none', color: P.mid, border: `1px solid ${P.border}`, borderRadius: 20, padding: '6px 12px', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' },
-    chip: (on) => ({ background: on ? P.greenPale : 'none', color: on ? P.green : P.light, border: `1px solid ${on ? P.greenLight : P.border}`, borderRadius: 14, padding: '3px 9px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }),
+    chip: (on) => ({ background: on ? P.greenPale : 'none', color: on ? P.green : P.light, border: `1px solid ${on ? P.greenLight : P.border}`, borderRadius: 14, padding: '3px 9px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', flexShrink: 0 }),
     row: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: `1px solid ${P.cream}` },
     ta: { width: '100%', boxSizing: 'border-box', border: `1px solid ${P.border}`, borderRadius: 8, padding: 10, fontSize: '0.86rem', lineHeight: 1.5, fontFamily: 'inherit', color: P.dark, resize: 'vertical' },
   }
@@ -111,10 +154,10 @@ export default function ComposeHarvestBand() {
   return (
     <div style={S.card} data-testid="compose-harvest-band">
       <div style={S.head}>
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div style={S.title}>Tonight&rsquo;s harvest</div>
           <div style={S.sub}>
-            {model.lineCount} {model.lineCount === 1 ? 'pick' : 'picks'} &middot; logged {ageLabel(batch.endedAt)}
+            {postableCount} {postableCount === 1 ? 'pick' : 'picks'} &middot; logged {ageLabel(batch.endedAt)}
           </div>
         </div>
         <button type="button" style={S.btn} onClick={() => setOpen((v) => !v)} aria-expanded={open}>
@@ -143,34 +186,47 @@ export default function ComposeHarvestBand() {
           <textarea
             value={lead}
             onChange={(ev) => setLead(ev.target.value)}
-            placeholder="Say something first (optional)…"
+            placeholder="Say something first (optional)&hellip;"
             rows={2}
             style={S.ta}
             aria-label="Opening line"
           />
 
+          {/* Collapsed by default on a long batch. Found by rendering at 390px: 17 lines of picker
+              push "Send to Facebook" 1.8 screens down, so the post — the thing this surface exists to
+              produce — and its only action both land below the fold. The picker is the exception
+              path; the post is the point. */}
           <div>
-            <div style={{ fontSize: '0.72rem', color: P.light, marginBottom: 4 }}>
-              What&rsquo;s in the post &mdash; tap to leave something out
-            </div>
-            {baseLines.map((l) => {
+            <button
+              type="button"
+              onClick={() => setPickerOpen((v) => !v)}
+              aria-expanded={pickerOpen}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                fontSize: '0.72rem', color: P.light, marginBottom: 4, textAlign: 'left' }}
+            >
+              What&rsquo;s in the post ({postableCount}) &mdash; {pickerOpen ? 'hide' : 'tap to leave something out'}
+            </button>
+            {pickerOpen && baseLines.map((l) => {
               const on = !excluded.has(l.id)
-              const first = l.isFirst || firsts.has(l.id)
+              const first = firstOverride.has(l.id) ? firstOverride.get(l.id) : l.isFirst
               return (
                 <div key={l.id} style={S.row}>
                   <button type="button" onClick={() => setExcluded((s) => {
-                    const n = new Set(s); n.has(l.id) ? n.delete(l.id) : n.add(l.id); return n
+                    const n = new Set(s); if (n.has(l.id)) n.delete(l.id); else n.add(l.id); return n
                   })}
                     aria-pressed={on}
-                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', flex: 1, textAlign: 'left',
-                      color: on ? P.dark : P.light, textDecoration: on ? 'none' : 'line-through', fontSize: '0.85rem' }}>
-                    {l.quantity} {l.name || <em>{l.crop} (needs a name)</em>}
-                    {!l.postable && <span style={{ color: P.light, fontSize: '0.72rem' }}> &middot; not counted</span>}
+                    disabled={!l.postable}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: l.postable ? 'pointer' : 'default', flex: 1, minWidth: 0, textAlign: 'left',
+                      color: on && l.postable ? P.dark : P.light, textDecoration: on ? 'none' : 'line-through', fontSize: '0.85rem' }}>
+                    {l.quantity} {l.name || <em>{l.crop || 'unnamed'} &mdash; needs a name</em>}
+                    {!l.postable && <span style={{ color: P.light, fontSize: '0.72rem' }}> &middot; not in the post</span>}
                   </button>
-                  <button type="button" style={S.chip(first)} aria-pressed={first}
-                    onClick={() => setFirsts((s) => { const n = new Set(s); n.has(l.id) ? n.delete(l.id) : n.add(l.id); return n })}>
-                    1st
-                  </button>
+                  {l.postable && (
+                    <button type="button" style={S.chip(first)} aria-pressed={first}
+                      onClick={() => setFirstOverride((m) => { const n = new Map(m); n.set(l.id, !first); return n })}>
+                      1st
+                    </button>
+                  )}
                 </div>
               )
             })}
@@ -178,7 +234,7 @@ export default function ComposeHarvestBand() {
 
           {/* The logged note is offered, never published as-is: Dave rewrites these ("Fell off plant
               with major blotch" -> "(fell from plant w/ deformity, not 1st harvest)"). */}
-          {baseLines.filter((l) => l.noteSuggestion).map((l) => (
+          {baseLines.filter((l) => l.noteSuggestion && l.postable).map((l) => (
             <div key={`n-${l.id}`}>
               <div style={{ fontSize: '0.72rem', color: P.light, marginBottom: 4 }}>
                 Note on {l.name || l.crop} &mdash; you logged &ldquo;{l.noteSuggestion}&rdquo;
@@ -186,7 +242,7 @@ export default function ComposeHarvestBand() {
               <input
                 value={annotations[l.id] ?? ''}
                 onChange={(ev) => setAnnotations((a) => ({ ...a, [l.id]: ev.target.value }))}
-                placeholder="Add it to the post in your words…"
+                placeholder="Add it to the post in your words&hellip;"
                 style={{ ...S.ta, resize: 'none' }}
                 aria-label={`Note for ${l.name || l.crop}`}
               />
@@ -210,17 +266,24 @@ export default function ComposeHarvestBand() {
                 </button>
               )}
             </div>
-            <textarea
-              value={postText}
-              onChange={(ev) => { setDraft(ev.target.value); setDirty(true); setStatus('') }}
-              rows={Math.min(18, Math.max(6, postText.split('\n').length + 1))}
-              style={S.ta}
-              aria-label="Post text"
-            />
+            {model.lineCount === 0 && !dirty ? (
+              <div style={{ fontSize: '0.82rem', color: P.mid, border: `1px dashed ${P.border}`, borderRadius: 8, padding: '12px 10px' }}>
+                Everything is left out &mdash; tap a line above to put it back.
+              </div>
+            ) : (
+              <textarea
+                value={postText}
+                onChange={(ev) => { setDraft(ev.target.value); setDirty(true); setStatus('') }}
+                rows={Math.min(14, Math.max(6, postText.split('\n').length + 1))}
+                style={S.ta}
+                aria-label="Post text"
+              />
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <button type="button" style={S.btn} onClick={onShare} data-testid="compose-share">
+            <button type="button" style={S.btn} onClick={onShare} data-testid="compose-share"
+              disabled={!postText.trim()}>
               <Icon name="action.share" size={14} decorative surface="inverse" style={{ marginRight: 5, verticalAlign: '-0.1em' }} />
               Send to Facebook
             </button>

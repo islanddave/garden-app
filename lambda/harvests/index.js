@@ -125,6 +125,17 @@ export const handler = async (event) => {
   // joins harvest_log at all, so this endpoint is the only place that already knows a harvest's weight.
   // Nullable exactly like `project` above — same `IS NULL OR` shape, so an absent param is a no-op.
   const plant = qp.plant || null;
+  // V4-COMPOSEPOST-002: ?created_since=<ISO> narrows ENTRIES ONLY to rows LOGGED since that instant.
+  // Deliberately not applied to the aggregates or weight queries — the compose surface wants the last
+  // few hours of logging activity for batch detection AND the full-season totals in the same response,
+  // and the two windows are different by design (BUG-COMPOSETOTALS-001: reading season totals off a
+  // 50-row entries page published a per-crop figure ~4x under the true one).
+  //
+  // It filters on created_at, NOT event_date, which is the point: a harvest logged tonight but dated
+  // three days back sorts three days back under the event_date window and drops off the page, so the
+  // composed post silently omits produce that was just picked. 6 of 504 live rows (1.19%) are
+  // backdated. Cheap to support, and it is the only predicate that matches "what did I just log".
+  const createdSince = qp.created_since || null;
   const seasonYear = tf.kind === 'season' ? tf.year : 0;
 
   const includeRaw = (qp.include ?? 'entries,aggregates').split(',').map((s) => s.trim()).filter(Boolean);
@@ -196,6 +207,7 @@ export const handler = async (event) => {
           AND (${crop}::text IS NULL OR cv.crop_type_slug = ${crop}::text)
           AND (${project}::uuid IS NULL OR e.project_id = ${project}::uuid)
           AND (${plant}::uuid IS NULL OR e.plant_id = ${plant}::uuid)
+          AND (${createdSince}::timestamptz IS NULL OR e.created_at >= ${createdSince}::timestamptz)
           AND (${curDate}::timestamptz IS NULL OR (e.event_date, e.id) < (${curDate}::timestamptz, ${curId}::uuid))
         ORDER BY e.event_date DESC, e.id DESC
         LIMIT ${PAGE_LIMIT + 1}

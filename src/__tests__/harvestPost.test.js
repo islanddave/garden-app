@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   detectLastBatch, toLines, buildPostModel, renderPost, renderLine,
-  normalizeVarietyName, pluralizeCrop, leadFacts, LINE_SOFT_CAP,
+  normalizeVarietyName, pluralizeCrop, leadFacts, seasonCountsByCrop, LINE_SOFT_CAP,
 } from '../lib/harvestPost.js'
 
 // GOLDEN FIXTURE — the real 2026-08-06 evening batch, pulled verbatim from prod Neon on 2026-08-10.
@@ -59,10 +59,17 @@ describe('detectLastBatch', () => {
     expect(batch.items.some((i) => i.crop_name === 'Blueberry')).toBe(false)
   })
 
-  it('is stable across the whole 20–240 minute plateau measured in prod', () => {
-    for (const gapMinutes of [20, 45, 90, 240]) {
-      expect(detectLastBatch([...AUG6_EARLIER, ...AUG6], { gapMinutes }).items).toHaveLength(9)
-    }
+  // The previous version of this test looped 20/45/90/240 over AUG6 and called the result a
+  // "plateau". It was tautological: AUG6's nearest preceding pick is 636 minutes away, so no
+  // threshold in [1, 630] can change the answer. It proved the fixture is insensitive to N, which is
+  // the opposite of evidence about N. Replaced with the shape that actually discriminates.
+  it('encodes the real N tradeoff: a straggler evening splits at 45 and fuses at 90', () => {
+    // 2026-08-08 in prod: a tight 31-pick run, then ONE lone pick 76.6 minutes later.
+    const run = Array.from({ length: 5 }, (_, i) =>
+      e(`2026-08-08T21:5${i}:00Z`, `Variety ${i}`, 'Tomato', 1))
+    const straggler = e('2026-08-08T23:10:00Z', 'Late Pick', 'Tomato', 1) // 76 min after the run
+    expect(detectLastBatch([...run, straggler], { gapMinutes: 45 }).items).toHaveLength(1)
+    expect(detectLastBatch([...run, straggler], { gapMinutes: 90 }).items).toHaveLength(6)
   })
 
   it('ends the run at a different logger so two overlapping sessions never merge', () => {
@@ -164,7 +171,29 @@ describe('buildPostModel grouping', () => {
       e(`2026-08-07T00:${String(10 + i).padStart(2, '0')}:00Z`, `Variety ${i}`, 'Tomato', 1))
     const { model } = compose(many)
     expect(model.overCap).toBe(true)
-    expect(model.lineCount).toBe(LINE_SOFT_CAP + 1)
+    expect(renderPost(model).split('\n').filter(Boolean).length).toBeGreaterThan(LINE_SOFT_CAP)
+  })
+
+  // Sibling plantings of one cultivar are distinct garden_node rows. Prod hits this in 2 of 35
+  // historical batches — the 08-08 evening renders "4 San Marzano / 4 San Marzano" unmerged.
+  it('sums sibling plantings of the same variety into one line', () => {
+    const siblings = [
+      e('2026-08-07T00:41:00Z', 'San Marzano Roma', 'Tomato', 4),
+      e('2026-08-07T00:42:00Z', 'San Marzano Roma', 'Tomato', 4),
+      e('2026-08-07T00:43:00Z', 'Moskvich Heirloom', 'Tomato', 1),
+    ]
+    const { text, model } = compose(siblings)
+    expect(text).toContain('8 San Marzano')
+    expect(text.match(/San Marzano/g)).toHaveLength(1)
+    expect(model.lineCount).toBe(2)
+  })
+
+  it('carries a first-harvest through the sibling merge', () => {
+    const siblings = [
+      e('2026-08-07T00:41:00Z', 'San Marzano Roma', 'Tomato', 4),
+      { ...e('2026-08-07T00:42:00Z', 'San Marzano Roma', 'Tomato', 4), event_type: 'first_harvest' },
+    ]
+    expect(compose(siblings).text).toContain('8 San Marzano tomatoes (1st harvest!)')
   })
 })
 
@@ -238,6 +267,25 @@ describe('what must never happen', () => {
     expect(renderPost(buildPostModel(lines))).toBe('2 cucumbers')
   })
 
+  // Every one of the 5 live plant_id-IS-NULL harvests in prod has NO crop either — no plant means no
+  // cultivar means no crop_types join. Running this module over 504 real rows put a bare "2" into
+  // 3 of 35 batches, including the 08-05 batch this file's own header cites as its proof.
+  it('never emits a bare integer for a harvest with neither a name nor a crop', () => {
+    const nameless = { ...e('2026-08-07T00:46:00Z', '', '', 2), planting_name: null, variety_name: null, crop_name: null }
+    const lines = toLines([nameless])
+    expect(lines[0].needsName).toBe(true)
+    expect(lines[0].postable).toBe(false)          // kept for the UI, kept OUT of the post
+    expect(renderPost(buildPostModel(lines))).toBe('')
+  })
+
+  it('treats a string quantity from the numeric column as a number', () => {
+    // harvest_log.quantity is `numeric`; the neon driver returns a STRING.
+    const asString = { ...e('2026-08-07T00:46:00Z', 'Moskvich Heirloom', 'Tomato', '3') }
+    const lines = toLines([asString])
+    expect(lines[0].quantity).toBe(3)
+    expect(renderPost(buildPostModel(lines))).toBe('3 Moskvich tomatoes')
+  })
+
   it('suppresses a name carrying identification uncertainty', () => {
     const vague = e('2026-08-07T00:46:00Z', 'Onion — scallion-type (thick blue-green, ID pending)', 'Onion', 3)
     const lines = toLines([vague])
@@ -258,12 +306,49 @@ describe('what must never happen', () => {
   })
 })
 
-describe('leadFacts', () => {
-  it('hands Dave numbers, never a sentence', () => {
+describe('leadFacts + seasonCountsByCrop', () => {
+  const AGG = {
+    crops: [
+      { crop_name: 'Tomato', crop_type_slug: 'tomato', units: [{ unit: 'count', unit_key: 'count', total: 382, count: 120 }] },
+      { crop_name: 'Cucamelon', crop_type_slug: 'cucamelon', units: [{ unit: 'count', unit_key: 'count', total: 167, count: 20 }] },
+      { crop_name: 'Blueberry', crop_type_slug: 'blueberry', units: [{ unit: 'cup', unit_key: 'cup', total: 12, count: 6 }] },
+    ],
+  }
+
+  it('reads season totals from the full-range aggregates, not from a paginated entries page', () => {
+    const counts = seasonCountsByCrop(AGG)
+    expect(counts.get('Tomato')).toBe(382)
+    expect(counts.get('Cucamelon')).toBe(167)
+    // A cup-only crop contributes no count total — it must not appear as a countable season figure.
+    expect(counts.has('Blueberry')).toBe(false)
+  })
+
+  it('hands Dave numbers, never a sentence, and labels the window it counted', () => {
     const batch = detectLastBatch(AUG6)
-    const facts = leadFacts(batch, AUG6)
+    const facts = leadFacts(batch, seasonCountsByCrop(AGG), 'this season')
     expect(facts).toContain('24 picked tonight')
     expect(facts.some((f) => /varieties/.test(f))).toBe(true)
+    expect(facts).toContain('382 tomatoes this season')
+    // BUG-COMPOSETOTALS-001: the chip must state its window. "382 tomatoes" alone reads as
+    // season-to-date regardless of what was actually summed.
+    for (const f of facts.filter((x) => /tomatoes|cucamelons/.test(x))) {
+      expect(f).toMatch(/this season$/)
+    }
     for (const f of facts) expect(f).not.toMatch(/[.!]$/) // fragments, not prose
+  })
+
+  it('compares each season figure against its OWN crop, not the cross-crop batch sum', () => {
+    // Cucamelon: 10 in this batch, 167 for the season -> emitted. Under the old guard (compare against
+    // the 24-item batch TOTAL) a crop whose season figure sat between its own batch qty and the batch
+    // sum was silently dropped.
+    const batch = detectLastBatch(AUG6)
+    const facts = leadFacts(batch, new Map([['Cucamelon', 20], ['Tomato', 8]]), 'this week')
+    expect(facts).toContain('20 cucamelons this week')   // 20 > this batch's 10
+    expect(facts).not.toContain('8 tomatoes this week')  // 8 < this batch's 8 tomatoes -> suppressed
+  })
+
+  it('emits no season facts when aggregates are missing rather than inventing them', () => {
+    const batch = detectLastBatch(AUG6)
+    expect(leadFacts(batch, seasonCountsByCrop(null))).toEqual(['24 picked tonight', '9 varieties'])
   })
 })

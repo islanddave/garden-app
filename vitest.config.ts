@@ -51,6 +51,12 @@ export default defineConfig({
         // lambda/** was entirely absent from coverage; index.js is the AWS entrypoint, currently 0%).
         // Ratchet stays at active_target: 0 — this only adds measurement, no new gate.
         'lambda/daily-plan/**',
+        // V4-COMPOSEPOST-002: instrument the harvests read model. The compose surface reads its wire
+        // shape, and the 2026-08-10 audit found aggregate.js's projector was outside every coverage
+        // measurement while the L-081 schema audit was simultaneously blind to its SELECT columns —
+        // so nothing measured it from either direction. Ratchet stays at active_target: 0, same as
+        // the daily-plan precedent: this adds measurement, not a new gate.
+        'lambda/harvests/**',
       ],
       exclude: [
         'src/__tests__/**',
