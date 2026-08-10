@@ -1,0 +1,87 @@
+# V4-CROPTYPEALOE-001 — Aloe was untypeable: crop_types had 0 aloe rows of 135, and the Snap picker
+# lists CULTIVARS (public.cultivar over plant_varieties), so both rows are required.
+#
+# Standing invariants are keyed on this migration's OWN schema_version row so they self-arm at apply
+# and are not red from the moment the directory reaches the branch (gate_runner has no
+# skip-if-unapplied logic). Apply-time receipts are continuous:false.
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.6-croptypealoe-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_succulent_category_exists
+    note: >
+      The row is modelled on the existing succulent family. If that category ever disappeared, the
+      chosen lifecycle/unit/grams defaults would no longer have a sibling to be consistent with.
+    sql: |
+      SELECT 1 FROM public.crop_types WHERE category = 'succulent' AND deleted_at IS NULL
+    expect: rowcount_gte
+    value: 1
+
+  - name: pre_cultivar_view_is_the_picker_source
+    note: >
+      The Snap picker reads public.cultivar. If that view stopped projecting plant_varieties, adding a
+      row there would not surface in the form and this migration would fix nothing.
+    sql: |
+      SELECT 1 FROM information_schema.views WHERE table_name = 'cultivar'
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_aloe_crop_type_exists
+    continuous: true
+    sql: |
+      SELECT 1 FROM public.crop_types ct
+      WHERE ct.slug = 'aloe' AND ct.category = 'succulent' AND ct.deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.23.6-croptypealoe-001')
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_aloe_cultivar_is_visible_to_the_picker
+    note: >
+      Asserted through the VIEW the API actually reads, not the base table — a base-table row that the
+      view does not project would satisfy a naive check while leaving the form exactly as broken.
+    continuous: true
+    sql: |
+      SELECT 1 FROM public.cultivar c
+      WHERE c.id = 'a10e0000-0000-4000-8000-00000000a10e'::uuid AND c.deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '4.23.6-croptypealoe-001')
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_cultivar_resolves_to_a_real_crop_type
+    note: >
+      A cultivar whose crop_type_slug dangles is worse than no cultivar — it types the planting to
+      nothing and every crop-level grouping silently drops it.
+    continuous: true
+    sql: |
+      SELECT 1 FROM public.plant_varieties v
+      WHERE v.id = 'a10e0000-0000-4000-8000-00000000a10e'::uuid
+        AND NOT EXISTS (SELECT 1 FROM public.crop_types ct WHERE ct.slug = v.crop_type_slug AND ct.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_exactly_one_aloe_cultivar
+    note: Guards a re-run minting a duplicate the picker would show twice.
+    continuous: true
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+      WHERE crop_type_slug = 'aloe' AND deleted_at IS NULL
+      HAVING count(*) > 1
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_daves_planting_is_typed
+    note: >
+      Apply-time receipt, NOT continuous — Dave may retype or remove this planting at will and that
+      must never red a standing gate.
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.plants
+      WHERE id = 'ea1c5abb-6b98-4e6d-bb6a-cb656ad9119b'::uuid
+        AND variety_id = 'a10e0000-0000-4000-8000-00000000a10e'::uuid
+    expect: rowcount_eq
+    value: 1
+    env: prod
