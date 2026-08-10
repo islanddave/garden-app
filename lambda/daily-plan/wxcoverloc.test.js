@@ -21,8 +21,27 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(join(here, 'handler.js'), 'utf8');
 
+// DECOMMENT BEFORE FLATTENING. A column named in a `--` comment is not a selected column. The
+// plantings query below carries ~40 lines of explanatory prose naming the very columns asserted
+// here, and flattening the whole file to ONE line makes `.` span every one of them.
+// MUTATION that this closes: delete `p.rain_exposed,` from the SELECT and leave
+// `-- p.rain_exposed (dropped in refactor)` on the line — all 7 tests passed.
+// `//` stripping is URL-safe; `--` requires surrounding space so a JS decrement is never eaten.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
 // Collapse whitespace so an indentation/wrap change can't red these assertions.
-const FLAT = SRC.replace(/\s+/g, ' ');
+const FLAT = decomment(SRC).replace(/\s+/g, ' ');
+
+// The plantings SELECT, bounded to its own statement, so a `select` in an unrelated query cannot
+// pair with a column found hundreds of lines away once the file is one flat line.
+const PLANTINGS_SELECT = (() => {
+  const i = FLAT.indexOf('select p.id, p.name, p.project_id');
+  expect(i, 'plantings SELECT not found in handler.js — this guard has gone blind').toBeGreaterThan(-1);
+  const j = FLAT.indexOf(' from ', i);
+  expect(j, 'plantings SELECT has no FROM — extraction failed').toBeGreaterThan(i);
+  return FLAT.slice(i, j);
+})();
 
 describe('DRG-WXCOVERLOC-001: covered is derived from the planting\'s own location', () => {
   it('joins locations on the planting\'s location, falling back to the project\'s', () => {
@@ -46,7 +65,12 @@ describe('DRG-WXCOVERLOC-001: covered is derived from the planting\'s own locati
     // engine.js reads p.rain_exposed as an explicit override of !covered when CARE_RAIN_CREDIT_ENABLED is on.
     // It was never SELECTed -> always undefined -> the override branch was structurally dead. Inert today
     // (0/250 rows populated, and the flag is OFF), but it must be present before F2 flips credit ON.
-    expect(FLAT).toMatch(/select .*\bp\.rain_exposed\b/);
+    // Asserted against the PLANTINGS SELECT's own column list, not the whole flattened file. The
+    // old form was `FLAT.toMatch(/select .*\bp\.rain_exposed\b/)`: FLAT is the entire file on ONE
+    // line, so `.` spanned everything and ANY of the file's 13 `select`s could pair with ANY later
+    // mention of the column — including one inside a comment.
+    // MUTATION: replace `p.rain_exposed,` in the SELECT with `-- p.rain_exposed (dropped)` -> RED.
+    expect(PLANTINGS_SELECT).toMatch(/\bp\.rain_exposed\b/);
   });
 
   it('still derives coverage from the joined locations alias', () => {

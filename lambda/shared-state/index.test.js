@@ -14,15 +14,27 @@ const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
 describe('shared-state Lambda — static SQL invariants', () => {
   const stmts = SRC.match(/sql`[\s\S]*?`/g) || [];
+  // READS ARE DERIVED FROM THE STATEMENT LIST, CASE-INSENSITIVELY.
+  // The old expression was `SRC.match(/SELECT[\s\S]*?`/g)` — case-SENSITIVE, so a read written in
+  // lowercase `select` was not a read as far as the soft-delete assertion was concerned, and
+  // therefore could not fail it. Postgres does not care about the case; neither may this guard.
+  // MUTATION that this closes: add a second `select payload from garden_shared_state where
+  // workspace_id = ${SENTINEL_WORKSPACE}::uuid` with NO `deleted_at IS NULL` — all 7 tests passed
+  // while the endpoint served soft-deleted rows.
+  const reads = stmts.filter((s) => /\bSELECT\b/i.test(s));
 
-  it('issues at least 4 SQL statements, all targeting garden_shared_state', () => {
-    expect(stmts.length).toBeGreaterThanOrEqual(4);
+  it('issues exactly the known SQL statements, all targeting garden_shared_state', () => {
+    // EXACT, not >=. A floor of 4 against a population of 4 licensed an unbounded number of NEW
+    // statements to appear un-audited; an ADD is a deliberate change, so bump this number with it.
+    expect(stmts.length,
+      'shared-state SQL statement count changed. Every statement here is scoped to the SENTINEL ' +
+      'workspace and soft-delete filtered; a new one must be audited, not absorbed by a floor.')
+      .toBe(4);
     for (const s of stmts) expect(s).toMatch(/garden_shared_state/);
   });
 
   it('every read filters soft-deleted rows (deleted_at IS NULL)', () => {
-    const reads = SRC.match(/SELECT[\s\S]*?`/g) || [];
-    expect(reads.length).toBeGreaterThanOrEqual(2);
+    expect(reads.length, 'no SELECT statements found — this guard is asserting over nothing').toBe(2);
     for (const r of reads) expect(r).toMatch(/deleted_at IS NULL/);
   });
 
@@ -31,9 +43,9 @@ describe('shared-state Lambda — static SQL invariants', () => {
     // every statement references the sentinel — reads via `workspace_id = ${SENTINEL_WORKSPACE}`,
     // writes via the INSERT column list + `VALUES (${SENTINEL_WORKSPACE}...)`.
     for (const s of stmts) expect(s).toMatch(/\$\{SENTINEL_WORKSPACE\}/);
-    // reads specifically use the WHERE-scoped form
-    const reads = SRC.match(/SELECT[\s\S]*?`/g) || [];
-    for (const r of reads) expect(r).toMatch(/workspace_id\s*=\s*\$\{SENTINEL_WORKSPACE\}/);
+    // reads specifically use the WHERE-scoped form (same case-insensitive read set as above, so a
+    // lowercase `select` cannot escape the workspace-scoping assertion either)
+    for (const r of reads) expect(r).toMatch(/workspace_id\s*=\s*\$\{SENTINEL_WORKSPACE\}/i);
   });
 
   it('increments the counter in a single atomic statement (no read-modify-write)', () => {
@@ -46,8 +58,10 @@ describe('shared-state Lambda — static SQL invariants', () => {
   });
 
   it('targets the soft-delete partial unique index on every upsert (ON CONFLICT ... WHERE deleted_at IS NULL)', () => {
-    const conflicts = SRC.match(/ON CONFLICT[\s\S]*?DO UPDATE/g) || [];
-    expect(conflicts.length).toBeGreaterThanOrEqual(2);
+    const conflicts = SRC.match(/ON CONFLICT[\s\S]*?DO UPDATE/gi) || [];
+    // EXACT, and case-insensitive for the same reason as the read set above.
+    expect(conflicts.length, 'upsert count changed — a new ON CONFLICT must target the partial ' +
+      'unique index deliberately, not slip in under a floor').toBe(2);
     for (const c of conflicts) expect(c).toMatch(/WHERE deleted_at IS NULL/);
   });
 

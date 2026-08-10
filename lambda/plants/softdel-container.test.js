@@ -39,7 +39,22 @@ function sqlTemplates(src) {
 const uncommented = (s) => s.replace(/--[^\n]*/g, '');
 const squash = (s) => uncommented(s).replace(/\s+/g, ' ');
 
-const CONTAINER_JOINED = (b) => /public\.container pp/.test(b);
+// ALIAS-AGNOSTIC. This was pinned to the literal alias `pp`, so a query that reached container for
+// ownership under any other alias was silently outside the swept set — no test, no signal.
+// MUTATION that this closes (verified in-memory against a copy of index.js, which is owned by
+// another session and was not written to): add a third GET /api/plants list branch joining
+// `public.container c ON c.id = p.container_id AND c.created_by = ANY(${householdIds})` with NO
+// liveness gate. It was invisible to BOTH this predicate and the branch test below.
+const CONTAINER_ALIAS = /public\.container\s+([a-z][a-z0-9_]*)/gi;
+const containerAliases = (b) => [...uncommented(b).matchAll(CONTAINER_ALIAS)].map((m) => m[1]);
+const CONTAINER_JOINED = (b) => containerAliases(b).length > 0;
+// A container-reaching query is gated when EVERY alias it reaches container through is checked for
+// liveness — not merely when the string `pp.deleted_at IS NULL` appears somewhere in it.
+const containerGated = (b) => {
+  const u = uncommented(b);
+  const aliases = [...new Set(containerAliases(b))];
+  return aliases.length > 0 && aliases.every((a) => new RegExp(`\\b${a}\\.deleted_at IS NULL`).test(u));
+};
 
 describe('plants Lambda — F4 container soft-delete gate', () => {
   // MUTATION: delete `AND pp.deleted_at IS NULL` from the plants LIST query (the bare branch)
@@ -47,12 +62,18 @@ describe('plants Lambda — F4 container soft-delete gate', () => {
   it('EVERY sql template that reaches container for ownership also requires it to be live', () => {
     const joined = sqlTemplates(SRC).filter(CONTAINER_JOINED);
     // 8 today: seen INSERT, archive UPDATE, by-id GET, PATCH pre-flight, PATCH UPDATE,
-    // DELETE UPDATE, list-by-project, list-all. Floor guards a silently-empty match set.
-    expect(joined.length).toBeGreaterThanOrEqual(8);
+    // DELETE UPDATE, list-by-project, list-all.
+    // EXACT, not >=. A floor of 8 against a population of 8 let a NEW container-reaching query
+    // appear with no audit at all; an ADD is a deliberate change, so bump this in the same commit.
+    expect(joined.length,
+      'plants container-reaching query count changed. An ADD needs this number bumped deliberately; ' +
+      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(8);
+    // Gated = every alias this query reaches container through is liveness-checked, not merely
+    // "the literal string pp.deleted_at IS NULL occurs somewhere in the template".
     const ungated = joined
-      .filter(b => !/pp\.deleted_at IS NULL/.test(uncommented(b)))
+      .filter(b => !containerGated(b))
       .map(b => squash(b).slice(0, 120));
-    expect(ungated, 'container-joined plants query with no pp.deleted_at gate').toEqual([]);
+    expect(ungated, 'container-reaching plants query with an unguarded container alias').toEqual([]);
   });
 
   // MUTATION: in the list-all query, hoist the gate to top level —
@@ -94,8 +115,17 @@ describe('plants Lambda — F4 container soft-delete gate', () => {
   // stranded planting on.
   it('both GET /api/plants list branches gate the container', () => {
     const list = SRC.slice(SRC.indexOf('const projectId = event.queryStringParameters?.project_id'));
-    const branches = list.split('FROM public.garden_node p').slice(1, 3).map(uncommented);
-    expect(branches.length).toBe(2);
+    // `.slice(1)`, NOT `.slice(1, 3)`. The old bound took at most TWO branches and then asserted
+    // `length === 2`, which a third branch could never fail: slice truncated it away and the count
+    // still read 2. The bound was structurally incapable of seeing the thing it counted.
+    // MUTATION that this closes (verified in-memory against a copy — index.js is owned by another
+    // session and was not written to): append a third list branch after the existing two with no
+    // container liveness gate -> the old form stayed GREEN; this form reds on the count, and if the
+    // count is then bumped deliberately, on the per-branch gate assertion below.
+    const branches = list.split('FROM public.garden_node p').slice(1).map(uncommented);
+    expect(branches.length,
+      'GET /api/plants list branch count changed — a new branch needs this number bumped in the ' +
+      'same commit, which is what forces its container gate to be reviewed').toBe(2);
     for (const [i, b] of branches.entries()) {
       expect(b, `plants list branch ${i} missing the container gate`).toMatch(/pp\.deleted_at IS NULL/);
     }

@@ -15,11 +15,34 @@ const { run, weatherForSpace, hydrologyForSpace } = h;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
+
+// A construct NAMED IN A COMMENT is not that construct. Every assertion about live code below runs
+// against CODE, not SRC. MUTATION that this closes: delete awnGet's `AbortSignal.timeout(8000)` and
+// leave `// was: AbortSignal.timeout(8000)` behind — the un-decommented whole-file `toContain`
+// passed with the 30s-hang defect fully reintroduced.
+// The `//` arm is URL-safe (`[^:]` guard): this file embeds https:// endpoints inside the very
+// template literals the bounds assertions read, so a naive strip would truncate them and red
+// everything. The `--` arm requires surrounding space so a JS decrement is never mistaken for a
+// SQL comment. SRC stays raw and is used ONLY where a comment is legitimately the subject.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+const CODE = decomment(SRC);
+
+// Branch-bounded: the slice ends at the next `async function` OR at `exports.handler`, whichever
+// comes first, so the LAST function in the file cannot swallow the handler and be satisfied by it.
+// MUTATION that this closes: fetchStation is the last `async function`, so the old extractor ran to
+// EOF; any `return null` or `AbortSignal.timeout(...)` added to exports.handler would have satisfied
+// fetchStation's assertions.
 const fnBody = (name) => {
-  const i = SRC.indexOf(`async function ${name}`);
+  const i = CODE.indexOf(`async function ${name}`);
   expect(i, `async function ${name} present in index.js`).toBeGreaterThan(-1);
-  const j = SRC.indexOf('async function', i + 1);
-  return SRC.slice(i, j === -1 ? undefined : j);
+  const ends = [CODE.indexOf('async function', i + 1), CODE.indexOf('exports.handler', i + 1)]
+    .filter((x) => x > -1);
+  const j = ends.length ? Math.min(...ends) : -1;
+  const body = CODE.slice(i, j === -1 ? undefined : j);
+  expect(body.length, `${name} body extraction collapsed to nothing`).toBeGreaterThan(40);
+  return body;
 };
 // AbortError as undici/node20 fetch rejects it on AbortSignal.timeout expiry.
 const timeoutErr = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
@@ -39,13 +62,20 @@ describe('index.js per-fetch bounds (static source guard)', () => {
     expect(b).toMatch(/catch[\s\S]*return null/);
   });
   it('fetchStation stays bounded (awnGet 8000ms) with its null-fallback catch', () => {
-    expect(SRC).toContain('AbortSignal.timeout(8000)');
+    // SCOPED TO awnGet's OWN BODY, and comment-stripped. This was a whole-file `SRC.toContain`,
+    // which the string surviving in ANY comment anywhere satisfied.
+    // MUTATION: replace awnGet's `fetch(url, { signal: AbortSignal.timeout(8000) })` with a bare
+    // `fetch(url)` and leave `// was: AbortSignal.timeout(8000)` behind -> RED here (was GREEN).
+    expect(fnBody('awnGet')).toContain('AbortSignal.timeout(8000)');
     expect(fnBody('fetchStation')).toMatch(/catch[\s\S]*return null/);
   });
   it('DB Pool stays UNBOUNDED — no connect/query timeout on the Neon Pool (cold-resume must be waited out)', () => {
-    expect(SRC).toMatch(/new Pool\(\{ connectionString: NEON_DATABASE_URL \}\)/);
+    // MUTATION: add `connectionTimeoutMillis: 5000` to the Pool options -> RED.
+    expect(CODE).toMatch(/new Pool\(\{ connectionString: NEON_DATABASE_URL \}\)/);
   });
   it('A0.2-EVENT-OVERRIDES sentinel is intact (rerun-daily-plan.sh greps for it)', () => {
+    // RAW SRC on purpose — here the COMMENT ITSELF is the subject: rerun-daily-plan.sh greps the
+    // deployed zip's index.js for this marker, so it is load-bearing text, not prose about code.
     expect(SRC).toContain('A0.2-EVENT-OVERRIDES sentinel');
   });
 });

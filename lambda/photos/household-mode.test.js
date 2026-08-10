@@ -11,6 +11,20 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
+// A SCOPE FILTER NAMED IN A COMMENT IS NOT A SCOPE FILTER.
+// The census below was already exact (toBe(23), after the `>= 10 against 23` vacuity was fixed) —
+// but it counted matches in RAW source, so the count could be held at 23 by prose.
+// MUTATION that this closes: rewrite the container auto-promote arm's
+// `AND created_by = ANY(${householdIds})` to `AND TRUE -- dropped: created_by = ANY(${householdIds})`
+// — a live cross-household featured-photo WRITE — and all 9 tests passed. The same deletion
+// WITHOUT the trailing comment reddened the census, which is what made the mechanism unambiguous.
+// `//` stripping is URL-safe (`[^:]` guard); `--` requires surrounding space so a JS decrement
+// is never mistaken for a SQL comment.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+const CODE = decomment(SRC);
+
 describe('photos Lambda — Household Mode uploaded_by -> created_by switch', () => {
   it('imports householdScope + computes householdIds', () => {
     // V4-SPACEPHOTO-001: match householdScope among a NAMED-IMPORT LIST, not as the sole import —
@@ -29,7 +43,7 @@ describe('photos Lambda — Household Mode uploaded_by -> created_by switch', ()
     // `[,)]` not `)`: V4-PHOTOBULK-001 appended capture-metadata columns after created_by, so
     // created_by is no longer the LAST column. That was incidental to this guard — the invariant
     // is that uploaded_by and created_by are both still bound, not their position in the list.
-    expect(SRC).toMatch(/uploaded_by, created_by[,)]/);
+    expect(CODE).toMatch(/uploaded_by, created_by[,)]/);
   });
 
   it('scope filters + cross-entity featured-photo guards use created_by = ANY(${householdIds})', () => {
@@ -42,7 +56,7 @@ describe('photos Lambda — Household Mode uploaded_by -> created_by switch', ()
     // Adding a legitimately-new scoped site is a deliberate change: bump this number in the same
     // commit. That cost is the point — it is what makes a REMOVED site impossible to miss.
     // The regex matches every qualified form (p./pp./ph./bare), so this is the whole population.
-    const matches = SRC.match(/created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
+    const matches = CODE.match(/created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
     expect(matches.length,
       'photos/index.js household-scope site count changed. A DROP is a cross-tenant leak; an ADD ' +
       'needs this count bumped deliberately.').toBe(23); // 23 at d9afab95
@@ -53,20 +67,20 @@ describe('photos Lambda — Household Mode uploaded_by -> created_by switch', ()
     // scope") — but locations has 0 NULL created_by across all 29 live rows (W0.2-r1
     // locations-census), so there is no backfill gate and the missing predicate was a
     // cross-tenant featured-photo write. The arm must now match its 3 siblings.
-    const locIdx = SRC.indexOf('UPDATE locations');
+    const locIdx = CODE.indexOf('UPDATE locations');
     expect(locIdx).toBeGreaterThan(-1);
-    const block = SRC.slice(locIdx, locIdx + 400);
+    const block = CODE.slice(locIdx, locIdx + 400);
     expect(block).toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
     expect(block).toMatch(/featured_photo_id IS NULL/);
     expect(block).toMatch(/deleted_at IS NULL/);
   });
 
   it('INSERT still binds uploaded_by + created_by = ${userId}', () => {
-    const insIdx = SRC.indexOf('INSERT INTO photos');
+    const insIdx = CODE.indexOf('INSERT INTO photos');
     // Window widened 600 -> 1200: the INSERT grew by 8 capture-metadata columns
     // (V4-PHOTOBULK-001) and the old window no longer reached the end of the statement, so the
     // householdIds negative assertion below was scanning a truncated block.
-    const block = SRC.slice(insIdx, insIdx + 1200);
+    const block = CODE.slice(insIdx, insIdx + 1200);
     expect(block).toMatch(/uploaded_by, created_by[,)]/);
     expect(block).not.toMatch(/householdIds/);
   });

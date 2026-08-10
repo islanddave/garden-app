@@ -17,12 +17,30 @@ import { resolve, dirname } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
-const fetchPrecipBody = (() => {
-  const i = SRC.indexOf('async function fetchPrecip');
-  expect(i, 'async function fetchPrecip present in index.js').toBeGreaterThan(-1);
-  const j = SRC.indexOf('async function', i + 1);
-  return SRC.slice(i, j === -1 ? undefined : j);
-})();
+
+// An index NAMED IN A COMMENT is not that index. Every assertion below reads CODE, not SRC.
+// MUTATION that this closes: change the live URL to `past_days=3` — which silently shifts D0 from
+// ps[2] to ps[3], i.e. exactly the wrong-day-rain breakage this file's header describes — and leave
+// `// past_days=2 was the original` on the line. The whole suite passed.
+// `//` stripping is URL-safe (`[^:]` guard) because the assertions read an https:// URL literal.
+const decomment = (s) => s.split('\n')
+  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+  .join('\n');
+const CODE = decomment(SRC);
+
+// Branch-bounded (also stops at exports.handler) so a trailing function cannot be satisfied by the
+// handler that follows it.
+const fnBody = (name) => {
+  const i = CODE.indexOf(`async function ${name}`);
+  expect(i, `async function ${name} present in index.js`).toBeGreaterThan(-1);
+  const ends = [CODE.indexOf('async function', i + 1), CODE.indexOf('exports.handler', i + 1)]
+    .filter((x) => x > -1);
+  const j = ends.length ? Math.min(...ends) : -1;
+  const body = CODE.slice(i, j === -1 ? undefined : j);
+  expect(body.length, `${name} body extraction collapsed to nothing`).toBeGreaterThan(40);
+  return body;
+};
+const fetchPrecipBody = fnBody('fetchPrecip');
 
 describe('Open-Meteo daily indexing must not drift (G5)', () => {
   it('past_days stays 2 — it is what makes D0 index 2 for every existing field', () => {
@@ -98,10 +116,15 @@ describe('Open-Meteo daily indexing must not drift (G5)', () => {
 
 describe('SNS publish path (F3) — deliberately NOT fail-soft', () => {
   const publishBody = (() => {
-    const i = SRC.indexOf('async function publishAlert');
+    const i = CODE.indexOf('async function publishAlert');
     expect(i, 'async function publishAlert present in index.js').toBeGreaterThan(-1);
-    const j = SRC.indexOf('\n}', i);
-    return SRC.slice(i, j);
+    const j = CODE.indexOf('\n}', i);
+    const body = CODE.slice(i, j);
+    // The two assertions below are NEGATIVE, so a truncated (or empty) haystack would pass them
+    // vacuously. Pin the extraction to something only the real body carries.
+    expect(body, 'publishAlert body extraction truncated — the negative assertions below would ' +
+      'pass against a short slice regardless of what the function does').toMatch(/PublishCommand/);
+    return body;
   })();
 
   it('has NO try/catch — §3-7 forbids swallowing a frost publish failure', () => {
@@ -127,7 +150,10 @@ describe('SNS publish path (F3) — deliberately NOT fail-soft', () => {
 });
 
 describe('handler query carries the frost inputs', () => {
-  const H = readFileSync(resolve(__dirname, 'handler.js'), 'utf8').replace(/\s+/g, ' ');
+  // Decommented BEFORE flattening. handler.js's plantings query carries ~40 lines of explanatory
+  // `--` prose that names these very columns, so on the raw text either assertion could be
+  // satisfied by the commentary describing the column rather than by the column being selected.
+  const H = decomment(readFileSync(resolve(__dirname, 'handler.js'), 'utf8')).replace(/\s+/g, ' ');
   it('selects crop_type_slug — frost class is derived from it, never from coldFor (G2)', () => {
     expect(H).toMatch(/pv\.crop_type_slug/);
   });
