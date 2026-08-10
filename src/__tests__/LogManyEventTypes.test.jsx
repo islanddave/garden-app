@@ -61,3 +61,17 @@ describe('LogMany — batch coverage invariant (submittable set === BATCH_EVENT_
     expect([...reachable].sort()).toEqual([...BATCH_EVENT_TYPES].sort());
   });
 });
+
+// V4-LOGMANYHONEST-001 — Log Many renders harvest tiles that ROUTE OUT to per-plant entry, because
+// a harvest needs a quantity/unit and the batch body cannot carry per-planting values. Un-announced
+// that reads as a mis-tap: the user chose the bulk surface and silently landed on a single-event
+// form. The hint sets the expectation before the tap. If harvest ever becomes batch-submittable,
+// this test is the reminder that the line must come down with it.
+describe('V4-LOGMANYHONEST-001 — the bulk surface is honest about harvest', () => {
+  it('the hint stays true — harvest is still NOT batch-submittable', () => {
+    // Ties the copy to the behavior it describes. If someone makes harvest batchable without
+    // removing the line, this REDs rather than leaving a stale promise on screen.
+    expect(bulkSubmittableValues()).not.toContain('harvest')
+    expect(bulkSubmittableValues()).not.toContain('first_harvest')
+  })
+})

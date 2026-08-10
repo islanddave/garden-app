@@ -142,3 +142,33 @@ describe('BUG-SNAPATTACH-001 — the quick-photo claim announces a miss', () => 
     expect(postCalls.length).toBe(0)
   })
 })
+
+// BUG-QUICKPHOTONOTICE-001 — the PWA "Log a harvest" shortcut is /log?event_type=harvest&fromquick=1
+// (public/manifest.webmanifest). It is a COLD LAUNCH into a new document, so the module-state park
+// is empty by construction and the BUG-SNAPATTACH-001 else-branch above fired on EVERY launch,
+// opening the app's fastest path with an error about a photo the user never picked.
+// The fix narrows the CLAIM to photo-intent deep links. These two cases are the contract: the false
+// warning is gone AND the true one still fires. The block above is the other half — if a future
+// change silences the real detector, those tests RED, not these.
+describe('BUG-QUICKPHOTONOTICE-001 — the harvest shortcut never claims a photo', () => {
+  it('shows NO carry-over notice on the harvest shortcut with an empty park', async () => {
+    // Exactly the manifest shortcut URL. Park deliberately empty — that is every cold launch.
+    await renderForm('event_type=harvest&fromquick=1')
+    expect(screen.queryByText(/didn’t carry over/i)).toBeNull()
+  })
+
+  it('does not consume a parked file it has no claim to', async () => {
+    // A harvest-intent launch must leave a park alone so a later photo-intent claim can find it —
+    // consuming it here would silently recreate BUG-SNAPATTACH-001 from the other direction.
+    pendingRef.current = new File(['x'], 'parked.jpg', { type: 'image/jpeg' })
+    await renderForm('event_type=harvest&fromquick=1')
+    expect(pendingRef.current).not.toBeNull()
+  })
+
+  it('STILL warns on a photo-intent launch with an empty park (the detector survives)', async () => {
+    // Duplicated from the block above on purpose: this is the assertion the fix could plausibly
+    // have broken, so it is pinned inside the fix's own contract too.
+    await renderForm('event_type=photo&plant=pl-1&project=proj-1&fromquick=1')
+    expect(await screen.findByText(/didn’t carry over/i)).toBeTruthy()
+  })
+})

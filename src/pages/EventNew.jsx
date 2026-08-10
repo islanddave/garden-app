@@ -446,7 +446,23 @@ export default function EventNew() {
   // V4-PHOTOQUICK-001: claim the File parked by a trusted tap on the planting page (a File can't
   // ride a URL, and an iOS picker opened post-navigation is suppressed). Runs once on mount.
   useEffect(() => {
-    if (!fromQuick) return
+    // BUG-QUICKPHOTONOTICE-001: claim ONLY for a photo-intent quick capture. `fromquick=1` has two
+    // producers and only one of them ever parks a File:
+    //   QuickActions.jsx:124  -> /log?...&event_type=photo&fromquick=1   — parks a File, always.
+    //   manifest.webmanifest  -> /log?event_type=harvest&fromquick=1     — parks NOTHING, ever.
+    // The PWA "Log a harvest" shortcut is a cold launch into a new document, so the module-state
+    // park is empty BY CONSTRUCTION — the else branch below then fired on every single launch and
+    // opened the app's fastest path with an error about a photo the user never picked. A false
+    // error in a channel trains the user to ignore it, which costs exactly when it is true.
+    // Narrow the CLAIM, never the notice: the else branch is the visible half of BUG-SNAPATTACH-001
+    // and its sibling gate `phantom_photo_events` is a live alert metric (baseline 22, "pre-fix
+    // debris"). A photo-intent launch whose park was consumed by a remount MUST still warn.
+    // Fixed in the bundle, not the manifest, deliberately: an installed Android PWA's shortcuts are
+    // launcher-cached until Chrome re-reads the manifest (days, unforceable, no programmatic
+    // invalidation), so a manifest edit would leave the defect live on Dave's device meanwhile and
+    // its acceptance criterion unverifiable. `fromquick` in the manifest is now inert for harvest;
+    // drop it there only if that file is being edited for some other reason.
+    if (!fromQuick || preselectedEventType !== 'photo') return
     const f = takePendingCapture()
     if (f) { setPhotoFile(f); setPhotoPreview(URL.createObjectURL(f)) }
     // BUG-SNAPATTACH-001: the claim can MISS — the park is module state cleared on read, so a

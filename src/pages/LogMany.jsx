@@ -292,6 +292,16 @@ export default function LogMany() {
           value={eventType}
           onChange={handlePick}
         />
+        {/* V4-LOGMANYHONEST-001: say it BEFORE the tap, not after. Harvest tiles render here but
+            route out to per-plant entry (goPerPlant), because a harvest needs a quantity and unit
+            and the batch body cannot carry per-planting values. Un-announced, that reads as a
+            mis-tap: the user deliberately chose the bulk surface and silently landed on a
+            single-event form with nothing to attribute it to. Preventing the surprise beats
+            explaining it afterwards, so this is a standing hint rather than a post-hoc notice.
+            Remove this line if/when harvest ever becomes batch-submittable. */}
+        <p data-testid="logmany-harvest-hint" style={{ margin: '10px 2px 0', fontSize: '0.78rem', color: P.light, lineHeight: 1.45 }}>
+          Harvests are logged one at a time — each one needs its own quantity.
+        </p>
       </Section>
 
       <Section label="When?">

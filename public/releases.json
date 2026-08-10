@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.6.1",
+    "date": "2026-08-10",
+    "highlights": [
+      "Fixed: opening the app from the home-screen \u201cLog a harvest\u201d shortcut no longer greets you with a message about a photo not carrying over. There was never a photo \u2014 the warning was firing on every single launch of the fastest way into the app.",
+      "Log Many now says up front that harvests are logged one at a time and why (each needs its own quantity), instead of silently bouncing you to the single-event form after you tap Harvested."
+    ]
+  },
+  {
     "version": "4.6.0",
     "date": "2026-08-10",
     "highlights": [
