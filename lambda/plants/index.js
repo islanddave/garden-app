@@ -20,6 +20,15 @@ import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STAT
 import { validateClear } from './validate.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
 
+// BUG-SOWNAPPROXORPHAN-001 — an `X_approx` flag says "the date in X is approximate". With no X it
+// qualifies nothing, so it is not a false flag, it is a meaningless one. Returns NULL rather than
+// false when the date is absent: false would assert "this absent date is EXACT", which is a
+// different and equally unfounded claim. Used on the create path; the PUT enforces the same rule in
+// SQL because it must consult the pre-update row.
+export function approxOrNull(dateVal, approxVal) {
+  return (dateVal ?? null) === null ? null : (approxVal ?? false);
+}
+
 // V4-EVENTSOURCE-001 — event_log.source value written by THIS Lambda. lambda/events/index.js
 // declares 'app'/'app_batch' and explicitly delegates 'app_status' here; the full value set and
 // why 'direct' is reserved-but-never-inferred live in
@@ -488,13 +497,50 @@ export const handler = async (event) => {
             END,
             -- V1.2a-4 S1 (PROJ-RESCOPE / V102 §4.1): lifecycle / attrition / source / lineage / succession columns.
             sown_at                  = CASE WHEN ${clear} @> ARRAY['sown_at'] THEN NULL ELSE COALESCE(${body.sown_at ?? null}, p.sown_at) END,
-            sown_at_approx           = CASE WHEN ${clear} @> ARRAY['sown_at_approx'] THEN NULL ELSE COALESCE(${body.sown_at_approx ?? null}, p.sown_at_approx) END,
+            -- BUG-SOWNAPPROXORPHAN-001. X_approx says "the date in X is approximate" — it is a
+            -- QUALIFIER, and a qualifier with nothing to qualify has no meaning. Every one of these
+            -- four is settable independently of its date, so the orphan is reachable two ways:
+            -- clear the date without clearing the flag (the clear channel treats keys one at a
+            -- time, and isBlank(false) is deliberately false, so a boolean can never enter
+            -- clear on its own), or POST/PUT a truthy flag with no date at all — which is exactly
+            -- what PlantingEditor does today, sending !!form.sown_at_approx unconditionally
+            -- beside form.sown_at || null.
+            --
+            -- The invariant is enforced HERE rather than in the three forms that can violate it,
+            -- and rather than as a CHECK. Here, because this is the single place every client's
+            -- write converges. Not a CHECK, because a CHECK would 400 the orphan combination and
+            -- the currently-deployed client sends it — arming a constraint over a still-deployed
+            -- writer is a break, not a repair. Nulling a flag that qualifies nothing cannot lose
+            -- information: there is no date whose precision it could have been describing.
+            --
+            -- The date expression is repeated inside the flag's CASE on purpose. Postgres evaluates
+            -- every SET expression against the PRE-update row, so the two reads agree by
+            -- construction; referencing the new value of a sibling column is not available here.
+            -- Live prod at authoring: 0 orphans across all four pairs, so this is prophylactic —
+            -- the population it prevents is future writes, not existing rows, and no backfill is
+            -- owed.
+            sown_at_approx           = CASE
+              WHEN (CASE WHEN ${clear} @> ARRAY['sown_at'] THEN NULL ELSE COALESCE(${body.sown_at ?? null}, p.sown_at) END) IS NULL THEN NULL
+              WHEN ${clear} @> ARRAY['sown_at_approx'] THEN NULL
+              ELSE COALESCE(${body.sown_at_approx ?? null}, p.sown_at_approx) END,
             germinated_at            = CASE WHEN ${clear} @> ARRAY['germinated_at'] THEN NULL ELSE COALESCE(${body.germinated_at ?? null}, p.germinated_at) END,
-            germinated_at_approx     = CASE WHEN ${clear} @> ARRAY['germinated_at_approx'] THEN NULL ELSE COALESCE(${body.germinated_at_approx ?? null}, p.germinated_at_approx) END,
+            germinated_at_approx     = CASE
+              WHEN (CASE WHEN ${clear} @> ARRAY['germinated_at'] THEN NULL ELSE COALESCE(${body.germinated_at ?? null}, p.germinated_at) END) IS NULL THEN NULL
+              WHEN ${clear} @> ARRAY['germinated_at_approx'] THEN NULL
+              ELSE COALESCE(${body.germinated_at_approx ?? null}, p.germinated_at_approx) END,
             transplanted_at          = COALESCE(${body.transplanted_at ?? null}, p.transplanted_at),
-            transplanted_at_approx   = CASE WHEN ${clear} @> ARRAY['transplanted_at_approx'] THEN NULL ELSE COALESCE(${body.transplanted_at_approx ?? null}, p.transplanted_at_approx) END,
+            -- transplanted_at and planted_out_at are NOT on the server clear allowlist (only their
+            -- _approx companions are), so their dates cannot currently be cleared. The guard still
+            -- applies: the never-set-date-with-a-checked-box path reaches these two as well.
+            transplanted_at_approx   = CASE
+              WHEN COALESCE(${body.transplanted_at ?? null}, p.transplanted_at) IS NULL THEN NULL
+              WHEN ${clear} @> ARRAY['transplanted_at_approx'] THEN NULL
+              ELSE COALESCE(${body.transplanted_at_approx ?? null}, p.transplanted_at_approx) END,
             planted_out_at           = COALESCE(${body.planted_out_at ?? null}, p.planted_out_at),
-            planted_out_at_approx    = CASE WHEN ${clear} @> ARRAY['planted_out_at_approx'] THEN NULL ELSE COALESCE(${body.planted_out_at_approx ?? null}, p.planted_out_at_approx) END,
+            planted_out_at_approx    = CASE
+              WHEN COALESCE(${body.planted_out_at ?? null}, p.planted_out_at) IS NULL THEN NULL
+              WHEN ${clear} @> ARRAY['planted_out_at_approx'] THEN NULL
+              ELSE COALESCE(${body.planted_out_at_approx ?? null}, p.planted_out_at_approx) END,
             qty_initial              = CASE WHEN ${clear} @> ARRAY['qty_initial'] THEN NULL ELSE COALESCE(${body.qty_initial ?? null}, p.qty_initial) END,
             qty_current              = CASE WHEN ${clear} @> ARRAY['qty_current'] THEN NULL ELSE COALESCE(${body.qty_current ?? null}, p.qty_current) END,
             qty_harvested            = COALESCE(${body.qty_harvested ?? null}, p.qty_harvested),
@@ -817,13 +863,18 @@ export const handler = async (event) => {
           ${body.source_inventory_item_id ?? null},
           ${body.metadata ?? null},
           ${body.sown_at ?? null},
-          ${body.sown_at_approx ?? false},
+          -- BUG-SOWNAPPROXORPHAN-001, the create half. Same invariant as the PUT above: an
+          -- X_approx qualifier with no X to qualify has no referent. PlantingEditor sends
+          -- !!form.sown_at_approx unconditionally, so a create with the checkbox ticked and the
+          -- date box empty writes the orphan directly. Computed in JS rather than as a SQL CASE
+          -- because there is no prior row to consult here — the body IS the whole truth.
+          ${approxOrNull(body.sown_at, body.sown_at_approx)},
           ${body.germinated_at ?? null},
-          ${body.germinated_at_approx ?? false},
+          ${approxOrNull(body.germinated_at, body.germinated_at_approx)},
           ${body.transplanted_at ?? null},
-          ${body.transplanted_at_approx ?? false},
+          ${approxOrNull(body.transplanted_at, body.transplanted_at_approx)},
           ${body.planted_out_at ?? null},
-          ${body.planted_out_at_approx ?? false},
+          ${approxOrNull(body.planted_out_at, body.planted_out_at_approx)},
           ${qtyInitial},
           ${body.qty_current ?? null},
           ${body.qty_harvested ?? 0},

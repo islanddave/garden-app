@@ -100,11 +100,22 @@ describe('BUG-COALESCECLEAR-001: allowlist <-> SQL drift guard', () => {
   // THE TEST THAT MATTERS. Driven off the imported allowlist, so a field added to validate.js
   // without a matching SQL arm reds here instead of shipping as an accepted-but-inert clear.
   // This is the exact defect that shipped in varieties and stayed green.
+  // The clear arm no longer has to be the FIRST `WHEN` of its CASE. BUG-SOWNAPPROXORPHAN-001 puts a
+  // date-is-NULL guard ahead of it on the four `*_at_approx` columns, because a CASE evaluates in
+  // order and the orphan guard has to win over the flag's own COALESCE. The assertion still demands
+  // the arm verbatim — `WHEN ${clear} @> ARRAY['f'] THEN NULL ELSE COALESCE(` — so deleting or
+  // neutering it still reds; only the positional constraint is relaxed.
+  //
+  // The `(?:(?!= CASE)[\s\S])` tempered repetition is load-bearing and is NOT decoration: a plain
+  // `[\s\S]*?` would happily run past the end of this field's assignment and satisfy the match
+  // against a NEIGHBOURING field's clear arm — which is the extractor-swallows-too-much defect that
+  // let a deleted `kind_set_at` pass `projects/select-columns` from the wrong statement entirely.
+  // Refusing to cross another `= CASE` bounds the search to one assignment.
   it('every allowlisted field has a matching CASE arm in the UPDATE', () => {
     expect(CLEARABLE_FIELDS.length).toBeGreaterThanOrEqual(21);
     for (const f of CLEARABLE_FIELDS) {
       const arm = new RegExp(
-        `${f}\\s*= CASE WHEN \\$\\{clear\\} @> ARRAY\\['${f}'\\] THEN NULL ELSE COALESCE\\(`);
+        `${f}\\s*= CASE(?:(?!= CASE)[\\s\\S])*?WHEN \\$\\{clear\\} @> ARRAY\\['${f}'\\] THEN NULL\\s+ELSE COALESCE\\(`);
       expect(SRC, `${f} is on CLEARABLE_FIELDS but has no CASE WHEN clear @> ARRAY['${f}'] SQL arm`)
         .toMatch(arm);
     }
