@@ -27,7 +27,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight } from './validators.js';
 import { validateClear, resolveFlagPair } from './clearFields.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
-import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
+import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
 import { FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES } from './statusTransitions.js';
 import { awardCritterServer, readUserPrefs as readPrefsForCritter, readSpeciesPrefs as readSpeciesPrefsForCritter } from './critterAward.js';
 import { applyBatchSideEffects } from './batchSideEffects.js';
@@ -1257,6 +1257,14 @@ export const handler = async (event) => {
           warnRejectedFk(userId, 'event_log', 'location_id', body.location_id);
           return resp(400, { error: 'Invalid location_id' });
         }
+        // BUG-AUTHZFKENUM-001: treatment_product_id -> inventory_items sat on the SAME statement as
+        // the three gates above and had none of its own. Integrity (a treatment logged against
+        // another household's product) plus a weak existence oracle: a live foreign id answered 200
+        // while a nonexistent one raised 23503 -> 400. Same generic 400 for both now.
+        if (body.treatment_product_id != null && !await loadOwnedInventoryItem(sql, body.treatment_product_id, householdIds)) {
+          warnRejectedFk(userId, 'event_log', 'treatment_product_id', body.treatment_product_id);
+          return resp(400, { error: 'Invalid treatment_product_id' });
+        }
 
         // event_log_has_anchor admits plant-or-project only (widening it to location is
         // V4-EVENTANCHOR-001, still blocked). Checked here so a violation is a 400 naming the
@@ -2064,6 +2072,17 @@ export const handler = async (event) => {
         if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
           warnRejectedFk(userId, 'event_log', 'location_id', body.location_id);
           return resp(400, { error: 'Invalid location_id' });
+        }
+      }
+      // BUG-AUTHZFKENUM-001 — the create half of the treatment_product_id gate (see the PUT arm).
+      // Gated on the raw body value rather than the isTreatment-narrowed `treatmentProductId`
+      // computed below: a non-treatment event discards the field anyway, so the only behaviour
+      // change is that a foreign id is rejected instead of silently dropped, and gating the raw
+      // field is what keeps this a single unconditional call site the static guard can count.
+      if (body.treatment_product_id != null) {
+        if (!await loadOwnedInventoryItem(sql, body.treatment_product_id, householdIds)) {
+          warnRejectedFk(userId, 'event_log', 'treatment_product_id', body.treatment_product_id);
+          return resp(400, { error: 'Invalid treatment_product_id' });
         }
       }
 

@@ -4,6 +4,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
+import { loadOwnedProject } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
 import { validateClear } from './validate.js';
@@ -546,6 +547,22 @@ export const handler = async (event) => {
           if (!await loadOwnedLocation(sql, body.location_id, householdIds)) {
             warnRejectedFk(userId, 'container', 'location_id', body.location_id);
             return resp(400, { error: 'location_id does not match a location you can use' });
+          }
+        }
+
+        // AUTHZ (BUG-AUTHZFKENUM-001): parent_project_id is a cross-entity FK set straight from the
+        // body, and this PUT was the ONE path that took it ungated — POST gates it inline against
+        // container.created_by and reparentCore validates the new parent, so only the edit verb was
+        // open. Cost was not merely a bad FK: the read surface at the top of this file LEFT JOINs
+        // `public.container p ON p.id = pp.parent_id` with NO household predicate and selects
+        // `p.display_name AS parent_project_name`, so an attacker who parented their own project to
+        // a victim's container read that container's name back out of their own GET. Generic 400,
+        // no existence oracle. Measured on live prod: 68 parented projects, all single-owner — this
+        // gate costs zero legitimate writes. Self-reference is caught above; this is ownership.
+        if (body.parent_project_id != null) {
+          if (!await loadOwnedProject(sql, body.parent_project_id, householdIds)) {
+            warnRejectedFk(userId, 'container', 'parent_id', body.parent_project_id);
+            return resp(400, { error: 'parent_project_id does not match a project you can use' });
           }
         }
 

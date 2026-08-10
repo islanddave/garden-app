@@ -35,6 +35,12 @@ const IN_SCOPE = [
   // principals uneditable by every human. Writes are now household-scoped plus a membership-gated
   // managed-principal arm (varieties/authz.js). READS were already global and are unchanged.
   'varieties/index.js',
+  // BUG-AUTHZFKENUM-001 (2026-08-10) — MOVED here from having no scoping at all. The handler's own
+  // header carried a "HOUSEHOLD NOTE (V1.1, at wire time): add household-scoped write authz" TODO;
+  // the audit found it was shipping two body-settable FKs (evidence.garden_node_id and the
+  // planting-typed arm of evidence.entity_id) with existence checks only, so the TODO is discharged
+  // now rather than at wire time. Reads are unaffected — this Lambda is POST-only.
+  'evidence-ingest/index.js',
 ];
 
 // Out-of-scope: must NOT import householdScope.

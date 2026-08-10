@@ -128,6 +128,28 @@ export async function loadOwnedSpace(sql, spaceId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
+// Verify a photo_id the caller is attaching to one of their own rows (plant_varieties.photo_id,
+// inventory_items.featured_image_id, preservation_log.photo_id). photos.created_by is the owner
+// column (verified live — photos ALSO carries a stale `uploaded_by`, which is NOT the owner column
+// and must never be used here; see the locations featured-photo assertion in authz-write-fk.test.js).
+//
+// BUG-AUTHZFKENUM-001: lifted verbatim from the module-private loadOwnedPhoto in
+// lambda/preservation/index.js, which was the only surface that had one. Two consumers now need the
+// same predicate (varieties.photo_id, inventory-items.featured_image_id) and a third private copy is
+// how dialects are born. preservation keeps its own copy for now — it is byte-equivalent to this and
+// is asserted as such by the preservation arm of authz-write-fk.test.js; deleting it in favour of
+// this import belongs to the consolidating sweep that also collapses authz-parents.js.
+export async function loadOwnedPhoto(sql, photoId, householdIds) {
+  if (!UUID_RE.test(String(photoId))) return null;
+  const rows = await sql`
+    SELECT id FROM photos
+    WHERE id = ${photoId}
+      AND created_by = ANY(${householdIds})
+      AND deleted_at IS NULL
+  `;
+  return rows.length ? rows[0] : null;
+}
+
 // Server-side observability for a rejected write-FK. Deliberately one-way: the detail goes to
 // CloudWatch, the caller gets only the generic 400 from the call site. A silent reject is
 // indistinguishable from a client bug, and this class of failure is exactly what we want to see if

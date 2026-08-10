@@ -3,7 +3,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
+import { householdScope, loadOwnedLocation, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { validateExtractRequest, buildAnthropicRequest, parseExtractResponse } from './extract.js';
 
@@ -264,6 +264,19 @@ export const handler = async (event) => {
           }
         }
 
+        // AUTHZ (BUG-AUTHZFKENUM-001): featured_image_id -> photos(id) is the UNGATED TWIN of
+        // featured_photo_id three lines above. Both are body-settable photo references on the same
+        // row; only one was checked. featured_image_id has no per-item linkage requirement (it is
+        // not constrained to photos.inventory_item_id = this item), so ownership is the whole of the
+        // check — hence the shared loadOwnedPhoto rather than a second inline linkage query.
+        // Measured on live prod: zero rows would lose a write.
+        if (body.featured_image_id != null) {
+          if (!await loadOwnedPhoto(sql, body.featured_image_id, householdIds)) {
+            warnRejectedFk(userId, 'inventory_items', 'featured_image_id', body.featured_image_id);
+            return resp(400, { error: 'featured_image_id does not match a photo you can use' });
+          }
+        }
+
         // AUTHZ (V4-AUTHZSWEEP-001): location_id is a cross-entity FK set straight from the body.
         // The DB FK proves existence, not ownership — gate it before the write. Generic 400, no
         // existence oracle. NOTE the PUT below assigns location_id unconditionally (not COALESCE),
@@ -368,6 +381,14 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       const verr = validateCreate(body);
       if (verr) return resp(400, { error: verr });
+
+      // AUTHZ (BUG-AUTHZFKENUM-001): create half of the featured_image_id gate — see the PUT arm.
+      if (body.featured_image_id != null) {
+        if (!await loadOwnedPhoto(sql, body.featured_image_id, householdIds)) {
+          warnRejectedFk(userId, 'inventory_items', 'featured_image_id', body.featured_image_id);
+          return resp(400, { error: 'featured_image_id does not match a photo you can use' });
+        }
+      }
 
       // AUTHZ (V4-AUTHZSWEEP-001): same gate as the PUT path — the create path must not be the
       // hole the edit path closes.

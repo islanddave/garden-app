@@ -39,7 +39,8 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validateBody, validateCropTypeBody, resolveCropTypeName, validateClear } from './validate.js';
 import { applyDerive } from './crop-derive.js';
-import { householdScope } from './household.js';
+import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
+import { loadOwnedProject } from './authz-parents.js';
 import { managedPrincipalPatterns } from './authz.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -246,6 +247,22 @@ export const handler = async (event) => {
         const allowed = await checkRateLimit(sql, userId, 'plant_varieties.update', 120);
         if (!allowed) return resp(429, { error: 'Rate limit exceeded — 120/hour for plant_varieties.update' });
 
+        // AUTHZ (BUG-AUTHZFKENUM-001): photo_id -> photos(id) was written verbatim from the body on
+        // BOTH verbs while the DB FK proved only existence. NOT a read leak TODAY — live prod has
+        // 0 of 408 cultivars with photo_id set and no frontend picker exists — but GET /api/varieties
+        // and GET /api/varieties/:id are GLOBALLY readable and already SELECT photo_id, so the day a
+        // resolver ships (the same shape as resolvePhotoViewUrl elsewhere) this becomes a
+        // cross-household read with no further code change. Gated now, at zero measured cost.
+        // Scoped with `household` (not householdIds) to match this handler's local naming; the
+        // managed-principal widening in ./authz.js governs WHICH CULTIVAR may be edited, never which
+        // photo may be attached — a managed row is still only attachable to household-owned photos.
+        if (body.photo_id != null) {
+          if (!await loadOwnedPhoto(sql, body.photo_id, household)) {
+            warnRejectedFk(userId, 'plant_varieties', 'photo_id', body.photo_id);
+            return resp(400, { error: 'photo_id does not match a photo you can use' });
+          }
+        }
+
         // PUT uses COALESCE pattern: undefined/null in body = keep existing.
         //
         // V4-EDITCOMPLETE-001 — that pattern alone makes every optional column WRITE-ONCE-SETTABLE:
@@ -383,6 +400,27 @@ export const handler = async (event) => {
       // If a variety already exists for this source project, return it (200);
       // skip the name/species fuzzy-match check (admin is authoritative).
       // Per design proj-rescope-s6-design-V001-20260519.1625.md §4 Q3 + §5.3 #6.
+      //
+      // THE IDEMPOTENCY SELECT BELOW IS HOUSEHOLD-SCOPED, and that is a SECOND fix, not decoration
+      // (BUG-AUTHZFKENUM-001). It used to read `WHERE source_proj_rescope_project_id = $1 AND
+      // deleted_at IS NULL LIMIT 1` with no owner predicate and no ORDER BY, which made it
+      // pre-squattable: an attacker POSTs a cultivar carrying a key they expect an admin to use
+      // later, and the admin's inline-create returns the ATTACKER'S ROW (200) instead of minting
+      // one — the attacker chooses the cultivar the admin's project gets classified as. The owner
+      // arms mirror the PUT/DELETE editable set exactly (household + managed principals), so the
+      // 4 live rows on this key still resolve. ORDER BY makes the LIMIT 1 deterministic rather than
+      // whatever the planner returns first.
+      //
+      // AUTHZ (BUG-AUTHZFKENUM-001): source_proj_rescope_project_id -> plant_projects was ungated,
+      // so a caller could mint a cultivar keyed to another household's project. Gated with the
+      // canonical project predicate. Measured on live prod: all 5 rows carrying this key are
+      // single-owner, so this costs zero legitimate writes.
+      if (body.source_proj_rescope_project_id != null) {
+        if (!await loadOwnedProject(sql, body.source_proj_rescope_project_id, household)) {
+          warnRejectedFk(userId, 'plant_varieties', 'source_proj_rescope_project_id', body.source_proj_rescope_project_id);
+          return resp(400, { error: 'source_proj_rescope_project_id does not match a project you can use' });
+        }
+      }
       const sourceProjId = body.source_proj_rescope_project_id ?? null;
       if (sourceProjId) {
         const existing = await sql`
@@ -401,6 +439,9 @@ export const handler = async (event) => {
           FROM public.cultivar
           WHERE source_proj_rescope_project_id = ${sourceProjId}
             AND deleted_at IS NULL
+            AND ( created_by = ANY(${household})
+                  OR created_by LIKE ANY(${managedPatterns}::text[]) )
+          ORDER BY created_at ASC, id ASC
           LIMIT 1
         `;
         if (existing.length) return resp(200, existing[0]);
@@ -408,6 +449,16 @@ export const handler = async (event) => {
 
       const allowed = await checkRateLimit(sql, userId, 'plant_varieties.create', 60);
       if (!allowed) return resp(429, { error: 'Rate limit exceeded — 60/hour for plant_varieties.create' });
+
+      // AUTHZ (BUG-AUTHZFKENUM-001): the create half of the photo_id gate — see the PUT arm above
+      // for why an unset-in-prod column still has to be gated. Gating one verb is the shape of the
+      // original bug, so both are gated or neither is.
+      if (body.photo_id != null) {
+        if (!await loadOwnedPhoto(sql, body.photo_id, household)) {
+          warnRejectedFk(userId, 'plant_varieties', 'photo_id', body.photo_id);
+          return resp(400, { error: 'photo_id does not match a photo you can use' });
+        }
+      }
 
       // Fuzzy-match warning (advisory). Frontend may show "similar exists, override?"
       // by re-POSTing with allow_duplicate=true. Backend honors the override.

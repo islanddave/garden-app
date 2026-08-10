@@ -147,7 +147,10 @@ describe('varieties write predicates — source-level invariants', () => {
   // Guards the composition Layer 1 tests. Without this, Layer 1 could be verifying a composition
   // the handler never performs.
   it('handler composes householdScope -> managedPrincipalPatterns exactly as tested above', () => {
-    expect(SRC).toMatch(/import \{ householdScope \} from '\.\/household\.js'/);
+    // BUG-AUTHZFKENUM-001 added loadOwnedPhoto + warnRejectedFk to this import for the photo_id and
+    // source_proj_rescope_project_id gates, so the assertion pins the SYMBOL and the MODULE rather
+    // than the exact one-symbol import line it used to be.
+    expect(SRC).toMatch(/import \{[^}]*\bhouseholdScope\b[^}]*\} from '\.\/household\.js'/);
     expect(SRC).toMatch(/import \{ managedPrincipalPatterns \} from '\.\/authz\.js'/);
     expect(SRC).toMatch(/const household = householdScope\(userId\)/);
     expect(SRC).toMatch(/const managedPatterns = managedPrincipalPatterns\(household\)/);
@@ -250,8 +253,17 @@ describe('varieties write predicates — source-level invariants', () => {
   it('POST still stamps created_by from the JWT sub only (no widening on create)', () => {
     const postIdx = SRC.lastIndexOf("if (method === 'POST')");
     const postBlock = SRC.slice(postIdx);
-    expect(postBlock).toMatch(/\$\{userId\}/);
-    expect(postBlock).not.toMatch(/\$\{household\}|\$\{managedPatterns\}/);
+    // BUG-AUTHZFKENUM-001 changed this assertion's TARGET, not its meaning. The POST block now
+    // legitimately mentions ${household} — the household-scoped source-project idempotency lookup
+    // and the loadOwnedProject/loadOwnedPhoto FK gates — and none of those stamps ownership. What
+    // must never widen is the INSERT's created_by, so the assertion moved onto the INSERT itself
+    // (which is strictly tighter than the old block-wide scan, not a relaxation).
+    const insIdx = postBlock.indexOf('INSERT INTO public.cultivar');
+    expect(insIdx, 'expected the create INSERT in the POST block').toBeGreaterThan(-1);
+    const insStmt = postBlock.slice(insIdx, postBlock.indexOf('RETURNING', insIdx));
+    expect(insStmt).toMatch(/created_by,/);
+    expect(insStmt).toMatch(/\$\{userId\}/);
+    expect(insStmt).not.toMatch(/\$\{household\}|\$\{managedPatterns\}/);
   });
 
   it('the GET read paths are untouched (still global, no scope predicate)', () => {
@@ -260,9 +272,18 @@ describe('varieties write predicates — source-level invariants', () => {
     expect(listBlock).not.toMatch(/household|managedPatterns/);
   });
 
-  // Exactly two write predicates gained the arm. A third occurrence means something else widened.
-  it('exactly two scoped write predicates exist — PUT and DELETE, nothing else', () => {
-    expect(SRC.match(/created_by = ANY\(\$\{household\}\)/g)).toHaveLength(2);
-    expect(SRC.match(/created_by LIKE ANY\(\$\{managedPatterns\}::text\[\]\)/g)).toHaveLength(2);
+  // Exactly three scoped predicates carry the arm. A fourth means something else widened.
+  //
+  // WAS TWO (PUT + DELETE). The third is the POST source-project idempotency SELECT, NARROWED by
+  // BUG-AUTHZFKENUM-001 — it previously read `WHERE source_proj_rescope_project_id = $1 AND
+  // deleted_at IS NULL LIMIT 1` with no owner predicate at all, which let an attacker pre-squat the
+  // key so an admin's /admin/classify inline-create returned the ATTACKER's cultivar with a 200.
+  // It reuses this exact arm rather than a fourth dialect precisely so it stays countable here: the
+  // set of rows the idempotency lookup may return is now identical to the set PUT/DELETE may edit.
+  it('exactly three scoped predicates exist — PUT, DELETE, and the POST idempotency lookup', () => {
+    expect(SRC.match(/created_by = ANY\(\$\{household\}\)/g)).toHaveLength(3);
+    expect(SRC.match(/created_by LIKE ANY\(\$\{managedPatterns\}::text\[\]\)/g)).toHaveLength(3);
+    // …and the new one is a READ, not a write: it must sit inside a SELECT.
+    expect(SRC).toMatch(/FROM public\.cultivar\s*\n\s*WHERE source_proj_rescope_project_id/);
   });
 });

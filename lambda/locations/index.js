@@ -3,7 +3,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { householdScope } from './household.js';
+import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { validateClear } from './validate.js';
 
@@ -244,6 +244,22 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.name) return resp(400, { error: 'name is required' });
 
+      // AUTHZ (BUG-AUTHZFKENUM-001): parent_id was NOT gated here, despite the household-scoped
+      // SELECT below looking like a gate. It only ever read the parent's `level`; a foreign or
+      // non-existent parent simply left `level = 0` and the INSERT then stored body.parent_id
+      // VERBATIM. That is a live cross-household READ, not merely a bad FK: `locations_with_path`
+      // is a recursive CTE view with NO created_by filter, so the attacker's own row's `full_path`
+      // comes back with the victim's ancestor names concatenated into it — and the GET above
+      // returns locations_with_path rows for every location the caller owns.
+      // Generic 400, no existence oracle. Measured on live prod: all 21 parented locations are
+      // single-owner, so this gate costs zero legitimate writes.
+      if (body.parent_id != null) {
+        if (!await loadOwnedLocation(sql, body.parent_id, householdIds)) {
+          warnRejectedFk(userId, 'locations', 'parent_id', body.parent_id);
+          return resp(400, { error: 'parent_id does not match a location you can use' });
+        }
+      }
+
       let level = 0;
       if (body.parent_id) {
         const parentRows = await sql`
@@ -281,10 +297,11 @@ export const handler = async (event) => {
     // BUG-COALESCECLEAR-001 audit finding: this catch mapped ONLY 23505. Every sibling handler
     // (plants, projects, events) maps 23503 and 23514 too; locations was the one surface that never
     // adopted it, so a caller-provokable constraint violation surfaced as "Internal server error"
-    // with no message. Reachable today: the POST accepts a parent_id it could not verify ownership
-    // of and inserts it anyway, so a non-existent uuid raises 23503 here and the caller learns
-    // nothing. (That ownership hole is its own defect and is NOT fixed by this line — filed
-    // separately. This only stops the failure being unreadable.)
+    // with no message. It USED to be reachable via the POST, which accepted a parent_id it could not
+    // verify ownership of and inserted it anyway, so a non-existent uuid raised 23503 here. That
+    // ownership hole is CLOSED as of BUG-AUTHZFKENUM-001 (the loadOwnedLocation gate in the POST
+    // above answers a foreign OR absent parent with a generic 400 before the INSERT), so this arm is
+    // now parity/defence-in-depth rather than the live path.
     //
     // Nothing on the clear allowlist can reach either code — `description` carries no CHECK and no
     // FK, and the three CHECKs on this table (chk_lat_lng_co_null, locations_level_check,

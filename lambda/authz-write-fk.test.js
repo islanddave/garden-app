@@ -16,10 +16,10 @@
 //       silently reappear when one of these handlers is next refactored.
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadOwnedLocation, loadOwnedInventoryItem, loadOwnedPlanting, loadOwnedSpace, warnRejectedFk } from './household.js';
+import { loadOwnedLocation, loadOwnedInventoryItem, loadOwnedPlanting, loadOwnedSpace, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,6 +42,10 @@ describe('V4-AUTHZSWEEP-001: ownership loaders bind the correct owner column', (
     ['loadOwnedLocation', loadOwnedLocation, 'locations', /FROM locations/i, /created_by = ANY\(\?\)/, true],
     ['loadOwnedInventoryItem', loadOwnedInventoryItem, 'inventory_items', /FROM inventory_items/i, /created_by = ANY\(\?\)/, true],
     ['loadOwnedSpace', loadOwnedSpace, 'spaces', /FROM spaces/i, /created_by = ANY\(\?\)/, false],
+    // BUG-AUTHZFKENUM-001: lifted out of lambda/preservation, where it was module-private, once a
+    // second and third consumer appeared (varieties.photo_id, inventory-items.featured_image_id).
+    // photos carries BOTH created_by and a stale uploaded_by; created_by is the owner column.
+    ['loadOwnedPhoto', loadOwnedPhoto, 'photos', /FROM photos/i, /created_by = ANY\(\?\)/, true],
   ];
 
   for (const [name, fn, table, fromRe, ownerRe, expectsSoftDelete] of CASES) {
@@ -132,6 +136,30 @@ const SITES = [
   ['photos/index.js', 'event_id', 'loadOwnedEvent', 1],
   ['photos/index.js', 'location_id', 'loadOwnedLocation', 2],
   ['photos/index.js', 'inventory_item_id', 'loadOwnedInventoryItem', 1],
+  // ── BUG-AUTHZFKENUM-001 — the seven live holes the enumeration audit found. ────────────────────
+  // projects PUT was the ONE verb that set parent_project_id ungated (POST gates it inline against
+  // container.created_by — see the dedicated assertion below; reparentCore validates its new
+  // parent), and the read surface LEFT JOINs the parent with no household predicate to select
+  // `p.display_name AS parent_project_name`, so it leaked the victim container's NAME.
+  ['projects/index.js', 'parent_project_id', 'loadOwnedProject', 1],
+  // locations POST *looked* gated — a household-scoped SELECT sat right above it — but that SELECT
+  // only read the parent's `level`; a miss left level=0 and inserted body.parent_id verbatim. The
+  // `locations_with_path` recursive view has NO created_by filter, so the attacker's own row's
+  // full_path came back carrying the victim's ancestor names.
+  ['locations/index.js', 'parent_id', 'loadOwnedLocation', 1],
+  // varieties photo_id: 0 of 408 live cultivars set it and no picker exists, so no leak TODAY —
+  // but GET /api/varieties and /:id are GLOBALLY readable and already return photo_id, so this is
+  // gated before a resolver ships rather than after.
+  ['varieties/index.js', 'photo_id', 'loadOwnedPhoto', 2],
+  ['varieties/index.js', 'source_proj_rescope_project_id', 'loadOwnedProject', 1],
+  // featured_image_id was the ungated twin of featured_photo_id three lines above it.
+  ['inventory-items/index.js', 'featured_image_id', 'loadOwnedPhoto', 2],
+  // treatment_product_id sat on the SAME statement as three gated siblings with no gate of its own.
+  ['events/index.js', 'treatment_product_id', 'loadOwnedInventoryItem', 2],
+  // evidence-ingest is the reason the ENUMERATION had to change, not just the gates: it never
+  // spells `body.<x>_id` (validate.js destructures the body; the write reads `v.value.<x>`), so the
+  // old scan found zero pairs in that dir and passed it while it carried two ungated FKs.
+  ['evidence-ingest/index.js', 'garden_node_id', 'loadOwnedPlantingRef', 1],
 ];
 // Which module each loader is imported from. Two homes today; authz-parents.js is a temporary one
 // (see its header) and collapses into household.js in the consolidating sweep — at which point this
@@ -141,6 +169,7 @@ const LOADER_MODULE = {
   loadOwnedInventoryItem: './household.js',
   loadOwnedPlanting: './household.js',
   loadOwnedSpace: './household.js',
+  loadOwnedPhoto: './household.js',
   loadOwnedProject: './authz-parents.js',
   loadOwnedPlantingRef: './authz-parents.js',
   loadOwnedEvent: './authz-parents.js',
@@ -150,84 +179,145 @@ const LOADER_MODULE = {
 // ── THE ENUMERATION RATCHET (BUG-AUTHZFKENUM-001) ───────────────────────────────────────────────
 //
 // SITES is a HAND-MAINTAINED list, and its own comment says "Adding a row here is now part of
-// adding a body-settable FK". Nothing enforced that. Measured 2026-08-07: SITES covers 13 of the
-// **50** distinct (handler, body.*_id) pairs on disk. The other 37 are invisible to this file —
-// not necessarily unsafe, but not seen by the guard that exists to see them, which is the same
-// fail-open-and-silent shape as an unlisted file producing no test.
+// adding a body-settable FK". Nothing enforced that, so this block closes the SET: every FK-shaped
+// column any handler WRITES must appear either in SITES with a gate count, or below with a reason.
 //
-// This does NOT claim the 37 are safe. Several are gated inline by predicates this file cannot
-// recognise (locations::parent_id, critter::plant_id, plants::featured_photo_id, and the
-// preservation pair this sweep's header records as already closed); several are plausibly not
-// household-owned at all (variety_id / cultivar_id / species_id are shared vocabulary; session_id
-// / flow_id / op_id are self-owned analytics ids). NONE of them has been audited BY THIS FILE, and
-// writing a per-entry verdict I had not actually derived would be the rubber stamp this codebase
-// keeps getting burned by. Their audit is owned by BUG-AUTHZFKENUM-001.
+// WHY THE ENUMERATION WAS REWRITTEN (this is the fix that closes the CLASS, not seven instances).
+// The first version of this ratchet walked `<dir>/index.js` only and matched only the literal token
+// `body.<name>_id`. Three blind spots were PROVEN live, not theorised:
+//   1. A HANDLER THAT DESTRUCTURES ITS BODY WAS ENTIRELY INVISIBLE. lambda/evidence-ingest never
+//      spells `body.<x>_id` — validate.js destructures the body and the handler writes
+//      `v.value.garden_node_id` — so the dir contributed ZERO pairs and the ratchet passed it while
+//      it carried two ungated FKs. A guard that reports "nothing to see" on the file with the bug
+//      in it is worse than no guard, because it reads as coverage.
+//   2. `crop_type_slug` IS A REAL FOREIGN KEY WITH NO `_id` SUFFIX (plant_varieties/preservation_log
+//      -> crop_types.slug, verified live) and could never match an `_id`-anchored regex.
+//   3. lambda/photocdn-derivative ships `index.mjs`, so the `existsSync(index.js)` filter skipped
+//      the dir outright — a dir could be added to the fleet and be born exempt.
+// The scan is now: for EVERY non-test .js/.mjs in EVERY lambda subdir, take (a) every FK-shaped
+// column named in an INSERT column list or a SET clause — the write ALWAYS names the column, which
+// is why this catches a destructuring handler that no body-token scan can see — and (b) every
+// `body.<fk-shaped>` reference, kept so the pairs the old scan found are not silently dropped.
 //
-// What this ratchet DOES do, and it is the part that matters going forward: it closes the SET. A
-// NEW body.*_id on any handler fails this test until someone puts it in SITES with a gate count or
-// adds it below with a reason. That is exactly the hole through which BUG-PARENTOWN-001 arrived —
-// the V4-AUTHZSWEEP-001 pass gated three plants PUT columns and left every POST column and the
-// whole photos parent set out of the table, so nothing failed when they stayed open.
+// WHAT IT STILL CANNOT SEE (say it out loud rather than let it read as total coverage):
+//   • A NEW non-`_id`-suffixed FK column that is not in FK_COLUMNS below. The suffix rule catches
+//     any new `*_id`; a new `*_slug`/`*_ref` FK has to be added to that snapshot by hand. Refresh it
+//     from live when the schema gains one (query in the FK_COLUMNS comment).
+//   • Dynamically-assembled SQL — a column name built by string concatenation rather than written
+//     literally in the template. No handler does this today (the neon tagged-template API takes no
+//     interpolated identifiers, which is what keeps it true).
+//   • WHETHER a listed pair is safe. This block only proves a DECISION was recorded. The gate
+//     counts in the third describe block are what prove a gate exists.
+// It also over-reports: `WHERE id = ${x}` inside a SET-clause slice, and server-derived columns
+// (`user_id = ${userId}`, `workspace_id`), surface as pairs needing an exemption line. That is the
+// deliberate direction to err in — a spurious entry costs one line, a missed one costs a CVE.
+//
+// FK-shaped columns with NO `_id` suffix. Snapshot of live prod 2026-08-10:
+//   SELECT DISTINCT kcu.column_name FROM information_schema.table_constraints tc
+//   JOIN information_schema.key_column_usage kcu USING (constraint_name)
+//   WHERE tc.constraint_type='FOREIGN KEY' AND tc.table_schema='public';
+// (`_id`-suffixed names are matched by rule, so only the exceptions are listed here.)
+const FK_COLUMNS = new Set(['crop_type_slug', 'source_tier']);
+const isFkColumn = (c) => /_id$/.test(c) || FK_COLUMNS.has(c);
+
+// Every non-test module in a Lambda dir, NOT just index.js — dashboard/handlers.js and
+// events/batchSideEffects.js both write FK columns, and index.mjs dirs must not be skipped.
+const handlerModules = (d) => readdirSync(join(here, d))
+  .filter(f => /\.m?js$/.test(f) && !/\.test\.m?js$/.test(f) && statSync(join(here, d, f)).isFile())
+  .sort();
+
+const pairsOnDisk = () => {
+  const dirs = readdirSync(here, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && e.name !== 'node_modules')
+    .map((e) => e.name).sort();
+  const out = new Set();
+  for (const d of dirs) {
+    for (const f of handlerModules(d)) {
+      const src = readFileSync(join(here, d, f), 'utf8');
+      // (a) WRITE TARGETS — the column list of an INSERT, and the assignments of a SET clause.
+      // Source-of-truth for "this dir can write this FK", independent of how the value is spelled.
+      for (const m of src.matchAll(/INSERT\s+INTO\s+[\w."]+\s*\(([^)]*)\)/gis)) {
+        for (const c of m[1].split(',').map((s) => s.trim())) if (isFkColumn(c)) out.add(`${d}::${c}`);
+      }
+      for (const m of src.matchAll(/\bSET\b([\s\S]*?)(?:\bWHERE\b|\bRETURNING\b|`)/gi)) {
+        for (const mm of m[1].matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*=/g)) if (isFkColumn(mm[1])) out.add(`${d}::${mm[1]}`);
+      }
+      // (b) BODY REFERENCES — retains everything the original scan saw (a handful of pairs are
+      // read from the body and written through a helper rather than a literal SET/INSERT here).
+      for (const m of src.matchAll(/\bbody\.([A-Za-z_][A-Za-z0-9_]*)\b/g)) if (isFkColumn(m[1])) out.add(`${d}::${m[1]}`);
+    }
+  }
+  return [...out].sort();
+};
+
+// Pairs with NO ownership gate, each one a recorded decision rather than an oversight. Grouped by
+// WHY. An entry here is not a safety claim about the handler; it is a claim that the pair was
+// looked at and found not to need a household ownership gate for the stated reason.
 const NOT_IN_SITES = [
-  'app-events::session_id',
-  'critter::plant_id',
-  'critter::source_event_id',
-  'critter::species_id',
-  'events::location_id',
-  'events::plant_id',
-  'events::project_id',
-  'events::treatment_product_id',
-  'favorites::entity_id',
-  'inventory-items::featured_image_id',
-  'inventory-items::featured_photo_id',
-  'inventory-items::variety_id',
-  'locations::featured_photo_id',
-  'locations::parent_id',
-  'photos::photo_id',
-  'plants::assignee_user_id',
-  'plants::featured_photo_id',
-  'plants::variety_id',
-  'preservation::harvest_log_id',
-  'preservation::photo_id',
-  'preservation::plant_id',
-  'preservation::storage_location_id',
-  'preservation::variety_id',
-  'projects::assignee_user_id',
-  'projects::featured_photo_id',
-  'projects::new_parent_id',
-  'projects::op_id',
-  'projects::parent_project_id',
-  'projects::source_op_id',
-  'tags::cultivar_id',
-  'tags::entity_id',
-  'tags::into_id',
-  'tags::tag_id',
-  'ux-events::flow_id',
-  'ux-events::session_id',
-  'varieties::photo_id',
-  'varieties::source_proj_rescope_project_id',
+  // ── Shared/global vocabulary: gating these would break the catalogue every household reads. ──
+  'dashboard::crop_type_slug', 'preservation::crop_type_slug', 'varieties::crop_type_slug',
+  'critter::species_id', 'events::species_id',
+  'inventory-items::variety_id', 'plants::cultivar_id', 'plants::variety_id',
+  'preservation::variety_id', 'tags::cultivar_id',
+  'evidence-ingest::source_tier', 'photos::source_tier',
+  // ── No FK constraint exists on the column — there is no referenced row to own. ──
+  'critter::target_id', 'events::target_id', 'events::source_id',
+  'facebook-share::client_request_id', 'facebook-share::fb_media_id', 'facebook-share::fb_page_id',
+  'facebook-share::fb_post_id', 'facebook-share::post_group_id',
+  'evidence-ingest::source_record_id', 'projects::op_id', 'projects::source_op_id',
+  'projects::subject_id', 'app-events::session_id', 'ux-events::flow_id', 'ux-events::session_id',
+  'favorites::entity_id', 'tags::entity_id', 'tags::into_id',
+  // ── Server-derived, never body-settable: the value is the JWT subject or a fixed workspace. ──
+  'daily-plan::assignee_user_id', 'daily-plan::user_id', 'dashboard::owner_id', 'dashboard::user_id',
+  'events::user_id', 'events::workspace_id', 'favorites::user_id', 'inventory-items::user_id',
+  'plants::assignee_user_id', 'preservation::user_id', 'projects::assignee_user_id',
+  'projects::workspace_id', 'shared-state::workspace_id', 'storage-location::user_id',
+  'tags::owner_id', 'varieties::owner_id',
+  // ── Gated inline by a predicate this file's SITES regex cannot express. Each is pinned by its
+  //    own named assertion in the third describe block — NOT pre-absolved here. ──
+  'projects::parent_id',        // POST create: inline container.created_by SELECT (asserted below)
+  'projects::new_parent_id',    // reparentCore step 3: household-scoped plant_projects SELECT
+  'evidence-ingest::entity_id', // planting-typed arm scoped via planting_ref_id (asserted below)
+  'inventory-items::featured_photo_id', // must be a photo LINKED to this item + created_by
+  // POST /api/share/facebook: `SELECT ... FROM photos WHERE id = ANY(photoIds) AND created_by =
+  // ANY(householdIds) AND deleted_at IS NULL`, and a short count is a 404 for the WHOLE request
+  // before any share_log INSERT — set-wise, so a single foreign id in the array fails all of it.
+  'facebook-share::photo_id',
+  'locations::featured_photo_id', 'plants::featured_photo_id', 'projects::featured_photo_id',
+  'photos::featured_photo_id',
+  'critter::plant_id', 'critter::source_event_id',
+  'preservation::harvest_log_id', 'preservation::photo_id', 'preservation::plant_id',
+  'preservation::storage_location_id', // the four module-private preservation loaders, asserted below
+  // ── The id being READ, not written: a `WHERE id = ${...}` inside the SET-clause slice, or the
+  //    handler's own row id / route param. Nothing crosses a household boundary. ──
+  'events::event_id', 'photos::photo_id', 'plants::plant_id', 'projects::plant_id',
+  'projects::project_id', 'dashboard::project_id', 'harvests::gn_id', 'tags::tag_id',
+  'plants::container_id', 'plants::leaf_id', 'projects::old_parent_id',
+  'photos::entity_id', 'photos::garden_node_id', 'varieties::entity_id', 'varieties::tag_id',
+  // ── Written by a side-effect writer from an ALREADY-GATED parent value, not from the body. ──
+  'events::achievement_id', 'events::trigger_event_id', 'events::source_event_id',
+  'events::location_id', 'events::plant_id', 'events::project_id',
 ];
 
-describe('BUG-AUTHZFKENUM-001: every body.*_id on disk is either gated or explicitly known', () => {
-  const pairsOnDisk = () => {
-    const dirs = readdirSync(here, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && existsSync(join(here, e.name, 'index.js')))
-      .map((e) => e.name).sort();
-    const out = [];
-    for (const d of dirs) {
-      const src = readFileSync(join(here, d, 'index.js'), 'utf8');
-      const fields = new Set([...src.matchAll(/\bbody\.([A-Za-z_][A-Za-z0-9_]*_id)\b/g)].map((m) => m[1]));
-      for (const f of [...fields].sort()) out.push(`${d}::${f}`);
-    }
-    return out;
-  };
-
+describe('BUG-AUTHZFKENUM-001: every FK-shaped column a handler writes is gated or explicitly known', () => {
   it('the sweep finds the handler fleet (guards against an empty walk)', () => {
     // Without this the two assertions below pass vacuously the moment the walk or the regex breaks.
-    expect(pairsOnDisk().length).toBeGreaterThanOrEqual(40);
+    // 102 pairs at the time of writing; the floor is deliberately just under it.
+    expect(pairsOnDisk().length).toBeGreaterThanOrEqual(95);
   });
 
-  it('no body.*_id exists that is neither in SITES nor explicitly listed', () => {
+  it('sees the handler that destructures its body — the blind spot that motivated the rewrite', () => {
+    // lambda/evidence-ingest contributed ZERO pairs to the previous scan while carrying two ungated
+    // FKs. If this ever goes back to empty, the rewrite has been reverted and the class is reopened.
+    const pairs = pairsOnDisk();
+    expect(pairs).toContain('evidence-ingest::garden_node_id');
+    expect(pairs).toContain('evidence-ingest::entity_id');
+    // …and the non-`_id` FK, and a dir reached only by walking a non-index module.
+    expect(pairs).toContain('varieties::crop_type_slug');
+    expect(pairs).toContain('dashboard::crop_type_slug');
+  });
+
+  it('no FK-shaped written column exists that is neither in SITES nor explicitly listed', () => {
     const known = new Set([
       ...SITES.map(([file, field]) => `${file.replace('/index.js', '')}::${field}`),
       ...NOT_IN_SITES,
@@ -251,10 +341,15 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
   for (const [file, field, loader, gates] of SITES) {
     it(`${file} gates body.${field} with ${loader} at ${gates} site(s)`, () => {
       const src = readFileSync(join(here, file), 'utf8');
-      // Anchored on the GATE ITSELF — `!await loader(sql, body.X,` — not on a loose three-token
-      // sequence spanning the file. The negation matters: it is what makes the call a gate rather
-      // than a lookup, and it sits immediately beside the field it protects.
-      const re = new RegExp(`!\\s*await\\s+${loader}\\s*\\(\\s*sql\\s*,\\s*body\\.${field}\\s*,`, 'g');
+      // Anchored on the GATE ITSELF — `!await loader(sql, <expr ending in the field>,` — not on a
+      // loose three-token sequence spanning the file. The negation matters: it is what makes the
+      // call a gate rather than a lookup, and it sits immediately beside the field it protects.
+      // The value expression is an optional dotted prefix rather than a hardcoded `body.`
+      // (BUG-AUTHZFKENUM-001): a handler that destructures its body gates `v.value.garden_node_id`,
+      // and requiring the `body.` spelling is exactly what made such a handler unrepresentable here
+      // and therefore left in NOT_IN_SITES. The FIELD NAME is still the anchor, so this cannot
+      // match a gate on some other column.
+      const re = new RegExp(`!\\s*await\\s+${loader}\\s*\\(\\s*sql\\s*,\\s*(?:[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*\\.)?${field}\\s*,`, 'g');
       const found = (src.match(re) || []).length;
       expect(found,
         `expected ${gates} ownership gate(s) on body.${field} in ${file}, found ${found}. ` +
@@ -269,6 +364,33 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     // predicate instead: the create path could otherwise birth a project inside another household's tree.
     const src = readFileSync(join(here, 'projects/index.js'), 'utf8').replace(/\s+/g, ' ');
     expect(src).toMatch(/body\.parent_project_id != null.*?FROM public\.container.*?created_by = ANY\(\$\{householdIds\}\).*?deleted_at IS NULL/);
+  });
+
+  it('evidence-ingest gates a planting-typed entity_id through its planting_ref_id', () => {
+    // BUG-AUTHZFKENUM-001. `entity` is a MIXED registry with NO created_by column of its own
+    // (verified live 2026-08-10: 408 cultivar + 168 critter_species rows are shared vocabulary,
+    // 271 planting rows are household data reachable via planting_ref_id -> plants). So the gate is
+    // conditional and runs through the canonical planting predicate — it cannot be a SITES row
+    // because the loader is handed the RESOLVED planting id, not the body field. Asserted here
+    // instead of pre-absolved in NOT_IN_SITES, which is what the locations::parent_id entry used to
+    // do while the pair was in fact wide open.
+    const src = readFileSync(join(here, 'evidence-ingest/index.js'), 'utf8').replace(/\s+/g, ' ');
+    expect(src).toMatch(/SELECT id, planting_ref_id FROM public\.entity/);
+    expect(src).toMatch(/ent\[0\]\.planting_ref_id != null && !await loadOwnedPlantingRef\(sql, ent\[0\]\.planting_ref_id, householdIds\)/);
+    // The rejection must reuse the SAME 404 an absent entity gets — a 400 here would BE the
+    // existence oracle ("exists, not yours" vs "no such entity") the loader contract forbids.
+    expect(src).toMatch(/planting_ref_id, householdIds\)\) \{ warnRejectedFk\([^)]*\); return resp\(404, \{ error: 'Unknown entity_id' \}\); \}/);
+  });
+
+  it('the varieties source-project idempotency SELECT is household-scoped and deterministic', () => {
+    // BUG-AUTHZFKENUM-001, second half of that hole. The FK gate stops an attacker POINTING at a
+    // foreign project; this stops them SQUATTING the key. The lookup was
+    // `WHERE source_proj_rescope_project_id = $1 AND deleted_at IS NULL LIMIT 1` with no owner
+    // predicate, so an attacker could pre-create a cultivar on a key an admin would later use and
+    // have /admin/classify's inline-create return the ATTACKER'S row with 200. Owner arms mirror
+    // the PUT/DELETE editable set exactly; ORDER BY makes the LIMIT 1 deterministic.
+    const src = readFileSync(join(here, 'varieties/index.js'), 'utf8').replace(/\s+/g, ' ');
+    expect(src).toMatch(/WHERE source_proj_rescope_project_id = \$\{sourceProjId\} AND deleted_at IS NULL AND \( created_by = ANY\(\$\{household\}\) OR created_by LIKE ANY\(\$\{managedPatterns\}::text\[\]\) \) ORDER BY created_at ASC, id ASC LIMIT 1/);
   });
 
   it('locations featured-photo check anchors on created_by, not the stale uploaded_by', () => {
@@ -409,7 +531,7 @@ describe('V4-AUTHZRESIDUE-001: the malformed-id contract is 400 everywhere, neve
   // must therefore short-circuit BEFORE issuing SQL.
 
   it('every exported household.js loader short-circuits a malformed id without touching the DB', async () => {
-    for (const fn of [loadOwnedLocation, loadOwnedInventoryItem, loadOwnedPlanting, loadOwnedSpace]) {
+    for (const fn of [loadOwnedLocation, loadOwnedInventoryItem, loadOwnedPlanting, loadOwnedSpace, loadOwnedPhoto]) {
       const sql = fakeSql([{ id: 'should-never-be-reached' }]);
       expect(await fn(sql, 'not-a-uuid', HOUSE), `${fn.name} must return null`).toBeNull();
       expect(sql.calls, `${fn.name} must short-circuit before issuing SQL`).toHaveLength(0);

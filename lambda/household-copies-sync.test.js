@@ -10,7 +10,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 // 'daily-plan-read' was missing from this list while shipping a copy of household.js — it drifted
 // silently (V4-AUTHZSWEEP-001, 2026-07-31). The enumeration below is now asserted to match the
 // filesystem, so the next added copy cannot go unguarded the same way.
-const DIRS = ['projects', 'plants', 'events', 'inventory-items', 'photos', 'dashboard', 'locations', 'critter', 'findings', 'tags', 'storage-location', 'preservation', 'harvests', 'facebook-share', 'members', 'daily-plan-read', 'varieties'];
+// 'evidence-ingest' joined on 2026-08-10 (BUG-AUTHZFKENUM-001): it writes evidence.garden_node_id
+// and evidence.entity_id straight from the request body and had NO household scoping at all, so it
+// needed householdScope + warnRejectedFk for the first time.
+const DIRS = ['projects', 'plants', 'events', 'inventory-items', 'photos', 'dashboard', 'locations', 'critter', 'findings', 'tags', 'storage-location', 'preservation', 'harvests', 'facebook-share', 'members', 'daily-plan-read', 'varieties', 'evidence-ingest'];
 
 describe('household.js per-Lambda copies stay in sync with canonical', () => {
   const canonical = readFileSync(join(here, 'household.js'), 'utf8');

@@ -17,7 +17,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 // comment-stripped comparison in lambda/events/events-authz.test.js. Dropping the canonical file
 // into that dir is step 1 of retiring those inline copies; step 3 — swapping them for an import in
 // lambda/events/index.js — is the events lane's edit, not this one's.
-const DIRS = ['events', 'photos', 'plants'];
+// 'projects', 'varieties' and 'evidence-ingest' joined on 2026-08-10 (BUG-AUTHZFKENUM-001), each
+// because it gained a body-settable parent FK that needs the canonical predicate: projects PUT
+// parent_project_id, varieties POST source_proj_rescope_project_id (both loadOwnedProject), and
+// evidence-ingest garden_node_id + the planting-typed arm of entity_id (loadOwnedPlantingRef).
+const DIRS = ['events', 'evidence-ingest', 'photos', 'plants', 'projects', 'varieties'];
 
 describe('authz-parents.js per-Lambda copies stay in sync with canonical', () => {
   const canonical = readFileSync(join(here, 'authz-parents.js'), 'utf8');
