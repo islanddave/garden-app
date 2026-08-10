@@ -1,9 +1,21 @@
 [
   {
+    "version": "4.4.1",
+    "date": "2026-08-10",
+    "highlights": [
+      "Fixed: the harvest composer's season figures were counting only a slice of your harvests, so a number like “36 tomatoes” could appear when the real season total was far higher. It now reads the full season and says which span it counted.",
+      "Fixed: the composer now only ever offers you your own harvest. Previously it could show one person in the household the other person's picks, written in their voice.",
+      "The “1st” tag can now be switched off again once it's on, and a harvest logged without a variety name no longer turns into a stray number in the middle of the post.",
+      "Two beds of the same variety now add up to one line — “8 San Marzano” rather than the same variety listed twice.",
+      "The list of what's in the post starts tucked away on a long harvest, so the post itself and the send button are where you can reach them.",
+      "A harvest you logged tonight but dated earlier no longer goes missing from tonight's post."
+    ]
+  },
+  {
     "version": "4.4.0",
     "date": "2026-08-10",
     "highlights": [
-      "Compose tonight's harvest post right on Today — it writes the text for you from what you actually picked, and stays hidden when there's nothing to post",
+      "Compose tonight's harvest post right on Today — it assembles the list from what you actually picked and hands you the numbers, you write the words, and it stays hidden when there's nothing to post",
       "Long-press the app icon on your phone for a 'Log a harvest' shortcut that skips straight past the menus",
       "Water-due and stale alerts no longer count plantings you have archived — a container could sit permanently marked 'water due' because of a planting that finished months ago",
       "Archived plantings keep their care history on their own page, and containers keep theirs — history surfaces were deliberately left alone",
