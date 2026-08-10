@@ -5,7 +5,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, projectKindOptions } from '../lib/constants.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
-import { VARIETY_REF_UI_SHIPPED } from '../lib/featureFlags.js'
+import { VARIETY_REF_UI_SHIPPED, PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, StatusSelect, SelectChip } from '../components/forms'
 
@@ -17,6 +17,14 @@ function generateSlug(name, startDate) {
   const base = slugify(name)
   return base.endsWith(`-${year}`) ? base : `${base}-${year}`
 }
+
+// V4-PROJHIDE-001 gap: under the flag, /projects redirects to /garden (App.jsx), so a Cancel
+// labelled for one destination silently teleported the user to another. No in-app link reaches
+// /projects/new when the flag is on, so this is the deep-link / bookmark path only — but a Cancel
+// that lands somewhere the user did not choose is a rough edge whether or not it is frequent.
+// Named once, consumed twice, so the breadcrumb and the Cancel target cannot drift apart.
+const BACK_TO = PROJECTS_HIDDEN ? '/garden' : '/projects'
+const BACK_LABEL = PROJECTS_HIDDEN ? 'Garden' : 'Projects'
 
 export default function ProjectNew() {
   const { fetch } = useApiFetch()
@@ -118,7 +126,7 @@ export default function ProjectNew() {
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '32px 20px' }}>
 
         <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 20 }}>
-          <Link to="/projects" style={{ color: P.green, textDecoration: 'none' }}>Projects</Link>
+          <Link to={BACK_TO} style={{ color: P.green, textDecoration: 'none' }}>{BACK_LABEL}</Link>
           {' › New project'}
         </div>
         <h1 style={{ margin: '0 0 24px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>New project</h1>
@@ -258,7 +266,7 @@ export default function ProjectNew() {
             <Button type="submit" variant="primary" loading={saving} loadingLabel="Creating…">
               Create project
             </Button>
-            <Link to="/projects" style={{ display: 'inline-flex', alignItems: 'center', color: P.mid, textDecoration: 'none', fontSize: '0.9rem' }}>Cancel</Link>
+            <Link to={BACK_TO} style={{ display: 'inline-flex', alignItems: 'center', color: P.mid, textDecoration: 'none', fontSize: '0.9rem' }}>Cancel</Link>
           </div>
         </form>
       </div>

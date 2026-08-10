@@ -80,6 +80,8 @@ export const PLANTING_REQUIRED_ENABLED = true
 // project_id); project routes stay reachable-but-unlinked; public /garden/:slug sharing is untouched.
 // Preview by flipping this const on dev. Criteria-gated, never date-gated. Rollback = flip back to
 // false (one client revert, no data to unwind).
+export const PROJECTS_HIDDEN = false
+
 // BUG-EVENTEDITFIELDS-001 slice 4 — the "move this event to a different planting" control.
 // OFF by default. This is the one slice of the ticket that earns a flag: slices 1 and 3 are inert
 // server changes (no client sends the keys), but this one puts a control on screen whose failure
@@ -87,8 +89,6 @@ export const PLANTING_REQUIRED_ENABLED = true
 // EventDetail, which previously used that flag only for a breadcrumb and a post-delete nav target.
 // Flag OFF leaves EventDetail byte-identical, so the existing suites stay meaningful untouched.
 export const EVENT_REANCHOR_ENABLED = false
-
-export const PROJECTS_HIDDEN = false
 
 // V4-IMGCACHE-001 D-1 (design V102 §B / §5.4): the subscribable image-LIST SWR cache ("slow-tab win").
 // When TRUE (default), the photo-list read sites (PhotosWall / PlantingDetail attached-photos /

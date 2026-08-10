@@ -53,6 +53,42 @@ async function renderGarden() {
   await screen.findByText(/Log many/)
 }
 
+// GAP CLOSED 2026-08-10 — the flip's one untested migration path, and the case beforeEach() cannot
+// reach. Every existing user carries `garden.groupBy.v1 = 'none'` (projectTree.js:375 defaults to it)
+// or the equivalent server pref. Under the flag, 'none' is absent from facetOptions and Garden.jsx:563
+// falls back to crop_type — but the suite's `localStorage.clear()` means every other case here starts
+// from an EMPTY store, i.e. the one starting state that cannot exhibit the bug. Seeding the stale value
+// first is the whole point: this asserts the flip is safe for people who already use the app, not just
+// for a fresh install.
+describe('Garden — V4-PROJHIDE-001 stale groupBy migration (flag ON)', () => {
+  it('falls back to crop_type when localStorage still holds the retired "none" facet', async () => {
+    localStorage.setItem('garden.groupBy.v1', 'none')
+    await renderGarden()
+    // Crop-type grouping is in effect: two distinct crop groups, not one project tree.
+    expect(screen.getByText('Tomato')).toBeTruthy()
+    expect(screen.getByText('Pepper')).toBeTruthy()
+    // And the retired project tree is NOT rendered off the stale value.
+    expect(screen.queryByText('Bed Alpha')).toBeNull()
+    expect(screen.queryByText('Bed Gamma')).toBeNull()
+  })
+
+  it('does not offer "Projects" as a group-by option even with the stale value set', async () => {
+    localStorage.setItem('garden.groupBy.v1', 'none')
+    await renderGarden()
+    expect(screen.queryByText('Projects')).toBeNull()
+  })
+
+  it('leaves the stale value in place rather than silently rewriting it', async () => {
+    // Deliberate, and worth pinning: the fallback is render-time only. Nothing migrates the stored
+    // value, so reverting the flag restores the user's original project-tree preference intact.
+    // If a future change starts rewriting it, that is a one-way door and this test should force the
+    // conversation rather than let it happen quietly.
+    localStorage.setItem('garden.groupBy.v1', 'none')
+    await renderGarden()
+    expect(localStorage.getItem('garden.groupBy.v1')).toBe('none')
+  })
+})
+
 describe('Garden — V4-PROJHIDE-001 (flag ON)', () => {
   it('does not render the by-project tree (project names are not nodes)', async () => {
     await renderGarden()
