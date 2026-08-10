@@ -23,6 +23,17 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy }) })
 vi.mock('../hooks/useUploadPhoto.js', () => ({
   useUploadPhoto: () => ({ upload: vi.fn().mockResolvedValue({ photo: { id: 'p1' } }), isUploading: false, error: null, photo: null, stage: null, progress: null, preview: null, reset: vi.fn() }),
 }))
+// V4-PLANTREQUIRED-001: the flag flipped TRUE in source on 2026-08-10. This suite predates the flip
+// and its assertions describe the planting-OPTIONAL behavior, which remains a live configuration
+// (rollback = one-line revert). Mocked FALSE so every assertion below keeps covering what it was
+// written to cover, rather than being rewritten to the flag-ON world. Flag-ON is covered by
+// EventNew.plantRequired.test.jsx and EventNew.plantMismatch.plantRequired.test.jsx.
+// importActual spread so every other flag (OVERLAY_ROUTES_ENABLED etc.) keeps its real value.
+vi.mock('../lib/featureFlags.js', async (importActual) => ({
+  ...(await importActual()),
+  PLANTING_REQUIRED_ENABLED: false,
+}))
+
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
   useNavigate: () => navigateSpy,

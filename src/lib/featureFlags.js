@@ -63,7 +63,11 @@ export const OVERLAY_ROUTES_ENABLED = true
 // flip would 400 every log from stale cached bundles mid-season (spec D7). Flip TRUE only after
 // Lane 2 telemetry shows new orphans for REQUIRED types approach zero (D1 falsifier). Criteria-gated,
 // never date-gated. Rollback = flip back to false (one client revert, no data to unwind).
-export const PLANTING_REQUIRED_ENABLED = false
+// FLIPPED TRUE 2026-08-10 on Dave's approval. D1 falsifier MEASURED MET 2026-08-06: orphan rate for
+// REQUIRED types was 0.08% over 30d on 5,156 events — a 4x improvement on the 0.31% of the 31-90d
+// window. The server validator stays unflipped BY DESIGN (see the paragraph above) — do NOT "fix"
+// the asymmetry; a lockstep server flip would 400 every log from a stale cached PWA bundle.
+export const PLANTING_REQUIRED_ENABLED = true
 
 // V4-PROJHIDE-001 (types-forward): hide "project" as a USER-FACING concept — project choosers,
 // labels, breadcrumbs, nav entries, the /projects tree default, and required-project gates all

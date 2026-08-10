@@ -451,8 +451,17 @@ post:
   # ANTI-VACUITY GUARD for the three ledger-joined gates: each of them passes trivially against an
   # empty ledger. Fails on a deliberate second apply, matching pre_not_already_applied's stance
   # that a re-run must be a deliberate act.
+  # env:prod — MEASURED, not assumed. At apply time (2026-08-10) staging's eligible population was
+  # ZERO (no archived planting there carries surviving events with no plant-keyed cache row), so the
+  # apply correctly wrote 0 rows and this anti-vacuity guard would be a PERMANENT false failure on
+  # staging while asserting nothing. Scoping it to prod keeps the guard where a population exists
+  # rather than deleting it. The honest consequence, recorded rather than hidden: on staging the
+  # three ledger-joined gates DO pass vacuously — that is correct there, because there is nothing for
+  # them to observe. The real assertion still runs on BOTH environments as a continuous invariant:
+  # post_every_non_deleted_planting_with_events_has_a_cache_row (and its project-arm sibling).
   - name: post_ledger_is_not_empty
     continuous: false
+    env: prod
     sql: |
       SELECT id FROM public.snap_cachemissingrow001_inserted
     expect: rowcount_gte

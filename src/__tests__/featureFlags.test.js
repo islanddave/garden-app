@@ -29,10 +29,15 @@ describe('featureFlags', () => {
     expect(typeof SYSTEM_NOTIFICATIONS_ENABLED).toBe('boolean')
   })
 
-  it('PLANTING_REQUIRED_ENABLED is a literal false in Lane 3 (client gate stays off until Lane 2 telemetry clears)', () => {
+  it('PLANTING_REQUIRED_ENABLED is a literal true — Lane 2 telemetry cleared, gate is LIVE', () => {
     // V4-PLANTREQUIRED-001: literal const, NOT an env var. Flip = code change + ship, criteria-gated
     // (spec D1 falsifier + D7 PWA-staleness). The server validator is deliberately never flipped in lockstep.
-    expect(PLANTING_REQUIRED_ENABLED).toBe(false)
+    //
+    // FLIPPED false -> true 2026-08-10 on Dave's approval. D1 falsifier measured MET 2026-08-06:
+    // orphan rate for REQUIRED types 0.08% over 30d on 5,156 events, a 4x improvement on the 0.31%
+    // of the 31-90d window. This assertion pins the SHIPPED value; it is intended to RED on any
+    // future flip so the change is deliberate. Rollback = one-line revert, no data to unwind.
+    expect(PLANTING_REQUIRED_ENABLED).toBe(true)
     expect(typeof PLANTING_REQUIRED_ENABLED).toBe('boolean')
   })
 })
