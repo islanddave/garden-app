@@ -615,22 +615,55 @@ export const handler = async (event) => {
         // fixed): this route has always returned {ok:true} regardless of rows affected, so a
         // not-found / not-owned DELETE reports success. Left as-is to avoid changing the response
         // contract inside an authz fix — see events-authz-gap-V100-20260804.md §Related.
+        // BUG-CACHEORPHANLEAK-001 — the soft-delete must take the care-cache row with it.
+        //
+        // scripts/integrity-weekly-check.sh's `entity_memory_orphans` metric counts, as an ORPHAN,
+        // exactly `em.plant_id IS NOT NULL AND NOT EXISTS (plants p WHERE p.id = em.plant_id AND
+        // p.deleted_at IS NULL)`. This route soft-deleted the planting and left the cache row
+        // standing, so every soft-delete of a planting that HAS a cache row permanently ratchets a
+        // shipped alert metric by one. It has only cost one so far (prod: 1 of 33 soft-deleted
+        // plantings carries a cache row, because the other 32 predate the plant-keyed cache) — but
+        // it is a monotonic leak, and the next soft-delete of a live planting adds another forever.
+        //
+        // Deleting rather than soft-deleting the cache row is right on the metric's OWN semantics
+        // and on the same reading V4-CACHEMISSINGROW-001 uses to exclude soft-deleted plantings
+        // from its backfill: an archive COMPLETES a record, a soft-delete RETRACTS it, and a
+        // retracted planting should have no care memory at all. Nothing reads it either way —
+        // every rollup filters `gp.deleted_at IS NULL` and the by-id GET 404s.
+        //
+        // ONE STATEMENT, and that is load-bearing rather than tidy. A separate
+        // `DELETE FROM entity_memory WHERE plant_id = $1` would carry NO ownership predicate,
+        // turning this route into a cross-household write primitive: anyone could erase anyone's
+        // care cache by id, and the DELETE returns {ok:true} regardless of rows affected so it
+        // would not even be observable. Driving the delete off the UPDATE's RETURNING means the
+        // cache row can only go when the soft-delete it belongs to actually happened, under the
+        // ownership predicate already proven above. garden_node is a simple renaming view
+        // (information_schema reports is_updatable = YES), so UPDATE ... RETURNING works here.
+        //
+        // Loss on undelete is acceptable and self-healing: the cache is derivable from event_log,
+        // and the deployed forward writer recreates the row on the next plant-anchored event.
         await sql`
-          UPDATE public.garden_node p
-          SET deleted_at = NOW()
-          WHERE p.id = ${plantId}
-            AND (
-              -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT
-              -- above). Applied here too so "invisible" and "immutable" stay the same set: after
-              -- the read fix there is no UI path to this row anyway, and the real cleanup for a
-              -- planting stranded under a deleted container is the projects-side propagation fix
-              -- (F4 write side, lambda/projects/index.js — NOT done here), not a per-row DELETE.
-              EXISTS (SELECT 1 FROM public.container pp
-                       WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds})
-                         AND pp.deleted_at IS NULL)
-              OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
-            )
-            AND p.deleted_at IS NULL
+          WITH gone AS (
+            UPDATE public.garden_node p
+            SET deleted_at = NOW()
+            WHERE p.id = ${plantId}
+              AND (
+                -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT
+                -- above). Applied here too so "invisible" and "immutable" stay the same set: after
+                -- the read fix there is no UI path to this row anyway, and the real cleanup for a
+                -- planting stranded under a deleted container is the projects-side propagation fix
+                -- (F4 write side, lambda/projects/index.js — NOT done here), not a per-row DELETE.
+                EXISTS (SELECT 1 FROM public.container pp
+                         WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds})
+                           AND pp.deleted_at IS NULL)
+                OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
+              )
+              AND p.deleted_at IS NULL
+            RETURNING p.id
+          )
+          DELETE FROM public.entity_memory em
+           USING gone
+           WHERE em.plant_id = gone.id
         `;
         return resp(200, { ok: true });
       }
