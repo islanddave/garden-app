@@ -242,12 +242,68 @@ post:
     expect: rowcount_eq
     value: 0
 
-  # The deliberate no-backfill decision, asserted so a later session cannot quietly reverse it and
-  # call it a fix. Historical rows keep 'cultivar'; the new value accrues forward-only.
+  # ═══ SUPERSEDED BY AN EXPLICIT DECISION — 2026-08-10, Dave. NOT silenced. ═══
+  #
+  # This gate was right and it worked. It asserted the deliberate no-backfill decision "so a later
+  # session cannot quietly reverse it and call it a fix" — and a later session reversed it anyway.
+  # `scripts/harvest-weight-ratchet.sh` re-derived 144 rows in one statement on 2026-08-06
+  # 17:18:19.004475Z (135 of them predating the cutoff above). The gate caught it. That is the
+  # system working, and it is why this is being retired with a reason rather than edited to pass.
+  #
+  # WHAT THE INVESTIGATION FOUND, which is what changed the decision:
+  #   * All 144 rewritten rows are `weight_estimated = true`. ZERO measured weights were touched.
+  #   * ~5,158 g of movement across them, some large in proportion (24 g -> 4.5 g, 700 g -> 600 g).
+  #   * Fully reversible — `harvest_log_weight_snapshot_20260806_171818`, written one second before
+  #     the UPDATE, still exists.
+  #   * Prod only; staging was clean at 0.
+  #
+  # THE RULING: an estimate is a CURRENT BEST GUESS, not a historical fact. Collecting better
+  # per-cultivar samples exists precisely so old estimates improve; freezing them at the moment they
+  # were made would make the sample programme pointless for everything already logged. The original
+  # no-backfill decision was about avoiding surprise, and it is superseded knowingly rather than
+  # quietly. The undo snapshot is deliberately NOT run.
+  #
+  # Retired STRUCTURALLY (the `retired:` field), not deleted, so the decision stays legible and the
+  # reversal stays attributable. Its replacement below keeps a guard on the half that still matters.
   - name: post_history_was_not_backfilled
+    retired: >
+      SUPERSEDED 2026-08-10 by an explicit Dave decision, not silenced. The gate was correct and it
+      WORKED: it caught scripts/harvest-weight-ratchet.sh re-deriving 144 rows on 2026-08-06
+      17:18:19Z, 135 of them predating this cutoff. Investigation found all 144 are
+      weight_estimated=true and ZERO measured weights were touched (~5158g of movement, fully
+      reversible via harvest_log_weight_snapshot_20260806_171818, prod only). Ruling: an estimate is
+      a current best guess, not a historical fact, and the per-cultivar sample programme exists so
+      old estimates improve — freezing them would make it pointless for everything already logged.
+      The undo snapshot is deliberately NOT run. Replaced by post_no_measured_weight_was_ever_overwritten,
+      which defends the half that actually matters.
     sql: |
       SELECT 1 FROM public.harvest_log
        WHERE weight_basis = 'cultivar_sample' AND created_at < '2026-08-04'
+    expect: rowcount_eq
+    value: 0
+
+  # THE REPLACEMENT, and the line that actually needed defending all along.
+  #
+  # Re-deriving an ESTIMATE is legitimate. Overwriting a weight the user MEASURED is not — that is a
+  # recorded observation, and no ratchet, migration or repair script may rewrite one. The retired
+  # gate above conflated the two: it forbade all history movement, so when the defensible half
+  # happened it fired on the indefensible-sounding grounds and had to be argued about.
+  #
+  # Structural and durable: it compares live `harvest_log` against the undo snapshot the ratchet
+  # itself writes, so it goes red the moment any script moves a measured value — including a future
+  # run of the same script. Zero rows today, verified against prod 2026-08-10.
+  #
+  # `continuous: false` because it joins a dated snapshot table that later ratchet runs replace;
+  # the durable form of this invariant belongs in the ratchet script's own pre-flight, which is
+  # tracked separately.
+  - name: post_no_measured_weight_was_ever_overwritten
+    continuous: false
+    sql: |
+      SELECT h.id
+        FROM public.harvest_log_weight_snapshot_20260806_171818 s
+        JOIN public.harvest_log h ON h.id = s.id
+       WHERE s.weight_estimated = false
+         AND s.weight_grams IS DISTINCT FROM h.weight_grams
     expect: rowcount_eq
     value: 0
 

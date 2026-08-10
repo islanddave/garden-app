@@ -110,20 +110,40 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Surface findings
-        # The two steps above are continue-on-error, so this is what makes a
-        # finding visible. An unreachable database already warned above and is
-        # reported as UNKNOWN — never silently folded into "clean".
+        # NOW BLOCKING — 2026-08-10. The backlog this job's header said to triage is triaged:
+        # prod went 27 failing gates / 16 migrations -> 0, staging 28 / 20 -> 0, every failure
+        # classified with evidence and not one assertion weakened to get there.
+        #
+        # WHY THE TEETH ARE HERE AND NOT ON THE TWO RUN STEPS ABOVE. They keep
+        # `continue-on-error: true` deliberately. Flipping those would abort the job the moment PROD
+        # reported a finding, and STAGING would never run — halving the signal exactly when
+        # something is wrong. This step already aggregates both outcomes, so it is the correct place
+        # to fail from. It previously computed `fail` and then never used it, which is why a job
+        # whose log said `[FAIL] v4-cachemissingrow-001` on BOTH environments still reported success.
+        #
+        # BLAST RADIUS, checked before flipping: promote-gate.yml requires `build-and-test` and
+        # `integration-tests` ONLY. This job is not among its required checks, so a red here does
+        # NOT block a promote or a merge. It makes a finding VISIBLE — which is the entire point,
+        # since the failure mode being fixed was findings hiding behind a green job.
+        #
+        # NEW AUTHORING REQUIREMENT this creates, and it must be honoured or the backlog returns:
+        # this job also fires on `migrations/**` pushes, so a migration whose post gates are pushed
+        # BEFORE it is applied will red here. Standing invariants must therefore be SELF-ARMING —
+        # keyed on the migration's own `schema_version` row, so they are vacuously true until the
+        # apply and asserting forever after. See migrations/v4-cachemissingrow-001/gates.yml for the
+        # pattern and the reasoning. Apply-window-only receipts take `continuous: false` instead.
         run: |
           set -euo pipefail
           fail=0
           if [[ "${{ steps.prod.outcome }}" != "success" ]]; then
-            echo "::warning::PROD post-gate invariants reported findings — see the job summary."
+            echo "::error::PROD post-gate invariants reported findings — see the job summary."
             fail=1
           fi
           if [[ "${{ steps.staging.outcome }}" != "success" ]]; then
-            echo "::warning::STAGING post-gate invariants reported findings — see the job summary."
+            echo "::error::STAGING post-gate invariants reported findings — see the job summary."
             fail=1
           fi
           if [[ "$fail" -eq 0 ]]; then
             echo "All continuous post-gate invariants hold on both environments."
           fi
+          exit "$fail"
