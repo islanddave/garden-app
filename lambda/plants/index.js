@@ -17,17 +17,9 @@ import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejected
 import { loadOwnedProject, loadOwnedPlantingRef } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
-import { validateClear } from './validate.js';
+import { validateClear, approxOrNull } from './validate.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
 
-// BUG-SOWNAPPROXORPHAN-001 — an `X_approx` flag says "the date in X is approximate". With no X it
-// qualifies nothing, so it is not a false flag, it is a meaningless one. Returns NULL rather than
-// false when the date is absent: false would assert "this absent date is EXACT", which is a
-// different and equally unfounded claim. Used on the create path; the PUT enforces the same rule in
-// SQL because it must consult the pre-update row.
-export function approxOrNull(dateVal, approxVal) {
-  return (dateVal ?? null) === null ? null : (approxVal ?? false);
-}
 
 // V4-EVENTSOURCE-001 — event_log.source value written by THIS Lambda. lambda/events/index.js
 // declares 'app'/'app_batch' and explicitly delegates 'app_status' here; the full value set and

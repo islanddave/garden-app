@@ -95,3 +95,19 @@ export function validateClear(clear, body = {}) {
   }
   return null;
 }
+
+// BUG-SOWNAPPROXORPHAN-001 — an `X_approx` flag says "the date in X is approximate". With no X it
+// qualifies nothing, so it is not a false flag, it is a meaningless one. Returns NULL rather than
+// false when the date is absent: false would assert "this absent date is EXACT", which is a
+// different and equally unfounded claim. Used on the create path; the PUT enforces the same rule in
+// SQL because it must consult the pre-update row.
+//
+// LIVES HERE, NOT IN index.js, and that is a CI constraint rather than taste: index.js imports
+// @neondatabase/serverless and the AWS/Clerk SDKs, which are installed per-Lambda-dir and are NOT
+// present in the ROOT node_modules that CI's `npm ci` builds. A unit test importing index.js
+// resolves locally (those packages happen to be hoisted here) and fails in CI with
+// "Failed to resolve import". validate.js is dependency-free by design, so importing from it is
+// safe from both. Every other lambda test avoids this by reading index.js as TEXT.
+export function approxOrNull(dateVal, approxVal) {
+  return (dateVal ?? null) === null ? null : (approxVal ?? false);
+}
