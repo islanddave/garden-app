@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.6.2",
+    "date": "2026-08-10",
+    "highlights": [
+      "Fixed: a plant added with Snap could be found in search but tapping the result did nothing. Plants added that way have no project attached, and every link to them was built to require one \u2014 so the row looked tappable and was inert. Search, Favourites and the Last-harvest tile now link to the plant directly."
+    ]
+  },
+  {
     "version": "4.6.1",
     "date": "2026-08-10",
     "highlights": [

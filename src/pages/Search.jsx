@@ -156,7 +156,15 @@ export default function Search() {
   }
 
   const plantingRow = p => {
-    const to = p.project_id && p.id ? `/projects/${p.project_id}/plantings/${p.id}` : null
+    // BUG-SEARCHDEADTAP-001: was `p.project_id && p.id ? /projects/${p.project_id}/plantings/${p.id} : null`.
+    // A planting created by Snap/CaptureFlow carries NO project_id, so `to` fell to null and <Row>
+    // rendered a plain <div> instead of a <Link> — the result appeared in search, looked tappable,
+    // and did nothing. Measured on prod: 2 live plantings have a null project_id.
+    // The un-scoped form is the CANONICAL route (App.jsx:199, V4-UNSCOPEDROUTES-001, which exists
+    // precisely because "project-less plantings had no reachable detail page under the
+    // /projects/:id/* forms"). The scoped form survives only as a redirect shim, so linking
+    // straight to the canonical route also drops a redirect hop and is PROJHIDE-forward.
+    const to = p.id ? `/plantings/${p.id}` : null
     // V4-PROJHIDE-001: drop the project_name fallback term from the planting subtitle when projects
     // aren't user-facing (variety/group/snippet still shown). Flag OFF keeps the exact prior chain.
     const sub = p.variety_ref?.name && p.variety_ref.name !== p.name ? p.variety_ref.name

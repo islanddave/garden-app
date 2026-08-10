@@ -5,11 +5,13 @@ import { P } from '../lib/constants.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 const TYPE_META = {
-  // V3-FAV-001: plantings lead (plantings-first as projects deprecate to buckets). The plant list
-  // (/api/plants) carries project_id, so the row deep-links to the planting's own detail page
-  // (/projects/:id/plantings/:plantingId) instead of the generic /garden. Falls back to /garden
-  // if a record somehow lacks project_id.
-  plant:          { label: 'Plantings', icon: '🌿', link: i => i.project_id ? `/projects/${i.project_id}/plantings/${i.id}` : `/garden` },
+  // V3-FAV-001: plantings lead (plantings-first as projects deprecate to buckets). The row deep-links
+  // to the planting's own detail page.
+  // BUG-SEARCHDEADTAP-001: was project-scoped with a `/garden` fallback when project_id was missing —
+  // so a favourited Snap-created planting (no project_id) silently dropped the user on the Garden page
+  // instead of the thing they tapped. The un-scoped form is CANONICAL (App.jsx:199,
+  // V4-UNSCOPEDROUTES-001) and needs no project_id, so the fallback is no longer reachable.
+  plant:          { label: 'Plantings', icon: '🌿', link: i => `/plantings/${i.id}` },
   project:        { label: 'Projects',  icon: '🌱', link: i => `/projects/${i.id}` },
   location:       { label: 'Locations', icon: '📍', link: () => `/locations` },
   inventory_item: { label: 'Inventory', icon: '📦', link: i => `/inventory/${i.id}` },

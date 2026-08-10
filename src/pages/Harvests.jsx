@@ -134,9 +134,12 @@ function SnapshotStrip({ snapshot, onOpenLog, onOpenTotals }) {
   const lhName = lh ? (lh.variety_name || lh.crop_name || lh.planting_name || 'Harvest') : null
   const lhQty = lh && lh.harvest_log_id != null && lh.quantity != null ? formatEntry({ quantity: lh.quantity, unit: lh.unit }, lh.crop_name) : null
   const lhTo = lh
-    // V4-PROJHIDE-001: keep the planting deep-link (shim → /plantings/:id); drop the bare-project
-    // fallback when projects are hidden (tile becomes non-navigable). Flag OFF unchanged.
-    ? (lh.plant_id && !lh.planting_removed && lh.project_id ? `/projects/${lh.project_id}/plantings/${lh.plant_id}` : (!PROJECTS_HIDDEN && lh.project_id ? `/projects/${lh.project_id}` : null))
+    // V4-PROJHIDE-001: keep the planting deep-link; drop the bare-project fallback when projects are
+    // hidden (tile becomes non-navigable). Flag OFF unchanged.
+    // BUG-SEARCHDEADTAP-001: the planting arm no longer requires project_id — it links to the
+    // CANONICAL un-scoped route (App.jsx:199, V4-UNSCOPEDROUTES-001), so a Snap-created planting with
+    // no project_id is reachable instead of falling through to a bare-project link or to null.
+    ? (lh.plant_id && !lh.planting_removed ? `/plantings/${lh.plant_id}` : (!PROJECTS_HIDDEN && lh.project_id ? `/projects/${lh.project_id}` : null))
     : null
 
   return (
