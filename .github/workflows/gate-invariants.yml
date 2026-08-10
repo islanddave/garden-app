@@ -1,4 +1,4 @@
-name: Migration gate invariants (advisory)
+name: Migration gate invariants
 
 # OPS-GATERUNNER-001. Runs the POST-gates of already-applied migrations against
 # live prod and staging as a continuous invariant check.
@@ -29,15 +29,22 @@ name: Migration gate invariants (advisory)
 # widen invalidates. Those carry `continuous: false` and are skipped here.
 # --continuous-only is what keeps this job's red meaningful instead of permanent.
 #
-# ADVISORY BY DESIGN (for now)
-# ----------------------------
-# Exits 0 even on findings, matching staging-drift.yml and schema-audit.yml. The
-# corpus has a known stale-gate backlog (measured 2026-08-04: 18 prod post-gate
-# failures, of which ~10 are superseded-by-design rather than real). Hard-failing
-# before that backlog is annotated would red the build permanently and train
-# everyone to ignore this job — reproducing the original disease in a new form.
-# FLIP `continue-on-error` TO false ONCE THE BACKLOG IS TRIAGED; that is the
-# point of the job, and leaving it advisory forever would be a slow failure.
+# WAS ADVISORY BY DESIGN — BLOCKING SINCE 2026-08-10
+# --------------------------------------------------
+# HISTORICAL, kept because the reasoning is why the flip had to wait rather than
+# something to undo. This job used to exit 0 even on findings, matching
+# staging-drift.yml and schema-audit.yml, because the corpus carried a stale-gate
+# backlog (measured 2026-08-04: 18 prod post-gate failures, ~10 superseded-by-design
+# rather than real; re-measured 2026-08-10: 27 across 16 migrations). Hard-failing
+# before that backlog was annotated would have redded the build permanently and
+# trained everyone to ignore this job — reproducing the original disease in a new form.
+# The instruction was to flip once the backlog was triaged, and leaving it advisory
+# forever would be a slow failure.
+#
+# The backlog is triaged: prod 27 -> 0 and staging 28 -> 0, every failure classified
+# with evidence and no assertion weakened to get there. The job now FAILS on findings
+# — see `Surface findings` for where the teeth are and why they are not on the two
+# run steps.
 #
 # Scheduled rather than per-push: a post-state invariant drifts with DATA and
 # with later migrations, not with each commit. Also fires on migrations/** pushes,
