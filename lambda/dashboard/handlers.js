@@ -226,6 +226,39 @@ export function queryFavoriteCount(sql, userId) {
 // The rollup is written out at each call site rather than shared, because these are neon tagged
 // templates: a `sql` fragment cannot be interpolated into another `sql` template without becoming a
 // bound parameter. The shape is identical everywhere and care-rekey-reads.test.js pins it.
+//
+// ── BUG-ROLLUPLIFECYCLE-001 — the plant arm's lifecycle filter is NOT uniform, on purpose ────────
+//
+// The rule: **a rollup whose value crosses a threshold, decides eligibility, or ranks a list must
+// range over the SAME population as the eligibility guard standing next to it. A rollup whose value
+// is only displayed as history may range wider.**
+//
+// Every ACTIONABLE query here already builds its `plantings` array and/or its EXISTS guard with
+// `deleted_at IS NULL AND archived_at IS NULL AND status NOT IN (...)`, while its rollup used
+// `deleted_at IS NULL` alone. That is not a stylistic drift — it makes the row assert a claim and
+// then name no planting that could be its subject: "water due", with an empty due list. Measured on
+// prod 2026-08-10: the Peppers container was legacy-water-due SOLELY on an archived planting's
+// frozen `last_watered_at`, honest verdict 2026-08-13. And because an archived planting's dates
+// never advance again, that error is monotonic — it recedes further into the past every day rather
+// than aging out.
+//
+// So the ACTIONABLE five carry the full actionability predicate:
+//   :queryWaterDue (legacy MIN) · :queryWaterDueFromPlan plan_rows display join · its legacy_rows
+//   MIN · :queryHarvestReady · :queryHeadsUp stale
+// `archived_at IS NULL` alone would NOT close it: a `failed` planting is dead tissue with a frozen
+// date, and `dormant` is the class the daily-plan engine already suppresses because interval-
+// watering a dormant succulent rots the crown.
+//
+// The HISTORY two keep archived plantings, and must:
+//   :queryActiveProjects (recent activity) · :queryInactiveList
+// Archiving a planting does not un-happen its events. A bed that produced a full spring crop and had
+// it pulled DID have activity, and the turnover date is the input to the succession decision.
+// `lambda/projects/index.js`'s four `last_activity_at` copies are history for the same reason.
+//
+// Direction of harm differs by aggregate and is why both halves matter: the water-due MIN goes DOWN,
+// producing a false POSITIVE; the observation MAXes go UP, SUPPRESSING a genuine stale/harvest alert.
+// Soft-deleted plantings belong to neither class and are already excluded everywhere — a soft-delete
+// is a retraction of the record, an archive is a completion of it.
 export function queryActiveProjects(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
@@ -349,7 +382,9 @@ export function queryWaterDue(sql, userId) {
           FROM entity_memory m
          WHERE m.project_id = pp.id
             OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
-                               WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+                               WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL
+                                     AND gp.archived_at IS NULL
+                                     AND (gp.status IS NULL OR gp.status NOT IN ('dormant','ended','failed','rooting')))
       ) em ON TRUE
       WHERE (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
         AND pp.deleted_at IS NULL
@@ -446,7 +481,9 @@ export function queryWaterDueFromPlan(sql, userId) {
             FROM entity_memory m
            WHERE m.project_id = pp.id
               OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
-                                 WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+                                 WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL
+                                       AND gp.archived_at IS NULL
+                                       AND (gp.status IS NULL OR gp.status NOT IN ('dormant','ended','failed','rooting')))
         ) em ON TRUE
         WHERE pp.deleted_at IS NULL AND pp.archived_at IS NULL
       ),
@@ -473,7 +510,9 @@ export function queryWaterDueFromPlan(sql, userId) {
             FROM entity_memory m
            WHERE m.project_id = pp.id
               OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
-                                 WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+                                 WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL
+                                       AND gp.archived_at IS NULL
+                                       AND (gp.status IS NULL OR gp.status NOT IN ('dormant','ended','failed','rooting')))
         ) em ON TRUE
         WHERE (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
           AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
@@ -506,7 +545,9 @@ export function queryHarvestReady(sql, userId) {
           FROM entity_memory m
          WHERE m.project_id = pp.id
             OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
-                               WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+                               WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL
+                                     AND gp.archived_at IS NULL
+                                     AND (gp.status IS NULL OR gp.status NOT IN ('dormant','ended','failed','rooting')))
       ) em ON TRUE
       WHERE pp.status = 'harvesting'
         AND pp.created_by = ANY(${householdIds})
@@ -562,7 +603,9 @@ export function queryHeadsUp(sql, userId) {
             FROM entity_memory m
            WHERE m.project_id = pp.id
               OR m.plant_id IN (SELECT gp.id FROM public.garden_node gp
-                                 WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL)
+                                 WHERE gp.container_id = pp.id AND gp.deleted_at IS NULL
+                                       AND gp.archived_at IS NULL
+                                       AND (gp.status IS NULL OR gp.status NOT IN ('dormant','ended','failed','rooting')))
         ) em ON TRUE
         WHERE pp.status IN ('sprouting','growing','flowering','fruiting')
           AND (pp.assignee_user_id = ${userId} OR (pp.assignee_user_id IS NULL AND pp.created_by = ${userId}))
