@@ -1,0 +1,423 @@
+# V4-CACHEMISSINGROW-001 — gates
+#
+# ═══ THE RULE THIS GATE SET EXISTS TO ESTABLISH ═══
+#
+#   An invariant of the form "for every X, property P holds" must be enumerated FROM the relation
+#   that DEFINES X — never from the relation that CARRIES P.
+#
+# Both shipped drift detectors enumerate `FROM entity_memory`, so each is a statement about cache
+# ROWS, not about PLANTINGS, and each silently carries the qualifier "for every entity that HAS a
+# cache row". 14 plantings sat outside that qualifier for three months with every gate green.
+#
+# The generalisation matters more than the repair: this migration's post-1 enumerates FROM plants,
+# which is the side that can be MISSING. Had that gate existed at care-rekey-001 it would have gone
+# red the instant that migration's 0b ran — its `WHERE p.deleted_at IS NULL AND p.archived_at IS
+# NULL` is the root cause of the whole population. That counterfactual is the gate's non-vacuity
+# proof, and it is why post-1 carries NO lifecycle filter beyond the scope decision below.
+#
+# ═══ WHAT IS DELIBERATELY NOT PINNED ═══
+# No count (14, 8, 6), no planting or container id, no date, no `INSERT n` as a success criterion,
+# and no `entity_memory_orphans` literal (reference the relation, not the baseline number, or the
+# gate rots the moment the baseline is legitimately refreshed). Every asserting gate compares two
+# live relations and asserts a relation between them, so it stays true as the garden grows and goes
+# red the moment any writer, migration or hand-run repair reopens the class.
+#
+# ═══ A KNOWN, CORRECT FLAP ═══
+# lambda/events/index.js documents that the event_log write COMMITS BEFORE the cache write, so a
+# thrown recompute leaves a genuine transient "event exists, cache row does not". post-1 will go red
+# on it. That is the signal firing, not a false positive — but it is written down here so the next
+# operator does not conclude the gate is noisy and start ignoring it.
+#
+# ═══ V4-DRIFTDETECTBOTH-001 IS CLOSED HERE ═══
+# post-3 is v4-carecacheundo-001's ahead-direction invariant WIDENED to 7 columns, adding
+# last_issue_at. The two applied copies remain 6-column and are historical records of what was
+# asserted at their apply; THIS file now carries the current invariant. The coupling is causal, not
+# tidiness: this migration is the first bulk writer of plant-keyed last_issue_at on rows that never
+# carried one, so the single column with no ahead-detector is the single column it newly populates.
+# (The integration twins in tests/integration/reanchor-carecache.int.test.js — staleForward() and
+# staleBehind() — are already 7-column; only the migration-gate half was outstanding.)
+
+pre:
+  - name: pre_recency_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'entity_memory'
+         AND column_name IN ('last_event_at','last_watered_at','last_fertilized_at',
+                             'last_pruned_at','last_observed_at','last_harvested_at','last_issue_at')
+    expect: rowcount_eq
+    value: 7
+
+  - name: pre_plant_arm_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'entity_memory' AND column_name = 'plant_id'
+    expect: rowcount_eq
+    value: 1
+
+  # NEITHER SIBLING NEEDED THIS — both were UPDATEs. `ON CONFLICT (plant_id) WHERE plant_id IS NOT
+  # NULL` is an INDEX-INFERENCE predicate, matched against an index DEFINITION, not a row filter. It
+  # resolves only against a PARTIAL UNIQUE index on plant_id. Absent, non-unique, or non-partial and
+  # 0b raises 42P10 at apply time. Asserting the COLUMN (as the siblings do) is strictly weaker.
+  - name: pre_plant_conflict_target_index_present
+    sql: |
+      SELECT 1
+        FROM pg_index i
+        JOIN pg_class c     ON c.oid = i.indexrelid
+        JOIN pg_class t     ON t.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'public' AND t.relname = 'entity_memory'
+         AND i.indisunique = true AND i.indpred IS NOT NULL
+         AND c.relname = 'entity_memory_plant_id_key'
+    expect: rowcount_eq
+    value: 1
+
+  # The 3-way CHECK is why a NULL plant_id bind is a 23514 transaction abort rather than a benign
+  # no-op row. 0b supplies plant_id only, from a non-null PK, so it satisfies the CHECK structurally.
+  - name: pre_exactly_one_parent_check_armed
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'public.entity_memory'::regclass
+         AND conname = 'entity_memory_exactly_one_parent'
+    expect: rowcount_eq
+    value: 1
+
+  # 0b writes last_issue_at on both arms. Without the mapping shipped, this file would populate a
+  # column no writer maintains and post-2/post-3 would assert an invariant nothing upholds.
+  - name: pre_last_issue_at_mapping_shipped
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.3-lastissueplant-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.5-cachemissingrow-001'
+    expect: rowcount_eq
+    value: 0
+
+  # A resumed run would otherwise adopt a stale ledger and 0r would then delete the wrong set.
+  # Fail loudly and let a human decide. Also fails a re-apply after a rollback if 0r's DROP was
+  # skipped — deliberately, for the same reason.
+  - name: pre_ledger_table_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'snap_cachemissingrow001_inserted'
+    expect: rowcount_eq
+    value: 0
+
+  # THE ORDERING PRECONDITION. gate_runner can only assert DATABASE state, and "a Lambda is
+  # deployed" is not database state — so this is a manual gate rather than a fake SQL one.
+  # gate_runner reports MANUAL and does NOT count it as a pass.
+  - name: pre_rollup_lifecycle_fix_is_deployed
+    manual: true
+    note: >
+      BUG-ROLLUPLIFECYCLE-001 must be LIVE on the dashboard Lambda before this file is applied.
+      Until it is, the 8 new archived-planting rows drag the legacy water-due
+      MIN(COALESCE(next_water_at, last_watered_at + interval)) backwards and flip the Lettuce
+      container from not-due to falsely water-due — measured on prod 2026-08-10. Verify:
+      `aws lambda get-function-configuration --function-name <dashboard>` shows a deploy at or after
+      the promote carrying rollup-lifecycle.test.js, AND the Peppers container is no longer
+      legacy-water-due. NOTE that promote-gate.yml's coupled deploy job is the SPA only —
+      deploy-lambda.yml is a separate push:main workflow, so "promote succeeded" does NOT mean this
+      fix is live. Wait for the deploy-lambda run to settle. Verifier = whoever runs the apply.
+
+  - name: pre_row_creating_forward_writer_is_deployed
+    manual: true
+    note: >
+      The deployed events Lambda must carry the BUG-CACHEGATE-001 arm (lambda/events/index.js — the
+      upsert guarded on newPlantId that "additionally CREATES the cache row for a planting that has
+      events but none"), shipped inside v4.3.0, events Lambda deployed 2026-08-07 20:59:56Z.
+      Without it this population is repaired once and erodes again on the next plant-anchored edit,
+      leaving post-1 asserting an invariant no writer upholds. Verifier = whoever runs the apply.
+
+sweep:
+  # THE FULL POPULATION — no lifecycle filter at all. This is the number post-1 must drive to zero
+  # within its scope, and the number the excluded-population sweep below must account for the
+  # remainder of.
+  - name: sweep_capture_plantings_with_events_and_no_cache_row
+    sql: |
+      SELECT p.id
+        FROM public.plants p
+       WHERE EXISTS (SELECT 1 FROM public.event_log e
+                      WHERE e.plant_id = p.id AND e.deleted_at IS NULL)
+         AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.plant_id = p.id)
+    expect: rowcount_gte
+    value: 0
+
+  # THE POPULATION THIS FILE DELIBERATELY DOES NOT REPAIR, measured so it is OWNED rather than
+  # invisible. A cache row on a soft-deleted planting is exactly what
+  # scripts/integrity-weekly-check.sh counts as an entity_memory_orphan, so creating one would
+  # manufacture a row a shipped alert metric names as a defect. Leaving a defect population
+  # uncounted is how the population THIS file repairs went unowned for three months.
+  - name: sweep_capture_soft_deleted_plantings_with_events_and_no_cache_row
+    sql: |
+      SELECT p.id
+        FROM public.plants p
+       WHERE p.deleted_at IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.event_log e
+                      WHERE e.plant_id = p.id AND e.deleted_at IS NULL)
+         AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.plant_id = p.id)
+    expect: rowcount_gte
+    value: 0
+
+  # Turns "none of them is a live planting" from prose into a machine fact recorded at apply time.
+  # If this is ever non-zero the user-visible risk profile is entirely different and the apply
+  # should stop for a fresh impact measurement.
+  - name: sweep_capture_live_plantings_with_events_and_no_cache_row
+    sql: |
+      SELECT p.id
+        FROM public.plants p
+       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND EXISTS (SELECT 1 FROM public.event_log e
+                      WHERE e.plant_id = p.id AND e.deleted_at IS NULL)
+         AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.plant_id = p.id)
+    expect: rowcount_gte
+    value: 0
+
+  # THE SAME CLASS ON THE OTHER ARM, never measured anywhere before this file. If it reads 0 the
+  # "for every entity" invariant is true on both arms and post-1 can be widened to say so; if it
+  # reads non-zero, post-1's name is honest about being plant-arm-only and the project arm needs
+  # its own ticket rather than a silent fold-in.
+  - name: sweep_capture_projects_with_events_and_no_cache_row
+    sql: |
+      SELECT pp.id
+        FROM public.plant_projects pp
+       WHERE pp.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM public.event_log e
+                      WHERE e.project_id = pp.id AND e.deleted_at IS NULL)
+         AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.project_id = pp.id)
+    expect: rowcount_gte
+    value: 0
+
+  # There are two users and their event volumes differ by three orders of magnitude, so a pooled
+  # rowcount hides the smaller one completely. rowcount here = number of AFFECTED USERS; no id is
+  # pinned.
+  - name: sweep_capture_distinct_users_in_the_missing_row_population
+    sql: |
+      SELECT DISTINCT p.created_by
+        FROM public.plants p
+       WHERE EXISTS (SELECT 1 FROM public.event_log e
+                      WHERE e.plant_id = p.id AND e.deleted_at IS NULL)
+         AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.plant_id = p.id)
+    expect: rowcount_gte
+    value: 0
+
+  # Before-picture for post-4. The metric is scripts/integrity-weekly-check.sh's
+  # `entity_memory_orphans`, copied verbatim so the two cannot drift.
+  - name: sweep_capture_entity_memory_orphans
+    sql: |
+      SELECT em.id FROM public.entity_memory em
+       WHERE (em.project_id IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM public.plant_projects pp
+                               WHERE pp.id = em.project_id AND pp.deleted_at IS NULL))
+          OR (em.plant_id IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM public.plants p
+                               WHERE p.id = em.plant_id AND p.deleted_at IS NULL))
+    expect: rowcount_gte
+    value: 0
+
+post:
+  # ═══ THE INVARIANT THIS MIGRATION EXISTS TO ESTABLISH ═══
+  # Enumerates FROM plants. That is the whole point — the two shipped detectors enumerate FROM
+  # entity_memory and a missing row is not a row.
+  #
+  # `p.deleted_at IS NULL` is the SCOPE decision (see 0b's header), not a lifecycle habit:
+  # entity_memory_orphans already defines a cache row on a soft-deleted planting as a defect, so the
+  # invariant cannot demand one. `archived_at` is deliberately ABSENT — filtering it is precisely
+  # the care-rekey-001/0b-backfill.sql mistake that created this entire population, and adding it
+  # here would re-hide 8 of the 14 rows this file repairs.
+  #
+  # Vacuity: this gate can pass with the defect present in exactly two ways, and both are closed.
+  # (i) the rows exist but are all-NULL — it tests EXISTENCE, not cell values, so post-2 is its
+  # mandatory partner and the two together are the single definition of done. (ii) someone adds a
+  # lifecycle filter to the enumeration — no gate can catch that, only the archived-planting fixture
+  # in the integration suite can, which is why that fixture is not optional.
+  - name: post_every_non_deleted_planting_with_events_has_a_cache_row
+    sql: |
+      SELECT p.id
+        FROM public.plants p
+       WHERE p.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM public.event_log e
+                      WHERE e.plant_id = p.id AND e.deleted_at IS NULL)
+         AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.plant_id = p.id)
+    expect: rowcount_eq
+    value: 0
+
+  # The VALUE half of the criterion — coverage alone passes on all-NULL rows.
+  # Re-declared here rather than inherited from v4-cachefwdgap-001 so a later edit to that file
+  # cannot separate the pair. The `t_x IS NOT NULL AND (cached IS NULL OR cached < t_x)` form is
+  # load-bearing on BOTH halves: a plain `cached < truth` evaluates to NULL on a NULL cell and the
+  # row is filtered out green — which is exactly how ten cells hid in the sibling ticket. Freshly
+  # INSERTed rows are the highest-NULL-density rows in the table, so this is the worst possible
+  # place to regress to the plain form. IS DISTINCT FROM would be direction-agnostic and would fold
+  # this ticket back together with carecacheundo's.
+  # Location-keyed rows are excluded: they have no writer, and with both plant_id and project_id
+  # NULL every truth subquery returns NULL, so every non-NULL cached column would read as drifted.
+  - name: post_no_cache_behind_event_log
+    sql: |
+      WITH truth AS (
+        SELECT em.id,
+               em.last_event_at, em.last_watered_at, em.last_fertilized_at,
+               em.last_pruned_at, em.last_observed_at, em.last_harvested_at, em.last_issue_at,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_any,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type IN ('watering','rain')
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_water,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type = 'fertilizing'
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_fert,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type = 'pruning'
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_prune,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type = 'observation'
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_obs,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.event_type IN ('harvest','first_harvest')
+                             ELSE e.event_type = 'harvest' END)
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_harv,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.flagged_as_issue = true
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_issue
+          FROM public.entity_memory em
+         WHERE em.plant_id IS NOT NULL OR em.project_id IS NOT NULL
+      )
+      SELECT id FROM truth
+       WHERE (t_any   IS NOT NULL AND (last_event_at      IS NULL OR last_event_at      < t_any))
+          OR (t_water IS NOT NULL AND (last_watered_at    IS NULL OR last_watered_at    < t_water))
+          OR (t_fert  IS NOT NULL AND (last_fertilized_at IS NULL OR last_fertilized_at < t_fert))
+          OR (t_prune IS NOT NULL AND (last_pruned_at     IS NULL OR last_pruned_at     < t_prune))
+          OR (t_obs   IS NOT NULL AND (last_observed_at   IS NULL OR last_observed_at   < t_obs))
+          OR (t_harv  IS NOT NULL AND (last_harvested_at  IS NULL OR last_harvested_at  < t_harv))
+          OR (t_issue IS NOT NULL AND (last_issue_at      IS NULL OR last_issue_at      < t_issue))
+    expect: rowcount_eq
+    value: 0
+
+  # V4-DRIFTDETECTBOTH-001 — carecacheundo's ahead-direction invariant WIDENED to 7 columns.
+  # The two applied copies are 6-column and cannot fail on a last_issue_at that is ahead, at any
+  # volume. This file is the first bulk writer of plant-keyed last_issue_at on rows that never
+  # carried one, so without this widening a wrong flagged_as_issue predicate in 0b would produce
+  # drift that passes every live gate.
+  - name: post_no_cache_ahead_of_event_log
+    sql: |
+      WITH truth AS (
+        SELECT em.id,
+               em.last_event_at, em.last_watered_at, em.last_fertilized_at,
+               em.last_pruned_at, em.last_observed_at, em.last_harvested_at, em.last_issue_at,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_any,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type IN ('watering','rain')
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_water,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type = 'fertilizing'
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_fert,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type = 'pruning'
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_prune,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.event_type = 'observation'
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_obs,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.event_type IN ('harvest','first_harvest')
+                             ELSE e.event_type = 'harvest' END)
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_harv,
+               (SELECT MAX(e.event_date) FROM public.event_log e
+                 WHERE e.deleted_at IS NULL AND e.flagged_as_issue = true
+                   AND (CASE WHEN em.plant_id IS NOT NULL THEN e.plant_id = em.plant_id
+                             ELSE e.project_id = em.project_id END)) AS t_issue
+          FROM public.entity_memory em
+         WHERE em.plant_id IS NOT NULL OR em.project_id IS NOT NULL
+      )
+      SELECT id FROM truth
+       WHERE (last_event_at      IS NOT NULL AND (t_any   IS NULL OR last_event_at      > t_any))
+          OR (last_watered_at    IS NOT NULL AND (t_water IS NULL OR last_watered_at    > t_water))
+          OR (last_fertilized_at IS NOT NULL AND (t_fert  IS NULL OR last_fertilized_at > t_fert))
+          OR (last_pruned_at     IS NOT NULL AND (t_prune IS NULL OR last_pruned_at     > t_prune))
+          OR (last_observed_at   IS NOT NULL AND (t_obs   IS NULL OR last_observed_at   > t_obs))
+          OR (last_harvested_at  IS NOT NULL AND (t_harv  IS NULL OR last_harvested_at  > t_harv))
+          OR (last_issue_at      IS NOT NULL AND (t_issue IS NULL OR last_issue_at      > t_issue))
+    expect: rowcount_eq
+    value: 0
+
+  # A migration must not be able to trip a shipped monitor without failing its own post phase.
+  # Stated as a RELATION (no row this migration created is an orphan) rather than against the
+  # committed baseline number, so it does not rot when that baseline is legitimately refreshed.
+  # continuous:false — the ledger only exists between apply and rollback.
+  - name: post_no_orphan_row_was_created_by_this_migration
+    continuous: false
+    sql: |
+      SELECT em.id
+        FROM public.entity_memory em
+        JOIN public.snap_cachemissingrow001_inserted i ON i.id = em.id
+       WHERE NOT EXISTS (SELECT 1 FROM public.plants p
+                          WHERE p.id = em.plant_id AND p.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.23.5-cachemissingrow-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ANTI-VACUITY GUARD for the three ledger-joined gates: each of them passes trivially against an
+  # empty ledger. Fails on a deliberate second apply, matching pre_not_already_applied's stance
+  # that a re-run must be a deliberate act.
+  - name: post_ledger_is_not_empty
+    continuous: false
+    sql: |
+      SELECT id FROM public.snap_cachemissingrow001_inserted
+    expect: rowcount_gte
+    value: 1
+
+  # INSERT-ONLY, asserted rather than trusted. Catches DO NOTHING silently becoming DO UPDATE, which
+  # would convert this file into a mass rewrite of every plant-keyed row and would annex both
+  # sibling migrations' populations.
+  # continuous:false is MANDATORY, not cosmetic: entity_memory takes ~264 writes/day, so ordinary
+  # traffic makes an `updated_at >= applied_at` proxy red within hours. That exact omission is why
+  # v4-carecacheundo-001's equivalent gate sits permanently red — do not add a third.
+  - name: post_no_preexisting_cache_row_was_touched
+    continuous: false
+    sql: |
+      SELECT em.id
+        FROM public.entity_memory em
+        JOIN public.schema_version sv ON sv.version = '4.23.5-cachemissingrow-001'
+       WHERE em.plant_id IS NOT NULL
+         AND em.updated_at >= sv.applied_at
+         AND NOT EXISTS (SELECT 1 FROM public.snap_cachemissingrow001_inserted i WHERE i.id = em.id)
+    expect: rowcount_eq
+    value: 0
+
+  # Asserts the PLANT-keyed writer was mirrored and not the project-keyed one: the plant arm carries
+  # no engine columns. The nightly daily-plan engine legitimately owns next_water_at and may write
+  # it later, hence continuous:false.
+  - name: post_backfilled_rows_carry_no_engine_columns
+    continuous: false
+    sql: |
+      SELECT em.id
+        FROM public.entity_memory em
+        JOIN public.snap_cachemissingrow001_inserted i ON i.id = em.id
+       WHERE em.next_water_at IS NOT NULL
+          OR em.location_type IS NOT NULL
+          OR em.watering_interval_days IS NOT NULL
+    expect: rowcount_eq
+    value: 0

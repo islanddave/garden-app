@@ -562,3 +562,78 @@ describe('the invariant, after the four gaps too — both directions', () => {
     expect(offenders.map((r) => r.plant_id ?? r.project_id)).toEqual([])
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// V4-CACHEMISSINGROW-001 — THE THIRD DETECTOR, and the blind spot both existing ones share.
+//
+// staleForward() and staleBehind() above both enumerate `FROM public.entity_memory`. Each is
+// therefore a statement about cache ROWS, not about PLANTINGS, and each silently carries the
+// qualifier "for every entity that HAS a cache row". A planting with surviving events and no row is
+// neither ahead nor behind — it is not a row. 14 plantings sat outside that qualifier on prod for
+// three months with every gate and every test green.
+//
+//   THE RULE: an invariant of the form "for every X, P holds" must be enumerated FROM the relation
+//   that DEFINES X, never from the relation that CARRIES P.
+//
+// missingCache() enumerates FROM plants — the side that can be MISSING. It carries NO lifecycle
+// filter, and that absence is the single most load-bearing line in this block: adding
+// `p.archived_at IS NULL` here is exactly the defect in migrations/care-rekey-001/0b-backfill.sql
+// that CREATED the prod population, and it would re-hide 8 of the 14 rows. Scoped by created_by
+// because the CI database is an ephemeral branch off staging — an unscoped detector would inherit
+// staging's holes and be red forever, which is how a real detector gets deleted for being noisy.
+async function missingCache() {
+  return directSql`
+    SELECT p.id AS plant_id
+      FROM public.plants p
+     WHERE p.created_by = ${USER}
+       AND EXISTS (SELECT 1 FROM public.event_log e
+                    WHERE e.plant_id = p.id AND e.deleted_at IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.plant_id = p.id)`
+}
+
+describe('V4-CACHEMISSINGROW-001 — a planting with events and no cache row', () => {
+  let plantM, plantN, evtM, evtN, project
+  const T1 = '2026-03-01T12:00:00.000Z'
+  const T2 = '2026-03-05T12:00:00.000Z'
+
+  beforeAll(async () => {
+    project = await newProject('missing')
+    plantM = await newPlanting({ project, tag: 'missing-m' })
+    plantN = await newPlanting({ project, tag: 'missing-n' })
+    evtM = await newEvent({ plant_id: plantM, project_id: project, event_type: 'watering', event_date: T2 })
+    evtN = await newEvent({ plant_id: plantN, project_id: project, event_type: 'first_harvest', event_date: T1 })
+    // MANUFACTURE THE HOLE. The deployed POST writer has just created both rows, so a test that
+    // merely created a planting and posted an event would pass for entirely the wrong reason.
+    await directSql`DELETE FROM entity_memory WHERE plant_id IN (${plantM}, ${plantN})`
+    // ARCHIVE one of them. This step is the mutation guard: without it, a future "tidy up" that
+    // adds a lifecycle filter to missingCache() still passes — and that edit is the exact shape of
+    // the bug in the tree that produced all 14 prod rows.
+    await directSql`UPDATE plants SET archived_at = NOW() WHERE id = ${plantM}`
+  })
+
+  it('NEGATIVE CONTROL: the hole is invisible to BOTH shipped detectors', async () => {
+    expect((await staleForward()).map((r) => r.plant_id ?? r.project_id)).toEqual([])
+    expect((await staleBehind()).map((r) => r.plant_id ?? r.project_id)).toEqual([])
+  })
+
+  it('the third detector FIRES on it — including on the ARCHIVED planting', async () => {
+    const found = (await missingCache()).map((r) => r.plant_id).sort()
+    expect(found).toEqual([plantM, plantN].sort())
+  })
+
+  it('the row comes back AT TRUTH, not merely back', async () => {
+    // Through the deployed writer, not by hand — the repair must be reachable by the code path
+    // that is supposed to maintain this invariant going forward.
+    await put(evtM, { event_type: 'watering', event_date: T2, plant_id: plantM, project_id: project })
+    await put(evtN, { event_type: 'first_harvest', event_date: T1, plant_id: plantN, project_id: project })
+
+    expect((await missingCache()).map((r) => r.plant_id)).toEqual([])
+    // Coverage ALONE would pass on two all-NULL rows, which is why this assertion is not optional:
+    // the definition of done is coverage AND value together, never either one on its own.
+    expect((await staleBehind()).map((r) => r.plant_id ?? r.project_id)).toEqual([])
+    // The plant arm maps harvest as IN ('harvest','first_harvest'); the PROJECT arm uses
+    // = 'harvest'. A backfill or writer that copied the project arm's mapping fails right here.
+    expect(ms((await plantCache(plantN)).last_harvested_at)).toBe(ms(T1))
+    expect(ms((await plantCache(plantM)).last_watered_at)).toBe(ms(T2))
+  })
+})
