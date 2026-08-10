@@ -33,6 +33,11 @@ import { LAYER } from '../lib/dismissLayers.js'
 // eight <PhotoUpload> call sites are unchanged and still use it. errorMode="surface" is preserved,
 // so the loud-error UX is the same.
 
+// V4-FBSHARE-001 — Graph API caps a multi-photo Page post; the bar refuses past this rather than
+// letting the share sheet fail mid-post. Named because it is asserted in three places (the warning,
+// the disabled state, the cursor) and a literal that appears three times drifts in two of them.
+const MAX_SHARE_PHOTOS = 10
+
 export default function PhotoLibrary() {
   const { fetch: apiFetch } = useApiFetch()
 
@@ -100,7 +105,16 @@ export default function PhotoLibrary() {
   // you scroll" behavior it lacked when the server limit was cut to 30.
   const PAGE = 24
   const [shown, setShown] = useState(PAGE)
-  useEffect(() => { setShown(PAGE) }, [filterProject, filterLocation, filterMode])
+  // BUG-PHOTOSELSTALE-001: a filter change REPLACES the photos array, so ids picked under the old
+  // filter may no longer resolve to a row. The selection is reset here, alongside the window, for
+  // the same reason the window is: both describe a view of a list that no longer exists.
+  // CLEAR, not intersect — justification at `selectedPhotos` below.
+  // Returning `prev` when already empty keeps the Set identity stable so mount and every
+  // already-cleared filter change bail out of a re-render instead of churning a fresh Set.
+  useEffect(() => {
+    setShown(PAGE)
+    setSelected(prev => (prev.size ? new Set() : prev))
+  }, [filterProject, filterLocation, filterMode])
   useEffect(() => {
     // Scroll listener rather than IntersectionObserver: IO is the same viewport-intersection
     // machinery native lazy depends on, and that is precisely what is not firing on this layout.
@@ -351,7 +365,31 @@ export default function PhotoLibrary() {
     setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
   }
   function openShare(photoList) { setSharePhotos(photoList); setShareOpen(true) }
+  // BUG-PHOTOSELSTALE-001 — ONE source of truth for "the selection", and it is this, not `selected`.
+  // `selected` is a Set of ids and cannot know whether an id still resolves to a row after the list
+  // is refetched; `selectedPhotos` is literally what openShare() posts. So every affordance below —
+  // whether the bar exists at all, its count, and the max guard — derives from THIS. That divergence
+  // WAS the defect: the bar read `selected.size` ("12 selected", "Max 10") while the button posted
+  // `selectedPhotos` (5). Both symptoms Dave would see are the same bug from opposite ends — a
+  // silent under-post, and a block on a post that was never over the cap.
+  //
+  // Deriving here is belt AND braces with the clear above, not a duplicate of it: the clear only
+  // covers filter changes, but `photos` is also replaced by loadPhotos() after an upload completes,
+  // and that path has no business clearing a selection. Derivation covers every array replacement,
+  // including ones not yet written.
+  //
+  // CLEAR-not-intersect (the effect above). Intersecting looks like it preserves a selection across
+  // a filter round-trip, but it cannot: it is lossy in one direction only, so filtering away and
+  // back returns fewer photos than it left with. Worse, `photos` is a SERVER PAGE, so an id can be
+  // absent from the new page while still matching the new filter — intersect would drop it silently
+  // and arbitrarily, which is a harder bug to explain than "the selection reset". And the fail-safe
+  // direction matters more than usual for a control that posts PUBLICLY: clearing forces the user to
+  // re-pick against the list in front of them, instead of carrying an unreviewed selection across a
+  // context change. (Intersecting inside that effect would also be a no-op — `photos` is still the
+  // OLD array at that point; the refetch has not resolved. It would have to move into loadPhotos.)
   const selectedPhotos = photos.filter(p => selected.has(p.id))
+  const selectionCount = selectedPhotos.length
+  const selectionOverMax = selectionCount > MAX_SHARE_PHOTOS
   // Dormant-until-configured: the FB share UI only appears once VITE_API_FACEBOOK_SHARE is wired
   // (set at go-live, after the lambda is deployed). Keeps a half-feature out of prod on any promote.
   const fbShareEnabled = !!import.meta.env.VITE_API_FACEBOOK_SHARE
@@ -675,18 +713,18 @@ export default function PhotoLibrary() {
       )}
 
       {/* V4-FBSHARE-001 — selection action bar (only in select-mode) */}
-      {selectMode && selected.size > 0 && (
+      {selectMode && selectionCount > 0 && (
         // BUG-PICKERCLIP-001: hidden — NOT unmounted — while the upload form's planting listbox is
         // open. visibility+pointerEvents keeps the node so the picker's 150ms deferred blur-close
         // cannot flicker an unmounting bar back under a finger mid-gesture. `visibility: hidden`
         // already drops the subtree from the a11y tree and the tab order, so no aria-hidden.
         <div data-testid="pl-select-bar" style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 150, background: P.white, borderTop: `1px solid ${P.border}`, padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, boxShadow: '0 -2px 10px rgba(0,0,0,0.08)', visibility: uploadPickerOpen ? 'hidden' : 'visible', pointerEvents: uploadPickerOpen ? 'none' : 'auto' }}>
-          <span style={{ fontSize: '0.9rem', fontWeight: 700, color: P.mid }}>{selected.size} selected</span>
+          <span style={{ fontSize: '0.9rem', fontWeight: 700, color: P.mid }}>{selectionCount} selected</span>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            {selected.size > 10 && <span style={{ fontSize: '0.72rem', color: P.terra }}>Max 10</span>}
+            {selectionOverMax && <span style={{ fontSize: '0.72rem', color: P.terra }}>{`Max ${MAX_SHARE_PHOTOS}`}</span>}
             <button type="button" onClick={exitSelectMode} style={{ background: 'transparent', color: P.mid, border: `1px solid ${P.border}`, borderRadius: 8, padding: '10px 16px', fontSize: '0.86rem', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
-            <button type="button" onClick={() => openShare(selectedPhotos)} disabled={selected.size > 10}
-              style={{ background: selected.size > 10 ? P.light : P.green, color: P.white, border: 'none', borderRadius: 8, padding: '10px 16px', fontSize: '0.86rem', fontWeight: 700, cursor: selected.size > 10 ? 'default' : 'pointer' }}>
+            <button type="button" onClick={() => openShare(selectedPhotos)} disabled={selectionOverMax}
+              style={{ background: selectionOverMax ? P.light : P.green, color: P.white, border: 'none', borderRadius: 8, padding: '10px 16px', fontSize: '0.86rem', fontWeight: 700, cursor: selectionOverMax ? 'default' : 'pointer' }}>
               Post to Facebook
             </button>
           </div>
