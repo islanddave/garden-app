@@ -261,3 +261,27 @@ def test_sharp_advisory_is_not_waived_in_the_real_allowlist():
     """GHSA-f88m-g3jw-g9cj needs an upgrade (0.35.x, a manifest edit + arm64 repackaging), not a
     waiver. Silencing it here would restore the green-gate-over-a-live-CVE state exactly."""
     assert "GHSA-f88m-g3jw-g9cj" not in mod.load_allow()
+
+
+def test_empty_lambda_enumeration_cannot_report_pass(monkeypatch, capsys):
+    """Vacuity floor. Every lambda check lives inside the per-target loop, so before this floor
+    an empty target list produced a clean 'PASS (0 waived, 0 blocking)' with exit 0 over 26
+    unaudited functions. This is NOT the AuditUnavailable path (which correctly exits 2): that
+    can only fire for a target the enumeration produced. A target that stops being ENUMERATED —
+    lambda/ renamed, manifests relocated, the iterdir/package.json filter no longer matching —
+    never becomes 'unaudited', it just silently ceases to exist. Mutation: stub lambda_targets
+    to return no targets while ROOT is the real repo."""
+    monkeypatch.setattr(mod, 'lambda_targets', lambda root=None: ([], []))
+    monkeypatch.setattr(mod, 'load_allow', lambda *a, **k: {})
+    rc = mod.main(["--lambdas-only"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "COVERAGE FLOOR" in out
+    assert "dependency-audit gate PASS" not in out
+
+
+def test_real_repo_clears_the_lambda_coverage_floor():
+    """The floor is only meaningful if the real fleet is comfortably above it; if this fails,
+    lower MIN_LAMBDA_TARGETS deliberately rather than letting the floor become the ceiling."""
+    t, o = mod.lambda_targets(REPO)
+    assert len(t) + len(o) >= mod.MIN_LAMBDA_TARGETS

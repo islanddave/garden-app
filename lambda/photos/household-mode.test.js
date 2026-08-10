@@ -33,12 +33,19 @@ describe('photos Lambda — Household Mode uploaded_by -> created_by switch', ()
   });
 
   it('scope filters + cross-entity featured-photo guards use created_by = ANY(${householdIds})', () => {
-    // 10 = the 9 pre-existing (view-url, 3 list branches, re-tag, batch-tag entity walk,
-    // container/garden_node/inventory auto-promote arms) + 1: BUG-PHOTOLOCAUTHZ-001 added the
-    // predicate to the locations auto-promote arm, closing the one arm that lacked it.
-    // (The old "7" comment was stale — this regex also matches p./pp. qualified forms.)
+    // EXACT, not >=. The floor was `>= 10` against a real population of 23 — it licensed the
+    // deletion of THIRTEEN scope filters, each one a cross-household photo read or write, while
+    // reporting green. Proven by mutation: rewrite 13 of the 23 `created_by = ANY(${householdIds})`
+    // conjuncts to `TRUE` (leaving exactly 10) and every test in this file passed. A census whose
+    // floor sits below its own population is not a census.
+    //
+    // Adding a legitimately-new scoped site is a deliberate change: bump this number in the same
+    // commit. That cost is the point — it is what makes a REMOVED site impossible to miss.
+    // The regex matches every qualified form (p./pp./ph./bare), so this is the whole population.
     const matches = SRC.match(/created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(10);
+    expect(matches.length,
+      'photos/index.js household-scope site count changed. A DROP is a cross-tenant leak; an ADD ' +
+      'needs this count bumped deliberately.').toBe(23); // 23 at d9afab95
   });
 
   it('UPDATE locations auto-promote arm carries the ownership predicate (BUG-PHOTOLOCAUTHZ-001)', () => {

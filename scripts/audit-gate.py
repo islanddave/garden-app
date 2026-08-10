@@ -37,6 +37,13 @@ import json, subprocess, sys, pathlib, hashlib, tempfile, shutil
 BLOCK = {"moderate", "high", "critical"}
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 NPM_TIMEOUT = 300  # per npm invocation; a hung registry must fail loud, not hang CI
+# Coverage floor for the lambda arm (see main()). 26 targets + 0 orphans at d9afab95;
+# slack for churn, but far above the 0 that the pre-floor gate happily reported PASS over.
+# REPO_ROOT is frozen at import and is NOT the patchable ROOT: the floor is a claim about the
+# REAL fleet, so it must not fire against the synthetic one-lambda fixture roots the unit
+# tests build (they monkeypatch ROOT; REPO_ROOT stays put, so the floor stays scoped to CI).
+MIN_LAMBDA_TARGETS = 20
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 class AuditUnavailable(Exception):
@@ -210,6 +217,7 @@ def main(argv):
             unaudited.append(["root"])
             notes.append("::error title=audit UNAUDITED::%s" % e)
 
+    coverage_fail = None
     if do_lambdas:
         lw, lb, lu, ln, lun = audit_lambdas(allow)
         waived += lw
@@ -217,6 +225,19 @@ def main(argv):
         unidentified += lu
         notes += ln
         unaudited += lun
+        # Vacuity floor. The lambda arm's entire subject list comes from lambda_targets(), and
+        # every check lives inside the per-target loop -- so an empty list is a clean
+        # "PASS (0 waived, 0 blocking)" with exit 0. Proven: stub lambda_targets() -> ([], [])
+        # and the gate reports PASS over 26 unaudited functions. Note this is NOT the
+        # AuditUnavailable path: that one correctly exits 2, but it can only fire for a target
+        # the enumeration actually produced. A target that stops being ENUMERATED (lambda/
+        # renamed, manifests relocated, or the iterdir/package.json filter stopping matching)
+        # never becomes "unaudited" -- it simply ceases to exist, silently.
+        found = len(lambda_targets()[0]) + len(lambda_targets()[1])
+        if ROOT == REPO_ROOT and found < MIN_LAMBDA_TARGETS:
+            coverage_fail = ("lambda enumeration found %d target(s) under %s, expected >= %d. "
+                             "The fleet is not being enumerated, so this gate is auditing "
+                             "(almost) nothing." % (found, ROOT / "lambda", MIN_LAMBDA_TARGETS))
 
     for line in notes:
         print(line)
@@ -236,6 +257,10 @@ def main(argv):
                    "scripts/audit-allowlist.json" % pkg.split(":")[0])
         print("::error title=audit BLOCK::%s [%s] %s — NOT allowlisted; %s" % (pkg, sev, ident, fix))
 
+    if coverage_fail:
+        print("\n❌ dependency-audit gate COVERAGE FLOOR: %s Exiting 2 — the gate refuses to "
+              "report PASS over a fleet it never enumerated." % coverage_fail)
+        return 2
     if unaudited:
         flat = [n for g in unaudited for n in g]
         print("\n❌ dependency-audit gate COULD NOT VERIFY %d target(s): %s. Exiting 2 — the gate "

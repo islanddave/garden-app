@@ -10,9 +10,11 @@ import { renderInner } from './_render.mjs'
 
 const PALETTE = ['#ff0000', '#0000ff', '#00aa00', '#aa00aa'] // distinct per region
 let fail = 0, checked = 0
+const checkedByKey = new Map() // key -> targets actually checked; backs the vacuity floor below
 
 for (const [key, e] of Object.entries(GLYPHS)) {
   if (e.class !== 'color-candidate') continue
+  checkedByKey.set(key, 0)
   // targets: top-level master if it declares regions, plus every multi-region variant.
   const targets = []
   if (e.svg24 && /data-region=/.test(e.svg24)) targets.push(['base', e])
@@ -20,7 +22,7 @@ for (const [key, e] of Object.entries(GLYPHS)) {
   for (const [vn, v] of targets) {
     const regions = [...new Set([...v.svg24.matchAll(/data-region="([^"]+)"/g)].map(m => m[1]))]
     if (regions.length < 1) continue
-    checked++
+    checked++; checkedByKey.set(key, checkedByKey.get(key) + 1)
     const fills = Object.fromEntries(regions.map((r, i) => [r, PALETTE[i % PALETTE.length]]))
     const { data, W, H } = renderInner(v.svg24, { fills })
     const op = (x, y) => data[(y * W + x) * 4 + 3] > 128
@@ -43,5 +45,28 @@ for (const [key, e] of Object.entries(GLYPHS)) {
     else console.log(`✓ ${key}:${vn} ${regions.length} region(s) paint, no interior seam (holes ${holePct}%)`)
   }
 }
+// --- Vacuity floor -----------------------------------------------------------------
+// `checked` was counted but never asserted, and every check above lives inside the target
+// loop — so a subject list of zero was a clean PASS with exit 0, printing
+// "PASS (0 color-candidate target(s))". Two proven mutations both slipped past it:
+// (a) GLYPHS/`class: 'color-candidate'` stop matching (registry key or class rename),
+//     proven with an empty-GLYPHS import stub;
+// (b) a color-candidate glyph's `data-region="..."` attributes are deleted — the exact
+//     regression this gate exists to catch. The base target is only enrolled when svg24
+//     already matches /data-region=/, and the `regions.length < 1` skip above drops the
+//     rest, so stripping the region markup REMOVED the glyph from its own gate.
+// Per-key rather than a bare total, so (b) still fails when only one glyph is stripped.
+// Region-less VARIANTS stay legitimately skippable — the assertion is per glyph key.
+const MIN_TARGETS = 6 // 7 targets across 7 color-candidate glyphs at d9afab95.
+const unchecked = [...checkedByKey].filter(([, n]) => n === 0).map(([k]) => k)
+if (unchecked.length) {
+  console.log(`✗ coverage: color-candidate glyph(s) contributed NO checked target: ${unchecked.join(', ')}. Their data-region markup is missing, so they are silently exempt from the seam gate.`)
+  fail++
+}
+if (checked < MIN_TARGETS) {
+  console.log(`✗ coverage floor: checked ${checked} target(s), expected >= ${MIN_TARGETS}. The color-candidate filter matched (almost) nothing — this gate is not covering the color pass.`)
+  fail++
+}
+
 console.log(fail ? `\nREGION-SEAM: FAIL (${fail})` : `\nREGION-SEAM: PASS (${checked} color-candidate target(s))`)
 process.exit(fail ? 1 : 0)

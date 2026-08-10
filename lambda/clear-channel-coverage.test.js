@@ -189,18 +189,60 @@ describe('BUG-COALESCECLEAR-001: every handler with a COALESCE-on-body arm decla
   // drift that shipped in varieties (`care_notes` on the allowlist, no matching SQL arm, entire
   // suite green, found by mutation rather than by design). Close it at column granularity: every
   // name in CLEARABLE_FIELDS must appear inside an `@> ARRAY[...]` arm in the sibling index.js.
-  for (const d of lambdaDirs()) {
-    const vPath = join(here, d, 'validate.js');
-    if (!existsSync(vPath)) continue;
-    const vSrc = strip(readFileSync(vPath, 'utf8'));
+  // The allowlist's HOME is discovered per dir, not assumed to be validate.js, and the discovered
+  // set is asserted against ALLOWLIST_HOMES below. Two independent blind spots this closes:
+  //   (1) `if (!listMatch) continue` — renaming the const silently deletes that dir's per-column
+  //       test with no visible change in a green run. Proven by mutation: rename CLEARABLE_FIELDS
+  //       -> CLEARABLE_COLS in lambda/plants/validate.js (nothing outside the file imports it, so
+  //       it is an ordinary refactor) and the plants per-column test vanished, 15 tests -> 14, all
+  //       green. The rename mutation now fails the ALLOWLIST_HOMES assertion instead.
+  //   (2) keying on `validate.js` — lambda/events keeps its allowlist in clearFields.js, so events
+  //       had NEVER received per-column coverage despite declaring six clearable columns.
+  const allowlistHome = (d) => readdirSync(join(here, d))
+    .filter(f => f.endsWith('.js') && !f.endsWith('.test.js'))
+    .sort()
+    .find(f => /CLEARABLE_FIELDS\s*=\s*\[/.test(strip(readFileSync(join(here, d, f), 'utf8')))) ?? null;
+
+  // Expected homes, asserted against disk. A relocation or rename must be a deliberate edit here.
+  const ALLOWLIST_HOMES = {
+    locations: 'validate.js', plants: 'validate.js', projects: 'validate.js',
+    varieties: 'validate.js', events: 'clearFields.js',
+  };
+
+  it('every declared clear allowlist is still discoverable where this guard looks', () => {
+    const onDisk = Object.fromEntries(
+      lambdaDirs().map(d => [d, allowlistHome(d)]).filter(([, f]) => f !== null));
+    expect(onDisk, 'a CLEARABLE_FIELDS allowlist moved, was renamed, or appeared in a new handler. ' +
+      'Per-column coverage below is generated from this map, so an unlisted allowlist gets NO test ' +
+      'at all and the drift it exists to catch becomes invisible.').toEqual(ALLOWLIST_HOMES);
+  });
+
+  for (const d of Object.keys(ALLOWLIST_HOMES)) {
+    const home = allowlistHome(d);
+    if (!home) continue; // the assertion above is what fails; don't double-report a crash here.
+    const vSrc = strip(readFileSync(join(here, d, home), 'utf8'));
     const listMatch = vSrc.match(/CLEARABLE_FIELDS\s*=\s*\[([\s\S]*?)\]/);
-    if (!listMatch) continue;
-    const declared = [...listMatch[1].matchAll(/'([A-Za-z_][A-Za-z0-9_]*)'/g)].map(m => m[1]);
+    const declared = listMatch
+      ? [...listMatch[1].matchAll(/'([A-Za-z_][A-Za-z0-9_]*)'/g)].map(m => m[1]) : [];
     const idxSrc = strip(readFileSync(join(here, d, 'index.js'), 'utf8'));
     const armed = new Set(
       [...idxSrc.matchAll(/@>\s*ARRAY\[\s*'([A-Za-z_][A-Za-z0-9_]*)'/g)].map(m => m[1]));
+    // Second legitimate binding shape: a resolver that is itself handed `clear` and returns the
+    // already-resolved value, written as a plain assignment (`severity = ${pair.severity}`).
+    // events/index.js:1193,1306 does exactly this for `severity`, which is why events shows five
+    // ARRAY arms for six clearable columns. Recognised NARROWLY — the resolver must visibly
+    // consume `clear`, and the column name must match on both sides — so this cannot become a
+    // blanket excuse for a column with no clear path at all.
+    const resolverTakesClear = /\bresolve[A-Za-z]*\([^)]*\bclear\b[^)]*\)/.test(idxSrc);
+    if (resolverTakesClear) {
+      for (const m of idxSrc.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\$\{\s*pair\.([A-Za-z_][A-Za-z0-9_]*)\b/g)) {
+        if (m[1] === m[2]) armed.add(m[1]);
+      }
+    }
 
     it(`${d}: every column on the allowlist has a matching SQL clear arm`, () => {
+      expect(listMatch, `${d}/${home} no longer declares CLEARABLE_FIELDS — this dir's per-column ` +
+        'coverage would silently disappear').not.toBeNull();
       // An empty allowlist is only legitimate as the recorded outcome of an audit. Anywhere else
       // it is a half-built channel: validateClear accepts keys the SQL will never act on.
       if (declared.length === 0) {

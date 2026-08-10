@@ -183,6 +183,18 @@ describe('route wiring — POST /api/photos/relay-upload (BUG-PHOTOUPLOADRELAY-0
     const b = relayBlock();
     expect(b.indexOf('RELAY_MAX_B64_CHARS')).toBeGreaterThan(-1);
     expect(b.indexOf('RELAY_THUMB_MAX_B64_CHARS')).toBeGreaterThan(-1);
+    // PRESENCE FLOOR — the sibling resp(403 test above has this line; its absence here was the
+    // whole defect. An ordering assertion alone is vacuously true when the left operand is
+    // MISSING: indexOf returns -1, and -1 is less than any real offset. Proven by mutation:
+    // rewrite both `return resp(413, {...})` guards at photos/index.js:528-529 to
+    // `console.warn(...)`, keeping both constants referenced so the two assertions above still
+    // pass. The relay upload size cap was gone — s3.send received an unbounded body — and all
+    // 45 tests in this file stayed GREEN.
+    expect(b.indexOf('resp(413'),
+      'no resp(413 in the relay block — the size cap does not reject, it only measures').toBeGreaterThan(-1);
+    // Both caps must reject, not just one: the photo and the thumb are separate limits.
+    expect((b.match(/resp\(413/g) ?? []).length,
+      'expected a 413 for BOTH the photo and the thumb cap').toBe(2);
     expect(b.indexOf('resp(413')).toBeLessThan(b.indexOf('s3.send'));
   });
   it('derives the thumb key SERVER-side (thumbs/ prefix is not caller-nameable)', () => {

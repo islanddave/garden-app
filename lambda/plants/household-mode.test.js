@@ -20,13 +20,25 @@ describe('plants Lambda — Household Mode scope widening', () => {
   });
 
   it('ownership reads/guards via pp.created_by use = ANY(${householdIds})', () => {
-    // LIST + UPDATE + DELETE + 2 list/get SELECTs = 5 pp.created_by sites.
+    // EXACT, not >=. The floor was `>= 5` against a real population of 8, so three container
+    // ownership predicates could be deleted and this stayed green — proven by mutation
+    // (rewrite 3 of the 8 to `TRUE`; all 7 tests in this file passed). Bump deliberately when a
+    // new scoped site is added; a DROP must never be silent.
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(5);
+    expect(matches.length,
+      'plants/index.js container-ownership site count changed — a DROP is a cross-tenant read/write')
+      .toBe(8); // 8 at d9afab95
   });
 
   it('featured-photo subquery SWITCHED uploaded_by -> created_by = ANY(${householdIds})', () => {
-    expect(SRC).toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
+    // SCOPED to the featured-photo link check. The old assertion was a whole-file
+    // `toMatch(/created_by = ANY\(\$\{householdIds\}\)/)`, which any of the 20+ occurrences
+    // elsewhere in the handler satisfied — so this `it` could not fail for the subquery it names,
+    // and it stacked with the loose floor above to hide the same deletions twice.
+    const i = SRC.indexOf('SELECT 1 FROM photos ph');
+    expect(i, 'featured-photo link subquery not found').toBeGreaterThan(-1);
+    const block = SRC.slice(i, SRC.indexOf('`', i));
+    expect(block).toMatch(/ph\.created_by = ANY\(\$\{householdIds\}\)/);
     // No remaining uploaded_by scope filter (plants has no uploaded_by INSERT column).
     expect(SRC).not.toMatch(/uploaded_by = \$\{userId\}/);
   });

@@ -76,7 +76,28 @@ describe('V4-CULTIVARNAME-001 — cadence key aliases survive a rename', () => {
     // name-matched UPDATE. Neither cultivar has a sample today, so the hazard is latent — this
     // fails the moment someone weighs one and files it under the old spelling.
     const v2 = JSON.parse(readFileSync(resolve(HERE, '../../src/data/harvest-weights-v2.json'), 'utf8'))
-    const stale = [...(v2.by_cultivar_samples ?? []), ...(v2.by_cultivar_voids ?? [])]
+    // CORPUS FLOOR, before the filter. `?? []` turns a renamed or removed key into a silently
+    // EMPTY corpus, and `expect([]).toEqual([])` is then true forever — a `filter -> toEqual([])`
+    // is only as strong as its input. Proven by mutating the guard's input: rename
+    // `by_cultivar_samples` -> `cultivar_samples` (what a schema_version bump does) AND add a
+    // sample keyed on 'Floridade'. The pre-floor expression returned [] and passed with the
+    // defect present. Assert the KEYS, not just their contents: by_cultivar_voids is legitimately
+    // empty today (0 entries), so a length floor on it would be wrong — but it must still EXIST,
+    // or half this guard's input is gone and nothing says so.
+    expect(Array.isArray(v2.by_cultivar_samples),
+      'harvest-weights-v2.json no longer has by_cultivar_samples — this guard is reading nothing')
+      .toBe(true)
+    expect(Array.isArray(v2.by_cultivar_voids),
+      'harvest-weights-v2.json no longer has by_cultivar_voids — half this guard\'s corpus is gone')
+      .toBe(true)
+    expect(v2.by_cultivar_samples.length, 'sample corpus is empty — the guard covers nothing')
+      .toBeGreaterThanOrEqual(9) // 9 at d9afab95
+    const corpus = [...v2.by_cultivar_samples, ...v2.by_cultivar_voids]
+    // Every entry must actually carry the field being filtered on; a renamed FIELD is the same
+    // silent miss one level down.
+    expect(corpus.every((s) => typeof s.variety_name === 'string'),
+      'a corpus entry has no variety_name — the filter below cannot see it').toBe(true)
+    const stale = corpus
       .filter((s) => s.variety_name === 'Czech Bush Slicer' || s.variety_name === 'Floridade')
       .map((s) => s.variety_name)
     expect(stale).toEqual([])

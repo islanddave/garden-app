@@ -27,6 +27,29 @@ if (update) {
 const base = JSON.parse(readFileSync(BASE, 'utf8'))
 const TOL = base.tolerance
 let fail = 0
+
+// --- Vacuity floor -----------------------------------------------------------------
+// This gate derives its ENTIRE subject list from the registry (`Object.entries(GLYPHS)`
+// filtered by isSvg). Every check below is a loop over that list, so an empty list is a
+// clean PASS with exit 0 — it printed "PASS (0 glyphs within ±1.5pp)" (and a `mean=NaN%
+// spread=-Infinitypp` uniformity line) while covering nothing. Turns red on either
+// mutation: (a) isSvg/GLYPHS stop matching — a registry key or schema rename, proven with
+// an empty-GLYPHS import stub; (b) a single glyph leaves the measured set while keeping
+// its baseline entry, which the drift loop below cannot see because it iterates `measured`,
+// not `base.glyphs` — so the orphaned baseline was never compared to anything.
+const MIN_GLYPHS = 90 // measured 105 at d9afab95; floor is deliberately slack for churn.
+const measuredKeys = Object.keys(measured)
+if (measuredKeys.length < MIN_GLYPHS) {
+  console.log(`✗ coverage floor: measured ${measuredKeys.length} glyphs, expected >= ${MIN_GLYPHS}. The registry filter matched (almost) nothing — this gate is not covering the fleet.`)
+  fail++
+}
+const orphaned = Object.keys(base.glyphs).filter((k) => !(k in measured))
+if (orphaned.length) {
+  const shown = orphaned.slice(0, 12).join(', ') + (orphaned.length > 12 ? `, +${orphaned.length - 12} more` : '')
+  console.log(`✗ baseline coverage: ${orphaned.length} baselined glyph(s) were not measured at all: ${shown}. Delete the baseline entry (--update) if the glyph is intentionally gone; otherwise it silently stopped being checked.`)
+  fail++
+}
+
 for (const [k, cov] of Object.entries(measured)) {
   const exp = base.glyphs[k]
   if (exp == null) { console.log(`✗ ${k}: no baseline (run --update if newly approved)`); fail++; continue }

@@ -27,9 +27,25 @@ const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 function seenBranch(src) {
   const start = src.indexOf('if (seenMatch) {');
   expect(start, 'seen branch (if (seenMatch) {) not found').toBeGreaterThan(-1);
-  // Take a generous window from the branch open to the next top-level `if (idMatch) {`.
-  const end = src.indexOf('if (idMatch) {', start);
-  return src.slice(start, end > -1 ? end : src.length);
+  // End at the NEXT top-level branch, which is `if (archiveMatch) {` — not `if (idMatch) {`.
+  // The old window ran seen->idMatch and therefore swallowed the ENTIRE archive branch, whose
+  // UPDATE carries its own `pp.created_by = ANY(${householdIds})`. Assertion (c) below then
+  // read as "someone in this window checks ownership", which the archive branch satisfied on
+  // the seen branch's behalf. Proven vacuous by mutation: delete the seen INSERT's whole
+  // `AND (( pp.created_by = ANY(${householdIds}) ... ))` clause from index.js and all four
+  // tests here stayed GREEN while POST /api/plants/:id/seen became writable cross-household.
+  // The end anchor is asserted, not defaulted: falling back to `src.length` on a renamed
+  // anchor would silently restore the over-wide window (and then some).
+  const end = src.indexOf('if (archiveMatch) {', start);
+  expect(end, 'seen branch end anchor (if (archiveMatch) {) not found — the extractor would ' +
+    'otherwise run past the seen branch and let a neighbouring branch satisfy its assertions')
+    .toBeGreaterThan(start);
+  const branch = src.slice(start, end);
+  // Size floor. A window that collapses to near-nothing makes every `includes`/`toMatch`
+  // below fail loudly rather than silently, but a `not.toMatch` would pass vacuously.
+  expect(branch.length, 'seen branch window is implausibly small — extractor anchors moved')
+    .toBeGreaterThan(400);
+  return branch;
 }
 
 describe('plants Lambda — seen-contract write path (V3-SEEN-001)', () => {
