@@ -278,11 +278,30 @@ post:
   #
   # Scoped `deleted_at IS NULL` for the same reason as post-1 — a cache row on a soft-deleted parent
   # is what entity_memory_orphans already counts as a defect, so the invariant cannot demand one.
+  #
+  # SELF-ARMING for the same reason as post-1, and I got this wrong once before writing it down:
+  # I measured the project arm on PROD (0), promoted the predicate straight to an asserting gate,
+  # and the very next scheduled invariants run came back [FAIL] on STAGING with rowcount=2. One
+  # environment measured, an invariant claimed for both — the same one-surface-generalised mistake
+  # this whole migration exists to correct, committed while correcting it.
+  #
+  # WHAT STAGING'S 2 ACTUALLY ARE: `cal1-int-test-1785782266037-gdj6f` and
+  # `cal1-int-test-1785782293311-t6y0w`, created 2026-08-03 by `cal1_user_int-test-*`. Integration
+  # test fixtures that were never torn down. So the invariant is TRUE for real data on both
+  # environments and staging is simply dirty.
+  #
+  # Deliberately NOT scoped around them. Excluding `created_by LIKE '%int-test%'` would make the
+  # gate quieter and weaker, and a guard narrowed to dodge inconvenient rows is how a guard stops
+  # being one. Self-arming instead: quiet until this migration is applied, then asserting — and on
+  # staging the apply will red here until the residue is cleaned, which is the correct moment to
+  # find out, with someone watching. Recorded in README.md's apply runbook as a staging precondition.
   - name: post_every_non_deleted_project_with_events_has_a_cache_row
     sql: |
       SELECT pp.id
         FROM public.plant_projects pp
-       WHERE pp.deleted_at IS NULL
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.23.5-cachemissingrow-001')
+         AND pp.deleted_at IS NULL
          AND EXISTS (SELECT 1 FROM public.event_log e
                       WHERE e.project_id = pp.id AND e.deleted_at IS NULL)
          AND NOT EXISTS (SELECT 1 FROM public.entity_memory em WHERE em.project_id = pp.id)
