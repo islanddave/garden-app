@@ -388,6 +388,11 @@ export default function EventNew() {
   // V3-EVENT-008 §8: "Add details" collapsible (Quantity / Visibility / Private notes).
   // Default collapsed unless the feature flag flips it open. Fields stay reachable.
   const [showAddDetails, setShowAddDetails] = useState(EVENTNEW_ADD_DETAILS_EXPANDED)
+  // V4-HARVFORMORDER-001 (S4): the harvest-only single disclosure holding Photo / Notes / Project /
+  // Metadata / When. Unconditional hook (never rendered for a non-harvest type, but the state must
+  // not be conditional). Collapsed by default — that IS the slice: the harvest fast path is
+  // Planting → Quantity → Unit and nothing else competes for the first screen.
+  const [showHarvestMore, setShowHarvestMore] = useState(false)
   const [plantsForProject, setPlantsForProject] = useState([])
   // BUG-PLANTFETCHSILENT-001 — both loaders below used to .catch into an empty list, which the
   // picker renders as "No plantings yet.": a network failure was indistinguishable from a project
@@ -493,6 +498,14 @@ export default function EventNew() {
     setForm(f => ({ ...f, ...picked }))
     if (typeof draft.showPrivate === 'boolean') setShowPrivate(draft.showPrivate)
     if (typeof draft.showAddDetails === 'boolean') setShowAddDetails(draft.showAddDetails)
+    // V4-HARVFORMORDER-001: restored text must never come back INVISIBLE. Notes moved under the
+    // harvest disclosure, which is collapsed by default, so a draft carrying a half-typed note
+    // would otherwise restore the bytes and hide them — indistinguishable from losing them. Honor
+    // an explicitly stashed toggle, then force it open whenever restored text exists (a PRE-S4
+    // draft has no showHarvestMore key at all, which is exactly the case that needs the fallback).
+    // No-op for every non-harvest type: they never render this disclosure.
+    if (typeof draft.showHarvestMore === 'boolean') setShowHarvestMore(draft.showHarvestMore)
+    if (picked.notes || picked.private_notes) setShowHarvestMore(true)
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // §4 draft stash — persist the in-progress form while dirty (BOTH surfaces, V4-DRAFTFULLPAGE-001).
@@ -506,8 +519,8 @@ export default function EventNew() {
     if (!dirty) return
     const snap = {}
     for (const k of DRAFT_FORM_FIELDS) snap[k] = form[k]
-    writeDraft(EVENTNEW_DRAFT_KEY, { form: snap, showPrivate, showAddDetails })
-  }, [form, showPrivate, showAddDetails])
+    writeDraft(EVENTNEW_DRAFT_KEY, { form: snap, showPrivate, showAddDetails, showHarvestMore })
+  }, [form, showPrivate, showAddDetails, showHarvestMore])
 
   // V4-DRAFTFULLPAGE-001 (b) — report in-progress content to the hosting Sheet (OverlayHost feeds
   // Sheet §5.2: a stray backdrop tap no-ops while dirty; Escape + the labelled Close stay live, and
@@ -1024,54 +1037,16 @@ export default function EventNew() {
     )
   }
 
-  return (
-    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
-      <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 60px' }}>
+  // ── V4-HARVFORMORDER-001 (S4) — ONE definition per block, TWO orders ──
+  // The form body used to be a single fixed sequence. Harvest needs a different one (Planting →
+  // Quantity → Unit first, so the fast path needs no scroll), and every OTHER event type must keep
+  // the shipped V4-LOGPHOTOFIRST-001 photo-first sequence byte-for-byte. Composing the body from
+  // named blocks — rather than forking the JSX — makes that structural: there is exactly one Photo
+  // block, one Notes block, etc., so the two orders can never silently diverge in CONTENT, only in
+  // sequence. Each block below is the same element it was before, moved verbatim.
+  const isHarvest = form.event_type === 'harvest'
 
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
-            <Link to="/dashboard" style={{ color: P.green, textDecoration: 'none' }}>Dashboard</Link>
-            {' › Log event'}
-          </div>
-          <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
-            Log an event
-          </h1>
-          {/* V3-LOGBTN-001: themed ghost button (cream/sage/terra), not a raw text link.
-              V4-OVERLAY-001 Slice 2: OverlaySwapLink so this in-overlay cross-link swaps content to
-              Log Many while preserving the background (full-page: a plain push, unchanged). */}
-          <div style={{ marginTop: 8 }}>
-            <OverlaySwapLink
-              to="/log/many"
-              style={{
-                display: 'inline-block', marginTop: 4,
-                backgroundColor: P.white, color: P.green,
-                border: `1px solid ${P.greenLight}`, borderRadius: 8,
-                padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
-                textDecoration: 'none',
-              }}
-            >
-              Log many →
-            </OverlaySwapLink>
-          </div>
-        </div>
-
-        {error && <ErrorBanner style={{ marginBottom: 16 }}>{error}</ErrorBanner>}
-        {notice && <ErrorBanner style={{ marginBottom: 16 }}>{notice}</ErrorBanner>}
-
-        {/* V4-HARVESTCENTER-001 (L9): ambient "preserve this?" affordance after a harvest logs. On
-            the overlay path it now renders on the V4-LOGCONF-001 confirmation card (see above); here
-            it covers the full-page path and the post-"Log another" form (preserveCtx survives the
-            card dismissal so the habit-stack offer isn't lost). */}
-        {preserveCtx && (
-          <PreserveOffer
-            onOpen={() => putUpSwap('/put-up', { state: { prefill: preserveCtx.prefill } })}
-            onDismiss={() => setPreserveCtx(null)}
-          />
-        )}
-
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-          {/* ── Photo — V4-LOGPHOTOFIRST-001 (BD-003, Dave 2026-08-04): "It should lead. Everything
+          /* ── Photo — V4-LOGPHOTOFIRST-001 (BD-003, Dave 2026-08-04): "It should lead. Everything
                else will follow." This block used to sit second-from-last, between "Add details" and
                "When?". Only its POSITION moved — the picker, the staging semantics, the preview
                controls and the submit-time upload are byte-for-byte what they were.
@@ -1090,7 +1065,8 @@ export default function EventNew() {
                diverging from it: for a `photo` event the submit gate already refuses to save without
                a photo, so "optional" was a lie told at the top of the form and only corrected by an
                error after Save. Same rule, said before the mistake instead of after — the shape
-               PhotoLibrary uses for its own one-of-target rule. ── */}
+               PhotoLibrary uses for its own one-of-target rule. ── */
+  const photoBlock = (
           <Section label={form.event_type === 'photo' ? 'Photo *' : 'Photo  ·  optional'}>
             {photoPreview ? (
               <div style={{ position: 'relative', display: 'inline-block' }}>
@@ -1169,8 +1145,10 @@ export default function EventNew() {
               </div>
             )}
           </Section>
+  )
 
-          {/* ── Event type ── */}
+          /* ── Event type ── */
+  const eventTypeBlock = (
           <Section label="What happened? *">
             {form.event_type === 'flag_issue' ? (
               <FlagModeFields
@@ -1197,13 +1175,17 @@ export default function EventNew() {
               </>
             )}
           </Section>
+  )
 
-          {/* ── V4-TREATLOG-001: Treatment details — directly below Event Type for pest/treatment events ── */}
-          {(form.event_type === 'pest_treatment' || form.event_type === 'doctored') && (
+          /* ── V4-TREATLOG-001: Treatment details — directly below Event Type for pest/treatment events ── */
+  const treatmentBlock = (
+          (form.event_type === 'pest_treatment' || form.event_type === 'doctored') && (
             <TreatmentDetails value={treatment} onChange={setTreatment} inventory={inventory} eventType={form.event_type} />
-          )}
+          )
+  )
 
-          {/* ── Notes ── */}
+          /* ── Notes ── */
+  const notesBlock = (
           <Section label="Notes">
             <div style={{ position: 'relative' }}>
               <Textarea
@@ -1222,10 +1204,12 @@ export default function EventNew() {
               />
             </div>
           </Section>
+  )
 
-          {/* ── Project ── V4-PROJHIDE-001: hidden when projects are not a user-facing concept; the
-               project_id is then derived from the chosen planting (or the default) instead of picked. ── */}
-          {!PROJECTS_HIDDEN && (
+          /* ── Project ── V4-PROJHIDE-001: hidden when projects are not a user-facing concept; the
+               project_id is then derived from the chosen planting (or the default) instead of picked. ── */
+  const projectBlock = (
+          !PROJECTS_HIDDEN && (
           <Section label="Project *">
             <Select
               value={form.project_id}
@@ -1250,16 +1234,18 @@ export default function EventNew() {
               </small>
             )}
           </Section>
-          )}
+          )
+  )
 
-          {/* ── Planting — V3-EVENT-005: ever-present, disabled until project chosen.
+          /* ── Planting — V3-EVENT-005: ever-present, disabled until project chosen.
                V4-LOGTARGET-001: relabeled from "Plant / Group (optional)" and the affirmative
                "— All plants (project level) —" sentinel retired: the no-planting state must read
                as UNSET (a neutral placeholder), never as a deliberate project-level choice.
                No requiredness here — Lane 2 is defaulting + feedback only (Lane 3 owns gating).
                V4-PLANTPICKER-001: the shared searchable PlantingSelect replaces the raw select.
                Scope stays project-bound (plants fed from the load effect above, which owns the
-               deep-link/sticky validation); PROJHIDE/Lane 3 flips this to the unscoped source. ── */}
+               deep-link/sticky validation); PROJHIDE/Lane 3 flips this to the unscoped source. ── */
+  const plantingBlock = (
           <Section label={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
             <PlantingSelect
               plants={plantsForProject}
@@ -1282,9 +1268,11 @@ export default function EventNew() {
               onOpenChange={handlePickerOpenChange}
             />
           </Section>
+  )
 
-          {/* ── V3-EVENTCONTSIZE-001: new-container capture for potting_up / transplant on a chosen planting ── */}
-          {(form.event_type === 'potting_up' || form.event_type === 'transplant') && form.plant_id && (
+          /* ── V3-EVENTCONTSIZE-001: new-container capture for potting_up / transplant on a chosen planting ── */
+  const containerBlock = (
+          (form.event_type === 'potting_up' || form.event_type === 'transplant') && form.plant_id && (
             <Section label="New container (optional)">
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <Field label="Pot / bag type" htmlFor="evt-ctype" optional>
@@ -1299,17 +1287,21 @@ export default function EventNew() {
                 </Field>
               </div>
             </Section>
-          )}
+          )
+  )
 
-          {/* ── Tier 2: per-type metadata enrichment (collapsible) ── */}
+          /* ── Tier 2: per-type metadata enrichment (collapsible) ── */
+  const metadataBlock = (
           <MetadataSection
             eventType={form.event_type}
             metadataState={metadataState}
             onMetadataChange={handleMetadataChange}
           />
+  )
 
-          {/* ── V1.2a-2 Wave 3: Harvest panel (harvest events only) ── */}
-          {form.event_type === 'harvest' && (
+          /* ── V1.2a-2 Wave 3: Harvest panel (harvest events only) ── */
+  const harvestBlock = (
+          form.event_type === 'harvest' && (
             <Section label="Harvest *">
               <div style={{ display: 'flex', gap: 10 }}>
                 <div style={{ flex: 2 }}>
@@ -1467,12 +1459,14 @@ export default function EventNew() {
               </div>
               )}
             </Section>
-          )}
+          )
+  )
 
-          {/* ── V3-EVENT-008 §8: "Add details" — collapsible home for the three
+          /* ── V3-EVENT-008 §8: "Add details" — collapsible home for the three
                low-frequency fields (Quantity / Visibility / Private notes). Default
                collapsed (feature-flagged) to declutter the common path; fully reachable.
-               Harvest quantity is a SEPARATE field in the Harvest panel and stays visible. ── */}
+               Harvest quantity is a SEPARATE field in the Harvest panel and stays visible. ── */
+  const addDetailsBlock = (
           <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 18px' }}>
             <button
               type="button"
@@ -1543,12 +1537,10 @@ export default function EventNew() {
               </div>
             )}
           </div>
+  )
 
-          {/* ── Photo moved to the TOP of the form — V4-LOGPHOTOFIRST-001 (BD-003). ── */}
-
-          {/* ── Visibility + Private notes moved into "Add details" above (V3-EVENT-008 §8) ── */}
-
-          {/* ── Date / time ── */}
+          /* ── Date / time ── */
+  const whenBlock = (
           <Section label="When?">
             <Input
               type="datetime-local"
@@ -1557,6 +1549,128 @@ export default function EventNew() {
               aria-label="Event date and time"
             />
           </Section>
+  )
+
+  /* ── Photo moved to the TOP of the form — V4-LOGPHOTOFIRST-001 (BD-003). ── */
+  /* ── Visibility + Private notes moved into "Add details" above (V3-EVENT-008 §8) ── */
+
+  return (
+    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
+      <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 60px' }}>
+
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
+            <Link to="/dashboard" style={{ color: P.green, textDecoration: 'none' }}>Dashboard</Link>
+            {' › Log event'}
+          </div>
+          <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
+            Log an event
+          </h1>
+          {/* V3-LOGBTN-001: themed ghost button (cream/sage/terra), not a raw text link.
+              V4-OVERLAY-001 Slice 2: OverlaySwapLink so this in-overlay cross-link swaps content to
+              Log Many while preserving the background (full-page: a plain push, unchanged). */}
+          <div style={{ marginTop: 8 }}>
+            <OverlaySwapLink
+              to="/log/many"
+              style={{
+                display: 'inline-block', marginTop: 4,
+                backgroundColor: P.white, color: P.green,
+                border: `1px solid ${P.greenLight}`, borderRadius: 8,
+                padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
+                textDecoration: 'none',
+              }}
+            >
+              Log many →
+            </OverlaySwapLink>
+          </div>
+        </div>
+
+        {error && <ErrorBanner style={{ marginBottom: 16 }}>{error}</ErrorBanner>}
+        {notice && <ErrorBanner style={{ marginBottom: 16 }}>{notice}</ErrorBanner>}
+
+        {/* V4-HARVESTCENTER-001 (L9): ambient "preserve this?" affordance after a harvest logs. On
+            the overlay path it now renders on the V4-LOGCONF-001 confirmation card (see above); here
+            it covers the full-page path and the post-"Log another" form (preserveCtx survives the
+            card dismissal so the habit-stack offer isn't lost). */}
+        {preserveCtx && (
+          <PreserveOffer
+            onOpen={() => putUpSwap('/put-up', { state: { prefill: preserveCtx.prefill } })}
+            onDismiss={() => setPreserveCtx(null)}
+          />
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+          {isHarvest ? (
+            /* ── HARVEST order (V4-HARVFORMORDER-001) ──────────────────────────────────────────
+               Planting → Quantity → Unit lead, so the two controls a harvest actually needs are on
+               screen the moment the form opens. Everything the harvest fast path does not touch
+               drops below, under ONE disclosure rather than five separate ones.
+
+               PROJECT IS DELIBERATELY *NOT* IN THAT DISCLOSURE. The plan's "hide the Project select
+               for harvest" is ALREADY satisfied: projectBlock is `!PROJECTS_HIDDEN && (…)` and
+               PROJECTS_HIDDEN is ON (featureFlags.js) — the select renders for NO event type today.
+               Adding a second, harvest-shaped gate on top would be redundant in the shipped config
+               and a silent behaviour change in the flag-OFF rollback config, where Project is a
+               REQUIRED field and burying it under a collapsed disclosure would make a harvest
+               unsaveable without first expanding something. So it keeps its relative position
+               (Project immediately before Planting) and simply renders nothing while the flag is on.
+
+               METADATA is in the disclosure for symmetry only — MetadataSection already returns null
+               for harvest via its own `eventType === 'harvest'` branch, so it too is inert here.
+
+               The event-type picker stays VISIBLE below the harvest panel rather than going into the
+               disclosure: it is how a mis-tapped type is corrected, and the plan's disclosure list
+               does not name it. It is off the fast path either way.
+
+               Save is NOT reordered — it is `position: sticky` and therefore already pinned to the
+               viewport bottom for every type; the fold problem S4 solves is the SCROLL to quantity,
+               not Save's document position. ── */
+            <>
+              {projectBlock}
+              {plantingBlock}
+              {harvestBlock}
+              {eventTypeBlock}
+
+              <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 18px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowHarvestMore(s => !s)}
+                  aria-expanded={showHarvestMore}
+                  data-testid="harvest-more-toggle"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <span aria-hidden="true">{showHarvestMore ? '▾' : '▸'}</span>
+                  <span>Photo, notes &amp; date  ·  optional</span>
+                </button>
+                {showHarvestMore && (
+                  <div data-testid="harvest-more-body" style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {photoBlock}
+                    {notesBlock}
+                    {metadataBlock}
+                    {whenBlock}
+                  </div>
+                )}
+              </div>
+
+              {addDetailsBlock}
+            </>
+          ) : (
+            /* ── Every non-harvest type: the shipped V4-LOGPHOTOFIRST-001 sequence, unchanged. ── */
+            <>
+              {photoBlock}
+              {eventTypeBlock}
+              {treatmentBlock}
+              {notesBlock}
+              {projectBlock}
+              {plantingBlock}
+              {containerBlock}
+              {metadataBlock}
+              {harvestBlock}
+              {addDetailsBlock}
+              {whenBlock}
+            </>
+          )}
 
           {/* ── Floating Save — V3-EVENT-005 (Dave to eyeball bottom offset) ── */}
           {/* Spacer so content isn't hidden behind the sticky button */}
