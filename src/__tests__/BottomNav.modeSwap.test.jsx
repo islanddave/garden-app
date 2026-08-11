@@ -118,18 +118,21 @@ describe('BottomNav Field/Desk mode swap (Inc 2 Bite 3)', () => {
   })
 
   describe('Mode swap is reactive', () => {
-    it('Today, Garden, DrG, More tabs render in both modes (non-swap regression check)', () => {
+    // V4-NAVHARVEST-001: the non-center tabs are now Today · Garden · Harvests. Only the CENTER
+    // slot swaps by mode (＋ create-sheet in Desk, mic → /field in Field); this check exists to
+    // prove the other three are mode-invariant, so the tab identity is incidental to its purpose.
+    it('Today, Garden, Harvests, More tabs render in both modes (non-swap regression check)', () => {
       const { unmount } = renderAt(MODE.DESK)
       expect(screen.getByText('Today')).toBeDefined()
       expect(screen.getByText('Garden')).toBeDefined()
-      expect(screen.getByText('DrG')).toBeDefined()
+      expect(screen.getByText('Harvests')).toBeDefined()
       expect(screen.getByText('More')).toBeDefined()
       unmount()
 
       renderAt(MODE.FIELD)
       expect(screen.getByText('Today')).toBeDefined()
       expect(screen.getByText('Garden')).toBeDefined()
-      expect(screen.getByText('DrG')).toBeDefined()
+      expect(screen.getByText('Harvests')).toBeDefined()
       expect(screen.getByText('More')).toBeDefined()
     })
   })

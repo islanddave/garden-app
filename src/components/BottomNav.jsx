@@ -13,7 +13,8 @@ import { useKeyboardChromeSuppressed } from '../lib/keyboardChrome.js'
 import Sheet from './forms/Sheet.jsx'
 import Icon from './Icon.jsx'
 
-// BottomNav — V200 / V4-THEME-001 nav: Today·Garden·＋·DrG·More.
+// BottomNav — V200 / V4-THEME-001 nav: Today·Garden·＋·Harvests·More (V4-NAVHARVEST-001, 2026-08-10;
+// was Today·Garden·＋·DrG·More — DrG demoted into More, see TABS below).
 // V200 Slice 9 (2026-07-01): the two hand-rolled slide-up dialogs (Create FAB sheet +
 // More menu) now adopt the shared Sheet primitive (a11y: role=dialog, aria-modal, focus
 // trap+restore, Escape, backdrop-dismiss — Sheet owns all of it, so the local Escape
@@ -22,11 +23,20 @@ import Icon from './Icon.jsx'
 // here (TopBar retired V4-APPBAR-003; this is now the PRIMARY mode toggle). Critters is by placement + a soft
 // subtitle only — NO badge/count/alert (Reward UX V102, ambient). Glyphs are still emoji;
 // the emoji->Icon SVG pass is the deferred Slice 9 follow-up commit.
+// V4-NAVHARVEST-001 (design: uiux-homogenization-master-plan-V100-20260723 §1.3, CONFIRMED
+// 2026-07-23, unbuilt until now). DrG/Findings demotes OUT of the tab bar into More — its own
+// code calls the surface "sparse" and it re-explains Today — and Harvests takes the slot. The
+// design deliberately kept these two moves SEPARABLE (demote now, promote later, gated on
+// /harvests existing); both are taken together here because /harvests is already live in prod
+// and was only ever reachable buried in the More menu.
+// `glyph` instead of `iconName`: mirrors the Harvests/Put-Up/Zones More rows, which use raw
+// emoji precisely to avoid adding an iconAnchors entry + an icon-completeness harness case for
+// a destination that has no drawn SVG. Tabs render one or the other, never both.
 const TABS = [
-  { to: '/today',    label: 'Today',  iconName: 'nav.today' },
-  { to: '/garden',   label: 'Garden', iconName: 'nav.garden' },
-  { to: '/log',      label: 'Create', iconName: 'nav.plus', highlight: true },
-  { to: '/findings', label: 'DrG',    iconName: 'nav.findings' },
+  { to: '/today',    label: 'Today',    iconName: 'nav.today' },
+  { to: '/garden',   label: 'Garden',   iconName: 'nav.garden' },
+  { to: '/log',      label: 'Create',   iconName: 'nav.plus', highlight: true },
+  { to: '/harvests', label: 'Harvests', glyph: '🧺' },
 ]
 
 // +LOG FAB -> create action sheet. Slice 9: trimmed to 3 first-class quick-hit actions.
@@ -188,6 +198,13 @@ export default function BottomNav() {
         <Link to="/dashboard" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.dashboard" size={22} decorative />Dashboard
         </Link>
+        {/* V4-NAVHARVEST-001 — DrG demoted here from the tab bar. DEMOTED, NOT REMOVED: /findings
+            keeps its route, its page and its drawn nav.findings icon, and every deep link into it
+            still resolves. It sits beside Dashboard because both are read-only overview surfaces.
+            BottomNavDot (the critter poll) is unaffected — it hangs off the nav shell, not this tab. */}
+        <Link to="/findings" onClick={closeMore} style={menuRowStyle}>
+          <Icon name="nav.findings" size={22} decorative />DrG
+        </Link>
         <Link to="/photos" onClick={closeMore} style={menuRowStyle}>
           <Icon name="media.camera" size={22} decorative />Photos
         </Link>
@@ -221,12 +238,10 @@ export default function BottomNav() {
         <Link to="/inventory" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.inventory" size={22} decorative />Inventory
         </Link>
-        {/* V4-HARVESTVIEW-001 — Harvests (what you got), adjacent to Put-Up (what you kept). Plain
-            Link, NOT OverlayLink: /harvests is a full browse page, not a registered overlayable route
-            (design §1). Emoji glyph mirrors Put-Up/Achievements (avoids the icon-completeness harness). */}
-        <Link to="/harvests" onClick={closeMore} style={menuRowStyle}>
-          <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🧺</span>Harvests
-        </Link>
+        {/* V4-NAVHARVEST-001 — the Harvests row that lived here was PROMOTED to the tab bar, not
+            duplicated: two doors to one destination is the redundant door-pair the IA work exists to
+            merge. Put-Up stays here and still reads as adjacent to Harvests (what you kept, next to
+            where what-you-got now lives). */}
         {/* V4-HARVESTCENTER-001 — Put-Up mounts under "more" (design V101 §6 dec.2 → route under More).
             OverlayLink so it opens as a flyover over the current page when OVERLAY_ROUTES_ENABLED (flag
             off: a plain <Link>, full-page — byte-identical). Emoji glyph mirrors the Achievements row
@@ -366,7 +381,9 @@ export default function BottomNav() {
           return (
             <Link key={tab.to} to={tab.to} aria-current={active ? 'page' : undefined}
               style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44, position: 'relative' }}>
-              <Icon name={tab.iconName} size={22} decorative />
+              {tab.glyph
+                ? <span aria-hidden="true" style={{ fontSize: '1.25rem', lineHeight: 1 }}>{tab.glyph}</span>
+                : <Icon name={tab.iconName} size={22} decorative />}
               <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400 }}>{tab.label}</span>
             </Link>
           )

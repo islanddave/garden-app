@@ -68,13 +68,18 @@ beforeEach(() => {
 })
 
 describe('BottomNav — V3-IA layout', () => {
-  it('renders Today + Garden + Create + DrG + More (V200 nav; Critters + Photos folded into More)', () => {
+  // V4-NAVHARVEST-001 (2026-08-10): the 4th tab is Harvests, not DrG. DrG is DEMOTED into the
+  // More menu, never removed — the "still reachable" assertion below is the load-bearing half of
+  // this change, and a demote that quietly became a deletion is exactly what it guards.
+  it('renders Today + Garden + Create + Harvests + More (V200 nav; Critters + Photos folded into More)', () => {
     render(<BottomNav />)
     expect(screen.getByText('Today')).toBeDefined()
     expect(screen.getByText('Garden')).toBeDefined()
     expect(screen.getByLabelText('Create')).toBeDefined()
-    expect(screen.getByText('DrG')).toBeDefined()
+    expect(screen.getByText('Harvests')).toBeDefined()
     expect(screen.getByText('More')).toBeDefined()
+    // DrG is no longer a first-class tab.
+    expect(screen.queryByText('DrG')).toBeNull()
     expect(screen.queryByText('Projects')).toBeNull()
     expect(screen.queryByText('Plants')).toBeNull()
     expect(screen.queryByText('Inventory')).toBeNull()
@@ -83,14 +88,14 @@ describe('BottomNav — V3-IA layout', () => {
     expect(screen.queryByText('Photos')).toBeNull()
   })
 
-  it('FAB keeps the center slot: tab order is Today · Garden · ＋ · DrG · More', () => {
+  it('FAB keeps the center slot: tab order is Today · Garden · ＋ · Harvests · More', () => {
     render(<BottomNav />)
     const nav = screen.getByLabelText('Main navigation')
     expect(nav.children.length).toBe(5)
     expect(nav.children[0].textContent).toContain('Today')
     expect(nav.children[1].textContent).toContain('Garden')
     expect(nav.children[2].getAttribute('aria-label')).toBe('Create')
-    expect(nav.children[3].textContent).toContain('DrG')
+    expect(nav.children[3].textContent).toContain('Harvests')
     expect(nav.children[4].textContent).toContain('More')
   })
 
@@ -108,7 +113,7 @@ describe('BottomNav — V3-IA layout', () => {
     render(<BottomNav />)
     expect(screen.getByText('Today').closest('a').getAttribute('href')).toBe('/today')
     expect(screen.getByText('Garden').closest('a').getAttribute('href')).toBe('/garden')
-    expect(screen.getByText('DrG').closest('a').getAttribute('href')).toBe('/findings')
+    expect(screen.getByText('Harvests').closest('a').getAttribute('href')).toBe('/harvests')
     // Create is not a direct link — it's a button that opens the create action sheet.
     const logBtn = screen.getByLabelText('Create')
     expect(logBtn.tagName).toBe('BUTTON')
@@ -155,12 +160,25 @@ describe('BottomNav — More menu', () => {
     expect(link.getAttribute('href')).toBe('/inventory')
   })
 
-  it('More menu shows the Harvests link pointing to /harvests (V4-HARVESTVIEW-001; plain Link, not overlay)', () => {
+  // V4-NAVHARVEST-001 — Harvests was PROMOTED out of this menu into the tab bar. The old test here
+  // asserted a More row via getByText('Harvests'), which would now pass VACUOUSLY by matching the
+  // tab. Assert the door count instead: exactly one Harvests link exists with the menu OPEN.
+  it('does NOT duplicate Harvests in the More menu now that it is a tab', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('More navigation options'))
-    const link = screen.getByText('Harvests').closest('a')
+    const harvestLinks = screen.getAllByText('Harvests').map(n => n.closest('a')).filter(Boolean)
+    expect(harvestLinks).toHaveLength(1)
+    expect(harvestLinks[0].getAttribute('href')).toBe('/harvests')
+  })
+
+  // The load-bearing half of the demote: DrG loses the tab but keeps a door. If this goes red,
+  // the change has silently become a deletion and /findings is unreachable from the nav.
+  it('More menu shows the DrG link pointing to /findings (V4-NAVHARVEST-001 demotion)', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    const link = screen.getByText('DrG').closest('a')
     expect(link).not.toBeNull()
-    expect(link.getAttribute('href')).toBe('/harvests')
+    expect(link.getAttribute('href')).toBe('/findings')
   })
 
   it('More menu shows the Dashboard link pointing to /dashboard (DRG-TODAY-003 demotion)', () => {
