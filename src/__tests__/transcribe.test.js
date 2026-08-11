@@ -31,6 +31,12 @@ class FakeSpeechRecognition {
   // Test helpers
   fireStart()         { if (this.onstart) this.onstart() }
   fireResult(results) { if (this.onresult) this.onresult({ resultIndex: 0, results }) }
+  // BUG-VOICEDUPE-001: the real SpeechRecognition event carries a CUMULATIVE results list for the
+  // whole session, and resultIndex marks the first CHANGED result — which does not reliably advance
+  // past entries that already finalized. fireResult() above models neither (fresh list, index pinned
+  // to 0), which is precisely why a duplicate-final bug could not be expressed against it. This
+  // helper takes the cumulative list and an explicit resultIndex so a re-delivery can be modelled.
+  fireResultAt(resultIndex, results) { if (this.onresult) this.onresult({ resultIndex, results }) }
   fireError(code)     { if (this.onerror) this.onerror({ error: code }) }
   fireEnd()           { if (this.onend) this.onend() }
 }
@@ -203,5 +209,66 @@ describe('transcribe.js', () => {
       expect(START_TIMEOUT_MS).toBeGreaterThan(0)
       expect(NO_SPEECH_TIMEOUT_MS).toBeGreaterThan(START_TIMEOUT_MS)
     })
+  })
+})
+
+// BUG-VOICEDUPE-001 — Dave: voice entry "often" inserts duplicated words he did not say.
+// "Often, not always" is the tell: it is cadence-dependent, which is what a re-delivered result
+// looks like. event.results is CUMULATIVE for the session and event.resultIndex is the first
+// CHANGED index, so an already-finalized result can be visited by more than one event. Without a
+// record of which finals were consumed, each visit appends the same words again — into
+// finalTranscript here AND, via onResult({isFinal:true}), into MicCaptureButton's finalTextRef,
+// which appends blindly.
+describe('BUG-VOICEDUPE-001 — a re-delivered final is consumed exactly once', () => {
+  function startWithFake(onResult) {
+    window.SpeechRecognition = FakeSpeechRecognition
+    const onEnd = vi.fn()
+    startLiveTranscription({ onResult, onEnd })
+    const sr = FakeSpeechRecognition.instances.at(-1)
+    sr.fireStart()
+    return { sr, onEnd }
+  }
+
+  it('does not double-count a final that a later event re-delivers', () => {
+    const onResult = vi.fn()
+    const { sr, onEnd } = startWithFake(onResult)
+
+    const first  = fakeResults([{ transcript: 'water the tomatoes', isFinal: true }])
+    // cumulative list grows; index 0 is ALREADY final and is re-delivered because resultIndex
+    // did not advance past it (the observed Chrome behaviour on a paused multi-utterance dictation)
+    const second = fakeResults([
+      { transcript: 'water the tomatoes', isFinal: true },
+      { transcript: 'and the beans', isFinal: true },
+    ])
+    sr.fireResultAt(0, first)
+    sr.fireResultAt(0, second)
+    sr.fireEnd()
+
+    const finalText = onEnd.mock.calls[0][0].finalTranscript
+    expect(finalText).toBe('water the tomatoes and the beans')
+    // the phrase must appear exactly once, not twice
+    expect(finalText.match(/water the tomatoes/g)).toHaveLength(1)
+  })
+
+  it('emits onResult isFinal once per distinct final, so a blind appender stays correct', () => {
+    const onResult = vi.fn()
+    const { sr } = startWithFake(onResult)
+    const list = fakeResults([{ transcript: 'harvested six', isFinal: true }])
+    sr.fireResultAt(0, list)
+    sr.fireResultAt(0, list)   // same index AND same text — a verbatim re-delivery, not new speech
+    const finals = onResult.mock.calls.map(c => c[0]).filter(r => r.isFinal)
+    expect(finals).toHaveLength(1)
+  })
+
+  it('still streams interim revisions of the SAME index freely (they replace, not accumulate)', () => {
+    const onResult = vi.fn()
+    const { sr, onEnd } = startWithFake(onResult)
+    sr.fireResultAt(0, fakeResults([{ transcript: 'har', isFinal: false }]))
+    sr.fireResultAt(0, fakeResults([{ transcript: 'harvest', isFinal: false }]))
+    sr.fireResultAt(0, fakeResults([{ transcript: 'harvested', isFinal: true }]))
+    sr.fireEnd()
+    const interims = onResult.mock.calls.map(c => c[0]).filter(r => !r.isFinal)
+    expect(interims).toHaveLength(2)              // interim updates are NOT suppressed
+    expect(onEnd.mock.calls[0][0].finalTranscript).toBe('harvested')
   })
 })

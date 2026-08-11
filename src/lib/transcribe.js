@@ -106,6 +106,21 @@ export function startLiveTranscription(opts = {}) {
   recognition.maxAlternatives = 1
 
   let finalTranscript  = ''
+  // BUG-VOICEDUPE-001: finals already counted, keyed `${index}:${text}`.
+  //
+  // event.results is cumulative for the session and MDN defines event.resultIndex as "the lowest
+  // index value result that has actually changed" — so a correct implementation never re-reports a
+  // settled final. In practice Web Speech implementations do re-deliver, which is what produces
+  // Dave's "often, not always" duplication: cadence decides how results get batched.
+  //
+  // The key is index+text, NOT index alone, and that is deliberate on evidence rather than taste.
+  // MDN does not state whether a finalized index may later hold different text, and this file's own
+  // existing test asserts that it can (two successive finals at index 0). Keying on index alone
+  // would silently drop the second — i.e. it would DELETE words the user really said in order to
+  // fix words they didn't. Index+text only ever drops a byte-identical re-delivery of the same
+  // slot, which cannot be new speech. Saying the same word twice for real lands on two different
+  // indices and is preserved.
+  const consumedFinals = new Set()
   let startWatchdog    = null
   let noSpeechWatchdog = null
   let started   = false
@@ -149,7 +164,16 @@ export function startLiveTranscription(opts = {}) {
       const transcript = r[0].transcript || ''
       const confidence = typeof r[0].confidence === 'number' ? r[0].confidence : null
       const isFinal    = !!r.isFinal
-      if (isFinal) finalTranscript = (finalTranscript + ' ' + transcript).trim()
+      if (isFinal) {
+        // A re-delivery of an already-consumed final is not new speech — drop it entirely rather
+        // than re-appending. Skipping the onResult emission too is the load-bearing half:
+        // MicCaptureButton appends every isFinal it receives with no dedup of its own, so a
+        // fix confined to finalTranscript here would still duplicate on the surface Dave uses.
+        const key = i + ':' + transcript
+        if (consumedFinals.has(key)) continue
+        consumedFinals.add(key)
+        finalTranscript = (finalTranscript + ' ' + transcript).trim()
+      }
       try { onResult({ transcript, isFinal, confidence }) } catch {}
     }
   }
