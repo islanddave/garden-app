@@ -7,7 +7,15 @@ import { matchPath } from 'react-router-dom'
 
 // Primary bottom-nav destinations that earn the 88px search-first header. Search belongs where a
 // journey STARTS; detail pages get a Back affordance there instead. Must stay == bottom-nav roots.
-export const ROOT_TABS = ['/today', '/garden', '/findings', '/dashboard']
+// V4-NAVHARVEST-001: /harvests became a primary tab, so it earns the root header. Without this it
+// resolved to 'detail' and the headline tab of that change shipped with a navigate(-1) Back arrow
+// in its header and no search — green tests throughout, because routeClass.test.js only asserts
+// ROOT_TABS *contains* a route, never that it matches the nav.
+// /findings is KEPT despite moving into More, following the /dashboard precedent: /dashboard was
+// demoted to More long ago (DRG-TODAY-003) and deliberately kept its root header. Demoting a route
+// in the nav and re-classing its header are separate decisions; this commit makes only the one the
+// nav change requires.
+export const ROOT_TABS = ['/today', '/garden', '/harvests', '/findings', '/dashboard']
 
 // Full-screen focused capture surfaces: slim immersive bar (Back + optional title, no search/fav).
 export const CAPTURE_ROUTES = ['/capture', '/field']

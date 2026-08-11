@@ -553,8 +553,13 @@ export default function EventNew() {
   // With the form live for the whole burst, that prefix would pin dirty=false for the rest of the
   // session and a stray backdrop tap would discard genuinely-unsaved harvest #2. The spec (§3)
   // names "keep reporting dirty=false post-save" as the BUG, not the fix. Post-save the predicate
-  // reads clean on its own anyway, because resetForNext() has just cleared the fields it counts —
-  // which is why EventNewOverlayDirty's post-save pin stays green unchanged.
+  // reads clean on its own, because resetForNext() clears the fields it counts — which is why
+  // EventNewOverlayDirty's post-save pin stays green unchanged.
+  // CORRECTED: that was true of every counted field EXCEPT treatment.*, which resetForNext() did
+  // not clear (the only handleSubmit call site passes keepMode:'type', which preserves event_type,
+  // so the type-change effect that resets treatment never fires). Harmless while the card covered
+  // the form; with the form live it left the sheet reporting dirty after a SUCCESSFUL
+  // pest_treatment save, so a backdrop tap no-opped. resetForNext() now clears it too.
   useReportOverlayDirty(!!(
     form.notes || form.private_notes || form.quantity ||
     photoFile || harvest.quantity || harvest.weight ||
@@ -745,6 +750,9 @@ export default function EventNew() {
       is_public:     f.is_public,
     }))
     setMetadataState({})
+    // Treatment was the one dirty-predicate field this reset missed. Stale values also meant the
+    // NEXT save could carry the previous save's treatment data on a keepMode:'type' burst.
+    setTreatment({ pest_target: '', product_id: '', product_text: '', category: '', amount: '' })
     setHarvest(freshHarvest())
     setHarvestError(null)
     setSeverity(null); setIssueChoice(''); setIssueOther('')
