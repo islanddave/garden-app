@@ -496,8 +496,16 @@ def restore_dump_into_branch(s3, cfg, manifest, target_uri):
             raise RevertError(f"downloaded dump {key} is empty")
         proc = subprocess.run(
             [
+                # FULL-DATABASE scope (no --schema): snap.py has written full-DB
+                # dumps since Gate 0.1, and prod has THREE schemas — public,
+                # extensions (relocated uuid-ossp; 14 columns DEFAULT
+                # extensions.uuid_generate_v4()), and gv (11 functions backing 11
+                # triggers on 6 core tables). Restoring --schema=public left gv and
+                # extensions at the fresh branch's inherited prod state, so a revert
+                # silently did NOT roll those back — and validate_branch() only
+                # counted public tables, so it certified the result as good.
                 "pg_restore", "--clean", "--if-exists", "--no-owner",
-                "--no-privileges", "--schema=public",
+                "--no-privileges",
                 "-d", target_uri, dump_path,
             ],
             capture_output=True, text=True,
@@ -523,6 +531,25 @@ def validate_branch(cfg, target_uri):
     )
     if int(existing) <= 0:
         raise RevertError("validate: restored branch has no public tables")
+    # Non-public schemas are NOT decoration: gv holds the trigger functions and
+    # extensions holds the uuid generators 14 column DEFAULTs call. A validation
+    # scoped to public alone passes on a database that cannot take an INSERT,
+    # which is exactly what the old --schema=public restore produced.
+    nonpublic = {}
+    for schema in ("gv", "extensions"):
+        try:
+            nonpublic[schema] = int(_psql_scalar(
+                target_uri,
+                "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+                f"WHERE n.nspname='{schema}';",
+            ))
+        except RevertError:
+            nonpublic[schema] = None
+        if not nonpublic[schema]:
+            raise RevertError(
+                f"validate: restored branch has no functions in schema '{schema}' "
+                "— the dump did not restore full-database scope; refusing to overwrite prod"
+            )
     counts = {}
     for t in SANITY_TABLES:
         try:
@@ -531,7 +558,7 @@ def validate_branch(cfg, target_uri):
             counts[t] = None
     if all(v is None for v in counts.values()):
         raise RevertError("validate: none of the core tables are present/queryable")
-    return {"public_tables": int(existing), "counts": counts}
+    return {"public_tables": int(existing), "counts": counts, "nonpublic_functions": nonpublic}
 
 
 def _expire_branch_by_name(cfg, name, ttl_days):

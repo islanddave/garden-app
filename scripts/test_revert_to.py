@@ -711,3 +711,68 @@ def test_run_rehearsal_force_abort_rolls_back(monkeypatch):
         rt.run(cfg, s3=s3)
     assert rolled["n"] == 1
     assert "rolled back" in str(e.value)
+
+
+# --- OPS-REVERTALIGN-001: full-database restore scope -------------------------
+# snap.py has written full-DB dumps since Gate 0.1, but the restore leg still
+# passed --schema=public, so gv (11 trigger functions) and extensions (uuid
+# generators behind 14 column DEFAULTs) were never rolled back, and validate_branch
+# only counted public tables so it certified the result. These pin both halves.
+
+def test_restore_dump_uses_full_database_scope(monkeypatch):
+    """--schema=public must NOT be reintroduced: it silently drops gv + extensions."""
+    cfg = rt.Config(env=base_env())
+    s3 = FakeS3({("garden-snapshots-prod", "db/snap-v2.5.0.dump"): b"DUMP"})
+    seen = {}
+
+    class P:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    def capture(argv, *a, **k):
+        seen["argv"] = argv
+        return P()
+
+    monkeypatch.setattr(rt.subprocess, "run", capture)
+    rt.restore_dump_into_branch(s3, cfg, good_manifest(), "postgresql://s")
+    argv = seen["argv"]
+    assert "pg_restore" in argv[0]
+    assert not any(str(a).startswith("--schema") for a in argv), (
+        f"restore must be full-database scope; got {argv}"
+    )
+    assert "--clean" in argv and "--if-exists" in argv
+
+
+def _validate_fake(gv, ext, tables="25"):
+    def fake(url, sql):
+        if "information_schema" in sql:
+            return tables
+        if "nspname='gv'" in sql:
+            return gv
+        if "nspname='extensions'" in sql:
+            return ext
+        return "10"
+    return fake
+
+
+def test_validate_branch_rejects_missing_gv(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    monkeypatch.setattr(rt, "_psql_scalar", _validate_fake(gv="0", ext="9"))
+    with pytest.raises(rt.RevertError, match="gv"):
+        rt.validate_branch(cfg, "postgresql://s")
+
+
+def test_validate_branch_rejects_missing_extensions(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    monkeypatch.setattr(rt, "_psql_scalar", _validate_fake(gv="11", ext="0"))
+    with pytest.raises(rt.RevertError, match="extensions"):
+        rt.validate_branch(cfg, "postgresql://s")
+
+
+def test_validate_branch_reports_nonpublic_functions(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    monkeypatch.setattr(rt, "_psql_scalar", _validate_fake(gv="11", ext="9"))
+    out = rt.validate_branch(cfg, "postgresql://s")
+    assert out["nonpublic_functions"] == {"gv": 11, "extensions": 9}
+    assert out["public_tables"] == 25
