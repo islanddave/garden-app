@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.9.1",
+    "date": "2026-08-11",
+    "highlights": [
+      "Fixed: on the harvest form the unit box was squeezed so narrow you could not tell which unit was selected — it showed as just an arrow. The 1-6 quick buttons now spread across the full width of the row, and the unit sits next to the quantity where you can read it."
+    ]
+  },
+  {
     "version": "4.9.0",
     "date": "2026-08-11",
     "highlights": [
