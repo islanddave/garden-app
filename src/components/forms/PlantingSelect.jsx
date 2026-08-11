@@ -250,6 +250,14 @@ export default function PlantingSelect({
   // covers every path (focus, type, arrow, escape, blur-timeout, select, chip "Change") and
   // cannot drift when a ninth is added.
   onOpenChange,
+  // BUG-POSTSAVEVALIDATION-001 — OPTIONAL, no-op default: the other six call sites are untouched
+  // (same contract as onOpenChange above). `touched` is LOCAL state, so when a host clears its own
+  // value without unmounting this component — EventNew's resetForNext() after a successful save —
+  // `selected` goes null while `touched` stays true and showBlankError renders "Choose a planting."
+  // against a field the user has not touched yet. Bumping this nonce marks the field fresh again.
+  // Deliberately a nonce and not a `touched` prop: ownership of the flag stays here, and the host
+  // only gets to say "this is a new form now", which is the fact it actually knows.
+  resetNonce,
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
   'data-testid': dataTestId,
@@ -262,6 +270,10 @@ export default function PlantingSelect({
   const [open, setOpen] = useState(false)
   const [highlight, setHighlight] = useState(0)
   const [touched, setTouched] = useState(false)
+  // BUG-POSTSAVEVALIDATION-001. Fires once on mount (a no-op — `touched` already starts false) and
+  // again on every host reset. When `resetNonce` is undefined the dep never changes, so the six
+  // other call sites see mount-only behaviour identical to before.
+  useEffect(() => { setTouched(false) }, [resetNonce])
   const inputRef = useRef(null)
   const listboxId = useMemo(() => `ps-list-${Math.random().toString(36).slice(2, 9)}`, [])
 

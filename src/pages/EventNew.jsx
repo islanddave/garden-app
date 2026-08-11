@@ -402,6 +402,8 @@ export default function EventNew() {
   const [saving,       setSaving]       = useState(false)
   const [error,        setError]        = useState(null)
   const [showPrivate,  setShowPrivate]  = useState(false)
+  // BUG-POSTSAVEVALIDATION-001 — bumped by resetForNext() to mark the planting picker fresh again.
+  const [pickerResetNonce, setPickerResetNonce] = useState(0)
   // V3-EVENT-008 §8: "Add details" collapsible (Quantity / Visibility / Private notes).
   // Default collapsed unless the feature flag flips it open. Fields stay reachable.
   const [showAddDetails, setShowAddDetails] = useState(EVENTNEW_ADD_DETAILS_EXPANDED)
@@ -752,6 +754,12 @@ export default function EventNew() {
     setShowPrivate(false)
     setError(null)
     setSaving(false)
+    // BUG-POSTSAVEVALIDATION-001 — the reset above clears plant_id, but PlantingSelect's `touched`
+    // is its own local state and this form does NOT unmount between saves, so it stayed true and
+    // the picker rendered "Choose a planting." in red the instant a save SUCCEEDED. Latent before
+    // S5b (the confirmation card covered the form until "Log another" was tapped); a live form
+    // surfaces it immediately. Bumping the nonce tells the picker this is a fresh form.
+    setPickerResetNonce(n => n + 1)
   }
 
   async function handleSubmit(e, { keepMode = 'type' } = {}) {
@@ -1276,6 +1284,7 @@ export default function EventNew() {
                 return { ...f, plant_id: id, project_id: derived }
               })}
               required={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type)}
+              resetNonce={pickerResetNonce}
               loadFailed={plantsLoadFailed}
               onRetry={() => setPlantsReloadKey(k => k + 1)}
               disabled={PROJECTS_HIDDEN ? false : !form.project_id}
