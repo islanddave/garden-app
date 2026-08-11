@@ -238,8 +238,12 @@ def test_restore_dump_tolerates_benign_warnings(monkeypatch):
         stderr = "pg_restore: warning: errors ignored on restore: 3"
         stdout = ""
     monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: P())
-    # benign-warning tail with no "pg_restore: error:" -> no raise
-    assert rt.restore_dump_into_branch(s3, cfg, good_manifest(), "postgresql://s") == "db/snap-v2.5.0.dump"
+    # benign-warning tail with no "pg_restore: error:" -> no raise.
+    # OPS-REVERTVALIDATE-001 changed the contract to (key, expected_counts); expected_counts is
+    # None here because the stubbed pg_restore renders no archive, and None must mean UNKNOWN.
+    key, expected = rt.restore_dump_into_branch(s3, cfg, good_manifest(), "postgresql://s")
+    assert key == "db/snap-v2.5.0.dump"
+    assert expected is None
 
 
 def test_validate_branch_no_tables(monkeypatch):
@@ -730,18 +734,27 @@ def test_restore_dump_uses_full_database_scope(monkeypatch):
         stderr = ""
         stdout = ""
 
+    calls = []
+
     def capture(argv, *a, **k):
-        seen["argv"] = argv
+        calls.append(argv)
         return P()
 
     monkeypatch.setattr(rt.subprocess, "run", capture)
     rt.restore_dump_into_branch(s3, cfg, good_manifest(), "postgresql://s")
+    # OPS-REVERTVALIDATE-001 added a SECOND pg_restore invocation (rendering the archive to
+    # read its COPY counts), so "the last argv" is no longer the restore. Select the restore
+    # call explicitly rather than by position — position is exactly what made this brittle.
+    seen["argv"] = next(a for a in calls if "-d" in a)
     argv = seen["argv"]
     assert "pg_restore" in argv[0]
     assert not any(str(a).startswith("--schema") for a in argv), (
         f"restore must be full-database scope; got {argv}"
     )
     assert "--clean" in argv and "--if-exists" in argv
+    # and the render call must NOT carry -d: it reads the archive, it must never touch a database
+    render = next(a for a in calls if "-f" in a and "-d" not in a)
+    assert render[:3] == ["pg_restore", "-f", "-"], render
 
 
 def _validate_fake(gv, ext, tables="25"):
@@ -776,3 +789,102 @@ def test_validate_branch_reports_nonpublic_functions(monkeypatch):
     out = rt.validate_branch(cfg, "postgresql://s")
     assert out["nonpublic_functions"] == {"gv": 11, "extensions": 9}
     assert out["public_tables"] == 25
+
+
+# --- OPS-REVERTVALIDATE-001: does the restore actually match the snapshot? ------------------
+# Everything else validate_branch reads is ABSOLUTE state, and absolute state cannot tell a real
+# restore from a no-op: the target branch is created with no parent_id, so Neon parents it off prod
+# and it already holds a full database before pg_restore runs. The archive's own COPY counts are the
+# only thing on hand that can falsify "the data landed".
+
+RENDERED = """--
+-- PostgreSQL database dump
+--
+CREATE TABLE public.plants (id uuid);
+COPY public.plants (id, name) FROM stdin;
+a\tBasil
+b\tThyme
+c\tSage
+\\.
+COPY public.event_log (id) FROM stdin;
+x
+y
+\\.
+COPY gv.lookup (k) FROM stdin;
+\\.
+"""
+
+
+def test_expected_row_counts_reads_copy_blocks(monkeypatch):
+    class P:
+        returncode = 0
+        stderr = ""
+        stdout = RENDERED
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: P())
+    assert rt._expected_row_counts("/tmp/x.dump") == {
+        "public.plants": 3, "public.event_log": 2, "gv.lookup": 0,
+    }
+
+
+def test_expected_row_counts_unreadable_archive_is_None_not_zero(monkeypatch):
+    """An unreadable archive must be UNKNOWN. Returning {} would read as 'every table has 0
+    rows', which a no-op restore would then match perfectly."""
+    class P:
+        returncode = 1
+        stderr = "pg_restore: error: could not open"
+        stdout = ""
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: P())
+    assert rt._expected_row_counts("/tmp/x.dump") is None
+
+
+def _branch_counts(rows):
+    """Fake _psql_query returning 'schema.table=n' lines like the real count query."""
+    return lambda url, sql: [f"{k}={v}" for k, v in rows.items()]
+
+
+def test_validate_branch_rejects_a_restore_that_does_not_match_the_archive(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    monkeypatch.setattr(rt, "_psql_scalar", _validate_fake(gv="11", ext="9"))
+    # the branch still holds PROD's data — the no-op restore this check exists to catch
+    monkeypatch.setattr(rt, "_psql_query", _branch_counts({"public.plants": 307, "public.event_log": 13952}))
+    with pytest.raises(rt.RevertError, match="does NOT match the snapshot archive"):
+        rt.validate_branch(cfg, "postgresql://s",
+                           expected_counts={"public.plants": 3, "public.event_log": 2})
+
+
+def test_validate_branch_accepts_an_exact_match(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    monkeypatch.setattr(rt, "_psql_scalar", _validate_fake(gv="11", ext="9"))
+    monkeypatch.setattr(rt, "_psql_query", _branch_counts({"public.plants": 3, "public.event_log": 2}))
+    out = rt.validate_branch(cfg, "postgresql://s",
+                             expected_counts={"public.plants": 3, "public.event_log": 2})
+    assert out["archive_match"] == "verified"
+    assert out["archive_tables_compared"] == 2
+
+
+def test_validate_branch_flags_a_table_the_restore_did_not_create(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    monkeypatch.setattr(rt, "_psql_scalar", _validate_fake(gv="11", ext="9"))
+    monkeypatch.setattr(rt, "_psql_query", _branch_counts({"public.plants": 3}))
+    with pytest.raises(rt.RevertError, match="NO SUCH TABLE"):
+        rt.validate_branch(cfg, "postgresql://s",
+                           expected_counts={"public.plants": 3, "public.harvest_log": 7})
+
+
+def test_validate_branch_reports_unknown_rather_than_claiming_verified(monkeypatch):
+    """expected_counts=None (unreadable archive) must NOT raise — the other checks still run —
+    but it must not report 'verified' either."""
+    cfg = rt.Config(env=base_env())
+    monkeypatch.setattr(rt, "_psql_scalar", _validate_fake(gv="11", ext="9"))
+    out = rt.validate_branch(cfg, "postgresql://s", expected_counts=None)
+    assert out["archive_match"] == "unknown-archive-unreadable"
+    assert out["archive_tables_compared"] == 0
+
+
+def test_validate_branch_refuses_when_branch_counts_cannot_be_read(monkeypatch):
+    cfg = rt.Config(env=base_env())
+    monkeypatch.setattr(rt, "_psql_scalar", _validate_fake(gv="11", ext="9"))
+    def boom(url, sql): raise rt.RevertError("psql failed")
+    monkeypatch.setattr(rt, "_psql_query", boom)
+    with pytest.raises(rt.RevertError, match="unverified restore"):
+        rt.validate_branch(cfg, "postgresql://s", expected_counts={"public.plants": 3})

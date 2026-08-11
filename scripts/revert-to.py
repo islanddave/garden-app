@@ -372,6 +372,22 @@ def _psql_scalar(url, sql):
     return proc.stdout.strip()
 
 
+def _psql_query(url, sql):
+    """Multi-ROW read-only query via psql. Returns a list of non-empty stripped lines.
+
+    Sibling of _psql_scalar for the OPS-REVERTVALIDATE-001 count comparison, which needs
+    every table in one round trip rather than one psql process per table (the restored
+    database carries ~59 of them).
+    """
+    proc = subprocess.run(
+        ["psql", url, "-tA", "-c", sql],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise RevertError(f"psql failed: {proc.stderr.strip()}")
+    return [ln.strip() for ln in proc.stdout.split("\n") if ln.strip()]
+
+
 def compute_rpo(cfg):
     """Surface the data-loss window to Dave: total live rows + latest event ts
     that the revert will DISCARD. Read-only against prod.
@@ -516,13 +532,54 @@ def restore_dump_into_branch(s3, cfg, manifest, target_uri):
             # Tolerate the standard "WARNING: errors ignored" tail; fail otherwise.
             if "pg_restore: error:" in (proc.stderr or ""):
                 raise RevertError(f"pg_restore failed: {proc.stderr.strip()[:800]}")
-    return key
+        # OPS-REVERTVALIDATE-001: read the EXPECTED per-table row counts out of the archive
+        # while the file is still on disk. Source is the dump, NOT the manifest — the manifest
+        # (snapshots/vX.json) carries git_tag / main_sha / LSN / S3 keys / lambda versions and
+        # NO counts at all, so the manifest cannot answer "did the data actually land". The
+        # archive can, it needs no schema change, and it works retroactively on every dump
+        # already in S3 rather than only on ones taken after some new field ships.
+        expected = _expected_row_counts(dump_path)
+    return key, expected
 
 
-def validate_branch(cfg, target_uri):
+def _expected_row_counts(dump_path):
+    """Per-table row counts as the ARCHIVE holds them: render it and count COPY data lines.
+
+    Returns {"schema.table": n} or None if the archive could not be rendered (callers treat
+    None as "unknown", never as "zero" — an unreadable archive must not silently look empty).
+    """
+    proc = subprocess.run(
+        ["pg_restore", "-f", "-", dump_path], capture_output=True, text=True,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        return None
+    counts, table, n = {}, None, 0
+    for line in proc.stdout.split("\n"):
+        if table is None:
+            if line.startswith("COPY ") and line.rstrip().endswith("FROM stdin;"):
+                table = line.split()[1]
+                n = 0
+            continue
+        if line == "\\.":
+            counts[table] = n
+            table = None
+            continue
+        n += 1
+    return counts
+
+
+def validate_branch(cfg, target_uri, expected_counts=None):
     """Schema + row-count sanity on the restored fresh branch before we let it
     overwrite prod. At least one core table must exist and the sanity tables
     must be queryable (count >= 0).
+
+    expected_counts ({"schema.table": n}, from the ARCHIVE) upgrades this from
+    "the branch looks plausible" to "the branch matches the snapshot we restored".
+    Absolute readings cannot tell a real restore from a no-op, because the target
+    branch is created off the DEFAULT branch (prod) and therefore ALREADY contains a
+    full database before pg_restore runs — see OPS-REVERTVALIDATE-001. None means
+    the archive was unreadable: that is UNKNOWN, and it is reported, never treated
+    as agreement.
     """
     existing = _psql_scalar(
         target_uri,
@@ -557,8 +614,49 @@ def validate_branch(cfg, target_uri):
     # PRESENT-but-not-rolled-back, and a >0 presence test passes on exactly that state.
     # So this catches an empty/failed restore, NOT the --schema=public bug that motivated
     # it — the actual fix for that is dropping --schema=public in restore_dump_into_branch,
-    # which scripts/test_revert_to.py pins directly. Making this a real scope check needs a
-    # comparison against the snapshot manifest (expected object/row counts): OPS-REVERTVALIDATE-001.
+    # which scripts/test_revert_to.py pins directly. The scope check proper is the
+    # expected_counts comparison below (OPS-REVERTVALIDATE-001).
+    #
+    # OPS-REVERTVALIDATE-001 — the check that can tell a real restore from a no-op.
+    # Everything above reads ABSOLUTE state, and absolute state cannot distinguish "the dump
+    # landed" from "nothing happened", because this branch was created off prod and already
+    # held a full database before pg_restore ran. Comparing against the archive's own COPY
+    # row counts is the difference between plausible and correct.
+    # NOTE the source: the archive, not snapshots/vX.json. That manifest holds git_tag,
+    # main_sha, LSN, S3 keys and lambda versions — NO counts — so it cannot answer this, and
+    # adding counts to it would only help snapshots taken after the change. The archive works
+    # on every dump already in the bucket.
+    mismatches = []
+    if expected_counts:
+        q = ("SELECT n.nspname||'.'||c.relname||'='||"
+             "(xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I',"
+             "n.nspname,c.relname),false,true,'')))[1]::text "
+             "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+             "WHERE c.relkind='r' AND n.nspname NOT IN ('pg_catalog','information_schema');")
+        actual = {}
+        try:
+            for row in (_psql_query(target_uri, q) or []):
+                if "=" in row:
+                    k, v = row.rsplit("=", 1)
+                    actual[k.strip()] = int(v)
+        except (RevertError, ValueError):
+            actual = None
+        if actual is None:
+            raise RevertError(
+                "validate: could not read row counts from the restored branch — refusing to "
+                "overwrite prod on an unverified restore"
+            )
+        for tbl, want in expected_counts.items():
+            got = actual.get(tbl)
+            if got is None:
+                mismatches.append(f"{tbl}: archive has {want} rows, restored branch has NO SUCH TABLE")
+            elif got != want:
+                mismatches.append(f"{tbl}: archive {want} vs restored {got}")
+        if mismatches:
+            raise RevertError(
+                "validate: restored branch does NOT match the snapshot archive — refusing to "
+                f"overwrite prod. {len(mismatches)} mismatch(es): {'; '.join(mismatches[:8])}"
+            )
     counts = {}
     for t in SANITY_TABLES:
         try:
@@ -567,7 +665,15 @@ def validate_branch(cfg, target_uri):
             counts[t] = None
     if all(v is None for v in counts.values()):
         raise RevertError("validate: none of the core tables are present/queryable")
-    return {"public_tables": int(existing), "counts": counts, "nonpublic_functions": nonpublic}
+    return {
+        "public_tables": int(existing),
+        "counts": counts,
+        "nonpublic_functions": nonpublic,
+        # "verified" only when the archive was readable AND every table matched. UNKNOWN is
+        # reported as UNKNOWN — an unreadable archive must never read as agreement.
+        "archive_match": ("verified" if expected_counts else "unknown-archive-unreadable"),
+        "archive_tables_compared": len(expected_counts or {}),
+    }
 
 
 def _expire_branch_by_name(cfg, name, ttl_days):
@@ -813,8 +919,8 @@ def run(cfg, s3=None, lambda_client=None, cloudfront_client=None):
             source_branch_id, uri = neon_create_branch_with_endpoint(
                 cfg, restore_name, ttl_days=cfg.branch_ttl_days
             )
-            restore_dump_into_branch(s3, cfg, manifest, uri)
-            validate_branch(cfg, uri)
+            _key, expected_counts = restore_dump_into_branch(s3, cfg, manifest, uri)
+            validate_branch(cfg, uri, expected_counts=expected_counts)
             source_lsn = None
 
         # Cut over: prod DB reset (first prod mutation) ...
