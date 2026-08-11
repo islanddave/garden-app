@@ -1915,6 +1915,48 @@ export const handler = async (event) => {
       const plantId = event.queryStringParameters?.plant_id ?? null;
       const limit = Math.min(parseInt(event.queryStringParameters?.limit ?? '50', 10), 200);
 
+      // BUG-UNSCOPEDPLANTLOG-001: plant_id WITHOUT project_id fell through BOTH branches below into
+      // the unfiltered household feed — plantId was read and then silently ignored, so a
+      // project-less planting's event log rendered the whole garden's most recent `limit` events
+      // under that planting's name (in prod, 50/50 watering). Not a fringe shape: PlantingDetail
+      // omits project_id BY DESIGN for CaptureFlow rows that have none, so this was the ONLY
+      // request it ever sent for them.
+      //
+      // Ownership CANNOT run through the container here — there is no project to join. It runs
+      // through the planting itself, via the same canonical predicate the POST path uses
+      // (loadOwnedPlantingRef, whose own-created_by arm is exactly the project-less case). That
+      // loader also rejects a malformed uuid with null rather than letting a 22P02 become a 500,
+      // and it filters gn.deleted_at — which is why the HIDE_EVENTS_UNDER_DELETED_PLANTING guard
+      // the other two branches carry is a no-op here and deliberately omitted.
+      if (plantId && !projectId) {
+        if (!await loadOwnedPlantingRef(sql, plantId, householdIds)) return resp(404, { error: 'Not found' });
+        const plantRows = await sql`
+          SELECT
+            e.id, e.project_id, e.location_id, e.plant_id,
+            e.event_type, e.event_date, e.notes,
+            e.quantity, e.is_public, e.logged_by, e.created_at,
+            e.metadata,
+            pp.display_name AS project_name
+          FROM event_log e
+          -- LEFT, not the INNER join the other two branches use. A project-less planting's events
+          -- carry project_id NULL, and an inner join on e.project_id drops every one of them — the
+          -- same NULL-parent hazard harvest-summary's unattributed arm exists to handle. This
+          -- branch would otherwise trade "shows the whole garden" for "shows nothing", which is
+          -- the quieter and worse of the two lies.
+          LEFT JOIN public.container pp ON pp.id = e.project_id
+          WHERE e.plant_id = ${plantId}
+            AND e.deleted_at IS NULL
+            -- Household scope is already established on the planting above; this second arm keeps
+            -- the container rule for the rows that DO have one (a caller may pass plant_id alone
+            -- for a planting that has a project).
+            AND (e.project_id IS NULL
+                 OR (pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL))
+          ORDER BY e.event_date DESC, e.created_at DESC
+          LIMIT ${limit}
+        `;
+        return resp(200, plantRows);
+      }
+
       // project_id + plant_id: planting-scoped (HS-2). Filter by plant_id BEFORE the LIMIT.
       const rows = (projectId && plantId)
         ? await sql`

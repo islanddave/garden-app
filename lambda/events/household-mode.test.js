@@ -29,7 +29,7 @@ describe('events Lambda — Household Mode surgical widening', () => {
     expect(SRC).toMatch(/const householdIds = householdScope\(userId\)/);
   });
 
-  it('exactly 14 event-entity sites widened to pp.created_by = ANY(${householdIds})', () => {
+  it('exactly 17 event-entity sites widened to pp.created_by = ANY(${householdIds})', () => {
     // UPDATE event_log guard + 3 event LIST/GET reads + Unit A bulk Quick Log batch
     // plant-resolution (2026-05-24) + HS-2 planting-scoped LIST read (2026-06-04, V3-NAV-001)
     // + DELETE /:id single-event-undo ownership pre-check (2026-06-10, V3-LOGMANY undo fix).
@@ -53,10 +53,17 @@ describe('events Lambda — Household Mode surgical widening', () => {
     //   path previously had no ownership predicate at all, so the count moving is the fix landing
     //   rather than scope creeping. loadOwnedProject and loadOwnedLocation do not match this regex
     //   (they scope on the parent table's own created_by, with no pp alias), so only one is added.
+    // + GET /api/events?plant_id= WITHOUT project_id, the plant_id-only list arm (2026-08-10,
+    //   BUG-UNSCOPEDPLANTLOG-001): ONE site. Like the POST gate above this is a NARROWING — the
+    //   shape previously fell through to the unfiltered household feed, so a project-less
+    //   planting's log showed the whole garden. Its PRIMARY ownership gate is loadOwnedPlantingRef
+    //   (in ./authz-parents.js, so it does not touch this count); the site counted here is the
+    //   secondary container predicate on the LEFT-joined rows that do have a project, which keeps
+    //   this arm's scope identical to its two sibling branches.
     // Each is an event-entity op, so household-widening is correct per the surgical-widening
-    // invariant. Count was 4 pre-Unit-A, 5 post-Unit-A, 6 post-HS-2, 7 post-undo-fix, 8 post-feed, 9 post-fruit_set, 10 post-flowering (V3-FLOWERING-001), 12 post-batch-flowering+fruit_set (V4-EVENTSEL-002: the two batch-path status UPDATEs), 14 post-germination (CAL-2: single + batch germinated_at set-once writes), 16 post-event-edit (BUG-HARVESTEDIT-001: PUT pre-check + UPDATE), 17 post-events-POST-authz (BUG-EVENTSOWN-001), back to 16 once that gate moved out of this file into ./authz-parents.js (step 3, same day — the predicate did not go away, it stopped being inline; authz-parents-copies-sync.test.js guards it there) (L-099 drift class).
+    // invariant. Count was 4 pre-Unit-A, 5 post-Unit-A, 6 post-HS-2, 7 post-undo-fix, 8 post-feed, 9 post-fruit_set, 10 post-flowering (V3-FLOWERING-001), 12 post-batch-flowering+fruit_set (V4-EVENTSEL-002: the two batch-path status UPDATEs), 14 post-germination (CAL-2: single + batch germinated_at set-once writes), 16 post-event-edit (BUG-HARVESTEDIT-001: PUT pre-check + UPDATE), 17 post-events-POST-authz (BUG-EVENTSOWN-001), back to 16 once that gate moved out of this file into ./authz-parents.js (step 3, same day — the predicate did not go away, it stopped being inline; authz-parents-copies-sync.test.js guards it there), 17 post-plant-only-list-arm (BUG-UNSCOPEDPLANTLOG-001) (L-099 drift class).
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(16);
+    expect(matches.length).toBe(17);
     // The moved gate still exists — assert it at its new home so this count can never drop silently.
     const localAuthz = decomment(readFileSync(resolve(__dirname, 'authz-parents.js'), 'utf8'));
     expect(localAuthz).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\)/);

@@ -797,3 +797,127 @@ describe('POST /api/events — germination stamps germinated_at, set-once (CAL-2
     expect(rows[0].germinated_at).toBeNull()
   })
 })
+
+// BUG-UNSCOPEDPLANTLOG-001 — GET /api/events?plant_id= with NO project_id.
+//
+// The list route's branch ladder was (projectId && plantId) → projectId → UNFILTERED. A request
+// carrying plant_id ALONE matched neither guard and fell to the third arm, which returns the whole
+// household's most recent `limit` events. plantId was read from the query string and then never
+// used. PlantingDetail omits project_id by design for plantings that have none (CaptureFlow rows),
+// so for those plantings this was the only request shape it ever sent: their log rendered the
+// garden's recent feed under their name — in prod, 50 rows, all of them other plants' waterings.
+//
+// The fix cannot authorize through public.container (there is no project), so it authorizes on the
+// planting via loadOwnedPlantingRef, and joins the container LEFT — an inner join on e.project_id
+// drops every event of a project-less planting, which would have swapped a loud wrong answer for a
+// silent empty one.
+describe('GET /api/events?plant_id= without project_id — planting-scoped (BUG-UNSCOPEDPLANTLOG-001)', () => {
+  let plantlessId          // USER's project-less planting (the aloe shape)
+  let ownEventIds = []     // its own events — project_id NULL
+  let noiseEventId         // USER's event under a DIFFERENT project — the bug's payload
+  let foreignPlantlessId   // FOREIGN_USER's project-less planting
+
+  beforeAll(async () => {
+    setTestUserId(USER)
+    const p = await directSql`
+      INSERT INTO plants (project_id, name, created_by)
+      VALUES (NULL, ${'plantless-' + RUN}, ${USER}) RETURNING id
+    `
+    plantlessId = p[0].id
+    const fp = await directSql`
+      INSERT INTO plants (project_id, name, created_by)
+      VALUES (NULL, ${'plantless-foreign-' + RUN}, ${FOREIGN_USER}) RETURNING id
+    `
+    foreignPlantlessId = fp[0].id
+
+    // Two events on the project-less planting, posted the way CaptureFlow does: plant_id, no
+    // project_id (validators.js:87 admits that body).
+    for (const notes of ['plantless-own-1', 'plantless-own-2']) {
+      const res = await callHandler(handler, {
+        method: 'POST', path: '/api/events',
+        body: { plant_id: plantlessId, event_type: 'watering', notes },
+      })
+      expect(res.status).toBe(201)
+      ownEventIds.push(res.body.id)
+    }
+
+    // Noise: same household, same user, DIFFERENT project, not this planting. Under the bug this
+    // row came back in the project-less planting's log.
+    const noise = await callHandler(handler, {
+      method: 'POST', path: '/api/events',
+      body: { project_id: projectId, event_type: 'watering', notes: 'plantless-noise' },
+    })
+    expect(noise.status).toBe(201)
+    noiseEventId = noise.body.id
+  })
+
+  it('returns ONLY that planting\'s events — no household-feed fallthrough', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'GET', path: `/api/events?plant_id=${plantlessId}`,
+    })
+    expect(status).toBe(200)
+    expect(Array.isArray(body)).toBe(true)
+    // THE REGRESSION ASSERT: the unfiltered arm returns this row; the scoped arm cannot.
+    expect(body.map((r) => r.id)).not.toContain(noiseEventId)
+    for (const row of body) expect(row.plant_id).toBe(plantlessId)
+  })
+
+  it('returns the project-less events themselves (LEFT JOIN — an inner join drops them all)', async () => {
+    setTestUserId(USER)
+    const { body } = await callHandler(handler, {
+      method: 'GET', path: `/api/events?plant_id=${plantlessId}`,
+    })
+    const ids = body.map((r) => r.id)
+    for (const id of ownEventIds) expect(ids).toContain(id)
+    expect(body.length).toBe(ownEventIds.length)
+    // project_id NULL survives the join; project_name is simply absent.
+    for (const row of body) expect(row.project_id).toBeNull()
+  })
+
+  it('soft-deleted events stay out of the plant-scoped list', async () => {
+    setTestUserId(USER)
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/events',
+      body: { plant_id: plantlessId, event_type: 'observation', notes: 'plantless-softdel' },
+    })
+    expect(created.status).toBe(201)
+    await directSql`UPDATE event_log SET deleted_at = NOW() WHERE id = ${created.body.id}`
+    const { body } = await callHandler(handler, {
+      method: 'GET', path: `/api/events?plant_id=${plantlessId}`,
+    })
+    expect(body.map((r) => r.id)).not.toContain(created.body.id)
+  })
+
+  it('a FOREIGN household\'s planting → 404, not that household\'s events and not the feed', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'GET', path: `/api/events?plant_id=${foreignPlantlessId}`,
+    })
+    expect(status).toBe(404)
+    expect(Array.isArray(body)).toBe(false)
+  })
+
+  it('a malformed plant_id → 404, not a 22P02 500 and not the feed', async () => {
+    setTestUserId(USER)
+    const { status } = await callHandler(handler, {
+      method: 'GET', path: '/api/events?plant_id=not-a-uuid',
+    })
+    expect(status).toBe(404)
+  })
+
+  it('an unknown but well-formed plant_id → 404 (existence-oblivious, same as foreign)', async () => {
+    setTestUserId(USER)
+    const { status } = await callHandler(handler, {
+      method: 'GET', path: '/api/events?plant_id=00000000-0000-4000-8000-000000000000',
+    })
+    expect(status).toBe(404)
+  })
+
+  it('the no-params list is UNCHANGED — the household feed still exists for callers that want it', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, { method: 'GET', path: '/api/events' })
+    expect(status).toBe(200)
+    expect(body.map((r) => r.id)).toContain(noiseEventId)
+  })
+})
