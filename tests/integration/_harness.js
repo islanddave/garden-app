@@ -4,6 +4,13 @@
 // directSql() = read-back assertions that prove DB state (not handler echo).
 import { neon } from '@neondatabase/serverless'
 import { vi } from 'vitest'
+import { assertEphemeralDatabase } from './_cleanup.js'
+
+// BUG-INTFIXTURELEAK-001: fail closed before a single fixture row is written. globalSetup performs
+// the same check in the parent process; this second call covers a worker that somehow starts without
+// it (e.g. a file run directly). Both must pass — the suite seeds and hard-deletes data, so it may
+// only ever touch a disposable branch.
+assertEphemeralDatabase()
 
 const DB_URL = process.env.INT_DATABASE_URL
 if (!DB_URL) throw new Error('INT_DATABASE_URL is required for integration tests')

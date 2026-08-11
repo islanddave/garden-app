@@ -27,6 +27,11 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 20000,
     include: ['tests/integration/**/*.int.test.js'],
+    // BUG-INTFIXTURELEAK-001. Per-file afterAll() is best-effort: it is skipped when beforeAll
+    // throws, when a file fails to import, or when the run is cancelled. globalSetup's teardown runs
+    // once after every file regardless, so it is the only hook that can guarantee the `int-test-`
+    // namespace is empty at exit. It also refuses to start against prod/staging (assertEphemeralDatabase).
+    globalSetup: ['tests/integration/_globalSetup.js'],
     server: {
       deps: {
         inline: [

@@ -25,6 +25,7 @@
 // Requires the CAL-1 columns; skips cleanly on a branch that lacks them.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, callHandler, setTestUserId, testRunId, insertProject } from './_harness.js'
+import { settle, assertFixtureId } from './_cleanup.js'
 import { handler as eventsHandler } from '../../lambda/events/index.js'
 
 const HAS_CAL1 = (await directSql`
@@ -107,33 +108,47 @@ describe.skipIf(!HAS_CAL1)('CAL-1 harvest weight derivation — POST /api/events
       VALUES (${cvSampledId}, 'count', 200, 10, now(), ${USER})`
   })
 
+  // BUG-INTFIXTURELEAK-001: this teardown used to be a bare await-chain, and the
+  // `ALTER TABLE ... DISABLE TRIGGER` sat OUTSIDE the try. When that ALTER failed (it takes an ACCESS
+  // EXCLUSIVE lock, so concurrent DDL is enough), it aborted the eight deletes after it and leaked
+  // the whole fixture graph — that is exactly how two runs on 2026-08-03 left projects, plants,
+  // varieties, crop_types, event_log and samples behind. settle() now attempts every step
+  // independently, and the ALTER is inside its own try/finally. The global sweeper
+  // (tests/integration/_globalSetup.js) is the backstop if this hook never runs at all.
   afterAll(async () => {
-    await directSql`DELETE FROM xp_events WHERE user_id = ${USER}`
-    await directSql`DELETE FROM user_achievements WHERE user_id = ${USER}`
-    await directSql`DELETE FROM user_stats WHERE user_id = ${USER}`
-    await directSql`DELETE FROM app_events WHERE user_clerk_sub = ${USER}`
-    await directSql`DELETE FROM harvest_log WHERE created_by = ${USER}`
-    await directSql`DELETE FROM entity_memory WHERE project_id = ${projectId}`
-    // cultivar_weight_sample carries a BEFORE DELETE immutability trigger — by design, corrections
-    // go to the void ledger and rows are never removed. That makes ordinary teardown impossible, so
-    // the trigger is disabled for the duration of this DELETE and restored immediately. This is the
-    // ONLY sanctioned place to do that: production corrections must still go through the void ledger.
-    // (Worth knowing operationally — purging bad sample data anywhere needs this same dance.)
-    await directSql`DELETE FROM cultivar_weight_void WHERE created_by = ${USER}`
-    await directSql`ALTER TABLE cultivar_weight_sample DISABLE TRIGGER trg_cws_immutable`
-    try {
-      await directSql`DELETE FROM cultivar_weight_sample WHERE created_by = ${USER}`
-    } finally {
-      await directSql`ALTER TABLE cultivar_weight_sample ENABLE TRIGGER trg_cws_immutable`
-    }
-    await directSql`DELETE FROM event_log WHERE created_by = ${USER}`
-    await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (SELECT id FROM plants WHERE created_by = ${USER})`
-    await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by = ${USER})`
-    await directSql`DELETE FROM plants WHERE created_by = ${USER}`
-    await directSql`DELETE FROM entity WHERE cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ${USER})`
-    await directSql`DELETE FROM plant_varieties WHERE created_by = ${USER}`
-    await directSql`DELETE FROM crop_types WHERE slug IN (${CROP_FALLBACK}, ${CROP_STRICT}, ${CROP_UNSEEDED})`
-    await directSql`DELETE FROM plant_projects WHERE created_by = ${USER}`
+    assertFixtureId(USER)
+    await settle('cal1-harvweight', [
+      () => directSql`DELETE FROM xp_events WHERE user_id = ${USER}`,
+      () => directSql`DELETE FROM user_achievements WHERE user_id = ${USER}`,
+      () => directSql`DELETE FROM user_stats WHERE user_id = ${USER}`,
+      () => directSql`DELETE FROM app_events WHERE user_clerk_sub = ${USER}`,
+      () => directSql`DELETE FROM harvest_log WHERE created_by = ${USER}`,
+      () => directSql`DELETE FROM entity_memory WHERE project_id = ${projectId}`,
+      // cultivar_weight_sample carries a BEFORE DELETE immutability trigger — by design, corrections
+      // go to the void ledger and rows are never removed. That makes ordinary teardown impossible, so
+      // the trigger is disabled for the duration of this DELETE and restored immediately. This is the
+      // ONLY sanctioned place to do that: production corrections must still go through the void ledger.
+      // (Worth knowing operationally — purging bad sample data anywhere needs this same dance.)
+      () => directSql`DELETE FROM cultivar_weight_void WHERE created_by = ${USER}`,
+      async () => {
+        let disabled = false
+        try {
+          await directSql`ALTER TABLE cultivar_weight_sample DISABLE TRIGGER trg_cws_immutable`
+          disabled = true
+          await directSql`DELETE FROM cultivar_weight_sample WHERE created_by = ${USER}`
+        } finally {
+          if (disabled) await directSql`ALTER TABLE cultivar_weight_sample ENABLE TRIGGER trg_cws_immutable`
+        }
+      },
+      () => directSql`DELETE FROM event_log WHERE created_by = ${USER}`,
+      () => directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (SELECT id FROM plants WHERE created_by = ${USER})`,
+      () => directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by = ${USER})`,
+      () => directSql`DELETE FROM plants WHERE created_by = ${USER}`,
+      () => directSql`DELETE FROM entity WHERE cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ${USER})`,
+      () => directSql`DELETE FROM plant_varieties WHERE created_by = ${USER}`,
+      () => directSql`DELETE FROM crop_types WHERE slug IN (${CROP_FALLBACK}, ${CROP_STRICT}, ${CROP_UNSEEDED})`,
+      () => directSql`DELETE FROM plant_projects WHERE created_by = ${USER}`,
+    ])
   })
 
   const postHarvest = (extra) => {

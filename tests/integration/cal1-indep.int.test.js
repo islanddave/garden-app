@@ -22,6 +22,7 @@
 // reasoning in cal1-sampleconf.int.test.js.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, setTestUserId, testRunId, insertProject } from './_harness.js'
+import { settle, assertFixtureId } from './_cleanup.js'
 
 const HAS_CAL1 = (await directSql`
   SELECT to_regclass('public.cultivar_weight_sample') IS NOT NULL AS ok`)[0].ok
@@ -108,26 +109,35 @@ describe.skipIf(!HAS_INDEP)('CAL-1 independence guard (V4-CAL1INDEP-001)', () =>
     await mk('genuineWide', 100, [[100, 10, 1], [300, 10, 2]])
   })
 
+  // BUG-INTFIXTURELEAK-001: was a bare await-chain with the ACCESS-EXCLUSIVE `ALTER TABLE` outside
+  // the try, so one failure abandoned every delete after it. See cal1-harvweight.int.test.js.
   afterAll(async () => {
-    // cultivar_weight_sample carries a BEFORE DELETE immutability trigger — corrections go to the
-    // void ledger and rows are never removed. Teardown is the ONLY sanctioned place to disable it.
-    await directSql`DELETE FROM cultivar_weight_void WHERE created_by = ${USER}`
-    await directSql`ALTER TABLE cultivar_weight_sample DISABLE TRIGGER trg_cws_immutable`
-    try {
-      await directSql`DELETE FROM cultivar_weight_sample WHERE created_by = ${USER}`
-    } finally {
-      await directSql`ALTER TABLE cultivar_weight_sample ENABLE TRIGGER trg_cws_immutable`
-    }
-    // entity rows point at plants and at plant_varieties by FK, so they must go first in both
-    // directions — dropping plants ahead of its planting entities is an FK violation, not a no-op.
-    await directSql`DELETE FROM entity WHERE entity_type = 'planting' AND planting_ref_id IN (
-      SELECT id FROM plants WHERE created_by = ${USER})`
-    await directSql`DELETE FROM plants WHERE created_by = ${USER}`
-    await directSql`DELETE FROM entity WHERE cultivar_ref_id IN (
-      SELECT id FROM plant_varieties WHERE created_by = ${USER})`
-    await directSql`DELETE FROM plant_varieties WHERE created_by = ${USER}`
-    await directSql`DELETE FROM crop_types WHERE slug = ${CROP}`
-    await directSql`DELETE FROM plant_projects WHERE created_by = ${USER}`
+    assertFixtureId(USER)
+    await settle('cal1-indep', [
+      // cultivar_weight_sample carries a BEFORE DELETE immutability trigger — corrections go to the
+      // void ledger and rows are never removed. Teardown is the ONLY sanctioned place to disable it.
+      () => directSql`DELETE FROM cultivar_weight_void WHERE created_by = ${USER}`,
+      async () => {
+        let disabled = false
+        try {
+          await directSql`ALTER TABLE cultivar_weight_sample DISABLE TRIGGER trg_cws_immutable`
+          disabled = true
+          await directSql`DELETE FROM cultivar_weight_sample WHERE created_by = ${USER}`
+        } finally {
+          if (disabled) await directSql`ALTER TABLE cultivar_weight_sample ENABLE TRIGGER trg_cws_immutable`
+        }
+      },
+      // entity rows point at plants and at plant_varieties by FK, so they must go first in both
+      // directions — dropping plants ahead of its planting entities is an FK violation, not a no-op.
+      () => directSql`DELETE FROM entity WHERE entity_type = 'planting' AND planting_ref_id IN (
+        SELECT id FROM plants WHERE created_by = ${USER})`,
+      () => directSql`DELETE FROM plants WHERE created_by = ${USER}`,
+      () => directSql`DELETE FROM entity WHERE cultivar_ref_id IN (
+        SELECT id FROM plant_varieties WHERE created_by = ${USER})`,
+      () => directSql`DELETE FROM plant_varieties WHERE created_by = ${USER}`,
+      () => directSql`DELETE FROM crop_types WHERE slug = ${CROP}`,
+      () => directSql`DELETE FROM plant_projects WHERE created_by = ${USER}`,
+    ])
   })
 
   it('one weighing written twice is ONE observation, not a corroborated pair', async () => {
