@@ -62,13 +62,22 @@ env:
   # garden-storage-location-staging and probed 2026-07-21: both return 401 (alive + auth-gated).
   STAGING_API_PRESERVATION:      https://gmcwnewzjykdlnd7nllagvyrlm0vgrjn.lambda-url.us-east-1.on.aws/
   STAGING_API_STORAGE_LOCATIONS: https://4arsh5rxe6f5f5bgbyeyueftee0qquwa.lambda-url.us-east-1.on.aws/
-  # Harvests page (V4-HARVESTVIEW-001). Declared empty until the first staging deploy creates
-  # garden-harvests-staging + its Function URL; then set this to the real URL (read from
-  # `aws lambda get-function-url-config --function-name garden-harvests-staging`). WARN-tier in the
-  # Validate step while empty (ship-then-wire) — an empty value bakes VITE_API_HARVESTS="" (Harvests
-  # unreachable on staging, nothing else breaks). Declared explicitly so the env reference is not an
-  # undefined-var silent-empty (the STAGING_API_TAGS lesson).
-  STAGING_API_HARVESTS: ""
+  # Harvests page (V4-HARVESTVIEW-001). WIRED 2026-08-10: garden-harvests-staging now exists, so the
+  # ship-then-wire placeholder is retired. Probed 401 (alive + auth-gated).
+  STAGING_API_HARVESTS:      https://c2xqhj5fktciet2efz3hjkayxe0zunda.lambda-url.us-east-1.on.aws/
+  # WIRED 2026-08-10 (OPS-STAGINGAPIGAP-001). These three Lambdas existed but were never referenced
+  # here at all — not in the env block, not in either VITE_ mapping, and not in EITHER validate list.
+  # So they were invisible to the ship-then-wire guard: the app fell back to a relative /api/... path,
+  # CloudFront answered it with index.html, and the client died on "Unexpected token '<'". That broke
+  # /today outright (daily-plan) and made the harvest flow unsmokeable on staging. All probed 401.
+  STAGING_API_MEMBERS:         https://zhkvqgtlh3jwsdvoeak5hhro4y0ujbxq.lambda-url.us-east-1.on.aws/
+  STAGING_API_FINDINGS:        https://xadazkudo5dyzaz67nmud2wsh40mbepo.lambda-url.us-east-1.on.aws/
+  STAGING_API_DAILY_PLAN_READ: https://5fblg7acway22fxx5svtqsc4ta0ipgpl.lambda-url.us-east-1.on.aws/
+  # Genuinely absent on staging — no garden-achievements-staging / facebook-share function exists.
+  # Declared EMPTY on purpose so the env reference is not an undefined-var silent-empty (the
+  # STAGING_API_TAGS lesson) and so the Validate step can WARN on them instead of ignoring them.
+  STAGING_API_ACHIEVEMENTS: ""
+  STAGING_API_FACEBOOK_SHARE: ""
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
@@ -286,10 +295,17 @@ jobs:
           # which let deploy-staging.yml bake VITE_API_TAGS="" into every build unnoticed (the lone
           # `vars.STAGING_API_TAGS` typo referenced an undefined repo var). Hard-fail the core vars,
           # WARN the ship-then-wire optionals, and assert a staging (pk_test_*) Clerk key.
-          for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD VITE_API_INVENTORY; do
+          # OPS-STAGINGAPIGAP-001 (2026-08-10): these two lists must between them name EVERY
+          # VITE_API_* the app reads. Five did not appear in either one — MEMBERS, FINDINGS,
+          # DAILY_PLAN_READ, ACHIEVEMENTS, FACEBOOK_SHARE — so the ship-then-wire guard could not
+          # see them, they baked as relative /api/... paths, CloudFront served index.html, and the
+          # client died on "Unexpected token '<'". A var absent from BOTH lists is the failure
+          # mode; an empty var in the WARN list is a known, declared state.
+          # Keep in sync with: rg -o 'VITE_API_[A-Z_]+' src/ --no-filename | sort -u
+          for VAR in VITE_CLERK_PUBLISHABLE_KEY VITE_API_PROJECTS VITE_API_PLANTS VITE_API_LOCATIONS VITE_API_EVENTS VITE_API_FAVORITES VITE_API_PHOTOS VITE_API_DASHBOARD VITE_API_INVENTORY VITE_API_HARVESTS VITE_API_MEMBERS VITE_API_FINDINGS VITE_API_DAILY_PLAN_READ; do
             [[ -n "${!VAR}" ]] || { echo "ERROR: $VAR not set"; exit 1; }
           done
-          for VAR in VITE_API_VARIETIES VITE_API_APP_EVENTS VITE_API_UX_EVENTS VITE_API_CRITTERS VITE_API_SHARED_STATE VITE_API_TAGS VITE_API_HARVESTS; do
+          for VAR in VITE_API_VARIETIES VITE_API_APP_EVENTS VITE_API_UX_EVENTS VITE_API_CRITTERS VITE_API_SHARED_STATE VITE_API_TAGS VITE_API_ACHIEVEMENTS VITE_API_FACEBOOK_SHARE; do
             [[ -n "${!VAR}" ]] || echo "WARN: $VAR not set — its UI will not work on staging until wired (ship-then-wire)"
           done
           [[ "$VITE_CLERK_PUBLISHABLE_KEY" == pk_test_* ]] || {
@@ -316,6 +332,11 @@ jobs:
           VITE_API_PRESERVATION:      ${{ env.STAGING_API_PRESERVATION }}
           VITE_API_STORAGE_LOCATIONS: ${{ env.STAGING_API_STORAGE_LOCATIONS }}
           VITE_API_HARVESTS:          ${{ env.STAGING_API_HARVESTS }}
+          VITE_API_MEMBERS:           ${{ env.STAGING_API_MEMBERS }}
+          VITE_API_FINDINGS:          ${{ env.STAGING_API_FINDINGS }}
+          VITE_API_DAILY_PLAN_READ:   ${{ env.STAGING_API_DAILY_PLAN_READ }}
+          VITE_API_ACHIEVEMENTS:      ${{ env.STAGING_API_ACHIEVEMENTS }}
+          VITE_API_FACEBOOK_SHARE:    ${{ env.STAGING_API_FACEBOOK_SHARE }}
 
       - name: Build (staging)
         id: build
@@ -352,6 +373,11 @@ jobs:
           VITE_API_PRESERVATION:      ${{ env.STAGING_API_PRESERVATION }}
           VITE_API_STORAGE_LOCATIONS: ${{ env.STAGING_API_STORAGE_LOCATIONS }}
           VITE_API_HARVESTS:          ${{ env.STAGING_API_HARVESTS }}
+          VITE_API_MEMBERS:           ${{ env.STAGING_API_MEMBERS }}
+          VITE_API_FINDINGS:          ${{ env.STAGING_API_FINDINGS }}
+          VITE_API_DAILY_PLAN_READ:   ${{ env.STAGING_API_DAILY_PLAN_READ }}
+          VITE_API_ACHIEVEMENTS:      ${{ env.STAGING_API_ACHIEVEMENTS }}
+          VITE_API_FACEBOOK_SHARE:    ${{ env.STAGING_API_FACEBOOK_SHARE }}
 
       - name: Verify build output
         run: |
