@@ -9,6 +9,7 @@ import TagChip from '../forms/TagChip.jsx'
 import TransplantDatePrompt from './TransplantDatePrompt.jsx'
 import { shuLabel, determinacyLabel } from '../../lib/varietySpec.js'
 import { resolveRipenessCues } from '../../lib/ripenessCues.js'
+import { resolveHarvestWindow } from '../../lib/harvestWindows.js'
 
 function Attr({ label, value }) {
   if (value == null || value === '') return null
@@ -64,6 +65,68 @@ function RipenessCue({ cues }) {
             {attribution.source}
           </a>
         ) : attribution.source}
+      </div>
+    </div>
+  )
+}
+
+// V4-RIPENESSCUES-001 — the harvest colour WINDOW: every colour you can legitimately pick at, and
+// what each one buys. Dave, 2026-08-11: "I want to know when I CAN pick them… Details should describe
+// the points of the colour pick — what you get at each point."
+//
+// WHY EVERY POINT RENDERS. He accepted a machine-readable shape on one condition — "so long as humans
+// utilize it fully" — so this deliberately does not summarise to the label and hide the payoffs behind
+// a tap. The payoffs ARE the feature; the label alone is the old single-cue model with an arrow in it.
+//
+// WHY ONLY ONE GRAIN RENDERS. `resolveHarvestWindow` returns both the cultivar colour sequence and the
+// crop-level mechanic. Rendering both would double an already tall block, and the cultivar records
+// carry their own maturity test inside `ripe_vs_unripe`, so the cultivar window wins when present and
+// the crop mechanic fills in only when it does not.
+function HarvestWindow({ window: win }) {
+  const rec = win.cultivar ?? win.crop
+  if (!rec) return null
+  return (
+    <div>
+      <div style={{ fontSize: '0.72rem', fontWeight: 600, color: P.light, marginBottom: 4,
+        textTransform: 'uppercase', letterSpacing: '0.5px' }}>When you can pick</div>
+      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: P.green, lineHeight: 1.4,
+        marginBottom: 8 }}>{rec.window_label}</div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {rec.window.map((p, i) => (
+          <div key={`${p.at}-${i}`} style={{ borderLeft: `2px solid ${P.greenPale}`, paddingLeft: 10 }}>
+            <div style={{ fontSize: '0.82rem', fontWeight: 700, color: P.dark, lineHeight: 1.4 }}>{p.at}</div>
+            <div style={{ fontSize: '0.82rem', color: P.mid, lineHeight: 1.5, wordBreak: 'break-word' }}>{p.look}</div>
+            <div style={{ fontSize: '0.82rem', color: P.dark, lineHeight: 1.5, marginTop: 2,
+              wordBreak: 'break-word' }}>→ {p.gives}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* The green-when-ripe answer. Dave: "what is first blush for a green?" On a cultivar whose ripe
+          state looks unripe this is the ONLY field that resolves the plant in front of him, so it gets
+          its own labelled block rather than being folded into a stage description. */}
+      {rec.ripe_vs_unripe && (
+        <div style={{ marginTop: 10, backgroundColor: P.greenPale, borderRadius: 8, padding: '8px 10px' }}>
+          <div style={{ fontSize: '0.72rem', fontWeight: 700, color: P.green, marginBottom: 2,
+            textTransform: 'uppercase', letterSpacing: '0.5px' }}>Telling ripe from unripe</div>
+          <div style={{ fontSize: '0.82rem', color: P.dark, lineHeight: 1.5,
+            wordBreak: 'break-word' }}>{rec.ripe_vs_unripe}</div>
+        </div>
+      )}
+
+      {/* A `low`-confidence window is a DERIVATION from the market class, not a quotation about this
+          cultivar. Rendering the caveat is the entire reason complete coverage is safe — it is what
+          keeps a derived window from reading like a sourced one. */}
+      {rec.caveat && (
+        <div style={{ fontSize: '0.78rem', color: P.mid, lineHeight: 1.5, marginTop: 8,
+          fontStyle: 'italic', wordBreak: 'break-word' }}>{rec.caveat}</div>
+      )}
+
+      <div style={{ fontSize: '0.72rem', color: P.light, lineHeight: 1.5, marginTop: 6 }}>
+        {rec.source_url
+          ? <a href={rec.source_url} target="_blank" rel="noreferrer noopener" style={{ color: P.light }}>{rec.source}</a>
+          : rec.source}
       </div>
     </div>
   )
