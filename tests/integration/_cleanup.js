@@ -35,7 +35,7 @@ const FIXTURE_ID_RE = /int-test-\d{10,}-[a-z0-9]{3,}/
 // exactly how the staging debris got there — nothing in the repo ever targets staging.
 const PROTECTED_ENDPOINTS = [
   'ep-lucky-bird-amju6iqt', // prod  (NEON_DATABASE_URL)
-  'ep-calm-star-amxjxz6n',  // staging br-damp-frog-amdfxwrr (NEON_STAGING_URL)
+  'ep-mute-firefly-amq424mj',  // staging br-polished-art-am12o4ue (NEON_STAGING_URL)
 ]
 
 /** Throws unless `id` carries the fixture namespace marker. Use before any per-file scoped delete. */

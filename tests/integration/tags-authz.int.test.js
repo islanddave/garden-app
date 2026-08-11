@@ -9,7 +9,7 @@ import { handler as tagsHandler } from '../../lambda/tags/index.js'
 
 // Staging (which CI branches its ephemeral test DB from) may lag prod on the v4-tagsub migration — the
 // tag/entity_tag tables can be ABSENT there. Detect at collection and skip cleanly if so; the lock
-// self-activates once staging is reconciled (apply migrations/v4-tagsub to br-damp-frog-amdfxwrr).
+// self-activates once staging is reconciled (apply migrations/v4-tagsub to br-polished-art-am12o4ue).
 const HAS_TAGS = (await directSql`SELECT to_regclass('public.tag') IS NOT NULL AS ok`)[0].ok
 
 // ── entity-tags — custom: attach household predicate (BUG-TAGENTOWN-001, v3.74) + tag-owner gate ──

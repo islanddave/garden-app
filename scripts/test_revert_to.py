@@ -446,7 +446,7 @@ def reh_env(**over):
         REHEARSAL_MODE="1",
         DEV_BRANCH="revert-rehearsal-dev-1",
         MAIN_BRANCH="revert-rehearsal-main-1",
-        NEON_PROD_BRANCH_ID="br-damp-frog-amdfxwrr",
+        NEON_PROD_BRANCH_ID="br-polished-art-am12o4ue",
     )
     env.update(over)
     return env
@@ -572,7 +572,7 @@ def test_run_rehearsal_dump_path(monkeypatch):
     assert out["reverted_to"] == "v2.5.0"
     assert lc.calls == []  # Lambda untouched in rehearsal
     assert any(m == "POST" and u.endswith("/branches") for m, u in fr.calls)  # dump path
-    assert any("br-damp-frog-amdfxwrr/restore" in u for m, u in fr.calls)  # reset STAGING, not prod
+    assert any("br-polished-art-am12o4ue/restore" in u for m, u in fr.calls)  # reset STAGING, not prod
     assert any("revert-rehearsal-main-1" in u for m, u in fr.calls)
 
 

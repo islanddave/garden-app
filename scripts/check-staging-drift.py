@@ -4,7 +4,7 @@
 WHY THIS EXISTS
 ---------------
 Nothing keeps the staging Neon branch in sync with prod. integration-test.yml
-creates an ephemeral branch off staging (br-damp-frog-amdfxwrr) and runs the
+creates an ephemeral branch off staging (br-polished-art-am12o4ue) and runs the
 real Lambda handlers against it WITHOUT applying any migration, so staging
 silently accumulates drift. Measured 2026-07-31 while unblocking Lane C:
 10 prod-only columns, 3 prod-only constraints, and 1 staging-ONLY constraint

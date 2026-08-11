@@ -31,7 +31,7 @@ jobs:
       SNAP_VERSION: v0.0.0
       NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
       NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
-      NEON_PROD_BRANCH_ID: br-damp-frog-amdfxwrr
+      NEON_PROD_BRANCH_ID: br-polished-art-am12o4ue
       NEON_BACKUP_URL: ${{ secrets.NEON_STAGING_URL }}
       SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
       SNAP_BRANCH_PREFIX: rehearsal-snap-

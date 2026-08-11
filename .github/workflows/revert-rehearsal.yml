@@ -4,7 +4,7 @@ name: revert rehearsal (staging)
 # Unlike snap (which only CREATES and so could be pointed at staging by env alone),
 # revert-to's CODE leg mutates refs -> it CANNOT be pointed at staging by env.
 # REHEARSAL_MODE=1 redirects the code legs to throwaway revert-rehearsal-* branches,
-# resets the STAGING Neon branch (br-damp-frog-amdfxwrr) from the v0.0.0 snapshot,
+# resets the STAGING Neon branch (br-polished-art-am12o4ue) from the v0.0.0 snapshot,
 # and SKIPS the prod Lambda/CF legs (revert-to.rehearsal_guard fails closed otherwise).
 # It does NOT touch dev, main, prod DB, prod Lambda, or prod CF.
 #
@@ -130,7 +130,7 @@ jobs:
           CONFIRM_DATA_LOSS: "yes"
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
-          NEON_PROD_BRANCH_ID: br-damp-frog-amdfxwrr
+          NEON_PROD_BRANCH_ID: br-polished-art-am12o4ue
           NEON_BACKUP_URL: ${{ secrets.NEON_STAGING_URL }}
           SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
           PHOTOS_BUCKET: ${{ vars.PHOTOS_BUCKET }}

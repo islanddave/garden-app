@@ -1,6 +1,6 @@
 # .github/workflows/integration-test.yml
 # Phase 2 / RES-001: real-Postgres integration test layer.
-# Creates an ephemeral Neon branch off staging (br-damp-frog-amdfxwrr), runs the real
+# Creates an ephemeral Neon branch off staging (br-polished-art-am12o4ue), runs the real
 # Lambda handlers against it with @neondatabase/serverless (prod driver), deletes the
 # branch in always(). Catches schema/code divergence (green-tests-broken-prod class)
 # BEFORE the dev->main gate. Smoke (run-smoke.sh on staging) stays — complementary.
@@ -55,7 +55,7 @@ jobs:
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
-          NEON_PARENT_BRANCH: br-damp-frog-amdfxwrr
+          NEON_PARENT_BRANCH: br-polished-art-am12o4ue
           RUN_ID: ${{ github.run_id }}
         run: |
           BRANCH_NAME="ci-${RUN_ID}"
