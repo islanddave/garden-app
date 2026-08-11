@@ -122,6 +122,31 @@ describe('BUG-SNAPRETAKE-001 — retake stays alive after a photo is chosen', ()
     expect(screen.getByTestId('capture-input')).toBeDefined()
   })
 
+  // The persistent input has NO implicit reset any more. On main the input lived inside the
+  // photo step, so leaving and re-entering remounted it with an empty value; mounting it for the
+  // component's whole life removed that, and <input type=file> fires no change event for an
+  // identical re-pick. Without the explicit clear, retake-then-choose-the-same-photo is dead
+  // again — a narrower survival of the very bug this suite exists to pin.
+  // NOTE ON METHOD: asserting `input.value === ''` after the change is VACUOUS — jsdom does not
+  // model file-input value semantics, so it reads '' whether or not the component cleared it, and
+  // the assertion passes with the fix removed. Verified by mutation before writing this version.
+  // Recording the assignment is what actually pins the behaviour.
+  it('clears the input value on pick, so choosing the SAME file again still fires', async () => {
+    wireLists()
+    await act(async () => { render(<CaptureFlow />) })
+    const input = await screen.findByTestId('capture-input')
+    const assigned = []
+    const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+    Object.defineProperty(input, 'value', {
+      configurable: true,
+      get: () => desc.get.call(input),
+      set: (v) => { assigned.push(v); desc.set.call(input, v) },
+    })
+    const file = new File(['x'], 'same.jpg', { type: 'image/jpeg' })
+    await act(async () => { fireEvent.change(input, { target: { files: [file] } }) })
+    expect(assigned).toContain('')
+  })
+
   it('clicking Retake / choose photo opens the picker instead of silently no-opping', async () => {
     wireLists()
     await act(async () => { render(<CaptureFlow />) })

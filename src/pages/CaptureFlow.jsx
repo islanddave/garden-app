@@ -85,6 +85,15 @@ export default function CaptureFlow() {
 
   function onPick(e) {
     const f = e.target.files?.[0]
+    // Required BECAUSE the input is now permanently mounted (BUG-SNAPRETAKE-001). It used to live
+    // inside the `step === 'photo'` block, so leaving and re-entering that step remounted a fresh
+    // input with an empty value; keeping it mounted removed that implicit reset, and <input
+    // type=file> fires NO change event when you pick the identical file again. Without this line the
+    // retake fix trades one silent dead tap for a narrower one — retake, choose the same photo,
+    // nothing happens — and "Next" after a save would stall on re-picking the same file, which is a
+    // true regression against the remounting version. Same idiom, same reason, as
+    // PhotoLibrary.jsx:248 / AddSeeds.jsx:183 / PhotoUpload.jsx / QuickActions.jsx.
+    e.target.value = ''   // re-picking the same file must refire onChange
     if (!f) return
     setFile(f)
     if (preview) URL.revokeObjectURL(preview)
