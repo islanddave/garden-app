@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.9.2",
+    "date": "2026-08-11",
+    "highlights": [
+      "Fixed: on Snap, the 'Retake / choose photo' button did nothing once you had already picked a photo. It works now.",
+      "Fixed: dictating into a text box sometimes repeated words you had not said. Voice entry no longer double-counts a phrase the browser sends twice.",
+      "'Save to device' has been removed from Snap and from Log event. A web app cannot actually save into your phone's photo gallery — the button only ever opened a share sheet — so it was promising something it could not do."
+    ]
+  },
+  {
     "version": "4.9.1",
     "date": "2026-08-11",
     "highlights": [
