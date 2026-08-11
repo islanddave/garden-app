@@ -1,0 +1,69 @@
+{
+  "sha": "eeb7019dd51675d7b12df363db4b379f9767fc1e",
+  "captured": "2026-08-10",
+  "harness": "tests/harness (HARNESS_BASELINE_SHA pinned)",
+  "emulation": {
+    "engine": "Chrome DevTools mobile emulation via Browser pane",
+    "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36",
+    "maxTouchPoints": 5,
+    "devicePixelRatio": 2,
+    "safeAreaInsetBottom": 0
+  },
+  "A_save_above_fold": {
+    "predicate": "saveButton.getBoundingClientRect().bottom <= window.innerHeight",
+    "state": "planting selected, quantity filled",
+    "results": [
+      { "surface": "overlay", "viewport": "390x844", "quantity": "chip", "saveRect": { "top": 784, "bottom": 832, "height": 48, "width": 180 }, "innerHeight": 844, "aboveFold": true, "fullyVisible": true, "slackPx": 12 },
+      { "surface": "overlay", "viewport": "390x500", "quantity": "chip", "saveRect": { "top": 440, "bottom": 488, "height": 48, "width": 180 }, "innerHeight": 500, "aboveFold": true, "fullyVisible": true, "slackPx": 12 },
+      { "surface": "overlay", "viewport": "390x500", "quantity": "keypad, #harvest-quantity focused", "saveRect": { "top": 440, "bottom": 488 }, "innerHeight": 500, "aboveFold": true, "fullyVisible": true, "slackPx": 12, "quantityFieldInViewport": true },
+      { "surface": "fullpage", "viewport": "390x844", "quantity": "chip", "saveRect": { "top": 747.5, "bottom": 795.5 }, "innerHeight": 863, "layoutViewport": "399x863", "aboveFold": true, "fullyVisible": true, "slackPx": 67.5 },
+      { "surface": "fullpage", "viewport": "390x500", "quantity": "keypad, #harvest-quantity focused", "saveRect": { "top": 396, "bottom": 444 }, "innerHeight": 512, "layoutViewport": "399x512", "aboveFold": true, "fullyVisible": true, "slackPx": 68, "quantityFieldInViewport": true }
+    ],
+    "note": "overlay slack 12px is the Sheet's paddingBottom calc(12px + env(safe-area-inset-bottom)); full-page slack 68px is BOTTOM_NAV_HEIGHT_PX + 12."
+  },
+  "B_taps_per_run": {
+    "counter": "document-level capture-phase pointerdown; keypresses and scroll gestures counted separately",
+    "journey": "tests/harness/script.js header",
+    "excludes": "the taps to open the log surface (bottom-nav + -> Log one)",
+    "results": [
+      { "surface": "overlay", "n": 5, "quantity": "chip", "optionIndex": 0, "taps": 26, "keypresses": 0, "scrollGestures": 0, "perHarvest": 5.2 },
+      { "surface": "overlay", "n": 31, "quantity": "chip", "optionIndex": 0, "taps": 156, "keypresses": 0, "scrollGestures": 0, "perHarvest": 5.03 },
+      { "surface": "overlay", "n": 5, "quantity": "keypad", "optionIndex": 0, "taps": 26, "keypresses": 5, "scrollGestures": 0 },
+      { "surface": "overlay", "n": 5, "quantity": "keypad", "optionIndex": 20, "taps": 26, "keypresses": 5, "scrollGestures": 5, "note": "worst case in this fixture set" },
+      { "surface": "fullpage", "n": 5, "quantity": "chip", "optionIndex": 0, "taps": 21, "keypresses": 0, "scrollGestures": 0, "perHarvest": 4.2 },
+      { "surface": "fullpage", "n": 31, "quantity": "chip", "optionIndex": 0, "taps": 125, "keypresses": 0, "scrollGestures": 0, "perHarvest": 4.03 },
+      { "surface": "fullpage", "n": 5, "quantity": "keypad", "optionIndex": 20, "taps": 21, "keypresses": 5, "scrollGestures": 5 }
+    ],
+    "fitted_model": { "overlay": "5N + 1", "fullpage": "4N + 1" },
+    "plan_model": { "overlay": "8N + 2", "fullpage": "7N + 1" },
+    "verdict": "plan model NOT reproduced: 26 measured vs 42 predicted at N=5 overlay; 156 vs 250 at N=31"
+  },
+  "C_chip_row_wrap": {
+    "viewport": "390x844 (also checked 375x667)",
+    "chipCount": 6,
+    "gridTemplateColumns": "44px 44px 44px 44px 44px 44px",
+    "rows": 1,
+    "wrapped": false,
+    "rowHeightPx": 48,
+    "chipWidthPx": 44.0,
+    "chipHeightPx": 48,
+    "containerWidthPx": 304,
+    "withLongestLabel": { "labels_tested": ["12", "888"], "rows": 1, "wrapped": false, "chipWidthPx": 44.0 },
+    "verdict": "the row cannot wrap — repeat(6, 1fr) is a fixed 6-column grid. Long labels overflow the chip, they do not add a row.",
+    "code_comment_discrepancy": "EventNew.jsx QTY_CHIPS / SelectChip comments claim 'measured 45.2px per chip' at 375px; measured 44.0px at both 375 and 390, i.e. pinned at SelectChip's touch minWidth:44 floor, not a computed 1fr share."
+  },
+  "incidental_findings": [
+    {
+      "id": "harvest-row-horizontal-overflow",
+      "detail": "The harvest quantity row has a min-content width of 399px (chip grid 6*44 + 5*8 = 304, + 10 gap, + ~50 unit select, + 34 left inset). At 390px CSS width the Unit select's right edge lands at x=399, 9px outside the layout viewport. Identical absolute geometry at 375px width, i.e. 24px outside — the row does not reflow, it clips.",
+      "overlay_effect": "Sheet panel becomes horizontally scrollable: scrollWidth 399 vs clientWidth 390.",
+      "fullpage_effect": "Chrome expands the layout viewport to 399x863 (from 390x844) to fit the overflow, scaling the whole page down ~2.3%.",
+      "measured_at": "eeb7019, both surfaces"
+    },
+    {
+      "id": "save-overlaps-quantity-at-390x500",
+      "detail": "Scroll-position dependent, and both positions are reachable. At 390x500 overlay with the quantity field focused: scrollIntoView block='center' puts the field at 224.7-263.2 and Save at 440-488 — clear. scrollIntoView block='end' (a bottom-aligned scroll) puts the field at 461.7-500.2 against the same Save at 440-488 — the sticky Save paints over the field being typed into. Save passes the aboveFold predicate in both cases; the predicate does not detect this.",
+      "measured_at": "eeb7019, overlay, keypad mode, 390x500"
+    }
+  ]
+}

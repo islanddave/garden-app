@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- ─────────────────────────────────────────────────────────────────────────────────────────
+         VIEWPORT META COPIED VERBATIM FROM ../../index.html. DO NOT "TIDY" IT.
+         Without `width=device-width` a harness page lays out at the 980px desktop default and every
+         mobile measurement taken from it is wrong. `interactive-widget=resizes-content` is the exact
+         key (V4-KBVIEWPORT-001) that makes the LAYOUT viewport shrink when the soft keyboard opens —
+         i.e. it is the thing under test whenever a fold claim is made. If ../../index.html changes,
+         change this line to match; src/__tests__/viewportMeta.static.test.js guards the app's copy,
+         nothing guards this one.
+         ───────────────────────────────────────────────────────────────────────────────────────── -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#2d6a4f" />
+    <title>garden-app mobile layout harness</title>
+    <style>
+      html, body { margin: 0; padding: 0; }
+      /* No app-level global CSS exists (the app styles inline via src/lib/constants.js P), so this
+         page needs nothing beyond the reset the app itself relies on from the UA. */
+      #harness-badge {
+        position: fixed; top: 0; left: 0; z-index: 99999;
+        font: 10px/1.4 ui-monospace, monospace; background: #2d6a4f; color: #fff;
+        padding: 1px 5px; border-bottom-right-radius: 4px; pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="harness-badge">HARNESS</div>
+    <div id="root"></div>
+    <script type="module" src="/tests/harness/main.jsx"></script>
+  </body>
+</html>
