@@ -19,12 +19,20 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toG
 // The chips ADD to the field rather than replacing it, so the 16.8% tail (decimals, integers >6)
 // costs exactly what it costs today — no regression to trade against the win.
 const QTY_CHIPS = ['1', '2', '3', '4', '5', '6']
+
+// V4-HARVFEEDBACK-001 S5b (spec §8) — how much the bottom spacer grows while the post-save feedback
+// zone is rendered, so the last form control still clears the sticky band. CSS-DERIVED ESTIMATE,
+// not a measurement: 10px top pad + 44pt Undo row + ~18px row 2 + 12px bottom pad ≈ 84, rounded to
+// 86. jsdom returns zero rects for everything, so the real number is an ON-DEVICE measurement at
+// 390×500 keyboard-open — that check belongs to the device harness, and this constant is the single
+// place to correct it. The 120px base for the action row alone is unchanged and stays inline.
+const POST_SAVE_STRIP_SPACER_PX = 86
 import { seasonTotalPhrase } from '../lib/harvestSummary.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect, SelectChip } from '../components/forms'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
-import PostSaveFeedback from '../components/PostSaveFeedback.jsx'
+import PostSaveFeedback, { confirmBtnGhost } from '../components/PostSaveFeedback.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap, useOverlayDismiss, useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
@@ -344,15 +352,24 @@ export default function EventNew() {
   const putUpSwap = useOverlaySwap()
   const [preserveCtx, setPreserveCtx] = useState(null)
   // V4-LOGCONF-001 (C1+C2, supersedes the §7 inlineUndo timed banner): after an overlay save the
-  // sheet BODY is replaced by a DURABLE confirmation card — no timer, dismissed only by explicit
-  // action (Close / View event / Log another / Undo). Same §7 modality rationale (the global toast
-  // is AT-invisible behind aria-modal) but as a state change, not a 5s race the user always loses.
+  // user gets a DURABLE confirmation — no timer, cleared only by the next save or the overlay
+  // closing. Same §7 modality rationale (the global toast is AT-invisible behind aria-modal) but as
+  // a state change, not a 5s race the user always loses.
+  // V4-HARVFEEDBACK-001 S5b: this state no longer REPLACES the sheet body. It now feeds a
+  // non-blocking strip folded into the sticky Save band, and the form stays mounted and live
+  // underneath (see the save-sticky block below). The card's Close / Log another / View event /
+  // View planting actions are gone with it.
   // { eventId, projectId, projName, eventLabel, eventEmoji, undone, error } | null.
-  // projectId comes from the POST RESPONSE (not staged client state) — it builds the View link.
+  // projectId still comes from the POST RESPONSE (not staged client state).
   const [confirmation, setConfirmation] = useState(null)
-  // V4-HARVESTVIEW-001 S4a: ambient "Season: 4.5 cups blueberry" line on the harvest confirmation
-  // card (design §2 loop-closer). STATIC text, best-effort, overlay-only. Null unless the just-logged
-  // harvest resolved a crop AND the post-save aggregates GET returned a total.
+  // V4-HARVFEEDBACK-001 S5b (spec §7): burst signal — successful overlay saves since this mount.
+  // A plain integer that dies with the overlay. Counts ALL event types (the burst property is the
+  // count, not the crop) and is NEVER an identity or role check: Jen on a 12-harvest day gets the
+  // count, Dave logging one watering does not. Rendered only at >= 2 (see PostSaveFeedback).
+  const [savesThisSession, setSavesThisSession] = useState(0)
+  // V4-HARVESTVIEW-001 S4a: ambient "Season: 4.5 cups blueberry (whole garden)" line on the
+  // post-save feedback (design §2 loop-closer). STATIC text, best-effort, overlay-only. Null unless
+  // the just-logged harvest resolved a crop AND the post-save aggregates GET returned a total.
   const [seasonLine, setSeasonLine] = useState(null)
   const dismissOverlay = useOverlayDismiss()
   const [metadataState, setMetadataState] = useState({})
@@ -527,10 +544,16 @@ export default function EventNew() {
   // the draft stash above keeps the bytes recoverable). BROADER than the stash predicate: it also
   // counts the non-stashed panels (photo, harvest qty, metadata, treatment, container, issue text)
   // whose loss a dismiss makes unrecoverable. Deliberately EXCLUDES bare event_type/plant_id picks —
-  // sticky/deep-link seeding would otherwise lock the backdrop on every pristine mount. False while
-  // the confirmation card shows (already saved — the card must stay backdrop-dismissable). No-op on
+  // sticky/deep-link seeding would otherwise lock the backdrop on every pristine mount. No-op on
   // the full page (no provider).
-  useReportOverlayDirty(!confirmation && !!(
+  // V4-HARVFEEDBACK-001 S5b: the `!confirmation &&` prefix is DELETED. It existed because the card
+  // replaced the body — nothing was typeable, so reporting clean kept the card backdrop-dismissable.
+  // With the form live for the whole burst, that prefix would pin dirty=false for the rest of the
+  // session and a stray backdrop tap would discard genuinely-unsaved harvest #2. The spec (§3)
+  // names "keep reporting dirty=false post-save" as the BUG, not the fix. Post-save the predicate
+  // reads clean on its own anyway, because resetForNext() has just cleared the fields it counts —
+  // which is why EventNewOverlayDirty's post-save pin stays green unchanged.
+  useReportOverlayDirty(!!(
     form.notes || form.private_notes || form.quantity ||
     photoFile || harvest.quantity || harvest.weight ||
     Object.keys(metadataState).length ||
@@ -962,15 +985,18 @@ export default function EventNew() {
     // ambient per Reward-UX V101 — never dispatched here.
     if (eventId) {
       if (inOverlay) {
-        // V4-LOGCONF-001 (C1+C2): durable confirmation card replaces the sheet body — no timer.
-        // Global toast is skipped (AT-invisible behind aria-modal, §7). projectId is taken from the
-        // POST RESPONSE so the View link can never point at a stale/mismatched client-side project.
+        // V4-LOGCONF-001 (C1+C2) / V4-HARVFEEDBACK-001 S5b: durable confirmation, no timer — now a
+        // non-blocking strip in the sticky band rather than a body-replacing card. Global toast is
+        // still skipped (AT-invisible behind aria-modal, §7).
+        // Spec §7: the burst signal increments HERE, on a confirmed successful save only.
+        setSavesThisSession(n => n + 1)
         setConfirmation({
           eventId,
           projectId: result.project_id ?? null,
-          // V4-VIEWPLANT-001: plantId gates + builds the "View planting" action. RESPONSE-sourced
-          // (same event row as project_id, so the pair corresponds by construction — the project-
-          // scoped planting route's ownership guard, PlantingDetail.jsx:126, is satisfied).
+          // plantId is RESPONSE-sourced (the saved row's truth). V4-HARVFEEDBACK-001 S5b: it no
+          // longer builds a "View planting" link (§4.2 dropped it — FLAGGED for Dave as a real
+          // regression against shipped V4-VIEWPLANT-001); it now only gates whether the
+          // confirmation names a planting or says "no planting attached" (V4-LOGTARGET-001).
           plantId: result.plant_id ?? null,
           plantName,
           projName,
@@ -981,14 +1007,19 @@ export default function EventNew() {
           photoError,
         })
         // V4-HARVESTVIEW-001 S4a: post-save season-total line (design §2 loop-closer). Cleared first
-        // so a prior harvest's total can never flash on this card; then a harvest-only aggregates GET
-        // fills it. Best-effort + STATIC text: renders nothing on failure, adds no link (the card's
-        // link count is a pinned B5 invariant), and does not touch confirmPhase, so focus stays put.
+        // so a prior harvest's total can never flash on this strip; then a harvest-only aggregates
+        // GET fills it. Best-effort + STATIC text: renders nothing on failure, adds no link (the
+        // strip's zero-link count is a pinned invariant).
+        // V4-HARVFEEDBACK-001 S5b (spec §4.3) — NEW: the phrase states its SCOPE. This aggregate is
+        // HOUSEHOLD-scoped, so unqualified it silently includes Jen's harvests and reads to each
+        // user as "mine". The `Season: ` prefix is preserved so anchored /^Season: / assertions
+        // still hold. `(whole garden)` is the shipped DEFAULT — the disclosure is non-negotiable,
+        // the exact wording is open for Dave (spec §10.2).
         setSeasonLine(null)
         if (isHarvest && seasonCropSlug) {
           apiFetch(`/api/harvests?include=aggregates&crop=${encodeURIComponent(seasonCropSlug)}`)
-            .then(d => { const phrase = seasonTotalPhrase(d?.aggregates?.crops?.[0]); if (phrase) setSeasonLine(`Season: ${phrase}`) })
-            .catch(() => { /* ambient — the card never surfaces a harvests-read failure */ })
+            .then(d => { const phrase = seasonTotalPhrase(d?.aggregates?.crops?.[0]); if (phrase) setSeasonLine(`Season: ${phrase} (whole garden)`) })
+            .catch(() => { /* ambient — the strip never surfaces a harvests-read failure */ })
         }
       } else {
         // Non-overlay (full page) DELIBERATELY keeps the global operational toast: outside the
@@ -1011,31 +1042,18 @@ export default function EventNew() {
     }
   }
 
-  // ── V4-LOGCONF-001 (C1+C2): durable overlay confirmation — replaces the sheet body ──
-  // V4-HARVFEEDBACK-001 S5a: the card itself now lives in components/PostSaveFeedback.jsx (a pure
-  // extraction, so S5b can be reverted on its own). This `inOverlay && confirmation` guard is the
-  // RENDER DECISION and stays here — `inOverlay` is deliberately not passed down, so the card never
-  // couples to the overlay-surface signal. PreserveOffer is INJECTED rather than imported by the
-  // card: it is DOUBLE-HOSTED (here and in the form body below, which covers the full-page path and
-  // the post-"Log another" form), and its single definition stays in this file.
-  if (inOverlay && confirmation) {
-    return (
-      <PostSaveFeedback
-        confirmation={confirmation}
-        seasonLine={seasonLine}
-        preserve={preserveCtx ? {
-          Component: PreserveOffer,
-          onOpen: () => putUpSwap('/put-up', { state: { prefill: preserveCtx.prefill } }),
-          onDismiss: () => setPreserveCtx(null),
-        } : null}
-        actions={{
-          onUndo: undoEvent,
-          onLogAnother: () => { setConfirmation(null); setSeasonLine(null) },
-          onClose: dismissOverlay,
-        }}
-      />
-    )
-  }
+  // ── V4-HARVFEEDBACK-001 S5b: the body-replacing early return is DELETED ────────────────────
+  // What used to sit here: `if (inOverlay && confirmation) return <PostSaveFeedback …/>` — an early
+  // return that UNMOUNTED the whole form and made "Log another" the only way back. Measured
+  // on-device (harness at eeb7019): overlay 5N+1 taps vs full-page 4N+1 for N harvests — the whole
+  // difference IS that dismissal, exactly 1 tap per harvest, ~20% of the per-harvest interaction,
+  // spent undoing the UI's own takeover. The `inOverlay && confirmation` guard survives as the RENDER
+  // DECISION — it just gates a strip inside the sticky Save band now (see save-sticky below)
+  // instead of gating the whole return, so the form stays mounted and live through a burst.
+  // Gone with it: Close, Log another, View event, View planting, and the card's PreserveOffer host
+  // (with the form live, both hosts would mount at once — spec §4.5; the form-body host below is
+  // now the only one and covers every path).
+  const showPostSaveStrip = inOverlay && !!confirmation
 
   // ── V4-HARVFORMORDER-001 (S4) — ONE definition per block, TWO orders ──
   // The form body used to be a single fixed sequence. Harvest needs a different one (Planting →
@@ -1673,8 +1691,14 @@ export default function EventNew() {
           )}
 
           {/* ── Floating Save — V3-EVENT-005 (Dave to eyeball bottom offset) ── */}
-          {/* Spacer so content isn't hidden behind the sticky button */}
-          <div style={{ height: 120 }} aria-hidden="true" />
+          {/* Spacer so content isn't hidden behind the sticky band.
+              V4-HARVFEEDBACK-001 S5b (spec §8) — RULE, not a magic number: spacer = rendered
+              sticky-band height + ~56px slack. The 120 base is the shipped value for the action row
+              alone (44pt control + padding + slack) and is deliberately unchanged, so the pre-save
+              and full-page layouts stay byte-identical. It grows by the feedback zone's height only
+              while that zone renders. Both numbers are CSS-derived estimates: jsdom returns zero
+              rects, so the actual band height is an ON-DEVICE measurement (see the handoff). */}
+          <div style={{ height: 120 + (showPostSaveStrip ? POST_SAVE_STRIP_SPACER_PX : 0) }} aria-hidden="true" />
           {/* V4-OVERLAY-001 Slice 2 (§6, BUG-SHEET-001 class): sticky, NOT fixed. `fixed` positions
               against the viewport, so inside a Sheet (which sets no transform/containing block) the
               CTA escaped the panel's scroll region and painted over the sheet at the same z200. sticky
@@ -1708,6 +1732,19 @@ export default function EventNew() {
           {/* No aria-hidden: `visibility: hidden` already removes the subtree from the a11y tree AND
               from the tab order, so adding it would only create the aria-hidden-with-focusable-
               descendant anti-pattern axe flags. */}
+          {/* V4-HARVFEEDBACK-001 S5b (spec §2): the band is MULTI-ROW now — feedback zone (rows 1-2,
+              conditional) stacked above the action zone (row 3, always). Folding the strip in here
+              rather than anchoring it to the top of the sheet is chosen for, in order of weight:
+              (1) ZERO SACCADE — feedback appears where the thumb just was; a top-anchored strip
+              forces a full-viewport reorientation after a bottom Save tap, the exact attention-
+              residue mechanism the Reward UX rule exists to prevent; (2) Undo cannot scroll away;
+              (3) it is sticky-IN-FLOW inside the Sheet's scrollport, so it never paints over garden
+              content and is therefore not a banned snackbar/banner/popover; (4) at ~500px, merging
+              into the Save band is the only version that fits.
+              The V4-PICKERUX-001 suppression stays on the WHOLE band, not just the action row: the
+              band is taller now, so it occludes MORE of a downward-opening listbox, which makes the
+              suppression more load-bearing than before, not less. Undo is hidden only for as long as
+              the listbox is open. */}
           <div
             data-testid="save-sticky"
             style={{
@@ -1715,35 +1752,84 @@ export default function EventNew() {
               bottom: inOverlay ? 0 : BOTTOM_NAV_HEIGHT_PX + 12,
               zIndex: 1,
               display: 'flex',
-              justifyContent: 'flex-end',
+              flexDirection: 'column',
               visibility: pickerOpen ? 'hidden' : 'visible',
               pointerEvents: pickerOpen ? 'none' : 'auto',
+              // Opaque only while the feedback zone renders. Pre-save the band stays transparent —
+              // byte-identical to the shipped look, where the shadowed Save floats over the form.
+              ...(showPostSaveStrip ? { backgroundColor: P.cream, borderTop: `1px solid ${P.border}` } : null),
             }}
           >
-            {/* V4-EVENTSAVE-001 (Dave): one Save = the former "Next of Type" behavior
-                (keep the event_type, clear the plant, stay on the form for the next plant).
-                The old "Next of Plant" button was rarely used and was removed. */}
-            <Button
-              type="button"
-              variant="primary"
-              loading={saving}
-              // BUG-PHOTOUPLOADHANG-001: while the photo leg runs, name the step + live % (same
-              // labels as PhotoUpload) — a minutes-long "Saving…" with no signal is how a dead
-              // upload hid inside the event save. Falls back to "Saving…" for the event POST.
-              loadingLabel={
-                photoUploader.stage === 'preparing' ? 'Preparing photo…' :
-                photoUploader.stage === 'uploading' ? (typeof photoUploader.progress === 'number' ? `Uploading photo… ${photoUploader.progress}%` : 'Uploading photo…') :
-                photoUploader.stage === 'saving' ? 'Saving photo…' :
-                'Saving…'
-              }
-              onClick={e => handleSubmit(e, { keepMode: 'type' })}
-              style={{
-                boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
-                minWidth: 180,
-              }}
-            >
-              Save
-            </Button>
+            {showPostSaveStrip && (
+              <PostSaveFeedback
+                confirmation={confirmation}
+                seasonLine={seasonLine}
+                savesThisSession={savesThisSession}
+                actions={{ onUndo: undoEvent }}
+              />
+            )}
+            {/* ── ACTION ZONE (row 3) — three functions, three corners (spec §2). Save keeps the
+                right (do NOT move it); Done takes the left, diagonally opposite, for maximum thumb
+                separation; Undo is row 1 right. Undo above Save is unavoidable once those two are
+                placed, and is MITIGATED rather than eliminated, deliberately: all four mis-tap
+                outcomes are visible and one-tap-recoverable. The mandated mitigation is the ≥20px
+                vertical clearance between Undo's bottom edge and Save's top edge, held even when
+                row 2 is absent — the feedback zone's 12px bottom padding plus this row's 12px top
+                padding give 24px unconditionally. CSS-derived; jsdom cannot measure it. */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              justifyContent: inOverlay ? 'space-between' : 'flex-end',
+              paddingTop: showPostSaveStrip ? 12 : 0,
+              paddingBottom: showPostSaveStrip ? 'calc(10px + env(safe-area-inset-bottom))' : 0,
+              paddingLeft: showPostSaveStrip ? 12 : 0,
+              paddingRight: showPostSaveStrip ? 12 : 0,
+            }}>
+              {/* V4-HARVFEEDBACK-001 S5b (spec §3) — `Done`, present from MOUNT, not only after a
+                  save. Load-bearing: a control that materialises only post-save is one the user
+                  never learns exists, and the exit is needed MOST when abandoning before saving.
+                  Sheet.jsx does render a labelled 44×44 Close for every consumer, but it is an
+                  icon-only X at the top of a scrollport that scrolls — at 390×500 keyboard-open it
+                  is off-screen, and the backdrop (the one large easy target) locks the moment the
+                  user types. So this is a VISIBILITY fix, not an existence one.
+                  Label deliberately differs from the Sheet header's `Close` so the two exits do not
+                  read as duplicates, and names the USER's state rather than a UI mechanic (already
+                  the app's vocabulary here — LogMany's result screen). Dismisses even while dirty,
+                  exactly as the Sheet's own Close does; no confirmation dialog (modals are a banned
+                  channel). Overlay-only: on the full page there is no overlay to dismiss and the
+                  arm must stay untouched.
+                  STATED LOSS (accepted, spec §3): Done with a half-typed harvest quantity discards
+                  it — DRAFT_FORM_FIELDS does not cover harvest.quantity/weight. NOT a regression;
+                  Escape and Android Back already do exactly this. */}
+              {inOverlay && (
+                <button type="button" onClick={dismissOverlay} style={confirmBtnGhost}>
+                  Done
+                </button>
+              )}
+              {/* V4-EVENTSAVE-001 (Dave): one Save = the former "Next of Type" behavior
+                  (keep the event_type, clear the plant, stay on the form for the next plant).
+                  The old "Next of Plant" button was rarely used and was removed. */}
+              <Button
+                type="button"
+                variant="primary"
+                loading={saving}
+                // BUG-PHOTOUPLOADHANG-001: while the photo leg runs, name the step + live % (same
+                // labels as PhotoUpload) — a minutes-long "Saving…" with no signal is how a dead
+                // upload hid inside the event save. Falls back to "Saving…" for the event POST.
+                loadingLabel={
+                  photoUploader.stage === 'preparing' ? 'Preparing photo…' :
+                  photoUploader.stage === 'uploading' ? (typeof photoUploader.progress === 'number' ? `Uploading photo… ${photoUploader.progress}%` : 'Uploading photo…') :
+                  photoUploader.stage === 'saving' ? 'Saving photo…' :
+                  'Saving…'
+                }
+                onClick={e => handleSubmit(e, { keepMode: 'type' })}
+                style={{
+                  boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
+                  minWidth: 180,
+                }}
+              >
+                Save
+              </Button>
+            </div>
           </div>
 
 

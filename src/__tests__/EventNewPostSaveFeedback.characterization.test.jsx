@@ -19,7 +19,7 @@
 // it reads does not parse).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 
 installStoragePolyfill()
@@ -122,12 +122,17 @@ beforeEach(() => {
   wireApiFetch()
 })
 
-// ── 1. PreserveOffer double-hosting (V4-HARVESTCENTER-001 L9) ────────────────────────────────
-// The offer has TWO independent render sites: one on the confirmation card, one in the form body.
-// The second is not a duplicate — it covers the full-page path AND the post-"Log another" form,
-// because preserveCtx deliberately survives card dismissal so the habit-stack offer isn't lost.
-describe('S5a characterization — PreserveOffer is double-hosted', () => {
-  it('(a) card path: a logged harvest renders the preserve offer ON the confirmation card', async () => {
+// ── 1. PreserveOffer hosting (V4-HARVESTCENTER-001 L9) ───────────────────────────────────────
+// S5a: the offer had TWO independent render sites — one on the confirmation card, one in the form
+// body — and only the card's was ever mounted at a time, because the card unmounted the form.
+// S5b: the card is gone and the form stays live, so DOUBLE-HOSTING WOULD MOUNT BOTH AT ONCE. The
+// `preserve` prop was dropped from PostSaveFeedback entirely (spec §4.5) and the form-body host is
+// now the ONLY one — it already covered the full-page path and the post-dismissal form, so it
+// covers every path unchanged. Per spec §9 the count assertion is RESCOPED, not deleted: it still
+// pins "exactly one host renders", which is now a stronger claim than it was (before, the two
+// hosts were mutually exclusive by construction; now nothing but this pin stops a duplicate).
+describe('S5a/S5b characterization — exactly ONE PreserveOffer host renders', () => {
+  it('(a) a logged harvest renders the preserve offer exactly once, with the form still live', async () => {
     dataRef.plants = [{ id: 'pl-1', name: 'Roma #1', variety_ref: { id: 'v-1', crop_type_slug: 'tomato' } }]
     renderInOverlay('event_type=harvest')
     await flushLoad()
@@ -136,17 +141,18 @@ describe('S5a characterization — PreserveOffer is double-hosted', () => {
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '2' } })
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 
-    // we are on the card (form body is gone) and the offer is here with it
-    expect(screen.queryByText('Save')).toBeNull()
+    // S5b INVERSION (spec §9): was `expect(queryByText('Save')).toBeNull()` — the pin on the
+    // body-replacing early return. The form surviving the save IS the slice.
+    expect(screen.getByText('Save')).toBeTruthy()
     expect(screen.getByRole('status').textContent).toMatch(/Logged/)
     expect(screen.getByText(PRESERVE_PROMPT)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Log a put-up' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Not now' })).toBeTruthy()
-    // exactly one host is mounted at a time — the card's
+    // THE load-bearing assertion of this file post-S5b: exactly one host, never two
     expect(screen.getAllByText(PRESERVE_PROMPT).length).toBe(1)
   })
 
-  it('(b) SECOND HOST: after Log another dismisses the card, the offer still renders in the form body', async () => {
+  it('(b) the SURVIVING host is genuinely dismissible, and the strip is unaffected by dismissing it', async () => {
     dataRef.plants = [{ id: 'pl-1', name: 'Roma #1', variety_ref: { id: 'v-1', crop_type_slug: 'tomato' } }]
     renderInOverlay('event_type=harvest')
     await flushLoad()
@@ -154,19 +160,21 @@ describe('S5a characterization — PreserveOffer is double-hosted', () => {
     await pickPlanting('pl-1')
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '2' } })
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log another' })) })
-
-    // card is gone, form is back — and the offer survived the dismissal from its OWN host
+    // NOTE: the `Log another` click that used to sit here is GONE — that dismissal is exactly the
+    // tap S5b removes, and the offer is reachable with no intervening click at all.
     expect(screen.getByText('Save')).toBeTruthy()
     expect(screen.getAllByText(PRESERVE_PROMPT).length).toBe(1)
     expect(screen.getByRole('button', { name: 'Log a put-up' })).toBeTruthy()
 
-    // and it is genuinely dismissible from this host
+    // still dismissible from this host...
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Not now' })) })
     expect(screen.queryByText(PRESERVE_PROMPT)).toBeNull()
+    // ...and dismissing the ambient offer does not take the confirmation/undo path with it
+    expect(screen.getByTestId('post-save-strip')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /undo/i })).toBeTruthy()
   })
 
-  it('(c) full-page path: no card, but the form-body host still offers it', async () => {
+  it('(c) full-page path: no strip, but the form-body host still offers it', async () => {
     dataRef.plants = [{ id: 'pl-1', name: 'Roma #1', variety_ref: { id: 'v-1', crop_type_slug: 'tomato' } }]
     renderFullPage('event_type=harvest')
     await flushLoad()
@@ -194,7 +202,7 @@ describe('S5a characterization — PreserveOffer is double-hosted', () => {
 // resetForNext(keepMode) (~:950) clears form.plant_id. If the feedback call ever moves after the
 // reset, the card loses BOTH the planting name and the season line — and no other test notices.
 describe('S5a characterization — client-state capture happens BEFORE resetForNext', () => {
-  it('the card names the planting AND shows the season line, even though the reset cleared plant_id', async () => {
+  it('the confirmation names the planting AND shows the season line, even though the reset cleared plant_id', async () => {
     dataRef.plants = [{ id: 'pl-1', name: 'Roma #1', variety_ref: { id: 'v-1', crop_type_slug: 'tomato' } }]
     // response carries plant_id, so the card renders the plantName-bearing arm
     dataRef.postResult = { id: 'evt-9', project_id: 'proj-1', plant_id: 'pl-1' }
@@ -216,7 +224,8 @@ describe('S5a characterization — client-state capture happens BEFORE resetForN
 
     // (iii) the reset genuinely DID clear form.plant_id — which is what makes (i)+(ii) an
     //       ordering proof rather than a coincidence: read after the reset, both would be empty.
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Log another' })) })
+    //       S5b: read directly off the LIVE form; the `Log another` click that used to be needed
+    //       here is the tap this slice removes, so its absence is part of what is being pinned.
     expect(screen.getByLabelText('Plant or group').value).toBe('')
     expect(screen.getByLabelText('Project').value).toBe('proj-1')  // project is deliberately kept
   })
@@ -240,8 +249,8 @@ describe('S5a characterization — client-state capture happens BEFORE resetForN
 // One variable (photoError, ~:908-919) feeds two renderings: the overlay card's role=alert
 // (~:1066-1070) and the full-page toast's message text (~:993-998). BUG-PHOTOUPLOADHANG-001: a
 // swallowed photo failure must stay VISIBLE on whichever surface the user is actually on.
-describe('S5a characterization — photoError reaches both the card and the toast', () => {
-  it('overlay arm: the card surfaces the photo failure as an alert, and the event still logged', async () => {
+describe('S5a characterization — photoError reaches both the strip and the toast', () => {
+  it('overlay arm: the strip surfaces the photo failure as an alert, and the event still logged', async () => {
     uploadRef.result = { error: 'S3 rejected the upload' }
     const { container } = renderInOverlay('event_type=watering')
     await flushLoad()
@@ -256,8 +265,14 @@ describe('S5a characterization — photoError reaches both the card and the toas
     const alert = screen.getByRole('alert')
     expect(alert.textContent).toMatch(/photo didn't upload/)
     expect(alert.textContent).toMatch(/S3 rejected the upload/)
-    // static text, no extra link: View event stays the only link (B5 invariant)
-    expect(screen.getAllByRole('link').length).toBe(1)
+    // RESCOPED B5 link invariant (spec §0.2/§9). Was `getAllByRole('link').length === 1`, holding
+    // only because the card unmounted the form; the live form's own header links make the
+    // document-wide count 3+ for reasons unrelated to this surface. Scoped to the strip, the intent
+    // survives and strengthens: the feedback surface contributes NO link at all.
+    expect(within(screen.getByTestId('post-save-strip')).queryAllByRole('link')).toHaveLength(0)
+    // and there is exactly ONE alert node, not one per failure (spec §4.4/§6) — photoError and an
+    // undo error can co-occur, and every test here uses singular getByRole('alert')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
   })
 
   it('full-page arm: the same failure rides the global undo toast text', async () => {
@@ -272,6 +287,25 @@ describe('S5a characterization — photoError reaches both the card and the toas
     const toast = screen.getByRole('status')
     expect(toast.textContent).toMatch(/Logged event for Tomatoes 2026/)
     expect(toast.textContent).toMatch(/but the photo didn't upload/)
+  })
+
+  // S5b (spec §4.4/§6): photoError and an undo error CAN co-occur. Before S5b they were two
+  // separate role="alert" nodes while every test in the codebase used singular getByRole('alert') —
+  // i.e. the second alert would have thrown, not been caught. One container now holds both.
+  it('a photo failure and a failed undo share ONE alert node', async () => {
+    uploadRef.result = { error: 'S3 rejected the upload' }
+    dataRef.deleteError = new Error('boom')
+    const { container } = renderInOverlay('event_type=watering')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    stagePhoto(container)
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /undo/i })) })
+
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toMatch(/undo/i)
+    expect(alert.textContent).toMatch(/photo didn't upload/)
   })
 
   it('a clean photo upload adds no failure text to either arm', async () => {
