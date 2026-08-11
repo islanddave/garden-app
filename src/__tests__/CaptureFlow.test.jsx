@@ -70,7 +70,10 @@ describe('CaptureFlow — V3-CAPTURE-001', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('cap-save')) })
     await waitFor(() => expect(screen.getByTestId('cap-undo')).toBeDefined())
     await act(async () => { fireEvent.click(screen.getByTestId('cap-next')) })
-    await waitFor(() => expect(screen.getByTestId('capture-input')).toBeDefined()) // back to photo step
+    // BUG-SNAPRETAKE-001: this used to assert on `capture-input`, which is now mounted in EVERY
+    // step, so that assertion could no longer fail and stopped meaning "back to photo step".
+    // cap-take is photo-step-only, so it still pins the reset the test is named for.
+    await waitFor(() => expect(screen.getByTestId('cap-take')).toBeDefined()) // back to photo step
   })
 
   it('log-event mode derives project_id + plant_id from the picked planting', async () => {
@@ -102,5 +105,37 @@ describe('CaptureFlow — V3-CAPTURE-001', () => {
     expect(choose).toBeTruthy()
     expect(take.textContent).toContain('Take photo')
     expect(choose.textContent).toContain('Choose photo')
+  })
+})
+
+// BUG-SNAPRETAKE-001 — "Retake / choose photo" was dead once a photo had been selected.
+// The control lives in step 'mode', which is only reachable AFTER onPick() advances the step —
+// and the file input used to render only in step 'photo', so by the time the button existed its
+// ref was null and openPicker() hit `if (!el) return`. No picker, no camera, no clear, no error.
+// These pin the two halves: the input survives the step change, and the button actually drives it.
+describe('BUG-SNAPRETAKE-001 — retake stays alive after a photo is chosen', () => {
+  it('the file input is still mounted once the flow has advanced past the photo step', async () => {
+    wireLists()
+    await act(async () => { render(<CaptureFlow />) })
+    await snapTo('mode-planting')                      // now in step 'form', well past 'photo'
+    expect(screen.queryByTestId('cap-take')).toBeNull() // proves we really left the photo step
+    expect(screen.getByTestId('capture-input')).toBeDefined()
+  })
+
+  it('clicking Retake / choose photo opens the picker instead of silently no-opping', async () => {
+    wireLists()
+    await act(async () => { render(<CaptureFlow />) })
+    const file = new File(['x'], 'a.jpg', { type: 'image/jpeg' })
+    await waitFor(() => expect(screen.getByTestId('capture-input')).toBeDefined())
+    await act(async () => { fireEvent.change(screen.getByTestId('capture-input'), { target: { files: [file] } }) })
+    // step 'mode' — where the Retake control lives and where the bug bit
+    const retake = await screen.findByText('Retake / choose photo')
+    const input = screen.getByTestId('capture-input')
+    const clickSpy = vi.spyOn(input, 'click').mockImplementation(() => {})
+    await act(async () => { fireEvent.click(retake) })
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+    // and it must ask for the library, not force the camera (V4-SNAPPICK-001 semantics preserved)
+    expect(input.getAttribute('capture')).toBeNull()
+    clickSpy.mockRestore()
   })
 })

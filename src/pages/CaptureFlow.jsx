@@ -162,6 +162,16 @@ export default function CaptureFlow() {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: 16 }}>
+      {/* BUG-SNAPRETAKE-001 — this input is mounted for EVERY step, deliberately, and must stay
+          that way. It used to live inside the `step === 'photo'` block, but the "Retake / choose
+          photo" control sits in `step === 'mode'`, i.e. it is only reachable AFTER onPick() has
+          advanced the step and unmounted the input. openPicker() then read a null fileRef and hit
+          its `if (!el) return`, so the tap produced no picker, no camera, no clear and no error —
+          the button was dead in exactly the state it exists to serve.
+          The early return is correct defensively; the bug was the ref being legitimately null.
+          Keeping the input outside the step conditionals is what makes it never null. */}
+      <input ref={fileRef} data-testid="capture-input" type="file" accept="image/*" onChange={onPick} style={{ display: 'none' }} />
+
       {preview && (
         <div style={{ marginBottom: 14 }}>
           <img src={preview} alt="capture preview" style={{ width: '100%', maxHeight: 280, objectFit: 'cover', borderRadius: 10, display: 'block' }} />
@@ -179,7 +189,6 @@ export default function CaptureFlow() {
       {step === 'photo' && (
         <div style={{ ...card, textAlign: 'center' }}>
           <p style={{ color: P.mid, marginTop: 0 }}>Take or choose a photo to begin.</p>
-          <input ref={fileRef} data-testid="capture-input" type="file" accept="image/*" onChange={onPick} style={{ display: 'none' }} />
           <div style={{ display: 'flex', gap: 10 }}>
             <button data-testid="cap-take" type="button" onClick={() => openPicker(true)} style={pickBtn}>
               <span style={{ fontSize: '1.3rem' }}>📷</span><span>Take photo</span>
