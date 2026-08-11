@@ -6,7 +6,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 import { EVENT_TYPE_META, requiresPlanting } from '../lib/eventTypes.js'
-import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
+import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
@@ -1125,7 +1125,7 @@ export default function EventNew() {
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
                 >✕</button>
-                <button
+                {!SAVE_TO_DEVICE_HIDDEN && <button
                   type="button"
                   onClick={() => saveFileToDevice(photoFile)}
                   aria-label="Save photo to device"
@@ -1135,7 +1135,7 @@ export default function EventNew() {
                     border: 'none', borderRadius: 8, padding: '5px 10px',
                     cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600,
                   }}
-                >Save to device</button>
+                >Save to device</button>}
               </div>
             ) : (
               <div>

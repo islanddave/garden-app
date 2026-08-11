@@ -222,3 +222,15 @@ export const DISMISS_REGISTRY_ENABLED = true
 // history.length after boot identical to pre-change — pinned by the "flag OFF is provably inert"
 // suite in BackNav.history.test.jsx, which also carries the real-history harness self-test.
 export const BACKNAV_ENABLED = true
+
+// V4-SNAPDEST-001 (BD0806-08, Dave 2026-08-06): "hide Save to Device app-wide".
+// Two surfaces carry the control — Snap (CaptureFlow) and Log event (EventNew) — so "app-wide"
+// means both, and gating them on one const keeps them from drifting apart.
+// WHY hidden rather than fixed: src/lib/saveFileToDevice.js can only reach the gallery via
+// navigator.share({files}) (a share sheet the user must complete) with a download fallback. A PWA
+// on Chrome Android cannot write to the device gallery directly, so the control cannot do what its
+// label promises — which is the finding V4-SNAPCAPTURE-001 (BD0806-06) asked for. Hiding it is the
+// honest state until/unless that platform capability changes.
+// Rollback is one const: flip false + redeploy and both buttons return. The flag-OFF path is the
+// lever, not dead code, and both branches are covered by SaveToDevice.flag.test.jsx.
+export const SAVE_TO_DEVICE_HIDDEN = true

@@ -12,6 +12,7 @@
 // take/choose picker and the mode cards are distinct affordances and keep their own styling.
 import React, { useState, useEffect, useRef } from 'react'
 import { saveFileToDevice } from '../lib/saveFileToDevice.js'
+import { SAVE_TO_DEVICE_HIDDEN } from '../lib/featureFlags.js'
 import { useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
@@ -175,7 +176,7 @@ export default function CaptureFlow() {
       {preview && (
         <div style={{ marginBottom: 14 }}>
           <img src={preview} alt="capture preview" style={{ width: '100%', maxHeight: 280, objectFit: 'cover', borderRadius: 10, display: 'block' }} />
-          {file && (
+          {file && !SAVE_TO_DEVICE_HIDDEN && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
               <button type="button" onClick={() => saveFileToDevice(file)} aria-label="Save photo to device"
                 style={{ border: `1px solid ${P.border}`, borderRadius: 8, padding: '5px 12px', background: P.white, color: P.mid, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
