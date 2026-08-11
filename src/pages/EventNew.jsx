@@ -1338,41 +1338,57 @@ export default function EventNew() {
   const harvestBlock = (
           form.event_type === 'harvest' && (
             <Section label="Harvest *">
+              {/* V4-HARVQTYCHIPS-001 — quick-pick chips ABOVE the field, not replacing it.
+                  A chip fills the quantity in ONE tap with no keyboard; the field below is
+                  untouched, so the 16.8% of harvests outside 1-6 cost exactly what they cost
+                  today. Pure addition, no regression on the tail — which is why there is no
+                  "More" affordance: the field IS the more affordance.
+                  Sits outside <Field> deliberately: Field's frozen contract takes EXACTLY ONE
+                  focusable control and clones ARIA onto it (components/forms/Field.jsx), so a
+                  chip group inside it would trip contractWarn and steal the input's wiring.
+                  Composed from the frozen SelectChip primitive, not a new one (FROZEN.md).
+
+                  BUG-HARVROWOVERFLOW-001 + BUG-HARVUNITVIS-001 — the chip grid is a FULL-WIDTH
+                  sibling of the quantity/unit row, NOT nested in that row's flex:2 column.
+                  It used to live inside that column, which made both filed defects one defect:
+                  six touch chips are minWidth 44 (SelectChip `touch`), so the grid demands
+                  6*44 + 5*8 = 304px of min-content, and asking for 304px inside two-thirds of the
+                  row forced the whole row to a 399px min-content against a 390px viewport — the
+                  overlay Sheet scrolled sideways and the full page scaled down ~2.3%. The same
+                  nesting put the unit <Select> beside the CHIPS rather than beside the quantity
+                  input, squeezing it to its ~85px minimum where the selected unit is not legible
+                  ("it's very easy to miss the unit") — a data-integrity bug on the one form whose
+                  purpose is quantity capture, since a wrong-unit harvest logs unnoticed.
+                  Full width gives the grid its 304px with room to spare at 390px AND lets the unit
+                  take a full third of the row beside the input it actually modifies.
+                  The chips are KEPT — Dave's call, they measured 83.2% of quantities — and the
+                  <Select> is untouched (replacing it with chips breaks Field's one-control contract). */}
+              <div
+                role="group"
+                aria-label="Harvest quantity quick pick"
+                // Grid, not flex-wrap: six equal columns keep the row on ONE line at 375px
+                // instead of wrapping to two and doubling the block height from 48px to 104px
+                // on the fast path. At full width the 304px min-content clears 375px outright.
+                style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 8 }}
+              >
+                {QTY_CHIPS.map(q => (
+                  <SelectChip
+                    key={q}
+                    active={harvest.quantity === q}
+                    onClick={() => {
+                      setHarvest(h => ({ ...h, quantity: q }))
+                      if (harvestError) setHarvestError(null)
+                    }}
+                    touch
+                    aria-label={`Harvest quantity ${q}`}
+                    data-testid={`qty-chip-${q}`}
+                  >
+                    {q}
+                  </SelectChip>
+                ))}
+              </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <div style={{ flex: 2 }}>
-                  {/* V4-HARVQTYCHIPS-001 — quick-pick chips ABOVE the field, not replacing it.
-                      A chip fills the quantity in ONE tap with no keyboard; the field below is
-                      untouched, so the 16.8% of harvests outside 1-6 cost exactly what they cost
-                      today. Pure addition, no regression on the tail — which is why there is no
-                      "More" affordance: the field IS the more affordance.
-                      Sits outside <Field> deliberately: Field's frozen contract takes EXACTLY ONE
-                      focusable control and clones ARIA onto it (components/forms/Field.jsx), so a
-                      chip group inside it would trip contractWarn and steal the input's wiring.
-                      Composed from the frozen SelectChip primitive, not a new one (FROZEN.md). */}
-                  <div
-                    role="group"
-                    aria-label="Harvest quantity quick pick"
-                    // Grid, not flex-wrap: six equal columns keep the row on ONE line at 375px
-                    // (measured 45.2px per chip) instead of wrapping to two and doubling the block
-                    // height from 48px to 104px on the fast path.
-                    style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 8 }}
-                  >
-                    {QTY_CHIPS.map(q => (
-                      <SelectChip
-                        key={q}
-                        active={harvest.quantity === q}
-                        onClick={() => {
-                          setHarvest(h => ({ ...h, quantity: q }))
-                          if (harvestError) setHarvestError(null)
-                        }}
-                        touch
-                        aria-label={`Harvest quantity ${q}`}
-                        data-testid={`qty-chip-${q}`}
-                      >
-                        {q}
-                      </SelectChip>
-                    ))}
-                  </div>
                   <Field label="Quantity *" htmlFor="harvest-quantity">
                     {/* type=text + inputMode=decimal is deliberate and stays: on Chrome Android an
                         invalid intermediate value in a type=number input makes .value return '',
