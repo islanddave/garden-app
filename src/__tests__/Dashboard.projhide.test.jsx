@@ -9,7 +9,7 @@
 // No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 const { fetchSpy, authMock, zoneMock, locationRef, navigateSpy } = vi.hoisted(() => ({
   fetchSpy:    vi.fn(),
@@ -88,12 +88,49 @@ describe('Dashboard — V4-PROJHIDE-001 (flag ON)', () => {
     expect(screen.queryByText(/inactive/i)).toBeNull()
   })
 
-  // NOT COVERED, and recorded rather than quietly dropped: the collapsed water-tile summary's
-  // project-free branch (Dashboard.jsx:705, `${waterDue.length} plantings need water` vs the flag-OFF
-  // `Water ${top.project_name} + N more`). The source IS correctly guarded — I read it — but two
-  // attempts at a fixture that renders the water tile in this harness did not get it on screen, and
-  // the assertion is not worth more of the session. It is display-only and its flag-OFF counterpart
-  // is covered in Dashboard.test.jsx. Whoever next touches that tile should add it.
+  // GAP CLOSED 2026-08-10 (second pass). The two earlier fixture attempts failed for a reason worth
+  // recording, because it will bite the next person the same way: WaterMeTile is NOT gated on
+  // `water_due`. It is gated on `hasProjects` (Dashboard.jsx:236 → :628 `if (!hasProjects) return null`),
+  // which is `projects.length > 0` where `projects` = `active_projects` FILTERED by
+  // ATTENTION_LIST_STATUSES (:105-108). So there are two independent ways to prime water_due perfectly
+  // and still render an empty screen with no error and no warning:
+  //   (a) active_projects: [] — the BASE_DASH default. Priming only the obviously-relevant key is the
+  //       natural fixture, and it silently renders nothing.
+  //   (b) active_projects non-empty but every row's status outside ATTENTION_LIST_STATUSES
+  //       (= PROJECT_STATUSES minus 'harvesting'). A 'harvesting' project ALSO yields hasProjects false.
+  // Both reproduced and observed failing before this suite was written. NOT the cause: the
+  // `waitFor(fetchSpy called)` idiom used above — verified sufficient, waitFor's act() flush lands the
+  // state; and NOT severityTier, which returns 'gold' on a missing next_water_at rather than throwing.
+  // Both tests below therefore carry a status-valid active project, and the fixture keeps project_name
+  // POPULATED so the flag-ON assertions cannot pass merely because there was no project name to leak.
+  const WATER_TWO = [
+    { project_id: 'pr1', project_name: 'Bed Alpha', plant_name: 'Sungold', next_water_at: '2026-08-08T12:00:00Z' },
+    { project_id: 'pr2', project_name: 'Bed Beta',                        next_water_at: '2026-08-09T12:00:00Z' },
+  ]
+  const ACTIVE_OK = [{ id: 'pr1', name: 'Bed Alpha', status: 'growing', last_activity_at: '2026-08-01' }]
+
+  it('collapsed water-tile summary is a project-free count, not "Water {project} + N more"', async () => {
+    // Dashboard.jsx:705 — the >1 branch. Flag OFF this reads `Water Bed Alpha + 1 more`.
+    primeDash({ water_due: WATER_TWO, active_projects: ACTIVE_OK })
+    render(<ToastProvider><Dashboard /></ToastProvider>)
+    await waitFor(() => expect(screen.getByText('2 plantings need water')).toBeDefined())
+    // The flag-OFF string is fully constructible from this fixture — its absence is the real assertion.
+    expect(screen.queryByText('Water Bed Alpha + 1 more')).toBeNull()
+  })
+
+  it('expanded water-tile rows name the planting or a neutral subject, never the project', async () => {
+    // Dashboard.jsx:742 — the per-row subject, reached only after expanding. Covers BOTH sides of
+    // `w.plant_name || 'Water due'`: pr1 has a plant_name, pr2 deliberately does not.
+    primeDash({ water_due: WATER_TWO, active_projects: ACTIVE_OK })
+    render(<ToastProvider><Dashboard /></ToastProvider>)
+    const summary = await waitFor(() => screen.getByText('2 plantings need water'))
+    fireEvent.click(summary)
+    await waitFor(() => expect(screen.getByText('Sungold')).toBeDefined())
+    expect(screen.getByText('Water due')).toBeDefined()
+    // 'Bed Beta' exists ONLY in water_due, so it can leak from nowhere else on this page.
+    expect(screen.queryByText('Bed Beta')).toBeNull()
+    expect(screen.queryByText('Bed Alpha')).toBeNull()
+  })
 
   it('renders no link into the retired /projects tree', async () => {
     primeDash({
