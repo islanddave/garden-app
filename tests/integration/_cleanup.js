@@ -36,6 +36,13 @@ const FIXTURE_ID_RE = /int-test-\d{10,}-[a-z0-9]{3,}/
 const PROTECTED_ENDPOINTS = [
   'ep-lucky-bird-amju6iqt', // prod  (NEON_DATABASE_URL)
   'ep-mute-firefly-amq424mj',  // staging br-polished-art-am12o4ue (NEON_STAGING_URL)
+  // RETIRED ids stay on the list forever. This is a denylist, so a dead entry costs
+  // nothing and a missing live one costs everything: the failure mode is SILENT (a run
+  // sails past assertEphemeralDatabase and hard-deletes), unlike a wrong branch id in
+  // integration-test.yml which dies loudly at branch-create. Retired 2026-08-11 by the
+  // Gate 3 staging-lineage flatten; any .env.local or shell still holding the old URL
+  // must keep hitting the guard rather than the database.
+  'ep-calm-star-amxjxz6n',  // RETIRED — pre-flatten staging (br-damp-frog-amdfxwrr)
 ]
 
 /** Throws unless `id` carries the fixture namespace marker. Use before any per-file scoped delete. */

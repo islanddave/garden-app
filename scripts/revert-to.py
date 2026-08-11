@@ -548,8 +548,17 @@ def validate_branch(cfg, target_uri):
         if not nonpublic[schema]:
             raise RevertError(
                 f"validate: restored branch has no functions in schema '{schema}' "
-                "— the dump did not restore full-database scope; refusing to overwrite prod"
+                "— refusing to overwrite prod"
             )
+    # HONEST LIMIT of the check above (do not read it as a scope verifier). The restore
+    # target is created by neon_create_branch_with_endpoint with NO parent_id, so Neon
+    # parents it off the DEFAULT branch (prod) and it INHERITS prod's gv + extensions
+    # before pg_restore runs. A public-only restore therefore leaves those schemas
+    # PRESENT-but-not-rolled-back, and a >0 presence test passes on exactly that state.
+    # So this catches an empty/failed restore, NOT the --schema=public bug that motivated
+    # it — the actual fix for that is dropping --schema=public in restore_dump_into_branch,
+    # which scripts/test_revert_to.py pins directly. Making this a real scope check needs a
+    # comparison against the snapshot manifest (expected object/row counts): OPS-REVERTVALIDATE-001.
     counts = {}
     for t in SANITY_TABLES:
         try:

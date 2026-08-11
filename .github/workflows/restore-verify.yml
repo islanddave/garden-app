@@ -21,10 +21,14 @@ name: restore-verify (scheduled)
 # via the archive TOC, but require_full_scope now DEFAULTS TO 1, so a legacy
 # public-only dump is a HARD failure rather than a warning. Evidence for the flip:
 # the newest dump on BOTH legs carries gv + extensions SCHEMA entries in its TOC
-# (db/garden-20260811.dump, db/snap-v4.9.0.dump). The `|| '1'` fallback on the env
-# line matches this default deliberately — a dispatch that omits the key must not
-# silently downgrade the gate (same footgun as promote-gate's require_integration,
-# 2026-08-06). Escape hatch preserved: dispatch with require_full_scope=0.
+# (db/garden-20260811.dump, db/snap-v4.9.0.dump — note the snap leg's newest dump at
+# the time of the last actual run was v4.8.0; both legs logged scope FULL).
+# The default is applied in SHELL (`${IN_REQUIRE_FULL_SCOPE:-1}`), not via a `||`
+# expression, so a dispatch that omits the key cannot silently downgrade the gate
+# (same footgun as promote-gate's require_integration, 2026-08-06) while an explicit
+# require_full_scope=0 still survives. Escape hatch preserved — see the env comment.
+# Note scripts/restore-verify.py:121 still defaults REQUIRE_FULL_SCOPE to "0", so a
+# DIRECT local invocation stays lenient; only this workflow is strict.
 #
 # UNATTENDED by design: the restore-verify role's OIDC trust is scoped to the
 # main ref (NOT environment:production), so the scheduled run does NOT pause.
@@ -146,7 +150,16 @@ jobs:
           NEON_BACKUP_URL: ${{ secrets.NEON_BACKUP_URL }}
           BACKUP_BUCKET: ${{ matrix.bucket }}
           DUMP_PREFIX: ${{ matrix.prefix }}
-          REQUIRE_FULL_SCOPE: ${{ inputs.require_full_scope || '1' }}
+          # Raw input into env, then default in SHELL below -- deliberately NOT
+          # `${{ inputs.require_full_scope || '1' }}`. Two expert reviews of this line
+          # DISAGREED on whether GH Actions treats the string '0' as truthy (and so
+          # whether require_full_scope=0 survives `||` at all). Rather than adjudicate
+          # expression-engine semantics, use the pattern promote-gate.yml:115+125 already
+          # proves: `${VAR:-1}` substitutes only on unset/empty, so '0' survives verbatim
+          # and the documented escape hatch demonstrably works. On `schedule` the input is
+          # null -> empty -> defaults to 1, which is the strict behaviour we want.
+          IN_REQUIRE_FULL_SCOPE: ${{ inputs.require_full_scope }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          export REQUIRE_FULL_SCOPE="${IN_REQUIRE_FULL_SCOPE:-1}"
           python3 scripts/restore-verify.py
