@@ -17,10 +17,14 @@ name: restore-verify (scheduled)
 # workflow_dispatch takes bucket/prefix inputs for a one-off proof run (pick
 # the dev ref in the Actions UI once this file is on main).
 #
-# Transition boundary: dumps older than the full-scope dumper are public-only;
-# the script detects scope per dump via the archive TOC and only WARNS on
-# legacy dumps. Flip require_full_scope=1 (dispatch input) once full-scope
-# dumps exist to make legacy scope a hard failure.
+# Transition boundary: CLOSED 2026-08-11. The script still detects scope per dump
+# via the archive TOC, but require_full_scope now DEFAULTS TO 1, so a legacy
+# public-only dump is a HARD failure rather than a warning. Evidence for the flip:
+# the newest dump on BOTH legs carries gv + extensions SCHEMA entries in its TOC
+# (db/garden-20260811.dump, db/snap-v4.9.0.dump). The `|| '1'` fallback on the env
+# line matches this default deliberately — a dispatch that omits the key must not
+# silently downgrade the gate (same footgun as promote-gate's require_integration,
+# 2026-08-06). Escape hatch preserved: dispatch with require_full_scope=0.
 #
 # UNATTENDED by design: the restore-verify role's OIDC trust is scoped to the
 # main ref (NOT environment:production), so the scheduled run does NOT pause.
@@ -47,9 +51,9 @@ on:
         default: ''
         type: string
       require_full_scope:
-        description: 'Hard-fail legacy public-only dumps (flip to 1 after the full-scope dumper ships)'
+        description: 'Hard-fail legacy public-only dumps. Default 1 since 2026-08-11 — both legs verified full-scope.'
         required: false
-        default: '0'
+        default: '1'
         type: choice
         options:
           - '0'
@@ -142,7 +146,7 @@ jobs:
           NEON_BACKUP_URL: ${{ secrets.NEON_BACKUP_URL }}
           BACKUP_BUCKET: ${{ matrix.bucket }}
           DUMP_PREFIX: ${{ matrix.prefix }}
-          REQUIRE_FULL_SCOPE: ${{ inputs.require_full_scope || '0' }}
+          REQUIRE_FULL_SCOPE: ${{ inputs.require_full_scope || '1' }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/restore-verify.py
