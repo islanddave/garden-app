@@ -27,17 +27,27 @@ the opposite.
 
 ### Blast radius (live prod, read-only, FULL tables — no `deleted_at` filter)
 
-| Measure | Value |
-|---|---|
-| `event_log` rows carrying a `project_id` | **12,447 — 100.0% of the table** |
-| …by owner (3 subs) | 12,393 / 36 / 18 |
-| `photos` carrying a `project_id` | 976 |
-| `photos` carrying an `event_id` | 742 |
-| Containers with events | 76 |
-| …incidentally protected | 27 |
-| **…wholly unprotected** | **49** |
-| **Events one `DELETE` away from silent destruction** | **2,432** |
-| Photos destroyed alongside them | 199 |
+**RE-MEASURED 2026-08-12** in the pre-apply audit. The authored figures were taken some days earlier
+and the tables have grown; both columns are shown because the *drift itself* is the point — these
+numbers are a moving population, so re-measure at apply time rather than citing either column.
+
+| Measure | At authoring | **Live prod 2026-08-12** |
+|---|---|---|
+| `event_log` rows carrying a `project_id` | 12,447 — "100.0% of the table" | **14,193 of 14,195 — 99.99%** |
+| …by owner | 12,393 / 36 / 18 (3 subs) | **14,158 / 35 (2 subs)** |
+| `photos` carrying a `project_id` | 976 | **1,104** |
+| `photos` carrying an `event_id` | 742 | **868** |
+| `photos` total | 1,094 | **1,253** |
+| Containers with events | 76 | **74** |
+| …incidentally protected | 27 | **29** |
+| **…wholly unprotected** | 49 | **45** |
+| **Events one `DELETE` away from silent destruction** | 2,432 | **2,333** |
+| Photos destroyed alongside them | 199 | **154** |
+
+The "100.0% of the table" claim was true when written and is now marginally false (2 of 14,195 rows
+carry a `plant_id` but no `project_id`). The conclusion is unchanged: this axis is the whole event
+log, not a corner of it. **No live row makes `RESTRICT` fail** — all three FKs are already
+`convalidated = t`, so `0c`'s validation scan is guaranteed to succeed (see gates.yml §VACUITY NOTE).
 
 The 27 "protected" containers are protected only as a **side effect** of unrelated tickets — a
 `harvest_log` row (`project_id` or `event_id`, both already `RESTRICT`) or a
@@ -57,6 +67,39 @@ test teardown — the same caller set that made EVTANCHORDEL real.
 Asked of the deployed artifact, not of the branch in hand. The live Lambda bundles were downloaded
 (`aws lambda get-function --query Code.Location`) for `garden-projects`, `garden-events`,
 `garden-plants`, `garden-photos`, `garden-harvests` and grepped for `DELETE FROM`.
+
+> **RE-RUN AND WIDENED 2026-08-12 (pre-apply audit). The verdict below is confirmed, but the original
+> method had two blind spots and both had to be closed before it could be trusted.**
+>
+> **Blind spot 1 — it covered 5 Lambdas out of 26.** `deploy-lambda` ships all 26 in one matrix, so
+> five bundles are not "the deployed artifact". All **27 prod (non-`-staging`) functions** were
+> re-downloaded and grepped. Result: the only real `DELETE FROM` statements anywhere in deployed prod
+> code are `DELETE FROM favorites` (`garden-favorites/index.js:99`, unrelated) and
+> `DELETE FROM public.entity_memory` (`garden-plants/index.js:664` — a *child* row delete, which no
+> parent-side `RESTRICT` can block). Everything else that matched is a comment, a test assertion
+> string, or a `method === 'DELETE'` HTTP branch that soft-deletes. **Verdict unchanged.**
+>
+> **Blind spot 2 — grepping Lambdas is structurally blind to IN-DATABASE writers, and there is one.**
+> `archive_plant_events()`, shipped into the database by `BUG-EVTANCHORDEL-001`, genuinely executes
+> `DELETE FROM public.event_log`. It is a deployed writer that no bundle grep can ever see. Under
+> flip 3 that delete is refused with `23503` for any event still carrying a photo.
+>
+> **It survives — but only by an ordering property that was undocumented and ungated.** The live
+> function body (read from `pg_get_functiondef`, not from a migration file) detaches photos with
+> `UPDATE public.photos SET event_id = NULL …` **before** it deletes the events, and that detach is
+> unconditional over every photo pointing at a dying event. So at `DELETE` time no photo references
+> those events and `RESTRICT` has nothing to refuse. Verified positionally on live prod: detach at
+> `prosrc` offset 2262, delete at 3022.
+>
+> A future edit reordering those two statements — or narrowing the detach predicate — would break
+> **both** archive functions against their own new constraint, and nothing in this migration would
+> have noticed. That hole is now closed by a new gate,
+> `post_archive_functions_detach_photos_before_deleting_events`, which asserts the ordering for both
+> functions and is mutation-tested (reversed order → fail, detach removed → fail).
+>
+> A full catalog sweep confirms `archive_plant_events` is the **only** routine in any non-system
+> schema that deletes from `event_log`/`photos`/`plant_projects`/`harvest_log`, and that there is no
+> `BEFORE DELETE` trigger on any of the three tables that could interfere.
 
 The only `DELETE FROM` in the deployed bundles are `DELETE FROM favorites` (unrelated), a source
 **comment** at `garden-plants/index.js:378` that predicts this very ticket, and an assertion
@@ -201,7 +244,75 @@ use the flag today. Promoting the durable invariants after prod apply is a delib
 
 ---
 
+## Pre-apply audit, 2026-08-12 — what changed in this directory
+
+The migration was authored and never applied. This audit re-derived every claim from live prod
+(`information_schema` / `pg_constraint` / `pg_proc`, never from migration files) and found **one
+migration-blocking defect in the gates**, plus several gates that passed for the wrong reason.
+Nothing was executed; no DDL was run.
+
+**Live prod state, re-verified.** All three FKs are still `ON DELETE CASCADE`
+(`confdeltype = 'c'`): `event_log_project_id_fkey`, `photos_project_id_fkey`, `photos_event_id_fkey`.
+`archive_container_events()` does **not** exist (only `archive_plant_events()` does). Both archive
+tables are still 0 rows. The defect and the premise are intact.
+
+**BLOCKER, now fixed — `post_no_cascade_fk_out_of_a_user_history_table` would have failed on a
+successful apply.** The gate asserts no `CASCADE` FK out of `event_log`/`photos`/`harvest_log`/
+`preservation_log`, but `photos_inventory_item_id_fkey` (`photos.inventory_item_id ->
+inventory_items(id) ON DELETE CASCADE`) is exactly that and is **not** one of the three FKs this
+migration flips. Because the gate is guarded on its own `schema_version` row, it passed vacuously
+before apply and would have flipped to FAIL the instant `0c` succeeded — the migration would apply
+cleanly and then red its own post phase. Simulated against live prod: 1 row returned, expected 0.
+Fixed with an exact-`conname` carve-out (not by widening the table list), so the gate still catches
+any newly-introduced cascade and any regression of the three it owns.
+
+**Gates that passed for the wrong reason** (all kept, all now carrying a `note` saying so, so a PASS
+is not mistaken for coverage):
+
+- `post_no_parentless_photos_introduced` — **vacuous**. `photos_must_have_parent` is
+  `convalidated = t` and this query is its exact negation across all seven arms, so Postgres makes a
+  matching row impossible to store. It reports constraint enforcement, not migration correctness.
+- `sweep_capture_unprotected_containers`, `sweep_capture_photos_with_a_single_dying_parent` —
+  **cannot fail by construction** (`rowcount_gte: 0` admits every result). Informational captures,
+  not assertions. The second carried no note at all and read like a real guard.
+- `sweep_no_dangling_*` (three gates) — belt-and-braces. All three FKs are already
+  `convalidated = t`, which is catalog-level proof no dangling row exists; `0c` keeps the same
+  columns and parent and changes only the referential action, so the validation scan cannot fail for
+  a reason these would catch.
+
+**A gate that is real, for an undocumented reason.** `post_no_anchorless_events_introduced` is
+genuinely non-vacuous: `event_log_has_anchor` is `convalidated = f` (**NOT VALIDATED**), so the
+pre-existing population was never scanned and the database does *not* guarantee that predicate.
+Its apparent twin above is vacuous for precisely the opposite reason. Both are now annotated.
+
+**New gate.** `post_archive_functions_detach_photos_before_deleting_events` — see §The falsifiable
+test. It covers the one property that actually keeps the in-database writers compatible with flip 3,
+and which nothing gated before.
+
+**RLS trap, recorded so it costs nobody else an hour.** `event_log`, `photos` and `plant_projects`
+all have `relrowsecurity = t`. Run the dangling-ref sweeps as an RLS-subject role (`garden_ro`, via
+`scripts/psql-ro.sh`) and they report 1 and 2 dangling rows — pure visibility artifacts, since parent
+rows are filtered from that role while child rows are not. `gate_runner` connects with
+`NEON_DATABASE_URL` (owner, RLS-exempt, `conn.read_only = True`) and gets the true answer.
+
+**Gate runs against live prod, this audit:** `pre` **6/6 PASS**, `sweep` **6/6 PASS**, `post`
+**15/16** — the single failure being `post_schema_version_recorded` (expected `2`, got `0`), which is
+the correct and expected reading for a migration that has not been applied.
+
+Gate count is now **28** (was 27). Unrelated pre-existing defect noticed in passing and **not**
+touched, as it belongs to another item: `migrations/v4-harvwatch-001/gates.yml` has an unknown
+top-level key `rollback`, so it fails `--validate-only` schema loading and its gates are **not
+skipped but unreadable** — that file's gates do not run at all today.
+
 ## Not closed here
+
+- **`photos_inventory_item_id_fkey` is `ON DELETE CASCADE`** — found during this audit. A hard
+  `DELETE FROM inventory_items` destroys every photo of that item with no archive: the same defect
+  class as this ticket, on a different parent axis. Deliberately not folded in — it needs its own
+  deployed-writer test, and it is latent and small: the deployed `garden-inventory-items` Lambda
+  soft-deletes (`UPDATE inventory_items SET deleted_at = NOW()`, verified in the live bundle) and only
+  **6** prod photos carry an `inventory_item_id`. Carved out of the post gate by name, with rationale.
+  Worth its own ticket.
 
 - **`plants.project_id` / `tasks.project_id` / `plant_projects.parent_project_id` are `ON DELETE SET
   NULL`.** A hard container delete silently re-homes child plantings into the project-less ownership

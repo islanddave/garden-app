@@ -118,6 +118,21 @@ sweep:
   # a soft delete is. A row pointing at a soft-deleted parent still satisfies the FK; a row pointing
   # at a row that is GONE does not. Filtering by deleted_at here would hide exactly the rows that
   # break the ALTER.
+  # VACUITY NOTE (audit 2026-08-12) — the three sweep_no_dangling_* gates below are BELT-AND-BRACES,
+  # not coverage. All three FKs they pre-flight are already `convalidated = t` in live prod, which is
+  # Postgres's own catalog-level proof that no dangling row exists on those exact columns; and 0c
+  # changes only the referential ACTION, keeping the same columns and the same parent. The validation
+  # scan that 0c's ADD CONSTRAINT runs therefore cannot fail for a reason these gates would catch.
+  # They pass because a validated FK already forbids the condition, NOT because anything about this
+  # migration was checked. Kept (they cost nothing and would catch a hand-edited NOT VALID FK), but
+  # do not count them as evidence the apply is safe.
+  #
+  # RLS TRAP, recorded so the next auditor does not lose an hour to it: event_log, photos and
+  # plant_projects all have relrowsecurity = t. Run these three sweeps as a role subject to RLS (e.g.
+  # garden_ro via scripts/psql-ro.sh) and they report 1 and 2 dangling rows — pure visibility
+  # artifacts, because the parent rows are filtered from that role while the child rows are not.
+  # gate_runner connects with NEON_DATABASE_URL (owner, RLS-exempt, conn.read_only = True) and gets
+  # the true answer: verified 2026-08-12, sweep 6/6 PASS against live prod.
   - name: sweep_no_dangling_event_project_refs
     sql: |
       SELECT 1 FROM public.event_log e
@@ -150,8 +165,14 @@ sweep:
     note: >
       Containers whose hard delete is refused by NOTHING today. A container is incidentally protected
       only if a harvest_log row (project_id or event_id, both already RESTRICT) or a
-      cultivar_weight_sample (NO ACTION) happens to block it. Prod at authoring time: 76 containers
-      with events, 27 incidentally protected, 49 unprotected, 2432 events one DELETE away.
+      cultivar_weight_sample (NO ACTION) happens to block it.
+      INFORMATIONAL CAPTURE, NOT AN ASSERTION — `rowcount_gte 0` is satisfied by every possible
+      result, so this gate CANNOT FAIL by construction. It exists to print the population into the
+      apply record, not to guard anything. Do not read a PASS here as a safety check.
+      Prod at authoring time: 76 containers with events, 27 incidentally protected, 49 unprotected,
+      2432 events one DELETE away. RE-MEASURED ON LIVE PROD 2026-08-12 (the table has grown since):
+      74 containers with events, 29 incidentally protected, 45 unprotected, 2333 events one DELETE
+      away.
     sql: |
       WITH ev AS (
         SELECT project_id, array_agg(id) AS ids, count(*) AS n_events
@@ -175,6 +196,13 @@ sweep:
   # photos_must_have_parent. Prod at authoring time: 10 project-only, 0 event-only. Not an assertion:
   # their existence is legitimate, it just means those containers need operator action first.
   - name: sweep_capture_photos_with_a_single_dying_parent
+    note: >
+      INFORMATIONAL CAPTURE, NOT AN ASSERTION — `rowcount_gte 0` is satisfied by every possible
+      result, so this gate CANNOT FAIL by construction. Flagged in the 2026-08-12 audit because,
+      unlike its sibling capture above, it carried no note and so read like a real guard. It lists
+      the photos whose ONLY parent is a dying one, i.e. exactly the population
+      archive_container_events()' Guard 3 will refuse to strand — useful to see before an operator
+      runs the function, but it guards nothing on its own. Live prod 2026-08-12: 12 such photos.
     sql: |
       SELECT ph.id, ph.project_id, ph.event_id
         FROM public.photos ph
@@ -243,6 +271,22 @@ post:
   # migration flips plus one more in the same class — which is the unfixed defect, faithfully
   # reported, and it will report it again the instant 0c lands if any of them survives.
   - name: post_no_cascade_fk_out_of_a_user_history_table
+    note: >
+      MIGRATION-BLOCKING DEFECT FOUND AND FIXED 2026-08-12 (audit before apply). As authored this
+      gate had no conname carve-out, so it would have PASSED vacuously before apply (its
+      schema_version guard is false) and then FAILED the moment 0c succeeded — the migration would
+      apply cleanly and immediately red its own post phase. Cause: photos_inventory_item_id_fkey is
+      `photos.inventory_item_id -> inventory_items(id) ON DELETE CASCADE` (verified live prod
+      2026-08-12), so table `photos` still carries a CASCADE FK that this migration does not own and
+      does not flip. Simulated post-apply on live prod: without the carve-out the query returns 1 row
+      (expect 0) -> FAIL. The carve-out is by exact conname, NOT by widening the table list, so the
+      gate still catches any NEW cascade introduced into these tables and still catches regression of
+      the three FKs this migration owns. THE CARVED-OUT FK IS A REAL SIBLING DEFECT of the same class
+      (a hard `DELETE FROM inventory_items` would destroy photos of that item with no archive) but is
+      deliberately NOT folded in: it is a different parent axis needing its own deployed-writer test,
+      and its blast radius is small and latent — the deployed garden-inventory-items Lambda
+      soft-deletes (`UPDATE inventory_items SET deleted_at = NOW()`, verified in the live bundle) and
+      only 6 prod photos carry an inventory_item_id. Tracked as a follow-up, not closed here.
     sql: |
       SELECT c.conname
         FROM pg_constraint c
@@ -253,6 +297,7 @@ post:
          AND c.contype = 'f'
          AND c.confdeltype = 'c'
          AND t.relname IN ('event_log','photos','harvest_log','preservation_log')
+         AND c.conname <> 'photos_inventory_item_id_fkey'
     expect: rowcount_eq
     value: 0
 
@@ -279,12 +324,27 @@ post:
   # NO ROW WAS TOUCHED. This migration is constraint-and-function only. These are structural
   # invariants rather than absolute counts, so they stay true as the garden grows.
   - name: post_no_anchorless_events_introduced
+    note: >
+      REAL GATE — and the audit of 2026-08-12 found it is real for a reason nobody had written down.
+      `event_log_has_anchor` is `convalidated = f` in live prod (NOT VALIDATED): it is enforced only
+      for rows inserted or updated after it was added, and the pre-existing population was never
+      scanned. So the database does NOT guarantee this predicate and the gate can genuinely fail.
+      Contrast its sibling below, which is vacuous for exactly the opposite reason. Live prod
+      2026-08-12: 0 anchorless events.
     sql: |
       SELECT 1 FROM public.event_log WHERE plant_id IS NULL AND project_id IS NULL
     expect: rowcount_eq
     value: 0
 
   - name: post_no_parentless_photos_introduced
+    note: >
+      VACUOUS — PASSES FOR THE WRONG REASON, kept only as belt-and-braces (audit 2026-08-12).
+      `photos_must_have_parent` is `convalidated = t` in live prod and its CHECK expression is the
+      exact negation of this query, term for term across all seven arms. Postgres therefore makes a
+      matching row physically impossible to store, so this gate reports the constraint's enforcement
+      rather than anything about this migration. Do not count it as evidence that the photo-detach
+      logic is correct — the gate that actually covers that ordering is
+      post_archive_functions_detach_photos_before_deleting_events.
     sql: |
       SELECT 1 FROM public.photos ph
        WHERE ph.event_id IS NULL AND ph.project_id IS NULL AND ph.location_id IS NULL
@@ -316,6 +376,45 @@ post:
           OR (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                WHERE n.nspname = 'public'
                  AND p.proname IN ('archive_plant_events','archive_container_events')) = 2
+    expect: rowcount_eq
+    value: 1
+
+  # ADDED 2026-08-12 (audit before apply). This is THE compatibility invariant that makes flip 3
+  # (photos.event_id CASCADE -> RESTRICT) safe, and NOTHING gated it.
+  #
+  # The authored deploy-boundary analysis answered "would the currently deployed code produce an
+  # operation this constraint rejects?" by grepping the deployed LAMBDA bundles for `DELETE FROM`.
+  # That method is structurally blind to IN-DATABASE writers, and there is exactly one:
+  # archive_plant_events(), shipped by BUG-EVTANCHORDEL-001, which really does
+  # `DELETE FROM public.event_log`. Under flip 3 that delete is refused with 23503 for any event that
+  # still has a photo hanging off it. It survives ONLY because it DETACHES photos (sets event_id =
+  # NULL) BEFORE deleting the events — an ordering property internal to the function body, invisible
+  # to every other gate here, and silently destroyable by any future edit that reorders those two
+  # statements or narrows the detach predicate. Verified live on prod 2026-08-12: detach at prosrc
+  # offset 2262, delete at 3022.
+  #
+  # Non-vacuous by construction: it fails if either function loses its detach, loses its delete, or
+  # performs them in the wrong order. Covers BOTH archive functions — archive_container_events() has
+  # the identical hazard for the same reason.
+  - name: post_archive_functions_detach_photos_before_deleting_events
+    note: >
+      Ordering invariant inside the two archive functions: photos must be detached (event_id set to
+      NULL, directly or via CASE) BEFORE `DELETE FROM public.event_log`. This is what keeps the
+      in-database writers compatible with photos_event_id_fkey ON DELETE RESTRICT. A future edit that
+      reorders these statements would leave both functions raising 23503 on any event that still
+      carries a photo, and no other gate in this file would notice.
+    sql: |
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '4.23.2-softdelcascade-001-archive')
+          OR (SELECT count(*)
+                FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+               WHERE n.nspname = 'public'
+                 AND p.proname IN ('archive_plant_events','archive_container_events')
+                 AND regexp_instr(p.prosrc, 'event_id\s*=\s*(NULL|CASE)') > 0
+                 AND regexp_instr(p.prosrc, 'DELETE FROM public\.event_log') > 0
+                 AND regexp_instr(p.prosrc, 'event_id\s*=\s*(NULL|CASE)')
+                   < regexp_instr(p.prosrc, 'DELETE FROM public\.event_log')) = 2
     expect: rowcount_eq
     value: 1
 
@@ -373,6 +472,15 @@ post:
   # means something ran it during the migration window. Re-runnable later only as an informational
   # note; on apply day it is an assertion.
   - name: post_archive_is_empty_on_apply
+    note: >
+      APPLY-WINDOW GATE ONLY — it asserts that this migration moved no row, which is true because 0a
+      and 0c are constraint-and-function only and nothing calls archive_container_events()
+      automatically. It is therefore correct at apply time and WILL legitimately fail later, the
+      first time an operator actually archives a container. That is by design, but note the
+      asymmetry flagged in the 2026-08-12 audit: unlike every other post gate here it carries NO
+      schema_version guard, so it is live on every run rather than only after apply. Do not promote
+      it to `continuous: true`, and expect to retire it once the escape hatch is first used. Live
+      prod 2026-08-12: both archives 0 rows.
     sql: |
       SELECT 1 FROM public.event_log_archive
       UNION ALL

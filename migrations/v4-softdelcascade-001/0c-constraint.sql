@@ -16,15 +16,26 @@
 -- │ irrecoverable. The planting axis refuses the same act with a clear 23503.                    │
 -- └──────────────────────────────────────────────────────────────────────────────────────────────┘
 --
--- MEASURED BLAST RADIUS (live prod, read-only, FULL tables — no deleted_at filter):
---   * 12,447 event_log rows carry a project_id. That is 100.0% of event_log — not a subset, THE
---     TABLE. Per owner: 12,393 / 36 / 18 across the three subs. Any pooled figure is one user's.
---   * 976 photos carry a project_id; 742 carry an event_id; 1,094 photos exist in total.
---   * 76 containers have events. 27 are incidentally protected — a harvest_log row (project_id or
---     event_id, both already RESTRICT) or a cultivar_weight_sample (NO ACTION) happens to block the
---     delete. That protection is a SIDE EFFECT of unrelated tickets, not a policy.
---   * 49 containers are wholly unprotected: 2,432 events and 199 photos are one DELETE away from
---     silent destruction, with nothing in the database refusing.
+-- MEASURED BLAST RADIUS (live prod, read-only, FULL tables — no deleted_at filter).
+-- RE-MEASURED 2026-08-12 in the pre-apply audit; authoring figures in parentheses. These are a
+-- MOVING population — re-measure at apply time rather than citing either number as current.
+--   * 14,193 of 14,195 event_log rows carry a project_id — 99.99% (was 12,447, described then as
+--     "100.0%"; 2 rows now carry a plant_id and no project_id, so that claim is marginally false
+--     today). This axis is still the whole event log, not a corner of it. Per owner: 14,158 / 35
+--     across TWO subs (was 12,393 / 36 / 18 across three). Any pooled figure is one user's.
+--   * 1,104 photos carry a project_id (976); 868 carry an event_id (742); 1,253 photos in total
+--     (1,094).
+--   * 74 containers have events (76). 29 are incidentally protected (27) — a harvest_log row
+--     (project_id or event_id, both already RESTRICT) or a cultivar_weight_sample (NO ACTION)
+--     happens to block the delete. That protection is a SIDE EFFECT of unrelated tickets, not a
+--     policy.
+--   * 45 containers are wholly unprotected (49): 2,333 events (2,432) and 154 photos (199) are one
+--     DELETE away from silent destruction, with nothing in the database refusing.
+--
+-- DOES ANY LIVE ROW MAKE RESTRICT FAIL? NO. All three FKs are already convalidated = 't', which is
+-- Postgres's own proof that every child row has a live parent; this file keeps the same columns and
+-- the same parent table and changes only the referential action, so the validation scan run by
+-- ADD CONSTRAINT is guaranteed to succeed. RESTRICT constrains only FUTURE parent deletes.
 --
 -- NOT REACHABLE FROM THE APP, WHICH IS EXACTLY WHY IT SURVIVED. Every app DELETE route soft-deletes
 -- (lambda/projects/index.js:637 sets deleted_at on the container view). It is reachable from admin
@@ -69,6 +80,32 @@
 -- migration is NOT split into pre-deploy and post-deploy files. This file changes only the
 -- referential action taken on a parent DELETE; it does not touch INSERT or UPDATE, so no deployed
 -- writer's behaviour changes at all.
+--
+-- RE-RUN AND WIDENED 2026-08-12 (pre-apply audit) — verdict CONFIRMED, method had to be fixed first:
+--   (a) The grep above covered 5 Lambdas; deploy-lambda ships all 26 in one matrix. All 27 prod
+--       (non-staging) bundles were re-downloaded and grepped. The only real DELETE FROM statements
+--       in deployed prod code are `DELETE FROM favorites` (garden-favorites/index.js:99, unrelated)
+--       and `DELETE FROM public.entity_memory` (garden-plants/index.js:664 — a CHILD-row delete, and
+--       no parent-side RESTRICT can block a child delete). Nothing hard-deletes plant_projects,
+--       event_log or photos. Verdict unchanged.
+--   (b) Grepping Lambdas CANNOT SEE IN-DATABASE WRITERS, and there is one that matters:
+--       archive_plant_events() (shipped by BUG-EVTANCHORDEL-001) really does
+--       `DELETE FROM public.event_log`. Under flip 3 that delete is refused with 23503 for any event
+--       that still carries a photo. It survives ONLY because it DETACHES photos
+--       (`UPDATE public.photos SET event_id = NULL …`, unconditional over every photo pointing at a
+--       dying event) BEFORE the delete — verified positionally on the LIVE function body via
+--       pg_get_functiondef: detach at prosrc offset 2262, delete at 3022. That ordering was
+--       undocumented and ungated; it is now asserted by the new gate
+--       post_archive_functions_detach_photos_before_deleting_events (mutation-tested: reversed
+--       order -> FAIL, detach removed -> FAIL).
+--   (c) Catalog sweep: archive_plant_events is the ONLY routine in any non-system schema that
+--       deletes from event_log/photos/plant_projects/harvest_log, and no BEFORE DELETE trigger
+--       exists on any of the three tables. So (b) is the complete set of in-database writers.
+--
+-- APPLY ORDER CONSEQUENCE: because no deployed writer — Lambda or in-database — performs an
+-- operation these RESTRICTs reject, this is SAFE TO APPLY BEFORE a code deploy. It does not need to
+-- follow one. The only ordering requirement is the CI/staging purge fix below, which is about the
+-- staging workflow, not about prod's deployed artifact.
 --
 -- The old writers that DO break are non-app and CI-only. They must land BEFORE this file is applied
 -- to the environment they run against — see gates.yml §DEPLOY BOUNDARY and README §Prod runbook:
