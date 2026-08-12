@@ -29,6 +29,11 @@ import { householdScope } from './household.js';
 // Pure, DB-free helpers live in ./aggregate.js so they unit-test without this file's runtime deps
 // (neon/clerk/aws — absent from root package.json under CI `npm ci`). See lambda/preservation/attribution.js.
 import { parseTimeframe, encodeCursor, decodeCursor, projectEntry, computeAggregates } from './aggregate.js';
+// V4-HARVSURFACE-001 — Today watch list + "not yet" dismissal. Same DB-free-pure / DB-touching split:
+// watch.js holds the candidate logic, watch-route.js the SQL and request contract.
+import {
+  matchWatchRoute, handleWatchGet, handleDismissToggle, handleDismissalPost, handleDismissalUndo,
+} from './watch-route.js';
 export { parseTimeframe, encodeCursor, decodeCursor, isoWeekStart, projectEntry, computeAggregates } from './aggregate.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -110,6 +115,43 @@ export const handler = async (event) => {
 
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/harvests';
+
+  // V4-HARVSURFACE-001 — the Today watch list rides this Lambda's EXISTING /api/harvests prefix.
+  // src/lib/api.js routes by first-match PREFIX, so /api/harvests/watch resolves here with no new
+  // Function URL, no repo variable, no deploy-lambda.yml matrix entry and no api.js edit. Matched
+  // BEFORE the /api/harvests exact-path guard below, which would otherwise 405 every watch request.
+  const watchRoute = matchWatchRoute(method, rawPath);
+  if (watchRoute) {
+    if (watchRoute.kind === 'method_not_allowed') return resp(405, { error: 'Method not allowed' });
+    let body = {};
+    if (event.body) {
+      try {
+        body = JSON.parse(event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body);
+      } catch {
+        return resp(400, { error: 'Malformed JSON body' });
+      }
+    }
+    const ctx = {
+      sql: neon(secrets.NEON_DATABASE_URL),
+      householdIds: householdScope(userId),
+      userId,
+      tz: HARVEST_TZ,
+      query: event.queryStringParameters ?? {},
+      body,
+    };
+    try {
+      let out;
+      if (watchRoute.kind === 'watch_get') out = await handleWatchGet(ctx);
+      else if (watchRoute.kind === 'dismiss_toggle') out = await handleDismissToggle(ctx);
+      else if (watchRoute.kind === 'dismissal_post') out = await handleDismissalPost(ctx);
+      else out = await handleDismissalUndo(ctx, watchRoute.id);
+      return resp(out.statusCode, out.body);
+    } catch (err) {
+      console.error('harvests watch route error', err);
+      return resp(500, { error: 'Internal server error' });
+    }
+  }
+
   if (method !== 'GET' || rawPath !== '/api/harvests') {
     return resp(405, { error: 'Method not allowed' });
   }

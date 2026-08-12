@@ -1,0 +1,426 @@
+// watch-route.js — V4-HARVSURFACE-001 slice 1 request handlers for the Today watch list.
+//
+// Lives beside index.js rather than inside it so the SQL and the request/response contract are
+// testable with an injected `sql` (see watch-route.test.js — a recording tagged-template stub that
+// runs THIS code, not a regex over it). index.js keeps its role as the auth/secrets/CORS seam.
+//
+// ROUTING. These paths ride the EXISTING /api/harvests prefix in src/lib/api.js, which is a
+// first-match PREFIX table — so /api/harvests/watch resolves to VITE_API_HARVESTS and this Lambda
+// with ZERO infra change: no new Function URL, no new repo variable, no deploy-lambda.yml matrix
+// entry, no api.js edit. That is the whole reason this route landed here rather than in a new
+// Lambda or in lambda/events (whose harvest-ready route is correctly evidence-only; see watch.js).
+//
+// THIS LAMBDA WAS READ-ONLY BEFORE THIS SLICE and index.js 405s anything that is not
+// GET /api/harvests. The dismissal write is the first mutation it has ever performed, so it is
+// deliberately narrow: one INSERT into one new standalone table, one UPDATE that sets undone_at on
+// a row the caller owns. It touches no existing relation.
+
+import {
+  WATCH_MODEL_VERSION, NURSERY_OFFSET_DAYS_FALLBACK,
+  buildWatchList, buildDismissalSnapshot, toYmd,
+} from './watch.js';
+
+export const WATCH_PATH = '/api/harvests/watch';
+export const DISMISS_PATH = '/api/harvests/watch/dismiss';
+export const DISMISSALS_PATH = '/api/harvests/watch/dismissals';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export function isUuid(v) { return typeof v === 'string' && UUID_RE.test(v); }
+
+// The reasons the CHECK constraint permits. Only 'not_yet' is calibration-bearing — the other two
+// are data corrections and MUST be excluded when fitting, which is why they are distinguishable
+// rather than collapsed. A row dismissed as 'wrong_target' is not evidence a crop was unripe.
+export const DISMISSAL_REASONS = new Set(['not_yet', 'not_mine', 'wrong_target']);
+export const CALIBRATION_REASON = 'not_yet';
+
+// Default visible cap (design §3.5: "Cap the visible group at 5 — a nine-row declarative group is an
+// inventory again"). Enforced SERVER-side as the default so a client that forgets cannot regress the
+// surface into the shape Dave rejected, and overridable because the client owns an expandable tail.
+export const DEFAULT_LIMIT = 5;
+export const MAX_LIMIT = 50;
+
+export function parseLimit(raw) {
+  if (raw == null || raw === '') return DEFAULT_LIMIT;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) return null;
+  return Math.min(n, MAX_LIMIT);
+}
+
+// ── The candidate query ──────────────────────────────────────────────────────────────────────────
+//
+// Returns raw rows for the PURE classifier in watch.js. SQL narrows and gathers anchors; it decides
+// nothing — same split the shipped harvest-ready route uses, and the reason the eligibility rules
+// are unit-testable at all.
+//
+// SHAPE NOTES, all verified against live prod 2026-08-12 (read-only, garden_ro):
+//   * View vocabulary: garden_node = plants, cultivar = plant_varieties. garden_node's FK to the
+//     project is `container_id`, NOT `project_id` (the base table's name). Getting that wrong is a
+//     hard error, not a silent one.
+//   * Household scope anchors on plant_projects.created_by, matching the rest of this Lambda. It
+//     does NOT anchor on the planting: garden_node.created_by exists but the project is the
+//     ownership root everywhere else in this file.
+//   * Live planting = deleted_at/archived_at NULL and status NOT IN (failed, ended, dormant), the
+//     same definition lambda/events/index.js:893 settled on after a dormant wineberry ranked #1.
+//   * The harvest-evidence CTE keeps the LEFT JOIN + first_harvest escape from the shipped route:
+//     `first_harvest` is a MILESTONE that carries no quantity by design and therefore NEVER has a
+//     harvest_log row (5/5 orphaned on prod). An INNER JOIN here would tell the watch list that a
+//     planting Dave has already picked still needs watching — the exact inverse of the bug being
+//     fixed.
+//   * The pick date is event_log.event_date, never harvest_log.created_at (~30% backdated).
+//
+// SIBLING ANCHOR (design §3.4 rank 2, "the strongest anchor available in the data and it is
+// currently unused"). Same project AND same crop_type_slug — the design's justification is "same
+// genetics, same site, same weather", and same-project alone does not establish the first of those
+// for a mixed project. MIN(first pick) across siblings, because the design admits a planting to the
+// queue when its EARLIEST defensible anchor fires: if the bed has been picking for 30 days, this
+// planting has been worth checking for 30 days, and dating it from the most recent sibling would
+// understate that.
+//
+// NURSERY OFFSET is computed PER HOUSEHOLD from that household's own plantings rather than baked in
+// — the correction for a from-sow DTM read off a transplant date should reflect how this gardener
+// actually starts seeds. Dave's median is 31 days over 39 dual-dated plantings (n is reported on the
+// wire so a thin sample is visible rather than silently trusted); below 5 samples it falls back to
+// the documented constant.
+export async function queryWatchRows(sql, householdIds, userId, tz) {
+  return sql`
+    WITH bounds AS (
+      SELECT (now() AT TIME ZONE ${tz})::date AS et_today,
+             -- Grow year = Nov 1 - Oct 31 (the season boundary this codebase already uses).
+             (make_date(
+                EXTRACT(YEAR FROM (now() AT TIME ZONE ${tz})::date)::int
+                  - CASE WHEN EXTRACT(MONTH FROM (now() AT TIME ZONE ${tz})::date)::int >= 11 THEN 0 ELSE 1 END,
+                11, 1))::date AS season_start
+    ),
+    picks AS (
+      SELECT e.plant_id,
+             count(*)::int AS harvest_count,
+             MIN((e.event_date AT TIME ZONE ${tz})::date) AS first_pick_date
+        FROM event_log e
+        LEFT JOIN harvest_log h ON h.event_id = e.id AND h.deleted_at IS NULL
+        CROSS JOIN bounds b
+       WHERE e.event_type IN ('harvest', 'first_harvest')
+         AND e.deleted_at IS NULL
+         AND e.plant_id IS NOT NULL
+         AND (h.id IS NOT NULL OR e.event_type = 'first_harvest')
+         AND (e.event_date AT TIME ZONE ${tz})::date >= b.season_start
+       GROUP BY e.plant_id
+    ),
+    fruit_set AS (
+      SELECT e.plant_id, MAX((e.event_date AT TIME ZONE ${tz})::date) AS fruit_set_date
+        FROM event_log e CROSS JOIN bounds b
+       WHERE e.event_type = 'fruit_set'
+         AND e.deleted_at IS NULL
+         AND e.plant_id IS NOT NULL
+         AND (e.event_date AT TIME ZONE ${tz})::date >= b.season_start
+       GROUP BY e.plant_id
+    ),
+    live AS (
+      SELECT gn.id            AS plant_id,
+             gn.container_id  AS project_id,
+             gn.display_name  AS planting_name,
+             gn.status,
+             gn.location_id,
+             gn.sown_at, gn.transplanted_at, gn.planted_out_at,
+             cv.id            AS variety_id,
+             cv.display_name  AS variety_name,
+             cv.crop_type_slug,
+             cv.days_to_maturity_min, cv.days_to_maturity_max,
+             ct.display_name  AS crop_display_name,
+             ct.harvest_habit, ct.dtm_basis, ct.set_to_first_pick_days
+        FROM garden_node gn
+        JOIN plant_projects pj ON pj.id = gn.container_id
+        JOIN cultivar cv       ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
+        JOIN crop_types ct     ON ct.slug = cv.crop_type_slug AND ct.deleted_at IS NULL
+       WHERE pj.created_by = ANY(${householdIds})
+         AND pj.deleted_at IS NULL
+         AND pj.archived_at IS NULL
+         AND gn.deleted_at IS NULL
+         AND gn.archived_at IS NULL
+         AND (gn.status IS NULL OR gn.status NOT IN ('failed', 'ended', 'dormant'))
+    ),
+    sibling AS (
+      SELECT l.plant_id,
+             s.plant_id      AS sibling_plant_id,
+             s.planting_name AS sibling_planting_name,
+             s.first_pick_date AS sibling_first_pick_date
+        FROM live l
+        JOIN LATERAL (
+          SELECT sl.plant_id, sl.planting_name, pk.first_pick_date
+            FROM live sl
+            JOIN picks pk ON pk.plant_id = sl.plant_id
+           WHERE sl.project_id = l.project_id
+             AND sl.plant_id <> l.plant_id
+             AND sl.crop_type_slug IS NOT DISTINCT FROM l.crop_type_slug
+             AND pk.first_pick_date IS NOT NULL
+           ORDER BY pk.first_pick_date ASC, sl.plant_id ASC
+           LIMIT 1
+        ) s ON true
+    ),
+    -- Active "not yet" suppression, scoped to THIS USER (not the household): a dismissal records
+    -- who OBSERVED. Dave's phone and his tablet share a user_id, which is what makes the dismissal
+    -- cross-device; Jen looking at a melon must not clear it from Dave's queue, and both
+    -- observations are independently valid calibration samples.
+    -- suppressed_until NULL = suppress for the rest of the grow year (design §3.5 makes dismissal a
+    -- queue EXIT); a date re-opens the watch on that day. Season-scoped either way.
+    dismissed AS (
+      SELECT d.plant_id
+        FROM public.harvest_watch_dismissal d CROSS JOIN bounds b
+       WHERE d.user_id = ${userId}
+         AND d.undone_at IS NULL
+         AND d.observed_on >= b.season_start
+         AND (d.suppressed_until IS NULL OR d.suppressed_until > b.et_today)
+       GROUP BY d.plant_id
+    ),
+    nursery AS (
+      SELECT count(*)::int AS n,
+             percentile_cont(0.5) WITHIN GROUP (
+               ORDER BY (gn.transplanted_at - gn.sown_at)
+             )::int AS median_gap
+        FROM garden_node gn
+        JOIN plant_projects pj ON pj.id = gn.container_id
+       WHERE pj.created_by = ANY(${householdIds})
+         AND gn.deleted_at IS NULL
+         AND gn.sown_at IS NOT NULL
+         AND gn.transplanted_at IS NOT NULL
+         AND gn.transplanted_at >= gn.sown_at
+    )
+    SELECT l.*,
+           COALESCE(pk.harvest_count, 0)      AS prior_harvest_count,
+           fs.fruit_set_date,
+           sb.sibling_plant_id, sb.sibling_planting_name, sb.sibling_first_pick_date,
+           (dm.plant_id IS NOT NULL)          AS dismissed_active,
+           loc.name                           AS location_name,
+           to_char(b.et_today, 'YYYY-MM-DD')  AS et_today,
+           to_char(b.season_start, 'YYYY-MM-DD') AS season_start,
+           nu.n                               AS nursery_sample_n,
+           nu.median_gap                      AS nursery_median_gap
+      FROM live l
+      CROSS JOIN bounds b
+      CROSS JOIN nursery nu
+      LEFT JOIN picks pk     ON pk.plant_id = l.plant_id
+      LEFT JOIN fruit_set fs ON fs.plant_id = l.plant_id
+      LEFT JOIN sibling sb   ON sb.plant_id = l.plant_id
+      LEFT JOIN dismissed dm ON dm.plant_id = l.plant_id
+      LEFT JOIN locations loc ON loc.id = l.location_id AND loc.deleted_at IS NULL
+  `;
+}
+
+// Below this many dual-dated plantings the household's own median is too thin to trust; fall back
+// to the documented constant rather than let one atypical pair set the offset for every crop.
+export const NURSERY_MIN_SAMPLE = 5;
+
+export function resolveNurseryOffset(rows) {
+  const r = rows?.[0];
+  const n = Number(r?.nursery_sample_n ?? 0);
+  const gap = Number(r?.nursery_median_gap);
+  if (n >= NURSERY_MIN_SAMPLE && Number.isFinite(gap) && gap >= 0) {
+    return { days: gap, source: 'household_median', sample_n: n };
+  }
+  return { days: NURSERY_OFFSET_DAYS_FALLBACK, source: 'fallback_constant', sample_n: n };
+}
+
+// GET /api/harvests/watch
+export async function handleWatchGet(ctx) {
+  const { sql, householdIds, userId, tz, query = {} } = ctx;
+  const limit = parseLimit(query.limit);
+  if (limit == null) return { statusCode: 400, body: { error: 'limit must be a positive integer' } };
+
+  const rows = await queryWatchRows(sql, householdIds, userId, tz);
+  const etToday = toYmd(rows?.[0]?.et_today) ?? toYmd(ctx.etTodayFallback);
+  const nursery = resolveNurseryOffset(rows);
+
+  const { candidates, excluded } = buildWatchList(rows, etToday, { nurseryOffsetDays: nursery.days });
+
+  return {
+    statusCode: 200,
+    body: {
+      time_zone: tz,
+      et_today: etToday,
+      season_start: toYmd(rows?.[0]?.season_start),
+      model_version: WATCH_MODEL_VERSION,
+      // The offset that shaped every calendar anchor in this payload, with its provenance and
+      // sample size — a client (or a later audit) can see whether the correction rested on this
+      // household's own data or on the documented constant.
+      nursery_offset: nursery,
+      limit,
+      // total_watching is the TRUE queue depth, so a client can render "showing 5 of 9" with an
+      // honest denominator. The shipped band's "Showing 3 of 28 ready" line is arithmetically false
+      // for exactly the reason this field exists: it counted a different population than it showed.
+      total_watching: candidates.length,
+      candidates: candidates.slice(0, limit),
+      // Why every non-candidate is absent. A zero-length list is then explainable instead of being
+      // the unreadable silence HarvestReadyBand's `return null` produces for three different states.
+      excluded,
+    },
+  };
+}
+
+// POST /api/harvests/watch/dismissals  { plant_id, reason?, observed_on?, note? }
+//
+// The snapshot is built SERVER-SIDE from the server's own candidate row. The client sends WHICH
+// planting and (optionally) WHEN it was observed — never the model fields. A client that could post
+// its own snapshot could poison the calibration set, and a stale PWA bundle would post an old
+// model's numbers stamped with the current version string.
+export async function handleDismissalPost(ctx) {
+  const { sql, householdIds, userId, tz, body = {} } = ctx;
+
+  const plantId = body.plant_id;
+  if (!isUuid(plantId)) return { statusCode: 400, body: { error: 'plant_id must be a uuid' } };
+
+  const reason = body.reason ?? CALIBRATION_REASON;
+  if (!DISMISSAL_REASONS.has(reason)) {
+    return { statusCode: 400, body: { error: `reason must be one of: ${[...DISMISSAL_REASONS].join(', ')}` } };
+  }
+
+  const note = body.note == null ? null : String(body.note).slice(0, 500);
+
+  const rows = await queryWatchRows(sql, householdIds, userId, tz);
+  const etToday = toYmd(rows?.[0]?.et_today) ?? toYmd(ctx.etTodayFallback);
+  const nursery = resolveNurseryOffset(rows);
+
+  // observed_on defaults to today and may be BACKDATED, following this codebase's event_date
+  // convention (Dave reads the list, walks out, comes back, then logs). Future dates are refused —
+  // an observation cannot have happened tomorrow, and one would silently corrupt every calibration
+  // interval derived from it.
+  const observedOn = toYmd(body.observed_on) ?? etToday;
+  if (observedOn == null) return { statusCode: 400, body: { error: 'observed_on must be YYYY-MM-DD' } };
+  if (etToday != null && observedOn > etToday) {
+    return { statusCode: 400, body: { error: 'observed_on cannot be in the future' } };
+  }
+
+  // Household membership is proven by the candidate query itself: it is already scoped to
+  // plant_projects.created_by = ANY(household), so a planting outside the household is simply not
+  // in `rows`. Same generic answer for absent / foreign / soft-deleted — no existence oracle.
+  const { candidates } = buildWatchList(rows, etToday, { nurseryOffsetDays: nursery.days });
+  const candidate = candidates.find((c) => c.plant_id === plantId);
+  if (!candidate) {
+    return { statusCode: 404, body: { error: 'No active watch-list candidate for that planting' } };
+  }
+
+  const snap = buildDismissalSnapshot(candidate, observedOn);
+
+  // ON CONFLICT DO NOTHING against the partial day-grain unique index: a double-tap is a 200 with
+  // the existing row rather than a 409 the UI would have to explain, and it does not mint a second
+  // sample for the same observation. A genuine re-check on a LATER day is a new row by design.
+  const inserted = await sql`
+    INSERT INTO public.harvest_watch_dismissal (
+      user_id, plant_id, project_id, observed_on, reason, note, model_version,
+      crop_type_slug, variety_id, anchor_kind, anchor_date, anchor_basis, anchor_basis_shifted,
+      expected_days, lead_days, check_from, days_watching
+    ) VALUES (
+      ${userId}, ${snap.plant_id}::uuid, ${snap.project_id}::uuid, ${snap.observed_on}::date,
+      ${reason}, ${note}, ${snap.model_version},
+      ${snap.crop_type_slug}, ${snap.variety_id}::uuid, ${snap.anchor_kind}, ${snap.anchor_date}::date,
+      ${snap.anchor_basis}, ${snap.anchor_basis_shifted},
+      ${snap.expected_days}::smallint, ${snap.lead_days}::smallint,
+      ${snap.check_from}::date, ${snap.days_watching}::smallint
+    )
+    ON CONFLICT (user_id, plant_id, observed_on) WHERE undone_at IS NULL DO NOTHING
+    RETURNING id, plant_id, observed_on, dismissed_at, reason, model_version
+  `;
+
+  if (inserted.length > 0) {
+    return { statusCode: 201, body: { dismissal: inserted[0], created: true } };
+  }
+
+  const existing = await sql`
+    SELECT id, plant_id, observed_on, dismissed_at, reason, model_version
+      FROM public.harvest_watch_dismissal
+     WHERE user_id = ${userId} AND plant_id = ${plantId}::uuid
+       AND observed_on = ${observedOn}::date AND undone_at IS NULL
+     LIMIT 1
+  `;
+  return { statusCode: 200, body: { dismissal: existing[0] ?? null, created: false } };
+}
+
+// POST /api/harvests/watch/dismiss  { plant_id, project_id?, dismissed: true|false }
+//
+// The BOOLEAN form the UI lane committed against, and the primary dismissal surface. It exists
+// because the named v1 risk in Dave's decision is a reflexive tap teaching the model noise, and a
+// dismissal with no recovery is exactly how that risk lands.
+//
+// THE BOOLEAN DOES NOT CORRUPT THE CALIBRATION SIGNAL — but only because `dismissed: false` is a
+// RETRACTION, never a delete. It sets undone_at on the active row; the row, its frozen model
+// snapshot and its observed_on all survive. That is strictly BETTER for calibration than a design
+// with no undo:
+//   * a retracted observation is itself labelled data (the user looked again, or mis-tapped), and
+//     the fitting query can include or exclude it explicitly via undone_at;
+//   * without an undo path, every reflexive mis-tap would be a permanent, unmarked FALSE negative
+//     silently poisoning the set, with no way to tell it from a real one.
+// So the boolean is accepted as specified. The one invariant it must never acquire is a hard
+// DELETE — that would destroy samples and bias the set toward observations someone stayed confident
+// about. See handleDismissalUndo.
+export async function handleDismissToggle(ctx) {
+  const { sql, userId, body = {} } = ctx;
+
+  const plantId = body.plant_id;
+  if (!isUuid(plantId)) return { statusCode: 400, body: { error: 'plant_id must be a uuid' } };
+  if (typeof body.dismissed !== 'boolean') {
+    return { statusCode: 400, body: { error: 'dismissed must be a boolean' } };
+  }
+
+  if (body.dismissed) {
+    const res = await handleDismissalPost(ctx);
+    if (res.statusCode >= 400) return res;
+    return {
+      statusCode: res.statusCode,
+      body: { plant_id: plantId, project_id: res.body.dismissal?.project_id ?? body.project_id ?? null, dismissed: true, dismissal: res.body.dismissal },
+    };
+  }
+
+  // Retract: soft-undo EVERY active dismissal this user holds on the planting. Plural on purpose —
+  // the day-grain unique index permits one active row per observation day, so a planting re-checked
+  // across several days can legitimately carry more than one, and a toggle-off that cleared only
+  // the newest would leave the row still suppressed with no control left to clear it.
+  const rows = await sql`
+    UPDATE public.harvest_watch_dismissal
+       SET undone_at = now()
+     WHERE user_id = ${userId} AND plant_id = ${plantId}::uuid AND undone_at IS NULL
+     RETURNING id, plant_id, observed_on, undone_at
+  `;
+  return {
+    statusCode: 200,
+    body: { plant_id: plantId, project_id: body.project_id ?? null, dismissed: false, retracted: rows },
+  };
+}
+
+// DELETE /api/harvests/watch/dismissals/:id — soft undo of ONE specific dismissal by id, for an
+// audit/admin path that needs to retract a single observation rather than clear a planting.
+// NEVER a hard delete: an undo is itself signal (the user changed their mind about what they saw),
+// and deleting samples biases the calibration set toward the observations someone stayed confident
+// about.
+export async function handleDismissalUndo(ctx, dismissalId) {
+  const { sql, userId } = ctx;
+  if (!isUuid(dismissalId)) return { statusCode: 400, body: { error: 'id must be a uuid' } };
+
+  // Scoped to user_id, so one user cannot undo another's observation. Already-undone rows are
+  // idempotent no-ops rather than errors.
+  const rows = await sql`
+    UPDATE public.harvest_watch_dismissal
+       SET undone_at = now()
+     WHERE id = ${dismissalId}::uuid AND user_id = ${userId} AND undone_at IS NULL
+     RETURNING id, plant_id, undone_at
+  `;
+  if (rows.length === 0) return { statusCode: 404, body: { error: 'Not found' } };
+  return { statusCode: 200, body: { undone: true, dismissal: rows[0] } };
+}
+
+// Path router. Returns null when the request is not a watch route, so index.js falls through to its
+// existing /api/harvests handling unchanged.
+// DISMISS_PATH is matched BEFORE DISMISSALS_PATH's prefix rules. Both start with
+// '/api/harvests/watch/dismiss', so order is load-bearing here exactly as it is in api.js's
+// first-match prefix table.
+export function matchWatchRoute(method, rawPath) {
+  if (rawPath === WATCH_PATH && method === 'GET') return { kind: 'watch_get' };
+  if (rawPath === DISMISS_PATH && method === 'POST') return { kind: 'dismiss_toggle' };
+  if (rawPath === DISMISSALS_PATH && method === 'POST') return { kind: 'dismissal_post' };
+  if (method === 'DELETE' && rawPath.startsWith(`${DISMISSALS_PATH}/`)) {
+    return { kind: 'dismissal_undo', id: rawPath.slice(DISMISSALS_PATH.length + 1) };
+  }
+  // A watch path with the wrong verb is a 405, NOT a fall-through: falling through would hand it to
+  // the /api/harvests read model, which answers a 405 with a message about the wrong route.
+  if (rawPath === WATCH_PATH || rawPath === DISMISS_PATH || rawPath.startsWith(DISMISSALS_PATH)) {
+    return { kind: 'method_not_allowed' };
+  }
+  return null;
+}
