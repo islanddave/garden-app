@@ -9,7 +9,12 @@ import { EVENT_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
-import { PROJECTS_HIDDEN, EVENT_REANCHOR_ENABLED } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN, EVENT_REANCHOR_ENABLED, WATER_DEPTH_EDIT_ENABLED } from '../lib/featureFlags.js'
+// V4-WATERMATH-001 F0 — the amount class is correctable from history (flag-gated; see featureFlags).
+import WaterDepthChips from '../components/WaterDepthChips.jsx'
+import {
+  isWaterDepthType, readWaterDepth, waterDepthMetadata, waterDepthLabel,
+} from '../lib/waterDepth.js'
 // BUG-HARVESTEDIT-001: the SAME constants the create form uses. The unit list also mirrors
 // harvest_log_unit_check in the database, so an option here that Postgres would reject cannot exist.
 import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toGrams } from '../lib/harvest-constants.js'
@@ -44,6 +49,21 @@ const METADATA_LABELS = {
   depth_mm:                  'Sowing depth (mm)',
   medium:                    'Growing medium',
   container:                 'Container',
+  // V4-WATERMATH-001 F0. `water_depth_source` is deliberately absent: it is model provenance
+  // ('user' vs 'default'), not something the user recorded, and rendering it invites a reading
+  // of the app's own confidence that the Jen-invisible rule keeps out of non-admin surfaces.
+  // Unlabelled keys render in the monospace raw-key fallback below, so omitting it from the
+  // labels map is not enough — it is filtered out of the entries list itself.
+  water_depth:               'Water amount',
+}
+
+// Metadata keys that are MACHINE provenance rather than user-entered detail. Filtered out of the
+// rendered Details block (see METADATA_LABELS above for why).
+const METADATA_HIDDEN_KEYS = new Set(['water_depth_source'])
+
+// Value formatters for keys whose stored value is a code, not display text.
+const METADATA_VALUE_FORMAT = {
+  water_depth: v => waterDepthLabel(v),
 }
 
 export default function EventDetail() {
@@ -128,6 +148,10 @@ export default function EventDetail() {
       // default and an untouched form can never move the event.
       plant_id:   event.plant_id ?? null,
       project_id: event.project_id ?? null,
+      // V4-WATERMATH-001 F0: seeded from the SAVED row. A row with no class (historical, or one
+      // written before capture shipped) seeds to the default — the same value the engine fold
+      // already assumes for it — so opening the editor never silently reclassifies anything.
+      water_depth: readWaterDepth(event.metadata),
     })
     setSaveErr(null)
     setEditing(true)
@@ -209,6 +233,16 @@ export default function EventDetail() {
           // never entered and EventDetail's save is byte-identical to before.
           ...(EVENT_REANCHOR_ENABLED && form.plant_id !== (event.plant_id ?? null)
             ? { plant_id: form.plant_id, project_id: form.project_id }
+            : {}),
+          // V4-WATERMATH-001 F0: sent as a MERGE over the row's existing metadata, never as a
+          // replacement — this form renders exactly one metadata key and must not null the rest
+          // (the same rule the `clear` channel above exists to enforce for columns). An edited
+          // class is always source='user': the default only ever writes itself at creation.
+          ...(WATER_DEPTH_EDIT_ENABLED && isWaterDepthType(form.event_type)
+            ? { metadata: {
+                ...(event.metadata && typeof event.metadata === 'object' ? event.metadata : {}),
+                ...waterDepthMetadata(form.water_depth, true),
+              } }
             : {}),
           ...(clearKeys.length ? { clear: clearKeys } : {}),
           // Sent ONLY for a harvest event. Absent means "don't touch harvest_log", which is what
@@ -328,6 +362,24 @@ export default function EventDetail() {
               placeholder="e.g. First true leaves visible"
             />
           </Field>
+
+          {/* V4-WATERMATH-001 F0 — correct the amount class of an already-logged watering.
+              Keyed off the form's CURRENT type (unlike the harvest panel, which keys off the
+              persisted type): there is no paired row to orphan here, so re-typing an event INTO
+              watering may legitimately give it a class. Sits outside <Field> — one-control
+              contract. Flag-gated: see WATER_DEPTH_EDIT_ENABLED for why. */}
+          {WATER_DEPTH_EDIT_ENABLED && isWaterDepthType(form.event_type) && (
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: 'block', fontSize: '0.77rem', fontWeight: 700, color: P.mid, marginBottom: 8, letterSpacing: '0.4px', textTransform: 'uppercase' }}>
+                How much water
+              </label>
+              <WaterDepthChips
+                value={form.water_depth}
+                onChange={v => setForm(f => ({ ...f, water_depth: v }))}
+                idPrefix="ev-water-depth"
+              />
+            </div>
+          )}
 
           <Field label="Quantity (optional)" htmlFor="ev-quantity" style={{ marginBottom: 14 }}>
             <Input
@@ -551,7 +603,8 @@ function EventFields({ event: ev }) {
 
   // Determine if metadata has any displayable entries
   const metadataEntries = ev.metadata && typeof ev.metadata === 'object'
-    ? Object.entries(ev.metadata).filter(([, v]) => v !== null && v !== undefined && v !== '')
+    ? Object.entries(ev.metadata).filter(([k, v]) =>
+        v !== null && v !== undefined && v !== '' && !METADATA_HIDDEN_KEYS.has(k))
     : []
 
   return (
@@ -583,8 +636,9 @@ function EventFields({ event: ev }) {
             border: `1px solid ${P.border}`,
             display: 'flex', flexDirection: 'column', gap: 8,
           }}>
-            {metadataEntries.map(([key, value]) => {
+            {metadataEntries.map(([key, rawValue]) => {
               const label = METADATA_LABELS[key] ?? null
+              const value = METADATA_VALUE_FORMAT[key] ? METADATA_VALUE_FORMAT[key](rawValue) : rawValue
               return (
                 <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
                   <span style={{ fontSize: '0.82rem', color: P.mid, flexShrink: 0 }}>

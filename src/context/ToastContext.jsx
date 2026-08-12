@@ -42,9 +42,13 @@ export function ToastProvider({ children }) {
     setToasts(ts => [...ts, { id, kind: 'msg', message, tone, duration }])
     return id
   }, [])
-  const showUndo = useCallback(({ message, onUndo, duration = 5000 }) => {
+  // `detail` (V4-WATERMATH-001 F0): optional secondary line under the message — a fact ABOUT the
+  // record just written (e.g. the watering amount class the row now carries), so the user can see
+  // what was stored while the undo is still on screen. Still operational: it states what happened,
+  // never how well it went. NOT a reward channel (see the boundary note at the top of this file).
+  const showUndo = useCallback(({ message, detail = null, onUndo, duration = 5000 }) => {
     const id = ++_seq
-    setToasts(ts => [...ts, { id, kind: 'undo', message, onUndo, duration }])
+    setToasts(ts => [...ts, { id, kind: 'undo', message, detail, onUndo, duration }])
     return id
   }, [])
   const api = useMemo(() => ({ show, showUndo, dismiss }), [show, showUndo, dismiss])
@@ -79,7 +83,14 @@ function UndoToast({ toast, offset, onUndo, onDismiss }) {
       boxShadow: '0 6px 18px rgba(0,0,0,0.3)', fontSize: '0.88rem', zIndex: 1200,
       display: 'flex', alignItems: 'center', gap: 14, maxWidth: 'calc(100% - 32px)',
     }}>
-      <span>{toast.message}</span>
+      {/* flex COLUMN for the text so a detail line stacks under the message instead of racing it
+          for the row's width; minWidth 0 keeps a long plant name from pushing Undo off-panel. */}
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        <span>{toast.message}</span>
+        {toast.detail && (
+          <span style={{ fontSize: '0.78rem', opacity: 0.85 }}>{toast.detail}</span>
+        )}
+      </span>
       <button type="button" onClick={onUndo} style={{
         background: 'transparent', color: P.greenLight, border: `1px solid ${P.greenLight}`,
         borderRadius: 6, padding: '5px 12px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer',
