@@ -21,9 +21,34 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Gardens at Mathews" />
     <title>Gardens at Mathews</title>
+    <!-- V4-PERFTHEMEA-001 preconnect. Rationale, measurements and the no-crossorigin /
+         derive-don't-hardcode reasoning: src/lib/bootSplash.js. Guarded by bootPaint.static.test.js.
+         Comments here are terse ON PURPOSE — this document is the critical path. -->
+    <script>
+      (function () {
+        try {
+          var k = '%VITE_CLERK_PUBLISHABLE_KEY%'
+          if (k.slice(0, 3) !== 'pk_') return
+          var host = atob(k.replace(/^pk_(live|test)_/, '')).replace(/\$+$/, '')
+          if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host)) return
+          var l = document.createElement('link')
+          l.rel = 'preconnect'
+          l.href = 'https://' + host
+          document.head.appendChild(l)
+        } catch (e) { /* never break boot for a preconnect */ }
+      })()
+    </script>
+    <!-- V4-PERFTHEMEA-001 pre-React boot paint. #f8f5f0 is P.cream; sibling of #root, never a
+         child (createRoot clears #root). Removed by src/lib/bootSplash.js — see it for the why. -->
+    <style>
+      #boot-splash { position: fixed; inset: 0; z-index: 2147483000; background: #f8f5f0;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 2.5rem; line-height: 1; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="boot-splash" aria-hidden="true">🌿</div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
