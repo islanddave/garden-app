@@ -37,6 +37,12 @@ import PostSaveFeedback, { confirmBtnGhost } from '../components/PostSaveFeedbac
 import { useToast } from '../context/ToastContext.jsx'
 import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap, useOverlayDismiss, useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
+// V4-WATERMATH-001 F0 — watering amount class (Light/Normal/Deep). See src/lib/waterDepth.js
+// for the metadata contract with the events Lambda and why it is NOT quantity_numeric.
+import WaterDepthChips from '../components/WaterDepthChips.jsx'
+import {
+  WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
+} from '../lib/waterDepth.js'
 import { EVENT_METADATA_FIELDS, HARVEST_QUALITY_LABELS, PLANT_CONTAINER_TYPE_OPTIONS, SEVERITY_LEVELS, ISSUE_OPTIONS } from '../lib/dropdownRegistry.js'
 
 // V3-EVENT-008: EVENT_TYPE_META lives in the canonical src/lib/eventTypes.js
@@ -400,6 +406,14 @@ export default function EventNew() {
   // endpoint (reuses the PLANT-CONTAINER-001 write path; not stored as event metadata).
   const [container, setContainer] = useState({ type: '', size: '' })
 
+  // V4-WATERMATH-001 F0: watering amount class. Preselected Normal — the default path costs zero
+  // added taps, which is the property the whole capture layer is built around. The touched ref is
+  // NOT cosmetic: it is what makes `water_depth_source` honest, and `water_depth_source` is what
+  // the 30-day <5% instrumentation gate measures. Without it every row would read 'user' and the
+  // gate that decides whether the ledger's amount math is feedable could never fire.
+  const [waterDepth, setWaterDepth] = useState(WATER_DEPTH_DEFAULT)
+  const waterDepthTouchedRef = useRef(false)
+
   // V1.2a-2 Wave 3: harvest panel state — only submitted for event_type=harvest.
   const [harvest, setHarvest] = useState(freshHarvest)
   const [harvestError, setHarvestError] = useState(null)
@@ -496,6 +510,8 @@ export default function EventNew() {
     setTreatment({ pest_target: '', product_id: '', product_text: '', category: '', amount: '' })
     // V4-HARVESTCENTER-001: a fresh type choice clears the lingering "preserve this?" affordance.
     setPreserveCtx(null)
+    // V4-WATERMATH-001 F0: a type change is a fresh entry — back to the preselected default.
+    setWaterDepth(WATER_DEPTH_DEFAULT); waterDepthTouchedRef.current = false
   }, [form.event_type])
 
   // V4-TREATLOG-001: lazy-load treatment-relevant inventory the first time a treatment event is
@@ -820,6 +836,11 @@ export default function EventNew() {
     setHarvestError(null)
     setSeverity(null); setIssueChoice(''); setIssueOther('')
     setContainer({ type: '', size: '' })
+    // V4-WATERMATH-001 F0: the amount class does NOT stick across a keepMode:'type' burst. A
+    // carried-over Deep would silently record an amount the user never chose for the NEXT
+    // planting — the same class of defect the treatment reset above exists to close — and it
+    // would also corrupt the annotation-rate signal by inflating one deliberate tap into N.
+    setWaterDepth(WATER_DEPTH_DEFAULT); waterDepthTouchedRef.current = false
     clearPhoto()
     setShowAddDetails(EVENTNEW_ADD_DETAILS_EXPANDED)
     setShowPrivate(false)
@@ -889,7 +910,14 @@ export default function EventNew() {
     // Build metadata — merge the flag issue_label (V4-FLAG-001) with any Tier-2 metadata.
     const isFlag = form.event_type === 'flag_issue'
     const issueLabel = isFlag ? (issueChoice === '__other__' ? issueOther.trim() : issueChoice) : ''
-    const mergedMeta = { ...metadataState, ...(isFlag && issueLabel ? { issue_label: issueLabel } : {}) }
+    // V4-WATERMATH-001 F0: the amount class is ALWAYS written on a watering event, including the
+    // untouched default. Writing only user-set classes would leave the ledger unable to tell "the
+    // default applied" from "this row predates capture", and would make the annotation-rate
+    // denominator unknowable.
+    const depthMeta = isWaterDepthType(form.event_type)
+      ? waterDepthMetadata(waterDepth, waterDepthTouchedRef.current)
+      : {}
+    const mergedMeta = { ...metadataState, ...depthMeta, ...(isFlag && issueLabel ? { issue_label: issueLabel } : {}) }
     const metadata = Object.keys(mergedMeta).length > 0 ? mergedMeta : null
     const flagPayload = isFlag ? { flagged_as_issue: true, severity } : {}
 
@@ -1086,7 +1114,12 @@ export default function EventNew() {
           plantId: result.plant_id ?? null,
           plantName,
           projName,
-          eventLabel: (EVENT_TYPE_META[form.event_type]?.label ?? 'event').replace('\n', ' '),
+          // V4-WATERMATH-001 F0: the confirmation states the class that was RECORDED — including
+          // the default one. A class written without being shown is a class the user cannot
+          // correct, and the undo beside it is the correction path. Read from `depthMeta`, which
+          // was captured before resetForNext() cleared the chip state.
+          eventLabel: ((EVENT_TYPE_META[form.event_type]?.label ?? 'event').replace('\n', ' '))
+            + (depthMeta.water_depth ? ` (${waterDepthLabel(depthMeta.water_depth)})` : ''),
           eventEmoji: EVENT_TYPE_META[form.event_type]?.emoji ?? '✓',
           undone: false,
           error: null,
@@ -1120,6 +1153,14 @@ export default function EventNew() {
           message: photoError
             ? `${toastTarget} — but the photo didn't upload`
             : toastTarget,
+          // V4-WATERMATH-001 F0: the recorded amount class, as a SECOND line rather than appended
+          // to `message`. Two reasons, both load-bearing: the message string is a pinned oracle
+          // (EventNew.test.jsx's exact-match "Logged event — Cayenne #1"), and the class is
+          // secondary information that should not compete with the target for the first read.
+          // Carries the anchor, so "Deep" is never left to the user's own definition.
+          detail: depthMeta.water_depth
+            ? `${waterDepthLabel(depthMeta.water_depth)} — ${WATER_DEPTH_CHIPS.find(c => c.value === depthMeta.water_depth)?.anchor ?? ''}`
+            : null,
           onUndo: () => { apiFetch('/api/events/' + eventId, { method: 'DELETE' }).catch(() => {}) },
         })
       }
@@ -1399,6 +1440,25 @@ export default function EventNew() {
                     placeholder="e.g. 3 gal, 5 L, 4 in" />
                 </Field>
               </div>
+            </Section>
+          )
+  )
+
+          /* ── V4-WATERMATH-001 F0: watering amount class (watering events only) ──
+             Placed directly under the type picker, mirroring where <TreatmentDetails> sits for
+             treatment types: a type-specific panel belongs beside the type that summons it, and
+             this one must be visible WITHOUT scrolling on the fast path or it will not be used.
+             It is never a gate — Normal is already selected, so Save works untouched. ── */
+  const waterDepthBlock = (
+          isWaterDepthType(form.event_type) && (
+            <Section label="How much water">
+              <WaterDepthChips
+                value={waterDepth}
+                onChange={(v) => { setWaterDepth(v); waterDepthTouchedRef.current = true }}
+              />
+              <p style={{ margin: '8px 0 0', color: P.mid, fontSize: '0.76rem' }}>
+                Relative to what this plant needs — Normal is already picked.
+              </p>
             </Section>
           )
   )
@@ -1792,6 +1852,7 @@ export default function EventNew() {
               {photoBlock}
               {eventTypeBlock}
               {treatmentBlock}
+              {waterDepthBlock}
               {notesBlock}
               {projectBlock}
               {plantingBlock}

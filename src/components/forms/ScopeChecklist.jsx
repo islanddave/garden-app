@@ -14,6 +14,13 @@
 //                                AbortController cancellation + race-safety
 //   - onSelectionChange({committedCount, excludedIds})  fires whenever the net selection
 //                                changes so the parent can build the confirm body + button state
+//   - renderRowExtra(planting, {excluded}) -> ReactNode | null   OPTIONAL (V4-WATERMATH-001 F0).
+//                                Renders BESIDE a review-list row, for a per-row override of a
+//                                batch-level value. Deliberately a render prop: this component
+//                                stays a scope/exclusion widget and learns nothing about watering
+//                                vocabulary — the caller owns the value and its semantics. Absent
+//                                (the default) a row renders exactly as before: the toggle button
+//                                is the row's only child and still fills its width.
 //
 // Net-count rule (plan §5 Phase D): never make the user mentally compute the set
 // difference — when any planting is skipped we render "N matched − M skipped → K will
@@ -38,6 +45,7 @@ export default function ScopeChecklist({
   verbLabel = 'log',
   runDryRun,
   onSelectionChange,
+  renderRowExtra,
 }) {
   const [preview, setPreview] = useState(null)       // { count, capped, plantings:[{id,name}] }
   const [excluded, setExcluded] = useState(() => new Set())
@@ -210,15 +218,20 @@ export default function ScopeChecklist({
               <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {plantings.map(pl => {
                   const off = excluded.has(pl.id)
+                  // The extra node is a SIBLING of the toggle button, never a child: nesting an
+                  // interactive control inside a <button> is invalid HTML and, on Chrome Android,
+                  // makes the inner tap toggle the row instead of doing its own job.
+                  const extra = renderRowExtra ? renderRowExtra(pl, { excluded: off }) : null
                   return (
-                    <li key={pl.id}>
+                    <li key={pl.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <button type="button" onClick={() => toggleExclude(pl.id)} aria-pressed={!off}
-                        style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, minHeight: 44,
+                        style={{ flex: 1, minWidth: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, minHeight: 44,
                           background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
                           color: off ? P.light : P.dark, textDecoration: off ? 'line-through' : 'none', fontSize: '0.88rem' }}>
                         <span aria-hidden="true" style={{ color: off ? P.light : P.green }}>{off ? '○' : '✓'}</span>
                         {pl.name}
                       </button>
+                      {extra}
                     </li>
                   )
                 })}

@@ -9,6 +9,13 @@ import Icon from '../components/Icon.jsx'
 import { ScopeChecklist } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
 import EventTypePicker, { EVENT_TYPES_UI } from '../components/forms/EventTypePicker.jsx'
+// V4-WATERMATH-001 F0 — batch amount class. ONE batch-level chip applies to every row; a per-row
+// override is available but never demanded. Making the class per-row-MANDATORY would put 20-40
+// forced decisions in a single burst, which is precisely the failure the chips exist to avoid.
+import WaterDepthChips from '../components/WaterDepthChips.jsx'
+import {
+  WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
+} from '../lib/waterDepth.js'
 
 // Bulk "Quick Log" (Unit A). Apply ONE event type to MANY plantings at once —
 // one event per planting — without per-item tapping. Scope: All active / By Project /
@@ -104,6 +111,15 @@ export default function LogMany() {
   const [error, setError]   = useState(null)
   const idemRef = useRef(null)
 
+  // V4-WATERMATH-001 F0: batch-level amount class + sparse per-row overrides ({plant_id: depth}).
+  // `batchDepthTouched` drives water_depth_source for every row the batch chip covers, exactly as
+  // on the single-event path — an untouched batch writes 'default' on all N rows, so the
+  // annotation-rate signal cannot be inflated by the high-volume path.
+  const [batchDepth, setBatchDepth] = useState(WATER_DEPTH_DEFAULT)
+  const [batchDepthTouched, setBatchDepthTouched] = useState(false)
+  const [rowDepth, setRowDepth] = useState({})
+  const depthApplies = isWaterDepthType(eventType)
+
   // V4-EVENTSEL-003: Log Many renders the SAME <EventTypePicker> tile grid as Log Event (below),
   // so the two selectors are visually identical. harvest/first_harvest tiles route to per-plant
   // entry (need a quantity); photo is hidden in bulk (absent from LOGMANY_PRIMARIES); everything
@@ -181,6 +197,14 @@ export default function LogMany() {
     if (dirty) writeDraft(DRAFT_KEY, { eventType, eventDate, scope, idemKey: idemRef.current })
   }, [result, ready, eventType, eventDate, scope])
 
+  // V4-WATERMATH-001 F0: a new event type or a new scope is a new batch. Per-row overrides are
+  // keyed by plant_id against a preview that has just been re-fetched, so keeping them would
+  // silently apply a class the user chose for one set of plantings to a different set. The
+  // batch-level chip resets with them — same reason the single-event path resets on type change.
+  useEffect(() => {
+    setBatchDepth(WATER_DEPTH_DEFAULT); setBatchDepthTouched(false); setRowDepth({})
+  }, [eventType, scope])
+
   // Server dry-run for ScopeChecklist. Stable (deps: fetch) — eventType/eventDate are
   // passed as call args so a vocabulary change retriggers the child's effect, not this fn.
   // `signal` flows to native fetch (api.js spreads options) → real request cancellation.
@@ -214,10 +238,28 @@ export default function LogMany() {
     writeDraft(DRAFT_KEY, { eventType, eventDate, scope, idemKey: idemRef.current })
     setSaving(true); setError(null)
     try {
+      // V4-WATERMATH-001 F0 — batch metadata contract with the events Lambda (W-F0-LAMBDA):
+      //   metadata            applied to EVERY row in the batch
+      //   metadata_overrides  { [plant_id]: {...} } merged OVER metadata for that row only
+      // The server merges these on top of its own hardcoded {batch_id, batch_v} rather than
+      // replacing it — batch_id is what the durable undo (DELETE /api/events/batch/:id) resolves
+      // against, so an override that clobbered it would strand the batch.
+      // Overrides are filtered to the COMMITTED set: a class chosen for a planting that was then
+      // excluded must not ride along and land on nothing.
+      const excludedIds = selection?.excludedIds ?? []
+      const overrideEntries = depthApplies
+        ? Object.entries(rowDepth).filter(([plantId]) => !excludedIds.includes(plantId))
+        : []
       const r = await fetch('/api/events/batch', { method: 'POST', body: JSON.stringify({
         idempotency_key: idemRef.current, event_type: eventType, scope,
-        exclude_plant_ids: selection?.excludedIds ?? [],
+        exclude_plant_ids: excludedIds,
         ...(eventDate ? { event_date: eventDate } : {}),
+        ...(depthApplies ? { metadata: waterDepthMetadata(batchDepth, batchDepthTouched) } : {}),
+        ...(overrideEntries.length ? {
+          metadata_overrides: Object.fromEntries(
+            overrideEntries.map(([plantId, depth]) => [plantId, waterDepthMetadata(depth, true)]),
+          ),
+        } : {}),
       }) })
       try { localStorage.setItem(SCOPE_KEY, JSON.stringify(scope)) } catch (e) {}
       try { localStorage.setItem(EVENT_TYPE_KEY, eventType) } catch (e) {}
@@ -264,6 +306,14 @@ export default function LogMany() {
             ✓ {result.count} {result.count === 1 ? 'planting' : 'plantings'} {verbLabel}
           </p>
           <p style={{ margin: '0 0 16px', color: P.mid, fontSize: '0.85rem' }}>in {scopeLabel}</p>
+          {/* V4-WATERMATH-001 F0: state the class that was RECORDED, beside the undo that can take
+              it back. Operational, not celebratory (Reward-UX V101) — it reports a stored value. */}
+          {depthApplies && (
+            <p data-testid="logmany-depth-recorded" style={{ margin: '-8px 0 16px', color: P.mid, fontSize: '0.82rem' }}>
+              Recorded as {waterDepthLabel(batchDepth)}
+              {Object.keys(rowDepth).length > 0 && ` · ${Object.keys(rowDepth).length} changed`}
+            </p>
+          )}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <button type="button" onClick={undo} style={btnGhost}>Undo</button>
             <button type="button" onClick={logMore} style={btnGhost}>Log more</button>
@@ -304,6 +354,23 @@ export default function LogMany() {
         </p>
       </Section>
 
+      {/* ── V4-WATERMATH-001 F0: ONE batch-level amount class ──
+          Sits directly under the type picker (same placement as Log One) and above the scope, so
+          it reads as a property of the batch rather than of any one planting. Per-row overrides
+          live in the Review list below and are opt-in: the batch chip alone is a complete answer. */}
+      {depthApplies && (
+        <Section label="How much water">
+          <WaterDepthChips
+            value={batchDepth}
+            onChange={(v) => { setBatchDepth(v); setBatchDepthTouched(true) }}
+            groupLabel="How much water for this batch"
+          />
+          <p style={{ margin: '10px 2px 0', fontSize: '0.78rem', color: P.light, lineHeight: 1.45 }}>
+            Applies to every planting in this batch. Change individual ones under Review below.
+          </p>
+        </Section>
+      )}
+
       <Section label="When?">
         {/* V3-EVENT-008 (V002 §5): back-dating for bulk frost / bring-in events logged the
             morning after. Defaults to today (empty = server "now"); future dates blocked. */}
@@ -332,6 +399,23 @@ export default function LogMany() {
         verbLabel={verbLabel}
         runDryRun={runDryRun}
         onSelectionChange={onSelectionChange}
+        renderRowExtra={depthApplies ? ((pl, { excluded }) => (
+          <WaterDepthRowOverride
+            key={`d-${pl.id}`}
+            planting={pl}
+            excluded={excluded}
+            value={rowDepth[pl.id] ?? batchDepth}
+            overridden={rowDepth[pl.id] != null}
+            onChange={(v) => setRowDepth(prev => (
+              // Choosing the batch value again REMOVES the override rather than pinning it. A row
+              // that merely agrees with the batch is not an override, and recording it as one
+              // would make the "N changed" count — and the per-row source='user' flag — lie.
+              v === batchDepth
+                ? Object.fromEntries(Object.entries(prev).filter(([k]) => k !== pl.id))
+                : { ...prev, [pl.id]: v }
+            ))}
+          />
+        )) : undefined}
       />
 
       {error && <ErrInline msg={error} />}
@@ -342,6 +426,54 @@ export default function LogMany() {
         {saving ? 'Logging…' : `Log ${verbLabel} on ${committedCount}`}
       </button>
     </Shell>
+  )
+}
+
+// V4-WATERMATH-001 F0 — per-row amount override inside the Review list.
+//
+// Collapsed by default to a single compact chip showing the class the row WILL be logged with
+// (inherited from the batch unless overridden). Tapping it reveals the three chips for that row
+// only. Two-stage rather than three-chips-always: at 390px a permanent 3-chip group per row costs
+// ~170px of every row's width and turns a review list into a decision list — the 20-40 forced
+// decisions the batch chip exists to prevent. The compact chip still SHOWS the class, so nothing
+// is hidden; only the changing of it is one tap away.
+function WaterDepthRowOverride({ planting, excluded, value, overridden, onChange }) {
+  const [open, setOpen] = useState(false)
+  // An excluded row is not being logged, so it has no class to set. Rendering the control anyway
+  // would offer a decision with no effect.
+  if (excluded) return null
+  const chip = WATER_DEPTH_CHIPS.find(c => c.value === value)
+  if (open) {
+    return (
+      <div style={{ flex: '0 0 auto' }}>
+        <WaterDepthChips
+          value={value}
+          onChange={(v) => { onChange(v); setOpen(false) }}
+          small
+          showAnchors={false}
+          idPrefix={`row-depth-${planting.id}`}
+          groupLabel={`How much water for ${planting.name}`}
+        />
+      </div>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setOpen(true)}
+      data-testid={`row-depth-toggle-${planting.id}`}
+      aria-label={`Water amount for ${planting.name}: ${waterDepthLabel(value)} — change`}
+      style={{
+        flex: '0 0 auto', minHeight: 44, minWidth: 44, padding: '6px 10px', borderRadius: 20,
+        border: `1px solid ${overridden ? P.green : P.border}`,
+        backgroundColor: P.white, color: overridden ? P.green : P.mid,
+        fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
+      }}
+    >
+      <span aria-hidden="true">{chip?.drops}</span>
+      <span aria-hidden="true">{waterDepthLabel(value)}</span>
+    </button>
   )
 }
 
