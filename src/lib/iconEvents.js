@@ -50,6 +50,15 @@ const NEW = {
   other: { svg24: '<path d="M15.6 4.8 19.2 8.4 9 18.6 4.6 19.8 5.8 15.4z"/><path d="M14 6.4 17.6 10"/><path d="M5.8 15.4 8.6 18.2"/>', svg18: '<path d="M15.4 5 19 8.6 8.8 18.8 4.4 20 5.6 15.6z"/><path d="M13.8 6.6 17.4 10.2"/>' },
   photo: { svg24: '<path d="M4 8.6h3.1l1.3-2.1a1 1 0 0 1 .85-.5h5.5a1 1 0 0 1 .85.5l1.3 2.1H21a1 1 0 0 1 1 1v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.6a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.6" r="3.4"/>', svg18: '<path d="M3.5 8.6h3.6l1.2-2h7.4l1.2 2h3.6a1 1 0 0 1 1 1v8.4a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V9.6a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.6" r="3.2"/>' },
   rain: { svg24: '<path d="M7.6 13.2a3.5 3.5 0 0 1 .3-7 4.5 4.5 0 0 1 8.6 1.2 3.2 3.2 0 0 1-.5 5.8z"/><path d="M8.4 16l-1 2.6"/><path d="M11.7 16l-1 2.6"/><path d="M15 16l-1 2.6"/>', svg18: '<path d="M7.4 13a3.6 3.6 0 0 1 .3-7 4.6 4.6 0 0 1 8.8 1.2 3.3 3.3 0 0 1-.5 5.8z"/><path d="M9 15.6l-1 2.8"/><path d="M14 15.6l-1 2.8"/>' },
+  // V4-WATERMATH-001 F0. EVENT_GLYPHS below maps EVERY EVENT_TYPES value and dereferences
+  // FORM(t).svg24 unguarded, so a type with no form here is a MODULE-LOAD TypeError — it takes
+  // the icon registry down, and with it every surface that imports it. Adding an event type
+  // therefore REQUIRES an entry here; this is not optional decoration.
+  // Form: a soil probe sunk into a mound, with a drop beside it — "I went and felt the soil".
+  // Deliberately NOT a reuse of care.drop (watering's glyph): moisture_check is the assertion
+  // that watering was NOT needed, and a user who cannot tell the two rows apart in their history
+  // cannot audit their own watering record.
+  moisture_check: { svg24: '<path d="M3.5 19h17"/><path d="M5 19a7 7 0 0 1 14 0"/><path d="M9.5 16.5V5.5"/><path d="M7.8 5.5h3.4"/><path d="M16 13.6c-1.1 0-2-.9-2-2 0-1.2 2-3.4 2-3.4s2 2.2 2 3.4c0 1.1-.9 2-2 2z"/>', svg18: '<path d="M3.5 19h17"/><path d="M5 19a7 7 0 0 1 14 0"/><path d="M9.5 16.5V5.5"/><path d="M7.8 5.5h3.4"/><path d="M16 13.6c-1.1 0-2-.9-2-2 0-1.2 2-3.4 2-3.4s2 2.2 2 3.4c0 1.1-.9 2-2 2z"/>' },
 }
 
 const REUSE = {

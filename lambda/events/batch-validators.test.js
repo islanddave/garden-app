@@ -92,9 +92,13 @@ describe('BATCH_EVENT_TYPES drift guard (exact equality)', () => {
     BATCH_EVENT_TYPES.forEach(t => expect(master.has(t), t).toBe(true));
   });
 
-  it('excludes exactly the 6 expected types (3 needs-input + 3 HS-1; flowering+fruit_set freed)', () => {
+  it('excludes exactly the 7 expected types (3 needs-input + 3 HS-1 + 1 non-reward; flowering+fruit_set freed)', () => {
+    // V4-WATERMATH-001 F0 added moisture_check — see the same guard in src/__tests__/eventTypes.js
+    // and the exclusion rationale in src/lib/eventTypes.js. This is the LAMBDA-side mirror: it
+    // reads the GENERATED copy, so it also proves codegen carried the exclusion across the
+    // bundler-less boundary rather than the Lambda silently keeping the old allowlist.
     expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
-      ['cutting_taken', 'divided', 'first_harvest', 'hand_pollinated', 'harvest', 'photo'],
+      ['cutting_taken', 'divided', 'first_harvest', 'hand_pollinated', 'harvest', 'moisture_check', 'photo'],
     );
   });
 });

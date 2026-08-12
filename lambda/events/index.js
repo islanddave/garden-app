@@ -24,7 +24,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES } from './validators.js';
 import { validateClear, resolveFlagPair } from './clearFields.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
@@ -375,6 +375,21 @@ export const handler = async (event) => {
       const batchId = randomUUID();
       const scopeJson = JSON.stringify(scope);
 
+      // V4-WATERMATH-001 F0 — per-row metadata for the batch INSERT (see buildBatchMetadataPlan).
+      // The merge happens HERE, in JS, not in SQL: it makes the whole precedence rule a pure
+      // function with unit tests, and it keeps the INSERT down to two jsonb parameters and one
+      // `->` lookup instead of a chain of `||` over bound values whose types Postgres would have
+      // to infer. Both are stringified with an explicit ::jsonb cast at the call site — an
+      // uncast bound object cannot be the left operand of `->` ("could not determine data type").
+      const { defaultMetadata, overrides } = buildBatchMetadataPlan({
+        batchId,
+        metadata: body.metadata,
+        plantMetadata: body.plant_metadata,
+        plantIds,
+      });
+      const defaultMetadataJson = JSON.stringify(defaultMetadata);
+      const overridesJson = JSON.stringify(overrides);
+
       // (3) One transaction: batch row + resolve-and-insert events + per-project entity_memory.
       await sql.transaction([
         sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
@@ -391,7 +406,13 @@ export const handler = async (event) => {
                logged_by, created_by, metadata, source)
             SELECT p.container_id, pp.location_id, p.id, ${eventType}, ${eventDate}::timestamptz, true,
                    ${userId}, ${userId},
-                   jsonb_build_object('batch_id', ${batchId}::text, 'batch_v', 1),
+                   -- V4-WATERMATH-001 F0. WAS: jsonb_build_object('batch_id', …, 'batch_v', 1) —
+                   -- hardcoded, so the batch path stored NO user metadata whatsoever and the
+                   -- watering amount chips would have captured ~0% of the high-volume path.
+                   -- Now: per-row override if this planting has one, else the batch-level default.
+                   -- Both objects already contain batch_id/batch_v (merged last, server-owned), so
+                   -- every row still carries the batch identity the undo cascade keys on.
+                   COALESCE(${overridesJson}::jsonb -> p.id::text, ${defaultMetadataJson}::jsonb),
                    ${EVENT_SOURCE_BATCH}
             FROM public.garden_node p JOIN public.container pp ON pp.id = p.container_id
             WHERE p.id = ANY(${plantIds})`,
@@ -2478,13 +2499,23 @@ export const handler = async (event) => {
           SELECT
             to_char((NOW() AT TIME ZONE (SELECT tz FROM z))::date, 'YYYY-MM-DD') AS today,
             (SELECT count(*)::int FROM event_log e
-              WHERE e.created_by = ${userId} AND e.deleted_at IS NULL) AS live_events,
+              WHERE e.created_by = ${userId} AND e.deleted_at IS NULL
+                -- V4-WATERMATH-001 F0: non-reward types are invisible to total_events. This
+                -- filter is NOT redundant with skipping the grant below — total_events and the
+                -- streak are RECOMPUTED from event_log on every logging action, so without it a
+                -- moisture_check row would be counted by the next watering the user logs. The
+                -- exclusion has to live in the recompute, not just in the grant.
+                AND NOT (e.event_type = ANY(${NON_REWARD_EVENT_TYPES}::text[]))) AS live_events,
             COALESCE((
               SELECT json_agg(d ORDER BY d DESC) FROM (
                 SELECT DISTINCT (e.event_date AT TIME ZONE (SELECT tz FROM z))::date AS d
                 FROM event_log e
                 WHERE e.created_by = ${userId}
                   AND e.deleted_at IS NULL
+                  -- Same reason, for the streak: a day whose ONLY activity is a moisture_check is
+                  -- not an activity day. Otherwise tapping "not thirsty" once a day sustains a
+                  -- streak indefinitely without gardening.
+                  AND NOT (e.event_type = ANY(${NON_REWARD_EVENT_TYPES}::text[]))
                   AND (e.event_date AT TIME ZONE (SELECT tz FROM z))::date
                       <= (NOW() AT TIME ZONE (SELECT tz FROM z))::date
               ) days
@@ -2538,6 +2569,12 @@ export const handler = async (event) => {
       // deliberately filters `reason = 'event_logged'`, so achievement XP has never counted toward
       // it (F16) and still does not. Step 5's telemetry still runs after both.
       let flatXpResult = { granted: 0, today_total: 0, daily_xp_remaining: DAILY_FLAT_XP_CAP, level: null };
+      // V4-WATERMATH-001 F0 — the zero-XP gate for moisture_check. Bound as a boolean into the
+      // grant's WHERE rather than wrapped around the whole query ON PURPOSE: today_xp still runs,
+      // so `today_total` / `daily_xp_remaining` in the response stay TRUE for this user right now.
+      // Short-circuiting the query would report a full 300-XP allowance to a capped-out user and
+      // make their XP meter jump backwards on a tap that is supposed to change nothing.
+      const eventTypeIsRewarded = isRewardedEventType(eventType);
       try {
         const rows = await sql`
           WITH today_xp AS (
@@ -2552,6 +2589,12 @@ export const handler = async (event) => {
             SELECT ${userId}, ${FLAT_XP_PER_EVENT}, 'event_logged', ${eventId}::uuid
             FROM today_xp
             WHERE today_sum < ${DAILY_FLAT_XP_CAP}
+              -- V4-WATERMATH-001 F0: false for every NON_REWARD_EVENT_TYPES member, so no
+              -- xp_events row is inserted and the stats UPDATE below adds COALESCE(NULL,0) = 0.
+              -- (No backticks in SQL comments: this block lives inside a JS template literal, and
+              -- a stray backtick terminates it — a module-load SyntaxError the unit suite cannot
+              -- see, because it reads this file as TEXT and never imports it. eslint caught it.)
+              AND ${eventTypeIsRewarded}::boolean
             -- eventId is brand new on every single-event POST, so this cannot conflict today. It is
             -- here so the single and batch grants carry the SAME retry semantics: at most one
             -- 'event_logged' grant per logging action, enforced by 0c rather than by convention.
@@ -2595,7 +2638,10 @@ export const handler = async (event) => {
       // F16: no daily cap on achievement XP — encouragement-class grants stay uncapped.
       // BUG-XPPROGRESSION-001 — was Step 3b; now runs after the flat grant (see Step 3b's header).
       try {
-        if (achievementResult.current_streak != null) {
+        // V4-WATERMATH-001 F0 — a non-reward type earns NO achievement either. Without this guard
+        // `time_of_day` (early_bird / night_owl) and `multi_per_day` would fire on a moisture_check
+        // tap, which is an XP grant by another name: achievement XP is UNCAPPED (F16).
+        if (achievementResult.current_streak != null && eventTypeIsRewarded) {
           const streakVal = achievementResult.current_streak;
           const totalVal  = achievementResult.total_events;
           // Post-grant level, falling back to the Step-3a readback if the flat grant failed or was
@@ -2614,6 +2660,10 @@ export const handler = async (event) => {
                 )::int AS today_events
               FROM event_log
               WHERE created_by = ${userId} AND deleted_at IS NULL
+                -- V4-WATERMATH-001 F0: moisture_check rows must not count toward multi_per_day
+                -- ("log N things today") on some OTHER event's evaluation either — otherwise the
+                -- snooze still buys the achievement, one action later.
+                AND NOT (event_type = ANY(${NON_REWARD_EVENT_TYPES}::text[]))
             ),
             candidates AS (
               SELECT a.id, a.xp_reward
@@ -2700,7 +2750,10 @@ export const handler = async (event) => {
           name: 'log_entry_created',
           metadata: { event_type: eventType, project_id: projectId, event_id: eventId },
         }];
-        if (flatXpResult.granted === 0 && flatXpResult.today_total >= DAILY_FLAT_XP_CAP) {
+        // eventTypeIsRewarded guard: a non-reward type forfeits nothing when the cap is already
+        // hit — it was never eligible — so emitting daily_xp_capped would overstate the only
+        // measurement of forfeited XP that exists.
+        if (eventTypeIsRewarded && flatXpResult.granted === 0 && flatXpResult.today_total >= DAILY_FLAT_XP_CAP) {
           telemetryEvents.push({
             name: 'daily_xp_capped',
             metadata: { event_id: eventId, today_total: flatXpResult.today_total },

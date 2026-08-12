@@ -45,7 +45,13 @@ describe('event_log.source — every write path this Lambda owns sets it', () =>
   it('the batch INSERT sets app_batch — the case the timestamp heuristic got 98.5% wrong', () => {
     // The heuristic misfired precisely BECAUSE one INSERT..SELECT gives up to 500 rows the same
     // created_at. Setting the column at that same statement is the fix.
-    expect(SRC).toMatch(/jsonb_build_object\('batch_id'[\s\S]{0,200}\$\{EVENT_SOURCE_BATCH\}/);
+    //
+    // V4-WATERMATH-001 F0 re-anchor: this used to match on `jsonb_build_object('batch_id'`, which
+    // was the batch INSERT's hardcoded metadata expression. That expression is GONE — metadata is
+    // now a per-row merge bound as two ::jsonb parameters — so the old needle would have found
+    // nothing and this test would have failed for a reason unrelated to provenance. Re-anchored on
+    // the metadata expression that replaced it, in the same statement, immediately above `source`.
+    expect(SRC).toMatch(/COALESCE\(\$\{overridesJson\}::jsonb -> p\.id::text[\s\S]{0,200}\$\{EVENT_SOURCE_BATCH\}/);
   });
 });
 

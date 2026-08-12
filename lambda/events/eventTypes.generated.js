@@ -8,7 +8,7 @@
 //
 // WHY this file exists: the events Lambda ships as a standalone zip with NO
 // bundler, so it cannot import from src/lib/ at runtime. validators.js imports
-// THIS sibling instead. (Source byte-length at generation: 15401.)
+// THIS sibling instead. (Source byte-length at generation: 19402.)
 
 export const EVENT_TYPES = [
   'sowing',
@@ -20,6 +20,7 @@ export const EVENT_TYPES = [
   'hardening_off',
   'watering',
   'rain',
+  'moisture_check',
   'fertilizing',
   'pest_treatment',
   'doctored',
@@ -68,6 +69,7 @@ export const BATCH_EXCLUDED_TYPES = [
   'divided',
   'cutting_taken',
   'hand_pollinated',
+  'moisture_check',
 ]
 
 // Derived (EVENT_TYPES minus BATCH_EXCLUDED_TYPES) — kept explicit here so the
@@ -115,4 +117,27 @@ export const BATCH_EVENT_TYPES = [
   'overwinter_survived',
   'observation',
   'other',
+]
+
+// V4-WATERMATH-001 F0 — event types that grant ZERO xp / streak / total_events.
+// Enforced ONLY in application code (live Neon has no reward trigger on event_log);
+// see the long note in src/lib/eventTypes.js for the three enforcement points.
+export const NON_REWARD_EVENT_TYPES = [
+  'moisture_check',
+]
+
+export function isRewardedEventType(eventType) {
+  return !NON_REWARD_EVENT_TYPES.includes(eventType)
+}
+
+// V4-WATERMATH-001 F0 — metadata.water_depth / metadata.water_depth_source vocabularies.
+export const WATER_DEPTH_CLASSES = [
+  'light',
+  'normal',
+  'deep',
+]
+
+export const WATER_DEPTH_SOURCES = [
+  'user',
+  'default',
 ]
