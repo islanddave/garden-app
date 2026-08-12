@@ -56,6 +56,7 @@ import PutUp from './pages/PutUp.jsx'
 import SpaceDetail from './pages/SpaceDetail.jsx'
 import VarietyEdit from './pages/VarietyEdit.jsx'
 import SplashScreen from './components/SplashScreen.jsx'
+import { dismissBootSplash } from './lib/bootSplash.js'
 import UpdateBanner from './components/UpdateBanner.jsx'
 import Sheet from './components/forms/Sheet.jsx'
 import { OverlayProvider, OverlaySurfaceProvider, OverlayDirtyProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
@@ -281,14 +282,23 @@ function AppRoutes() {
 }
 
 export default function App() {
+  // V4-PERFTHEMEA-001: hand the screen over from index.html's pre-React #boot-splash to
+  // SplashScreen. LAYOUT effect, not a passive one, so the removal commits in the same frame that
+  // paints SplashScreen — both are P.cream, so the handover is invisible. A passive effect would
+  // allow a paint in between, i.e. one frame of the white flash this whole change removes.
+  React.useLayoutEffect(dismissBootSplash, [])
+
   // ModeProvider — Field/Desk mode scaffold (Post-V2 UX overhaul Inc 2 Bite 2).
   // Global app-state (Open Q #2 → global, not per-page). Sits inside Auth so
   // it can later read user prefs if needed, outside Zone so the mode chip
   // remains stable as zones change. Session-persistent via sessionStorage.
   return (
-    <>
-      <SplashScreen />
     <AuthProvider>
+      {/* V4-PERFTHEMEA-001: moved INSIDE AuthProvider. It now exits on readiness rather than on a
+          fixed timer, which means it has to be able to read `loading` — measured: it used to leave
+          ~850ms before Protected stopped returning null. Still a sibling overlay (position:fixed),
+          so it covers login and every route exactly as before. */}
+      <SplashScreen />
       <ModeProvider>
         <ZoneProvider>
           <FavoritesProvider>
@@ -299,7 +309,6 @@ export default function App() {
         </ZoneProvider>
       </ModeProvider>
     </AuthProvider>
-    </>
   )
 }
 
