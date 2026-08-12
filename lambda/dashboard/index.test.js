@@ -645,9 +645,10 @@ describe('DRG-WATERRECON-001 — queryWaterDueFromPlan (alert bar reads the DrG 
     // plan keyed per-user + ET day
     expect(q.resolved).toMatch(/FROM daily_plan/);
     expect(q.resolved).toMatch(/America\/New_York/);
-    // same-day done-set (mirrors daily-plan-read.annotateDone): watering/rain event today ET
+    // same-day done-set (mirrors daily-plan-read.annotateDone): watering/rain event today ET, plus
+    // moisture_check on the interim rolling-24h window (V4-WATERMATH-001 F0)
     expect(q.resolved).toMatch(/FROM event_log/);
-    expect(q.resolved).toMatch(/event_type IN \('watering','rain'\)/);
+    expect(q.resolved).toMatch(/event_type IN \('watering','rain','moisture_check'\)/);
     // display fields the UI reads (WaterMeTile + todayBand) preserved from entity_memory + container
     expect(q.resolved).toMatch(/entity_memory/);
     expect(q.resolved).toMatch(/public\.container/);
@@ -713,16 +714,30 @@ const __readSrc = (p) => __decomment(__readFileSync(p, 'utf8'));
 describe('DRG-WATERRECON-001 — bar/Today freshness filters stay in lockstep (anti-drift)', () => {
   it('the bar SQL and Today annotateDone use the same water-done event types + ET-day boundary', () => {
     const barSrc = __readSrc('lambda/dashboard/handlers.js');
-    const todaySrc = __readSrc('lambda/daily-plan-read/index.js');
-    // bar: SQL literal IN ('watering','rain'); Today: DONE_EVENTS.water_due array ['watering','rain']
-    expect(barSrc).toMatch(/event_type IN \('watering','rain'\)/);
-    expect(todaySrc).toMatch(/water_due:\s*\[\s*'watering',\s*'rain'\s*\]/);
+    const todaySrc = __readSrc('lambda/daily-plan-read/doneEvents.js');
+    // bar: SQL literal IN ('watering','rain','moisture_check');
+    // Today: DONE_EVENTS.water_due array ['watering','rain','moisture_check']
+    expect(barSrc).toMatch(/event_type IN \('watering','rain','moisture_check'\)/);
+    expect(todaySrc).toMatch(/water_due:\s*\[\s*'watering',\s*'rain',\s*'moisture_check'\s*\]/);
     // both key the done-day on America/New_York ::date
     expect(barSrc).toMatch(/event_date AT TIME ZONE 'America\/New_York'\)::date/);
-    expect(todaySrc).toMatch(/event_date AT TIME ZONE 'America\/New_York'\)::date/);
+    expect(__readSrc('lambda/daily-plan-read/index.js')).toMatch(/event_date AT TIME ZONE 'America\/New_York'\)::date/);
     // both filter soft-deleted events out of the done-set
     expect(barSrc).toMatch(/ev\.deleted_at IS NULL/);
-    expect(todaySrc).toMatch(/e\.deleted_at IS NULL/);
+    expect(__readSrc('lambda/daily-plan-read/index.js')).toMatch(/e\.deleted_at IS NULL/);
+  });
+
+  // V4-WATERMATH-001 F0 BLOCKING #2: the two readers must ALSO agree on the interim rolling-24h
+  // snooze window, not just on the type list. If only one reader carries it, a morning "Not thirsty"
+  // clears one surface and keeps nagging on the other — the split-brain this lockstep guard exists
+  // for, just one layer deeper than the vocabulary.
+  it('both readers give moisture_check the SAME rolling 24h window (interim pre-F2 snooze)', () => {
+    const barSrc = __readSrc('lambda/dashboard/handlers.js');
+    const todaySrc = __readSrc('lambda/daily-plan-read/index.js');
+    for (const src of [barSrc, todaySrc]) {
+      expect(src).toMatch(/event_type = 'moisture_check'/);
+      expect(src).toMatch(/event_date > now\(\) - INTERVAL '24 hours'/);
+    }
   });
 });
 
@@ -742,6 +757,40 @@ describe('DRG-WATERRECON-002 — queryWaterDueFromPlan schema_version guard', ()
     expect(q.resolved).toMatch(/FROM legacy_rows WHERE NOT \(SELECT ok FROM compat\)/);
     // the expected version is BOUND (parameterized), never string-inlined
     expect(q.values).toContain(1);
+  });
+});
+
+// V4-WATERMATH-001 — overdue_by must never be able to 500 the dashboard.
+// Asserted against the RESOLVED query (the template literal actually evaluated), not the file text,
+// because the bug being guarded is a JS-escaping bug that only exists after cooking: '\.' written in
+// a template literal cooks to a bare '.', which is POSIX match-any, so '2x3' would pass the guard and
+// throw 22P02 inside ::numeric. Source-text assertions cannot see that difference; this can.
+// Semantics were verified by executing both the old and new expressions against live Neon: the old
+// one errors on 2.3, the new one is total over 17 input shapes.
+describe('V4-WATERMATH-001 — overdue_by parse is total (no 22P02 dashboard-wide 500)', () => {
+  // __decomment for the same reason it exists everywhere else in this file: the replacement carries a
+  // SQL comment quoting the OLD expression verbatim, so an un-decommented assertion would find that
+  // epitaph and report the tripwire as still present (or, worse, pass on a comment after a real
+  // regression). Assertions run against comment-stripped, resolved SQL.
+  const resolved = () => { queryWaterDueFromPlan(makeSql(), 'user_alpha'); return __decomment(sqlCalls[sqlCalls.length - 1].resolved); };
+
+  it('never casts overdue_by straight to ::int (the 22P02 tripwire)', () => {
+    expect(resolved()).not.toMatch(/\(e->>'overdue_by'\)::int/);
+  });
+
+  it('gates on a plain-decimal regex whose dot survives template-literal cooking as a LITERAL dot', () => {
+    const q = resolved();
+    expect(q).toContain("(e->>'overdue_by') ~ '^-?[0-9]+(\\.[0-9]+)?$'");
+    // the cooked-away form is the regression: a bare '.' matches any character
+    expect(q).not.toContain("'^-?[0-9]+(.[0-9]+)?$'");
+  });
+
+  it('floors the fractional D the F2 ledger will emit and clamps before ::int (22003)', () => {
+    const q = resolved();
+    expect(q).toMatch(/floor\(\(e->>'overdue_by'\)::numeric\)/);
+    expect(q).toMatch(/LEAST\(GREATEST\(floor\(\(e->>'overdue_by'\)::numeric\), -3650\), 3650\)::int/);
+    // unparseable still degrades to 0 rather than dropping or throwing
+    expect(q).toMatch(/END, 0\) AS overdue_by/);
   });
 });
 
