@@ -114,8 +114,12 @@ describe('EventNew — dirty report to the hosting Sheet (V4-DRAFTFULLPAGE-001 b
   it('typed notes report dirty; clearing them reports clean again', async () => {
     renderReporting('event_type=watering')
     await flushLoad()
+    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'leggy seedlings' } })
     expect(reported.current).toBe(true)
+    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: '' } })
     expect(reported.current).toBe(false)
   })
@@ -142,6 +146,8 @@ describe('EventNew — dirty report to the hosting Sheet (V4-DRAFTFULLPAGE-001 b
   it('after a save the confirmation card reports NOT dirty (card stays backdrop-dismissable)', async () => {
     renderReporting('event_type=watering')
     await flushLoad()
+    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'watered deeply' } })
     expect(reported.current).toBe(true)
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })

@@ -448,6 +448,11 @@ export default function EventNew() {
   // not be conditional). Collapsed by default — that IS the slice: the harvest fast path is
   // Planting → Quantity → Unit and nothing else competes for the first screen.
   const [showHarvestMore, setShowHarvestMore] = useState(false)
+  // V4-NOTESCOLLAPSE-001 (BD0806-12): Notes is collapsed and lives at the END of the non-harvest
+  // form. Measured on tests/harness at 390x844 before this change: Notes sat at y=789 and pushed the
+  // REQUIRED Planting field to y=957 — 113px below the fold — to hold a field Dave rarely fills.
+  // The harvest branch is untouched: its Notes already sits inside showHarvestMore's disclosure.
+  const [showNotes, setShowNotes] = useState(false)
   const [plantsForProject, setPlantsForProject] = useState([])
   // BUG-PLANTFETCHSILENT-001 — both loaders below used to .catch into an empty list, which the
   // picker renders as "No plantings yet.": a network failure was indistinguishable from a project
@@ -1330,8 +1335,7 @@ export default function EventNew() {
   )
 
           /* ── Notes ── */
-  const notesBlock = (
-          <Section label="Notes">
+  const notesField = (
             <div style={{ position: 'relative' }}>
               <Textarea
                 value={form.notes}
@@ -1348,7 +1352,37 @@ export default function EventNew() {
                 transform="none"
               />
             </div>
+  )
+          /* Harvest layout only — already inside showHarvestMore's "Photo, notes & date" disclosure,
+             so it keeps the plain Section and renders byte-identically to what shipped. */
+  const notesBlock = (
+          <Section label="Notes">
+            {notesField}
           </Section>
+  )
+
+          /* ── V4-NOTESCOLLAPSE-001 — the non-harvest home for Notes: collapsed, at the end of the
+               form, expandable on tap. Same disclosure grammar as "Add details" so the form has one
+               vocabulary rather than two.
+
+               OPEN is DERIVED (`showNotes || form.notes`), not plain state: collapsing must never
+               hide text the user has already written, and a restored draft carrying notes must show
+               them without a tap. The tap only ever opens something that was empty. ── */
+  const notesOpen = showNotes || !!form.notes
+  const notesDisclosureBlock = (
+          <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 18px' }}>
+            <button
+              type="button"
+              data-testid="notes-disclosure"
+              onClick={() => setShowNotes(s => !s)}
+              aria-expanded={notesOpen}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: P.mid, fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: 0, minHeight: 44, width: '100%', display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <span aria-hidden="true">{notesOpen ? '▾' : '▸'}</span>
+              <span>Notes  ·  optional</span>
+            </button>
+            {notesOpen && <div style={{ marginTop: 14 }}>{notesField}</div>}
+          </div>
   )
 
           /* ── Project ── V4-PROJHIDE-001: hidden when projects are not a user-facing concept; the
@@ -1853,7 +1887,6 @@ export default function EventNew() {
               {eventTypeBlock}
               {treatmentBlock}
               {waterDepthBlock}
-              {notesBlock}
               {projectBlock}
               {plantingBlock}
               {containerBlock}
@@ -1861,6 +1894,9 @@ export default function EventNew() {
               {harvestBlock}
               {addDetailsBlock}
               {whenBlock}
+              {/* V4-NOTESCOLLAPSE-001 — LAST. Save is `position: sticky` and pinned to the viewport
+                  bottom on every surface, so "below Save" is document order, not viewport order. */}
+              {notesDisclosureBlock}
             </>
           )}
 

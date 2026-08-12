@@ -106,6 +106,8 @@ describe('BUG-PLANTMISMATCH-001 × V4-PLANTREQUIRED-001 (flag ON)', () => {
     await flushLoad()
     await act(async () => { await Promise.resolve() })
     await switchTo('proj-b')
+    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'x' } })
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
     await act(async () => { await Promise.resolve() })
@@ -134,6 +136,8 @@ describe('BUG-PLANTMISMATCH-001 × V4-PLANTREQUIRED-001 (flag ON)', () => {
     await flushLoad()
     await act(async () => { await Promise.resolve() })
     await switchTo('proj-a')
+    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'x' } })
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
     await waitFor(() => expect(postCalls.length).toBe(1))
@@ -155,6 +159,8 @@ describe('BUG-PLANTMISMATCH-001 × V4-PLANTREQUIRED-001 (flag ON)', () => {
     renderEventNew('project=proj-b&plant=plant-a&event_type=watering')
     await flushLoad()
     await act(async () => { await Promise.resolve() })
+    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'x' } })
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
     await act(async () => { await Promise.resolve() })
@@ -168,6 +174,8 @@ describe('BUG-PLANTMISMATCH-001 × V4-PLANTREQUIRED-001 (flag ON)', () => {
     await flushLoad()
     await act(async () => { await Promise.resolve() })
     await switchTo('proj-b')
+    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'x' } })
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
     await waitFor(() => expect(postCalls.length).toBe(1))

@@ -193,19 +193,27 @@ describe('V4-HARVFORMORDER-001 — every OTHER type keeps the shipped photo-firs
       // Photo is FIRST — the whole point of V4-LOGPHOTOFIRST-001.
       expect(order[0].startsWith('Photo')).toBe(true)
       expect(order[1]).toBe('What happened? *')
-      // Notes -> Planting -> When, in the shipped sequence. The Planting label is 'Planting *' or
-      // 'Planting' depending on requiresPlanting(type), so match on the prefix rather than pinning
-      // a requiredness this slice does not own.
+      // Planting -> When, in the shipped sequence. The Planting label is 'Planting *' or 'Planting'
+      // depending on requiresPlanting(type), so match on the prefix rather than pinning a
+      // requiredness this slice does not own.
       const planting = order.findIndex(l => l.startsWith('Planting'))
-      expect(order.indexOf('Notes')).toBeGreaterThan(order.indexOf('What happened? *'))
-      expect(planting).toBeGreaterThan(order.indexOf('Notes'))
+      expect(planting).toBeGreaterThan(order.indexOf('What happened? *'))
       expect(order.indexOf('When?')).toBeGreaterThan(planting)
+      // V4-NOTESCOLLAPSE-001 — Notes used to sit between 'What happened?' and Planting, as an
+      // always-open Section. It is now a collapsed disclosure at the END of the form, so it emits no
+      // uppercase Section label at all and follows the When? field in document order.
+      expect(order.includes('Notes')).toBe(false)
+      const notesToggle = screen.getByTestId('notes-disclosure')
+      expect(screen.queryByLabelText('Notes')).toBe(null)
+      const when = screen.getByLabelText('Event date and time')
+      expect(when.compareDocumentPosition(notesToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
       // No Harvest panel, and none of S4's machinery leaks onto this path.
       expect(order.includes('Harvest *')).toBe(false)
       expect(screen.queryByTestId('harvest-more-toggle')).toBe(null)
-      // Notes and When are DIRECTLY visible — never behind a disclosure.
+      // When is DIRECTLY visible, and Notes is one tap away — never unreachable.
+      expect(when).toBeTruthy()
+      fireEvent.click(notesToggle)
       expect(screen.getByLabelText('Notes')).toBeTruthy()
-      expect(screen.getByLabelText('Event date and time')).toBeTruthy()
     })
   }
 
@@ -221,12 +229,16 @@ describe('V4-HARVFORMORDER-001 — every OTHER type keeps the shipped photo-firs
     expect(after[0].startsWith('Photo')).toBe(true)
     expect(after.includes('Harvest *')).toBe(false)
     expect(screen.queryByTestId('harvest-more-toggle')).toBe(null)
-    expect(screen.getByLabelText('Notes')).toBeTruthy()
+    // V4-NOTESCOLLAPSE-001: the non-harvest Notes home is its own collapsed disclosure.
+    expect(screen.getByTestId('notes-disclosure')).toBeTruthy()
   })
 
   it('reorders LIVE the other way — watering -> harvest hides Notes behind the disclosure', async () => {
     const { container } = renderEventNew('event_type=watering')
     await flushLoad()
+    // Non-harvest: reachable behind the notes disclosure (V4-NOTESCOLLAPSE-001), not open on arrival.
+    expect(screen.getByTestId('notes-disclosure')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     expect(screen.getByLabelText('Notes')).toBeTruthy()
 
     fireEvent.click(screen.getByText(/Harvested/i))
