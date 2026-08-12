@@ -219,13 +219,32 @@ export const BATCH_EXCLUDED_TYPES = [
 // and `set_updated_at` — and NEITHER touches xp_events, user_stats or achievements. The only
 // trigger anywhere in the reward path is `trg_user_stats_level` on `user_stats`, whose whole body
 // is `NEW.level := public.xp_level(NEW.xp)`. So every grant is APPLICATION code in the events
-// Lambda, and the exclusion has to be applied there — in three places, because two of them are
+// Lambda, and the exclusion has to be applied there — in FOUR places, because two of them are
 // recomputes that would otherwise re-grant retroactively:
 //   (1) the flat XP grant                     — skipped outright for these types;
 //   (2) user_stats.total_events / streak      — RECOMPUTED as `count(*) FROM event_log`, so a
 //                                               moisture_check row would inflate the total on the
 //                                               NEXT event logged even if this one granted nothing;
 //   (3) the achievement evaluator's counts    — `today_events` (multi_per_day) counts every row.
+//   (4) the CRITTER award                     — BUG-CRITTERNONREWARD-001. Added 2026-08-12; it was
+//                                               missed when (1)-(3) were built and shipped ungated
+//                                               to the integration branch. It is the ONLY reward
+//                                               here that writes DURABLE data (a critter_state row
+//                                               persists; xp/streak/total_events are recomputed),
+//                                               and it had no daily cap, so a ~47.5% roll per
+//                                               moisture_check made the snooze farmable for
+//                                               collectibles even while it correctly earned no XP.
+//                                               Gated at lambda/events/index.js's hook, in
+//                                               awardCrittersForBatch, and at the awardCritterServer
+//                                               chokepoint; pinned by critter-nonreward.test.js.
+//
+// KNOWN NOT COVERED by this partition (both are direct-API-only — the shipped SPA reaches neither,
+// and neither was introduced with moisture_check; recorded here so the next reader does not have
+// to re-derive them): `POST /api/critters` (lambda/critter/index.js) grants a critter_state row for
+// ANY source event with no event_type gate and no roll at all, and the `issue_resolve_count`
+// achievement evaluator (lambda/events/index.js) counts any flagged+resolved row regardless of
+// type. The SPA only ever sets flagged_as_issue on 'flag_issue', and has had no caller for
+// awardCritter() since the server-side hook replaced it.
 //
 // WHY: moisture_check is a one-tap "not thirsty" snooze sitting next to the primary log button. A
 // rewarded snooze is a farmable XP lever — tap it on 200 plantings, cap the daily XP, sustain a

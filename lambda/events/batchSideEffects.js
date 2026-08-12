@@ -120,8 +120,13 @@ export async function applyBatchSideEffects({
 
   // ── Step 1: critters (pre-existing behaviour, now also reached on an idempotent re-hit) ──────
   try {
+    // BUG-CRITTERNONREWARD-001 — `eventType` is the batch's single type (batches are homogeneous),
+    // and it is threaded through so the critter grant obeys the same NON_REWARD_EVENT_TYPES
+    // partition Step 2 below already applies to total_events and the streak. Defence-in-depth
+    // today (moisture_check is in BATCH_EXCLUDED_TYPES, so a batch cannot create one) — the point
+    // is that lifting that exclusion cannot silently re-open the grant.
     await awardCrittersForBatch({
-      sql, userId, events, householdId: userId, tzOffsetMin,
+      sql, userId, events, householdId: userId, tzOffsetMin, eventType,
     });
   } catch (critterErr) {
     console.warn('critter batch hook failed (non-fatal):', critterErr?.message ?? String(critterErr));

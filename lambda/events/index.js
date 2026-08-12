@@ -2488,7 +2488,14 @@ export const handler = async (event) => {
         // Smoke / admin can bypass server-side awarding by setting metadata._skip_critter_award: true.
         // Production frontend NEVER sets this — it lets the hook do its thing.
         const skipAward = newEvent.metadata && (newEvent.metadata._skip_critter_award === true);
-        if (!skipAward && newEvent.plant_id) {
+        // BUG-CRITTERNONREWARD-001 — the FOURTH grant path for NON_REWARD_EVENT_TYPES, and the only
+        // one that writes durable data (a critter_state row survives; xp/streak/total_events are all
+        // recomputed). Steps 3a/3b/3c below already withhold xp, streak and total_events from a
+        // moisture_check; without this line the same event still rolled ~33% for a collectible, so
+        // "I checked the soil" was a farmable reward loop wearing a zero-xp label.
+        // Gated HERE as well as inside awardCritterServer: that chokepoint fails open on an absent
+        // eventType by design, so the call sites are the primary control. See critterAward.js.
+        if (!skipAward && newEvent.plant_id && isRewardedEventType(newEvent.event_type)) {
           const tzOffsetHeader = parseInt(event.headers?.['x-client-tz-offset'] ?? event.headers?.['X-Client-Tz-Offset'] ?? '0', 10);
           // Fetch prefs + species prefs once for this event (cheap; one-row lookups).
           let critterPrefs = null;
@@ -2511,6 +2518,7 @@ export const handler = async (event) => {
             speciesPrefs,
             // speciesMultipliers: future season/milestone config (V4 blocker). Empty = use base_probability.
             speciesMultipliers: {},
+            eventType: newEvent.event_type,
           });
         }
       } catch (critterErr) {
