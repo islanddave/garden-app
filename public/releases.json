@@ -1,5 +1,18 @@
 [
   {
+    "version": "4.10.0",
+    "date": "2026-08-12",
+    "highlights": [
+      "Log a harvest straight from the + button — it is the first action in the create sheet now, and the planting picker opens ready for you, so a quick-button harvest is five taps with no typing.",
+      "The planting field no longer quietly fills itself in with whatever you logged last. You pick the planting each time; the one you used most recently is listed first, so it is one tap, not a silent guess.",
+      "New crop filter chips on the planting picker — tap Tomato or Pepper to cut a long list down instantly, and the filter stays put while you log a run of harvests.",
+      "Harvests now opens on Totals, the view you actually want on arrival. Coming in from a planting's 'All harvests' link still lands on the log, unfiltered by season.",
+      "Pick any past growing season from the season chip, and each crop's Totals row now carries a small sparkline of when it came in across the year.",
+      "New Export on Harvests: copy your totals or your log as plain text, filtered by crop and timeframe — totals break down by variety, with first-pick dates.",
+      "Harvest colour windows are live on the planting card: every colour you can legitimately pick at and what each one buys you in heat, sweetness or keeping — plus how to tell ripe from unripe on the varieties that ripen green."
+    ]
+  },
+  {
     "version": "4.9.2",
     "date": "2026-08-12",
     "highlights": [
