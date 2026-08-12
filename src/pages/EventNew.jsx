@@ -464,6 +464,16 @@ export default function EventNew() {
     setPickerOpen(open)
     if (open) setRecentPlantId(readLastPlantId())
   }, [])
+  // V4-HARVFAB-001 — auto-open the planting picker on the FAB's harvest arrival, and ONLY there.
+  // Guards, per design §1c: event_type=harvest, NO ?plant= (an explicit deep-link already answered
+  // the question — HarvestReadyBand seeds &plant=), and NO draft (a restored draft means the user
+  // is resuming, not starting). The draft guard is belt-and-braces TODAY: the restore effect below
+  // bails on any seed and event_type IS a seed, so no draft can be live on this arrival. It is
+  // stated rather than assumed because that coupling belongs to the draft predicate, not here.
+  // Lazy state, not a live value: this is a fact about the ARRIVAL, evaluated once.
+  const [harvestFabAutoOpen] = useState(() => (
+    preselectedEventType === 'harvest' && !preselectedPlantId && !readDraft(EVENTNEW_DRAFT_KEY)?.form
+  ))
   // the user explicitly started — never a reward/celebration channel).
 
   // Reset metadata when event type changes
@@ -1352,6 +1362,8 @@ export default function EventNew() {
               // V4-CROPFILTER-001: crop chips on the app's highest-frequency picker. Filter state
               // survives resetForNext within the mount, so a tomato burst taps the chip once.
               cropChips={CROP_CHIPS_AUTO}
+              // V4-HARVFAB-001: the FAB harvest arrival opens the picker itself (see above).
+              autoOpen={harvestFabAutoOpen}
               resetNonce={pickerResetNonce}
               loadFailed={plantsLoadFailed}
               onRetry={() => setPlantsReloadKey(k => k + 1)}

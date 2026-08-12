@@ -16,8 +16,19 @@ const { signOutSpy, navigateSpy, locationRef } = vi.hoisted(() => ({
   locationRef: { pathname: '/dashboard' },
 }))
 
+// V4-HARVFAB-001 — the Link mock now SERIALIZES `state.background` into a data attribute. Without
+// it "opens as an overlay" had no observable in jsdom at all: OverlayLink and Link both render an
+// <a href>, so a route silently dropping out of OVERLAYABLE_CREATE — the exact-string trap that
+// makes a query-string route fall through to a full-page navigation — was untestable. `state` is
+// stripped from the spread either way so React never sees it as a DOM attribute.
 vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
+  Link: ({ children, to, state, ...rest }) => (
+    <a
+      href={typeof to === 'string' ? to : '#'}
+      data-overlay-bg={state?.background ? String(state.background.pathname) : undefined}
+      {...rest}
+    >{children}</a>
+  ),
   useLocation: () => locationRef,
   useNavigate: () => navigateSpy,
 }))
@@ -266,9 +277,11 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
     expect(screen.getByLabelText('Create').getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('clicking +LOG opens the sheet with the four create options', () => {
+  it('clicking +LOG opens the sheet with the five create options', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
+    // V4-HARVFAB-001: Log harvest is the 5th action and the FIRST row (budget 4 -> 5, hard cap).
+    expect(screen.getByText('Log harvest')).toBeDefined()
     expect(screen.getByText('Log an event')).toBeDefined()
     expect(screen.getByText('Log many')).toBeDefined()
     expect(screen.getByText('Add a planting')).toBeDefined()
@@ -280,20 +293,60 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
     expect(screen.getByLabelText('Create').getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('holds the documented <=4 action budget', () => {
+  // THE BUDGET GUARD. This REPLACES an assertion that read
+  //   getAllByRole('link').filter(a => ALLOWED_HREFS.includes(a.href)).length <= 4
+  // which was vacuous against the only change it could ever need to catch: a NEW action's href is
+  // by definition not in the allow-list, so it was filtered out before being counted and a 5th,
+  // 6th, or 20th row all passed. (The recon for this slice claimed the opposite; the crucible's qa
+  // and regression seats independently inverted it, and the pre-change suite confirmed it by
+  // staying green after Log harvest landed.) Counting EVERY row by testid is the form that fails.
+  it('renders exactly five create actions — 5 is a hard cap, not a starting point', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
-    const sheetLinks = screen.getAllByRole('link').filter(a => ['/log', '/log/many', '/garden?add=1', '/sow'].includes(a.getAttribute('href')))
-    expect(sheetLinks.length).toBeLessThanOrEqual(4)
+    expect(screen.getAllByTestId('create-action')).toHaveLength(5)
+  })
+
+  it('puts Log harvest FIRST — slot 1 encodes annual frequency, not this month\'s', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    const labels = screen.getAllByTestId('create-action').map(row => row.textContent)
+    expect(labels[0]).toContain('Log harvest')
+    expect(labels[1]).toContain('Log an event')
+    expect(labels[2]).toContain('Log many')
   })
 
   it('each create option points to the correct route', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
+    expect(screen.getByText('Log harvest').closest('a').getAttribute('href')).toBe('/log?event_type=harvest')
     expect(screen.getByText('Log an event').closest('a').getAttribute('href')).toBe('/log')
     expect(screen.getByText('Log many').closest('a').getAttribute('href')).toBe('/log/many')
     expect(screen.getByText('Add a planting').closest('a').getAttribute('href')).toBe('/garden?add=1')
     expect(screen.getByText('Sow from seed').closest('a').getAttribute('href')).toBe('/sow')
+  })
+
+  it('opens Log harvest as an OVERLAY, like /log — not as a full-page navigation', () => {
+    // OVERLAYABLE_CREATE matches action.to by EXACT STRING, so a query-string route that is not
+    // listed verbatim degrades silently: same link, same href, same test result, different UX.
+    // The background-state attribute is the only thing that tells the two apart.
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    expect(screen.getByText('Log harvest').closest('a').getAttribute('data-overlay-bg')).toBe('/dashboard')
+    expect(screen.getByText('Log an event').closest('a').getAttribute('data-overlay-bg')).toBe('/dashboard')
+    // The control reading — /garden?add=1 is a PAGE by design (Slice 3), so it carries no
+    // background. Without this half, an OverlayLink-everywhere mutation would pass.
+    expect(screen.getByText('Add a planting').closest('a').getAttribute('data-overlay-bg')).toBeNull()
+    expect(screen.getByText('Sow from seed').closest('a').getAttribute('data-overlay-bg')).toBeNull()
+  })
+
+  it('leaves only one harvest-scented row in the sheet', () => {
+    // Two rows both promising harvest is a worse sheet than either alone: the "Log an event"
+    // sub-copy drops the word in the same change that adds the dedicated row.
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('Create'))
+    expect(screen.getByText('Log an event').closest('[data-testid="create-action"]').textContent)
+      .not.toMatch(/harvest/i)
+    expect(screen.getByText('Watering, a note…')).toBeDefined()
   })
 
   it('selecting an option closes the sheet', () => {

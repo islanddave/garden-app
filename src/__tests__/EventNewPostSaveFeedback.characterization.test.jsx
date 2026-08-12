@@ -236,6 +236,13 @@ describe('S5a characterization — client-state capture happens BEFORE resetForN
     renderInOverlay('event_type=harvest')
     await flushLoad()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    // V4-HARVFAB-001 re-anchor (design §5.3 — an inserted STEP, never a weakened assertion).
+    // `event_type=harvest` with no ?plant= and no draft now auto-opens the planting picker, and
+    // V4-PICKERUX-001 hides the ENTIRE sticky band (Save + the post-save strip) while a listbox is
+    // open — so role=status is correctly inaccessible until the picker is dismissed. The sibling
+    // case above needs no such step because pickPlanting() closes the picker by selecting. Escape
+    // is the user's own dismissal, not a test-only backdoor. Every assertion below is unchanged.
+    fireEvent.keyDown(screen.getByLabelText('Plant or group'), { key: 'Escape' })
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '3' } })
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 

@@ -304,6 +304,14 @@ export default function PlantingSelect({
   // logging taps the Tomato chip once, not six times; adjudicated §1b); it clears on unmount.
   // Pass a MODULE-CONST object, not an inline literal, so memo deps stay referentially stable.
   cropChips,
+  // V4-HARVFAB-001 — OPTIONAL, default-off ⇒ every other render site byte-identical. True means
+  // "open the panel on mount, with no user gesture": the FAB's harvest action lands on a form
+  // whose first REQUIRED action is choosing a planting, so that action presents itself instead of
+  // waiting to be discovered — which is what makes the 5-tap claim honest. Deliberately LATCHED to
+  // the first eligible render rather than tracked live: a prop that re-opened whenever it was
+  // truthy would re-open the panel the instant the user dismissed it. Focus is NOT forced — on
+  // Android that would summon the keyboard over the list the user came here to read.
+  autoOpen = false,
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
   'data-testid': dataTestId,
@@ -393,6 +401,16 @@ export default function PlantingSelect({
     })
   }, [])
   const clearChips = useCallback(() => setChipSelection(new Set()), [])
+
+  // V4-HARVFAB-001 — see the `autoOpen` prop doc. Runs at most once per mount, and waits out a
+  // `disabled` first render (EventNew's picker is disabled until a project exists when
+  // PROJECTS_HIDDEN is off) rather than dropping the auto-open on the floor.
+  const autoOpenedRef = useRef(false)
+  useEffect(() => {
+    if (!autoOpen || disabled || autoOpenedRef.current) return
+    autoOpenedRef.current = true
+    setOpen(true)
+  }, [autoOpen, disabled])
 
   // V4-PICKERUX-001 — the single notification point for `open`. Keyed on `open` ONLY: keying it on
   // the callback identity would re-fire on every parent render (callers pass inline closures), and

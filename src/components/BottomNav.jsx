@@ -47,9 +47,27 @@ const TABS = [
 // (user-initiated create menu), so the sheet pattern is appropriate under Reward UX V102.
 // V4-SOWFAB-001: Sow from seed added as the 4th action, directly under Add a planting — the two
 // are the same verb from different starting points (existing plant vs seed packet), and /sow was
-// previously reachable only by URL. Fills the documented <=4 budget exactly; nothing displaced.
+// previously reachable only by URL.
+//
+// V4-HARVFAB-001 (design harvest-logging-ux-design-V100-20260812 §1c, BD-002) — THE BUDGET IS NOW
+// 5, AND 5 IS A HARD CAP. Harvest takes the FIRST slot: it is the highest-frequency event in the
+// app by an order of magnitude and cost SEVEN taps to reach through "Log an event". Read this
+// before touching the list:
+//   - Any SIXTH action requires DISPLACEMENT, not expansion. The sheet is a glance surface; the
+//     budget existed before this change and survives it.
+//   - Slot 1 encodes ANNUAL frequency, not today's season. A winter session looking at a quiet
+//     harvest month must not "fix" the ordering — it will be wrong again by June.
+//   - Displacement was considered and rejected here: "Log many" is Dave-protected first-class
+//     (2026-07-01 directive) and Add a planting / Sow from seed have active seasonal
+//     constituencies.
+//   - Expect a few days of muscle-memory mistaps from "Log an event" regulars. Recovery is one
+//     in-form tap — the type picker renders below the harvest panel — so there is no back-out and
+//     no lost input.
+// "Log an event"'s sub-copy drops "harvest" in the same change: two harvest-scented rows in one
+// sheet is a worse sheet than either row alone.
 const CREATE_ACTIONS = [
-  { to: '/log',          iconName: 'event.other',      label: 'Log an event',   sub: 'Watering, harvest, a note…' },
+  { to: '/log?event_type=harvest', glyph: '🍅',                label: 'Log harvest',    sub: 'Straight to the harvest form' },
+  { to: '/log',          iconName: 'event.other',      label: 'Log an event',   sub: 'Watering, a note…' },
   { to: '/log/many',     iconName: 'action.logmany',   label: 'Log many',        sub: 'One event across many plants' },
   // V4-PROJHIDE-001: project-neutral sub-label when "project" is not a user-facing concept. Flag OFF
   // keeps the original copy — module-const evaluated once at load, so behavior is byte-identical.
@@ -58,7 +76,12 @@ const CREATE_ACTIONS = [
 ]
 
 // The create-menu targets that open as overlays (§6). Others navigate as pages.
-const OVERLAYABLE_CREATE = new Set(['/log', '/log/many'])
+// MATCHED AGAINST `action.to` BY EXACT STRING — not by pathname. A query-string route therefore
+// needs its FULL string listed here or it silently falls through to a full-page navigation, which
+// is precisely the bug V4-HARVFAB-001 would have shipped. Exact-string is deliberate over
+// pathname-matching: stripping the query would also opt in every future `/log?…` route, and
+// `/garden?add=1` stays a page on purpose (Slice 3). One consumer, below.
+const OVERLAYABLE_CREATE = new Set(['/log', '/log/many', '/log?event_type=harvest'])
 
 // Shared menu-row style. `border:'none'` first so buttons drop their default border, then
 // `borderTop` as the row separator (later longhand wins over the shorthand).
@@ -157,9 +180,19 @@ export default function BottomNav() {
               key={action.label}
               to={action.to}
               onClick={closeCreate}
+              // V4-HARVFAB-001: the budget guard counts THESE, not links filtered by an href
+              // allow-list — an allow-list passes vacuously against exactly the change it is
+              // supposed to catch (a new action). See BottomNav.createBudget.test.jsx.
+              data-testid="create-action"
               style={{ ...menuRowStyle, padding: '12px 24px' }}
             >
-              <Icon name={action.iconName} size={24} decorative style={{ color: P.green }} />
+              {/* V4-HARVFAB-001: same glyph-or-iconName contract the TABS rows use — one or the
+                  other, never both. No `event.harvest` icon anchor exists, and minting one would
+                  add an iconAnchors entry plus an icon-completeness harness case for a single row.
+                  🍅 is deliberately NOT the /harvests tab's 🧺: create action vs browse surface. */}
+              {action.glyph
+                ? <span aria-hidden="true" style={{ fontSize: '1.35rem', lineHeight: 1, width: 24, textAlign: 'center' }}>{action.glyph}</span>
+                : <Icon name={action.iconName} size={24} decorative style={{ color: P.green }} />}
               <span style={{ display: 'flex', flexDirection: 'column' }}>
                 <span style={{ fontSize: '1rem', fontWeight: 600 }}>{action.label}</span>
                 <span style={{ fontSize: '0.78rem', color: P.light }}>{action.sub}</span>
