@@ -6,6 +6,7 @@ import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'
 import HarvestReadyBand from '../components/HarvestReadyBand.jsx'
+import HarvestWatchBand from '../components/HarvestWatchBand.jsx'
 import ComposeHarvestBand from '../components/ComposeHarvestBand.jsx'
 import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
@@ -119,6 +120,14 @@ export default function Today() {
       {/* V4-HARVESTSURF-001 — cadence-evidence "ready to pick" nudge. Same ambient, self-fetching,
           hidden-when-empty posture as the band above; never fires without a prior harvest. */}
       <HarvestReadyBand />
+
+      {/* V4-HARVSURFACE-001 Slice 1 — Section 2 of the two-section harvest surface: the "worth
+          checking" watch list. Deliberately BELOW the ready band: that one is an action surface
+          (imperative, go/no-go now), this one is a plan surface (declarative, "what changed since
+          I last looked"). Design §4 — the mood and weight difference is what stops these rows from
+          being read as tasks, which is what would turn the screen back into an inventory. Same
+          ambient posture as its neighbours: self-fetching, error swallowed, hidden when empty. */}
+      <HarvestWatchBand />
 
       {/* V4-COMPOSEPOST-001 — compose tonight's harvest post from what was just logged. Same ambient
           posture again: self-fetching, error swallowed, renders nothing unless there is a batch from
