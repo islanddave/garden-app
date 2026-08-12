@@ -14,7 +14,7 @@ const FROZEN = [
   'Field', 'Input', 'Textarea', 'Select', 'EnumSelect', 'StatusSelect', 'SelectChip',
   'Button', 'Badge',
   'SegmentedControl', 'Sheet', 'TileGrid',
-  'EventTypePicker', 'ScopeChecklist', 'PlantForm', 'PlantingSelect',
+  'EventTypePicker', 'ScopeChecklist', 'PlantForm', 'PlantingSelect', 'FilterChipRow',
   'Spinner', 'ErrorBanner', 'Toast',
   'formStyles',
 ]

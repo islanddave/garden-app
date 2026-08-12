@@ -111,6 +111,54 @@ describe('computePlacement — chrome-aware in both directions', () => {
   })
 })
 
+// ── V4-CROPFILTER-001 — the crop-chip row's height enters the room math ──────
+// The chip row shares the floating panel with the list, so room the chips occupy is room the list
+// cannot have. Left out of computePlacement, the panel would open taller than the band it just
+// measured — the exact overflow-into-chrome class the chrome subtraction above exists to close,
+// reintroduced through a different term. Same reasoning, so the same test shape: pure arithmetic,
+// both directions, and an explicit no-op proof for every caller that passes no chips.
+describe('computePlacement — panelExtra (the chip row shares the panel)', () => {
+  it('subtracts the chip-row height from the downward room', () => {
+    // 512 - 112 - 200 - 8 = 192 without chips; a 56px chip row leaves the LIST 136.
+    expect(at(156, CHROME).maxHeight).toBe(192)
+    expect(at(156, { ...CHROME, panelExtra: 56 }).maxHeight).toBe(136)
+  })
+
+  it('subtracts it from the upward room too — a flipped panel is no roomier', () => {
+    const shallow = { rectTop: 190, rectBottom: 234, viewTop: 0, viewBottom: 260 }
+    const raw = computePlacement(shallow)
+    const withChips = computePlacement({ ...shallow, panelExtra: 40 })
+    expect(raw.flip).toBe(true)
+    expect(withChips.flip).toBe(true)
+    expect(withChips.maxHeight).toBe(raw.maxHeight - 40)
+  })
+
+  it('can be what tips the flip decision — the case a chips-blind threshold gets wrong', () => {
+    // Room below = 512 - 340 - 8 = 164, comfortably over LIST_MIN_H (140), so no chips ⇒ open down.
+    // A 56px chip row leaves 108 for the list: below the floor, and above (340 - 8 - 56 = 276) is
+    // roomier — so it must flip. Chips-blind, this panel opens downward and overflows by 56px.
+    expect(at(296).flip).toBe(false)
+    expect(at(296, { panelExtra: 56 }).flip).toBe(true)
+  })
+
+  it('never lets the chip row push the list below the one-row floor', () => {
+    for (const top of [0, 50, 120, 240, 360, 480]) {
+      const { maxHeight } = at(top, { ...CHROME, panelExtra: 200 })
+      expect(maxHeight).toBeGreaterThanOrEqual(44)
+      expect(maxHeight).toBeLessThanOrEqual(280)
+    }
+  })
+
+  it('panelExtra 0 (the default, and every chip-less call site) is arithmetically a no-op', () => {
+    // The counterpart of the zero-chrome proof above: the six pickers that pass no `cropChips`, and
+    // the 340+ suites that mount them, keep the exact numbers they were written against.
+    for (const top of [40, 150, 300, 450]) {
+      expect(at(top, { panelExtra: 0 })).toEqual(at(top))
+      expect(at(top, { ...CHROME, panelExtra: 0 })).toEqual(at(top, CHROME))
+    }
+  })
+})
+
 // ── V4-PICKERKB-002 / analyst finding I2 — container-aware insets ────────────
 // Inside an opaque floating container that paints OVER the bottom chrome (the Sheet overlay,
 // PhotoLibrary's PhotoModal) the chrome insets are pure over-subtraction: TodayBand mounts

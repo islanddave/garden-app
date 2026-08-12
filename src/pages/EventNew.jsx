@@ -31,6 +31,7 @@ import { seasonTotalPhrase } from '../lib/harvestSummary.js'
 import { useUxFlow, FLOWS } from '../lib/uxEvents.js'
 import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect, SelectChip } from '../components/forms'
+import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import TreatmentDetails from '../components/TreatmentDetails.jsx'
 import PostSaveFeedback, { confirmBtnGhost } from '../components/PostSaveFeedback.jsx'
 import { useToast } from '../context/ToastContext.jsx'
@@ -1348,6 +1349,9 @@ export default function EventNew() {
               // BUG-LOGTARGETREQ-001: remembered planting as RANKING, never value — read at
               // picker-open (see handlePickerOpenChange). Only this site passes it.
               recentPlantId={recentPlantId}
+              // V4-CROPFILTER-001: crop chips on the app's highest-frequency picker. Filter state
+              // survives resetForNext within the mount, so a tomato burst taps the chip once.
+              cropChips={CROP_CHIPS_AUTO}
               resetNonce={pickerResetNonce}
               loadFailed={plantsLoadFailed}
               onRetry={() => setPlantsReloadKey(k => k + 1)}

@@ -20,6 +20,7 @@ import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
 import { PlantForm, Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
+import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
 
@@ -885,6 +886,8 @@ export default function ProjectDetail() {
                 placeholder="— Choose a planting —"
                 aria-label="Planting"
                 data-testid="projdetail-mini-planting"
+                // V4-CROPFILTER-001: crop chips on the mini-logger's picker (§1b enabled sites).
+                cropChips={CROP_CHIPS_AUTO}
               />
             </Field>
 

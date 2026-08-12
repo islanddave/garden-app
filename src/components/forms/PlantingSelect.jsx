@@ -26,6 +26,7 @@ import { T, inputChrome } from './formStyles.js'
 import { formatQty } from '../../lib/format.js'
 import { PROJECTS_HIDDEN } from '../../lib/featureFlags.js'
 import { useInOverlaySurface } from '../../context/OverlayContext.jsx'
+import FilterChipRow from './FilterChipRow.jsx'
 import {
   useComboboxInput, looseIncludes,
   kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingRight,
@@ -34,6 +35,24 @@ import {
 // Max rows rendered in the listbox — VarietyPicker precedent: cap VISIBLY (footer row), never
 // truncate silently. Unscoped garden lists run to the hundreds; 200 keeps the DOM sane.
 const MAX_RESULTS = 200
+
+// V4-CROPFILTER-001 — crop-chip row thresholds + pin policy (design §1b).
+// Row suppressed when the list is small enough that scanning beats filtering, or when there is
+// nothing to discriminate (fewer than 2 distinct crops). Pins are DATA-DRIVEN, never hard-coded:
+// top-2 crop types by live-planting count in the loaded list, with pepper/tomato preference on
+// TIES only — encodes the August distribution without freezing it (the trailing-harvest-count
+// signal isn't available in picker context, so live-planting count is the proxy).
+const CHIPS_MIN_ROWS = 8          // ≤7 rows → scanning beats filtering; no chip row
+const CHIPS_MIN_CROPS = 2
+const PIN_COUNT = 2
+const PIN_TIE_PREF = ['pepper', 'tomato']
+const pinTieRank = s => { const i = PIN_TIE_PREF.indexOf(s); return i === -1 ? PIN_TIE_PREF.length : i }
+// 'sweet-corn' → 'Sweet Corn' — display fallback until a labels map is ever needed (§ Deferred).
+const titleizeSlug = s => String(s).split(/[-_]/).map(w => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ')
+// The opt-in value every enabled site passes: no explicit pins, so the row derives its own. A
+// SHARED FROZEN CONST, not an inline `{}` — an inline literal is a new identity every host render,
+// which would thrash the memos keyed on it on the app's highest-frequency form.
+export const CROP_CHIPS_AUTO = Object.freeze({})
 
 // V4-PICKERUX-001 P1 — the listbox used to be a hardcoded 280px box that always opened DOWNWARD,
 // with no idea how much room was actually below the input. On Android with the keyboard up, the
@@ -110,11 +129,16 @@ export function readChromeInsets(anchorEl = null, inOverlay = false) {
 // makes flipping UP the common case, and TopChrome (sticky, z80) paints over the listbox with
 // tappable Back/search/avatar controls in it — so a one-sided fix would trade a downward wrong-tap
 // hazard for an upward one.
+// V4-CROPFILTER-001: `panelExtra` = the chip row's rendered height (0 when no chips). It enters
+// BOTH directions' room BEFORE the flip decision and the list clamp — the chip row shares the
+// floating panel with the list, so room the chips occupy is room the list cannot have, and a flip
+// threshold that ignored it would open a panel taller than the band it measured. panelExtra=0 is
+// arithmetically a no-op: every pre-chip caller and test keeps its exact behavior.
 export function computePlacement({
-  rectTop, rectBottom, viewTop, viewBottom, chromeTop = 0, chromeBottom = 0,
+  rectTop, rectBottom, viewTop, viewBottom, chromeTop = 0, chromeBottom = 0, panelExtra = 0,
 }) {
-  const below = Math.floor(viewBottom - chromeBottom - rectBottom - LIST_GAP)
-  const above = Math.floor(rectTop - viewTop - chromeTop - LIST_GAP)
+  const below = Math.floor(viewBottom - chromeBottom - rectBottom - LIST_GAP) - panelExtra
+  const above = Math.floor(rectTop - viewTop - chromeTop - LIST_GAP) - panelExtra
   // Flip only when down genuinely cannot seat a choosable list AND up is roomier. A flip that buys
   // 10px is churn the user reads as jitter.
   const flip = below < LIST_MIN_H && above > below
@@ -136,7 +160,7 @@ export function computePlacement({
 // so every existing test keeps the previous down-280 behavior rather than silently exercising a new
 // path. That guard has its own test (PlantingSelectPlacement.test.jsx) — do not "fix" it by making
 // jsdom measure; 340+ test files depend on it.
-function measurePlacement(inputEl, inOverlay = false) {
+function measurePlacement(inputEl, inOverlay = false, panelExtra = 0) {
   if (!inputEl || typeof inputEl.getBoundingClientRect !== 'function') return null
   const r = inputEl.getBoundingClientRect()
   if (!r || (!r.top && !r.bottom && !r.height)) return null
@@ -149,6 +173,9 @@ function measurePlacement(inputEl, inOverlay = false) {
   return computePlacement({
     rectTop: r.top, rectBottom: r.bottom, viewTop, viewBottom,
     chromeTop: chrome.top, chromeBottom: chrome.bottom,
+    // V4-CROPFILTER-001: chip-row height (zero rect in jsdom → 0 → the measure guard's
+    // null/default path is untouched; the suite keeps today's arithmetic).
+    panelExtra,
   })
 }
 
@@ -266,6 +293,17 @@ export default function PlantingSelect({
   // within the filtered set; the marker renders only at top position (an out-of-scope retention
   // prepend outranks it). Ranking, never value: this prop must never seed `value`.
   recentPlantId,
+  // V4-CROPFILTER-001 — OPT-IN crop-chip row: `cropChips: { pinned?: [slugs] }`. Absent (all
+  // legacy sites) ⇒ byte-identical render. When present, a FilterChipRow of crop_type_slug chips
+  // renders INSIDE the floating panel, above the listbox (below it when flipped up — chips stay
+  // adjacent to the input edge). Multi-select OR across chips, AND with the typeahead. Chips
+  // FILTER, never gate: unmatchable plantings (no resolvable slug) stay reachable chips-off and
+  // are EXCLUDED under an active chip by design. Row suppressed when the consumer already pins
+  // scope (varietyId/cropSlug), under CHIPS_MIN_CROPS distinct crops, or at ≤7 rows. Chip state
+  // is per-instance and session-ephemeral — NEVER persisted — but SURVIVES resetNonce (burst
+  // logging taps the Tomato chip once, not six times; adjudicated §1b); it clears on unmount.
+  // Pass a MODULE-CONST object, not an inline literal, so memo deps stay referentially stable.
+  cropChips,
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
   'data-testid': dataTestId,
@@ -281,7 +319,15 @@ export default function PlantingSelect({
   // BUG-POSTSAVEVALIDATION-001. Fires once on mount (a no-op — `touched` already starts false) and
   // again on every host reset. When `resetNonce` is undefined the dep never changes, so the six
   // other call sites see mount-only behaviour identical to before.
+  // V4-CROPFILTER-001: chipSelection is DELIBERATELY not cleared here — chip filter state must
+  // survive the host's resetForNext/save within a mount (§1b adjudication; a 6-tomato burst taps
+  // the Tomato chip once). It is filter state, not write-target state (§5.2).
   useEffect(() => { setTouched(false) }, [resetNonce])
+  // V4-CROPFILTER-001 chip state: per-instance, session-ephemeral (never localStorage).
+  const [chipSelection, setChipSelection] = useState(() => new Set())
+  // Bumped by FilterChipRow's More-tray toggle so the placement effect re-measures the panel.
+  const [chipLayoutNonce, setChipLayoutNonce] = useState(0)
+  const chipRowRef = useRef(null)
   const inputRef = useRef(null)
   const listboxId = useMemo(() => `ps-list-${Math.random().toString(36).slice(2, 9)}`, [])
 
@@ -304,6 +350,49 @@ export default function PlantingSelect({
   // One flag for both modes so every downstream branch stays a single condition; the empty-state
   // row must be gated on THIS, not `failed`, or a controlled failure still prints "No plantings yet."
   const loadFailedEffective = failed || loadFailed
+
+  // ── V4-CROPFILTER-001: crop universe + data-driven pins + row eligibility ──
+  // Universe derived from the LOADED list (distinct crop_type_slug + live-planting counts),
+  // count-desc then alpha — the same list the chips will filter, so a pin can never dead-end.
+  const cropUniverse = useMemo(() => {
+    if (!cropChips) return []
+    const counts = new Map()
+    for (const p of rows) {
+      const slug = p.variety_ref?.crop_type_slug
+      if (slug) counts.set(slug, (counts.get(slug) || 0) + 1)
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  }, [cropChips, rows])
+  const explicitPinned = cropChips ? cropChips.pinned : undefined
+  const pinnedSlugs = useMemo(() => {
+    if (!cropChips) return []
+    const counts = new Map(cropUniverse)
+    // Any pin with ZERO matching plantings is hidden — no dead-end taps (§1b).
+    if (explicitPinned) return explicitPinned.filter(s => (counts.get(s) || 0) > 0)
+    return [...cropUniverse]
+      .sort((a, b) => b[1] - a[1] || pinTieRank(a[0]) - pinTieRank(b[0]) || a[0].localeCompare(b[0]))
+      .slice(0, PIN_COUNT)
+      .map(([s]) => s)
+  }, [cropChips, cropUniverse, explicitPinned])
+  // Chips never render when the consumer already pins scope (varietyId/cropSlug — PutUp keeps
+  // its shipped behavior), when <2 crops discriminate, or when scanning beats filtering (≤7 rows).
+  const chipsEligible = !!cropChips && !varietyId && !cropSlug &&
+    cropUniverse.length >= CHIPS_MIN_CROPS && rows.length >= CHIPS_MIN_ROWS
+  const chipFilterActive = chipsEligible && chipSelection.size > 0
+  const chipOptions = useMemo(
+    () => cropUniverse.map(([slug]) => ({ value: slug, label: titleizeSlug(slug) })),
+    [cropUniverse],
+  )
+  // Toggle/clear own the Set immutably — a mutated Set would not re-run the filter memo.
+  const toggleChip = useCallback((slug) => {
+    setChipSelection(prev => {
+      const next = new Set(prev)
+      if (next.has(slug)) next.delete(slug)
+      else next.add(slug)
+      return next
+    })
+  }, [])
+  const clearChips = useCallback(() => setChipSelection(new Set()), [])
 
   // V4-PICKERUX-001 — the single notification point for `open`. Keyed on `open` ONLY: keying it on
   // the callback identity would re-fire on every parent render (callers pass inline closures), and
@@ -329,8 +418,10 @@ export default function PlantingSelect({
     return () => { live = false }
   }, [apiFetch, controlled, scopeProjectId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Scope → search → sort ─────────────────────────────────────────────────
-  const candidates = useMemo(() => {
+  // ── Scope → search → chip filter → sort ────────────────────────────────────
+  // V4-CROPFILTER-001: returns hiddenByChips alongside — the count feeds the loud active-filter
+  // signal ("N hidden") whenever the chip filter is non-empty.
+  const { candidates, hiddenByChips } = useMemo(() => {
     let list = rows
     if (varietyId) list = list.filter(p => String(p.variety_id ?? p.variety_ref?.id ?? '') === String(varietyId))
     else if (cropSlug) list = list.filter(p => p.variety_ref?.crop_type_slug === cropSlug)
@@ -339,11 +430,24 @@ export default function PlantingSelect({
       // V4-PICKERVOICE-001: voice-forgiving normalization ("sun ray" -> "Sunray"). Strictly
       // widens the old .toLowerCase().includes() — typed queries keep every match they had.
       // Fully client-side here (unlike VarietyPicker there is no server ?q= leg to stay strict).
+      // V4-CROPFILTER-001 rider: crop_type_slug joins the haystack so typing "pepper" narrows
+      // even when no name/variety/project carries the word.
       list = list.filter(p =>
         looseIncludes(p.name, q) ||
         looseIncludes(p.variety_ref?.name, q) ||
-        looseIncludes(p.project_name, q)
+        looseIncludes(p.project_name, q) ||
+        looseIncludes(p.variety_ref?.crop_type_slug, q)
       )
+    }
+    // V4-CROPFILTER-001: multi-select OR across chips (set membership), AND with the typeahead
+    // (both filters apply). Applied AFTER the query so hiddenByChips counts what the CHIPS hide
+    // within the current query. Slug-less plantings are excluded under an active chip BY DESIGN
+    // (pinned as intended, not accidental — they stay reachable with chips off).
+    let chipHidden = 0
+    if (chipFilterActive) {
+      const before = list.length
+      list = list.filter(p => chipSelection.has(p.variety_ref?.crop_type_slug))
+      chipHidden = before - list.length
     }
     const sorted = sort === 'sown'
       ? [...list].sort((a, b) => {
@@ -360,8 +464,8 @@ export default function PlantingSelect({
       const ri = sorted.findIndex(p => String(p.id) === String(recentPlantId))
       if (ri > 0) sorted.unshift(sorted.splice(ri, 1)[0])
     }
-    return sorted
-  }, [rows, varietyId, cropSlug, query, sort, recentPlantId])
+    return { candidates: sorted, hiddenByChips: chipHidden }
+  }, [rows, varietyId, cropSlug, query, sort, recentPlantId, chipFilterActive, chipSelection])
 
   const selected = useMemo(
     () => rows.find(p => String(p.id) === String(value)) || null,
@@ -398,7 +502,11 @@ export default function PlantingSelect({
     let raf = 0
     const apply = () => {
       raf = 0
-      const next = measurePlacement(inputRef.current, inOverlay)
+      // V4-CROPFILTER-001: the chip row's LIVE height (0 when absent, and 0 in jsdom's zero-rect
+      // world) is the panelExtra term — measured rather than assumed, because the row wraps to a
+      // second line on narrow viewports and the More tray expands it further.
+      const extra = chipRowRef.current?.getBoundingClientRect?.().height || 0
+      const next = measurePlacement(inputRef.current, inOverlay, extra)
       // Bail when nothing changed: this runs on visualViewport scroll, which fires per compositor
       // frame during the keyboard animation. Re-rendering a 200-row listbox every frame, on the one
       // interaction where the device is already animating, is exactly the cost not worth paying.
@@ -422,7 +530,9 @@ export default function PlantingSelect({
     }
     // visible.length is a dep because the panel's own height changes the flip decision once the
     // list is short enough to not need the room. inOverlay flips the chrome-inset zeroing.
-  }, [open, disabled, visible.length, inOverlay])
+    // V4-CROPFILTER-001: chipsEligible (row appears/disappears) and chipLayoutNonce (More tray
+    // expanded/collapsed) both change panelExtra, so both must re-measure.
+  }, [open, disabled, visible.length, inOverlay, chipsEligible, chipLayoutNonce])
 
   useEffect(() => { setHighlight(0) }, [query, rows])
 
@@ -523,6 +633,31 @@ export default function PlantingSelect({
   const showMicBtn = open && !disabled && voiceSupported
   const togglePad = toggleSlotsPaddingRight({ showKb: showKbBtn, showMic: showMicBtn })
 
+  // V4-CROPFILTER-001 — the chip row sits INSIDE the floating panel but OUTSIDE the listbox role:
+  // chips are never options and never keyboard-highlight targets (onKeyDown walks `visible` only).
+  // The "N hidden" line is the loud active-filter signal the adjudication requires in exchange for
+  // letting chip state survive resetForNext — an invisible filter on a required field is the whole
+  // failure mode. Its own mousedown-preventDefault comes from FilterChipRow's root.
+  const chipRow = chipsEligible ? (
+    <div ref={chipRowRef} style={chipRowWrap(!!placement?.flip)}>
+      <FilterChipRow
+        options={chipOptions}
+        selected={chipSelection}
+        onToggle={toggleChip}
+        pinned={pinnedSlugs}
+        onClear={clearChips}
+        onLayoutChange={() => setChipLayoutNonce(n => n + 1)}
+        aria-label="Filter by crop"
+        data-testid={dataTestId ? `${dataTestId}-crop-chips` : 'ps-crop-chips'}
+      />
+      {chipFilterActive && (
+        <div data-testid="ps-chip-filter-note" style={chipNote}>
+          {hiddenByChips > 0 ? `${hiddenByChips} hidden` : 'Crop filter on'}
+        </div>
+      )}
+    </div>
+  ) : null
+
   return (
     <div style={{ position: 'relative' }}>
       <input
@@ -587,11 +722,12 @@ export default function PlantingSelect({
         </button>
       )}
       {open && !disabled && (
+        <PanelShell chips={chipRow} placement={placement}>
         <ul
           id={listboxId}
           role="listbox"
           aria-label="Plantings"
-          style={listboxStyle(placement)}
+          style={listboxStyle(placement, chipsEligible)}
           // Keep input focus while clicking rows; onBlur's deferred close still runs after click.
           onMouseDown={e => e.preventDefault()}
         >
@@ -623,7 +759,28 @@ export default function PlantingSelect({
           )}
           {!loading && !loadFailedEffective && visible.length === 0 && (
             <li style={noteRow} role="presentation">
-              {query.trim() ? `No plantings match “${query.trim()}”.` : 'No plantings yet.'}
+              {/* V4-CROPFILTER-001 filtered-to-empty: naming the CHIPS as the cause (and offering
+                  the one-tap exit right here) is the difference between "your garden is empty" and
+                  "your filter is". Chips outrank the query in the copy because they are the filter
+                  the user cannot see in the input. */}
+              {chipFilterActive ? (
+                <>
+                  No plantings match —{' '}
+                  <button
+                    type="button"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={clearChips}
+                    data-testid="ps-chips-clear-empty"
+                    style={{
+                      padding: 0, border: 'none', background: 'none', color: P.terra,
+                      fontSize: '0.8rem', fontWeight: 600, textDecoration: 'underline',
+                      cursor: 'pointer', fontFamily: 'inherit',
+                    }}
+                  >
+                    clear chips
+                  </button>
+                </>
+              ) : query.trim() ? `No plantings match “${query.trim()}”.` : 'No plantings yet.'}
             </li>
           )}
           {visible.map((p, i) => (
@@ -662,6 +819,7 @@ export default function PlantingSelect({
             </li>
           )}
         </ul>
+        </PanelShell>
       )}
       {showBlankError && (
         <div role="alert" style={{ color: P.terra, fontSize: '0.77rem', marginTop: 4 }}>
@@ -712,11 +870,40 @@ const linkBtn = {
   minHeight: 44,
 }
 
+// V4-CROPFILTER-001 — panel shell. `chips` null (every legacy call site) ⇒ children pass STRAIGHT
+// through: no wrapper node, no style change, byte-identical DOM to before. With chips, this
+// wrapper takes over the floating-panel chrome and the <ul> becomes a plain scroll region inside
+// it, so the list scrolls under a chip row that stays put. Chip position follows the flip so the
+// row is always adjacent to the INPUT edge of the panel — under the input when opening down,
+// above it when flipped up (the thumb reaches the same place either way).
+function PanelShell({ chips, placement, children }) {
+  if (!chips) return children
+  return (
+    <div style={panelStyle(placement)} data-testid="ps-panel">
+      {placement?.flip
+        ? <>{children}{chips}</>
+        : <>{chips}{children}</>}
+    </div>
+  )
+}
+
 // V4-PICKERUX-001 P1: placement is now measured (see measurePlacement). `null` reproduces the
 // pre-P1 constant exactly — down, 280 — so an environment that cannot measure (jsdom, and any
 // browser where the input is not laid out yet) behaves as it always did.
-function listboxStyle(placement) {
+// V4-CROPFILTER-001: `nested` = "the PanelShell above owns the positioning and chrome", so the
+// list keeps only its scroll behavior. Default false is the untouched pre-chip path.
+function listboxStyle(placement, nested = false) {
   const flip = !!placement?.flip
+  if (nested) {
+    return {
+      margin: 0,
+      padding: 4,
+      listStyle: 'none',
+      maxHeight: placement?.maxHeight ?? LIST_MAX_H,
+      overflowY: 'auto',
+      overscrollBehavior: 'contain',
+    }
+  }
   return {
     position: 'absolute',
     zIndex: 30,
@@ -738,6 +925,40 @@ function listboxStyle(placement) {
     // V4-KBVIEWPORT-001 and still correct under it — scroll chaining is not a viewport-model issue.)
     overscrollBehavior: 'contain',
   }
+}
+
+// The chrome the <ul> used to carry, moved out one level when chips share the panel.
+function panelStyle(placement) {
+  const flip = !!placement?.flip
+  return {
+    position: 'absolute',
+    zIndex: 30,
+    ...(flip
+      ? { bottom: '100%', top: 'auto', margin: '0 0 4px' }
+      : { top: '100%', bottom: 'auto', margin: '4px 0 0' }),
+    left: 0,
+    right: 0,
+    backgroundColor: P.white,
+    border: `1px solid ${P.border}`,
+    borderRadius: T.radiusField,
+    boxShadow: flip ? '0 -6px 18px rgba(0,0,0,0.12)' : '0 6px 18px rgba(0,0,0,0.12)',
+  }
+}
+
+// The separator sits on whichever side faces the list, which swaps with the flip.
+function chipRowWrap(flip) {
+  return {
+    padding: '8px 8px 4px',
+    ...(flip
+      ? { borderTop: `1px solid ${P.border}` }
+      : { borderBottom: `1px solid ${P.border}` }),
+  }
+}
+
+const chipNote = {
+  marginTop: 4,
+  fontSize: '0.74rem',
+  color: P.light,
 }
 
 function rowStyle(highlighted) {

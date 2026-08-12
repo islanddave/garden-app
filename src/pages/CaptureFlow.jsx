@@ -22,7 +22,7 @@ import { P } from '../lib/constants.js'
 import Field from '../components/forms/Field.jsx'
 import Input from '../components/forms/Input.jsx'
 import Select from '../components/forms/Select.jsx'
-import PlantingSelect from '../components/forms/PlantingSelect.jsx'
+import PlantingSelect, { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import Button from '../components/forms/Button.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
 
@@ -244,7 +244,9 @@ export default function CaptureFlow() {
               <>
                 <Field label="Planting">
                   {/* V4-PLANTPICKER-001: shared searchable picker (unscoped list is garden-sized) */}
-                  <PlantingSelect data-testid="cap-evplant" plants={plantings} value={evPlant}
+                  {/* V4-CROPFILTER-001: crop chips — the unscoped garden-sized list is exactly
+                      where scanning stops working (§1b enabled sites). */}
+                  <PlantingSelect data-testid="cap-evplant" plants={plantings} value={evPlant} cropChips={CROP_CHIPS_AUTO}
                     onChange={id => setEvPlant(id)} labelFormat="bare" placeholder="— pick a planting —" />
                 </Field>
                 <Field label="Event">
@@ -261,7 +263,7 @@ export default function CaptureFlow() {
               <>
                 <Field label="Planting to update">
                   {/* V4-PLANTPICKER-001: shared searchable picker (unscoped list is garden-sized) */}
-                  <PlantingSelect data-testid="cap-rpplant" plants={plantings} value={rpPlant}
+                  <PlantingSelect data-testid="cap-rpplant" plants={plantings} value={rpPlant} cropChips={CROP_CHIPS_AUTO}
                     onChange={id => setRpPlant(id)} labelFormat="bare" placeholder="— pick a planting —" />
                 </Field>
                 <Note>This photo becomes the planting’s featured picture.</Note>

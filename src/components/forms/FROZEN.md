@@ -24,6 +24,7 @@ Barrel: `src/components/forms/index.js`. Token layer: `formStyles.js` (`T`) + pa
 | **EnumSelect** | Select bound to a registry value set (dropdownRegistry). |
 | **StatusSelect** | Status-vocabulary select (lifecycle stages). |
 | **SelectChip** | Tappable chip option (chip-style single/multi pick). |
+| **FilterChipRow** | Multi-select FILTER chip row (OR across chips) with optional pinned chips + `More ▾` in-place tray and a one-tap Clear. Distinct from SelectChip, which is a single tappable option: this owns the ROW, its pin/tray policy, and the aria-pressed selected state. V4-CROPFILTER-001. Selection state is consumer-owned (a Set) and session-ephemeral by design. `TimeframeChips` in Harvests.jsx is the hand-rolled precursor it adopts conventions from; migrating it is a tracked follow-up, deliberately not the minting change. |
 | **SegmentedControl** | 2+-way mutually-exclusive VIEW toggle (radiogroup). V4-THEME-001. |
 | **Sheet** | Bottom-sheet fly-up (dialog, backdrop, focus-trap, safe-area). V4-THEME-001. |
 | **TileGrid** | Responsive tile-grid layout (columns/auto-fit, empty state). V4-THEME-001. |
