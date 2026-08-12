@@ -117,6 +117,13 @@ function serializeUnits(unitMap) {
 // event-count buckets (ISO-Mon, grow-year span follows the filter); first-pick per planting
 // (min day_key — NEVER the first_harvest marker, per design §3b); the distinct crop list that feeds
 // the crop picker; and the total unquantified (quantity-less) event count.
+// V4-HARVESTVIEW-001 S4 (sparkline): each crops[] element additionally carries its OWN weekly[]
+// buckets — same ISO-Monday keys and {week_start, count} shape as the top-level weekly[]. ADDITIVE
+// field only (no contract bump): the per-crop sparkline needs per-row distribution, and the global
+// weekly[] cannot be attributed to a crop row without inviting gestalt misreads (design §2b). Old
+// clients ignore it; new clients MUST branch on absence (a frontend can deploy ahead of this Lambda
+// and a rollback must hold — the TotalsWeight precedent). Unattributed rows keep counting toward the
+// top-level weekly[] only; other[] deliberately carries no weekly (no sparkline renders there).
 export function computeAggregates(rows) {
   const crops = new Map();
   const other = new Map();
@@ -148,7 +155,8 @@ export function computeAggregates(rows) {
 
     if (r.crop_slug) {
       let c = crops.get(r.crop_slug);
-      if (!c) { c = { crop_type_slug: r.crop_slug, crop_name: r.crop_name ?? r.crop_slug, units: new Map(), varieties: new Map(), unquantified: 0 }; crops.set(r.crop_slug, c); }
+      if (!c) { c = { crop_type_slug: r.crop_slug, crop_name: r.crop_name ?? r.crop_slug, units: new Map(), varieties: new Map(), unquantified: 0, weekly: new Map() }; crops.set(r.crop_slug, c); }
+      c.weekly.set(wk, (c.weekly.get(wk) ?? 0) + 1);
       if (hasQty) addUnit(c.units, r.unit, q); else c.unquantified += 1;
       const vkey = r.variety_id ?? '__novar__';
       let v = c.varieties.get(vkey);
@@ -167,6 +175,7 @@ export function computeAggregates(rows) {
       crop_name: c.crop_name,
       units: serializeUnits(c.units),
       unquantified: c.unquantified,
+      weekly: [...c.weekly.entries()].map(([week_start, count]) => ({ week_start, count })).sort((a, b) => a.week_start.localeCompare(b.week_start)),
       varieties: [...c.varieties.values()].map((v) => ({
         variety_id: v.variety_id, variety_name: v.variety_name, units: serializeUnits(v.units), unquantified: v.unquantified,
       })).sort((a, b) => String(a.variety_name ?? '').localeCompare(String(b.variety_name ?? ''))),

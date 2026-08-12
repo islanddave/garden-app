@@ -128,4 +128,33 @@ describe('computeAggregates', () => {
     expect(total).toBe(rows.length);
     expect(agg.weekly.every((w) => /^\d{4}-\d{2}-\d{2}$/.test(w.week_start))).toBe(true);
   });
+
+  // V4-HARVESTVIEW-001 S4 (sparkline) — crops[].weekly is ADDITIVE per-crop distribution.
+  describe('crops[].weekly (per-crop sparkline buckets)', () => {
+    it('buckets each crop separately on the same ISO-Monday keys as the top-level weekly', () => {
+      const bb = agg.crops.find((c) => c.crop_type_slug === 'blueberry');
+      // blueberry rows a/b/c/e: 07-20, 07-21, 07-22, 07-20 -> all in the 2026-07-20 ISO week
+      expect(bb.weekly).toEqual([{ week_start: '2026-07-20', count: 4 }]);
+      const zu = agg.crops.find((c) => c.crop_type_slug === 'zucchini');
+      expect(zu.weekly).toEqual([{ week_start: '2026-06-01', count: 1 }]);
+    });
+    it('payload-shape pin: every crop carries sorted {week_start, count} weekly[]; other[] carries none', () => {
+      for (const c of agg.crops) {
+        expect(Array.isArray(c.weekly)).toBe(true);
+        expect(c.weekly.every((w) => /^\d{4}-\d{2}-\d{2}$/.test(w.week_start) && Number.isInteger(w.count) && w.count > 0)).toBe(true);
+        const keys = c.weekly.map((w) => w.week_start);
+        expect(keys).toEqual([...keys].sort());
+        // a crop's weekly counts sum to its event count (quantified + unquantified rows both count)
+        const events = c.units.reduce((s, u) => s + u.count, 0) + c.unquantified;
+        expect(c.weekly.reduce((s, w) => s + w.count, 0)).toBe(events);
+      }
+      // unattributed rows stay in the TOP-LEVEL weekly only — no sparkline on the Other bucket
+      for (const o of agg.other) expect(o.weekly).toBeUndefined();
+    });
+    it('per-crop weekly totals reconcile with the top-level weekly minus unattributed rows', () => {
+      const perCrop = agg.crops.reduce((s, c) => s + c.weekly.reduce((x, w) => x + w.count, 0), 0);
+      const top = agg.weekly.reduce((s, w) => s + w.count, 0);
+      expect(perCrop).toBe(top - 1); // one unattributed row (event f)
+    });
+  });
 });
