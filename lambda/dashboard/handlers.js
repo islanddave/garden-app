@@ -19,6 +19,7 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 import { householdScope } from './household.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
+import { NON_REWARD_EVENT_TYPES } from './eventTypes.rewards.js';
 
 // DRG-WATERRECON-002: pinned to lambda/daily-plan/engine.js PLAN_SCHEMA_VERSION (kept in lockstep by the
 // anti-drift source test). The alert bar trusts a daily_plan ONLY when its stored items.schema_version
@@ -325,6 +326,19 @@ export function queryUserStats(sql, userId) {
 // V1.2-streak-fix (2026-05-25): DISTINCT activity days (by event_date in the user's TZ) + today,
 // for live streak recompute via the pure helper. Per-USER (created_by) — a streak is the user's
 // own activity, not household-scoped. Recomputing here means the displayed streak is never stale.
+//
+// V4-WATERMATH-001 F0 (2026-08-12) — NON_REWARD_EVENT_TYPES filter. This recompute is AUTHORITATIVE
+// for what the user sees: handleDashboard overwrites storedStats.current_streak with
+// computeStreak(activityDays, …), so whatever this query returns IS the displayed streak, no matter
+// what the write path stored. The events Lambda filters the reward partition out of its grant path,
+// both of its recomputes and its achievement counts — but this is a THIRD, independent reader, and
+// until now it counted every event type. Left unfiltered, tapping "I checked the soil" every morning
+// would sustain a streak indefinitely: a rewarded farmable loop, which is the exact thing the
+// partition exists to prevent.
+//
+// Scoped to the activity-DAY subquery only. The `today` term is a clock reading, not an event
+// aggregate, so it takes no predicate — filtering there would be meaningless, and a blanket WHERE
+// would be the easy mistake.
 export function queryActivityDays(sql, userId) {
   return sql`
       WITH z AS (
@@ -338,6 +352,7 @@ export function queryActivityDays(sql, userId) {
             FROM event_log e
             WHERE e.created_by = ${userId}
               AND e.deleted_at IS NULL
+              AND NOT (e.event_type = ANY(${NON_REWARD_EVENT_TYPES}::text[]))
               AND (e.event_date AT TIME ZONE (SELECT tz FROM z))::date
                   <= (NOW() AT TIME ZONE (SELECT tz FROM z))::date
           ) days
