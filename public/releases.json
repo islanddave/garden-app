@@ -5,7 +5,8 @@
     "highlights": [
       "Fixed: on Snap, the 'Retake / choose photo' button did nothing once you had already picked a photo. It works now.",
       "Fixed: dictating into a text box sometimes repeated words you had not said. Voice entry no longer double-counts a phrase the browser sends twice.",
-      "'Save to device' has been removed from Snap and from Log event. A web app cannot actually save into your phone's photo gallery — the button only ever opened a share sheet — so it was promising something it could not do."
+      "'Save to device' has been removed from Snap and from Log event. A web app cannot actually save into your phone's photo gallery — the button only ever opened a share sheet — so it was promising something it could not do.",
+      "New: every fruiting plant's card now shows a harvest colour window — the full range of colours at which you can pick it, with what each colour gets you (heat, sweetness, wall thickness, best use). Covers 125 varieties, including the ones that never turn red: Cherokee Green, Black Krim, and the peppers picked green on purpose."
     ]
   },
   {
