@@ -65,10 +65,15 @@ describe('photo-access seam — ON path signing correctness', () => {
 // then served an unsigned S3 presign with no CloudFront signing and no PHOTO_CDN_SIGN_FALLBACK
 // telemetry, which is the entire defect this describe block exists to catch. The old title
 // also said "all 6 call sites" while checking 5 dirs; there are 9.
-const SITES = { photos: 4, plants: 2, projects: 1, locations: 1, 'inventory-items': 1 };
-const TOTAL_SITES = Object.values(SITES).reduce((a, b) => a + b, 0); // 9 at d9afab95
+// photos 4 -> 6: W-RESTORE's GET /api/photos/deleted presigns the same view_url + thumb_url pair as
+// the live list. A recovery surface has to SHOW the photo — a user cannot choose what to put back
+// from a grid of grey boxes — and a soft-deleted photo's S3 object is untouched (DD2), so it signs
+// exactly like any other read. Enrolling it here is the point of the census: a new read path that
+// bypassed the resolver would serve an unsigned presign with no CloudFront signing.
+const SITES = { photos: 6, plants: 2, projects: 1, locations: 1, 'inventory-items': 1 };
+const TOTAL_SITES = Object.values(SITES).reduce((a, b) => a + b, 0); // 9 at d9afab95, 11 at W-RESTORE
 
-describe('photo-access seam — all 9 call sites route through the resolver', () => {
+describe('photo-access seam — all 11 call sites route through the resolver', () => {
   // Derived from disk, not hand-listed: a dir that starts importing the resolver must be
   // enrolled, and a dir that STOPS importing it (the seam removed wholesale) turns this red
   // instead of quietly shrinking the loop to nothing.

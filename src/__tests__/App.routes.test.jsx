@@ -31,7 +31,7 @@ const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => 
 const overlayPaths = () => renderRoutes({ overlay: true, user: true }).map((r) => r.props.path)
 
 describe('App route table (single source of truth)', () => {
-  it('the page tree has the full 51-route set with no duplicates', () => {
+  it('the page tree has the full 52-route set with no duplicates', () => {
     // 46 → 48: V4-UNSCOPEDROUTES-001 added the canonical un-scoped /plantings/:plantingId and
     // /events/:eventId (the /projects/:id/* forms remain as redirects, still counted).
     // 48 → 50: V4-SPACEPHOTO-001 Lane C adds /space and /space/:spaceId. Counted here because the
@@ -39,9 +39,12 @@ describe('App route table (single source of truth)', () => {
     // SpacePhotos.flagOff.test.jsx, which mocks it false.
     // 50 → 51: V4-EDITCOMPLETE-001 V3 adds /varieties/:varietyId/edit — the first and only write
     // surface for the 32 PUT-writable cultivar columns, which had no edit UI at all.
+    // 51 → 52: W-RESTORE adds /photos/deleted — the Recently deleted surface the photo-delete
+    // confirm's "recoverable from Recently deleted" copy names. It is NOT flag-gated: the copy
+    // promising it ships unconditionally, so the destination must too.
     const paths = pagePaths()
-    expect(paths).toHaveLength(51)
-    expect(new Set(paths).size).toBe(51)
+    expect(paths).toHaveLength(52)
+    expect(new Set(paths).size).toBe(52)
   })
 
   it('includes the catch-all, index redirect, and every key route', () => {

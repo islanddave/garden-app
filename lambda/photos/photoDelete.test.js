@@ -13,7 +13,10 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PHOTO_POINTERS, softDeletePhoto, restorePhoto } from './photoDelete.js';
+import {
+  PHOTO_POINTERS, softDeletePhoto, restorePhoto,
+  listDeletedPhotos, clampDeletedLimit, DELETED_LIST_LIMIT_DEFAULT, DELETED_LIST_LIMIT_MAX,
+} from './photoDelete.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOUSE = ['user_a', 'user_b'];
@@ -421,5 +424,110 @@ describe('W-DEL — the Soft-Delete-Only Rule at the module level', () => {
     const src = readFileSync(resolve(__dirname, 'photoDelete.js'), 'utf8');
     expect(src).not.toMatch(/@aws-sdk\/client-s3/);
     expect(src).not.toMatch(/DeleteObjectCommand/);
+  });
+});
+
+// ── W-RESTORE — the "Recently deleted" list ───────────────────────────────────────────────────────
+//
+// EXECUTED, not read. Every assertion below drives listDeletedPhotos through the recording fake and
+// inspects the statement it actually built. The static-source arm at the end guards the ONE thing
+// execution cannot: that this deliberate `deleted_at IS NOT NULL` read stays the only one.
+describe('W-RESTORE — listDeletedPhotos', () => {
+  const DELETED_ROW = {
+    id: PHOTO, storage_path: 'events/e/p.jpg', caption: '', created_at: '2026-08-10T00:00:00Z',
+    deleted_at: '2026-08-12T13:58:44Z', project_id: null, plant_id: null, event_id: null,
+    location_id: null, inventory_item_id: null, project_name: null,
+  };
+  const listSql = (rows = [DELETED_ROW]) => fakeSql((text) => (/FROM photos p/.test(text) ? rows : []));
+
+  it('selects ONLY soft-deleted rows — the inverse of every other read on this table', async () => {
+    const sql = listSql();
+    await listDeletedPhotos(sql, { householdIds: HOUSE });
+    const stmt = sql.calls.at(-1).text;
+    expect(stmt).toMatch(/AND p\.deleted_at IS NOT NULL/);
+    // The mutation this catches: dropping the NOT. Without it the page lists the user's ENTIRE live
+    // library under a heading that says everything on it is deleted, and every Restore is a no-op
+    // 200 (`already_restored`) — a fully green, fully wrong surface.
+    expect(stmt).not.toMatch(/p\.deleted_at IS NULL/);
+  });
+
+  it('scopes to the household and passes the ids as a bound value, never inlined', async () => {
+    const sql = listSql();
+    await listDeletedPhotos(sql, { householdIds: HOUSE });
+    const { text, values } = sql.calls.at(-1);
+    expect(text).toMatch(/WHERE p\.created_by = ANY\(\?\)/);
+    expect(values[0]).toEqual(HOUSE);
+  });
+
+  it('orders most-recently-DELETED first, with a stable tiebreak', async () => {
+    const sql = listSql();
+    await listDeletedPhotos(sql, { householdIds: HOUSE });
+    // created_at DESC would look identical on a one-row prod and be wrong the moment an old photo is
+    // deleted today — it would sort to the BOTTOM of the recovery list the user came here to use.
+    expect(sql.calls.at(-1).text).toMatch(/ORDER BY p\.deleted_at DESC, p\.id DESC/);
+  });
+
+  it('returns the rows the driver returned, unmapped', async () => {
+    const rows = await listDeletedPhotos(listSql(), { householdIds: HOUSE });
+    expect(rows).toEqual([DELETED_ROW]);
+  });
+
+  it('joins the container so a row can name its parent', async () => {
+    const sql = listSql();
+    await listDeletedPhotos(sql, { householdIds: HOUSE });
+    expect(sql.calls.at(-1).text).toMatch(/LEFT JOIN public\.container pp ON pp\.id = p\.project_id/);
+  });
+
+  it('binds a clamped limit — a hostile or absent ?limit can never reach SQL as NaN', async () => {
+    const cases = [
+      [undefined, DELETED_LIST_LIMIT_DEFAULT],
+      ['', DELETED_LIST_LIMIT_DEFAULT],
+      ['banana', DELETED_LIST_LIMIT_DEFAULT],
+      ['0', DELETED_LIST_LIMIT_DEFAULT],
+      ['-5', DELETED_LIST_LIMIT_DEFAULT],
+      ['10', 10],
+      ['99999', DELETED_LIST_LIMIT_MAX],
+    ];
+    for (const [raw, expected] of cases) {
+      expect(clampDeletedLimit(raw)).toBe(expected);
+      const sql = listSql();
+      await listDeletedPhotos(sql, { householdIds: HOUSE, limit: raw });
+      expect(sql.calls.at(-1).values.at(-1)).toBe(expected);
+    }
+  });
+
+  it('is a pure READ — it builds no transaction and issues no UPDATE', async () => {
+    // Soft-Delete-Only has a second edge nobody states: the RECOVERY surface must not mutate either.
+    // Listing is not an action, and a list that quietly wrote would make "Recently deleted" unsafe to
+    // open. This is also the guard against a future "auto-purge on view".
+    const sql = listSql();
+    await listDeletedPhotos(sql, { householdIds: HOUSE });
+    expect(sql.transactions).toHaveLength(0);
+    expect(sql.calls.every((c) => /^\s*SELECT/i.test(c.text))).toBe(true);
+    expect(sql.calls.some((c) => /UPDATE|DELETE FROM/i.test(c.text))).toBe(false);
+  });
+
+  it('is the ONLY deleted-inclusive read in the module (the 0A.6 exemption, made countable)', () => {
+    // read-paths-deletedat.test.js closes the class for index.js: every serving SELECT there filters
+    // deleted_at IS NULL. This query is the single deliberate inverse and it lives HERE, so the
+    // exemption is nameable and bounded rather than an escape hatch. A second one has to change this
+    // number, which is the point.
+    // DECOMMENTED first, per read-paths-deletedat.test.js's own lesson: a construct NAMED IN A
+    // COMMENT is not that construct. The header above this query DESCRIBES the predicate in prose,
+    // and counting raw source would tally that description as a third live inverse — the guard would
+    // then be satisfiable (or breakable) by editing a comment.
+    const src = readFileSync(resolve(__dirname, 'photoDelete.js'), 'utf8')
+      .split('\n')
+      .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
+      .join('\n');
+    const inverses = src.match(/deleted_at IS NOT NULL/g) ?? [];
+    // Two: this list's predicate, and restorePhoto's `AND deleted_at IS NOT NULL` UPDATE guard.
+    expect(inverses).toHaveLength(2);
+  });
+
+  it('offers no permanent-delete verb anywhere in the module (Soft-Delete-Only)', () => {
+    const src = readFileSync(resolve(__dirname, 'photoDelete.js'), 'utf8');
+    expect(src).not.toMatch(/DELETE\s+FROM\s+photos/i);
+    expect(src).not.toMatch(/purge|hardDelete|emptyTrash/i);
   });
 });

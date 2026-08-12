@@ -344,3 +344,52 @@ export async function restorePhoto(sql, { photoId, householdIds, spaceEnabled = 
   await restoreHeroPointers(sql, photo, householdIds, spaceEnabled);
   return { status: 200, body: { id: restored.id, deleted_at: null } };
 }
+
+// ── W-RESTORE — the "Recently deleted" LIST (DD8's other half). ───────────────────────────────────
+//
+// WHY IT LIVES HERE AND NOT IN index.js. This is the ONE read in the whole photos surface that is
+// SUPPOSED to return soft-deleted rows, and read-paths-deletedat.test.js's 0A.6 enumeration guard
+// asserts that every `SELECT ... FROM photos` template in index.js carries `deleted_at IS NULL`.
+// Putting the query here is not a dodge of that guard — it is the exemption made STRUCTURAL and
+// nameable: the guard keeps meaning "no serving read in index.js leaks deleted photos", this module
+// holds the single deliberate inverse, and photoDelete.test.js pins that this file contains exactly
+// ONE `deleted_at IS NOT NULL` SELECT so a second one cannot appear unremarked. It also puts the
+// query in the tier that can actually EXECUTE it (index.js is unit-testable only as source text).
+//
+// SCOPE: `created_by = ANY(householdIds)` — byte-identical to the live GET /api/photos list and to
+// softDeletePhoto's own pre-read. Dave and Jen see (and can restore) each other's deletions, which
+// is the same household decision the DELETE route documents; V5-PERMSHARD-001 is where that changes,
+// if it ever does.
+//
+// ORDER is `deleted_at DESC` — most-recently-DELETED first, which is the order the user's memory is
+// in ("I just deleted the wrong one"), NOT created_at. `id DESC` is a tiebreak so two photos deleted
+// inside one transaction (the W-EVTDEL multi-photo path deletes several at one `now()`) have a
+// stable order across refetches instead of drifting between renders.
+//
+// NO permanent-delete/empty-trash companion exists, deliberately. Soft-Delete-Only: this surface can
+// only ever put things BACK.
+export const DELETED_LIST_LIMIT_DEFAULT = 60;
+export const DELETED_LIST_LIMIT_MAX = 200;
+
+// Shared with the route so an unparseable/absent/hostile ?limit lands on the default rather than on
+// NaN (which SQL-stringifies to `NaN` and errors the whole request).
+export function clampDeletedLimit(raw) {
+  const n = parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n) || n < 1) return DELETED_LIST_LIMIT_DEFAULT;
+  return Math.min(n, DELETED_LIST_LIMIT_MAX);
+}
+
+export async function listDeletedPhotos(sql, { householdIds, limit }) {
+  const n = clampDeletedLimit(limit);
+  return sql`
+    SELECT p.id, p.storage_path, p.caption, p.created_at, p.deleted_at,
+           p.project_id, p.plant_id, p.event_id, p.location_id, p.inventory_item_id,
+           pp.display_name AS project_name
+      FROM photos p
+      LEFT JOIN public.container pp ON pp.id = p.project_id
+     WHERE p.created_by = ANY(${householdIds})
+       AND p.deleted_at IS NOT NULL
+     ORDER BY p.deleted_at DESC, p.id DESC
+     LIMIT ${n}
+  `;
+}

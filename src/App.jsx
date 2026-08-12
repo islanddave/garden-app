@@ -26,6 +26,7 @@ import InventoryAdd from './pages/InventoryAdd.jsx'
 import InventoryDetail from './pages/InventoryDetail.jsx'
 import EventNew from './pages/EventNew.jsx'
 import PhotoLibrary from './pages/PhotoLibrary.jsx'
+import RecentlyDeleted from './pages/RecentlyDeleted.jsx'
 import Favorites from './pages/Favorites.jsx'
 import ProjectTypes from './pages/ProjectTypes.jsx'
 import Garden from './pages/Garden.jsx'
@@ -189,6 +190,11 @@ export function renderRoutes({ overlay, user }) {
     { path: '/log/many',      overlayable: true, ariaLabel: 'Log many',          size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><LogMany /></ErrorBoundary></Protected> },
     { path: '/put-up',        overlayable: true, ariaLabel: 'Log a put-up',       size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PutUp /></ErrorBoundary></Protected> },
     { path: '/photos',        element: <Protected><PhotoLibrary /></Protected> },
+    // W-RESTORE. Declared AFTER /photos and matched with `end: true` by react-router v6, so the two
+    // never compete. Boundaried like its data-fetching siblings: a throw here must cost this page,
+    // not the shell — and this is the page a user reaches specifically because something already
+    // went wrong, so it is the worst possible place to white-screen the PWA.
+    { path: '/photos/deleted', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><RecentlyDeleted /></ErrorBoundary></Protected> },
     { path: '/harvests',      element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Harvests /></ErrorBoundary></Protected> },
     { path: '/favorites',     element: <Protected><Favorites /></Protected> },
     { path: '/search',        overlayable: true, ariaLabel: 'Search your garden', size: 'peek', element: <Protected><Search /></Protected> },

@@ -408,6 +408,21 @@ export default function PhotoLibrary() {
             <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
               Photos
             </h1>
+            {/* W-RESTORE — the ONLY entry point to Recently deleted, so it is unconditional. It does
+                NOT hide when the list is empty: a recovery surface the user cannot find until after
+                they need it is the same failure as not having one, and "where did my deleted photo
+                go?" is a question asked from HERE. Rendered under the title rather than beside
+                Select/+ Upload because at 390px that row is already two controls wide, and a
+                text link next to two filled buttons reads as a third button. */}
+            <Link
+              to="/photos/deleted"
+              style={{
+                display: 'inline-flex', alignItems: 'center', minHeight: 44,
+                color: P.mid, fontSize: '0.84rem', fontWeight: 600, textDecoration: 'none',
+              }}
+            >
+              Recently deleted
+            </Link>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
             {photos.length > 0 && fbShareEnabled && (
