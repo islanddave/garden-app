@@ -20,6 +20,10 @@ vi.mock('../lib/uxEvents.js', () => ({
   useUxFlow: () => ({ step: vi.fn(), tap: vi.fn(), complete: vi.fn(), reset: vi.fn() }),
 }))
 vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => null }))
+// V4-RIPENESSCUES-001: CropCard lazy-loads the colour-window resolver in an effect — stub it to
+// the sync no-window resolver so nothing async mutates state mid-test (no act() churn; absence
+// assertions race-free). Window rendering is covered in CropCard.window*.test.jsx.
+vi.mock('../lib/harvestWindows.js', () => import('./helpers/harvestWindowsSyncStub.js'))
 
 import PlantingDetail from '../pages/PlantingDetail.jsx'
 import { ESTIMATE_SOURCE_COPY, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'

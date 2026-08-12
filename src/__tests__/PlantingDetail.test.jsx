@@ -21,6 +21,10 @@ vi.mock('../lib/uxEvents.js', () => ({
 }))
 // V3-FAV-001: FavoriteToggle calls useAuth (no AuthProvider in this harness) — stub it to a no-op.
 vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => null }))
+// V4-RIPENESSCUES-001: CropCard lazy-loads the colour-window resolver in an effect — stub it to
+// the sync no-window resolver so nothing async mutates state mid-test (no act() churn; absence
+// assertions race-free). Window rendering is covered in CropCard.window*.test.jsx.
+vi.mock('../lib/harvestWindows.js', () => import('./helpers/harvestWindowsSyncStub.js'))
 
 import PlantingDetail from '../pages/PlantingDetail.jsx'
 

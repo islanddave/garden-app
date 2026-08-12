@@ -35,3 +35,12 @@ createRoot(document.getElementById('root')).render(
     </ClerkProvider>
   </StrictMode>
 )
+
+// V4-RIPENESSCUES-001: idle-time warm import of the lazy colour-window chunk (CropCard loads it on
+// demand; see the boundary note there). Warming after boot lands the chunk in the runtime cache
+// before field use — the value moment is standing at the plant, where connectivity is worst — so
+// first CropCard paint usually resolves without pop-in. INERT ON FAILURE by design: offline or a
+// purged old-hash chunk just rejects here, and CropCard's own .catch keeps the card windowless.
+const warmHarvestWindows = () => { import('./lib/harvestWindows.js').catch(() => {}) }
+if (typeof requestIdleCallback === 'function') requestIdleCallback(warmHarvestWindows, { timeout: 10000 })
+else setTimeout(warmHarvestWindows, 3000)

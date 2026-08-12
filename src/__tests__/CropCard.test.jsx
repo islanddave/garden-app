@@ -5,6 +5,10 @@ import { render, screen } from '@testing-library/react'
 
 const { apiFetchSpy } = vi.hoisted(() => ({ apiFetchSpy: vi.fn() }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy, getToken: vi.fn() }) }))
+// V4-RIPENESSCUES-001: CropCard lazy-loads the colour-window resolver in an effect — stub it to
+// the sync no-window resolver so nothing async mutates state mid-test (no act() churn; absence
+// assertions race-free). Window rendering is covered in CropCard.window*.test.jsx.
+vi.mock('../lib/harvestWindows.js', () => import('./helpers/harvestWindowsSyncStub.js'))
 
 import CropCard from '../components/planting/CropCard.jsx'
 

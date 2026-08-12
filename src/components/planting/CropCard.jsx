@@ -9,7 +9,16 @@ import TagChip from '../forms/TagChip.jsx'
 import TransplantDatePrompt from './TransplantDatePrompt.jsx'
 import { shuLabel, determinacyLabel } from '../../lib/varietySpec.js'
 import { resolveRipenessCues } from '../../lib/ripenessCues.js'
-import { resolveHarvestWindow } from '../../lib/harvestWindows.js'
+
+// V4-RIPENESSCUES-001: the colour-window dataset is ~110KB gzip of JSON reached ONLY from this
+// card, so the resolver module (`../../lib/harvestWindows.js`, which statically imports the JSON)
+// is loaded LAZILY in an effect below — the app's first code-split point. NEVER reintroduce a
+// static `import { resolveHarvestWindow }` here: it silently pulls the dataset back into the entry
+// bundle with every test green; `scripts/verify-window-chunk.sh` is the only detector. React.lazy
+// is forbidden at/above this card — an offline chunk-miss would throw into the route ErrorBoundary
+// and replace the whole PlantingDetail page; the `.catch → render nothing` branch below cannot.
+// Module-scope cache: once the chunk lands, later mounts resolve synchronously at first render.
+let hwModule = null
 
 function Attr({ label, value }) {
   if (value == null || value === '') return null
@@ -83,8 +92,21 @@ function RipenessCue({ cues }) {
 // carry their own maturity test inside `ripe_vs_unripe`, so the cultivar window wins when present and
 // the crop mechanic fills in only when it does not.
 function HarvestWindow({ window: win }) {
+  // V4-RIPENESSCUES-001 disclosure: ≤3-point windows render fully expanded (362 points / 125
+  // records ≈ 2.9 avg — the majority ship complete, zero taps). Only >3-point windows collapse,
+  // and the collapsed view keeps first + FINAL point (endpoint comparison is Dave's canonical
+  // question — "what does letting an Anaheim go to full ripeness give me vs green?") plus
+  // ripe_vs_unripe and the caveat, which render OUTSIDE the points list and are never hidden by
+  // collapse — a collapsed unlabelled low-confidence point would be a confidently-presented
+  // derived claim (colour-window canon §4/§9). Content is never cut; disclosure manages length.
+  // This deviates from canon §6 "every window point renders" for >3-point records — recorded as a
+  // maintenance note on harvest-colour-window-V100-20260811.md (deviation must not be silent).
+  const [expanded, setExpanded] = React.useState(false)
   const rec = win.cultivar ?? win.crop
   if (!rec) return null
+  const pts = rec.window ?? []
+  const collapsed = pts.length > 3 && !expanded
+  const shown = collapsed ? [pts[0], pts[pts.length - 1]] : pts
   return (
     <div>
       <div style={{ fontSize: '0.72rem', fontWeight: 600, color: P.light, marginBottom: 4,
@@ -93,7 +115,7 @@ function HarvestWindow({ window: win }) {
         marginBottom: 8 }}>{rec.window_label}</div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {rec.window.map((p, i) => (
+        {shown.map((p, i) => (
           <div key={`${p.at}-${i}`} style={{ borderLeft: `2px solid ${P.greenPale}`, paddingLeft: 10 }}>
             <div style={{ fontSize: '0.82rem', fontWeight: 700, color: P.dark, lineHeight: 1.4 }}>{p.at}</div>
             <div style={{ fontSize: '0.82rem', color: P.mid, lineHeight: 1.5, wordBreak: 'break-word' }}>{p.look}</div>
@@ -102,6 +124,16 @@ function HarvestWindow({ window: win }) {
           </div>
         ))}
       </div>
+
+      {/* In-place downward expansion — no sheet, no scroll re-anchor. ≥48px touch target (§5.8). */}
+      {collapsed && (
+        <button type="button" onClick={() => setExpanded(true)}
+          style={{ display: 'block', minHeight: 48, padding: '4px 0', marginTop: 2, border: 'none',
+            background: 'none', textAlign: 'left', cursor: 'pointer', fontSize: '0.82rem',
+            fontWeight: 600, color: P.green }}>
+          Show all {pts.length} points ▾
+        </button>
+      )}
 
       {/* The green-when-ripe answer. Dave: "what is first blush for a green?" On a cultivar whose ripe
           state looks unripe this is the ONLY field that resolves the plant in front of him, so it gets
@@ -119,7 +151,7 @@ function HarvestWindow({ window: win }) {
           cultivar. Rendering the caveat is the entire reason complete coverage is safe — it is what
           keeps a derived window from reading like a sourced one. */}
       {rec.caveat && (
-        <div style={{ fontSize: '0.78rem', color: P.mid, lineHeight: 1.5, marginTop: 8,
+        <div data-testid="harvest-window-caveat" style={{ fontSize: '0.78rem', color: P.mid, lineHeight: 1.5, marginTop: 8,
           fontStyle: 'italic', wordBreak: 'break-word' }}>{rec.caveat}</div>
       )}
 
@@ -134,6 +166,30 @@ function HarvestWindow({ window: win }) {
 
 export default function CropCard({ planting, onUpdated }) {
   const { projected } = useEntityTags('plant', planting?.id)
+  const vref = planting?.variety_ref ?? null
+  // V4-RIPENESSCUES-001: async window state — pending | resolved-with-window | resolved-empty |
+  // failed. Only resolved-with-window changes rendered output (pending, resolved-empty and failed
+  // all render byte-identical to the pre-window card, and null for a sparse record), so it is the
+  // ONLY transition that re-renders: mounts whose cultivar has no window stay free of async churn,
+  // and the non-window test suites stay race-free under the sync stub.
+  const [, bumpWindow] = React.useReducer(t => t + 1, 0)
+  React.useEffect(() => {
+    // A bare record (null variety_ref) fires NO import at all — stays synchronous. A landed chunk
+    // (hwModule set, here or by main.jsx's idle warm import) resolves at render, no effect work.
+    if (!vref || hwModule) return
+    let alive = true
+    import('../../lib/harvestWindows.js')
+      .then(m => {
+        hwModule = m
+        if (!alive) return
+        const w = m.resolveHarvestWindow(vref)
+        if (w.cultivar || w.crop) bumpWindow() // re-render only when a window will render
+      })
+      // failed → render nothing: card unchanged, PlantingDetail intact, no error surface.
+      // hwModule stays null so the next mount retries.
+      .catch(() => {})
+    return () => { alive = false }
+  }, [vref])
   const m = computeMaturity(planting)
   const v = planting?.variety_ref || {}
   const shu = shuLabel(v)
@@ -156,8 +212,15 @@ export default function CropCard({ planting, onUpdated }) {
   // the cue from exactly the sparsest records — the reach the cue was chosen for.
   const cues = resolveRipenessCues(v)
   const hasCue = !!(cues.target || cues.mechanic)
+  // V4-RIPENESSCUES-001: sync resolution once the lazy chunk has landed. `win` is null while
+  // pending/failed and when the record has no window — all indistinguishable by design.
+  const win = (vref && hwModule) ? hwModule.resolveHarvestWindow(vref) : null
+  const hasWindow = !!(win && (win.cultivar || win.crop))
   const attrs = [dtm, v.sun_requirements, v.expected_yield_notes].filter(Boolean)
-  if (!hasMaturity && !hasChips && specChips.length === 0 && attrs.length === 0 && !hasCue) return null
+  // The early return stays SYNC over today's signals; `!hasWindow` is the async-sparse term — a
+  // window-ONLY sparse card renders once the window resolves (pending+sparse renders null,
+  // indistinguishable from today; resolved-empty/failed+sparse returns null permanently).
+  if (!hasMaturity && !hasChips && specChips.length === 0 && attrs.length === 0 && !hasCue && !hasWindow) return null
 
   return (
     <div style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: 24,
@@ -215,12 +278,16 @@ export default function CropCard({ planting, onUpdated }) {
       )}
 
       {/* structured cultivar attributes */}
-      {(attrs.length > 0 || hasCue) && (
+      {(attrs.length > 0 || hasCue || hasWindow) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <Attr label="Days to maturity" value={dtm} />
           <Attr label="Sun" value={v.sun_requirements} />
           <Attr label="Expected yield" value={v.expected_yield_notes} />
           <RipenessCue cues={cues} />
+          {/* V4-RIPENESSCUES-001: the window renders BELOW the corrective cue — the cue answers
+              "what would I get wrong", the window answers "when can I pick and what does each
+              colour buy". One visual section; 39/44 cultivars carry both. */}
+          {hasWindow && <HarvestWindow window={win} />}
         </div>
       )}
     </div>
