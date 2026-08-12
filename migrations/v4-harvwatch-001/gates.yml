@@ -1,0 +1,107 @@
+# gates.yml
+# V4-HARVSURFACE-001 slice 1 — public.harvest_watch_dismissal.
+#
+# STATUS AT AUTHORING (2026-08-12): AUTHORED, NOT APPLIED. Not applied to staging, not applied to
+# prod. No DDL has been executed anywhere by the authoring lane.
+#
+# SEQUENCING: staging -> rehearse 0r -> re-apply -> dev push -> prod -> promote.
+#
+# The DDL must land BEFORE the dev push, and for a sharper reason than usual: CI's integration job
+# branches off STAGING WITHOUT applying migrations, so a missing relation surfaces as an infra flake
+# rather than as a missing migration, and the run gets retried instead of fixed.
+#
+# The relation is additive and standalone — nothing reads or writes it until the route ships — so
+# applying it early is inert. Applying it LATE is not: the dismissal POST 500s on a missing relation
+# and the watch GET's suppression LEFT JOIN takes the whole route down with it.
+#
+# ORDERING AGAINST THE SPA. deploy-lambda.yml and deploy.yml fire on the same push to main under
+# different concurrency groups and are UNORDERED — the SPA can go live before the Lambda. Split into
+# two promotes, SERVER FIRST. A client shipped ahead of this Lambda calls /api/harvests/watch, the
+# path falls through the prefix table to the old garden-harvests bundle, and 405s on every request.
+
+pre:
+  - name: pre_plants_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_table_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='harvest_watch_dismissal'
+    expect: rowcount_eq
+    value: 0
+
+  # gen_random_uuid() is the PK default. It is built in from PG13 and this cluster is well past
+  # that, but an explicit gate is cheaper than a CREATE TABLE that fails halfway through a session.
+  - name: pre_gen_random_uuid_available
+    sql: |
+      SELECT 1 WHERE to_regprocedure('gen_random_uuid()') IS NOT NULL
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='harvest_watch_dismissal'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_all_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='harvest_watch_dismissal'
+         AND column_name IN ('id','user_id','plant_id','project_id','observed_on','dismissed_at',
+                             'undone_at','reason','note','model_version','crop_type_slug',
+                             'variety_id','anchor_kind','anchor_date','anchor_basis',
+                             'anchor_basis_shifted','expected_days','lead_days','check_from',
+                             'days_watching','suppressed_until','created_at')
+    expect: rowcount_eq
+    value: 22
+
+  # The partial predicate is the load-bearing half. A plain UNIQUE would make an undo-then-redismiss
+  # a constraint violation, and a unique on (user_id, plant_id) alone would silently discard a
+  # genuine second observation — the most valuable sample shape there is.
+  - name: post_day_grain_unique_is_partial
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='harvest_watch_dismissal'
+         AND indexname='uq_harvest_watch_dismissal_active_day'
+         AND indexdef ILIKE '%UNIQUE%' AND indexdef ILIKE '%undone_at IS NULL%'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_supporting_indexes_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='harvest_watch_dismissal'
+         AND indexname IN ('idx_harvest_watch_dismissal_user_active',
+                           'idx_harvest_watch_dismissal_model_observed')
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_check_constraints_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.harvest_watch_dismissal'::regclass AND contype='c'
+         AND conname IN ('harvest_watch_dismissal_reason_chk','harvest_watch_dismissal_anchor_chk')
+    expect: rowcount_eq
+    value: 2
+
+  # Additive-only proof: this migration must not have touched any existing relation.
+  - name: post_starts_empty
+    sql: |
+      SELECT 1 FROM public.harvest_watch_dismissal
+    expect: rowcount_eq
+    value: 0
+
+rollback:
+  file: 0r-rollback.sql
+  # Rehearse on STAGING only, and only BEFORE the route ships. Post-ship the table holds the only
+  # negative-class calibration samples in the system and they are not reconstructible — dump first.
+  note: >
+    Standalone table, single outbound FK to public.plants, referenced by nothing. The drop cannot
+    cascade into user data. Post-ship, \copy the table out before running this.

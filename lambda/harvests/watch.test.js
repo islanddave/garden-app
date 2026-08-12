@@ -114,7 +114,7 @@ describe('PART A: the gate the shipped surface can never pass', () => {
 
   it('all five named live-prod plantings become candidates on the measured date', () => {
     const { candidates } = buildWatchList([CHARENTAIS, GREEN_FLESH, TENDER_SWEET, YUKON_GOLD, CABBAGE], TODAY);
-    expect(candidates.map((c) => c.planting_name).sort()).toEqual(
+    expect(candidates.map((c) => c.name).sort()).toEqual(
       ['Cabbage', 'Charentais', 'Green Flesh', 'Tender Sweet Orange', 'Yukon Gold'],
     );
   });
@@ -139,21 +139,55 @@ describe('PART A: the gate the shipped surface can never pass', () => {
 // ── PART B — anchors ─────────────────────────────────────────────────────────────────────────────
 
 describe('anchor hierarchy (design §3.4)', () => {
-  it('tier 2 sibling beats tier 3 calendar, and takes NO lead — check_from IS the sibling pick date', () => {
-    const a = resolveWatchAnchor(CHARENTAIS);
-    expect(a.kind).toBe('sibling');
+  // Q1 (when does the watch open) is answered by the EARLIEST anchor; Q2 (what does the row cite)
+  // by the STRONGEST anchor already fired. Charentais: calendar opens 2026-07-06, the sibling picks
+  // on 08-08, so the queue entry is 07-06 and the provenance is the sibling.
+  it('opens on the earliest anchor but CITES the strongest one already fired', () => {
+    const a = resolveWatchAnchor(CHARENTAIS, { etToday: TODAY });
+    expect(a.check_from).toBe('2026-07-06');   // calendar, the earliest
+    expect(a.opened_by).toBe('calendar');
+    expect(a.kind).toBe('sibling');            // provenance, the strongest fired
     expect(a.lead_days).toBe(0);
-    expect(a.check_from).toBe('2026-08-08');
     expect(a.source_plant_id).toBe('p-minnesota');
   });
 
-  it('tier 1 observed fruit_set beats a sibling', () => {
-    const a = resolveWatchAnchor({ ...CHARENTAIS, fruit_set_date: '2026-07-01' });
+  it('cites the observed fruit_set over a sibling when both have fired', () => {
+    const a = resolveWatchAnchor({ ...CHARENTAIS, fruit_set_date: '2026-07-01' }, { etToday: TODAY });
     expect(a.kind).toBe('observed');
     expect(a.expected_days).toBe(42);
-    // lead = min(22, round(42 * 0.25) = 11) = 11 -> 2026-07-01 + (42 - 11) = +31d
+    // lead = min(22, round(42 * 0.25) = 11) = 11 -> 2026-07-01 + (42 - 11) = 2026-08-01, fired.
     expect(a.lead_days).toBe(11);
-    expect(a.check_from).toBe('2026-08-01');
+  });
+
+  // THE LIVE-PROD REGRESSION. Under the original strict tier precedence, `observed` outranked
+  // everything unconditionally AND set check_from. Both of Dave's named melons carry a fruit_set
+  // dated 2026-07-23 alongside a sibling that had ALREADY PICKED, so the observed anchor pushed
+  // check_from out to 08-23 / 08-26, both rows read not_yet_open, and they were INVISIBLE on
+  // 08-12 — the exact plantings whose absence motivated this slice. Caught by running the real
+  // query against live prod; the fixture-only tests had no fruit_set on these rows and passed.
+  //
+  // MUTATION TARGET: make check_from come from `strongest` instead of `earliest` in
+  // resolveWatchAnchor -> this test goes red.
+  it('an unfired prediction must NEVER suppress a planting another anchor already admitted', () => {
+    const withFruitSet = { ...CHARENTAIS, fruit_set_date: '2026-07-23' };
+    const a = resolveWatchAnchor(withFruitSet, { etToday: TODAY });
+    // observed would not open until 2026-07-23 + (42 - 11) = 2026-08-23, eleven days from TODAY.
+    expect(a.alternates).toContainEqual({ kind: 'observed', check_from: '2026-08-23' });
+    expect(a.check_from).toBe('2026-07-06');
+    expect(classifyWatchCandidate(withFruitSet, TODAY).eligible).toBe(true);
+  });
+
+  it('same for Tender Sweet Orange, the other planting the regression hid', () => {
+    const withFruitSet = { ...TENDER_SWEET, fruit_set_date: '2026-07-23' };
+    const v = classifyWatchCandidate(withFruitSet, TODAY);
+    expect(v.eligible).toBe(true);
+    expect(v.anchor.kind).toBe('sibling');     // cites the completed pick, not the prediction
+    expect(v.check_from).toBe('2026-07-14');
+  });
+
+  it('records the anchors it did not cite, so a row is auditable without re-deriving it', () => {
+    const a = resolveWatchAnchor(CHARENTAIS, { etToday: TODAY });
+    expect(a.alternates.map((x) => x.kind)).toEqual(['calendar']);
   });
 
   it('a fruit_set with no set_to_first_pick_days does NOT become a tier-1 anchor', () => {
@@ -254,9 +288,9 @@ describe('expectedDaysFor', () => {
 describe('ranking and payload', () => {
   it('ranks newest watch first (design §3.5)', () => {
     const { candidates } = buildWatchList([YUKON_GOLD, GREEN_FLESH, TENDER_SWEET, CABBAGE, CHARENTAIS], TODAY);
-    expect(candidates.map((c) => c.days_watching)).toEqual([2, 4, 4, 25, 29]);
-    expect(candidates[0].planting_name).toBe('Tender Sweet Orange');
-    expect(candidates[candidates.length - 1].planting_name).toBe('Green Flesh');
+    expect(candidates.map((c) => c.days_watching)).toEqual([4, 25, 29, 29, 37]);
+    expect(candidates[0].name).toBe('Cabbage');
+    expect(candidates[candidates.length - 1].name).toBe('Charentais');
   });
 
   it('ties break on plant_id so identical requests return identical order', () => {
@@ -269,8 +303,9 @@ describe('ranking and payload', () => {
     const [row] = buildWatchList([TENDER_SWEET], TODAY).candidates;
     expect(row.confidence).toBe('sibling');
     expect(row.anchor.source_planting_name).toBe('Sugar Baby');
-    expect(row.check_from).toBe('2026-08-10');
-    expect(row.days_watching).toBe(2);
+    expect(row.check_from).toBe('2026-07-14');
+    expect(row.days_watching).toBe(29);
+    expect(row.basis).toBe('sibling picked Aug 10');
   });
 
   it('reports WHY each excluded planting is absent instead of one silent empty list', () => {

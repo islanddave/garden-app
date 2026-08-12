@@ -300,6 +300,27 @@ const NOT_IN_SITES = [
   // ── Written by a side-effect writer from an ALREADY-GATED parent value, not from the body. ──
   'events::achievement_id', 'events::trigger_event_id', 'events::source_event_id',
   'events::location_id', 'events::plant_id', 'events::project_id',
+
+  // ── V4-HARVSURFACE-001: the harvest_watch_dismissal INSERT (lambda/harvests/watch-route.js). ──
+  //
+  // Ownership decision, recorded per column rather than waved through as a group. The gate is
+  // structural: handleDismissalPost NEVER writes a body value into any of these. It re-runs
+  // queryWatchRows — which is itself scoped `pj.created_by = ANY(householdIds)` — builds the
+  // candidate list from that result, and 404s unless the requested plant_id is IN it. Only then is
+  // the row assembled, and every FK below is copied off the SERVER's own candidate object.
+  //
+  // So a foreign or soft-deleted planting cannot reach the INSERT at all: it is absent from the
+  // household-scoped query, so `candidates.find(...)` misses and the request 404s before any write.
+  // Same generic answer for absent / foreign / not-a-candidate — no existence oracle.
+  //
+  // Pinned by watch-route.test.js: "a planting that is not an active candidate answers 404 with no
+  // detail" (asserts sql.calls never reaches the INSERT) and "IGNORES client-supplied model fields
+  // entirely" (asserts an attacker-supplied anchor/model payload is not bound into the statement).
+  'harvests::plant_id',       // body-supplied, but validated by membership in the scoped candidate list
+  'harvests::project_id',     // copied off the server candidate, never read from the body
+  'harvests::variety_id',     // ditto
+  'harvests::crop_type_slug', // shared catalogue vocabulary, same class as preservation::crop_type_slug
+  'harvests::user_id',        // server-derived: the JWT subject, same class as events::user_id
 ];
 
 describe('BUG-AUTHZFKENUM-001: every FK-shaped column a handler writes is gated or explicitly known', () => {

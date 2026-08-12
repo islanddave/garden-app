@@ -177,69 +177,163 @@ export function expectedDaysFor(row) {
   return null;
 }
 
-// Resolve the single strongest anchor and the date the watch opens on. Returns null when the
-// planting rests on nothing — a row with no anchor is NOT shown (design §3.4: "what a window row
-// must rest on to be shown at all"), rather than shown with a shrug.
-export function resolveWatchAnchor(row, opts = {}) {
-  const nurseryOffsetDays = opts.nurseryOffsetDays ?? NURSERY_OFFSET_DAYS_FALLBACK;
+// Tier rank, used ONLY to break a tie between anchors that open on the same day. It is NOT a
+// precedence order — see the selection rule below, which is the opposite.
+const TIER_RANK = { observed: 0, sibling: 1, calendar: 2 };
 
-  // Tier 1 — observed signal (fruit_set + set_to_first_pick_days).
+// Build every anchor this row can support. Selection happens in resolveWatchAnchor.
+function availableAnchors(row, nurseryOffsetDays) {
+  const out = [];
+
+  // Observed — a fruit_set event Dave logged, plus the crop's fruit-set-to-first-pick interval
+  // (populated for melon=42 and watermelon=45 on live prod; NULL elsewhere, and a fruit_set with no
+  // interval predicts nothing, so it produces no anchor).
   const fruitSet = toYmd(row?.fruit_set_date);
   const setToPick = Number(row?.set_to_first_pick_days);
   if (fruitSet != null && Number.isFinite(setToPick) && setToPick > 0) {
     const lead = leadDaysFor(setToPick);
-    return {
-      kind: 'observed',
-      anchor_date: fruitSet,
-      basis: 'from-fruit-set',
-      basis_shifted: false,
-      basis_field: 'fruit_set_date',
-      expected_days: setToPick,
-      lead_days: lead,
-      nursery_offset_applied: 0,
-      check_from: addDays(fruitSet, setToPick - lead),
-      source_plant_id: null,
-    };
+    out.push({
+      kind: 'observed', anchor_date: fruitSet, basis: 'from-fruit-set', basis_shifted: false,
+      basis_field: 'fruit_set_date', expected_days: setToPick, lead_days: lead,
+      nursery_offset_applied: 0, check_from: addDays(fruitSet, setToPick - lead), source_plant_id: null,
+    });
   }
 
-  // Tier 2 — a sibling in the same project already picked. No lead: this is an observation.
+  // Sibling — a planting of the same crop in the same project already picked. NO lead: this is an
+  // observation that the bed is producing, not a prediction to be de-biased.
   const sibling = toYmd(row?.sibling_first_pick_date);
   if (sibling != null) {
-    return {
-      kind: 'sibling',
-      anchor_date: sibling,
-      basis: 'sibling-first-pick',
-      basis_shifted: false,
-      basis_field: 'sibling_first_pick_date',
-      expected_days: null,
-      lead_days: 0,
-      nursery_offset_applied: 0,
-      check_from: sibling,
-      source_plant_id: row?.sibling_plant_id ?? null,
-    };
+    out.push({
+      kind: 'sibling', anchor_date: sibling, basis: 'sibling-first-pick', basis_shifted: false,
+      basis_field: 'sibling_first_pick_date', expected_days: null, lead_days: 0,
+      nursery_offset_applied: 0, check_from: sibling, source_plant_id: row?.sibling_plant_id ?? null,
+    });
   }
 
-  // Tier 3 — calendar, basis stated.
+  // Calendar — sow/transplant plus catalogue DTM, basis carried on the wire.
   const expected = expectedDaysFor(row);
   const cal = calendarAnchor(row, nurseryOffsetDays);
   if (cal != null && expected != null) {
     const lead = leadDaysFor(expected);
-    return {
-      kind: 'calendar',
-      anchor_date: cal.date,
-      observed_anchor_date: cal.observed_date,
-      basis: cal.basis,
-      basis_shifted: cal.basis_shifted,
-      basis_field: cal.basis_field,
-      expected_days: expected,
-      lead_days: lead,
-      nursery_offset_applied: cal.nursery_offset_applied,
-      check_from: addDays(cal.date, expected - lead),
-      source_plant_id: null,
-    };
+    out.push({
+      kind: 'calendar', anchor_date: cal.date, observed_anchor_date: cal.observed_date,
+      basis: cal.basis, basis_shifted: cal.basis_shifted, basis_field: cal.basis_field,
+      expected_days: expected, lead_days: lead, nursery_offset_applied: cal.nursery_offset_applied,
+      check_from: addDays(cal.date, expected - lead), source_plant_id: null,
+    });
   }
 
-  return null;
+  return out.filter((a) => a.check_from != null);
+}
+
+// Resolve the anchor a row rests on. Returns null when the planting rests on nothing — a row with
+// no anchor is NOT shown (design §3.4: "what a window row must rest on to be shown at all"), rather
+// than shown with a shrug.
+//
+// TWO SEPARATE QUESTIONS, TWO SEPARATE ANSWERS. Collapsing them is what produced the live-prod bug
+// described below, and both halves of this split are load-bearing:
+//
+//   1. WHEN DOES THE WATCH OPEN?  ->  the EARLIEST check_from across every available anchor.
+//      Design §3.5: the queue admits a planting "when its EARLIEST defensible anchor fires", and
+//      every anchor built above is by construction defensible. Critically, this makes it IMPOSSIBLE
+//      for one anchor to suppress another — the failure mode below. This date is `check_from` /
+//      `watching_since`, and it is the "checking since Aug 4" the design asks the row to show.
+//
+//   2. WHAT DOES THE ROW SAY IT RESTS ON?  ->  the STRONGEST anchor that has ALREADY FIRED.
+//      Provenance should cite the best evidence actually in hand. A sibling that has been picked is
+//      a completed observation of this crop ripening in this bed; a catalogue DTM measured off an
+//      estimated sow date is a guess that happens to fire earlier. Telling Dave the guess when the
+//      observation is available would be strictly worse copy, so `basis` and `confidence` come from
+//      here while `watching_since` comes from (1).
+//
+// THE REGRESSION THIS REPLACED. Strict tier precedence — always prefer observed, then sibling, then
+// calendar — produced the exact bug this whole slice exists to fix. Charentais and Tender Sweet
+// Orange each carry a fruit_set dated 2026-07-23 AND a sibling (Minnesota Mini, Crimson Sweet) that
+// had ALREADY picked on 08-08 / 08-10. The `observed` anchor won on tier and pushed check_from out
+// to 08-23 / 08-26, so both rows read `not_yet_open` and were INVISIBLE on 08-12 — two of the very
+// plantings whose absence motivated the slice. A fruit_set run through a catalogue interval is still
+// a PREDICTION, merely one starting from an observed event; letting it outrank and suppress a
+// completed pick inverts the evidence hierarchy the design was arguing for.
+//
+// Caught only by running the real query against live prod. The fixture tests passed, because no
+// fixture carried both a fruit_set and a sibling — which is why the fixtures now do.
+export function resolveWatchAnchor(row, opts = {}) {
+  const nurseryOffsetDays = opts.nurseryOffsetDays ?? NURSERY_OFFSET_DAYS_FALLBACK;
+  const anchors = availableAnchors(row, nurseryOffsetDays);
+  if (anchors.length === 0) return null;
+
+  const byDate = [...anchors].sort((a, b) => (
+    a.check_from < b.check_from ? -1 : a.check_from > b.check_from ? 1
+      : TIER_RANK[a.kind] - TIER_RANK[b.kind]
+  ));
+  const earliest = byDate[0];
+
+  // Strongest anchor already in hand. Before ANY anchor has fired the row is not eligible anyway, so
+  // fall back to the earliest — that is the one whose firing will admit it.
+  const today = toYmd(opts.etToday);
+  const fired = today == null ? [] : anchors.filter((a) => a.check_from <= today);
+  const pool = fired.length > 0 ? fired : [earliest];
+  const strongest = [...pool].sort((a, b) => (
+    TIER_RANK[a.kind] - TIER_RANK[b.kind] || (a.check_from < b.check_from ? -1 : 1)
+  ))[0];
+
+  return {
+    ...strongest,
+    // (1) — queue entry. Always the earliest, whatever the row cites as provenance.
+    check_from: earliest.check_from,
+    opened_by: earliest.kind,
+    // `alternates` records every anchor not cited, so a row is auditable without re-deriving it and
+    // a later tuning pass can see which anchors disagreed and by how much.
+    alternates: byDate.filter((a) => a !== strongest).map((a) => ({ kind: a.kind, check_from: a.check_from })),
+  };
+}
+
+// ── Short provenance string (`basis` on the wire) ────────────────────────────────────────────────
+//
+// The canon rule that a derivation must be LABELLED still binds (design §3.4 rank 3: calendar is
+// "permitted only with its basis visible"), but the watch row is compact and a long field turns the
+// list back into the inventory it replaces. So: short, and honest about the weakest link.
+//
+// A basis-shifted calendar anchor gets the "(est. sow)" qualifier because that row rests on a date
+// this module INFERRED — the crop's DTM counts from sowing, no sow date exists, and the anchor was
+// reconstructed by subtracting the household's median nursery gap from the transplant date. Printing
+// it as a plain sow date would launder an estimate into a record.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+export function shortDate(ymd) {
+  const s = toYmd(ymd);
+  if (s == null) return null;
+  const [, m, d] = s.split('-');
+  return `${MONTHS[Number(m) - 1]} ${Number(d)}`;
+}
+
+const FIELD_VERB = { sown_at: 'sown', transplanted_at: 'transplanted', planted_out_at: 'planted out' };
+
+export function describeBasis(anchor, etToday) {
+  if (!anchor) return null;
+  if (anchor.kind === 'sibling') return `sibling picked ${shortDate(anchor.anchor_date)}`;
+  if (anchor.kind === 'observed') return `fruit set ${shortDate(anchor.anchor_date)}`;
+
+  // The age is measured from anchor_date — the date the DTM math ACTUALLY used — never from the raw
+  // field. When the nursery offset was applied, those differ by a month, and printing the raw
+  // transplant age beside a catalogue figure computed from the estimated sow date produced a
+  // sentence whose two numbers could not both be true ("sown 62d · catalogue 85d" on a planting the
+  // model believed was 93 days from sowing).
+  //
+  // The verb follows the FIELD, not the basis, for the same reason: a from-transplant crop anchored
+  // on sown_at must not print "transplanted" over a sow-date age.
+  const offset = Number(anchor.nursery_offset_applied ?? 0);
+  const verb = offset > 0 ? 'sown' : (FIELD_VERB[anchor.basis_field] ?? 'planted');
+  const age = daysBetween(anchor.anchor_date, etToday);
+  const agePart = age == null ? verb : `${verb} ${age}d`;
+  const dtm = anchor.expected_days == null ? null : `catalogue ${anchor.expected_days}d`;
+  const core = dtm ? `${agePart} · ${dtm}` : agePart;
+
+  // Short provenance qualifier — the canon rule that a derivation must be LABELLED. `(est. sow)`
+  // marks a sow date this module RECONSTRUCTED; `(est.)` marks the uncorrected shift, where the DTM
+  // basis and the available date simply disagree.
+  if (offset > 0) return `${core} (est. sow)`;
+  return anchor.basis_shifted ? `${core} (est.)` : core;
 }
 
 // ── Candidate classification ─────────────────────────────────────────────────────────────────────
@@ -268,7 +362,7 @@ export function classifyWatchCandidate(row, etToday, opts = {}) {
     return { eligible: false, reason: 'dismissed' };
   }
 
-  const anchor = resolveWatchAnchor(row, opts);
+  const anchor = resolveWatchAnchor(row, { ...opts, etToday: today });
   if (anchor == null) return { eligible: false, reason: 'no_anchor' };
   if (anchor.check_from == null) return { eligible: false, reason: 'no_anchor' };
 
@@ -279,16 +373,37 @@ export function classifyWatchCandidate(row, etToday, opts = {}) {
   return { eligible: true, reason: 'watching', anchor, check_from: anchor.check_from, days_watching: daysWatching };
 }
 
-// Wire projection. Field names carry the grammar contract (see the header) — `check_from` and
-// `days_watching`, never `ready_at` or `days_overdue`.
-export function projectWatchRow(row, verdict) {
+// Wire projection.
+//
+// FIELD NAMES ARE A CROSS-LANE CONTRACT. `name`, `variety_ref`, `watching_since` and `basis` match
+// the shape the concurrent UI lane committed and tested against — they are NOT this module's
+// preferred spellings, they are the agreed ones, and renaming them silently breaks 33 UI tests.
+//
+// The grammar contract still binds on top of that (design §3.1): `watching_since` and `basis`, never
+// `ready_at` or `days_overdue`. A client cannot render a prediction in an observation's grammar
+// without first renaming a field.
+//
+// `check_from` / `days_watching` / `crop_type_slug` are kept as ADDITIVE aliases rather than
+// dropped: the dismissal snapshot is built from this same object, and the calibration columns are
+// named for the model, not for the row.
+export function projectWatchRow(row, verdict, etToday) {
   const a = verdict.anchor;
   return {
     plant_id: row.plant_id,
     project_id: row.project_id,
-    planting_name: row.planting_name ?? null,
-    location_id: row.location_id ?? null,
+
+    // ── UI contract ──────────────────────────────────────────────────────────────────────────────
+    name: row.planting_name ?? null,
     location_name: row.location_name ?? null,
+    variety_ref: {
+      name: row.variety_name ?? null,
+      crop_type_slug: row.crop_type_slug ?? null,
+    },
+    watching_since: verdict.check_from,
+    basis: describeBasis(a, etToday),
+
+    // ── Additive: everything the UI does not render but the server/audit path needs ───────────────
+    location_id: row.location_id ?? null,
     crop_type_slug: row.crop_type_slug ?? null,
     crop_display_name: row.crop_display_name ?? null,
     variety_id: row.variety_id ?? null,
@@ -309,6 +424,7 @@ export function projectWatchRow(row, verdict) {
       nursery_offset_applied: a.nursery_offset_applied,
       source_plant_id: a.source_plant_id ?? null,
       source_planting_name: a.kind === 'sibling' ? (row.sibling_planting_name ?? null) : null,
+      alternates: a.alternates ?? [],
     },
     check_from: verdict.check_from,
     days_watching: verdict.days_watching,
@@ -325,6 +441,12 @@ export function rankWatchCandidates(rows) {
   });
 }
 
+// Cross-lane contract: the exact keys the UI lane committed against. Asserted in the test suite so a
+// rename here fails HERE rather than as a blank row in the client after integration.
+export const UI_CONTRACT_FIELDS = Object.freeze([
+  'plant_id', 'project_id', 'name', 'location_name', 'variety_ref', 'watching_since', 'basis',
+]);
+
 // Full pipeline over raw SQL rows. Returns the ranked list PLUS a reason census, so a zero-length
 // list is explainable at the API boundary instead of being an unreadable silence.
 export function buildWatchList(rows, etToday, opts = {}) {
@@ -332,7 +454,7 @@ export function buildWatchList(rows, etToday, opts = {}) {
   const excluded = {};
   for (const row of rows ?? []) {
     const verdict = classifyWatchCandidate(row, etToday, opts);
-    if (verdict.eligible) candidates.push(projectWatchRow(row, verdict));
+    if (verdict.eligible) candidates.push(projectWatchRow(row, verdict, etToday));
     else excluded[verdict.reason] = (excluded[verdict.reason] ?? 0) + 1;
   }
   return { candidates: rankWatchCandidates(candidates), excluded };
