@@ -418,7 +418,7 @@ export const handler = async (event) => {
             -- leaves A.featured_photo_id = P. NOTHING IS DELETED, so no deleted_at filter can ever
             -- catch it — only re-checking membership can.
             --
-            -- `fp.project_id = pp.id` is exactly the linkage the set-featured WRITE validator
+            -- The predicate fp.project_id = pp.id is exactly the linkage the set-featured WRITE validator
             -- already enforces (~:540 below). Read half and write half of ONE invariant: diverging
             -- them manufactures the silent-revert bug fetchSpaceHero documents (the user re-picks
             -- the photo, the write accepts, the read demotes it again). Change one, change both.
