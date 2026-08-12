@@ -62,12 +62,31 @@ const DEFAULT_HARVEST_UNIT = 'count'
 // blueberry pick defaulted "cups" onto the next count-crop harvest, corrupting the
 // exact crop×unit lines the export ships. No crop context (no planting picked yet, or
 // an unresolvable slug) → global → DEFAULT, exactly the old chain.
-function readLastHarvestUnit(cropSlug) {
+// V4-HARVUNITDEFAULT-001: `cropDefaultUnit` is crop_types.default_unit, carried on
+// variety_ref by lambda/plants/index.js. It slots BETWEEN the per-crop memory and the
+// legacy GLOBAL key, and that position is the whole point:
+//   1. lastHarvestUnit:<slug> — Dave's OWN history for THIS crop. Strongest evidence
+//      there is; a curated default must never overrule what he actually does.
+//   2. crop_types.default_unit — curated reference. Only consulted on a crop he has
+//      never harvested before, i.e. exactly where tier 3 used to guess.
+//   3. lastHarvestUnit (global) — the documented corruption vector this displaces:
+//      whatever unit the LAST harvest of ANY crop used. This is the "cups blueberry
+//      pick defaults cups onto the next count-crop" bug in the comment above.
+//   4. 'count'.
+// So the new tier can only ever displace a cross-crop guess, never a real signal.
+// A crop with default_unit NULL (all 50 non-edible crop types on prod — flowers,
+// succulents, houseplants, ornamentals, the one tree) falls straight through to the
+// old chain, byte-identical to today's behavior. Validated against HARVEST_UNITS on
+// the way in so a bad/retired DB value can never reach the <select> as a dead option.
+function readLastHarvestUnit(cropSlug, cropDefaultUnit) {
   try {
     if (cropSlug) {
       const perCrop = localStorage.getItem(`lastHarvestUnit:${cropSlug}`)
       if (perCrop && HARVEST_UNITS.includes(perCrop)) return perCrop
     }
+  } catch { /* localStorage unavailable — the crop default below is still usable */ }
+  if (cropDefaultUnit && HARVEST_UNITS.includes(cropDefaultUnit)) return cropDefaultUnit
+  try {
     const stored = localStorage.getItem('lastHarvestUnit')
     if (stored && HARVEST_UNITS.includes(stored)) return stored
   } catch { /* localStorage unavailable — fall through to default */ }
@@ -534,8 +553,11 @@ export default function EventNew() {
   // explicit in-entry unit pick (unitTouchedRef); a cleared planting falls back to the global key.
   useEffect(() => {
     if (form.event_type !== 'harvest' || unitTouchedRef.current) return
-    const slug = plantsForProject.find(p => p.id === form.plant_id)?.variety_ref?.crop_type_slug
-    const unit = readLastHarvestUnit(slug)
+    // V4-HARVUNITDEFAULT-001: both halves come off the SAME variety_ref, so a planting with no
+    // variety (3 live on prod) or an unmapped crop type yields undefined for both and the chain
+    // degrades to exactly the pre-change behavior rather than to some other crop's unit.
+    const vref = plantsForProject.find(p => p.id === form.plant_id)?.variety_ref
+    const unit = readLastHarvestUnit(vref?.crop_type_slug, vref?.default_unit)
     setHarvest(h => (h.unit === unit ? h : { ...h, unit }))
   }, [form.event_type, form.plant_id, plantsForProject])
 
