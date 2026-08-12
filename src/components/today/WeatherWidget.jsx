@@ -182,10 +182,25 @@ function liveTimeLabel(refreshedAt) {
 }
 
 // NET-NEW — derive the no-wrap headline sentence from the two lane verdicts.
-function headlineFor(containersDo, bedsDo) {
+//
+// BUG-TODAYWATER-001 honesty guard (2026-08-12, Dave's call). `waterDueCount` is the length of the
+// SAME plan's water_due list, rendered by <CareNeeded> two components below this headline. Today has
+// carried two independently-thresholded watering models since the widget shipped — this one zeroes
+// both lanes at wetNow >= 0.8 with NO PoP gate, the engine suppresses at 1.0" gated on PoP >= 60 —
+// so any morning landing between them printed the ABSOLUTE sentence "All set — no watering needed
+// today." directly above a full watering list. It happened on 2026-08-03 (0.98") and again on
+// 2026-08-08 (0.99" over 78 listed plantings); the 0.02-class near-miss is what Dave actually sees.
+//
+// This guard does not adjudicate which model is right — the harmonization does that. It only forbids
+// the one sentence that is unconditionally FALSE while the list is non-empty. Deliberately scoped to
+// the both-hold branch: the other three sentences are lane advice, not a claim about the whole page.
+// Copy is length-budgeted for a 390px Android viewport (the visible line is nowrap + ellipsis; the
+// full sentence ships as sr-only text, so the a11y contract is never the truncated one).
+function headlineFor(containersDo, bedsDo, waterDueCount = 0) {
   if (containersDo && bedsDo) return 'Water both — containers and beds today.'
   if (containersDo && !bedsDo) return 'Water containers, skip the beds today.'
   if (!containersDo && bedsDo) return 'Water the beds, hold containers.'
+  if (waterDueCount > 0) return `Rain may cover today's list — ${waterDueCount} still due.`
   return 'All set — no watering needed today.'
 }
 
@@ -196,6 +211,7 @@ export default function WeatherWidget({
   planDate = null,
   liveHydrology = null,
   refreshedAt = null,
+  waterDueCount = 0,
 }) {
   const scale = computeWateringScale(hydrology, weather)
 
@@ -232,7 +248,7 @@ export default function WeatherWidget({
   // Derived headline (NET-NEW). Both lane verdicts -> one no-wrap sentence; the lanes + rain note restate it.
   const containersDo = pillState(scale.containers) === 'do'
   const bedsDo = pillState(scale.beds) === 'do'
-  const headline = headlineFor(containersDo, bedsDo)
+  const headline = headlineFor(containersDo, bedsDo, waterDueCount)
 
   // A full-width stacked lane: [leading target icon] [label flex:1 min-width:0] [3-can rail OR pause shape].
   // V4-WATERWHY-002: non-interactive (was a <button> only to toggle the removed Why panel).
