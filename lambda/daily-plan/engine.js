@@ -228,10 +228,20 @@ function rainCreditDaysTiered(tier, wi, hy){
 // vessel-agnostic gate is the only design robust to the dominant NULL case (NULL is outdoor -> suppressed ->
 // fails safe). covered/indoor never got the rain -> exempt. Independent of CARE_RAIN_CREDIT_ENABLED so the
 // eventual credit-ON flip cannot bypass it. Recovery is automatic as the 72h windowPrecip decays (no counter).
-const SOAK_CAP_IN = 1.0;         // >= this over the 72h windowPrecip -> suppress outdoor watering
-const SOAK_WET_FLOOR_IN = 0.5;   // "already moist" prerequisite for the incoming-rain trigger
-const SOAK_FCST_QPF_IN = 0.5;    // incoming 24h amount that counts
-const SOAK_FCST_POP_PCT = 60;    // min PoP for an incoming-rain skip
+// BUG-TODAYWATER-001 (2026-08-12) — these four moved OUT of this file. They are now required from
+// wateringThresholds.json, which src/lib/wateringScale.js (the WeatherWidget headline on Today)
+// imports from this same path. Until this change the widget owned a private, unharmonized copy —
+// 0.8" with no probability gate at all — so on 2026-08-03 (0.98") and 2026-08-08 (0.99") the two
+// models straddled the same number and Today printed "All set — no watering needed today." above a
+// full watering list. The file lives in THIS directory because deploy-lambda.yml packages it with
+// `zip -r .`, so the engine's copy ships with no workflow change; the client bundles it at build.
+// Values are unchanged — this is a re-homing, not a retune. src/lib/wateringModelParity.test.js
+// fails if either module reintroduces a literal.
+const SOAK_THRESHOLDS = require('./wateringThresholds.json');
+const SOAK_CAP_IN = SOAK_THRESHOLDS.SOAK_CAP_IN;                 // >= this over the 72h windowPrecip -> suppress outdoor watering
+const SOAK_WET_FLOOR_IN = SOAK_THRESHOLDS.SOAK_WET_FLOOR_IN;     // "already moist" prerequisite for the incoming-rain trigger
+const SOAK_FCST_QPF_IN = SOAK_THRESHOLDS.SOAK_FCST_QPF_IN;       // incoming 24h amount that counts
+const SOAK_FCST_POP_PCT = SOAK_THRESHOLDS.SOAK_FCST_POP_PCT;     // min PoP for an incoming-rain skip
 // BUG-TODAYWATER-001: a small vessel needs MUCH more gross rainfall than a bed before a skip is safe. A
 // 5-gal fabric bag is a ~113 sq-in footprint and a mature canopy sheds water AWAY from it, so a 1" event
 // delivers under half of one hand-watering — while the plant transpires 1.5-3 L/day. The cost asymmetry is

@@ -1,5 +1,5 @@
 /**
- * BUG-TODAYWATER-001 — the honesty guard.
+ * BUG-TODAYWATER-001 — the honesty guard, and the proof that the harmonization made it a backstop.
  *
  * Today renders two independent watering verdicts on one screen from one plan: WeatherWidget's
  * headline (computeWateringScale) and CareNeeded's list (the daily-plan engine's per-planting
@@ -7,12 +7,19 @@
  * printed the ABSOLUTE sentence "All set — no watering needed today." directly above a full watering
  * list. That is the experience Dave reported as "~95 plants listed as needing water during heavy rain".
  *
- * The hydrology bags below are NOT invented — they are the verbatim stored `prior_runs` snapshots from
- * live prod Neon for the two mornings the divergence is reconstructible on:
- *   2026-08-08 06:01:03Z (02:01 EDT): recent 0.02 + today 0.97 @ PoP 28  -> widget wetNow 0.99, 78 listed
- *   2026-08-03 (nightly, per todaywater-diagnosis-V100-20260803): today 0.98 @ PoP 84 -> ~200 listed
- * Both straddle widget-0.8 and engine-1.0. This suite pins the page-level contract; the threshold
- * harmonization itself is pinned by wateringModelParity.test.js.
+ * Two layers, tested here in that order:
+ *   1. The guard (shipped first, independently): never print the absolute sentence over a non-empty
+ *      list. Belt and braces — it does not care WHY the two disagree.
+ *   2. The harmonization: the widget now reproduces the engine's model from the engine's own
+ *      thresholds, so on both incident mornings the disagreement no longer occurs at all. Those two
+ *      cases moved OUT of the guard's territory and into wateringModelParity.test.js, and the tests
+ *      below assert exactly that — the cause is fixed, not only the symptom.
+ *
+ * The guard still has real work: the widget has two coarse lanes and the engine has per-planting
+ * exposure, so a genuine measured soak zeroes both lanes while the engine correctly keeps listing
+ * COVERED/INDOOR plantings, which never got the rain. That gap is structural and permanent — no
+ * amount of threshold harmonization closes it. It is the 2026-08-03 shape: 4.32" and 18 still due,
+ * every one of them indoor.
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -38,7 +45,18 @@ import Today from '../pages/Today.jsx'
 
 const weather = { tonightLow: 68, highToday: 86, code: 3, hot: false }
 
-// Live prod, daily_plan.items.prior_runs, plan_date 2026-08-08, generated_at 06:01:03.510Z.
+// A real measured soak, as prod emits one now that a WS-2902 is bound: the rain is in
+// today_observed_in, not merely forecast. This is the 2026-08-03 event (4.32" for the day) in the
+// payload shape the gauge integration produces since BUG-RAINACTUAL-001. Both lanes hold — correctly,
+// the ground IS saturated — while the engine keeps listing the 18 indoor plantings the rain never
+// reached. Headline and list are both right and still contradict each other; that is the guard's job.
+const MEASURED_SOAK = {
+  recent_precip_in: 0.5, today_observed_in: 3.82, today_remaining_in: 0,
+  today_precip_in: 3.82, today_pop: 92, tomorrow_precip_in: 0, tomorrow_pop: 1,
+}
+
+// Live prod, daily_plan.items.prior_runs, plan_date 2026-08-08, generated_at 06:01:03.510Z — the
+// morning Dave re-observed the defect. 78 plantings listed under "All set".
 const AUG8_0201 = {
   recent_precip_in: 0.02, today_precip_in: 0.97, today_pop: 28,
   today_observed_in: 0, today_remaining_in: 0.97,
@@ -56,41 +74,33 @@ const AUG3_NIGHTLY = {
 // silently drops one copy still has to keep the sentence honest.
 const headlineText = (container) => container.textContent
 
-describe('BUG-TODAYWATER-001 — WeatherWidget never claims "All set" over a non-empty list', () => {
-  it('08-08 02:01 EDT: 78 plantings listed -> the absolute sentence is replaced, not printed', () => {
+describe('BUG-TODAYWATER-001 layer 1 — the absolute sentence never appears over a non-empty list', () => {
+  it('a measured soak with indoor plantings still due: "All set" is replaced, not printed', () => {
     const { container } = render(
-      <WeatherWidget weather={weather} hydrology={AUG8_0201} waterDueCount={78} />
+      <WeatherWidget weather={weather} hydrology={MEASURED_SOAK} waterDueCount={18} />
     )
     expect(headlineText(container)).not.toMatch(/All set/i)
-    expect(headlineText(container)).toMatch(/Rain may cover today's list — 78 still due\./)
-  })
-
-  it('08-03 nightly: same class, same guard (0.98" @ PoP 84 over ~200 listed)', () => {
-    const { container } = render(
-      <WeatherWidget weather={weather} hydrology={AUG3_NIGHTLY} waterDueCount={200} />
-    )
-    expect(headlineText(container)).not.toMatch(/All set/i)
-    expect(headlineText(container)).toMatch(/200 still due/)
+    expect(headlineText(container)).toMatch(/Rain may cover today's list — 18 still due\./)
   })
 
   it('an EMPTY list still gets the absolute sentence — the guard suppresses a falsehood, not the copy', () => {
     const { container } = render(
-      <WeatherWidget weather={weather} hydrology={AUG8_0201} waterDueCount={0} />
+      <WeatherWidget weather={weather} hydrology={MEASURED_SOAK} waterDueCount={0} />
     )
     expect(headlineText(container)).toMatch(/All set — no watering needed today\./)
   })
 
   it('back-compat: a caller passing no count at all behaves exactly as before (absolute sentence)', () => {
-    const { container } = render(<WeatherWidget weather={weather} hydrology={AUG8_0201} />)
+    const { container } = render(<WeatherWidget weather={weather} hydrology={MEASURED_SOAK} />)
     expect(headlineText(container)).toMatch(/All set — no watering needed today\./)
   })
 
   it('the guard is scoped to the both-hold branch — lane advice is untouched', () => {
-    // Dry: containers water (base 2), beds hold (a reliable soak is coming). Not an absolute claim,
-    // so a non-empty list must NOT rewrite it.
-    const dryBedsHold = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
+    // Already moist with a qualifying soak coming: beds hold, containers water. Not an absolute
+    // claim about the page, so a non-empty list must NOT rewrite it.
+    const bedsHold = { recent_precip_in: 0.6, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.6, tomorrow_pop: 70 }
     const { container } = render(
-      <WeatherWidget weather={weather} hydrology={dryBedsHold} waterDueCount={42} />
+      <WeatherWidget weather={weather} hydrology={bedsHold} waterDueCount={42} />
     )
     expect(headlineText(container)).toMatch(/Water containers, skip the beds today\./)
     expect(headlineText(container)).not.toMatch(/still due/)
@@ -106,17 +116,45 @@ describe('BUG-TODAYWATER-001 — WeatherWidget never claims "All set" over a non
   })
 })
 
+describe('BUG-TODAYWATER-001 layer 2 — the two incident mornings no longer disagree at all', () => {
+  // These are the cases the guard used to have to catch. After harmonization the widget reaches the
+  // engine's verdict on both, so the honest headline falls out of the model rather than out of a
+  // rescue. If a future edit reintroduces the divergence, these fail BEFORE the guard fires — which
+  // is the point of keeping them: a guard that quietly starts doing real work is a regression.
+
+  it('08-08 02:01 EDT (0.97" @ 28%): the widget agrees with the 78-item list', () => {
+    const { container } = render(
+      <WeatherWidget weather={weather} hydrology={AUG8_0201} waterDueCount={78} />
+    )
+    // 28% is nowhere near SOAK_FCST_POP_PCT, and 0.02" measured is nowhere near SOAK_CAP_IN, so
+    // nothing is suppressed and the widget says what the list says.
+    expect(headlineText(container)).toMatch(/Water both — containers and beds today\./)
+    expect(headlineText(container)).not.toMatch(/All set/i)
+    expect(headlineText(container)).not.toMatch(/still due/)   // the guard did not need to fire
+  })
+
+  it('08-03 nightly (0.98" @ 84%): beds hold with the engine, containers keep watering', () => {
+    const { container } = render(
+      <WeatherWidget weather={weather} hydrology={AUG3_NIGHTLY} waterDueCount={200} />
+    )
+    // A qualifying forecast: the engine suppresses outdoor beds, and so does the bed lane. The
+    // container lane keeps watering because a forecast may not suppress a container (decision 3).
+    expect(headlineText(container)).toMatch(/Water containers, skip the beds today\./)
+    expect(headlineText(container)).not.toMatch(/All set/i)
+  })
+})
+
 describe('BUG-TODAYWATER-001 — Today wires the list it renders into the headline that describes it', () => {
   beforeEach(() => { planState.current = null; sessionStorage.clear() })
 
-  const planWith = (n) => ({
+  const planWith = (n, hydrology = MEASURED_SOAK) => ({
     data: {
-      has_plan: true, plan_date: '2026-08-08', generated_at: '2026-08-08T06:01:03.510Z',
+      has_plan: true, plan_date: '2026-08-03', generated_at: '2026-08-03T06:01:03.510Z',
       plan: {
-        weather, hydrology: AUG8_0201,
+        weather, hydrology,
         substrate: { msg: 'Feeding on HOLD.', on_hold: true },
         water_due: Array.from({ length: n }, (_, i) => ({
-          id: `pl${i}`, name: `Planting ${i}`, project: 'Peppers', project_id: 'pr1',
+          id: `pl${i}`, name: `Planting ${i}`, project: 'Shelf 4', project_id: 'pr1',
           overdue_by: 1, in_ground: false,
         })),
         no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
@@ -126,14 +164,14 @@ describe('BUG-TODAYWATER-001 — Today wires the list it renders into the headli
   })
 
   it('the reported screen: watering list rendered, so the headline above it does not say "All set"', () => {
-    planState.current = planWith(78)
+    planState.current = planWith(18)
     const { container } = render(<Today />)
     // The contradiction, both halves in one assertion pair: the list IS on screen…
     expect(screen.getByText('Needs care today')).toBeTruthy()
     expect(screen.getByText('Planting 0')).toBeTruthy()
     // …and the headline above it no longer denies it.
     expect(container.textContent).not.toMatch(/All set/i)
-    expect(container.textContent).toMatch(/Rain may cover today's list — 78 still due\./)
+    expect(container.textContent).toMatch(/Rain may cover today's list — 18 still due\./)
   })
 
   it('a genuinely clear day keeps the reassuring sentence', () => {
