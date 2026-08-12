@@ -230,9 +230,46 @@ export const handler = async (event) => {
 
       if (method === 'GET') {
         const rows = await sql`
-          SELECT i.*, fp.storage_path AS featured_photo_storage_path, pv.display_name AS variety_name
+          SELECT i.*,
+                 COALESCE(fp.id, fb.id) AS effective_featured_photo_id,
+                 (fp.id IS NOT NULL) AS featured_is_explicit,
+                 COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path,
+                 pv.display_name AS variety_name
           FROM inventory_items i
-          LEFT JOIN photos fp ON fp.id = i.featured_photo_id
+          -- BUG-PHOTOHEROMOVE-001 / INV-HERO — the hero is DERIVED here, never trusted from the
+          -- stored pointer. Same shape as fetchSpaceHero (lambda/photos/index.js:~314); read its
+          -- long-form rationale before touching this. Two predicates: the photo must be ALIVE, and
+          -- it must STILL be a member of this item's gallery.
+          --
+          -- The membership arm is the one that bites today. Reassign ships (PhotoLibrary's tag
+          -- modal, full-replace PUT) and re-parents a photo without clearing the old parent's
+          -- featured_photo_id. NOTHING IS DELETED, so no deleted_at filter can ever catch it —
+          -- only re-checking membership can.
+          --
+          -- `fp.inventory_item_id = i.id` is exactly the linkage the set-featured WRITE validator
+          -- already enforces (~:275 below). Read half and write half of ONE invariant: diverging
+          -- them manufactures the silent-revert bug fetchSpaceHero documents (the user re-picks the
+          -- photo, the write accepts, the read demotes it again). Change one, change both.
+          --
+          -- ALIASED to effective_featured_photo_id, NOT featured_photo_id, because `i.*` above
+          -- already emits the raw column: two same-named columns in one SELECT and the driver's
+          -- last-one-wins is undefined behavior to depend on. The JS below does the override
+          -- explicitly. featured_image_id is untouched here — it is the deprecated V1-era twin
+          -- (0 rows populated) and is not a hero surface.
+          LEFT JOIN photos fp
+                 ON fp.id = i.featured_photo_id
+                AND fp.deleted_at IS NULL
+                AND fp.created_by = ANY(${householdIds})
+                AND fp.inventory_item_id = i.id
+          LEFT JOIN LATERAL (
+                 SELECT ph.id, ph.storage_path
+                   FROM photos ph
+                  WHERE ph.inventory_item_id = i.id
+                    AND ph.deleted_at IS NULL
+                    AND ph.created_by = ANY(${householdIds})
+                  ORDER BY ph.created_at DESC, ph.id DESC
+                  LIMIT 1
+               ) fb ON TRUE
           LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
           WHERE i.id = ${itemId}
             AND i.created_by = ANY(${householdIds})
@@ -241,8 +278,16 @@ export const handler = async (event) => {
         if (!rows.length) return resp(404, { error: 'Not found' });
         const row = rows[0];
         const featured_photo_view_url = await resolvePhotoViewUrl(row.featured_photo_storage_path, { presign: getFeaturedPhotoViewUrl, sm });
-        const { featured_photo_storage_path: _ignore, ...rest } = row;
-        return resp(200, { ...rest, featured_photo_view_url });
+        // INV-HERO: `i.*` carried the RAW pointer; replace it with the derived effective hero so
+        // the id and the url can never disagree (the incoherence DD3 names — a LEFT JOIN that nulls
+        // the storage_path while the raw id stays non-null, which the client then feeds to PhotoImg
+        // and to featuredInSet badge comparisons). Strip the join-only columns.
+        const {
+          featured_photo_storage_path: _ignore,
+          effective_featured_photo_id: _effective,
+          ...rest
+        } = row;
+        return resp(200, { ...rest, featured_photo_id: row.effective_featured_photo_id, featured_photo_view_url });
       }
 
       if (method === 'PUT') {
@@ -258,6 +303,7 @@ export const handler = async (event) => {
              WHERE id = ${body.featured_photo_id}
                AND inventory_item_id = ${itemId}
                AND created_by = ANY(${householdIds})
+               AND deleted_at IS NULL
           `;
           if (!linkRows.length) {
             return resp(400, { error: 'featured_photo_id must be a photo linked to this inventory item' });

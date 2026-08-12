@@ -82,10 +82,16 @@ const DIALOG_SURFACES = {
 // V4-HARVEXPORT-001 S5: HarvestExportSheet.jsx is likewise deliberate — the Export affordance on the
 // Harvests page opens a fly-up, and it nests HarvestTimeframeChips' grow-year sheet inside itself
 // (Sheet's openStack + topmost-Escape arbitration are built for exactly that stacking).
+// DD9 / W-EVTDEL: components/photo/EventDeleteConfirm.jsx is a DELIBERATE addition — the
+// event-delete confirm has to hold an opt-in "Also delete the photo" checkbox, and window.confirm
+// cannot, which is the entire reason it became a component. It renders the shared <Sheet>, which IS
+// the registered role="dialog" surface, so no new DIALOG_SURFACES entry is owed — the dismiss
+// behaviour is Sheet's, and the component deliberately adds no dialog chrome of its own.
 const SHEET_SITES = [
   'App.jsx',
   'components/BottomNav.jsx',
   'components/HarvestExportSheet.jsx',
+  'components/photo/EventDeleteConfirm.jsx',
   'components/HarvestTimeframeChips.jsx',
   'components/planting/TransplantDatePrompt.jsx',
   'components/today/CareNeeded.jsx',

@@ -398,15 +398,46 @@ export const handler = async (event) => {
             SELECT pp.id, pp.display_name AS name, pp.slug, pp.status, pp.variety, pp.description,
                    to_char(pp.start_date, 'YYYY-MM-DD') AS start_date,
                    pp.is_public, pp.location_id, pp.created_at, pp.updated_at, pp.created_by,
-                   pp.parent_id AS parent_project_id, pp.version, pp.featured_photo_id,
+                   pp.parent_id AS parent_project_id, pp.version,
+                   COALESCE(fp.id, fb.id) AS featured_photo_id,
+                   (fp.id IS NOT NULL) AS featured_is_explicit,
                    pp.classification AS kind,
                    to_char(pp.target_end_date, 'YYYY-MM-DD') AS target_end_date,
                    pp.kind_set_at, pp.archived_at, pp.assignee_user_id,
                    p.display_name AS parent_project_name,
-                   fp.storage_path AS featured_photo_storage_path
+                   COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path
             FROM public.container pp
             LEFT JOIN public.container p ON p.id = pp.parent_id AND p.deleted_at IS NULL
-            LEFT JOIN photos fp ON fp.id = pp.featured_photo_id
+            -- BUG-PHOTOHEROMOVE-001 / INV-HERO — the hero is DERIVED here, never trusted from the
+            -- stored pointer. Same shape as fetchSpaceHero (lambda/photos/index.js:~314); read its
+            -- long-form rationale before touching this. Two predicates: the photo must be ALIVE,
+            -- and it must STILL be a member of this project's gallery.
+            --
+            -- The membership arm is the one that bites today. Reassign ships (PhotoLibrary's tag
+            -- modal, full-replace PUT): moving photo P from project A to B re-parents the row and
+            -- leaves A.featured_photo_id = P. NOTHING IS DELETED, so no deleted_at filter can ever
+            -- catch it — only re-checking membership can.
+            --
+            -- `fp.project_id = pp.id` is exactly the linkage the set-featured WRITE validator
+            -- already enforces (~:540 below). Read half and write half of ONE invariant: diverging
+            -- them manufactures the silent-revert bug fetchSpaceHero documents (the user re-picks
+            -- the photo, the write accepts, the read demotes it again). Change one, change both.
+            -- NOTE this is the project's OWN photos only — deliberately NOT the ?attachedTo union,
+            -- which is planting-scoped and treats project_id as a container, not an attachment.
+            LEFT JOIN photos fp
+                   ON fp.id = pp.featured_photo_id
+                  AND fp.deleted_at IS NULL
+                  AND fp.created_by = ANY(${householdIds})
+                  AND fp.project_id = pp.id
+            LEFT JOIN LATERAL (
+                   SELECT ph.id, ph.storage_path
+                     FROM photos ph
+                    WHERE ph.project_id = pp.id
+                      AND ph.deleted_at IS NULL
+                      AND ph.created_by = ANY(${householdIds})
+                    ORDER BY ph.created_at DESC, ph.id DESC
+                    LIMIT 1
+                 ) fb ON TRUE
             WHERE pp.id = ${projectId}
               AND pp.created_by = ANY(${householdIds})
               AND pp.deleted_at IS NULL
@@ -535,6 +566,7 @@ export const handler = async (event) => {
              WHERE id = ${body.featured_photo_id}
                AND project_id = ${projectId}
                AND created_by = ANY(${householdIds})
+               AND deleted_at IS NULL
           `;
           if (!linkRows.length) {
             return resp(400, { error: 'featured_photo_id must be a photo linked to this project' });

@@ -10,6 +10,10 @@ import { householdScope, loadOwnedSpace, loadOwnedLocation, loadOwnedInventoryIt
 import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isAllowedUploadKey } from './uploadKeyPolicy.js';
+// W-DEL — the soft-delete + restore core lives in its own module BECAUSE this file is not
+// importable from the repo root, so anything written here can only be covered by SQL-text
+// assertions. See photoDelete.js's header.
+import { softDeletePhoto, restorePhoto } from './photoDelete.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // requestChecksumCalculation/responseChecksumValidation: newer SDK v3 versions (3.679+) default
@@ -1233,10 +1237,16 @@ export const handler = async (event) => {
       const setsParent = Boolean(body.project_id || body.location_id || body.plant_id) || spaceParented;
       const updatedRows = await sql`
         WITH prev AS (
+          -- W-DEL ships the first route that can produce a soft-deleted photo, which turns "PATCH
+          -- mutates an invisible row and returns 200" from unreachable into routine. The filter is
+          -- the whole reason this CTE exists as a gate rather than a snapshot: a 0-row prev makes
+          -- the UPDATE match nothing, so the route 404s a deleted photo instead of silently
+          -- re-parenting it (and re-running autoPromoteFeatured against it).
           SELECT id, intake_status
             FROM photos
            WHERE id = ${photoId}
              AND created_by = ANY(${householdIds})
+             AND deleted_at IS NULL
         )
         UPDATE photos p
            SET project_id    = ${body.project_id ?? null},
@@ -1272,6 +1282,55 @@ export const handler = async (event) => {
         await autoPromoteFeatured(sql, updated, householdIds);
       }
       return resp(200, updated);
+    }
+
+    // POST /api/photos/:id/restore — W-DEL / DD8. Declared BEFORE the bare-:id DELETE so the more
+    // specific path wins; `[^/]+` in the id match would otherwise never see it, but relying on that
+    // is exactly the kind of ordering assumption that breaks when someone loosens a regex.
+    //
+    // Durable recovery, not a 5-second window. The soft delete is recoverable forever (DD2), so a
+    // toast that asserts "gone" after 5s would leave the user's belief WORSE than the system's
+    // state — the V3-ARCHIVE-001 failure, whose accepted fix was a durable Unarchive affordance and
+    // not a longer toast. It also removes the WCAG 2.2.1 (Timing Adjustable) exposure a
+    // sole-recovery timer would carry.
+    const restoreMatch = rawPath.match(/^\/api\/photos\/([^/]+)\/restore$/);
+    if (restoreMatch && method === 'POST') {
+      const { status, body } = await restorePhoto(sql, {
+        photoId: restoreMatch[1],
+        householdIds,
+        spaceEnabled: spacePhotosEnabled,
+      });
+      return resp(status, body);
+    }
+
+    // DELETE /api/photos/:id — W-DEL, closing defect D2 (no user-facing photo delete existed
+    // ANYWHERE: no route, no control, which is the only reason the §0 incident was unrecoverable).
+    //
+    // SOFT DELETE ONLY. `deleted_at = now()`; the row survives, the S3 object survives, every
+    // relation survives, and restore above brings it back. See photoDelete.js.
+    //
+    // HOUSEHOLD-SCOPED, and that is a DECISION, not an inheritance: `created_by = ANY(householdIds)`
+    // means Dave and Jen can delete each other's photos. Confirmed correct as-is 2026-08-12;
+    // sharding permissions to two or more levels is V5-PERMSHARD-001 and is deliberately NOT built
+    // here. (The PUT route's header comment two blocks up still says "Owner-scoped (only the
+    // uploader can re-tag)" and has been stale since the V3-ROLES teardown widened it — anchor to
+    // the code, not to that line.)
+    //
+    // KNOWN AND INTENDED SIDE EFFECT: nulling a hero returns the parent to
+    // `featured_photo_id IS NULL`, which is exactly autoPromoteFeatured's precondition — so the
+    // NEXT photo POSTed to that parent silently becomes its hero. With the read-side effective-hero
+    // derivation shipped, the parent never even APPEARS hero-less in between: the fallback arm
+    // substitutes the newest surviving photo immediately, with featured_is_explicit false. The
+    // delete feedback copy must account for a hero that visibly replaces itself rather than
+    // disappearing.
+    if (idMatch && method === 'DELETE') {
+      const { status, body } = await softDeletePhoto(sql, {
+        photoId: idMatch[1],
+        householdIds,
+        userId,
+        spaceEnabled: spacePhotosEnabled,
+      });
+      return resp(status, body);
     }
 
     return resp(405, { error: 'Method not allowed' });
