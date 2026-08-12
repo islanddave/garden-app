@@ -83,15 +83,17 @@ describe('flag OFF — the /space routes are ABSENT from the table, not merely r
   })
 
   // The rollback is EXACT, not merely "smaller". A lever that drops the two space routes but also
-  // perturbs the other 49 is not a rollback, and a bare not-to-contain check could not tell the
-  // difference. This is the flag-OFF counterpart to App.routes.test.jsx's flag-ON 51.
+  // perturbs the other 50 is not a rollback, and a bare not-to-contain check could not tell the
+  // difference. This is the flag-OFF counterpart to App.routes.test.jsx's flag-ON 52.
   // 48 → 49: V4-EDITCOMPLETE-001 V3's /varieties/:varietyId/edit is NOT flag-gated, so it is
   // present in both tables; the flag's delta stays exactly the two space routes.
-  it('restores the shipped 49-route table exactly, with no duplicates', async () => {
+  // 49 → 50: W-RESTORE's /photos/deleted is likewise not flag-gated — same reasoning, and the same
+  // delta invariant: the flag still adds exactly two routes and nothing else.
+  it('restores the shipped 50-route table exactly, with no duplicates', async () => {
     const { renderRoutes } = await import('../App.jsx')
     const paths = renderRoutes({ overlay: false, user: true }).map(r => r.props.path)
-    expect(paths).toHaveLength(49)
-    expect(new Set(paths).size).toBe(49)
+    expect(paths).toHaveLength(50)
+    expect(new Set(paths).size).toBe(50)
   })
 
   it('adds NO route to the overlay tree either', async () => {

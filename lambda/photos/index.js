@@ -13,7 +13,7 @@ import { isAllowedUploadKey } from './uploadKeyPolicy.js';
 // W-DEL — the soft-delete + restore core lives in its own module BECAUSE this file is not
 // importable from the repo root, so anything written here can only be covered by SQL-text
 // assertions. See photoDelete.js's header.
-import { softDeletePhoto, restorePhoto } from './photoDelete.js';
+import { softDeletePhoto, restorePhoto, listDeletedPhotos } from './photoDelete.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // requestChecksumCalculation/responseChecksumValidation: newer SDK v3 versions (3.679+) default
@@ -778,6 +778,47 @@ export const handler = async (event) => {
       `;
       if (!attached.length) return resp(400, REJECT);
       return resp(200, attached[0]);
+    }
+
+    // GET /api/photos/deleted — W-RESTORE, the "Recently deleted" surface (DD8).
+    //
+    // THIS ROUTE IS WHY THE DELETE CONFIRM MAY SAY "recoverable from Recently deleted". Until it
+    // existed the copy in EventDeleteConfirm.jsx was a promise about a place the user could not go:
+    // the data was recoverable, the AFFORDANCE was not. A destructive control must not ship ahead of
+    // the recovery path it advertises.
+    //
+    // The SELECT deliberately lives in photoDelete.js, not here — it is the one read that MUST
+    // return `deleted_at IS NOT NULL`, and index.js is where the 0A.6 enumeration guard asserts the
+    // opposite of every template. See the header comment on listDeletedPhotos.
+    //
+    // Declared ABOVE the exact-match `/api/photos` GET for reading order only; the two cannot
+    // collide (that one is `===`, not a prefix). A DELETE to this path falls to the bare-:id arm and
+    // 404s on UUID_RE, which is the correct answer — there is no permanent-delete verb here and
+    // Soft-Delete-Only means there never will be.
+    if (rawPath === '/api/photos/deleted' && method === 'GET') {
+      const rows = await listDeletedPhotos(sql, {
+        householdIds,
+        limit: event.queryStringParameters?.limit,
+      });
+      // Same presign pair as the live list: the S3 object SURVIVES a soft delete (DD2), so a
+      // recently-deleted photo still renders its own thumbnail — which is the entire point. A user
+      // cannot decide what to put back from a grid of grey boxes. thumb_url stays a HINT (the client
+      // falls back to view_url) exactly as it is on the live list.
+      const withUrls = await Promise.all(
+        rows.map(async (photo) => {
+          let view_url = null, thumb_url = null;
+          try {
+            view_url = await resolvePhotoViewUrl(photo.storage_path, { presign: getViewUrl, sm });
+          } catch { /* view_url stays null — the client renders a placeholder tile, not a broken page */ }
+          try {
+            thumb_url = photo.storage_path
+              ? await resolvePhotoViewUrl(`thumbs/${photo.storage_path}`, { presign: getViewUrl, sm })
+              : null;
+          } catch { /* non-fatal: the client falls back to view_url */ }
+          return { ...photo, view_url, thumb_url };
+        })
+      );
+      return resp(200, withUrls);
     }
 
     // GET /api/photos — list user's photos with optional filters
