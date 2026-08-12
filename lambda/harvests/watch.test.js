@@ -305,7 +305,12 @@ describe('ranking and payload', () => {
     expect(row.anchor.source_planting_name).toBe('Sugar Baby');
     expect(row.check_from).toBe('2026-07-14');
     expect(row.days_watching).toBe(29);
-    expect(row.basis).toBe('sibling picked Aug 10');
+    // V4-ANCHORBASE-001: this test's NAME always promised the sibling was named; the string it
+    // asserted never named it. A borrowed anchor now says whose date it borrowed, because the
+    // sibling match is on crop and not cultivar — 49 distinct varieties share one pepper project on
+    // live prod — so "a sibling picked" can mean a plant with a 43-day-different maturity.
+    expect(row.basis).toBe('sibling Sugar Baby picked Aug 10');
+    expect(row.basis.length).toBeLessThanOrEqual(40);
   });
 
   it('reports WHY each excluded planting is absent instead of one silent empty list', () => {

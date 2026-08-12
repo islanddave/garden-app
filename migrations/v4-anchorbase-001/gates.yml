@@ -1,0 +1,119 @@
+# gates.yml
+# V4-ANCHORBASE-001 — public.plant_anchor_derivation (BD-001a + BD0806-27).
+#
+# STATUS AT AUTHORING (2026-08-12): AUTHORED, NOT APPLIED. Not applied to staging, not applied to
+# prod. No DDL and no backfill has been executed anywhere by the authoring lane, and no derived
+# anchor exists in any environment.
+#
+# ⚠️ 0a AND 0b ARE SEPARATE DECISIONS. 0a is inert schema and can land whenever convenient. 0b
+# writes 64 derived anchors of which 57 (89%) are the add-date baseline, measured 47.3% accurate
+# to within a week over Dave's own 112 dual-dated plantings. Applying 0b is a JUDGEMENT CALL that
+# needs Dave, not a mechanical follow-on. Nothing reads the table until
+# lambda/harvests/watch.js's DERIVED_ANCHOR_ENABLED is flipped to true, which is a third, separate
+# decision — so there are three gates here and they are deliberately not collapsed into one.
+#
+# SEQUENCING: staging 0a -> rehearse 0r -> re-apply 0a -> [Dave decision] 0b on staging -> validate
+# -> dev push -> prod 0a -> [Dave decision] prod 0b -> [Dave decision] flag flip -> promote.
+#
+# The DDL must land on staging BEFORE any dev push that reads the relation, for the usual sharp
+# reason: CI's integration job branches off STAGING WITHOUT applying migrations, so a missing
+# relation surfaces as an infra flake and gets retried instead of fixed.
+#
+# NO ORDERING HAZARD AGAINST THE SPA in the current shape. Nothing in the client and nothing in the
+# watch route selects this table while DERIVED_ANCHOR_ENABLED is false, so 0a can ship in either
+# order relative to deploy.yml / deploy-lambda.yml. That changes the moment the flag flips: at that
+# point the Lambda must go FIRST, same as V4-HARVSURFACE-001.
+#
+# WHY THIS BACKFILL DOES NOT NEED THE APP PATH. Direct DB writes normally bypass the Lambda's side
+# effects, which is why data entry goes through the app. This relation is different in kind: it is a
+# new standalone table that no Lambda writes, no trigger watches and no existing surface reads. The
+# backfill's own guard is that it writes ONLY to that table — 0c check 6 proves public.plants was
+# untouched by asserting no plant row's updated_at moved.
+
+pre:
+  - name: pre_plants_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_event_log_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='event_log'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_table_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plant_anchor_derivation'
+    expect: rowcount_eq
+    value: 0
+
+  # gen_random_uuid() is the PK default; built in from PG13 and this cluster is well past that, but
+  # an explicit gate is cheaper than a CREATE TABLE that fails halfway through a session.
+  - name: pre_gen_random_uuid_available
+    sql: |
+      SELECT 1 FROM pg_proc WHERE proname='gen_random_uuid'
+    expect: rowcount_gte
+    value: 1
+
+post:
+  - name: post_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plant_anchor_derivation'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_indexes_present
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='plant_anchor_derivation'
+         AND indexname IN ('uq_plant_anchor_derivation_live',
+                           'idx_plant_anchor_derivation_user_live',
+                           'idx_plant_anchor_derivation_model_source')
+    expect: rowcount_eq
+    value: 3
+
+  - name: post_check_constraints_present
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.plant_anchor_derivation'::regclass AND contype='c'
+         AND conname IN ('plant_anchor_derivation_source_chk',
+                         'plant_anchor_derivation_confidence_chk',
+                         'plant_anchor_derivation_field_chk',
+                         'plant_anchor_derivation_offset_chk')
+    expect: rowcount_eq
+    value: 4
+
+  # Additive-only proof for 0a on its own: the DDL step must leave the table empty. If 0b has
+  # already been applied this gate is expected to fail and 0c check 4 is the census to read instead.
+  - name: post_starts_empty
+    sql: |
+      SELECT 1 FROM public.plant_anchor_derivation
+    expect: rowcount_eq
+    value: 0
+
+  # The marking rule, as a gate rather than only as a validation query. Zero tolerance: a derived
+  # anchor coexisting with an observed one is the exact failure this whole item exists to prevent.
+  - name: post_no_derived_beside_observed
+    sql: |
+      SELECT 1 FROM public.plant_anchor_derivation d
+        JOIN public.plants p ON p.id = d.plant_id
+       WHERE d.superseded_at IS NULL
+         AND (p.sown_at IS NOT NULL OR p.transplanted_at IS NOT NULL
+              OR p.planted_out_at IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
+
+rollback:
+  file: 0r-rollback.sql
+  note: >
+    Safe at any time by construction — this migration never writes to public.plants, so there is no
+    user data to restore. The only loss is the superseded-row history, which is the sole accuracy
+    measurement the add-date baseline will ever produce; \copy the table out first if any exists.
+    To retract only the derived values while keeping the schema, DELETE WHERE model_version =
+    'anchor-derive-v1' instead of dropping.
