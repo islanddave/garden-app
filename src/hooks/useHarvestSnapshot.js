@@ -7,8 +7,9 @@ import { etDay, addDays } from '../lib/harvestSummary.js'
 // (design §3b), so it fetches season-scoped independently of the Log's filters. One request:
 // season entries (most-recent first → last harvest + last-7-days derivation) + aggregates
 // (this-season distinct-crop count). Grow-year = Nov 1 – Oct 31; "2026 season" ends Oct 2026.
-const HARVEST_TZ = 'America/New_York'
-function currentGrowYear(d) { return d.getMonth() >= 10 ? d.getFullYear() + 1 : d.getFullYear() }
+// S4: grow-year derivation moved to the ONE shared helper (src/lib/growYear.js) — this file held
+// one of the two duplicated copies the design §2b consolidation names.
+import { currentGrowYear, HARVEST_TZ } from '../lib/growYear.js'
 
 export function useHarvestSnapshot() {
   const { fetch: apiFetch } = useApiFetch()

@@ -231,6 +231,28 @@ export function seasonTotalPhrase(crop) {
   return noun ? `${qtys} ${noun}` : qtys
 }
 
+// V4-HARVEXPORT-001: the per-unit total line for an aggregates `units[]` array
+// ([{unit, total}] off GET /api/harvests). Lifted out of Harvests.jsx so the Totals VIEW and the
+// Totals EXPORT render the same string from the same code — the export's whole claim is that it
+// reconciles with the page, and two call sites of formatEntry drift the moment one adds a rule.
+// '' (not '—') on empty: callers substitute their own "+N unrecorded" fallback.
+export function unitsLine(units, cropName) {
+  if (!Array.isArray(units) || units.length === 0) return ''
+  return units.map((u) => `${fmtQuantity(u.total)} ${unitLabel(u.unit, u.total, cropName)}`.trim()).join(' \u00b7 ')
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// Absolute, judgment-free first-pick date (design §6: neutral fact, never "9 days late"). "Jun 14";
+// the year is appended only when it differs from `currentYear`. Pure string math on the day_key —
+// `currentYear` is an ARGUMENT because this file has no clock (see the header), which is also what
+// lets the export render the same date the page does without importing a second date policy.
+export function fmtFirstPick(dayKey, currentYear = null) {
+  const [y, m, d] = String(dayKey).slice(0, 10).split('-').map(Number)
+  if (!y || !m || !d) return String(dayKey)
+  return `${MONTHS[m - 1]} ${d}${currentYear != null && y !== currentYear ? `, ${y}` : ''}`
+}
+
 // crop_type_slug ('sweet-pepper') → a display noun ('sweet pepper') for the count-unit label.
 export function cropNoun(planting) {
   const slug = planting?.variety_ref?.crop_type_slug

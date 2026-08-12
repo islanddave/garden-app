@@ -16,7 +16,7 @@
 // before — its fixtures carried quality_rating and nothing ever checked what happened to it.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 const { fetchSpy, searchParamsRef } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
@@ -29,6 +29,10 @@ vi.mock('react-router-dom', () => ({
 }))
 
 import Harvests from '../pages/Harvests.jsx'
+
+// V4-HARVDEFAULT-001: a bare arrival lands on TOTALS; every assertion here reads a LOG row, so the
+// cases toggle in (design §2a: insert a toggle step, never weaken an assertion).
+const toLog = () => fireEvent.click(screen.getByRole('radio', { name: 'Log' }))
 
 const RATED_ROW = {
   event_id: 'e1', day_key: '2026-07-20', event_date: '2026-07-20T12:00:00Z',
@@ -60,6 +64,7 @@ describe('V4-HIDEQUALITY-001 — shipped flag value', () => {
 describe('V4-HIDEQUALITY-001 — output surface is quiet at the shipped value', () => {
   it('renders no QualityDots even when the API returns a rating', async () => {
     render(<Harvests />)
+    toLog()
     // Wait on the row itself, not on an absence — asserting "not there" before the fetch settles
     // would pass against an empty page and prove nothing. Anchor on the per-row Edit link: the crop
     // name appears in both the row and the crop filter, so a text match on it is ambiguous.
@@ -74,6 +79,7 @@ describe('V4-HIDEQUALITY-001 — output surface is quiet at the shipped value', 
   // nothing, so this asserts what the client actually controls: only the dots left.
   it('leaves the rest of the harvest row intact', async () => {
     render(<Harvests />)
+    toLog()
     await waitFor(() => expect(screen.getByLabelText('Open this harvest event')).toBeTruthy())
     expect(screen.getAllByText(/Sungold/).length).toBeGreaterThan(0)
     expect(screen.getByText('4 Tomatoes')).toBeTruthy()

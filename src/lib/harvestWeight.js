@@ -96,3 +96,17 @@ export function sumHarvestWeights(harvests) {
   out.text = formatGrams(out.grams)
   return out
 }
+
+// V4-HARVEXPORT-001: the qualifier clauses that must ride every weight number. Lifted out of
+// Harvests.jsx (where it was local) so the Totals view and the Totals EXPORT emit the SAME
+// phrasing — a bare "12 kg" claims every gram was weighed, which is false for nearly every row
+// today, and an export that drops the qualifier launders that claim into a spreadsheet. Fixed
+// order (weighed / estimated / no weight yet); each clause dropped only when its count is zero.
+export function weightParts(w) {
+  const parts = []
+  if (!w) return parts
+  if (w.measured > 0) parts.push(`${w.measured} weighed`)
+  if (w.estimated > 0) parts.push(`${w.estimated} estimated`)
+  if (w.unweighed > 0) parts.push(`${w.unweighed} with no weight yet`)
+  return parts
+}

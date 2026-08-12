@@ -157,6 +157,9 @@ describe('V4-HIDEQUALITY-001 rollback lever — output surface (Harvests)', () =
   it('re-renders QualityDots for a rated harvest with the flag off', async () => {
     wireHarvests()
     render(<Harvests />)
+    // V4-HARVDEFAULT-001: a bare arrival lands on TOTALS; the quality dots are a LOG-row element, so
+    // toggle in (design §2a: insert a toggle step, never weaken an assertion).
+    fireEvent.click(screen.getByRole('radio', { name: 'Log' }))
     await waitFor(() => expect(screen.getByLabelText('Quality 4 of 5')).toBeTruthy())
   })
 })
