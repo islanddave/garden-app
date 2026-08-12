@@ -110,9 +110,41 @@ export const handler = async (event) => {
         const rows = await sql`
           SELECT l.id, l.name, l.slug, l.level, l.type_label, l.parent_id, l.sort_order,
                  l.description, l.is_active, l.created_at,
-                 l.featured_photo_id, fp.storage_path AS featured_photo_storage_path
+                 COALESCE(fp.id, fb.id) AS featured_photo_id,
+                 (fp.id IS NOT NULL) AS featured_is_explicit,
+                 COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path
           FROM locations l
-          LEFT JOIN photos fp ON fp.id = l.featured_photo_id
+          -- BUG-PHOTOHEROMOVE-001 / INV-HERO — the hero is DERIVED here, never trusted from the
+          -- stored pointer. Same shape as fetchSpaceHero (lambda/photos/index.js:~314); read its
+          -- long-form rationale before touching this. Two predicates: the photo must be ALIVE, and
+          -- it must STILL be a member of this zone's gallery.
+          --
+          -- The membership arm is the one that bites today. Reassign ships (PhotoLibrary's tag
+          -- modal, full-replace PUT): moving photo P from zone A to B re-parents the row and leaves
+          -- A.featured_photo_id = P. NOTHING IS DELETED, so no deleted_at filter can ever catch it
+          -- — only re-checking membership can.
+          --
+          -- `fp.location_id = l.id` is exactly the linkage the set-featured WRITE validator already
+          -- enforces (~:150 below). Read half and write half of ONE invariant: diverging them
+          -- manufactures the silent-revert bug fetchSpaceHero documents (the user re-picks the
+          -- photo, the write accepts, the read demotes it again). Change one, change both.
+          -- EXACT match, deliberately NOT the recursive loc_subtree walk the ?location_id gallery
+          -- uses: the write validator is exact, so a subtree-wide read arm would accept a hero the
+          -- write refuses — the same divergence from the opposite direction.
+          LEFT JOIN photos fp
+                 ON fp.id = l.featured_photo_id
+                AND fp.deleted_at IS NULL
+                AND fp.created_by = ANY(${householdIds})
+                AND fp.location_id = l.id
+          LEFT JOIN LATERAL (
+                 SELECT ph.id, ph.storage_path
+                   FROM photos ph
+                  WHERE ph.location_id = l.id
+                    AND ph.deleted_at IS NULL
+                    AND ph.created_by = ANY(${householdIds})
+                  ORDER BY ph.created_at DESC, ph.id DESC
+                  LIMIT 1
+               ) fb ON TRUE
           WHERE (l.slug = ${locId} OR l.id::text = ${locId}) AND l.deleted_at IS NULL AND l.created_by = ANY(${householdIds})
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });

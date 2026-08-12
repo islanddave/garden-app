@@ -196,7 +196,9 @@ export const handler = async (event) => {
           SELECT p.id, p.display_name AS name, p.quantity,
                  p.status, p.notes, p.container_id AS project_id,
                  p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata,
-                 p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
+                 COALESCE(fp.id, fb.id) AS featured_photo_id,
+                 (fp.id IS NOT NULL) AS featured_is_explicit,
+                 COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path,
                  p.created_at, p.updated_at,
                  p.sown_at, p.sown_at_approx,
                  p.germinated_at, p.germinated_at_approx,
@@ -244,7 +246,49 @@ export const handler = async (event) => {
           LEFT JOIN public.container pp ON pp.id = p.container_id
           LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
           LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
-          LEFT JOIN photos fp ON fp.id = p.featured_photo_id
+          -- BUG-PHOTOHEROMOVE-001 / INV-HERO — the hero is DERIVED here, never trusted from the
+          -- stored pointer. Same shape as fetchSpaceHero (lambda/photos/index.js:~314); read its
+          -- long-form rationale before touching this. Two predicates: the photo must be ALIVE, and
+          -- it must STILL be a member of this planting's gallery.
+          --
+          -- The membership arm is the one that matters here. Reassign ships today (PhotoLibrary's
+          -- tag modal, full-replace PUT): moving photo P from planting A to B re-parents the row
+          -- and leaves A.featured_photo_id = P. NOTHING IS DELETED, so no deleted_at filter can
+          -- ever catch it — a hero that is no longer in its own gallery is only detectable by
+          -- re-checking membership.
+          --
+          -- MEMBERSHIP IS EVENT-INCLUSIVE, and that is load-bearing, not defensive. EventNew logs
+          -- event photos with {project_id, event_id} and NO plant_id, so a plant_id-only re-check
+          -- would demote 123 of the 250 explicit plant heroes live on prod (measured 2026-08-12)
+          -- to the fallback arm — a mass product regression wearing the costume of a bug fix.
+          -- The predicate below is the SAME ONE the set-featured WRITE validator already enforces
+          -- (~:340 below, V4-PHOTOFEATURE-002). That is deliberate: these are the read half and
+          -- the write half of ONE invariant. Diverging them manufactures the silent-revert bug
+          -- fetchSpaceHero's comment documents — the user re-picks the photo, the write accepts
+          -- it, the read demotes it again, forever. If you change one, change both.
+          --
+          -- LATERAL for the explicit arm (not a plain LEFT JOIN with extra ON clauses) only
+          -- because the predicate needs event_log, which a join in this position cannot reference.
+          LEFT JOIN LATERAL (
+                 SELECT ph.id, ph.storage_path
+                   FROM photos ph
+                   LEFT JOIN public.event_log e ON e.id = ph.event_id
+                  WHERE ph.id = p.featured_photo_id
+                    AND ph.deleted_at IS NULL
+                    AND ph.created_by = ANY(${householdIds})
+                    AND (ph.plant_id = p.id OR e.plant_id = p.id)
+                  LIMIT 1
+               ) fp ON TRUE
+          LEFT JOIN LATERAL (
+                 SELECT ph.id, ph.storage_path
+                   FROM photos ph
+                   LEFT JOIN public.event_log e ON e.id = ph.event_id
+                  WHERE ph.deleted_at IS NULL
+                    AND ph.created_by = ANY(${householdIds})
+                    AND (ph.plant_id = p.id OR e.plant_id = p.id)
+                  ORDER BY ph.created_at DESC, ph.id DESC
+                  LIMIT 1
+               ) fb ON TRUE
           LEFT JOIN public.garden_node parent ON parent.id = p.parent_plant_id AND parent.deleted_at IS NULL
           LEFT JOIN entity_memory em ON em.plant_id = p.id
           WHERE p.id = ${plantId}
@@ -690,7 +734,9 @@ export const handler = async (event) => {
             SELECT p.id, p.display_name AS name, p.quantity,
                    p.status, p.notes, p.container_id AS project_id,
                    p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata,
-                   p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
+                   COALESCE(fp.id, fb.id) AS featured_photo_id,
+                   (fp.id IS NOT NULL) AS featured_is_explicit,
+                   COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path,
                    p.created_at,
                    p.sown_at, p.sown_at_approx,
                    p.germinated_at, p.germinated_at_approx,
@@ -718,7 +764,29 @@ export const handler = async (event) => {
             JOIN public.container pp ON pp.id = p.container_id
             LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
             LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
-            LEFT JOIN photos fp ON fp.id = p.featured_photo_id
+            -- INV-HERO effective-hero derivation — full rationale on the by-id GET above
+            -- (BUG-PHOTOHEROMOVE-001). Event-inclusive membership is load-bearing: 123 of 250
+            -- live plant heroes are event-linked with a NULL photos.plant_id.
+            LEFT JOIN LATERAL (
+                   SELECT ph.id, ph.storage_path
+                     FROM photos ph
+                     LEFT JOIN public.event_log e ON e.id = ph.event_id
+                    WHERE ph.id = p.featured_photo_id
+                      AND ph.deleted_at IS NULL
+                      AND ph.created_by = ANY(${householdIds})
+                      AND (ph.plant_id = p.id OR e.plant_id = p.id)
+                    LIMIT 1
+                 ) fp ON TRUE
+            LEFT JOIN LATERAL (
+                   SELECT ph.id, ph.storage_path
+                     FROM photos ph
+                     LEFT JOIN public.event_log e ON e.id = ph.event_id
+                    WHERE ph.deleted_at IS NULL
+                      AND ph.created_by = ANY(${householdIds})
+                      AND (ph.plant_id = p.id OR e.plant_id = p.id)
+                    ORDER BY ph.created_at DESC, ph.id DESC
+                    LIMIT 1
+                 ) fb ON TRUE
             WHERE pp.created_by = ANY(${householdIds})
               -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT
               -- above). Top-level here because this branch INNER JOINs the container — the
@@ -734,7 +802,9 @@ export const handler = async (event) => {
             SELECT p.id, p.display_name AS name, p.quantity,
                    p.status, p.notes, p.container_id AS project_id,
                    p.cultivar_id AS variety_id, p.source_inventory_item_id, p.metadata,
-                   p.featured_photo_id, fp.storage_path AS featured_photo_storage_path,
+                   COALESCE(fp.id, fb.id) AS featured_photo_id,
+                   (fp.id IS NOT NULL) AS featured_is_explicit,
+                   COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path,
                    p.created_at,
                    p.sown_at, p.sown_at_approx,
                    p.germinated_at, p.germinated_at_approx,
@@ -762,7 +832,29 @@ export const handler = async (event) => {
             LEFT JOIN public.container pp ON pp.id = p.container_id
             LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL
             LEFT JOIN public.crop_types ct ON ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
-            LEFT JOIN photos fp ON fp.id = p.featured_photo_id
+            -- INV-HERO effective-hero derivation — full rationale on the by-id GET above
+            -- (BUG-PHOTOHEROMOVE-001). Event-inclusive membership is load-bearing: 123 of 250
+            -- live plant heroes are event-linked with a NULL photos.plant_id.
+            LEFT JOIN LATERAL (
+                   SELECT ph.id, ph.storage_path
+                     FROM photos ph
+                     LEFT JOIN public.event_log e ON e.id = ph.event_id
+                    WHERE ph.id = p.featured_photo_id
+                      AND ph.deleted_at IS NULL
+                      AND ph.created_by = ANY(${householdIds})
+                      AND (ph.plant_id = p.id OR e.plant_id = p.id)
+                    LIMIT 1
+                 ) fp ON TRUE
+            LEFT JOIN LATERAL (
+                   SELECT ph.id, ph.storage_path
+                     FROM photos ph
+                     LEFT JOIN public.event_log e ON e.id = ph.event_id
+                    WHERE ph.deleted_at IS NULL
+                      AND ph.created_by = ANY(${householdIds})
+                      AND (ph.plant_id = p.id OR e.plant_id = p.id)
+                    ORDER BY ph.created_at DESC, ph.id DESC
+                    LIMIT 1
+                 ) fb ON TRUE
             -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT above).
             -- This is the Plants page list — the surface where a planting stranded under a
             -- soft-deleted container would have stayed visible.
