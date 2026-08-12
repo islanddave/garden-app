@@ -8,12 +8,13 @@ import QualityDots from '../components/QualityDots.jsx'
 import StatTile from '../components/StatTile.jsx'
 import Sparkline from '../components/Sparkline.jsx'
 import HarvestTimeframeChips from '../components/HarvestTimeframeChips.jsx'
+import HarvestExportSheet from '../components/HarvestExportSheet.jsx'
 import { useHarvests } from '../hooks/useHarvests.js'
 import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
 import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
 import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
-import { fmtQuantity, unitLabel, formatEntry, addDays, etDay } from '../lib/harvestSummary.js'
-import { describeHarvestWeight, formatGrams, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
+import { fmtQuantity, unitLabel, formatEntry, unitsLine, fmtFirstPick, addDays, etDay } from '../lib/harvestSummary.js'
+import { describeHarvestWeight, formatGrams, weightParts, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 import { currentGrowYear, growYearOfDayKey, growYearSpan, growYearOptions, HARVEST_TZ } from '../lib/growYear.js'
 import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
 
@@ -47,6 +48,9 @@ export default function Harvests() {
   const [projectLabel, setProjectLabel] = useState('')
   const [cropSheetOpen, setCropSheetOpen] = useState(false)
   const [projectSheetOpen, setProjectSheetOpen] = useState(false)
+  // V4-HARVEXPORT-001: the page has no overflow menu (and minting one to HIDE a Dave-requested
+  // feature is the worst scent), so Export is a visible header-right text affordance.
+  const [exportOpen, setExportOpen] = useState(false)
   // The arrival DEFAULT is not a user-chosen filter: the empty-state chooser + clear-filters
   // affordance must not read it as one (a first-run user at the untouched default sees first-run
   // copy, never "No harvests match these filters"). Updated if the off-season effect re-anchors.
@@ -104,8 +108,19 @@ export default function Harvests() {
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 700, margin: '0 auto', padding: '24px 16px 60px' }}>
-        <h1 style={{ margin: '0 0 2px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Harvests</h1>
-        <p style={{ margin: '0 0 16px', fontSize: '0.82rem', color: P.light }}>What the garden gave you.</p>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <h1 style={{ margin: '0 0 2px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Harvests</h1>
+            <p style={{ margin: '0 0 16px', fontSize: '0.82rem', color: P.light }}>What the garden gave you.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setExportOpen(true)}
+            style={{ flex: '0 0 auto', minHeight: 48, padding: '0 6px', background: 'transparent', border: 'none', color: P.green, fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer' }}
+          >
+            Export
+          </button>
+        </div>
 
         <SnapshotStrip snapshot={snapshot} onOpenLog={() => setView('log')} onOpenTotals={() => setView('totals')} />
 
@@ -143,6 +158,21 @@ export default function Harvests() {
           <TotalsView aggregates={aggregates} onSeeInLog={seeInLog} timeframe={timeframe} />
         )}
       </div>
+
+      {/* The sheet OWNS its fetch, seeded from the page's current view/filters — it opens ready, not
+          as a configuration wall (design §2c). Mounted only while open so its load effect can't run
+          behind the page. */}
+      {exportOpen && (
+        <HarvestExportSheet
+          open={exportOpen}
+          onClose={() => setExportOpen(false)}
+          defaultFormat={view === 'log' ? 'log' : 'totals'}
+          initialTimeframe={timeframe}
+          initialCrops={crop ? [crop] : []}
+          cropOptions={cropOptions}
+          seasonYears={seasonYears}
+        />
+      )}
 
       <PickerSheet
         open={cropSheetOpen}
@@ -443,15 +473,8 @@ function HarvestEntry({ entry: e }) {
 
 // ── Totals (S3-a: per-crop rows expand IN PLACE — variety sub-rows, first-pick dates, unquantified
 // count, "See in log →". Global sparkline + independent year selector = S3-b/S3-c.) ────────────────
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-// Absolute, judgment-free first-pick date (design §6: neutral fact, never "9 days late"). "Jun 14";
-// the year is appended only when it isn't the current calendar year. Pure string math on the day_key.
-function fmtFirstPick(dayKey) {
-  const [y, m, d] = String(dayKey).slice(0, 10).split('-').map(Number)
-  if (!y || !m || !d) return String(dayKey)
-  const cur = new Date().getFullYear()
-  return `${MONTHS[m - 1]} ${d}${y !== cur ? `, ${y}` : ''}`
-}
+// (S5: fmtFirstPick + unitsLine + weightParts moved to src/lib — the Totals EXPORT renders the same
+// strings from the same code, which is the only way "the export reconciles with the page" stays true.)
 
 // V4-HARVESTVIEW-001 S4 (sparkline): map a crop's ADDITIVE weekly[] field to bare Sparkline values.
 // Absent field (older Lambda — the frontend deploys ahead and a rollback must hold) -> null, render
@@ -558,7 +581,7 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
             <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
               {firstPicks.map((f) => (
                 <div key={f.plant_id} style={{ fontSize: '0.8rem', color: P.mid }}>
-                  First pick {fmtFirstPick(f.first_pick_date)}{f.planting_name ? ` · ${f.planting_name}` : ''}
+                  First pick {fmtFirstPick(f.first_pick_date, new Date().getFullYear())}{f.planting_name ? ` · ${f.planting_name}` : ''}
                 </div>
               ))}
             </div>
@@ -586,13 +609,6 @@ function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeI
 // which is false for nearly every row today; the qualifier prints in a fixed order (weighed /
 // estimated / no weight yet), each clause dropped only when its count is zero — the same phrasing
 // PlantingWeightTotal uses in src/pages/PlantingDetail.jsx.
-function weightParts(w) {
-  const parts = []
-  if (w.measured > 0) parts.push(`${w.measured} weighed`)
-  if (w.estimated > 0) parts.push(`${w.estimated} estimated`)
-  if (w.unweighed > 0) parts.push(`${w.unweighed} with no weight yet`)
-  return parts
-}
 
 // The whole-universe total, above the crop rows. "Total weight", NOT "season weight": the timeframe
 // chips still scope the Totals tab (only crop/project are dropped there), so a Last-7-days number
@@ -659,10 +675,6 @@ function CropWeightLine({ weight }) {
   )
 }
 
-function unitsLine(units, cropName) {
-  if (!Array.isArray(units) || units.length === 0) return ''
-  return units.map((u) => `${fmtQuantity(u.total)} ${unitLabel(u.unit, u.total, cropName)}`.trim()).join(' · ')
-}
 
 // ── Shared states ──────────────────────────────────────────────────────────────────────────────────
 function EmptyState({ emoji, title, body }) {

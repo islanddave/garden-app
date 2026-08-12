@@ -364,6 +364,28 @@ describe('Harvests page', () => {
     await waitFor(() => expect(within(group).getByRole('button', { name: `${cur - 1} season` }).getAttribute('aria-pressed')).toBe('true'))
   })
 
+  // ── V4-HARVEXPORT-001: the Export affordance is VISIBLE and seeded (design §5.1, §2c) ───────────
+  // The page has no overflow menu, and minting one to hide a Dave-requested feature is the worst
+  // scent — so this pins the affordance itself, not just the sheet's internals.
+  it('a visible Export affordance opens a sheet seeded from the current view and timeframe', async () => {
+    const cur = currentGrowYear(new Date())
+    mockRoutes({ entries: TWO_CROPS, crops: [TOMATO_CROP], cropList: [{ crop_type_slug: 'tomato', display_name: 'Tomato' }] })
+    render(<Harvests />)
+    await waitFor(() => expect(screen.getByRole('button', { name: /Tomato/ })).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
+    // Format segment defaults from the current view (Totals on a bare arrival) — one affordance
+    // never silently produces two different artifacts.
+    const seg = await screen.findByRole('radio', { name: 'Totals summary' })
+    expect(seg.getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Log lines' }).getAttribute('aria-checked')).toBe('false')
+    // …and the sheet carries the page's timeframe, not a fresh All-time default.
+    const exportTf = screen.getByRole('group', { name: 'Export timeframe' })
+    expect(within(exportTf).getByRole('button', { name: 'This season' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('export-preview')).toBeTruthy()
+    expect(harvestCalls().some((u) => u.includes('include=aggregates') && u.includes(`timeframe=season:${cur}`))).toBe(true)
+  })
+
   it('stays on the current season while harvests are recent (in season)', async () => {
     const cur = currentGrowYear(new Date())
     mockRoutes({
