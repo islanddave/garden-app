@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  validateCritterPostBody, validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
-  validateMarkViewedPatchBody, MAX_MARK_VIEWED_BATCH,
-  UUID_RE, MVP_SPECIES_MIN, MVP_SPECIES_MAX, SMOKE_SENTINEL_SPECIES_ID,
+  validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
+  validateMarkViewedPatchBody, MAX_MARK_VIEWED_BATCH, UUID_RE,
 } from './validators.js'
 
 const VALID_UUID = '11111111-2222-3333-4444-555555555555'
@@ -17,58 +16,6 @@ describe('UUID_RE', () => {
     expect(UUID_RE.test('not-a-uuid')).toBe(false)
     expect(UUID_RE.test('')).toBe(false)
     expect(UUID_RE.test('11111111-2222-3333-4444-5555555555')).toBe(false)
-  })
-})
-
-describe('validateCritterPostBody', () => {
-  it('accepts minimal valid body (source_event_id only)', () => {
-    expect(validateCritterPostBody({ source_event_id: VALID_UUID })).toBeNull()
-  })
-  it('accepts full valid body with all fields', () => {
-    expect(validateCritterPostBody({
-      source_event_id: VALID_UUID,
-      plant_id: OTHER_UUID,
-      species_id: 3,
-      meta: { deterministic_seed: VALID_UUID, copy_variant_id: 4, client_picked_at: '2026-05-28T12:00:00Z' },
-    })).toBeNull()
-  })
-  it('rejects missing body', () => {
-    expect(validateCritterPostBody(null)?.status).toBe(400)
-    expect(validateCritterPostBody(undefined)?.status).toBe(400)
-  })
-  it('rejects missing/invalid source_event_id', () => {
-    expect(validateCritterPostBody({})?.status).toBe(400)
-    expect(validateCritterPostBody({ source_event_id: 'not-a-uuid' })?.status).toBe(400)
-  })
-  it('rejects invalid plant_id format', () => {
-    expect(validateCritterPostBody({ source_event_id: VALID_UUID, plant_id: 'bad' })?.status).toBe(400)
-  })
-  it('species_id full pool range accepted (V102: 1..254)', () => {
-    for (let i = MVP_SPECIES_MIN; i <= MVP_SPECIES_MAX; i++) {
-      expect(validateCritterPostBody({ source_event_id: VALID_UUID, species_id: i })).toBeNull()
-    }
-  })
-  it('species_id smoke sentinel 255 accepted', () => {
-    expect(validateCritterPostBody({ source_event_id: VALID_UUID, species_id: SMOKE_SENTINEL_SPECIES_ID })).toBeNull()
-  })
-  it('species_id out of range rejected', () => {
-    expect(validateCritterPostBody({ source_event_id: VALID_UUID, species_id: 0 })?.status).toBe(400)
-    expect(validateCritterPostBody({ source_event_id: VALID_UUID, species_id: 300 })?.status).toBe(400)
-    expect(validateCritterPostBody({ source_event_id: VALID_UUID, species_id: 1.5 })?.status).toBe(400)
-  })
-  it('meta allowlist enforced (no behavioral-log creep)', () => {
-    expect(validateCritterPostBody({
-      source_event_id: VALID_UUID,
-      meta: { deterministic_seed: VALID_UUID }, // allowed
-    })).toBeNull()
-    expect(validateCritterPostBody({
-      source_event_id: VALID_UUID,
-      meta: { jen_typed_string: 'hello' }, // not allowed
-    })?.status).toBe(400)
-    expect(validateCritterPostBody({
-      source_event_id: VALID_UUID,
-      meta: [], // arrays not allowed
-    })?.status).toBe(400)
   })
 })
 

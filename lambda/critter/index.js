@@ -26,9 +26,8 @@ import { verifyToken } from '@clerk/backend'
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'
 import { householdScope } from './household.js'
 import {
-  validateCritterPostBody, validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
-  validateMarkViewedPatchBody,
-  UUID_RE, MVP_SPECIES_MIN, MVP_SPECIES_MAX, SMOKE_SENTINEL_SPECIES_ID,
+  validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
+  validateMarkViewedPatchBody, UUID_RE,
 } from './validators.js'
 
 // Deploy marker — fires once per cold start. Smoke step greps last 5min CloudWatch for this string.
@@ -151,82 +150,26 @@ export const handler = async (event) => {
   const tzOffsetMin = parseInt(headers['x-client-tz-offset'] ?? headers['X-Client-Tz-Offset'] ?? '0', 10)
 
   try {
-    // ── Route 1: POST /api/critters ─────────────────────────────────────
-    if (rawPath === '/api/critters' && method === 'POST') {
-      const body = JSON.parse(event.body ?? '{}')
-      const vErr = validateCritterPostBody(body)
-      if (vErr) return resp(vErr.status, { error: vErr.error })
-
-      const sourceEventId = body.source_event_id
-      // Step 1 of revision §2.2: verify source event in scope + has plant_id.
-      const evRows = await sql`
-        SELECT id, plant_id, created_at
-          FROM public.event_log
-         WHERE id = ${sourceEventId}
-           AND created_by = ANY(${householdIds})
-           AND deleted_at IS NULL
-         LIMIT 1
-      `
-      if (evRows.length === 0) return resp(404, { error: 'source event not found in scope' })
-      const sourceEvent = evRows[0]
-      // MVP plant-only scope cut per §1.1: no plant_id → 204 (no critter awarded, no error).
-      if (sourceEvent.plant_id == null) return resp(204, '')
-      // If client passed plant_id, must match (defensive; prevents injection of unrelated plants).
-      const plantId = body.plant_id ?? sourceEvent.plant_id
-      if (body.plant_id != null && body.plant_id !== sourceEvent.plant_id) {
-        return resp(400, { error: 'plant_id mismatch with source event' })
-      }
-      // Step 3: verify plant ownership in scope.
-      const plantRows = await sql`
-        SELECT 1 FROM public.garden_node
-         WHERE id = ${plantId}
-           AND created_by = ANY(${householdIds})
-           AND deleted_at IS NULL
-         LIMIT 1
-      `
-      if (plantRows.length === 0) return resp(403, { error: 'forbidden' })
-
-      // Step 4: client-asserted species_id (deterministic per Tension 3). Default to 3 (blue jay)
-      // if missing — Lambda doesn't reject; logs telemetry warning. Real flow always sends client value.
-      const speciesId = (Number.isInteger(body.species_id) ? body.species_id : 3)
-      if (speciesId < MVP_SPECIES_MIN || (speciesId > MVP_SPECIES_MAX && speciesId !== SMOKE_SENTINEL_SPECIES_ID)) {
-        console.warn(`critter: species_id ${speciesId} out of expected range — accepting per revision §2.2 step 4`)
-      }
-
-      // Step 7: compute dot_visible_after via quiet-hours.
-      const prefs = await readUserPrefs(sql, userId)
-      const now = new Date()
-      const dotVisibleAfter = computeDotVisibleAfter(now, prefs.quiet_hours_start, prefs.quiet_hours_end, tzOffsetMin)
-
-      // Step 6: INSERT. meta defaults to {} if unset; allowlist validated in validator.
-      const meta = body.meta ?? {}
-      try {
-        const insRows = await sql`
-          INSERT INTO public.critter_state
-            (created_by, species_id, target_kind, target_id, plant_id,
-             source_event_id, dot_visible_after, meta)
-          VALUES
-            (${userId}, ${speciesId}, 'plant', ${plantId}, ${plantId},
-             ${sourceEventId}, ${dotVisibleAfter}::timestamptz, ${JSON.stringify(meta)}::jsonb)
-          RETURNING id, species_id, target_id, plant_id, earned_at, dot_visible_after
-        `
-        return resp(201, { critter: insRows[0] })
-      } catch (err) {
-        // PG 23505 = unique_violation. Per revision §3.27: idempotent success path.
-        if (err && (err.code === '23505' || /unique/i.test(err.message ?? ''))) {
-          const dupRows = await sql`
-            SELECT id, species_id, target_id, plant_id, earned_at, dot_visible_after
-              FROM public.critter_state
-             WHERE source_event_id = ${sourceEventId}
-               AND deleted_at IS NULL
-               AND created_by = ANY(${householdIds})
-             LIMIT 1
-          `
-          if (dupRows.length > 0) return resp(200, { critter: dupRows[0], idempotent: true })
-        }
-        throw err
-      }
-    }
+    // ── Route 1: POST /api/critters — RETIRED 2026-08-12 (BUG-CRITTERSELFGRANT-001) ──────
+    // This route inserted a critter_state row for ANY event in the caller's household: no
+    // event_type gate, NO PROBABILITY ROLL AT ALL, and the CALLER CHOSE species_id. It was a
+    // guaranteed self-grant of the one reward in this system that writes durable data (xp, streak
+    // and total_events are all recomputed from event_log; a critter_state row persists until
+    // someone deletes it). Strictly worse than the ~47.5% server roll that BUG-CRITTERNONREWARD-001
+    // gated, and it predated the NON_REWARD_EVENT_TYPES partition entirely.
+    //
+    // Retired rather than gated. Gating would have needed a codegen change — the event-type
+    // vocabulary generates into lambda/events/ only — to teach this Lambda a vocabulary it has no
+    // other reason to know, in order to keep a route with no callers alive.
+    //
+    // Evidence there were none, checked before removal rather than assumed:
+    //   * SPA: critterClient.awardCritter() had zero call sites; EventNew.jsx:1041 records that the
+    //     server-side hook (events Lambda -> critterAward.js) replaced it. That dead client function
+    //     is removed in the same commit, so no client can name this path.
+    //   * PROD: all 1277 live critter_state rows carry meta->>'deterministic_seed', which ONLY
+    //     awardCritterServer writes; this route wrote the caller's meta (default {}). Zero rows have
+    //     ever come from here. (Live read-only query, 2026-08-12.)
+    // Requests now fall through to the 404 at the bottom of this handler.
 
     // ── Route 2: GET /api/critters/active ───────────────────────────────
     // Two lifetime counts per species_id (incl. viewed/faded; excludes soft-deleted):

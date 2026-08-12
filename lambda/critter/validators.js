@@ -4,45 +4,17 @@
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+// NOTE: validateCritterPostBody was removed with POST /api/critters (BUG-CRITTERSELFGRANT-001; see
+// the tombstone in index.js). Its SMOKE_SENTINEL_SPECIES_ID went with it — that route was the only
+// caller, and critterSpecies.js holds the copy the client/lambda parity tests actually compare.
+//
+// The two range constants STAY: validateSpeciesPrefsPatchBody bounds its species_id with them, so
+// they were never exclusive to the retired route. Same values, same reason.
 // V102 un-gate (L-102 owner-override): full earnable critter pool. Live pool is species_id 1-168;
-// the validator bound is 1-254 to leave headroom under the DB CHECK (species_id BETWEEN 1 AND 255)
-// for later roster waves without re-touching this gate. Smoke sentinel 255 still accepted (out-of-pool).
+// the bound is 1-254 to leave headroom under the DB CHECK (species_id BETWEEN 1 AND 255) for later
+// roster waves without re-touching this gate.
 export const MVP_SPECIES_MIN = 1
 export const MVP_SPECIES_MAX = 254
-export const SMOKE_SENTINEL_SPECIES_ID = 255
-
-// POST /api/critters body validator
-export function validateCritterPostBody(body) {
-  if (!body || typeof body !== 'object') return { status: 400, error: 'body required' }
-  if (!body.source_event_id || !UUID_RE.test(body.source_event_id)) {
-    return { status: 400, error: 'source_event_id must be a UUID' }
-  }
-  // plant_id optional in request; absence → 204 (MVP plant-only scope cut per revision §1.1)
-  if (body.plant_id != null && !UUID_RE.test(body.plant_id)) {
-    return { status: 400, error: 'plant_id must be a UUID' }
-  }
-  // species_id is client-asserted (deterministic from seed, per Tension 3) within MVP range or sentinel
-  if (body.species_id != null) {
-    const id = body.species_id
-    if (!Number.isInteger(id)) return { status: 400, error: 'species_id must be an integer' }
-    const inMvp = id >= MVP_SPECIES_MIN && id <= MVP_SPECIES_MAX
-    const isSentinel = id === SMOKE_SENTINEL_SPECIES_ID
-    if (!inMvp && !isSentinel) {
-      return { status: 400, error: `species_id ${id} out of pool range (1-254) and not smoke sentinel (255)` }
-    }
-  }
-  // meta JSONB allowlist (revision §6 deferred note — prevent behavioral-log creep)
-  if (body.meta != null) {
-    if (typeof body.meta !== 'object' || Array.isArray(body.meta)) {
-      return { status: 400, error: 'meta must be a plain object' }
-    }
-    const ALLOWED = new Set(['deterministic_seed', 'copy_variant_id', 'client_picked_at'])
-    for (const k of Object.keys(body.meta)) {
-      if (!ALLOWED.has(k)) return { status: 400, error: `meta.${k} not in allowlist` }
-    }
-  }
-  return null
-}
 
 // PATCH /api/notifications/prefs body validator
 const CRITTER_VISIT_VALUES = new Set(['off', 'in_app_only', 'system'])

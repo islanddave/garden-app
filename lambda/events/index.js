@@ -1039,6 +1039,16 @@ export const handler = async (event) => {
                   AND el.flagged_as_issue = true
                   AND el.resolved_at IS NOT NULL
                   AND el.resolved_at >= el.created_at + INTERVAL '24 hours'
+                  -- BUG-CRITTERNONREWARD-001 sibling: this counter is the last unfiltered reward
+                  -- path for NON_REWARD_EVENT_TYPES, whose contract is "ZERO xp, ZERO streak
+                  -- credit, ZERO total_events". It counted ANY flagged-and-resolved row regardless
+                  -- of event_type, so a flagged moisture_check counted toward the caretaker
+                  -- achievements and granted xp through the xp_grants CTE below — a literal
+                  -- violation. Same predicate as the recompute two blocks away in this file.
+                  -- Currently unreachable from the SPA (EventNew sets flagged_as_issue only for
+                  -- flag_issue) and prod carries 0 non-reward flagged rows, so this changes no
+                  -- existing count; it closes the direct-API path and the next one to ship.
+                  AND NOT (el.event_type = ANY(${NON_REWARD_EVENT_TYPES}::text[]))
               ),
               resolved_stats AS (
                 SELECT
