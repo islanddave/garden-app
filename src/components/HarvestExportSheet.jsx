@@ -129,7 +129,11 @@ export default function HarvestExportSheet({
       let cursor = null
       let all = []
       for (let i = 0; i < MAX_PAGES; i++) {
-        const data = await apiFetch(qs({ include: 'entries,aggregates', timeframe, cursor }))
+        // Pre-promote regression pass I-4: entries ONLY. Log mode consumes data.entries/data.cursor and
+        // never touches aggregates, but the Lambda computes them over the FULL range with no cursor and
+        // no limit (incl. a GROUPING SETS weight roll-up) on every drain page — ~11 wasted full-range
+        // computations per drain, re-fired on each crop-chip toggle, against the shared prod Neon.
+        const data = await apiFetch(qs({ include: 'entries', timeframe, cursor }))
         if (runRef.current !== rid) return
         if (servedFromCache(data)) throw new Error('cache')
         all = all.concat(Array.isArray(data?.entries) ? data.entries : [])

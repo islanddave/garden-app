@@ -471,8 +471,14 @@ export default function EventNew() {
   // bails on any seed and event_type IS a seed, so no draft can be live on this arrival. It is
   // stated rather than assumed because that coupling belongs to the draft predicate, not here.
   // Lazy state, not a live value: this is a fact about the ARRIVAL, evaluated once.
+  // Pre-promote regression pass I-2: the ?project= guard is what makes "and ONLY there" true. Without
+  // it this fires on two ALREADY-SHIPPED producers that also carry event_type=harvest —
+  // HarvestReadyTile.jsx (`/log?project=…&event_type=harvest`) and the installed-PWA manifest shortcut
+  // (`/log?event_type=harvest&fromquick=1`) — neither of which design §1c scoped this to. The FAB row
+  // passes NO params but event_type, so it is unaffected.
   const [harvestFabAutoOpen] = useState(() => (
-    preselectedEventType === 'harvest' && !preselectedPlantId && !readDraft(EVENTNEW_DRAFT_KEY)?.form
+    preselectedEventType === 'harvest' && !preselectedPlantId && !preselectedProjectId &&
+    !readDraft(EVENTNEW_DRAFT_KEY)?.form
   ))
   // the user explicitly started — never a reward/celebration channel).
 

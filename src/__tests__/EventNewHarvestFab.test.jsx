@@ -123,6 +123,25 @@ describe('V4-HARVFAB-001 — the harvest arrival opens the picker itself', () =>
   })
 })
 
+// Pre-promote regression pass I-2. "ONLY there" is a scope claim about ARRIVALS, and two shipped
+// producers also arrive with event_type=harvest: HarvestReadyTile (`?project=…&event_type=harvest`)
+// and the installed-PWA manifest shortcut (`?event_type=harvest&fromquick=1`). Neither was in design
+// §1c's scope, and neither was reviewed for an auto-opening picker. The FAB row carries no params but
+// event_type, so the ?project= guard separates them exactly.
+describe('V4-HARVFAB-001 — auto-open is scoped to the FAB arrival, not every harvest deep link', () => {
+  it('does NOT auto-open for the Harvest-ready tile arrival (?project= present)', async () => {
+    renderEventNew('project=proj-B&event_type=harvest')
+    await flushLoad()
+    expect(listbox()).toBeNull()
+  })
+
+  it('still DOES auto-open for the bare FAB arrival', async () => {
+    renderEventNew('event_type=harvest')
+    await flushLoad()
+    await waitFor(() => expect(listbox()).not.toBeNull())
+  })
+})
+
 // The two slices meet here, and the meeting is the whole point of sequencing S1 before S3: a
 // one-tap harvest that still silently pre-targets the last planting is BD-006 made CHEAPER, which
 // is worse than the seven-tap version. This is the only test that observes both at once.

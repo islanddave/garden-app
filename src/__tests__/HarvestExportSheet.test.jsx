@@ -104,6 +104,23 @@ describe('HarvestExportSheet — Log mode drain', () => {
     expect(preview().value).toContain('V3') // the page-2 row
   })
 
+  // Pre-promote regression pass I-4. Log mode reads entries/cursor and never touches aggregates, but
+  // the Lambda computes them over the FULL range with no cursor and no limit (plus a GROUPING SETS
+  // weight roll-up) for EVERY page it is asked for — and `load` re-drains on each chip toggle, so
+  // asking wastes ~11 full-range computations per drain against the shared prod Neon. Pinned because
+  // the wasteful form is invisible at the UI: both produce byte-identical exports.
+  it('asks for entries ONLY — never the unused full-range aggregates leg', async () => {
+    drainOk()
+    open({ defaultFormat: 'log' })
+    await waitFor(() => expect(copyBtn().disabled).toBe(false))
+    const urls = fetchSpy.mock.calls.map((c) => decodeURIComponent(String(c[0])))
+    expect(urls).toHaveLength(2)
+    urls.forEach((u) => {
+      expect(u).toContain('include=entries')
+      expect(u).not.toContain('aggregates')
+    })
+  })
+
   it('drains UNFILTERED once and client-filters — never one request per selected crop', async () => {
     drainOk()
     open({ defaultFormat: 'log', initialCrops: ['tomato'] })
