@@ -152,4 +152,23 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
       expect((SRC.match(needle) || []).length, `expected 2 unprefixed ${label}`).toBe(2);
     }
   });
+
+  // V4-HARVUNITDEFAULT-001: the harvest unit selector in EventNew.jsx pre-selects a crop's
+  // crop_types.default_unit, and this JSON key is the ONLY way that value reaches the client —
+  // there is no separate crop-types endpoint. Drop it from a variety_ref block and the selector
+  // silently reverts to guessing from the global last-used unit, which is the cross-crop
+  // wrong-unit bug the feature exists to close. Exactly the write->read symmetry class the rest
+  // of this file guards, so it is guarded the same way: source-level, all 3 reads.
+  // ct is the crop_types LEFT JOIN already present for dtm_basis; default_unit is crop-scoped
+  // only (plant_varieties has unit_weights/weight_source/weight_confidence but NO default_unit
+  // column), so it is read straight off ct with no COALESCE — do not add a pv. arm here.
+  it("every variety_ref block carries 'default_unit', ct.default_unit (V4-HARVUNITDEFAULT-001)", () => {
+    const hits = SRC.match(/'default_unit',\s*ct\.default_unit\b/g) || [];
+    expect(hits.length, 'expected default_unit in all 3 variety_ref JSON blocks').toBe(3);
+  });
+
+  it('joins crop_types in all 3 reads so ct.default_unit resolves', () => {
+    const joins = SRC.match(/LEFT JOIN public\.crop_types ct ON ct\.slug = pv\.crop_type_slug/g) || [];
+    expect(joins.length, 'expected the crop_types join in all 3 reads').toBe(3);
+  });
 });
