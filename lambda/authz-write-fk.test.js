@@ -271,6 +271,12 @@ const NOT_IN_SITES = [
   'projects::subject_id', 'app-events::session_id', 'ux-events::flow_id', 'ux-events::session_id',
   'favorites::entity_id', 'tags::entity_id', 'tags::into_id',
   // ── Server-derived, never body-settable: the value is the JWT subject or a fixed workspace. ──
+  // daily-plan::space_id — weather_daily's (space_id, date) upsert, added by V4-WATERMATH-001 F1.
+  // daily-plan is an EventBridge cron Lambda: it parses no request body at all, and the value is
+  // read off p.workspace_id of plantings the handler has ALREADY scoped (handler.js bySpace grouping),
+  // never off caller input. There is no request through which a caller could name another
+  // household's space, so there is no cross-household write to gate.
+  'daily-plan::space_id',
   'daily-plan::assignee_user_id', 'daily-plan::user_id', 'dashboard::owner_id', 'dashboard::user_id',
   'events::user_id', 'events::workspace_id', 'favorites::user_id', 'inventory-items::user_id',
   'plants::assignee_user_id', 'preservation::user_id', 'projects::assignee_user_id',
