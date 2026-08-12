@@ -56,7 +56,7 @@ export default function HarvestWatchBand() {
   const load = useCallback(() => {
     if (inflight.current) return
     inflight.current = true
-    fetch('/api/events/harvest-watch')
+    fetch('/api/harvests/watch')
       .then(d => setData(d && Array.isArray(d.candidates) ? d : { candidates: [] }))
       .catch(() => { /* supplementary glance — never surface a fetch error onto Today */ })
       .finally(() => { inflight.current = false })
@@ -93,7 +93,7 @@ export default function HarvestWatchBand() {
   const setDismissed = useCallback((r, dismissed) => {
     const id = r.plant_id
     setRowUi(s => ({ ...s, [id]: { dismissed, busy: true, error: null } }))
-    fetch('/api/events/harvest-watch/dismiss', {
+    fetch('/api/harvests/watch/dismiss', {
       method: 'POST',
       body: JSON.stringify({ plant_id: id, project_id: r.project_id ?? null, dismissed }),
     })

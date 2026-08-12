@@ -26,8 +26,8 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getTok
 
 import HarvestWatchBand from '../components/HarvestWatchBand.jsx'
 
-const WATCH = '/api/events/harvest-watch'
-const DISMISS = '/api/events/harvest-watch/dismiss'
+const WATCH = '/api/harvests/watch'
+const DISMISS = '/api/harvests/watch/dismiss'
 
 // Real dataset keys. `yellowbrandywine` is a cultivar record (confidence medium, no qualifier);
 // `tomato` is a crop-level record whose first point is "mature green"; `capeliente` is a
