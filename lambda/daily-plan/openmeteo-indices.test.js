@@ -106,11 +106,182 @@ describe('Open-Meteo daily indexing must not drift (G5)', () => {
 
   it('an absent hourly block becomes null, NEVER [] — absence must not read as "no rain coming"', () => {
     expect(fetchPrecipBody).toMatch(/Array\.isArray\(j\.hourly\.time\) && Array\.isArray\(j\.hourly\.precipitation\)/);
-    expect(fetchPrecipBody).toMatch(/:\s*null,\s*\n\s*\};/);
+    // ANCHORED TO hourly_precip, not to the end of the returned object.
+    //
+    // This assertion previously read /:\s*null,\s*\n\s*\};/ — "somewhere there is a `: null,` on the
+    // last line before the closing brace". That only tested the right thing while hourly_precip
+    // happened to be the FINAL key in the return, and it went red the moment V4-WATERMATH-001 F1
+    // appended settled_days after it, despite the else-branch it cares about being untouched. Worse
+    // in the other direction: as a floating pattern it could have been satisfied by ANY other key's
+    // `: null,` while hourly_precip's else-branch quietly became `[]` — which is the exact defect the
+    // test is named for (an empty array reads downstream as "no more rain coming" and over-waters
+    // into a storm; remainingHourlyIn returns null, never 0, for precisely this reason).
+    //
+    // The form below binds the ternary to its own key, so it survives appends and cannot be met by a
+    // neighbour.
+    expect(fetchPrecipBody).toMatch(/hourly_precip:[\s\S]{0,240}?\?[\s\S]{0,240}?\n\s*:\s*null,/);
+    expect(fetchPrecipBody).not.toMatch(/hourly_precip:[\s\S]{0,240}?\?[\s\S]{0,240}?\n\s*:\s*\[\],/);
   });
 
   it('fetchPrecip keeps its null-fallback catch — hydrology degrades, it does not crash the run', () => {
     expect(fetchPrecipBody).toMatch(/catch[\s\S]*return null/);
+  });
+});
+
+// ── V4-WATERMATH-001 F1 — the ET0 append, and the two Open-Meteo call sites this file never pinned ──
+//
+// Until now this file guarded ONE of the three Open-Meteo surfaces in the codebase. The other two were
+// unguarded, and each is a positional-indexing surface in its own right:
+//
+//   (1) fetchNWS's weather_code call — its own URL, its own daily array, read at index [0].
+//   (2) fetchPrecip's main list      — the one this file was written for.
+//   (3) scripts/backfill-weather-daily.mjs — the archive endpoint, added by F1. Same field NAMES,
+//       different endpoint, and crucially NO past_days, so importing the [D-2, D-1, D0, ...]
+//       convention into it would be the bug rather than the guard.
+//
+// All three are pinned below, because the failure mode they share is silence: the plan keeps
+// generating, the numbers stay plausible, and only the day they describe is wrong.
+describe('F1 — et0_fao_evapotranspiration is APPENDED, never inserted', () => {
+  const dailyList = () => {
+    const m = fetchPrecipBody.match(/&daily=([a-z0-9_,]+)/i);
+    expect(m, '`daily=` list present on the fetchPrecip URL').toBeTruthy();
+    return m[1].split(',');
+  };
+
+  it('requests ET0 at all — the whole point of F1', () => {
+    expect(fetchPrecipBody).toMatch(/daily=[^`'"]*et0_fao_evapotranspiration/);
+  });
+
+  it('the three pre-existing daily fields are STILL THE FIRST THREE, in their original order', () => {
+    // This is the assertion that makes "appended" mean something. `toMatch` on a prefix would also
+    // pass if a fourth field were spliced in ahead of temperature_2m_min; comparing the leading
+    // slice of the parsed list cannot.
+    expect(dailyList().slice(0, 3)).toEqual([
+      'precipitation_sum', 'precipitation_probability_max', 'temperature_2m_min',
+    ]);
+  });
+
+  it('ET0 and the daily max come AFTER them, at the end of the list', () => {
+    const list = dailyList();
+    expect(list.indexOf('et0_fao_evapotranspiration')).toBeGreaterThan(list.indexOf('temperature_2m_min'));
+    expect(list.indexOf('temperature_2m_max')).toBeGreaterThan(list.indexOf('temperature_2m_min'));
+    expect(list).toHaveLength(5);
+  });
+
+  it('fetches temperature_2m_max — without it weather_daily.tmax_f is NULL forever', () => {
+    // NWS supplies highToday, which is TODAY's forecast high. The writer persists COMPLETED days, so
+    // that value is the wrong day by construction and cannot feed F2's fabric-bag heat ramp.
+    expect(fetchPrecipBody).toMatch(/daily=[^`'"]*temperature_2m_max/);
+    expect(fetchPrecipBody).toMatch(/const tmax = \(j\.daily && j\.daily\.temperature_2m_max\)/);
+  });
+
+  it('no unit conversion is performed on ET0 — the endpoint already returns inches', () => {
+    // Verified live 2026-08-12: with precipitation_unit=inch the endpoint reports
+    // daily_units.et0_fao_evapotranspiration = "inch". A stray mm->in factor would be a silent 25x.
+    expect(fetchPrecipBody).toMatch(/precipitation_unit=inch/);
+    expect(fetchPrecipBody).not.toMatch(/25\.4/);
+    expect(fetchPrecipBody).not.toMatch(/et0[^\n]*\/\s*25/);
+  });
+
+  it('ET0 keeps a third decimal — round2 would collapse the entire useful range', () => {
+    // Live values at this Space run ~0.15-0.25 in/day (0.186 and 0.193 on consecutive days), and the
+    // demand term is a RATIO, so two decimals inject several percent of error before any modelling.
+    expect(fetchPrecipBody).toMatch(/et0_in: Number\.isFinite\(et0\[i\]\) \? round3\(et0\[i\]\)/);
+    expect(SRC).toMatch(/const round3 = \(n\) => Math\.round\(\(n \+ Number\.EPSILON\) \* 1000\) \/ 1000/);
+  });
+
+  it('settled_days carries D-2 and D-1 ONLY — today is still accumulating', () => {
+    // D0 is index 2. Including it would let a 15:30 intraday run persist a partial day as the day's
+    // actual, which no later read could tell apart from a genuinely dry day.
+    expect(fetchPrecipBody).toMatch(/settled_days: \[0, 1\]\.map/);
+    expect(fetchPrecipBody).not.toMatch(/settled_days: \[0, 1, 2\]/);
+  });
+
+  it('an absent settled value becomes null, NEVER 0 — same rule as the yesterday actual', () => {
+    expect(fetchPrecipBody).toMatch(/precip_in: Number\.isFinite\(ps\[i\]\) \? round2\(ps\[i\]\) : null/);
+    expect(fetchPrecipBody).not.toMatch(/et0\[i\] \|\| 0/);
+    expect(fetchPrecipBody).not.toMatch(/tmax\[i\] \|\| 0/);
+  });
+
+  it('the day label is Open-Meteo\'s own ET-local date, not one derived from the clock', () => {
+    // weather_daily."date" is contracted to be the ET civil day. Deriving it from the fetch clock
+    // would put the row on the wrong day whenever a run straddles midnight.
+    expect(fetchPrecipBody).toMatch(/date: times\[i\] \|\| null/);
+    expect(fetchPrecipBody).toMatch(/timezone=America\/New_York/);
+  });
+});
+
+describe('call site (1) — fetchNWS\'s weather_code call, previously unpinned', () => {
+  const nwsBody = fnBody('fetchNWS');
+
+  it('reads the WMO code at index 0, and has no past_days that could move it', () => {
+    // A SECOND Open-Meteo URL with its own daily array. It has no past_days, so index 0 IS today.
+    // Adding one here — the obvious "make it consistent with fetchPrecip" edit — would silently turn
+    // the widget icon into the weather from two days ago.
+    expect(nwsBody).toMatch(/daily=weather_code/);
+    expect(nwsBody).not.toMatch(/past_days/);
+    expect(nwsBody).toMatch(/forecast_days=1/);
+    expect(nwsBody).toMatch(/om\.daily\.weather_code\[0\]/);
+  });
+
+  it('the icon fetch stays cosmetic — its failure must not cost the temperatures', () => {
+    // It sits in its own inner try/catch inside fetchNWS precisely so an Open-Meteo blip cannot
+    // take out the NWS-sourced tonightLow/highToday that the frost path depends on.
+    expect(nwsBody).toMatch(/try\s*{[\s\S]*open-meteo[\s\S]*}\s*catch/);
+  });
+
+  it('is a genuinely separate request from fetchPrecip\'s', () => {
+    expect((nwsBody.match(/api\.open-meteo\.com/g) || []).length).toBe(1);
+  });
+});
+
+describe('call site (3) — the archive backfill, a third positional surface', () => {
+  const ARCHIVE = decomment(
+    readFileSync(resolve(__dirname, '..', '..', 'scripts', 'backfill-weather-daily.mjs'), 'utf8'));
+
+  it('uses the ARCHIVE endpoint with an explicit date range, not past_days', () => {
+    expect(ARCHIVE).toMatch(/archive-api\.open-meteo\.com\/v1\/archive/);
+    expect(ARCHIVE).toMatch(/start_date=\$\{startDate\}&end_date=\$\{endDate\}/);
+    // past_days is what creates the D0-offset convention. This endpoint has no such offset, so
+    // importing the convention would misread every row by however many days someone assumed.
+    expect(ARCHIVE).not.toMatch(/past_days/);
+  });
+
+  it('requests the same field names, in the same order, as the forecast call', () => {
+    expect(ARCHIVE).toMatch(
+      /daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max/);
+    expect(ARCHIVE).toMatch(/temperature_unit=fahrenheit/);
+    expect(ARCHIVE).toMatch(/precipitation_unit=inch/);
+    expect(ARCHIVE).toMatch(/timezone=America\/New_York/);
+  });
+
+  it('pairs every value with ITS OWN time[i] entry rather than assuming a fixed offset', () => {
+    // The safe form: map over d.time and index the value arrays with the same i. There is no
+    // "index 2 is today" assumption anywhere, which is what makes this call site drift-proof.
+    expect(ARCHIVE).toMatch(/times\.map\(\(date, i\) =>/);
+    for (const f of ['et0_fao_evapotranspiration', 'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum']) {
+      expect(ARCHIVE).toMatch(new RegExp(`d\\.${f}\\?\\.\\[i\\]`));
+    }
+  });
+
+  it('never writes today, and is dry unless --apply is passed', () => {
+    expect(ARCHIVE).toMatch(/const endDate = shiftDays\(today, -1\)/);
+    expect(ARCHIVE).toMatch(/const apply = argv\.includes\('--apply'\)/);
+  });
+
+  it('carries the SAME gauge-downgrade guard as the nightly writer', () => {
+    // A backfill with a laxer conflict policy than the Lambda would undo the Lambda's work on every
+    // run — the two policies have to move together or not at all.
+    const flat = ARCHIVE.replace(/\s+/g, ' ');
+    expect(flat).toMatch(/on conflict \(space_id, "date"\) do update set/i);
+    expect(flat).toMatch(/precip_in = case when weather_daily\.precip_source = 'gauge_merged'/i);
+    expect(flat).toMatch(/precip_source = case when weather_daily\.precip_source = 'gauge_merged'/i);
+  });
+
+  it('labels everything it writes as openmeteo_archive — it can never produce a gauge value', () => {
+    // The AmbientWeather API serves a rolling ~3-day window, so gauge history is unreachable from
+    // this script by construction. Saying so on the row is the honest outcome.
+    expect(ARCHIVE).toMatch(/const SOURCE = 'openmeteo_archive'/);
   });
 });
 

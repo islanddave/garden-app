@@ -1,0 +1,192 @@
+# gates.yml
+# V4-WATERMATH-001 F1 (W-F2A-WX) — public.weather_daily.
+#
+# STATUS AT AUTHORING (2026-08-12): AUTHORED, NOT APPLIED. Not applied to staging, not applied to
+# prod. This lane executed no DDL anywhere. Verified against live prod Neon at authoring time:
+# `SELECT to_regclass('public.weather_daily')` returns NULL — the relation exists nowhere.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# SEQUENCING — and the one ordering that is not interchangeable
+#
+#   staging apply  ->  rehearse 0r-rollback  ->  re-apply to staging  ->  PROD apply  ->  dev push
+#   ->  promote
+#
+# The DDL must reach STAGING BEFORE THE DEV PUSH, and the reason is sharper than the usual
+# migrations-first habit. CI's integration job branches off STAGING AND DOES NOT APPLY MIGRATIONS.
+# A relation that is missing there does not surface as "you forgot a migration" — it surfaces as a
+# connection/relation error indistinguishable from an infra flake, and the standing response to a
+# flake is to RETRY the run. So the failure mode is not a red build that gets fixed; it is a build
+# that goes green on the second attempt with the migration still unapplied, and the fact that the
+# table was never created stays hidden until something reads it in prod.
+#
+# The DDL must ALSO reach PROD before the promote, for the seededgate reason below.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# WHY APPLYING EARLY IS FREE AND APPLYING LATE IS NOT
+#
+# Applying early is inert. The table starts empty, no SELECT anywhere reads it while
+# CARE_WATER_LEDGER_ENABLED is unset (F1 ships the read gated and F2 owns the flip), and the only
+# writer is non-fatal. An unapplied-but-shipped Lambda is also survivable BY DESIGN — the writer's
+# INSERT is wrapped in try/catch and a failure logs a warning and returns false, exactly like
+# backfillYesterdayActual — but survivable is not the same as correct: every night the migration is
+# late is a night of weather the ledger will never have, and the archive backfill can only restore
+# the model-sourced columns, never the gauge-merged precip (see 0r-rollback.sql).
+#
+# The named failure class here is BUG-SEEDEDGATE-001 AT TABLE GRANULARITY. One missing column in a
+# query blanked the entire nightly plan for both users. A missing TABLE in an ungated SELECT is the
+# same defect with a larger blast radius, which is why F1 ships the read behind a flag and pins
+# "flag OFF issues zero weather_daily queries" with an executing test rather than a source grep.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# ROLLBACK. 0r-rollback.sql. Rehearse on STAGING only, and rehearse it BEFORE prod apply while the
+# table is still empty. Post-accumulation the drop destroys the gauge-merged precip rows, which are
+# NOT reconstructible from any endpoint (the AmbientWeather API serves a rolling ~3-day window) —
+# dump first; the \copy commands are in 0r-rollback.sql. The table is standalone: nothing references
+# it and its only outbound FK is to public.spaces, so the drop cannot cascade into user data.
+
+pre:
+  - name: pre_spaces_present
+    note: FK target. weather_daily.space_id references public.spaces(id).
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='spaces'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_spaces_has_primary_key
+    note: >
+      A REFERENCES clause needs a unique constraint on the target. Cheaper to assert than to
+      discover halfway through a CREATE TABLE. Reads pg_catalog, NOT
+      information_schema.table_constraints — see the note on post_pk_columns_are_space_id_and_date;
+      the information_schema form returns zero rows for a non-owner role and this gate would then
+      fail while public.spaces was perfectly healthy. Verified live 2026-08-12: spaces_pkey
+      PRIMARY KEY (id) is present.
+    sql: |
+      SELECT 1 FROM pg_class t
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_index i ON i.indrelid = t.oid AND i.indisprimary
+       WHERE n.nspname='public' AND t.relname='spaces'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_table_absent
+    note: Greenfield. If this returns a row, someone already applied 0a — stop and diff before re-running.
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='weather_daily'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='weather_daily'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_all_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='weather_daily'
+         AND column_name IN ('space_id','date','et0_in','tmax_f','tmin_f','precip_in',
+                             'precip_source','et0_source','created_at','updated_at')
+    expect: rowcount_eq
+    value: 10
+
+  - name: post_no_extra_columns
+    note: >
+      Paired with the gate above so the two together pin the column set EXACTLY. The IN-filter gate
+      alone passes happily on a table that also grew a column nobody intended.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='weather_daily'
+    expect: rowcount_eq
+    value: 10
+
+  - name: post_no_created_by_column
+    note: >
+      Deliberate absence, not an oversight. The V4-OWNERSHIP-001 transfer trigger fires on created_by
+      across 9 tables and reads NULL -> value as an ownership transfer. An unattended Lambda writing
+      this table three times a night must stay outside that machinery entirely.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='weather_daily' AND column_name='created_by'
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_date_column_is_date_not_timestamp
+    note: >
+      Load-bearing. The column is contracted to be an ET CIVIL DAY. A timestamptz here would compile,
+      write, and read fine while silently re-anchoring every row to a UTC boundary — putting an
+      evening storm on the wrong side of the ledger fold for five hours every night, all year.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='weather_daily'
+         AND column_name='date' AND data_type='date'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_pk_columns_are_space_id_and_date
+    note: >
+      The ON CONFLICT target the writer's upsert names. Wrong key = duplicate rows per day.
+
+      READS pg_catalog, NOT information_schema.table_constraints / key_column_usage, and that choice
+      is load-bearing rather than stylistic. Those two information_schema views are privilege-
+      filtered to the table OWNER. Measured on live prod 2026-08-12 as the read-only role garden_ro:
+      information_schema.table_constraints returned 0 rows for the ENTIRE public schema while
+      pg_catalog returned 311. A gate written against them does not error and does not warn — it
+      quietly reports rowcount=0 and fails, and the failure looks exactly like a missing primary key
+      on a table that has one. information_schema.tables and .columns are NOT filtered this way
+      (both verified visible to garden_ro), which is why the column gates above may keep using them.
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN LATERAL unnest(c.conkey) AS k(attnum) ON true
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+       WHERE c.conrelid='public.weather_daily'::regclass AND c.contype='p'
+         AND a.attname IN ('space_id','date')
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_pk_has_exactly_two_columns
+    note: >
+      Pairs with the gate above. That one proves both expected columns are IN the key; this one
+      proves nothing else is. A three-column PK would satisfy the filtered gate and still break the
+      writer's ON CONFLICT (space_id, "date").
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN LATERAL unnest(c.conkey) AS k(attnum) ON true
+       WHERE c.conrelid='public.weather_daily'::regclass AND c.contype='p'
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_fk_to_spaces_on_delete_cascade
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.weather_daily'::regclass AND contype='f'
+         AND confrelid='public.spaces'::regclass AND confdeltype='c'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_check_constraints_present
+    note: >
+      The two source-domain checks are what keep the writer's downgrade guard meaningful — an
+      out-of-domain source string compares unequal to 'gauge_merged' forever and would let a model
+      value quietly overwrite a gauge reading. The two non-negativity checks refuse a unit or
+      array-index bug upstream rather than letting the ledger integrate a negative demand day.
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.weather_daily'::regclass AND contype='c'
+         AND conname IN ('weather_daily_precip_source_chk','weather_daily_et0_source_chk',
+                         'weather_daily_et0_nonneg_chk','weather_daily_precip_nonneg_chk')
+    expect: rowcount_eq
+    value: 4
+
+  - name: post_starts_empty
+    note: Additive-only proof — this migration creates a relation and touches no existing one.
+    sql: |
+      SELECT 1 FROM public.weather_daily
+    expect: rowcount_eq
+    value: 0

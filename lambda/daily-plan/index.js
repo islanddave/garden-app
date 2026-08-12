@@ -29,6 +29,12 @@ async function getSecrets() {
 }
 
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+// V4-WATERMATH-001 F1 — ET0 needs a third decimal and round2 would destroy the signal it carries.
+// Reference ET at this site runs ~0.15-0.25 in/day, so two decimals quantise the entire useful range
+// into about ten buckets: the live 2026-08-10/11 pair (0.186 and 0.193) both collapse to 0.19. The
+// ledger's demand term is a RATIO of ET0 to a monthly reference, so that rounding is not cosmetic —
+// it injects a few percent of error into every day's demand before any modelling happens.
+const round3 = (n) => Math.round((n + Number.EPSILON) * 1000) / 1000;
 
 // ET calendar date — plan_date must be the LOCAL day even when the cron fires after UTC midnight.
 function todayET() {
@@ -114,12 +120,34 @@ async function fetchPrecip(lat, lng) {
     // BUG-RAINACTUAL-001 H5: `hourly=precipitation` is appended to THE SAME call (one request, not two).
     // `hourly` is a SEPARATE response object from `daily`, so this cannot shift ps[]/pop[]/tmin[] by even one
     // slot — the same append-only discipline G5 used, and openmeteo-indices.test.js pins both halves.
+    // V4-WATERMATH-001 F1: et0_fao_evapotranspiration + temperature_2m_max APPENDED AT THE END of the
+    // `daily=` list — the same append-only discipline G5 and H5 used, for the same reason. past_days is
+    // what sets D0's offset, and the list order is what sets nothing at all PROVIDED nothing is inserted
+    // ahead of an existing field; every index below (ps[0..4], pop[2..3], tmin[3..5]) therefore still
+    // means exactly the day it meant before. Inserting mid-list instead would have shifted nothing in
+    // JS (these are named arrays, not one flat vector) but WOULD have broken the reviewer's ability to
+    // reason about the URL the way this file's whole comment history teaches them to — and the archive
+    // backfill, which reads the SAME field names out of a DIFFERENT endpoint, does depend on the order
+    // matching. openmeteo-indices.test.js pins the list prefix and the append.
+    //
+    // UNITS ARE NOT ASSUMED — verified against the live endpoint at this Space's coordinates on
+    // 2026-08-12: daily_units reported et0_fao_evapotranspiration = "inch" (it honours
+    // precipitation_unit, which is why no mm->in conversion appears anywhere below) and
+    // temperature_2m_max = "°F". The weather_daily columns are named et0_in / tmax_f accordingly.
+    //
+    // WHY temperature_2m_max IS HERE AT ALL, given the ledger design names only ET0: weather_daily.tmax_f
+    // feeds F2's continuous fabric-bag heat ramp (1.1 + 0.25 x ramp(Tmax, 80->90°F)), and NOTHING ELSE IN
+    // THIS RUN FETCHES A DAILY MAX. NWS supplies highToday, which is TODAY's forecast high — the writer
+    // persists COMPLETED days, so today's high is the wrong day by construction. Without this append
+    // tmax_f would be NULL on every row ever written and the bag ramp would have no input.
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
-      `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min&hourly=precipitation&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=America/New_York&past_days=2&forecast_days=4`;
+      `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max&hourly=precipitation&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=America/New_York&past_days=2&forecast_days=4`;
     const j = await (await fetch(url, { signal: AbortSignal.timeout(6000) })).json();
     const ps = (j.daily && j.daily.precipitation_sum) || [];   // [D-2, D-1, D0, D1, D2, D3]
     const pop = (j.daily && j.daily.precipitation_probability_max) || [];
     const tmin = (j.daily && j.daily.temperature_2m_min) || [];  // same indexing as ps
+    const et0 = (j.daily && j.daily.et0_fao_evapotranspiration) || [];  // same indexing as ps
+    const tmax = (j.daily && j.daily.temperature_2m_max) || [];         // same indexing as ps
     const times = (j.daily && j.daily.time) || [];
     const tomorrow = ps[3] || 0;
     // Absence is NEVER coerced to a temperature: a missing entry stays null so evalAdvisory skips it
@@ -153,6 +181,32 @@ async function fetchPrecip(lat, lng) {
       hourly_precip: (j.hourly && Array.isArray(j.hourly.time) && Array.isArray(j.hourly.precipitation))
         ? { time: j.hourly.time, precipitation: j.hourly.precipitation, timezone: j.timezone || null }
         : null,
+      // V4-WATERMATH-001 F1 — the COMPLETED days in this response, as the rows weather_daily will hold.
+      // Indices 0 and 1 are D-2 and D-1; index 2 is D0, which is deliberately EXCLUDED. Today is still
+      // accumulating, and the write discipline in design Part 4 is explicit that intraday runs must never
+      // persist a partial day — a 15:30 partial total written as the day's actual would silently corrupt
+      // every later recompute that reads it back, and nothing downstream could tell it apart from a real
+      // dry day. `date` is Open-Meteo's own local (America/New_York) day label, which is the ET civil day
+      // weather_daily.date is contracted to be; deriving it from the fetch clock instead would put the row
+      // on the wrong day whenever a run straddles midnight.
+      //
+      // precip_in here is the RAW model value, never the gauge. The gauge merge for D-1 happens later in
+      // station.mergeStationHydrology and lands on the top-level yesterday_precip_actual_in key; the writer
+      // (handler.writeWeatherDaily) prefers that merged value and only falls back to this one. Keeping the
+      // raw figure separate is what lets the writer label precip_source honestly instead of guessing.
+      //
+      // These keys ride on the hydrology bag but never reach the stored plan: engine.generatePlan copies
+      // hydrology by NAMED key, so flag-OFF byte-parity holds exactly as it did for forecast_lows and
+      // yesterday_precip_actual_in before them.
+      settled_days: [0, 1].map((i) => ({
+        date: times[i] || null,
+        et0_in: Number.isFinite(et0[i]) ? round3(et0[i]) : null,
+        tmax_f: Number.isFinite(tmax[i]) ? round2(tmax[i]) : null,
+        tmin_f: Number.isFinite(tmin[i]) ? round2(tmin[i]) : null,
+        // null, NEVER 0 — absence of data must not be recorded as "no rain fell". Same rule as
+        // yesterday_precip_actual_in above, and the same reason: 0 is real data here.
+        precip_in: Number.isFinite(ps[i]) ? round2(ps[i]) : null,
+      })).filter((d) => d.date),
     };
   } catch (e) {
     console.warn(JSON.stringify({ msg: 'fetchPrecip failed — hydrology null', lat, lng, error: e.message }));
