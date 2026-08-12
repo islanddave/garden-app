@@ -28,8 +28,8 @@
         "no_history": 0,
         "pest": 0,
         "plantings": 4,
-        "rain_skipped": 1,
-        "water_due": 3
+        "rain_skipped": 2,
+        "water_due": 2
       },
       "substrate": {
         "feeding_now": 4,
@@ -56,6 +56,22 @@
             "in_ground": true,
             "interval": 4,
             "name": "Main Bed Tomato",
+            "project": "Garden",
+            "project_id": "pj1",
+            "reason": "Skip — 1\" rain falling today @ 80%",
+            "sat_kind": "today",
+            "sat_wp": 1.2,
+            "saturated": true,
+            "today_in": 1,
+            "today_pop": 80
+          },
+          {
+            "crop": "pepper",
+            "days_since": 4,
+            "id": "sv1",
+            "in_ground": false,
+            "interval": 3,
+            "name": "Bench Pepper Cell",
             "project": "Garden",
             "project_id": "pj1",
             "reason": "Skip — 1\" rain falling today @ 80%",
@@ -96,21 +112,6 @@
             "project": "Garden",
             "project_id": "pj1",
             "rain_note": "Water — fabric bag dries fast at 86°F (rain credit withheld on hot days)"
-          },
-          {
-            "crop": "pepper",
-            "days_since": 4,
-            "id": "sv1",
-            "in_ground": false,
-            "interval": 3,
-            "method": "deep_even",
-            "moisture": "evenly_moist",
-            "name": "Bench Pepper Cell",
-            "never": false,
-            "overdue_by": 1,
-            "project": "Garden",
-            "project_id": "pj1",
-            "rain_note": "Water — 1.2\" rain didn't cover the gap (last watered 4d ago)"
           }
         ]
       }

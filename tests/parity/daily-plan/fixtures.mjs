@@ -231,7 +231,7 @@ export const scenarios = [
   },
   {
     name: 'today-moderate-flagon',
-    desc: '1.0"@80% today forecast, flag ON: solo_cup waters (small bar 2.0), in_ground skips kind today, hot fabric bag waters (gate outranks forecast).',
+    desc: '1.0"@80% today forecast, flag ON: solo_cup NOW SKIPS (BUG-SOAKBAR-001 moved the small bar 2.0 -> 0.91, and 1.0" clears it — this is the one golden that changed), in_ground skips kind today, hot fabric bag waters (gate outranks forecast).',
     input: { ...TODAY_MODERATE, todayAwareEnabled: true },
   },
   {
@@ -241,7 +241,7 @@ export const scenarios = [
   },
   {
     name: 'today-heavy-flagon',
-    desc: '2.5"@90% today forecast, flag ON: established solo_cup skips at the 2.0" small bar, fresh transplant still waters, in_ground skips.',
+    desc: '2.5"@90% today forecast, flag ON: established solo_cup skips at the 0.91" small bar (2.5" cleared the old 2.0" bar too, so this golden is unchanged), fresh transplant still waters, in_ground skips.',
     input: { ...TODAY_HEAVY, todayAwareEnabled: true },
   },
 ];

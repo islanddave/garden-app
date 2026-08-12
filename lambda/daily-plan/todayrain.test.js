@@ -138,11 +138,14 @@ describe('BUG-TODAYWATER-001 — a forecast must not outrank the carve-outs that
     expect(verdict({ hy: H(0, 2.5, 92, 0, null), p: { container_type: 'tray_cell' } }).bucket).toBe('skip');
   });
 
-  it('S9c holds small vessels to a much larger forecast before a skip is safe', () => {
-    // SOAK_TODAY_SMALL_IN = 2.0. A container intercepts rain only over its own footprint and a mature
-    // canopy sheds water away from it, so ~1" is under half of one watering.
+  it('S9c holds small vessels to a larger forecast than beds before a skip is safe', () => {
+    // BUG-SOAKBAR-001 retuned SOAK_TODAY_SMALL_IN 2.0 -> 0.91 (derivation in engine.js; bar value and its
+    // blast radius are owned by soakcontainer.test.js). What this test asserts is unchanged and is the
+    // ORDERING, not the number: a container is never skipped on a forecast that would only just skip a bed.
+    // Amounts moved to straddle the current bar — 0.85" below, 2.5" above — so the test still discriminates.
     const small = { container_type: 'solo_cup' };
-    expect(verdict({ hy: H(0, 0.98, 84, 0, null), p: small }).bucket).toBe('water');
+    expect(verdict({ hy: H(0, 0.85, 84, 0, null), p: small }).bucket).toBe('water');
+    expect(verdict({ hy: H(0, 0.85, 84, 0, null), p: BED }).bucket).toBe('skip');   // same rain, bed: skipped
     expect(verdict({ hy: H(0, 2.5, 92, 0, null), p: small }).bucket).toBe('skip');
   });
 
@@ -151,7 +154,9 @@ describe('BUG-TODAYWATER-001 — a forecast must not outrank the carve-outs that
     // Consequence worth stating plainly: on the 02:01 snapshot of 2026-08-03 this fix suppresses in-ground
     // beds and does NOT suppress the unlabelled bags. Suppressing those required the 3.8" that only became
     // OBSERVABLE later that morning — which is the staleness half of the bug, not this half.
-    expect(verdict({ hy: H(0, 0.98, 84, 0, null) }).bucket).toBe('water');
+    // BUG-SOAKBAR-001: 0.98" -> 0.85" so the "unlabelled row still waters" half stays below the retuned
+    // 0.91" bar. The point of the test is the CLASSIFICATION of an unset container_type, not the amount.
+    expect(verdict({ hy: H(0, 0.85, 84, 0, null) }).bucket).toBe('water');
     expect(verdict({ hy: H(0, 3.8, 92, 0, null) }).bucket).toBe('skip');   // the 08:37 re-run figure
   });
 
@@ -390,15 +395,22 @@ describe('BUG-TODAYWATER-001 2nd pass — the PoP gates the remainder, and only 
   });
 
   it('C7 holds the small-vessel bar against the REMAINDER, not the day total', () => {
-    // 0.9" has fallen, 1.2" is still expected, 2.1" for the day. SOAK_TODAY_SMALL_IN is a bar on how much
-    // more is coming — a solo cup that has already caught 0.9" and expects 1.2" more has not met a 2.0" bar,
-    // and the measured 0.9" is under the cap, so it still needs water.
-    const m = gaugeHy(0.9, 2.1, 92);
-    expect(m.today_remaining_in).toBe(1.2);
-    expect(m.today_precip_in).toBeGreaterThan(SOAK_TODAY_SMALL_IN);
+    // 0.9" has fallen, 0.6" is still expected, 1.5" for the day. SOAK_TODAY_SMALL_IN is a bar on how much
+    // more is COMING — a solo cup that has already caught 0.9" and expects 0.6" more has not met the bar,
+    // and the measured 0.9" is under the 1.0" cap, so it still needs water.
+    // BUG-SOAKBAR-001 re-picked these amounts. The test's whole point is that the day TOTAL clears the bar
+    // while the REMAINDER does not, so the numbers must straddle whatever the bar currently is: the old
+    // 0.9/2.1 split leaves a 1.2" remainder, which clears the retuned 0.91" bar and would have made this
+    // test assert the opposite of its own name. The remainder also has to stay >= SOAK_FCST_QPF_IN or
+    // todayQualifies rejects it first and the bar is never consulted — that would pass vacuously.
+    const m = gaugeHy(0.9, 1.5, 92);
+    expect(m.today_remaining_in).toBeCloseTo(0.6, 5);
+    expect(m.today_precip_in).toBeGreaterThan(SOAK_TODAY_SMALL_IN);          // day total clears the bar
+    expect(m.today_remaining_in).toBeLessThan(SOAK_TODAY_SMALL_IN);          // remainder does not
+    expect(todayQualifies(m)).toBe(true);                                    // ...and it is not the gate rejecting it
     expect(saturationSuppressed('outdoor', m, { todayAware: true, smallVessel: true })).toBe(null);
     expect(verdict({ hy: m, p: { container_type: 'solo_cup' } }).bucket).toBe('water');
-    // MUTATION: restore `if(hy.today_precip_in >= bar)` -> 2.1 >= 2.0, bucket becomes 'skip'.
+    // MUTATION: restore `if(hy.today_precip_in >= bar)` -> 1.5 >= 0.91, bucket becomes 'skip'.
   });
 
   it('C8 reports the amount it actually judged, so a busted forecast stays auditable', () => {
