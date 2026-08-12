@@ -34,6 +34,7 @@ export const EVENT_TYPES = [
   'hardening_off',
   'watering',
   'rain',
+  'moisture_check',
   'fertilizing',
   'pest_treatment',
   'doctored',
@@ -91,6 +92,11 @@ export const EVENT_TYPE_META = {
   hardening_off:   { label: 'Hardening off',        emoji: '⛅', category: 'Growth & Training' },
   watering:        { label: 'Watered',              emoji: '💧', category: 'Care' },
   rain:            { label: 'Rain',                 emoji: '🌧️', category: 'Environmental' },
+  // V4-WATERMATH-001 F0: "I checked the soil and it does not need water." A NEGATIVE care
+  // observation — it records an inspection, NOT an intervention. Deliberately NOT mapped onto
+  // `observation`: the daily-plan DONE_EVENTS map treats `observation` as satisfying PEST tasks,
+  // so reusing it would silently check off pest work the user never did.
+  moisture_check:  { label: 'Moisture check',       emoji: '🖐️', category: 'Care' },
   fertilizing:     { label: 'Fertilized / Fed',     emoji: '🌿', category: 'Care' },
   pest_treatment:  { label: 'Pest treatment',       emoji: '🐛', category: 'Pest & Health' },
   doctored:        { label: 'Doctored / Treated',   emoji: '🩹', category: 'Pest & Health' },
@@ -189,6 +195,12 @@ export const PRIMARY_EVENT_TYPES = [
 // statements in the index.js batch transaction, guarded by FLOWERING/FRUITING_SOURCE_STATUSES
 // — idempotent: plantings already at/past the target status are skipped). So bulk logging is
 // trigger-parity with single logging for these two.
+//   V4-WATERMATH-001 F0:
+//     moisture_check         — a per-plant JUDGEMENT ("this one is still damp"), the exact
+//                              opposite of a scope-wide assertion. Bulk-logging "none of these
+//                              500 need water" without touching them is a fabricated observation,
+//                              and it would let one tap suppress the whole water bar. Also see
+//                              NON_REWARD_EVENT_TYPES: it earns nothing, so bulk has no upside.
 export const BATCH_EXCLUDED_TYPES = [
   'harvest',
   'first_harvest',
@@ -196,7 +208,52 @@ export const BATCH_EXCLUDED_TYPES = [
   'divided',
   'cutting_taken',
   'hand_pollinated',
+  'moisture_check',
 ]
+
+// ── Reward-bearing partition (V4-WATERMATH-001 F0) ──────────────────
+// Event types that must grant ZERO xp, ZERO streak credit and ZERO total_events.
+//
+// This list is NOT cosmetic and it is NOT enforced by the database. Verified against live Neon
+// 2026-08-12: `event_log` carries exactly two non-internal triggers — `prevent_ownership_transfer`
+// and `set_updated_at` — and NEITHER touches xp_events, user_stats or achievements. The only
+// trigger anywhere in the reward path is `trg_user_stats_level` on `user_stats`, whose whole body
+// is `NEW.level := public.xp_level(NEW.xp)`. So every grant is APPLICATION code in the events
+// Lambda, and the exclusion has to be applied there — in three places, because two of them are
+// recomputes that would otherwise re-grant retroactively:
+//   (1) the flat XP grant                     — skipped outright for these types;
+//   (2) user_stats.total_events / streak      — RECOMPUTED as `count(*) FROM event_log`, so a
+//                                               moisture_check row would inflate the total on the
+//                                               NEXT event logged even if this one granted nothing;
+//   (3) the achievement evaluator's counts    — `today_events` (multi_per_day) counts every row.
+//
+// WHY: moisture_check is a one-tap "not thirsty" snooze sitting next to the primary log button. A
+// rewarded snooze is a farmable XP lever — tap it on 200 plantings, cap the daily XP, sustain a
+// streak without gardening — and it would poison the V1.1 watering learner with events that mean
+// "I did nothing." Zero reward is what keeps it an honest signal.
+export const NON_REWARD_EVENT_TYPES = [
+  'moisture_check',
+]
+
+// Single predicate for the reward partition. Free-text / non-vocabulary types are rewarded
+// (they are real logging actions), so the default is TRUE and exclusion is opt-in.
+export function isRewardedEventType(eventType) {
+  return !NON_REWARD_EVENT_TYPES.includes(eventType)
+}
+
+// ── Watering amount classes (V4-WATERMATH-001 F0 capture) ───────────
+// Stored as `metadata.water_depth` on watering events — category-canonical, no DDL.
+// Deliberately NOT `quantity_numeric`: that column is structurally harvest-only (the single-event
+// POST hardcodes it from harvest.quantity, and 544/544 live rows are harvest), and a dimensionless
+// class code parked in a numeric column would collide with real gallons later. Categories also
+// survive a magnitude retune; recorded numerics would not.
+//
+// `metadata.water_depth_source` records WHO chose the class: 'user' = the gardener tapped a chip,
+// 'default' = the preselected Normal rode along untouched. The two are not interchangeable —
+// the F0 instrumentation gate (if <5% of waterings carry a USER-set depth at 30 days, the
+// amount-dependent math is declared unfeedable) can only be measured if provenance is stored.
+export const WATER_DEPTH_CLASSES = ['light', 'normal', 'deep']
+export const WATER_DEPTH_SOURCES = ['user', 'default']
 
 // ── Derived batch allowlist (NEVER hand-listed) ─────────────────────
 // The server (validateBatchBody) and the LogMany picker both consume this.
@@ -249,7 +306,7 @@ export function buildSecondaryGroups(primaryValues, values = EVENT_TYPES) {
 // lockstep — a PWA service-worker running a stale bundle would 400 every log mid-season (spec D7).
 export const PLANTING_REQUIRED_TYPES = new Set([
   'sowing', 'seed_soak', 'germination', 'thinning', 'potting_up', 'transplant', 'hardening_off',
-  'watering', 'fertilizing', 'pest_treatment', 'doctored', 'pruning',
+  'watering', 'moisture_check', 'fertilizing', 'pest_treatment', 'doctored', 'pruning',
   'brought_inside', 'brought_outside', 'caged', 'staked', 'trellised', 'pinched', 'suckered',
   'deadheaded', 'hand_pollinated', 'divided', 'cutting_taken', 'rooting', 'relocated',
   'flowering', 'fruit_set', 'first_harvest', 'harvest', 'scape_cut', 'cured', 'seed_saved',

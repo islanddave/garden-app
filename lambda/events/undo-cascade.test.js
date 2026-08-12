@@ -31,16 +31,25 @@ const SRC = decomment(RAW);
 
 // The route markers are COMMENT banners, so the offsets are taken in RAW; the extracted window is
 // then decommented so every assertion below runs against code and cannot be satisfied by prose.
-const singleUndo = () => {
-  const idx = RAW.indexOf('/api/events/:id — single-event undo');
-  expect(idx).toBeGreaterThan(-1);
-  return decomment(RAW.slice(idx, idx + 6000));
+//
+// The window is bounded by the route's OWN terminating `return`, not by a magic character count.
+// It used to be `idx + 3000` / `idx + 6000`, and that is a vacuity trap, not a style nit: adding a
+// comment inside either route silently slides code out of the window, and while a POSITIVE
+// assertion then fails loudly (which is how this was caught — W-BATCHNULL's note pushed the batch
+// photos statement past 3000 chars), every NEGATIVE assertion in the third describe block would
+// have started passing for free, asserting nothing about code that had simply left the frame.
+// A missing terminator is a hard failure rather than a silent slice to the end of file.
+const routeWindow = (startMarker, endMarker) => {
+  const i = RAW.indexOf(startMarker);
+  expect(i, `route marker not found: ${startMarker}`).toBeGreaterThan(-1);
+  const j = RAW.indexOf(endMarker, i);
+  expect(j, `route terminator not found: ${endMarker}`).toBeGreaterThan(i);
+  return decomment(RAW.slice(i, j + endMarker.length));
 };
-const batchUndo = () => {
-  const idx = RAW.indexOf('/api/events/batch/:id — undo a batch');
-  expect(idx).toBeGreaterThan(-1);
-  return decomment(RAW.slice(idx, idx + 3000));
-};
+const singleUndo = () => routeWindow(
+  '/api/events/:id — single-event undo', 'return resp(200, { undone: true, id: eventId });');
+const batchUndo = () => routeWindow(
+  '/api/events/batch/:id — undo a batch', 'return resp(200, { undone: true, batch_id: batchId });');
 
 describe('events Lambda — single-event undo cascades to child rows', () => {
   it('soft-deletes the event’s harvest_log rows', () => {
@@ -83,6 +92,46 @@ describe('events Lambda — batch undo cascades identically', () => {
     const block = batchUndo();
     const harvestStmt = block.slice(block.indexOf('UPDATE harvest_log h SET'));
     expect(harvestStmt.slice(0, 400)).not.toMatch(/e\.deleted_at IS NULL/);
+  });
+});
+
+// W-BATCHNULL. WIRING GUARDS ONLY — these prove the fallback is PRESENT in each of the two
+// statements, nothing about what it does. The behaviour lives in
+// tests/integration/batch-photo-reparent.int.test.js, which runs the real handler against real
+// Postgres; that file also carries the finding these guards exist to protect, namely that the
+// fallback cannot fire while event_log_has_anchor holds. Both arms are asserted separately and
+// against the SAME shape, because the two statements were found to have drifted apart once already.
+describe('events Lambda — the parentless-photo fallback is wired into BOTH undo paths', () => {
+  it.each([
+    ['single-event undo', () => singleUndo()],
+    ['batch undo', () => batchUndo()],
+  ])('%s falls the photo back to pending_tag when every parent would be NULL', (_label, block) => {
+    const stmt = block().slice(block().indexOf('UPDATE photos ph SET'));
+    // The CASE must be conjunctive over EVERY parent column photos_must_have_parent names, and it
+    // must test the post-COALESCE values, not the raw ph.* ones — testing ph.project_id alone would
+    // fire on any event-anchored photo and dump the whole undo path into the quick-tag inbox.
+    expect(stmt).toMatch(/intake_status\s*=\s*CASE/);
+    expect(stmt).toMatch(/WHEN COALESCE\(ph\.project_id, e\.project_id\) IS NULL/);
+    expect(stmt).toMatch(/AND COALESCE\(ph\.plant_id,\s*e\.plant_id\)\s*IS NULL/);
+    expect(stmt).toMatch(/AND ph\.location_id IS NULL/);
+    expect(stmt).toMatch(/AND ph\.inventory_item_id IS NULL/);
+    expect(stmt).toMatch(/AND ph\.space_id IS NULL/);
+    expect(stmt).toMatch(/THEN 'pending_tag'/);
+    // ELSE preserves the existing marker. `ELSE NULL` would erase 'upload_failed' on every detach.
+    expect(stmt).toMatch(/ELSE ph\.intake_status END/);
+    // No OR anywhere in the guard — one loosened conjunct is the whole blast radius.
+    expect(stmt.slice(stmt.indexOf('CASE'), stmt.indexOf('END'))).not.toMatch(/\bOR\b/i);
+  });
+
+  it('sets a status photos_intake_status_valid actually admits', () => {
+    // The CHECK is (intake_status IS NULL OR intake_status IN ('pending_tag','upload_failed')).
+    // A typo here trades a 23514 on photos_must_have_parent for a 23514 on the status CHECK —
+    // the same stranded batch, via a constraint nobody would think to look at.
+    for (const block of [singleUndo(), batchUndo()]) {
+      const stmt = block.slice(block.indexOf('UPDATE photos ph SET'));
+      const literal = stmt.match(/THEN '([a-z_]+)'/);
+      expect(literal?.[1]).toBe('pending_tag');
+    }
   });
 });
 

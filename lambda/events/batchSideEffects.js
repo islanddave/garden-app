@@ -73,6 +73,9 @@
 // per-row work. A per-event XP model would have been O(N) INSERTs — a third argument against it.
 
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
+// V4-WATERMATH-001 F0 — the zero-reward partition. Imported from the generated vocabulary so the
+// batch recompute and the single-event recompute cannot drift on WHICH types are excluded.
+import { NON_REWARD_EVENT_TYPES } from './eventTypes.generated.js';
 import { awardCrittersForBatch } from './critterAward.js';
 
 // Deterministic pick of the event a batch-level effect is attributed to (achievement
@@ -137,13 +140,20 @@ export async function applyBatchSideEffects({
       SELECT
         to_char((NOW() AT TIME ZONE (SELECT tz FROM z))::date, 'YYYY-MM-DD') AS today,
         (SELECT count(*)::int FROM event_log e
-          WHERE e.created_by = ${userId} AND e.deleted_at IS NULL) AS live_events,
+          WHERE e.created_by = ${userId} AND e.deleted_at IS NULL
+            -- V4-WATERMATH-001 F0 — MUST mirror index.js Step 3a exactly. moisture_check is in
+            -- BATCH_EXCLUDED_TYPES so a batch can never CREATE one, but this is a recompute over
+            -- the user's whole history: without the filter, moisture_checks logged on the single
+            -- path would be silently absorbed into total_events by the next batch, and the two
+            -- write paths would disagree about the same number.
+            AND NOT (e.event_type = ANY(${NON_REWARD_EVENT_TYPES}::text[]))) AS live_events,
         COALESCE((
           SELECT json_agg(d ORDER BY d DESC) FROM (
             SELECT DISTINCT (e.event_date AT TIME ZONE (SELECT tz FROM z))::date AS d
             FROM event_log e
             WHERE e.created_by = ${userId}
               AND e.deleted_at IS NULL
+              AND NOT (e.event_type = ANY(${NON_REWARD_EVENT_TYPES}::text[]))
               AND (e.event_date AT TIME ZONE (SELECT tz FROM z))::date
                   <= (NOW() AT TIME ZONE (SELECT tz FROM z))::date
           ) days
@@ -263,6 +273,8 @@ export async function applyBatchSideEffects({
             )::int AS today_events
           FROM event_log
           WHERE created_by = ${userId} AND deleted_at IS NULL
+            -- V4-WATERMATH-001 F0 — mirrors index.js Step 3c.
+            AND NOT (event_type = ANY(${NON_REWARD_EVENT_TYPES}::text[]))
         ),
         candidates AS (
           SELECT a.id, a.xp_reward

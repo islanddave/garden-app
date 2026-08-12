@@ -133,6 +133,63 @@ export function validatePostBody(body) {
   const catErr = validateTreatmentCategory(body.treatment_category);
   if (catErr) return catErr;
 
+  // V4-WATERMATH-001 F0: `metadata` has always been passed straight through to the jsonb column
+  // unvalidated. The amount-capture keys are now LOAD-BEARING (the F2 ledger folds them into the
+  // watering math and the 30-day instrumentation gate counts them), so they get a vocabulary check
+  // at the edge. Everything else in metadata keeps its historic pass-through behaviour.
+  const metaErr = validateEventMetadata(body.metadata);
+  if (metaErr) return metaErr;
+
+  return null;
+}
+
+// ── V4-WATERMATH-001 F0 — watering amount capture ───────────────────────────────────────────────
+// `metadata.water_depth` ('light'|'normal'|'deep') + `metadata.water_depth_source` ('user'|'default').
+//
+// WHY a whitelist and not free-text: these two keys feed the ledger's per-event water contribution.
+// An unrecognised class does not degrade gracefully — it silently drops out of every aggregate and
+// reads as "no annotation", which is indistinguishable from the habituation signal the 30-day
+// instrumentation gate is trying to measure. Rejecting at the edge keeps "unannotated" honest.
+//
+// This validates SHAPE only. It does not require water_depth on watering events (the whole design
+// is zero-added-taps-by-default), and it does not forbid it on other types — `rain` may plausibly
+// carry one later, and a 400 on an unrelated type would be a gratuitous break.
+import {
+  NON_REWARD_EVENT_TYPES, isRewardedEventType,
+  WATER_DEPTH_CLASSES, WATER_DEPTH_SOURCES,
+} from './eventTypes.generated.js';
+export { NON_REWARD_EVENT_TYPES, isRewardedEventType, WATER_DEPTH_CLASSES, WATER_DEPTH_SOURCES };
+
+export const WATER_DEPTH_ERROR = `metadata.water_depth must be one of: ${WATER_DEPTH_CLASSES.join(', ')}`;
+export const WATER_DEPTH_SOURCE_ERROR = `metadata.water_depth_source must be one of: ${WATER_DEPTH_SOURCES.join(', ')}`;
+export const WATER_DEPTH_ORPHAN_ERROR = 'metadata.water_depth_source requires metadata.water_depth';
+
+// A plain JSON object — not null, not an array. `metadata` is a jsonb column so Postgres would
+// happily take an array or a scalar; every reader in the app does `metadata->>'key'`, which
+// silently yields NULL for those shapes rather than erroring, so the check belongs here.
+export function isPlainMetadataObject(v) {
+  return v != null && typeof v === 'object' && !Array.isArray(v);
+}
+
+// Returns null on success, or { status, error }.
+export function validateEventMetadata(metadata) {
+  if (metadata == null) return null;
+  if (!isPlainMetadataObject(metadata)) {
+    return { status: 400, error: 'metadata must be an object' };
+  }
+  const depth = metadata.water_depth;
+  if (depth != null && !WATER_DEPTH_CLASSES.includes(depth)) {
+    return { status: 400, error: WATER_DEPTH_ERROR };
+  }
+  const source = metadata.water_depth_source;
+  if (source != null && !WATER_DEPTH_SOURCES.includes(source)) {
+    return { status: 400, error: WATER_DEPTH_SOURCE_ERROR };
+  }
+  // Provenance without a value is meaningless and would corrupt the annotation-rate metric
+  // (a row counted as "user-set" with nothing set).
+  if (source != null && depth == null) {
+    return { status: 400, error: WATER_DEPTH_ORPHAN_ERROR };
+  }
   return null;
 }
 
@@ -241,7 +298,81 @@ export function validateBatchBody(body) {
       return { status: 400, error: 'exclude_plant_ids must all be UUIDs' };
     }
   }
+
+  // V4-WATERMATH-001 F0 — the batch path now carries metadata (it previously carried NONE; see
+  // buildBatchMetadataPlan). One batch-level object applied to every row, plus optional per-row
+  // overrides keyed by plant_id. Both go through the SAME vocabulary check as the single POST.
+  const batchMetaErr = validateEventMetadata(body.metadata);
+  if (batchMetaErr) return batchMetaErr;
+  if (body.plant_metadata != null) {
+    if (!isPlainMetadataObject(body.plant_metadata)) {
+      return { status: 400, error: 'plant_metadata must be an object keyed by plant_id' };
+    }
+    for (const [plantId, meta] of Object.entries(body.plant_metadata)) {
+      if (!UUID_RE.test(plantId)) {
+        return { status: 400, error: 'plant_metadata keys must be plant UUIDs' };
+      }
+      if (!isPlainMetadataObject(meta)) {
+        return { status: 400, error: 'plant_metadata values must be objects' };
+      }
+      const perErr = validateEventMetadata(meta);
+      if (perErr) return perErr;
+    }
+  }
   return null;
+}
+
+// ── V4-WATERMATH-001 F0 — batch metadata merge ──────────────────────────────────────────────────
+// THE bug this closes: the batch INSERT hardcoded its metadata as
+//   jsonb_build_object('batch_id', <id>, 'batch_v', 1)
+// and accepted no client metadata at all. Batch is the HIGH-VOLUME path (~80% of events
+// historically), so amount chips wired only to the single POST would have captured ~0% of real
+// watering. This function produces the two jsonb parameters the INSERT binds.
+//
+// Merge precedence, lowest to highest:
+//   1. batch-level metadata      (the one chip the user set for the whole burst)
+//   2. per-plant override        (the row whose chip they tapped individually)
+//   3. server-owned batch keys   (batch_id / batch_v)
+// (3) is LAST on purpose and is the security-relevant half: `metadata->>'batch_id'` is what the
+// undo cascade, the side-effect re-hit lookup and the batch feed all key on. If a client could
+// set batch_id it could attach its rows to — or detach them from — someone else's batch. Merging
+// the server keys last makes that unforgeable rather than merely unlikely.
+//
+// Reserved-namespace strip: keys beginning with `_` are the app's internal channel (e.g.
+// `_skip_critter_award`, honoured by the single POST) and are dropped from client-supplied batch
+// metadata. The single path's behaviour is deliberately unchanged — this is a NEW surface, and
+// opening a bulk bypass lever at the same moment is not a trade worth making.
+export function stripReservedMetadataKeys(meta) {
+  if (!isPlainMetadataObject(meta)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(meta)) {
+    if (k.startsWith('_')) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+// Returns { defaultMetadata, overrides } — both plain objects, ready to JSON.stringify.
+//   defaultMetadata : applied to every row that has no per-plant entry
+//   overrides       : { <lowercased plant_id>: <fully merged metadata> } — ONLY for plantings that
+//                     are both in `plantIds` and carry an override. Rows for plantings outside the
+//                     server-resolved scope are dropped: the scope SELECT is the authority on which
+//                     plantings get written, and a metadata map must never widen it.
+export function buildBatchMetadataPlan({ batchId, metadata, plantMetadata, plantIds }) {
+  const serverKeys = { batch_id: String(batchId), batch_v: 1 };
+  const base = stripReservedMetadataKeys(metadata);
+  const defaultMetadata = { ...base, ...serverKeys };
+
+  const overrides = {};
+  if (isPlainMetadataObject(plantMetadata)) {
+    const inScope = new Set((plantIds ?? []).map((id) => String(id).toLowerCase()));
+    for (const [rawId, meta] of Object.entries(plantMetadata)) {
+      const id = String(rawId).toLowerCase();
+      if (!inScope.has(id)) continue;
+      overrides[id] = { ...base, ...stripReservedMetadataKeys(meta), ...serverKeys };
+    }
+  }
+  return { defaultMetadata, overrides };
 }
 
 

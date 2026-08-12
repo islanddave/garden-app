@@ -67,9 +67,12 @@ describe('BATCH_EVENT_TYPES (derived)', () => {
     );
   });
 
-  it('excludes exactly the 6 expected types (3 needs-input + 3 HS-1; flowering+fruit_set freed)', () => {
+  it('excludes exactly the 7 expected types (3 needs-input + 3 HS-1 + 1 non-reward; flowering+fruit_set freed)', () => {
+    // V4-WATERMATH-001 F0 added moisture_check: a per-plant JUDGEMENT ("this one is still damp"),
+    // the opposite of a scope-wide assertion. Bulk-logging "none of these 500 need water" without
+    // touching them fabricates an observation and lets one tap suppress the whole water bar.
     expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
-      ['cutting_taken', 'divided', 'first_harvest', 'hand_pollinated', 'harvest', 'photo'],
+      ['cutting_taken', 'divided', 'first_harvest', 'hand_pollinated', 'harvest', 'moisture_check', 'photo'],
     );
   });
 

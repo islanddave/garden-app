@@ -27,7 +27,12 @@ const OUT = join(repoRoot, 'lambda', 'events', 'eventTypes.generated.js')
 
 // Import the canonical module by absolute file URL (zero-dep, so this just works).
 const canon = await import('file://' + SRC)
-const { EVENT_TYPES, BATCH_EXCLUDED_TYPES, BATCH_EVENT_TYPES } = canon
+const {
+  EVENT_TYPES, BATCH_EXCLUDED_TYPES, BATCH_EVENT_TYPES,
+  // V4-WATERMATH-001 F0. These three cross the same bundler-less boundary as the vocabulary and
+  // for the same reason: validators.js enforces them at the API edge and CANNOT import src/lib/.
+  NON_REWARD_EVENT_TYPES, WATER_DEPTH_CLASSES, WATER_DEPTH_SOURCES,
+} = canon
 
 function emit(arr) {
   return '[\n' + arr.map((v) => `  '${v}',`).join('\n') + '\n]'
@@ -58,6 +63,20 @@ export const BATCH_EXCLUDED_TYPES = ${emit(BATCH_EXCLUDED_TYPES)}
 // Derived (EVENT_TYPES minus BATCH_EXCLUDED_TYPES) — kept explicit here so the
 // Lambda needs no runtime filtering and the committed artifact is the contract.
 export const BATCH_EVENT_TYPES = ${emit(BATCH_EVENT_TYPES)}
+
+// V4-WATERMATH-001 F0 — event types that grant ZERO xp / streak / total_events.
+// Enforced ONLY in application code (live Neon has no reward trigger on event_log);
+// see the long note in src/lib/eventTypes.js for the three enforcement points.
+export const NON_REWARD_EVENT_TYPES = ${emit(NON_REWARD_EVENT_TYPES)}
+
+export function isRewardedEventType(eventType) {
+  return !NON_REWARD_EVENT_TYPES.includes(eventType)
+}
+
+// V4-WATERMATH-001 F0 — metadata.water_depth / metadata.water_depth_source vocabularies.
+export const WATER_DEPTH_CLASSES = ${emit(WATER_DEPTH_CLASSES)}
+
+export const WATER_DEPTH_SOURCES = ${emit(WATER_DEPTH_SOURCES)}
 `
 
 const isCheck = process.argv.includes('--check')
