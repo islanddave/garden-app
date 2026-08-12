@@ -287,12 +287,29 @@ const NOT_IN_SITES = [
   // before any share_log INSERT — set-wise, so a single foreign id in the array fails all of it.
   'facebook-share::photo_id',
   'locations::featured_photo_id', 'plants::featured_photo_id', 'projects::featured_photo_id',
+  // W-DEL adds a SECOND way the photos handler writes these two, and it is not body-settable at
+  // all: photoDelete.js NULLs every display pointer at the photo being soft-deleted, and replays
+  // the hero set on restore. Neither takes an id from the request body — both key on the ROUTE's
+  // photo id, whose household ownership is proven by a pre-read before any statement is built, and
+  // the null statements are scoped to `<pointer column> = <that photo id>` and nothing else. There
+  // is no id here for a caller to point somewhere it does not own.
   'photos::featured_photo_id',
+  // featured_image_id — the deprecated V1-era twin (0 rows populated on all four parents). photos
+  // only ever NULLs it, alongside its twin, so a delete cannot leave the forgotten column pointing
+  // at a deleted photo. The body-settable half lives in inventory-items and IS gated (see SITES).
+  'photos::featured_image_id',
   'critter::plant_id', 'critter::source_event_id',
   'preservation::harvest_log_id', 'preservation::photo_id', 'preservation::plant_id',
   'preservation::storage_location_id', // the four module-private preservation loaders, asserted below
   // ── The id being READ, not written: a `WHERE id = ${...}` inside the SET-clause slice, or the
   //    handler's own row id / route param. Nothing crosses a household boundary. ──
+  // photos::photo_id is NO LONGER read-only as of W-DEL: photoDelete.js NULLs plant_varieties.photo_id
+  // (through public.cultivar) and preservation_log.photo_id when a photo is soft-deleted. Still no
+  // ownership gate needed, and for a stronger reason than "it is only read" — the value is the
+  // ROUTE's photo id, already proven household-owned, and the predicate is `photo_id = <that id>`.
+  // R8 is why plant_varieties in particular may not carry a household predicate here: it is a SHARED
+  // cultivar catalogue (424 rows, RLS disabled, created_by includes `system` and intake scripts), so
+  // scoping by the photo is the ONLY form that is both correct and safe.
   'events::event_id', 'photos::photo_id', 'plants::plant_id', 'projects::plant_id',
   'projects::project_id', 'dashboard::project_id', 'harvests::gn_id', 'tags::tag_id',
   'plants::container_id', 'plants::leaf_id', 'projects::old_parent_id',

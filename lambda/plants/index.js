@@ -389,6 +389,7 @@ export const handler = async (event) => {
               LEFT JOIN event_log e ON e.id = ph.event_id
              WHERE ph.id = ${body.featured_photo_id}
                AND ph.created_by = ANY(${householdIds})
+               AND ph.deleted_at IS NULL
                AND (ph.plant_id = ${plantId} OR e.plant_id = ${plantId})
           `;
           if (!linkRows.length) {

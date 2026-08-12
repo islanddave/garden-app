@@ -178,6 +178,7 @@ export const handler = async (event) => {
                WHERE id = ${body.featured_photo_id}
                  AND location_id = ${actualLocationId}
                  AND created_by = ANY(${householdIds})
+                 AND deleted_at IS NULL
             `;
             if (!linkRows.length) {
               return resp(400, { error: 'featured_photo_id must be a photo linked to this location' });

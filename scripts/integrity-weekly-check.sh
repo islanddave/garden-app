@@ -68,9 +68,17 @@ SELECT json_build_object(
   -- a weekly ALERT for a perfectly correct row. Exactly the BUG-PHOTOPARENT-001 failure recorded in
   -- integrity-baselines.json, where inventory_item_id was the missing clause and produced 6 false
   -- positives. When the CHECK gains a clause, it gains one here in the same commit.
+  -- W-INTEG (2026-08-12): the pending_tag ESCAPE, the seventh clause of the CHECK and the one this
+  -- predicate had always omitted. The rule one line above says "the same 7 minus the pending_tag
+  -- escape" — which was correct only while nothing could produce such a row. A quick-tag photo (or
+  -- a batch-undo fallback, W-BATCHNULL) legitimately sits parentless AND pending, so without this
+  -- the FIRST one pages a weekly ALERT for a row the CHECK explicitly permits. That is the THIRD
+  -- recurrence of the BUG-PHOTOPARENT-001 class the baselines file already warns about twice.
+  -- A row that is parentless and NOT pending is still a genuine violation and still counted.
   'photos_parentless', (SELECT count(*) FROM photos WHERE deleted_at IS NULL
      AND project_id IS NULL AND event_id IS NULL AND plant_id IS NULL AND location_id IS NULL
-     AND inventory_item_id IS NULL AND space_id IS NULL),
+     AND inventory_item_id IS NULL AND space_id IS NULL
+     AND intake_status IS DISTINCT FROM 'pending_tag'),
   'photos_to_deleted_inventory', (SELECT count(*) FROM photos ph LEFT JOIN inventory_items i ON i.id = ph.inventory_item_id
      WHERE ph.deleted_at IS NULL AND ph.inventory_item_id IS NOT NULL AND (i.id IS NULL OR i.deleted_at IS NOT NULL)),
   'care_dupe_groups', (SELECT count(*) FROM (
