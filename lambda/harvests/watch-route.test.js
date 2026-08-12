@@ -158,7 +158,9 @@ describe('GET /api/harvests/watch', () => {
   it('basis is a SHORT provenance string, and cites the completed pick when one exists', async () => {
     const sql = makeSql([[row()]]);
     const res = await handleWatchGet(ctx(sql, { query: {} }));
-    expect(res.body.candidates[0].basis).toBe('sibling picked Aug 10');
+    // Names the sibling (V4-ANCHORBASE-001) and still fits the design's ~40-char basis budget.
+    expect(res.body.candidates[0].basis).toBe('sibling Sugar Baby picked Aug 10');
+    expect(res.body.candidates[0].basis.length).toBeLessThanOrEqual(40);
     expect(res.body.candidates[0].basis.length).toBeLessThanOrEqual(32);
   });
 

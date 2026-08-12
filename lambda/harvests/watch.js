@@ -62,11 +62,75 @@ export const WATCH_LEAD_MAX_FRACTION = 0.25;
 // documented fallback when a household has too little data to compute its own.
 export const NURSERY_OFFSET_DAYS_FALLBACK = 31;
 
+// V4-ANCHORBASE-001. OFF, and off is the decision, not a placeholder.
+//
+// A fourth anchor tier — `derived` — reads a backfilled anchor for plantings that have NO date of
+// their own (public.plant_anchor_derivation, migrations/v4-anchorbase-001/). Measured by running
+// this module over live prod rows on 2026-08-12 (scripts/measure-anchor-coverage.{sql,mjs}): of the
+// 64 anchorless live plantings, sow events recover 0 and transplant events recover 0 (every
+// planting with a transplant event ALREADY has transplanted_at — the app writes the column when the
+// event is logged), nursery-proxy events recover 7, and the add-date baseline recovers the
+// remaining 57. So 89% of anything this tier contributes is a baseline guess whose measured
+// accuracy is 47.3% within a week (median +9d, p75 +22d, max +48d over Dave's own 112 dual-dated
+// plantings).
+//
+// A surface that opens a watch row on that number is asserting a date Dave never entered, on the
+// strength of a coin flip. Admitting the tier is Dave's call, and this constant is where he makes
+// it: flipping it to true is the whole change.
+//
+// WHAT THE FLIP IS WORTH, measured, in combination with the sibling restriction below — because the
+// two levers are not independent and pricing them separately is misleading:
+//     A  as shipped                     75 candidates,  62 sibling-anchored,  16 no_anchor
+//     B  sibling restricted only        40 candidates,   7 sibling-anchored,  25 no_anchor
+//     C  derived tier only              80 candidates,  62 sibling-anchored,   7 no_anchor
+//     D  both                           49 candidates,   7 sibling-anchored,   9 no_anchor
+// Read C carefully: the derived tier ALONE makes the queue WORSE (75 -> 80). It can only ADD rows,
+// never remove them, because queue entry takes the EARLIEST anchor. Its real value is visible only
+// in B vs D — restricting the sibling anchor on its own pushes 9 extra plantings into `no_anchor`
+// (16 -> 25), i.e. it HIDES them; the derived tier is what buys them back and then some (25 -> 9).
+// The derivation is what makes the sibling restriction affordable, not a queue-thinning measure.
+//
+// While false, the tier is inert twice over: this flag, and the fact that the derivation relation
+// does not exist in any environment yet, so the route never selects it.
+export const DERIVED_ANCHOR_ENABLED = false;
+
 // A single-habit crop is the POINT of this module (see the blind-spot note above). Repeating habits
 // are admitted too: their FIRST harvest of the season is a watch-list event even though every
 // subsequent one belongs to the overdue band. NULL habit is excluded — on live prod that set is
 // entirely ornamental.
 export const WATCHED_HABITS = new Set(['single', 'repeat', 'cut_and_come_again']);
+
+// V4-ANCHORBASE-001. The sibling anchor is restricted to `single`-habit crops, and the restriction
+// exists because the anchor's own justification was falsified against live prod.
+//
+// The comment below still says "same genetics, same bed, same weather". Two of those three are true.
+// The FIRST one is not, because the sibling CTE matches on `crop_type_slug` — the crop — and not on
+// the cultivar. Measured read-only against prod 2026-08-12 (household = Dave; Jen has zero live
+// plantings):
+//     Peppers project   56 live plantings, 49 DISTINCT varieties, DTM 57-100  -> 43-day spread
+//     Tomatoes project  44 live plantings, 41 DISTINCT varieties, DTM 52- 85  -> 33-day spread
+// In the two largest projects a "sibling" is a different cultivar 49 times out of 56 and 41 out of
+// 44. Borrowing a first-pick date across a 43-day maturity spread is not same-genetics evidence; it
+// is a coin flip with a date attached. And because the anchor fires for EVERY un-picked planting in
+// a project where any same-crop sibling has picked, one 56-plant pepper project alone can contribute
+// ~50 near-identical rows against a display cap of 5.
+//
+// WHY `single` IS THE RIGHT CUT, rather than tightening the join to cultivar. Matching on cultivar
+// would be more defensible per row but would collapse the anchor to almost nothing — Dave grows one
+// or two plants of most varieties, so a same-cultivar sibling that has already picked is rare. The
+// habit restriction keeps the anchor exactly where its logic actually holds: for a `single`-habit
+// crop, "the first fruit in this bed came off on date D" is a real, dated observation about a
+// one-shot harvest. For a `repeat` crop it is not even the right question — a pepper plant picked
+// in July says nothing about when a different variety beside it starts, because both will be picked
+// repeatedly for months.
+//
+// MEASURED EFFECT (live prod 2026-08-12, this module's own classifier run over live rows via
+// scripts/measure-anchor-coverage.{sql,mjs}): sibling-anchored candidates 62 -> 7, total queue
+// 75 -> 40. The rows that leave do not vanish silently — 31 of them still hold their OWN calendar
+// anchor and simply stop borrowing one, and their `basis` stops citing a neighbour's pick date as
+// evidence about them. 9 DO fall out of sight (no_anchor 16 -> 25), which is the cost of this
+// change and the reason it is paired with the derived tier above rather than shipped alone.
+export const SIBLING_ANCHOR_HABITS = new Set(['single']);
 
 // ── Pure YYYY-MM-DD date math ────────────────────────────────────────────────────────────────────
 // String in, string out, UTC-anchored internally. NO `new Date()` without arguments anywhere in this
@@ -179,10 +243,26 @@ export function expectedDaysFor(row) {
 
 // Tier rank, used ONLY to break a tie between anchors that open on the same day. It is NOT a
 // precedence order — see the selection rule below, which is the opposite.
-const TIER_RANK = { observed: 0, sibling: 1, calendar: 2 };
+// EXPORTED so the tier ordering can be pinned directly. The derived-vs-calendar pair is currently
+// UNOBSERVABLE through behaviour — availableAnchors refuses to build a derived anchor when a
+// calendar one exists, so no row can ever hold both — which means a mutation swapping their ranks
+// passes every behavioural test. That is precisely why it is asserted as an invariant in the suite:
+// the ordering becomes load-bearing the moment that coexistence guard is relaxed, and a silent
+// inversion would make a row cite an invented date over one Dave entered.
+// `derived` ranks LAST on purpose (V4-ANCHORBASE-001, marking-rule layer 2): a date the system
+// invented must never be the provenance a row cites when a date Dave entered is available. Since
+// this rank governs only the CITATION and never queue entry (see resolveWatchAnchor), a derived
+// anchor can still open a watch early — it just never gets to claim credit for it.
+export const TIER_RANK = Object.freeze({ observed: 0, sibling: 1, calendar: 2, derived: 3 });
 
 // Build every anchor this row can support. Selection happens in resolveWatchAnchor.
-function availableAnchors(row, nurseryOffsetDays) {
+//
+// `siblingHabits` is injectable rather than read straight from the constant so the measurement
+// harness (scripts/measure-anchor-coverage.mjs) can price the restriction against live rows in BOTH
+// directions. Without it, "what did restricting the sibling anchor cost/save" is unanswerable except
+// by editing the module and re-running, which is how a claimed effect size ends up unverified.
+function availableAnchors(row, nurseryOffsetDays, siblingHabits = SIBLING_ANCHOR_HABITS,
+  derivedEnabled = DERIVED_ANCHOR_ENABLED) {
   const out = [];
 
   // Observed — a fruit_set event Dave logged, plus the crop's fruit-set-to-first-pick interval
@@ -201,8 +281,10 @@ function availableAnchors(row, nurseryOffsetDays) {
 
   // Sibling — a planting of the same crop in the same project already picked. NO lead: this is an
   // observation that the bed is producing, not a prediction to be de-biased.
+  // Gated on habit — see SIBLING_ANCHOR_HABITS. The crop-not-cultivar mismatch means this anchor is
+  // only defensible where "the first fruit came off on date D" is a real one-shot event.
   const sibling = toYmd(row?.sibling_first_pick_date);
-  if (sibling != null) {
+  if (sibling != null && siblingHabits.has(row?.harvest_habit)) {
     out.push({
       kind: 'sibling', anchor_date: sibling, basis: 'sibling-first-pick', basis_shifted: false,
       basis_field: 'sibling_first_pick_date', expected_days: null, lead_days: 0,
@@ -221,6 +303,27 @@ function availableAnchors(row, nurseryOffsetDays) {
       expected_days: expected, lead_days: lead, nursery_offset_applied: cal.nursery_offset_applied,
       check_from: addDays(cal.date, expected - lead), source_plant_id: null,
     });
+  }
+
+  // Derived — a backfilled anchor for a planting that has NO date of its own (V4-ANCHORBASE-001).
+  // Read from the persisted derived_anchor_* columns rather than derived here, so the value the
+  // watch list uses is the same value that was recorded, labelled and can be audited or reverted.
+  // Guarded by BOTH the feature flag and the presence of the column, and — the invariant that makes
+  // this safe — it is skipped outright whenever `cal` produced anything, because a planting with a
+  // real date must never also carry a derived one.
+  if (derivedEnabled && cal == null && expected != null) {
+    const derivedDate = toYmd(row?.derived_anchor_date);
+    if (derivedDate != null) {
+      const lead = leadDaysFor(expected);
+      out.push({
+        kind: 'derived', anchor_date: derivedDate, basis: 'derived-anchor', basis_shifted: false,
+        basis_field: 'derived_anchor_date', expected_days: expected, lead_days: lead,
+        nursery_offset_applied: 0, check_from: addDays(derivedDate, expected - lead),
+        source_plant_id: null,
+        derived_source: row?.derived_anchor_source ?? null,
+        derived_confidence: row?.derived_anchor_confidence ?? null,
+      });
+    }
   }
 
   return out.filter((a) => a.check_from != null);
@@ -259,7 +362,8 @@ function availableAnchors(row, nurseryOffsetDays) {
 // fixture carried both a fruit_set and a sibling — which is why the fixtures now do.
 export function resolveWatchAnchor(row, opts = {}) {
   const nurseryOffsetDays = opts.nurseryOffsetDays ?? NURSERY_OFFSET_DAYS_FALLBACK;
-  const anchors = availableAnchors(row, nurseryOffsetDays);
+  const anchors = availableAnchors(row, nurseryOffsetDays, opts.siblingHabits ?? SIBLING_ANCHOR_HABITS,
+    opts.derivedEnabled ?? DERIVED_ANCHOR_ENABLED);
   if (anchors.length === 0) return null;
 
   const byDate = [...anchors].sort((a, b) => (
@@ -309,10 +413,47 @@ export function shortDate(ymd) {
 
 const FIELD_VERB = { sown_at: 'sown', transplanted_at: 'transplanted', planted_out_at: 'planted out' };
 
-export function describeBasis(anchor, etToday) {
+// A borrowed anchor must LOOK borrowed. `sibling picked Aug 10` says a sibling picked, but never
+// says WHICH — so a row silently presents a neighbouring planting's date as evidence about itself,
+// and Dave has no way to see that the "sibling" is a different variety with a different maturity
+// (V4-ANCHORBASE-001: 49 varieties in one pepper project). Naming it makes the borrow visible and
+// checkable at a glance. The name is truncated because the design's ~40-char basis budget is what
+// keeps the watch row a row instead of the inventory it replaced.
+const SIBLING_NAME_MAX = 18;
+
+export function siblingLabel(name) {
+  const s = typeof name === 'string' ? name.trim() : '';
+  if (s === '') return null;
+  return s.length <= SIBLING_NAME_MAX ? s : `${s.slice(0, SIBLING_NAME_MAX - 1).trimEnd()}…`;
+}
+
+export function describeBasis(anchor, etToday, row = null) {
   if (!anchor) return null;
-  if (anchor.kind === 'sibling') return `sibling picked ${shortDate(anchor.anchor_date)}`;
+  if (anchor.kind === 'sibling') {
+    const who = siblingLabel(row?.sibling_planting_name ?? anchor.source_planting_name);
+    // Falls back to the unnamed form rather than printing an empty slot — a sibling with no name on
+    // the row is a data gap, not a reason to drop the provenance entirely.
+    return who == null
+      ? `sibling picked ${shortDate(anchor.anchor_date)}`
+      : `sibling ${who} picked ${shortDate(anchor.anchor_date)}`;
+  }
   if (anchor.kind === 'observed') return `fruit set ${shortDate(anchor.anchor_date)}`;
+
+  // V4-ANCHORBASE-001, marking-rule layer 3. A derived anchor's copy leads with `est.` — ALWAYS,
+  // before any date or number — because this row rests on a date Dave never entered. The
+  // add-date baseline says so in as many words: at 47.3% accuracy within a week it is not a date,
+  // it is an assumption, and printing it as `planted 62d` would launder it into a record.
+  if (anchor.kind === 'derived') {
+    const from = anchor.derived_source === 'add_date_baseline' ? 'est. from add-date'
+      : anchor.derived_source === 'nursery_proxy_event' ? 'est. from nursery event'
+        : anchor.derived_source === 'sow_event' ? 'est. from sow event'
+          : anchor.derived_source === 'transplant_event' ? 'est. from transplant event'
+            : 'est. anchor';
+    const days = daysBetween(anchor.anchor_date, etToday);
+    const dtm = anchor.expected_days == null ? null : `catalogue ${anchor.expected_days}d`;
+    const core = days == null ? from : `${from} ${days}d`;
+    return dtm ? `${core} · ${dtm}` : core;
+  }
 
   // The age is measured from anchor_date — the date the DTM math ACTUALLY used — never from the raw
   // field. When the nursery offset was applied, those differ by a month, and printing the raw
@@ -400,7 +541,7 @@ export function projectWatchRow(row, verdict, etToday) {
       crop_type_slug: row.crop_type_slug ?? null,
     },
     watching_since: verdict.check_from,
-    basis: describeBasis(a, etToday),
+    basis: describeBasis(a, etToday, row),
 
     // ── Additive: everything the UI does not render but the server/audit path needs ───────────────
     location_id: row.location_id ?? null,
@@ -424,6 +565,12 @@ export function projectWatchRow(row, verdict, etToday) {
       nursery_offset_applied: a.nursery_offset_applied,
       source_plant_id: a.source_plant_id ?? null,
       source_planting_name: a.kind === 'sibling' ? (row.sibling_planting_name ?? null) : null,
+      // V4-ANCHORBASE-001: the marking rides the wire, not just the copy. `derived` is a boolean a
+      // consumer can filter on without parsing prose — a calibration query that silently trained on
+      // invented anchors would be fitting its own assumption.
+      derived: a.kind === 'derived',
+      derived_source: a.derived_source ?? null,
+      derived_confidence: a.derived_confidence ?? null,
       alternates: a.alternates ?? [],
     },
     check_from: verdict.check_from,
