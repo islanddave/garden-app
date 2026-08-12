@@ -119,6 +119,144 @@ async function backfillYesterdayActual(pg, userId, today, hy, prov) {
   }
 }
 
+// ── V4-WATERMATH-001 F1 (W-F2A-WX) — the weather_daily substrate ─────────────────────────────────
+// Canon: watering-cadence-math-design-V100-20260812.md Part 4. Migration: migrations/v4-weatherdaily-001.
+//
+// F1 ships the SUBSTRATE only. Nothing here changes a single watering verdict — the engine does not
+// read weather_daily yet (that is F2, behind CARE_WATER_LEDGER_ENABLED) — and that is the point: the
+// ledger's demand term integrates over a 30-day window, so the series has to have been accumulating
+// long before the fold that consumes it is switched on.
+//
+// WRITE DISCIPLINE, and why each clause of it is load-bearing:
+//   * COMPLETED DAYS ONLY. Sourced from hydrology.settled_days, which excludes D0 by construction.
+//     A 15:30 intraday run persisting today's partial total would be indistinguishable from a real
+//     dry day on every later read.
+//   * !dryRun ONLY. A dry replay must read and never write — the same wrapper contract that governs
+//     every other write in this run (scripts/rerun-daily-plan.sh depends on a dry invoke being
+//     zero-write, and the A0.2/A0.3 sentinels exist to prove the deployed zip honours it).
+//   * STRICTLY BEFORE `today`. This is the guard against the `--today <past>` replay trap: the
+//     wrapper's `--today` overrides the PLAN DATE but the fetchers still call Open-Meteo relative to
+//     NOW, so a "historical" replay holds today's weather wearing a past date's label. Without this
+//     comparison, one `--live --today 2026-07-01` would stamp this week's ET0 onto July rows and the
+//     corruption would be invisible — the values are plausible and the provenance column would say
+//     'openmeteo_live', which would be true and useless.
+//   * NON-FATAL, ALWAYS. Same fail-open posture as readPriorRuns and backfillYesterdayActual: this
+//     is substrate accumulation, and losing a night of it is a rounding error against losing the
+//     nightly plan. The catch is what makes the migration-lands-late window survivable at all.
+const WEATHER_DAILY_SOURCE_GAUGE = 'gauge_merged';
+const WEATHER_DAILY_SOURCE_LIVE = 'openmeteo_live';
+
+// Upsert the completed days from one Space's hydrology bag. Returns the number of rows written; never
+// throws, never returns a rejected promise. `prov` is the Space's station provenance bag, which is the
+// ONLY thing that can distinguish a gauge reading from a model hindcast (see the H3 note in station.js —
+// an "actual" that is silently a forecast is the exact defect BUG-RAINACTUAL-001 was filed for).
+async function writeWeatherDaily(pg, spaceId, today, hy, prov) {
+  try {
+    const days = hy && Array.isArray(hy.settled_days) ? hy.settled_days : null;
+    if (!days || !days.length) return 0;
+    if (typeof today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return 0;
+    const yesterday = prevPlanDate(today);
+    // The gauge-merged D-1 figure, if station.mergeStationHydrology established one. Read from the
+    // TOP-LEVEL key rather than from settled_days because the merge writes it there — settled_days
+    // deliberately carries the raw model value so the two can be told apart here.
+    const mergedYest = Number.isFinite(hy.yesterday_precip_actual_in) ? hy.yesterday_precip_actual_in : null;
+    const yestIsGauge = !!(prov && prov.yesterday_actual_source === 'station');
+    let written = 0;
+    for (const d of days) {
+      if (!d || typeof d.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d.date)) continue;
+      if (d.date >= today) continue;                       // the --today replay guard; ISO dates compare lexically
+      const isYesterday = d.date === yesterday;
+      // Prefer the gauge-merged number for D-1; fall back to the raw model value. Label honestly in
+      // both directions — the label is what makes a later "how good was our input?" question answerable.
+      const precip = (isYesterday && mergedYest != null) ? mergedYest : d.precip_in;
+      const precipSource = precip == null
+        ? null
+        : ((isYesterday && mergedYest != null && yestIsGauge) ? WEATHER_DAILY_SOURCE_GAUGE : WEATHER_DAILY_SOURCE_LIVE);
+      const et0Source = d.et0_in == null ? null : WEATHER_DAILY_SOURCE_LIVE;
+      // Every parameter carries an explicit cast. Neon's driver cannot infer a type for a NULL bind
+      // and answers "could not determine data type of parameter" — which, in a try/catch this broad,
+      // would present as the weather substrate silently never populating.
+      await pg.query(
+        `insert into weather_daily (space_id, "date", et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source)
+         values ($1::uuid, $2::date, $3::numeric, $4::numeric, $5::numeric, $6::numeric, $7::text, $8::text)
+         on conflict (space_id, "date") do update set
+           et0_in    = coalesce(excluded.et0_in,    weather_daily.et0_in),
+           tmax_f    = coalesce(excluded.tmax_f,    weather_daily.tmax_f),
+           tmin_f    = coalesce(excluded.tmin_f,    weather_daily.tmin_f),
+           -- NEVER downgrade a gauge reading to a model one. The nightly run rewrites D-2 as well as
+           -- D-1, and by the time a day is D-2 the AmbientWeather buckets that produced its gauge
+           -- figure are gone, so the only value on offer is Open-Meteo's. Without this guard every
+           -- night would overwrite yesterday's measured rain with the model's estimate — the table
+           -- would hold real gauge data for exactly 24 hours, and precip_source would faithfully
+           -- record the replacement while looking entirely healthy.
+           precip_in = case when weather_daily.precip_source = '${WEATHER_DAILY_SOURCE_GAUGE}'
+                             and coalesce(excluded.precip_source, '') <> '${WEATHER_DAILY_SOURCE_GAUGE}'
+                            then weather_daily.precip_in
+                            else coalesce(excluded.precip_in, weather_daily.precip_in) end,
+           precip_source = case when weather_daily.precip_source = '${WEATHER_DAILY_SOURCE_GAUGE}'
+                                 and coalesce(excluded.precip_source, '') <> '${WEATHER_DAILY_SOURCE_GAUGE}'
+                                then weather_daily.precip_source
+                                else coalesce(excluded.precip_source, weather_daily.precip_source) end,
+           et0_source = coalesce(excluded.et0_source, weather_daily.et0_source),
+           updated_at = now()`,
+        [spaceId, d.date, d.et0_in ?? null, d.tmax_f ?? null, d.tmin_f ?? null,
+         precip ?? null, precipSource, et0Source]);
+      written++;
+    }
+    // Design Part 4 asks for named soak observability rather than vibes: rows/day per space and the
+    // null-rate, so a substrate that is quietly writing all-NULL rows is visible in CloudWatch before
+    // F2 ever reads it. An alarm threshold on this line is a pre-F2 task.
+    console.log(JSON.stringify({ msg: 'weather-daily-write', space: spaceId, rows: written,
+      dates: days.map((d) => d && d.date).filter(Boolean),
+      null_et0: days.filter((d) => d && d.et0_in == null).length,
+      null_precip: days.filter((d) => d && d.precip_in == null).length,
+      gauge_yesterday: yestIsGauge }));
+    return written;
+  } catch (e) {
+    // The named failure class: BUG-SEEDEDGATE-001 at TABLE granularity. If the migration has not
+    // landed, every statement above throws "relation weather_daily does not exist" — and it stops
+    // here, with a warning, leaving the nightly plan completely unaffected.
+    console.warn(JSON.stringify({ msg: 'weather_daily write failed — plan unaffected', space: spaceId, error: e?.message }));
+    return 0;
+  }
+}
+
+// FLAG-GATED READ. Nothing in F1 calls this unless CARE_WATER_LEDGER_ENABLED is exactly 'true'; F2's
+// fold is its only real consumer. The gating is the whole point — a SELECT against a relation that
+// does not exist yet is precisely the seededgate defect (one bad query blanked the entire nightly plan
+// for both users), so the read must be structurally unreachable until the migration is known to have
+// landed, not merely defensive about it. Pinned by an EXECUTING test that counts the queries run()
+// actually issues, not by a source grep: a grep proves where the call site is written, and the thing
+// worth proving is that it is never reached.
+async function readWeatherDaily(pg, spaceId, fromDate, toDate) {
+  try {
+    const { rows } = await pg.query(
+      `select "date"::text as date, et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source
+         from weather_daily
+        where space_id = $1::uuid and "date" >= $2::date and "date" <= $3::date
+        order by "date"`,
+      [spaceId, fromDate, toDate]);
+    return rows;
+  } catch (e) {
+    // Fail-open to an EMPTY SERIES, never to a throw. Design Part 4's degenerate branch is explicit:
+    // a missing weather_daily row yields demand = 1.0, which is today's model exactly. An unreadable
+    // table must therefore degrade the ledger to present-day behaviour, not take the run down.
+    console.warn(JSON.stringify({ msg: 'weather_daily read failed — ledger degrades to demand 1.0', space: spaceId, error: e?.message }));
+    return [];
+  }
+}
+
+// How far back the ledger fold looks. Design Part 2 anchors on the latest watering/rain event within
+// 30 days, so the weather window must cover the same span or the earliest days of the fold would
+// accrue demand 1.0 against real events.
+const WEATHER_DAILY_WINDOW_DAYS = 30;
+
+function weatherWindowStart(today, days = WEATHER_DAILY_WINDOW_DAYS) {
+  const d = new Date(today + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
 // ── V4-FROST-001 F3 — alert dedup store (§3-5) ────────────────────────────────────────────────────
 // Cheapest durable home per §3-5: an additive `alerts_sent` key on the daily-plan items payload that is
 // already written per run. No DDL, no PLAN_SCHEMA_VERSION bump (every reader selects named keys), and the
@@ -269,8 +407,15 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   console.log(JSON.stringify({ msg: 'station-fetched', ms: Date.now() - t0, present: !!stationRaw }));
   const station = deriveStation(stationRaw, { nowMs: Date.now() });
   let boundSpaces = 0;
+  // V4-WATERMATH-001 F1 — the ledger flag, read ONCE and used for exactly one thing in F1: whether the
+  // weather_daily SELECT happens at all. Default OFF, and OFF is byte-identical — the engine is not
+  // wired to this data yet (that is F2), so with the flag off this run issues zero reads against the
+  // new relation. The WRITE below is deliberately NOT behind this flag: the substrate has to be
+  // accumulating before the fold that consumes it is switched on, which is the entire reason F1 is a
+  // separate ship. Mirror any flip in src/lib/featureFlags.js when F2 gives it a client-side meaning.
+  const waterLedgerEnabled = process.env.CARE_WATER_LEDGER_ENABLED === 'true';
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.
-  const wxBySpace = {}, hyBySpace = {}, coordsBySpace = {}, stationProvBySpace = {};
+  const wxBySpace = {}, hyBySpace = {}, coordsBySpace = {}, stationProvBySpace = {}, wxDailyBySpace = {};
   for (const s of spaces) {
     let wx = await weatherForSpace(s, { geocodeZip, fetchNWS });
     let hy = await hydrologyForSpace(s, { geocodeZip, fetchPrecip });  // assembled BEFORE suggestions
@@ -292,6 +437,20 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     stationProvBySpace[s.id] = prov;
     coordsBySpace[s.id] = await coordsForSpace(s, { geocodeZip });               // DRG-WXROLL-001: for client live-refresh
     console.log(JSON.stringify({ msg: 'space-wx', space: s.id, ms: Date.now() - t0, wx: !!wx, hy: !!hy }));
+    // V4-WATERMATH-001 F1 — persist this Space's completed days, then (ONLY behind the flag) read the
+    // fold window back. Order matters: the write goes first so a same-night backfill of a gap is
+    // visible to the read in the same run rather than a day later.
+    //
+    // The write is gated on !dryRun and is non-fatal by construction (writeWeatherDaily never throws),
+    // so neither a dry replay nor an unapplied migration can affect anything below this line.
+    if (!dryRun) await writeWeatherDaily(pg, s.id, today, hy, prov);
+    // FLAG OFF => this expression short-circuits to null and readWeatherDaily is NEVER CALLED, so no
+    // statement mentioning weather_daily is ever sent by the read path. That is the seededgate
+    // guarantee, and it is pinned by an executing test that counts real queries (weatherdaily.test.js),
+    // not by a source assertion — the claim is about reachability, which source text cannot show.
+    wxDailyBySpace[s.id] = waterLedgerEnabled
+      ? await readWeatherDaily(pg, s.id, weatherWindowStart(today), prevPlanDate(today))
+      : null;
   }
   // Group plantings by Space so each gets its own forecast; within a Space, engine splits per caretaker.
   // DRG-WXSTATION-001 observability (V200 §3): one structured line per run — chosen source, recent value,
@@ -365,7 +524,12 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   const bySpace = {};
   for (const p of plantings) (bySpace[p.workspace_id] ||= []).push(p);
   for (const [spaceId, rows] of Object.entries(bySpace)) {
-    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled });
+    // V4-WATERMATH-001 F1 — `weatherDaily` is passed but NOT YET CONSUMED: generatePlan destructures
+    // named parameters and has no `weatherDaily` among them, so this is inert today and the plan stays
+    // byte-identical. It is here as the F2 seam, so the fold's input arrives by the same route as every
+    // other engine input rather than being threaded in as a late special case. It is null whenever
+    // CARE_WATER_LEDGER_ENABLED is off, which is always, until F2 flips it.
+    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled });
     // Frost is a SITE-level event (§3-3): evaluated once per Space, then annotated with the affected crop
     // types. D6: one coalesced alert naming every crop type that tripped ITS OWN threshold; plantings
     // already under cover are excluded (frostClass.summarize's covered filter).
@@ -506,4 +670,5 @@ function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   return { dryRun, today, ping: !!(event && event.ping === true) };
 }
 
-module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, ALERTS_SENT_MAX };
+module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, ALERTS_SENT_MAX,
+  writeWeatherDaily, readWeatherDaily, weatherWindowStart, WEATHER_DAILY_WINDOW_DAYS };
