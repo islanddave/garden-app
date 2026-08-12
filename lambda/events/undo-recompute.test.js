@@ -151,9 +151,18 @@ describe('events Lambda — single-event undo is no longer gated on watering', (
   it('pushes the project-keyed recompute unconditionally', () => {
     const b = singleUndo();
     const push = b.indexOf('stmts.push(sql`');
-    const guardBefore = b.lastIndexOf('if (', push);
-    // The only `if` above the first recompute push is the 404 ownership guard, which returns.
-    expect(b.slice(guardBefore, push)).toMatch(/if \(!owned\.length\)/);
+    expect(push).toBeGreaterThan(-1);
+    // Every `if` above the first recompute push must be an ownership guard that RETURNS, so none of
+    // them can gate the push. This used to name the single expected guard via lastIndexOf('if (');
+    // BUG-NULLPROJEVENT-001 added a SECOND 404 guard (the isEventOwned re-check on the row the
+    // ownership read returned), which became the last `if` and broke the landmark while the property
+    // it was testing still held. Asserting the property across ALL of them is what the test meant,
+    // and it no longer has to be re-anchored every time a guard is added.
+    const ownedRead = b.indexOf('const owned = await sql');
+    expect(ownedRead).toBeGreaterThan(-1);
+    const guards = b.slice(ownedRead, push).match(/^\s*if \(.*$/gm) ?? [];
+    expect(guards.length).toBeGreaterThan(0);
+    for (const g of guards) expect(g).toMatch(/return resp\(404, \{ error: 'Not found' \}\);/);
   });
 
   it('still guards the plant-keyed recompute on plantId — project-level events have none', () => {

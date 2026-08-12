@@ -34,7 +34,13 @@
 import { useAuth } from '@clerk/react'
 import { useCallback } from 'react'
 
-const FUNCTION_URLS = {
+// Exported for src/__tests__/clientRouteLambdaContract.test.js, which resolves every client-side
+// API path through THIS table (via resolveUrl, with probe base URLs) and asserts the Lambda it
+// lands on actually declares a matching route. Exporting it is what makes that guard read the one
+// real table instead of a second copy — a copy is precisely how BUG-HARVWATCHROUTE-001 stayed green.
+// Values are still the statically-replaced `import.meta.env.VITE_*` member expressions: Vite only
+// substitutes static property access, so this object must never be rebuilt by dynamic indexing.
+export const FUNCTION_URLS = {
   '/api/projects/inactive': import.meta.env.VITE_API_DASHBOARD     ?? '',
   '/api/projects':          import.meta.env.VITE_API_PROJECTS      ?? '',
   '/api/plants':            import.meta.env.VITE_API_PLANTS        ?? '',

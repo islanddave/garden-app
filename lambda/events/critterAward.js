@@ -41,7 +41,10 @@ async function incrementSightingTally(sql) {
   }
 }
 
-// Build deterministic seed (mirrors src/lib/critterClient.js buildSeed).
+// Build deterministic seed. This is now the ONLY seed builder: the client mirror in
+// src/lib/critterClient.js was removed with POST /api/critters (BUG-CRITTERSELFGRANT-001).
+// Its output is stored as meta.deterministic_seed, so this function's behavior is
+// load-bearing for the provenance of every existing critter_state row — do not change it.
 function buildSeed(sourceEventId, eventCreatedAt, householdId) {
   return [
     sourceEventId ?? '',

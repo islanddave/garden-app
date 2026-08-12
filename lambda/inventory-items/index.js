@@ -246,12 +246,12 @@ export const handler = async (event) => {
           -- featured_photo_id. NOTHING IS DELETED, so no deleted_at filter can ever catch it —
           -- only re-checking membership can.
           --
-          -- `fp.inventory_item_id = i.id` is exactly the linkage the set-featured WRITE validator
+          -- The predicate fp.inventory_item_id = i.id is exactly the linkage the set-featured WRITE validator
           -- already enforces (~:275 below). Read half and write half of ONE invariant: diverging
           -- them manufactures the silent-revert bug fetchSpaceHero documents (the user re-picks the
           -- photo, the write accepts, the read demotes it again). Change one, change both.
           --
-          -- ALIASED to effective_featured_photo_id, NOT featured_photo_id, because `i.*` above
+          -- ALIASED to effective_featured_photo_id, NOT featured_photo_id, because the i.* wildcard above
           -- already emits the raw column: two same-named columns in one SELECT and the driver's
           -- last-one-wins is undefined behavior to depend on. The JS below does the override
           -- explicitly. featured_image_id is untouched here — it is the deprecated V1-era twin

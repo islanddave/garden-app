@@ -238,13 +238,15 @@ export const BATCH_EXCLUDED_TYPES = [
 //                                               awardCrittersForBatch, and at the awardCritterServer
 //                                               chokepoint; pinned by critter-nonreward.test.js.
 //
-// KNOWN NOT COVERED by this partition (both are direct-API-only — the shipped SPA reaches neither,
-// and neither was introduced with moisture_check; recorded here so the next reader does not have
-// to re-derive them): `POST /api/critters` (lambda/critter/index.js) grants a critter_state row for
-// ANY source event with no event_type gate and no roll at all, and the `issue_resolve_count`
-// achievement evaluator (lambda/events/index.js) counts any flagged+resolved row regardless of
-// type. The SPA only ever sets flagged_as_issue on 'flag_issue', and has had no caller for
-// awardCritter() since the server-side hook replaced it.
+// The two paths previously recorded here as KNOWN NOT COVERED are now both closed, 2026-08-12:
+//   POST /api/critters      RETIRED, not gated. It granted a critter_state row for any source event
+//                           with no event_type gate and no roll at all. Zero SPA callers and zero
+//                           prod rows ever came from it; see the tombstone in lambda/critter/index.js.
+//   issue_resolve_count     FILTERED. The resolved_set CTE in lambda/events/index.js counted any
+//                           flagged+resolved row regardless of type, so a flagged non-reward event
+//                           earned caretaker achievements and their XP. It now carries the same
+//                           NOT (event_type = ANY(NON_REWARD_EVENT_TYPES)) predicate as the
+//                           recompute. Prod had 0 non-reward flagged rows, so no count moved.
 //
 // WHY: moisture_check is a one-tap "not thirsty" snooze sitting next to the primary log button. A
 // rewarded snooze is a farmable XP lever — tap it on 200 plantings, cap the daily XP, sustain a

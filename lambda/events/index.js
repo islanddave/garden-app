@@ -25,6 +25,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES } from './validators.js';
+import { isEventOwned } from './eventOwnership.js';
 import { validateClear, resolveFlagPair } from './clearFields.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
@@ -1039,6 +1040,16 @@ export const handler = async (event) => {
                   AND el.flagged_as_issue = true
                   AND el.resolved_at IS NOT NULL
                   AND el.resolved_at >= el.created_at + INTERVAL '24 hours'
+                  -- BUG-CRITTERNONREWARD-001 sibling: this counter is the last unfiltered reward
+                  -- path for NON_REWARD_EVENT_TYPES, whose contract is "ZERO xp, ZERO streak
+                  -- credit, ZERO total_events". It counted ANY flagged-and-resolved row regardless
+                  -- of event_type, so a flagged moisture_check counted toward the caretaker
+                  -- achievements and granted xp through the xp_grants CTE below — a literal
+                  -- violation. Same predicate as the recompute two blocks away in this file.
+                  -- Currently unreachable from the SPA (EventNew sets flagged_as_issue only for
+                  -- flag_issue) and prod carries 0 non-reward flagged rows, so this changes no
+                  -- existing count; it closes the direct-API path and the next one to ship.
+                  AND NOT (el.event_type = ANY(${NON_REWARD_EVENT_TYPES}::text[]))
               ),
               resolved_stats AS (
                 SELECT
@@ -1185,10 +1196,12 @@ export const handler = async (event) => {
         const catErr = validateTreatmentCategory(body.treatment_category);
         if (catErr) return resp(catErr.status, { error: catErr.error });
 
-        // Authz + existence in one read, matching the DELETE/GET pattern exactly (container
-        // ownership via project_id). Verified safe against live data: 0 of 11,583 undeleted events
-        // carry a NULL project_id, so the inner join excludes nothing real. Deliberately NOT a
-        // looser rule invented for this fix — a bug fix is the wrong place to widen authz.
+        // Authz + existence in one read, matching the DELETE/GET pattern exactly.
+        // BUG-NULLPROJEVENT-001: this used to INNER JOIN container on el.project_id and justify it
+        // with "0 of 11,583 undeleted events carry a NULL project_id". That count is now 2 and
+        // rising, and each such row was un-viewable, un-editable and un-deletable in-app. The join
+        // is now a LEFT JOIN plus an explicit two-arm predicate; see eventOwnership.js for the rule
+        // and for why the arms are keyed on project_id rather than on which join produced a row.
         const owned = await sql`
           SELECT el.id, el.event_type, el.plant_id,
                  -- BUG-CACHEGATE-001: the PRE-edit event_date. The care-cache trigger predicate has
@@ -1206,15 +1219,22 @@ export const handler = async (event) => {
                  -- to recompute the cache on the anchor the event just LEFT.
                  el.project_id, el.location_id,
                  (SELECT h.id FROM harvest_log h
-                   WHERE h.event_id = el.id AND h.deleted_at IS NULL LIMIT 1) AS harvest_log_id
+                   WHERE h.event_id = el.id AND h.deleted_at IS NULL LIMIT 1) AS harvest_log_id,
+                 pp.created_by AS project_owner_id,
+                 pn.created_by AS plant_owner_id
             FROM event_log el
-            JOIN public.container pp ON pp.id = el.project_id
+            LEFT JOIN public.container pp ON pp.id = el.project_id AND pp.deleted_at IS NULL
+            LEFT JOIN public.garden_node pn ON pn.id = el.plant_id AND pn.deleted_at IS NULL
            WHERE el.id = ${eventId}
              AND el.deleted_at IS NULL
-             AND pp.created_by = ANY(${householdIds})
-             AND pp.deleted_at IS NULL
+             AND (
+                   (el.project_id IS NOT NULL AND pp.created_by = ANY(${householdIds}))
+                OR (el.project_id IS NULL     AND pn.created_by = ANY(${householdIds}))
+             )
         `;
         if (!owned.length) return resp(404, { error: 'Not found' });
+        // Second, independent gate on the row the SQL handed back (eventOwnership.js §TWO GATES).
+        if (!isEventOwned(owned[0], householdIds)) return resp(404, { error: 'Not found' });
         const existing = owned[0];
         const hasHarvestRow = existing.harvest_log_id != null;
 
@@ -1371,12 +1391,22 @@ export const handler = async (event) => {
                                                WHEN ${clear} @> ARRAY['pest_target'] THEN NULL
                                                ELSE COALESCE(${body.pest_target ?? null}, el.pest_target) END,
                  updated_at    = NOW()
-            FROM public.container pp
            WHERE el.id = ${eventId}
              AND el.deleted_at IS NULL
-             AND pp.id = el.project_id
-             AND pp.created_by = ANY(${householdIds})
-             AND pp.deleted_at IS NULL
+             -- BUG-NULLPROJEVENT-001. The FROM public.container pp clause is gone: UPDATE ... FROM cannot
+             -- express "the container is optional", and a project-less event has no container row
+             -- to join, so the old form updated zero rows and 404'd after the pre-read had already
+             -- said yes. EXISTS carries the same two-arm rule as the pre-read instead. The SET list
+             -- never referenced pp, so nothing else depended on that join.
+             AND EXISTS (
+               SELECT 1 FROM public.container pp
+                WHERE el.project_id IS NOT NULL AND pp.id = el.project_id
+                  AND pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL
+               UNION ALL
+               SELECT 1 FROM public.garden_node gn
+                WHERE el.project_id IS NULL AND gn.id = el.plant_id
+                  AND gn.created_by = ANY(${householdIds}) AND gn.deleted_at IS NULL
+             )
           RETURNING el.id, el.project_id, el.location_id, el.plant_id, el.event_type,
                     el.event_date, el.title, el.notes, el.private_notes, el.quantity,
                     el.is_public, el.logged_by, el.created_at, el.updated_at,
@@ -1785,16 +1815,26 @@ export const handler = async (event) => {
                  FROM harvest_log h
                 WHERE h.event_id = e.id AND h.deleted_at IS NULL
                 LIMIT 1
-             ) x) AS harvest
+             ) x) AS harvest,
+            -- BUG-NULLPROJEVENT-001 ownership columns; see eventOwnership.js.
+            pp.created_by AS project_owner_id,
+            pn.created_by AS plant_owner_id
           FROM event_log e
-          JOIN public.container pp ON pp.id = e.project_id
+          -- Aliased pn, not gn: the HIDE_EVENTS_UNDER_DELETED_PLANTING subquery below already binds
+          -- gn, and a same-named outer alias would be silently shadowed inside it.
+          LEFT JOIN public.container pp ON pp.id = e.project_id AND pp.deleted_at IS NULL
+          LEFT JOIN public.garden_node pn ON pn.id = e.plant_id AND pn.deleted_at IS NULL
           WHERE e.id = ${eventId}
             AND e.deleted_at IS NULL
-            AND pp.created_by = ANY(${householdIds})
-            -- V4-SOFTDEL-001 F3: match the DELETE handler below, which already carries
-            -- pp.deleted_at IS NULL. Without it this GET 200s a detail page for an event whose
-            -- container is in the trash — and the delete button on that page 404s.
-            AND pp.deleted_at IS NULL
+            -- V4-SOFTDEL-001 F3 is now carried by the join's own pp.deleted_at IS NULL predicate: a
+            -- soft-deleted container produces no pp row, so pp.created_by is NULL and the
+            -- project arm below cannot match. The old standalone AND pp.deleted_at IS NULL line
+            -- was removed because against a LEFT JOIN it reads NULL IS NULL — always true, and
+            -- therefore no longer the control it reads as.
+            AND (
+                  (e.project_id IS NOT NULL AND pp.created_by = ANY(${householdIds}))
+               OR (e.project_id IS NULL     AND pn.created_by = ANY(${householdIds}))
+            )
             -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING (disabled today).
             AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
                  OR e.plant_id IS NULL
@@ -1802,7 +1842,12 @@ export const handler = async (event) => {
                              WHERE gn.id = e.plant_id AND gn.deleted_at IS NULL))
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
-        return resp(200, rows[0]);
+        // Second, independent gate on the row the SQL handed back (eventOwnership.js §TWO GATES).
+        if (!isEventOwned(rows[0], householdIds)) return resp(404, { error: 'Not found' });
+        // The two owner columns exist to decide ownership, not to be part of the wire contract —
+        // stripped so this GET's response shape is byte-identical to what it returned before.
+        const { project_owner_id: _po, plant_owner_id: _pn, ...detail } = rows[0];
+        return resp(200, detail);
       }
 
       // DELETE /api/events/:id — single-event undo. SOFT-DELETE ONLY (deleted_at; never
@@ -1830,16 +1875,26 @@ export const handler = async (event) => {
       //     was narrowed to match, so a soft-deleted parent no longer reads as corruption; a
       //     MISSING (hard-deleted) parent still does.
       if (method === 'DELETE') {
+        // BUG-NULLPROJEVENT-001 — same two-arm ownership rule as the GET and the PUT pre-read; see
+        // eventOwnership.js. The re-parent CASE further down already handles a NULL e.project_id
+        // (its own comment anticipates exactly this change), so nothing below needed to move.
         const owned = await sql`
-          SELECT el.id, el.project_id, el.event_type, el.plant_id
+          SELECT el.id, el.project_id, el.event_type, el.plant_id,
+                 pp.created_by AS project_owner_id,
+                 pn.created_by AS plant_owner_id
           FROM event_log el
-          JOIN public.container pp ON pp.id = el.project_id
+          LEFT JOIN public.container pp ON pp.id = el.project_id AND pp.deleted_at IS NULL
+          LEFT JOIN public.garden_node pn ON pn.id = el.plant_id AND pn.deleted_at IS NULL
           WHERE el.id = ${eventId}
             AND el.deleted_at IS NULL
-            AND pp.created_by = ANY(${householdIds})
-            AND pp.deleted_at IS NULL
+            AND (
+                  (el.project_id IS NOT NULL AND pp.created_by = ANY(${householdIds}))
+               OR (el.project_id IS NULL     AND pn.created_by = ANY(${householdIds}))
+            )
         `;
         if (!owned.length) return resp(404, { error: 'Not found' });
+        // Second, independent gate on the row the SQL handed back (eventOwnership.js §TWO GATES).
+        if (!isEventOwned(owned[0], householdIds)) return resp(404, { error: 'Not found' });
         const projectId = owned[0].project_id;
         const plantId = owned[0].plant_id;
         const stmts = [
