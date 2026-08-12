@@ -49,8 +49,18 @@ const DEFAULT_HARVEST_UNIT = 'count'
 
 // Read the user's last-used harvest unit from localStorage. Guarded for
 // tests / SSR where localStorage may be unavailable or throw.
-function readLastHarvestUnit() {
+// BUG-LOGTARGETREQ-001 / §5.2 prefill-not-preselect: now keyed PER CROP
+// (lastHarvestUnit:<crop_type_slug>) with the legacy global key as fallback. The global
+// default was the same silent-wrong-default class as quantity prefill — a "cups"
+// blueberry pick defaulted "cups" onto the next count-crop harvest, corrupting the
+// exact crop×unit lines the export ships. No crop context (no planting picked yet, or
+// an unresolvable slug) → global → DEFAULT, exactly the old chain.
+function readLastHarvestUnit(cropSlug) {
   try {
+    if (cropSlug) {
+      const perCrop = localStorage.getItem(`lastHarvestUnit:${cropSlug}`)
+      if (perCrop && HARVEST_UNITS.includes(perCrop)) return perCrop
+    }
     const stored = localStorage.getItem('lastHarvestUnit')
     if (stored && HARVEST_UNITS.includes(stored)) return stored
   } catch { /* localStorage unavailable — fall through to default */ }
@@ -88,8 +98,18 @@ const LAST_PROJECT_KEY = 'logone.lastProject'
 // every save — it is the project-level fallback for pre-migration devices and for
 // saves made deliberately without a planting (a plant-less save REMOVES lastPlant so
 // "remembered" is always literally the last save). LogMany's quicklog.* keys untouched.
-// INVARIANT (server exactly_one_parent CHECK): a remembered plant is only ever seeded
-// alongside its remembered parent project — plant_id present ⇒ project_id present.
+// BUG-LOGTARGETREQ-001 (BD-006): the cold-mount VALUE seed from this key is REMOVED.
+// The sticky auto-seed satisfied the required-planting gate with a planting Dave never
+// chose this time — misattribution, not convenience. The key is now consumed ONLY as a
+// RANKING signal: EventNew reads it at picker-OPEN (not mount) and passes it as
+// PlantingSelect's `recentPlantId`, which pins that row to position 1 with a visible
+// "recent" marker. Invariant: a cold mount with NO draft and NO deep-link never
+// pre-targets a planting.
+// STALE-BUNDLE COMPATIBILITY CONTRACT: the removal is client-only (§5.7 — the server
+// validator stays un-flipped), so pre-fix cached PWA bundles keep auto-seeding from
+// this key until their SW updates. The KEY NAME and the WRITE-ON-SAVE below must not
+// be renamed or removed while any pre-fix bundle can be live — an old bundle reading a
+// key that stopped updating would seed a FROZEN stale planting, strictly worse.
 const LAST_PLANT_KEY = 'logone.lastPlant'
 
 // V4-OVERLAY-001 Slice 2 draft stash key + the form fields that survive a dismiss/re-open. Only the
@@ -318,15 +338,12 @@ export default function EventNew() {
   // live data in the load effect below). Read once (lazy init) so an in-session
   // save that rewrites localStorage never re-seeds this mount.
   const [rememberedProjectId] = useState(readLastProjectId)
-  // V4-LOGTARGET-001 (sticky option b): remembered PLANTING, seeded ONLY when its
-  // remembered parent project is also seeding — never with a deep-linked ?project=
-  // or ?plant= (explicit intent wins), and never without a remembered project (a
-  // plant with no parent project would violate the server's exactly_one_parent
-  // CHECK at submit). Validated against the project's live plants in the load
-  // effect below (archived/missing → cleared, same fallback as the project path).
-  const [rememberedPlantId] = useState(() =>
-    (!preselectedProjectId && !preselectedPlantId && rememberedProjectId) ? readLastPlantId() : ''
-  )
+  // BUG-LOGTARGETREQ-001: the remembered-PLANTING value seed that lived here is REMOVED
+  // (see the LAST_PLANT_KEY note above). plant_id now seeds from ?plant= ONLY — explicit
+  // intent (HarvestReadyBand ships a &plant= producer) wins; remembered state is demoted
+  // to a ranking signal read at picker-open (recentPlantId below). logone.lastProject
+  // seeding SURVIVES by design: under PROJECTS_HIDDEN project_id rides the chosen
+  // planting or the default-project fallback, and exempt-type logs rely on it.
 
   const [form, setForm] = useState({
     event_type:    preselectedEventType,
@@ -336,7 +353,7 @@ export default function EventNew() {
     notes:         '',
     private_notes: '',
     quantity:      '',
-    plant_id:      preselectedPlantId || rememberedPlantId,
+    plant_id:      preselectedPlantId,
     is_public:     true,
   })
 
@@ -385,6 +402,10 @@ export default function EventNew() {
   // V1.2a-2 Wave 3: harvest panel state — only submitted for event_type=harvest.
   const [harvest, setHarvest] = useState(freshHarvest)
   const [harvestError, setHarvestError] = useState(null)
+  // BUG-LOGTARGETREQ-001 per-crop unit: true once the user explicitly picks a unit for the CURRENT
+  // entry — the per-crop re-seed effect below must never override a deliberate in-entry choice.
+  // Reset wherever the entry resets (type change, resetForNext).
+  const unitTouchedRef = useRef(false)
 
   // V4-FLAG-001: flag-mode state (event_type='flag_issue'). Severity is REQUIRED; the issue is a
   // static seeded label (Slice 1) or a free-typed/voiced 'Other' -> metadata.issue_label.
@@ -430,10 +451,18 @@ export default function EventNew() {
   // Save is never the next action while a picker is open, so hiding it costs the user nothing and
   // makes the mis-tap structurally impossible rather than merely unlikely.
   const [pickerOpen, setPickerOpen] = useState(false)
+  // BUG-LOGTARGETREQ-001: the remembered planting, demoted from value to RANKING. Read at
+  // picker-OPEN, not mount — after an in-burst save rewrites logone.lastPlant, the still-
+  // mounted form ranks fresh for harvest #2. Passed to PlantingSelect as recentPlantId
+  // (position-1 pin + visible "recent" marker; filters win — see PlantingSelect).
+  const [recentPlantId, setRecentPlantId] = useState('')
   // Stable identity: PlantingSelect reads this through a ref and its effect keys on `open` alone,
   // but keeping the handler stable costs nothing and keeps the BUG-SOWFOCUS-001 rule intact for any
   // future consumer that does key on the callback.
-  const handlePickerOpenChange = useCallback(open => setPickerOpen(open), [])
+  const handlePickerOpenChange = useCallback(open => {
+    setPickerOpen(open)
+    if (open) setRecentPlantId(readLastPlantId())
+  }, [])
   // the user explicitly started — never a reward/celebration channel).
 
   // Reset metadata when event type changes
@@ -441,6 +470,7 @@ export default function EventNew() {
     setMetadataState({})
     // V1.2a-2 Wave 3: reset the type-specific panels too. Harvest unit is
     // re-seeded from localStorage so the user's last choice persists across types.
+    unitTouchedRef.current = false
     setHarvest(freshHarvest())
     setHarvestError(null)
     // V4-FLAG-001: reset flag-mode fields when the event type changes.
@@ -463,6 +493,18 @@ export default function EventNew() {
 
   // V3-EVENTCONTSIZE-001: clear the captured container when the event type or target planting changes.
   useEffect(() => { setContainer({ type: '', size: '' }) }, [form.event_type, form.plant_id])
+
+  // BUG-LOGTARGETREQ-001 (§5.2 prefill-not-preselect): re-seed the harvest unit from the CHOSEN
+  // planting's per-crop memory (lastHarvestUnit:<crop_type_slug>, global fallback). A prefill is
+  // permitted here because a wrong unit is visible beside the quantity and user-confirmable —
+  // unlike the removed planting seed, it never silently targets a write. Never fires over an
+  // explicit in-entry unit pick (unitTouchedRef); a cleared planting falls back to the global key.
+  useEffect(() => {
+    if (form.event_type !== 'harvest' || unitTouchedRef.current) return
+    const slug = plantsForProject.find(p => p.id === form.plant_id)?.variety_ref?.crop_type_slug
+    const unit = readLastHarvestUnit(slug)
+    setHarvest(h => (h.unit === unit ? h : { ...h, unit }))
+  }, [form.event_type, form.plant_id, plantsForProject])
 
   // M1 telemetry: reset the flow on mount; mark start-capture the first time the
   // event type is set to watering (the "started a watering log" signal).
@@ -529,10 +571,12 @@ export default function EventNew() {
 
   // §4 draft stash — persist the in-progress form while dirty (BOTH surfaces, V4-DRAFTFULLPAGE-001).
   // Cleared on a successful save (spent). Dirty NARROWED to typed text (was any-field): the sticky
-  // seeds (event_type kept post-save, remembered plant_id) satisfied the old predicate on every
-  // mount, so the post-save rewrite stored a draft whose EMPTY plant_id then clobbered the
-  // V4-LOGTARGET-001 remembered-planting seed on the next bare mount. Typed text is the
-  // irreplaceable content; picks still ride along in the snapshot whenever text is present.
+  // seeds (event_type kept post-save, and the since-removed remembered plant_id — see
+  // BUG-LOGTARGETREQ-001 above) satisfied the old predicate on every mount, so the post-save
+  // rewrite stored a stale draft. Typed text is the irreplaceable content; picks still ride along
+  // in the snapshot whenever text is present. Draft-restored plant_id is KEPT by design
+  // (adjudicated: the user explicitly chose that planting in this draft — user context, never a
+  // silent default).
   useEffect(() => {
     const dirty = !!(form.notes || form.private_notes || form.quantity)
     if (!dirty) return
@@ -585,18 +629,18 @@ export default function EventNew() {
         const live = (data ?? []).filter(p => !p.archived_at)
         setPlantsForProject(live)
         // BUG-PLANTMISMATCH-001 — GENERALIZED stale-guard. This used to be two checks, each scoped
-        // to one specific id (the ?plant= deep-link prefill and the remembered planting), which is
-        // why a HAND-PICKED planting survived a project switch untouched and POSTed as a mismatched
-        // (project_id, plant_id) pair with nothing on either side validating it. Prod carries 39
-        // such pairs. The rule is not about where the id came from: any plant_id that is not in this
-        // project's live plantings is not a valid target for this project, full stop. Subsumes both
-        // prior checks (V3-LOG-001 deep-link safety, V4-LOGTARGET-001 remembered-planting fallback)
-        // — same silent fall-back to no planting, no notice, since neither is a user error.
+        // to one specific id (the ?plant= deep-link prefill and the since-removed remembered-
+        // planting seed), which is why a HAND-PICKED planting survived a project switch untouched
+        // and POSTed as a mismatched (project_id, plant_id) pair with nothing on either side
+        // validating it. Prod carries 39 such pairs. The rule is not about where the id came from:
+        // any plant_id that is not in this project's live plantings is not a valid target for this
+        // project, full stop. BUG-LOGTARGETREQ-001 removed the remembered-planting seed, but the
+        // guard stays GENERAL — it still validates the ?plant= deep-link and the hand-picked case.
         setForm(f => (f.plant_id && !live.some(p => p.id === f.plant_id) ? { ...f, plant_id: '' } : f))
       })
       .catch(() => { if (!cancelled) { setPlantsForProject([]); setPlantsLoadFailed(true) } })
     return () => { cancelled = true }
-  }, [apiFetch, form.project_id, preselectedPlantId, rememberedPlantId, plantsReloadKey])
+  }, [apiFetch, form.project_id, preselectedPlantId, plantsReloadKey])
 
   // V4-PROJHIDE-001: unscoped planting source. With the project chooser hidden, the picker lists
   // EVERY live planting and project_id is DERIVED from the chosen planting (see PlantingSelect
@@ -632,8 +676,9 @@ export default function EventNew() {
       } else if (!preselectedProjectId && rememberedProjectId && !loggable.some(p => p.id === rememberedProjectId)) {
         // V4-STICKY-001: a remembered project that no longer exists (archived / status
         // changed) must not stick — silently fall back to the current default (no notice).
-        // V4-LOGTARGET-001: the remembered PLANT falls with its parent project — a plant
-        // seeded without a live project would violate plant_id ⇒ project_id at submit.
+        // BUG-LOGTARGETREQ-001: the remembered-PLANT seed is gone, so plant_id here can
+        // only be a ?plant= param riding the remembered project — it falls with that
+        // project (a plant under a dead project would violate plant_id ⇒ project_id).
         setForm(f => (f.project_id === rememberedProjectId ? { ...f, project_id: '', plant_id: '' } : f))
       }
       // V4-PROJHIDE-001: the project chooser is hidden, but exempt (planting-less) events still need
@@ -753,6 +798,7 @@ export default function EventNew() {
     // Treatment was the one dirty-predicate field this reset missed. Stale values also meant the
     // NEXT save could carry the previous save's treatment data on a keepMode:'type' burst.
     setTreatment({ pest_target: '', product_id: '', product_text: '', category: '', amount: '' })
+    unitTouchedRef.current = false
     setHarvest(freshHarvest())
     setHarvestError(null)
     setSeverity(null); setIssueChoice(''); setIssueOther('')
@@ -889,8 +935,15 @@ export default function EventNew() {
     }
 
     // V1.2a-2 Wave 3: remember the chosen harvest unit for next time.
+    // BUG-LOGTARGETREQ-001: ALSO written per-crop (lastHarvestUnit:<slug>) so crop A's unit never
+    // leaks onto crop B's next harvest. The bare global key keeps being written — it is the
+    // fallback for crops with no per-crop memory yet AND the key pre-fix bundles read.
     if (isHarvest) {
-      try { localStorage.setItem('lastHarvestUnit', harvest.unit) } catch { /* noop */ }
+      try {
+        localStorage.setItem('lastHarvestUnit', harvest.unit)
+        const savedSlug = plantsForProject.find(p => p.id === form.plant_id)?.variety_ref?.crop_type_slug
+        if (savedSlug) localStorage.setItem(`lastHarvestUnit:${savedSlug}`, harvest.unit)
+      } catch { /* noop */ }
       // only remember the weight unit once it has actually been used to weigh something
       if (harvest.weight !== '') {
         try { localStorage.setItem('lastHarvestWeightUnit', harvest.weight_unit) } catch { /* noop */ }
@@ -1292,6 +1345,9 @@ export default function EventNew() {
                 return { ...f, plant_id: id, project_id: derived }
               })}
               required={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type)}
+              // BUG-LOGTARGETREQ-001: remembered planting as RANKING, never value — read at
+              // picker-open (see handlePickerOpenChange). Only this site passes it.
+              recentPlantId={recentPlantId}
               resetNonce={pickerResetNonce}
               loadFailed={plantsLoadFailed}
               onRetry={() => setPlantsReloadKey(k => k + 1)}
@@ -1413,7 +1469,9 @@ export default function EventNew() {
                     <Select
                       id="harvest-unit"
                       value={harvest.unit}
-                      onChange={e => setHarvest(h => ({ ...h, unit: e.target.value }))}
+                      // BUG-LOGTARGETREQ-001: an explicit pick pins the unit for THIS entry — the
+                      // per-crop re-seed effect must not override it on a later planting change.
+                      onChange={e => { unitTouchedRef.current = true; setHarvest(h => ({ ...h, unit: e.target.value })) }}
                       aria-label="Harvest unit"
                       style={{ minHeight: 44, minWidth: 44 }}
                     >

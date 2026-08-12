@@ -258,6 +258,14 @@ export default function PlantingSelect({
   // Deliberately a nonce and not a `touched` prop: ownership of the flag stays here, and the host
   // only gets to say "this is a new form now", which is the fact it actually knows.
   resetNonce,
+  // BUG-LOGTARGETREQ-001 — OPTIONAL, default-off ⇒ all render sites byte-identical. When set and
+  // present in the candidate list, that planting is PINNED to position 1 with a visible "recent"
+  // text affix (label channel, never color-only), bypassing the internal sort for that row only.
+  // Composition rules: FILTERS WIN — an active crop chip or typeahead query that excludes it
+  // simply filters it out (never shown-but-dimmed, never overriding a filter); it hoists only
+  // within the filtered set; the marker renders only at top position (an out-of-scope retention
+  // prepend outranks it). Ranking, never value: this prop must never seed `value`.
+  recentPlantId,
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
   'data-testid': dataTestId,
@@ -337,16 +345,23 @@ export default function PlantingSelect({
         looseIncludes(p.project_name, q)
       )
     }
-    if (sort === 'sown') {
-      return [...list].sort((a, b) => {
-        const at = a.sown_at ? Date.parse(a.sown_at) : Infinity
-        const bt = b.sown_at ? Date.parse(b.sown_at) : Infinity
-        if (at !== bt) return (isNaN(at) ? Infinity : at) - (isNaN(bt) ? Infinity : bt)
-        return (a.name || '').localeCompare(b.name || '')
-      })
+    const sorted = sort === 'sown'
+      ? [...list].sort((a, b) => {
+          const at = a.sown_at ? Date.parse(a.sown_at) : Infinity
+          const bt = b.sown_at ? Date.parse(b.sown_at) : Infinity
+          if (at !== bt) return (isNaN(at) ? Infinity : at) - (isNaN(bt) ? Infinity : bt)
+          return (a.name || '').localeCompare(b.name || '')
+        })
+      : [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    // BUG-LOGTARGETREQ-001 — recentPlantId hoist, AFTER scope+search+sort so filters always win:
+    // a row the filter excluded is simply absent (findIndex misses), and the pin acts only within
+    // the filtered set. Absent/archived remembered id → no-op, fallback ordering (never a crash).
+    if (recentPlantId) {
+      const ri = sorted.findIndex(p => String(p.id) === String(recentPlantId))
+      if (ri > 0) sorted.unshift(sorted.splice(ri, 1)[0])
     }
-    return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-  }, [rows, varietyId, cropSlug, query, sort])
+    return sorted
+  }, [rows, varietyId, cropSlug, query, sort, recentPlantId])
 
   const selected = useMemo(
     () => rows.find(p => String(p.id) === String(value)) || null,
@@ -626,6 +641,14 @@ export default function PlantingSelect({
               <span style={{ minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {label(p)}
               </span>
+              {/* BUG-LOGTARGETREQ-001 — "recent" marker: LABEL channel (visible text), never
+                  color/position-only, and ONLY at top position — the retention prepend outranks
+                  the hoist, so a recent row pushed to index 1 carries no marker. */}
+              {i === 0 && recentPlantId && String(p.id) === String(recentPlantId) && (
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: P.green, marginLeft: 8, flexShrink: 0, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                  recent
+                </span>
+              )}
               {/* V4-PROJHIDE-001: option project_name tag hidden when projects aren't user-facing.
                   V4-PICKERUX-001: also hidden when every visible row shares one project. */}
               {p.project_name && labelFormat !== 'wave' && !PROJECTS_HIDDEN && showProjectTag && (

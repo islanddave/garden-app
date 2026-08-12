@@ -7,7 +7,7 @@
 // jest-dom (L-182). Harness mirrors EventNew.plantRequired.test.jsx.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react'
 
 const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
@@ -132,5 +132,38 @@ describe('EventNew — V4-PROJHIDE-001 (flag ON)', () => {
     await waitFor(() => expect(postCalls.length).toBe(1))
     expect(postCalls[0].plant_id).toBeNull()
     expect(postCalls[0].project_id).toBe('proj-A')
+  })
+})
+
+// BUG-LOGTARGETREQ-001 — FLAG-ON duplicates of the sticky-suite pins (design §1a "Flag-arm
+// coverage"): the removed auto-seed executed in BOTH flag arms and prod runs flag-ON, so the
+// never-pre-targets invariant and the ranked-first behavior are pinned here too, against the
+// unscoped /api/plants source. Rollback-arm (flags FALSE) twins live in EventNewStickyProject.
+describe('EventNew — sticky planting demoted to ranking, flag-ON arm (BUG-LOGTARGETREQ-001)', () => {
+  const PLANT_2 = { id: 'plant-2', name: 'Cherokee', project_id: 'proj-B' }
+
+  it('NEVER PRE-TARGETS: both logone.* keys set → bare cold mount (no draft, no deep-link) → no chip, empty combobox', async () => {
+    localStorage.setItem('logone.lastProject', 'proj-B')
+    localStorage.setItem('logone.lastPlant', 'plant-1')
+    renderEventNew('')
+    await flushLoad()
+    expect(screen.queryByTestId('evtnew-planting-chip')).toBeNull()
+    expect(screen.getByLabelText('Plant or group').value).toBe('')
+  })
+
+  it('RANKED FIRST: the remembered planting leads the opened picker with a visible "recent" marker', async () => {
+    dataRef.plants = [PLANT, PLANT_2]
+    localStorage.setItem('logone.lastProject', 'proj-B')
+    localStorage.setItem('logone.lastPlant', 'plant-1')
+    renderEventNew('')
+    await flushLoad()
+    fireEvent.focus(screen.getByLabelText('Plant or group'))
+    await waitFor(() => {
+      const rows = screen.getAllByRole('option')
+      // Name sort would put Cherokee first; the recent hoist must beat it, visibly marked.
+      expect(rows[0].textContent).toContain('Sungold')
+      expect(within(rows[0]).getByText('recent')).toBeTruthy()
+      expect(rows[1].textContent).toContain('Cherokee')
+    })
   })
 })
