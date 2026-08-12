@@ -146,7 +146,9 @@ describe('PlantingDetail — ownership guard + HS-2 filter', () => {
     })
     renderAt()
     await waitFor(() =>
-      expect(apiFetchSpy).toHaveBeenCalledWith('/api/events?project_id=proj1&plant_id=pl1'))
+      // V4-EVENTHISTPAGE-001 appended &limit=200 (the verified server ceiling) — the HS-2 filter
+      // this case guards is unchanged.
+      expect(apiFetchSpy).toHaveBeenCalledWith('/api/events?project_id=proj1&plant_id=pl1&limit=200'))
   })
 
   it('event-log error state is distinct from the page error (page still renders)', async () => {

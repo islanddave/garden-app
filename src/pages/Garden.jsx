@@ -25,7 +25,6 @@ import { setPlantingSequence } from '../lib/plantingSequence.js'
 import { useEntityTagsBulk } from '../hooks/useTags.js'
 import PlantingEditor from '../components/PlantingEditor.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
-import PhotosWall from '../components/PhotosWall.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
 import { useMembers } from '../hooks/useMembers.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
@@ -42,10 +41,10 @@ import { restoreStep, hasRestoreTarget } from '../lib/scrollRestore.js'
 //   • leaf rows (no children) → whole row OPENS
 // Frontend-only: composes /api/projects + /api/plants (no backend/schema change).
 
-// V200 Slice 3: Plants|Photos sub-tab. Remembered in-session via a module-level var (NOT a
-// server pref this slice) so switching tabs and back doesn't reset the choice; each sub-tab
-// owns its own grouping state, so per-sub-tab grouping is preserved automatically.
-let lastSubtab = 'plants'
+// V4-GARDENSEGCTRL-001 (BD0806-20): the V200 Slice 3 Plants|Photos sub-tab is REMOVED. Garden is
+// the plants surface, full stop. Photos were never reachable only from here — /photos (PhotoLibrary)
+// is a first-class route in the BottomNav "More" menu, and PhotosWall itself is still rendered by
+// SpaceDetail — so the removal strands neither the surface nor the component.
 // V4-NAVSTATE-001: last Garden scroll offset, preserved across drill-in + back (module-scoped so it
 // survives the tab's unmount/remount).
 let lastGardenScrollY = 0
@@ -56,8 +55,6 @@ export default function Garden() {
   const { members, loading: membersLoading } = useMembers()
   const [careLens, setCareLens] = useState(() => { try { return localStorage.getItem('garden.careLens') || 'all' } catch { return 'all' } })
   const onCareLensChange = useCallback((v) => { setCareLens(v); try { localStorage.setItem('garden.careLens', v) } catch { /* ignore */ } }, [])
-  const [subtab, setSubtabState] = useState(lastSubtab)
-  const setSubtab = useCallback((v) => { lastSubtab = v; setSubtabState(v) }, [])
   const [projects, setProjects] = useState([])
   const [plants,   setPlants]   = useState([])
   // V4-GARDENLOCFILTER-001: physical locations for the Location group-by. Fetched alongside
@@ -587,35 +584,30 @@ export default function Garden() {
       <CritterCoachmark eligible={coachmarkEligible} onDismiss={onCoachmarkDismiss} />
       <CritterOptInPrompt eligible={optInEligible} onDismiss={onOptInDismiss} />
 
-      {/* V3-IA: no page title — the Garden tab is self-evident. V200 Slice 3 adds the
-          Plants|Photos sub-tab switch; Plants-only controls stay on the Plants sub-tab. */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
-        <SegmentedControl
-          options={[{ value: 'plants', label: 'Plants' }, { value: 'photos', label: 'Photos' }]}
-          value={subtab}
-          onChange={setSubtab}
-          ariaLabel="Plants or Photos"
-        />
-        {subtab === 'plants' && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            {facetOptions.length > 1 && (
-              <GroupByControl options={facetOptions} value={effectiveGroupBy} onChange={onGroupByChange} />
-            )}
-            <Link to="/capture" data-testid="snap-entry-garden" style={btnGhostIcon}>
-              <Icon name="media.camera" size={16} decorative style={{ color: P.green }} />Snap
-            </Link>
-            <OverlayLink to="/log/many" style={btnGhostIcon}>
-              <Icon name="action.logmany" size={16} decorative style={{ color: P.green }} />Log many
-            </OverlayLink>
-            {/* V4-APPBAR-003: Favorites rehomed here from the retired header heart (Dave: into the Garden tab). */}
-            <Link to="/favorites" aria-label="Favorites" style={btnGhostIcon}>
-              <Icon name="action.heart" size={16} decorative style={{ color: P.green }} />Favorites
-            </Link>
-          </div>
-        )}
+      {/* V3-IA: no page title — the Garden tab is self-evident. V4-GARDENSEGCTRL-001 removed the
+          Plants|Photos switch that used to sit at the left of this row; the controls that were gated
+          on the Plants sub-tab are now unconditional. `flex-end` (was `space-between`) keeps the
+          action row right-aligned exactly where it shipped now that it is this row's only child —
+          and it now gets the full 390px width instead of sharing it with the switch. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {facetOptions.length > 1 && (
+            <GroupByControl options={facetOptions} value={effectiveGroupBy} onChange={onGroupByChange} />
+          )}
+          <Link to="/capture" data-testid="snap-entry-garden" style={btnGhostIcon}>
+            <Icon name="media.camera" size={16} decorative style={{ color: P.green }} />Snap
+          </Link>
+          <OverlayLink to="/log/many" style={btnGhostIcon}>
+            <Icon name="action.logmany" size={16} decorative style={{ color: P.green }} />Log many
+          </OverlayLink>
+          {/* V4-APPBAR-003: Favorites rehomed here from the retired header heart (Dave: into the Garden tab). */}
+          <Link to="/favorites" aria-label="Favorites" style={btnGhostIcon}>
+            <Icon name="action.heart" size={16} decorative style={{ color: P.green }} />Favorites
+          </Link>
+        </div>
       </div>
 
-      {subtab === 'plants' && careLensOptions.length > 2 && (
+      {careLensOptions.length > 2 && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, marginBottom: 16 }}>
           <SegmentedControl options={careLensOptions} value={effectiveLens} onChange={onCareLensChange} ariaLabel="Show plantings by caretaker" />
           {effectiveLens !== 'all' && (
@@ -636,9 +628,7 @@ export default function Garden() {
         </div>
       )}
 
-      {subtab === 'photos' && <PhotosWall />}
-
-      {subtab === 'plants' && editor && (
+      {editor && (
         <PlantingEditor
           mode={editor.mode}
           plant={editor.plant ?? null}
@@ -655,7 +645,7 @@ export default function Garden() {
         />
       )}
 
-      {subtab === 'plants' && (effectiveGroupBy !== 'none' ? (
+      {(effectiveGroupBy !== 'none' ? (
         <FacetedGarden
           plants={visiblePlants} tagMap={tagMap} facet={effectiveGroupBy} locations={locations}
           crittersByPlantId={crittersByPlantId} onSpriteLongPress={onSpriteLongPress}

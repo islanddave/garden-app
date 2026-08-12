@@ -105,6 +105,8 @@ describe('EventNew — V4-DRAFTFULLPAGE-001 full-page draft stash', () => {
   it('typing notes on the FULL PAGE writes the draft (was overlay-only)', async () => {
     renderFullPage('event_type=watering')
     await flushLoad()
+    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'aphids on the kale' } })
     const raw = sessionStorage.getItem(DRAFT_KEY)
     expect(raw).toBeTruthy()
@@ -124,6 +126,11 @@ describe('EventNew — V4-DRAFTFULLPAGE-001 full-page draft stash', () => {
     seedDraft({ notes: 'stale draft text' })
     renderFullPage('event_type=watering')
     await flushLoad()
+    // V4-NOTESCOLLAPSE-001: the disclosure auto-opens only when notes carries text, so a COLLAPSED
+    // one is itself proof the stale draft did not land. Opened anyway to assert the field is empty —
+    // the same fact this case has always pinned.
+    expect(screen.getByTestId('notes-disclosure').getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     expect(screen.getByLabelText('Notes').value).toBe('')
   })
 
@@ -138,6 +145,8 @@ describe('EventNew — V4-DRAFTFULLPAGE-001 full-page draft stash', () => {
   it('a successful save clears the draft and the post-save reset does NOT rewrite it', async () => {
     renderFullPage('event_type=watering')
     await flushLoad()
+    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'about to save' } })
     expect(sessionStorage.getItem(DRAFT_KEY)).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })

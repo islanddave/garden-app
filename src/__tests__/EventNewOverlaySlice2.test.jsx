@@ -286,6 +286,8 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2) + S5b non-blo
   it('Done dismisses even while the form is dirty — no confirmation dialog', async () => {
     renderInOverlay('event_type=watering')
     await flushLoad()
+    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'half typed' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Done' })) })
     expect(navigateSpy).toHaveBeenCalledWith('/today', { replace: true })
@@ -302,6 +304,8 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2) + S5b non-blo
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
     await pickPlanting('pl-1')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
+    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
+    fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'next one' } })
     // still there, still undoable
     expect(screen.getByTestId('post-save-strip')).toBeTruthy()
