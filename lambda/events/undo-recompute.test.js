@@ -38,13 +38,23 @@ const SRC = decomment(RAW);
 
 // The route markers are COMMENT banners, so the offsets are taken in RAW; the extracted window is
 // then decommented so every assertion below runs against code and cannot be satisfied by prose.
-const block = (marker, len) => {
-  const idx = RAW.indexOf(marker);
-  expect(idx).toBeGreaterThan(-1);
-  return decomment(RAW.slice(idx, idx + len));
+// Bounded by the route's OWN terminating `return`, not by a magic character count. The lengths
+// here were 9000 / 12000 and broke the moment a comment was added inside either route (W-BATCHNULL,
+// 2026-08-12). The failure mode that matters is not this one — a positive assertion that loses its
+// text fails loudly. It is that a window which slides too short makes every NEGATIVE assertion pass
+// vacuously, asserting nothing about code that has simply left the frame. Same fix applied in
+// undo-cascade.test.js; keep the two in step.
+const routeWindow = (startMarker, endMarker) => {
+  const i = RAW.indexOf(startMarker);
+  expect(i, `route marker not found: ${startMarker}`).toBeGreaterThan(-1);
+  const j = RAW.indexOf(endMarker, i);
+  expect(j, `route terminator not found: ${endMarker}`).toBeGreaterThan(i);
+  return decomment(RAW.slice(i, j + endMarker.length));
 };
-const batchUndo = () => block('/api/events/batch/:id — undo a batch', 9000);
-const singleUndo = () => block('/api/events/:id — single-event undo', 12000);
+const batchUndo = () => routeWindow(
+  '/api/events/batch/:id — undo a batch', 'return resp(200, { undone: true, batch_id: batchId });');
+const singleUndo = () => routeWindow(
+  '/api/events/:id — single-event undo', 'return resp(200, { undone: true, id: eventId });');
 
 // One arm's statement, isolated inside its own route block by the key it joins on. The four arms
 // have near-identical SET lists, so anchoring must run BACKWARDS from the distinguishing FROM clause

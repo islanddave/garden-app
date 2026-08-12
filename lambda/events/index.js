@@ -721,10 +721,40 @@ export const handler = async (event) => {
         sql`UPDATE harvest_log h SET deleted_at = NOW(), updated_at = NOW()
             FROM event_log e
             WHERE e.id = h.event_id AND e.metadata->>'batch_id' = ${batchId} AND h.deleted_at IS NULL`,
+        // W-BATCHNULL parent-loss fallback. READ THE REACHABILITY NOTE BEFORE "SIMPLIFYING" THIS.
+        //
+        // The hazard this guards: nulling event_id while every other parent column is also NULL
+        // violates photos_must_have_parent (23514). Inside sql.transaction that aborts the WHOLE
+        // undo, and because the batch stays undone_at IS NULL the user can retry forever — the
+        // batch would be permanently un-undoable, not partially applied.
+        //
+        // REACHABILITY, measured 2026-08-12 against live prod, NOT inherited from the plan: this
+        // arm cannot fire today, and the guard that makes it unreachable is NOT in this file. It is
+        // `CHECK event_log_has_anchor (plant_id IS NOT NULL OR project_id IS NOT NULL)` on
+        // event_log. It is marked NOT VALID, which skips the initial table scan ONLY — it is fully
+        // enforced on every INSERT and UPDATE, so an event with both parents NULL cannot be stored.
+        // At least one of e.project_id / e.plant_id is therefore always non-NULL, and the COALESCEs
+        // above propagate it onto the photo, so the photo always lands parented. Verified by
+        // executing these exact statements against a real Postgres carrying both constraints, over
+        // every (project_id, plant_id) shape the anchor CHECK admits: all parented, none violating.
+        //
+        // So this is defence-in-depth for a constraint held one join away, not a live bug fix. It
+        // is kept because event_log_has_anchor is still NOT VALID and v4-evtanchordel-001 is
+        // actively reshaping event anchoring: if that CHECK is ever relaxed or dropped, this arm
+        // starts carrying real weight and the photo lands in the quick-tag inbox instead of
+        // stranding the batch. The paired alert (integrity-weekly photos_parentless gaining its
+        // pending_tag escape) already shipped, so the fallback cannot page.
+        // tests/integration/batch-photo-reparent.int.test.js pins the whole chain and goes red the
+        // moment event_log_has_anchor stops holding.
         sql`UPDATE photos ph SET
               event_id   = NULL,
               project_id = COALESCE(ph.project_id, e.project_id),
               plant_id   = COALESCE(ph.plant_id,   e.plant_id),
+              intake_status = CASE
+                WHEN COALESCE(ph.project_id, e.project_id) IS NULL
+                 AND COALESCE(ph.plant_id,   e.plant_id)   IS NULL
+                 AND ph.location_id IS NULL AND ph.inventory_item_id IS NULL AND ph.space_id IS NULL
+                THEN 'pending_tag' ELSE ph.intake_status END,
               updated_at = NOW()
             FROM event_log e
             WHERE e.id = ph.event_id AND e.metadata->>'batch_id' = ${batchId} AND ph.deleted_at IS NULL`,
@@ -1824,10 +1854,29 @@ export const handler = async (event) => {
           // provenance: plant_id is NULL on every project-level event, so the JS locals cannot say
           // which parent is the live one, while the event row always can. Reading both parents out
           // of event_log lets the COALESCEs below pick the surviving parent without JS deciding.
+          // Same W-BATCHNULL fallback as the batch arm above — see the long reachability note there;
+          // it is the canonical one and this arm must not drift from it. Two extra facts specific to
+          // THIS path, both measured rather than assumed:
+          //   * The plan's framing had the defect here as a live "opaque 500". It is not. The
+          //     ownership pre-read above INNER JOINs public.container on el.project_id, so an event
+          //     with a NULL project_id returns zero rows and 404s before this statement is ever
+          //     built. e.project_id is therefore always non-NULL here — a second, independent reason
+          //     the CASE cannot fire, on top of event_log_has_anchor.
+          //   * That INNER JOIN is an OWNERSHIP read whose null-exclusion is incidental, so it is
+          //     not something to rely on: clearFields.js calls it "THE INNER-JOIN TRAP" and is
+          //     already stale where it claims "zero of 12,580 live events have a NULL project_id"
+          //     (prod carries 2 as of 2026-08-12, both plant-anchored, both created after that
+          //     comment). Whoever fixes that trap by widening this JOIN to a LEFT JOIN will make
+          //     e.project_id nullable here — and this fallback is what keeps that change safe.
           sql`UPDATE photos ph SET
                 event_id   = NULL,
                 project_id = COALESCE(ph.project_id, e.project_id),
                 plant_id   = COALESCE(ph.plant_id,   e.plant_id),
+                intake_status = CASE
+                  WHEN COALESCE(ph.project_id, e.project_id) IS NULL
+                   AND COALESCE(ph.plant_id,   e.plant_id)   IS NULL
+                   AND ph.location_id IS NULL AND ph.inventory_item_id IS NULL AND ph.space_id IS NULL
+                  THEN 'pending_tag' ELSE ph.intake_status END,
                 updated_at = NOW()
               FROM event_log e
               WHERE e.id = ${eventId} AND ph.event_id = ${eventId} AND ph.deleted_at IS NULL`,
