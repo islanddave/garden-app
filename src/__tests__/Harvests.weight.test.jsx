@@ -9,7 +9,7 @@
 //   * the native-unit amount stays the headline — grams are a second axis, not a replacement
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 
 const { fetchSpy, searchParamsRef } = vi.hoisted(() => ({
   fetchSpy: vi.fn(), searchParamsRef: { current: new URLSearchParams() },
@@ -32,13 +32,20 @@ const BASE = {
   quantity: 4, unit: 'count', quality_rating: 4, harvest_log_id: 'h1', photos: [],
 }
 
+// V4-HARVDEFAULT-001: a bare arrival now lands on TOTALS, and the weight chip is a LOG-row element —
+// so every case toggles to the Log tab right after render (design §2a: insert a toggle step, never
+// weaken an assertion). Folded into the shared helper because all 7 cases need it identically.
+// NOTE: this suite is NOT in the design's §2a enumerated re-anchor set — it is the same class of
+// bare-render Log-scoped suite and needs the same one-line edit. Flagged in the build report.
 function renderWith(overrides) {
   fetchSpy.mockResolvedValue({
     entries: [{ ...BASE, ...overrides }],
     aggregates: { crops: [], other: [] },
     cursor: null,
   })
-  return render(<Harvests />)
+  const r = render(<Harvests />)
+  fireEvent.click(screen.getByRole('radio', { name: 'Log' }))
+  return r
 }
 
 describe('Harvests — weight chip', () => {

@@ -75,9 +75,14 @@ const DIALOG_SURFACES = {
 }
 
 // <Sheet render sites. App.jsx is OverlayHost (the route-overlay host), not a page-level sheet.
+// V4-HARVESTVIEW-001 S4: HarvestTimeframeChips.jsx is a DELIBERATE addition — the season chip opens
+// a grow-year sheet, and the chip row was extracted out of Harvests.jsx (which keeps its own crop /
+// project picker sheets, so it stays listed). It renders the shared <Sheet>, which is the registered
+// role="dialog" surface, so no new registry entry is owed — the dismiss behavior is Sheet's.
 const SHEET_SITES = [
   'App.jsx',
   'components/BottomNav.jsx',
+  'components/HarvestTimeframeChips.jsx',
   'components/planting/TransplantDatePrompt.jsx',
   'components/today/CareNeeded.jsx',
   'pages/AddSeeds.jsx',

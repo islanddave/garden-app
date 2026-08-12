@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
@@ -6,37 +6,53 @@ import Sheet from '../components/forms/Sheet.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import QualityDots from '../components/QualityDots.jsx'
 import StatTile from '../components/StatTile.jsx'
+import Sparkline from '../components/Sparkline.jsx'
+import HarvestTimeframeChips from '../components/HarvestTimeframeChips.jsx'
 import { useHarvests } from '../hooks/useHarvests.js'
 import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
 import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
 import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
-import { fmtQuantity, unitLabel, formatEntry, etDay } from '../lib/harvestSummary.js'
+import { fmtQuantity, unitLabel, formatEntry, addDays, etDay } from '../lib/harvestSummary.js'
 import { describeHarvestWeight, formatGrams, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
+import { currentGrowYear, growYearOfDayKey, growYearSpan, growYearOptions, HARVEST_TZ } from '../lib/growYear.js'
 import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
 
-// Harvests — V4-HARVESTVIEW-001 S2a/S2b. Route + snapshot strip + Log feed + minimal Totals, reading
-// the shipped GET /api/harvests. Retrospective/reflective: never prompts, counts down, or scores
-// (design §1). Snapshot self-labels FIXED windows (design §3b) so it's independent of the Log filter.
-// S2b part 1 added the snapshot strip + timeframe chips; part 2 adds crop + project picker sheets +
-// dismissible pills. Crop/project scope the LOG only (design §3b) — they're dropped from the query on
-// the Totals tab, so minimal Totals stays the whole-season overview until S3's year selector lands.
-
-const HARVEST_TZ = 'America/New_York'
-const currentGrowYear = (d) => (d.getMonth() >= 10 ? d.getFullYear() + 1 : d.getFullYear())
+// Harvests — V4-HARVESTVIEW-001 S2a/S2b + S4 (V4-HARVDEFAULT-001). Route + snapshot strip + Log feed
+// + Totals, reading the shipped GET /api/harvests. Retrospective/reflective: never prompts, counts
+// down, or scores (design §1). Snapshot self-labels FIXED windows (design §3b) so it's independent of
+// the Log filter. Crop/project scope the LOG only (design §3b) — they're dropped from the query on
+// the Totals tab. S4: bare arrivals land on TOTALS scoped to the season (BD-004 — Dave's stated
+// retrieval mode is totals); the season chip + grow-year sheet live in HarvestTimeframeChips; per-crop
+// sparklines ride the additive crops[].weekly Lambda field.
 
 export default function Harvests() {
   // S4: EventNew's post-harvest line + PlantingDetail's "All harvests →" land here pre-filtered to a
   // crop via ?crop=<slug>. Seeded once on mount; the pickers drive local state from there (no two-way
   // URL sync in V1 — server-persisted last filter is a named phase-2 item, design §9).
   const [searchParams] = useSearchParams()
-  const [view, setView] = useState('log') // 'log' | 'totals'
-  const [timeframe, setTimeframe] = useState('') // '' = all time
+  // V4-HARVDEFAULT-001: bare arrivals default to TOTALS; a ?crop= arrival keeps landing on the LOG.
+  // The ?crop= guard protects the live producer PlantingDetail's "All harvests →" and the deep-link
+  // pin below — an aggregate row is not "all harvests" for the planting the user just left.
+  const arrivedWithCrop = !!searchParams.get('crop')
+  const [view, setView] = useState(() => (arrivedWithCrop ? 'log' : 'totals')) // 'log' | 'totals'
+  // V4-HARVDEFAULT-001 + boss condition C1: the bare-arrival default timeframe is the CURRENT
+  // grow-year (from season 2 on, an all-time blend dilutes "what THIS season gave" into a number that
+  // never visibly moves off-season). ?crop= arrivals keep '' (All time) — silently rescoping the
+  // shipped "All harvests →" link to one season would contradict its own label and render an EMPTY
+  // log for prior-season/overwintered plantings.
+  const [timeframe, setTimeframe] = useState(() => (arrivedWithCrop ? '' : `season:${currentGrowYear(new Date())}`)) // '' = all time
   const [crop, setCrop] = useState(() => searchParams.get('crop') || '') // crop_type_slug; '' = all crops
   const [cropLabel, setCropLabel] = useState('')
   const [project, setProject] = useState('') // project_id (uuid); '' = all projects
   const [projectLabel, setProjectLabel] = useState('')
   const [cropSheetOpen, setCropSheetOpen] = useState(false)
   const [projectSheetOpen, setProjectSheetOpen] = useState(false)
+  // The arrival DEFAULT is not a user-chosen filter: the empty-state chooser + clear-filters
+  // affordance must not read it as one (a first-run user at the untouched default sees first-run
+  // copy, never "No harvests match these filters"). Updated if the off-season effect re-anchors.
+  const defaultTimeframeRef = useRef(arrivedWithCrop ? '' : `season:${currentGrowYear(new Date())}`)
+  const timeframeTouched = useRef(false)
+  const changeTimeframe = (v) => { timeframeTouched.current = true; setTimeframe(v) }
 
   // Crop/project scope the LOG (design §3b: "filters scope the Log only"). On the Totals tab we drop
   // them so the minimal Totals shows the timeframe-only aggregate universe (its own year selector +
@@ -49,8 +65,36 @@ export default function Harvests() {
     project: logScoped ? (project || undefined) : undefined,
   })
   const { snapshot } = useHarvestSnapshot()
-  const { crops: cropOptions, projects: projectOptions } = useHarvestFilterOptions()
-  const filterActive = timeframe !== '' || crop !== '' || project !== ''
+  const { crops: cropOptions, projects: projectOptions, minFirstPickDay } = useHarvestFilterOptions()
+  // A filter is ACTIVE when the user narrowed something: crop/project, or a timeframe that is
+  // neither All time (the widest scope — it can hide nothing) nor the untouched arrival default.
+  const filterActive = crop !== '' || project !== '' || (timeframe !== '' && timeframe !== defaultTimeframeRef.current)
+
+  // V4-HARVDEFAULT-001 — canon harvest-view §5 OFF-SEASON rule: a bare arrival re-anchors ONCE to the
+  // LAST COMPLETED season when the current one reads off-season — no harvest in >30 days (or none at
+  // all this season) while earlier-season history exists. January seed-ordering runs on exactly the
+  // last completed season's data; a near-empty current season would pin a number that never moves.
+  // Data-driven, never calendar-gated; skipped the moment the user touches the timeframe, and never
+  // on a ?crop= arrival (boss C1 — that arrival stays All time).
+  const reanchored = useRef(false)
+  useEffect(() => {
+    if (arrivedWithCrop || timeframeTouched.current || reanchored.current || !snapshot) return
+    const cur = currentGrowYear(new Date())
+    if (timeframe !== `season:${cur}`) return
+    const minYear = growYearOfDayKey(minFirstPickDay)
+    if (minYear == null || minYear >= cur) return // no earlier-season history to fall back on
+    const lastKey = snapshot.lastHarvest?.day_key ?? null
+    const offSeason = lastKey == null || lastKey < addDays(etDay(new Date(), HARVEST_TZ), -30)
+    if (!offSeason) return
+    reanchored.current = true
+    defaultTimeframeRef.current = `season:${cur - 1}`
+    setTimeframe(`season:${cur - 1}`)
+  }, [arrivedWithCrop, snapshot, minFirstPickDay, timeframe])
+
+  // Season-sheet universe: continuous range from the earliest harvest's grow-year (UNFILTERED
+  // all-time first_pick, design §2b — the page's own aggregates are timeframe-scoped and would
+  // self-collapse) up to the current season. Empty seasons included; they render the honest empty state.
+  const seasonYears = growYearOptions(minFirstPickDay, currentGrowYear(new Date()))
 
   const clearAll = () => { setTimeframe(''); setCrop(''); setCropLabel(''); setProject(''); setProjectLabel('') }
   // "See in log →" from an expanded Totals crop row: filter the Log to that crop and switch tabs
@@ -74,7 +118,9 @@ export default function Harvests() {
           />
         </div>
 
-        <TimeframeChips value={timeframe} onChange={setTimeframe} />
+        {/* ONE shared timeframe control above BOTH views (design §2b) — the season chip + grow-year
+            sheet live inside it, so no invisible active filter is representable across the toggle. */}
+        <HarvestTimeframeChips value={timeframe} onChange={changeTimeframe} seasonYears={seasonYears} />
 
         {view === 'log' && (
           <FilterControls
@@ -94,7 +140,7 @@ export default function Harvests() {
         ) : view === 'log' ? (
           <LogView entries={entries} filterActive={filterActive} onClearFilters={clearAll} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore} />
         ) : (
-          <TotalsView aggregates={aggregates} onSeeInLog={seeInLog} />
+          <TotalsView aggregates={aggregates} onSeeInLog={seeInLog} timeframe={timeframe} />
         )}
       </div>
 
@@ -177,33 +223,8 @@ function last7Phrase(top) {
   }).join(' · ')
 }
 
-function TimeframeChips({ value, onChange }) {
-  const growYear = currentGrowYear(new Date())
-  const chips = [
-    { value: '', label: 'All time' },
-    { value: '7d', label: 'Last 7 days' },
-    { value: 'month', label: 'This month' },
-    { value: `season:${growYear}`, label: 'This season' },
-  ]
-  return (
-    <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }} role="group" aria-label="Filter by timeframe">
-      {chips.map((c) => {
-        const active = value === c.value
-        return (
-          <button
-            key={c.value || 'all'}
-            type="button"
-            onClick={() => onChange(c.value)}
-            aria-pressed={active}
-            style={{ padding: '6px 14px', borderRadius: 20, fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', border: `1px solid ${active ? P.green : P.border}`, backgroundColor: active ? P.greenPale : P.white, color: active ? P.green : P.mid }}
-          >
-            {c.label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
+// (S4: the timeframe chip row moved to src/components/HarvestTimeframeChips.jsx — the ONE shared
+// control, reused by the export sheet — and grew the season chip + grow-year sheet there.)
 
 // ── Crop/project filters (design §3b): picker sheets rendering dismissible pills, Log-scoped ────────
 function FilterControls({ cropValue, onOpenCrop, onClearCrop, projectValue, onOpenProject, onClearProject }) {
@@ -432,7 +453,22 @@ function fmtFirstPick(dayKey) {
   return `${MONTHS[m - 1]} ${d}${y !== cur ? `, ${y}` : ''}`
 }
 
-function TotalsView({ aggregates, onSeeInLog }) {
+// V4-HARVESTVIEW-001 S4 (sparkline): map a crop's ADDITIVE weekly[] field to bare Sparkline values.
+// Absent field (older Lambda — the frontend deploys ahead and a rollback must hold) -> null, render
+// nothing: the TotalsWeight precedent. Under All time the marks window to the CURRENT season
+// (all-years-in-one-row is unreadable and undefined, design §2b); every other timeframe is already
+// server-scoped, so the buckets pass through as-is.
+function sparkValues(weekly, timeframe) {
+  if (!Array.isArray(weekly)) return null
+  let rows = weekly
+  if (!timeframe) {
+    const span = growYearSpan(currentGrowYear(new Date()))
+    rows = weekly.filter((w) => w.week_start >= span.start && w.week_start < span.end)
+  }
+  return rows.map((w) => Number(w.count))
+}
+
+function TotalsView({ aggregates, onSeeInLog, timeframe }) {
   const [expanded, setExpanded] = useState(() => new Set())
   const crops = aggregates?.crops ?? []
   const other = aggregates?.other ?? []
@@ -453,6 +489,7 @@ function TotalsView({ aggregates, onSeeInLog }) {
           key={c.crop_type_slug}
           crop={c}
           firstPicks={firstPick.filter((f) => f.crop_type_slug === c.crop_type_slug)}
+          sparkValues={sparkValues(c.weekly, timeframe)}
           open={expanded.has(c.crop_type_slug)}
           onToggle={() => toggle(c.crop_type_slug)}
           onSeeInLog={onSeeInLog}
@@ -477,7 +514,7 @@ function TotalsView({ aggregates, onSeeInLog }) {
 
 // One expandable crop total. Collapsed = crop name + per-unit season total + unquantified count.
 // Expanded (in place) adds variety sub-rows, first-pick date per planting, and the See-in-log jump.
-function CropTotalRow({ crop: c, firstPicks, open, onToggle, onSeeInLog }) {
+function CropTotalRow({ crop: c, firstPicks, sparkValues, open, onToggle, onSeeInLog }) {
   const varieties = Array.isArray(c.varieties) ? c.varieties : []
   // A single unnamed variety is just the crop total again — only surface sub-rows when they add info.
   const showVarieties = varieties.length > 1 || (varieties.length === 1 && !!varieties[0].variety_name)
@@ -495,6 +532,12 @@ function CropTotalRow({ crop: c, firstPicks, open, onToggle, onSeeInLog }) {
           <CropWeightLine weight={c.weight} />
           {c.unquantified > 0 && (
             <span style={{ display: 'block', fontSize: '0.75rem', color: P.light, marginTop: 2 }}>+{c.unquantified} unrecorded</span>
+          )}
+          {/* S4 sparkline: null when crops[].weekly is absent (older Lambda) — renders NOTHING. */}
+          {sparkValues && sparkValues.length > 0 && (
+            <span style={{ display: 'block', marginTop: 6 }}>
+              <Sparkline values={sparkValues} ariaLabel={`${c.crop_name}: weekly harvest activity`} />
+            </span>
           )}
         </span>
         <span aria-hidden="true" style={{ flex: '0 0 auto', color: P.light, fontSize: '0.8rem', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.12s' }}>▶</span>
