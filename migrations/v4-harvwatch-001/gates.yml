@@ -98,10 +98,18 @@ post:
     expect: rowcount_eq
     value: 0
 
-rollback:
-  file: 0r-rollback.sql
-  # Rehearse on STAGING only, and only BEFORE the route ships. Post-ship the table holds the only
-  # negative-class calibration samples in the system and they are not reconstructible — dump first.
-  note: >
-    Standalone table, single outbound FK to public.plants, referenced by nothing. The drop cannot
-    cascade into user data. Post-ship, \copy the table out before running this.
+# ROLLBACK (documentation only — gate_runner.py's strict schema admits ONLY the top-level keys
+# pre/sweep/post, and rejects anything else with exit 2. Expressing this as a `rollback:` key made
+# the whole file unloadable, so every gate above silently did not run. Kept as a comment.)
+#
+#   file: 0r-rollback.sql
+#
+#   Rehearse on STAGING only, and only BEFORE the route ships. Post-ship the table holds the only
+#   negative-class calibration samples in the system and they are not reconstructible — dump first.
+#
+#   Standalone table, single outbound FK to public.plants, referenced by nothing. The drop cannot
+#   cascade into user data. Post-ship, \copy the table out before running this.
+#
+#   REHEARSED on staging 2026-08-12 (drop clean, re-apply clean, plants untouched) before the
+#   prod apply. Applied to staging AND prod 2026-08-12; all 6 post-gates verified by hand via psql
+#   because this file could not be loaded by the runner at the time.
