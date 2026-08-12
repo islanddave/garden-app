@@ -121,6 +121,27 @@ jobs:
         run: |
           test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
 
+      - name: Harvest-window chunk split (V4-RIPENESSCUES-001)
+        # THE ONLY DETECTOR for the inert-payload class, and until now it was wired to nothing.
+        # The colour-window feature shipped DEAD in v4.9.x — resolver imported, nothing called it,
+        # ~110KB gzip of JSON riding the entry bundle to every user, all tests green. vitest cannot
+        # catch this class at all: it asserts MODULES, and resolves the import itself at test time,
+        # so it never observes the real chunk graph. Only a build-artifact check can. A mutation
+        # that recreated the bug kept all 127 unit tests passing.
+        #
+        # Asserts against the artifact the step above just built (SKIP_BUILD=1 — verify THIS dist/,
+        # not a second differently-configured build): exactly one hashed chunk carries the dataset
+        # marker, and it is NOT the entry chunk. Fails the build (exit 1) if a static
+        # `import { resolveHarvestWindow }` is reintroduced at/above CropCard, if the dataset
+        # vanishes from the bundle entirely, or if the marker leaks into multiple chunks.
+        #
+        # Home is ci.yml on purpose: this is deterministic from source, so it reaches the same
+        # verdict here as it would in deploy.yml — but here it fails BEFORE the code lands on dev,
+        # rather than mid-deploy after main has already fast-forwarded.
+        env:
+          SKIP_BUILD: '1'
+        run: bash scripts/verify-window-chunk.sh
+
       - name: Event-types drift guard
         # V3-EVENT-008: fails the build if lambda/events/eventTypes.generated.js is
         # stale vs the canonical src/lib/eventTypes.js (regenerate to temp + byte-diff).

@@ -24,8 +24,22 @@ cd "$(dirname "$0")/.."
 
 MARKER='chartreuse with an amber blossom end'
 
-echo "== npx vite build =="
-npx vite build
+# SKIP_BUILD=1 verifies an EXISTING dist/ instead of producing a fresh one. CI sets it so this
+# guard inspects the very artifact the build step already produced (same env vars, same flags)
+# rather than a second build configured differently — verifying a DIFFERENT artifact than the one
+# the pipeline carries forward would be a weaker assertion. Unset (the default) keeps the
+# standalone pre-push behaviour documented above: build, then verify.
+if [ "${SKIP_BUILD:-0}" = "1" ]; then
+  echo "== SKIP_BUILD=1 — verifying the existing dist/ =="
+  if [ ! -f dist/index.html ]; then
+    echo "FAIL: SKIP_BUILD=1 but dist/index.html does not exist — nothing to verify."
+    echo "      This guard must run AFTER the build step, never instead of it."
+    exit 1
+  fi
+else
+  echo "== npx vite build =="
+  npx vite build
+fi
 
 ENTRY_BASENAME=$(sed -n 's/.*<script[^>]*src="\/assets\/\([^"]*\.js\)".*/\1/p' dist/index.html | head -1)
 if [ -z "$ENTRY_BASENAME" ]; then
