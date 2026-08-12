@@ -1,0 +1,84 @@
+{
+  "schema": "garden.storage_deadlines.v1",
+  "version": "1.0.0",
+  "authored": "2026-08-12",
+  "item": "V4-STORAGEDEADLINE-001",
+  "zone": "5b western Massachusetts, ~518ft",
+  "note": "Per-CROP-TYPE seasonal LIFT deadlines for 'single'-habit storage crops — the crops isReadyToPick() structurally cannot surface (harvestReadiness.js requires harvest_habit IN ('repeat','cut_and_come_again') AND >=1 prior harvest, so every once-per-season crop is invisible to the ready band). Keyed by crop_types.slug, same key space as harvest-attributes-v1.json. THIS FILE IS DELIBERATELY ALMOST EMPTY. A date with no citable source is not a date; the disconfirmations in `no_calendar_deadline` are as load-bearing as the one record in `by_crop_type` and exist so the next session does not re-derive the falsified premise from scratch.",
+  "provenance_rule": "Every entry in by_crop_type carries source + source_url + confidence, and its `true_trigger` names the physical signal the calendar date is only a PROXY for. Where the trigger is an observed plant state the app does not record, the crop belongs in no_calendar_deadline, NOT in by_crop_type with an invented date. Precedent for the harm: harvestWindows.json shipped at 11.8% cultivar calibration with 22-day median error.",
+  "frost_anchor_warning": "Do NOT anchor these deadlines to FROST_ANCHORS.firstFallFrost (src/lib/sowEngine.js, '09-28'). The one sourced deadline here is ~17 days LATER than the frost anchor, because the operative variable is SOIL temperature, not air frost. Anchoring to first frost would fire two and a half weeks early on every planting. storageDeadlines.test.js asserts this gap so a future 'simplification' cannot quietly collapse the two.",
+  "field_contract": {
+    "deadline_kind": "regional_calendar_proxy = a calendar date a regional extension source states as the practical cutoff, standing in for a physical trigger the app cannot measure. No other kind is defined yet; do not invent one.",
+    "deadline_month_day": "MM-DD. Resolved against the year of the caller-supplied today, never against an internal clock.",
+    "check_from_month_day": "MM-DD the CHECK window opens. Always earlier than deadline_month_day. The gap is deliberate lead time, not a second deadline.",
+    "true_trigger": "The physical signal the date proxies for. Prose, for display and for honesty — the date is downstream of this, not the other way round.",
+    "loss": "What is actually lost, and when it becomes visible. Storage-crop loss materialises months later in the pantry, which is why it needs surfacing at all.",
+    "check_copy / past_copy": "User-facing copy. CHECK FORM ONLY — 'start checking X', never 'X is ready'. These estimates are weak and the copy must not overclaim.",
+    "confidence": "high | medium | low. medium = a regional extension source states the guidance, but as a typical case ('usually before...'), not a measured threshold."
+  },
+  "by_crop_type": {
+    "sweet_potato": {
+      "display_name": "Sweet potato",
+      "deadline_kind": "regional_calendar_proxy",
+      "deadline_month_day": "10-15",
+      "check_from_month_day": "10-01",
+      "true_trigger": "Soil temperature, not air frost. Root growth stops below 65F; below 55F chilling injury begins and is irreversible and cumulative. Vines tolerate a light frost, so a frosted vine is not itself the signal to dig.",
+      "loss": "The whole stored crop, invisible at harvest. Chilled roots show shrivelled, sunken, dark areas and blacken when cut; 'hardcore' roots stay hard after cooking. The damage is permanent and only shows up in storage.",
+      "check_copy": "Start checking sweet potatoes for lifting — they want to be out of the ground before the soil cools, usually by mid-October.",
+      "past_copy": "Sweet potato lifting window has passed — worth checking whether any are still in the ground.",
+      "source": "UMass Extension — Sweet Potato Harvest and Storage",
+      "source_url": "https://www.umass.edu/agriculture-food-environment/vegetable/fact-sheets/sweet-potato-harvest-storage",
+      "confidence": "medium",
+      "notes": "UMass is the regionally-correct authority for zone 5b western MA. It states roots 'should come out before a hard freeze sets in, usually before mid-October'. 10-15 is that phrase encoded; it is a typical case, not a measured threshold, hence medium. Dave has 2 live sweet potato plantings (verified live prod 2026-08-12), both status 'vegetative'."
+    }
+  },
+  "no_calendar_deadline": {
+    "_note": "Crops examined for V4-STORAGEDEADLINE-001 and deliberately NOT given a date. Each records WHY and what signal would have to exist first. Removing a crop from this list requires a citable regional source, not a plausible guess.",
+    "winter_squash": {
+      "design_claim": "'off the vine before frost touches fruit or it will not store'",
+      "finding": "Not supported by the regional source. The UMass pumpkin/winter-squash fact sheet gives no frost or freeze guidance at all; its cold threshold is 50F CHILLING INJURY IN STORAGE, a post-harvest condition. Penn State puts field damage at a HARD FREEZE below 28F, which is a materially colder and later event than 'frost'. Also moot for now: 0 live winter_squash plantings in prod (verified 2026-08-12).",
+      "needed": "A regional source giving a field-frost threshold for storage life, plus at least one live planting to surface it on."
+    },
+    "bean_dry": {
+      "design_claim": "'in at pod-rattle before the next wetting'",
+      "finding": "Dave does not grow dry beans. All 3 live `bean` plantings are snap/filet bush types (Contender, Gold Rush, Tavera), and crop_types.bean is harvest_habit='repeat' — so they are already visible to the ready-to-pick band and are not a storage crop at all. There is no dry-bean crop type.",
+      "needed": "A dry-bean crop type and a live planting. The trigger (pod rattle) is an observed state the schema does not record."
+    },
+    "garlic": {
+      "design_claim": "'cure then move before humidity re-softens wrappers'",
+      "finding": "Garlic is the ONE crop already carrying a hard window: crop_types.harvest_season_start_doy=186 / end_doy=211 = 2026-07-05 to 2026-07-30. That window closed before this item was filed. Zero garlic harvests have ever been logged, and the single live planting is still status 'vegetative'. A deadline feature cannot help 2026 garlic; it would fire on a window already 13 days shut.",
+      "needed": "Nothing new for the harvest deadline — it exists. The CURING stage the claim is actually about is a post-harvest process with no schema representation at all."
+    },
+    "onion": {
+      "design_claim": "'lift within 10-14d of leaf-fall or necks rot and the crop will not store'",
+      "finding": "The trigger is leaf-fall (tops going over) — an OBSERVED PLANT STATE. There is no leaf_fall event type in event_log (38 types in prod, none of them this), so the 10-14 day clock has nothing to start from. A calendar substitute would be a guess. Separately, the premise that these close invisibly did not hold: Dave lifted onions on 07-27, 07-28 and 08-04 with no app prompt.",
+      "needed": "A leaf-fall / tops-down observation event type. Then the deadline is derived, not invented."
+    },
+    "shallot": {
+      "design_claim": "same as onion",
+      "finding": "Same unrecorded leaf-fall trigger. Same disconfirmation, more strongly: Dave lifted shallots on 07-23, 07-26, 07-30, 08-04 and 08-08 — five separate picks, incrementally, unprompted. The observed behaviour is continuous pulling as needed, not a single storage lift on a deadline.",
+      "needed": "As onion."
+    },
+    "cabbage": {
+      "design_claim": "'head splits within 24-48h of heavy rain'",
+      "finding": "The trigger is a rainfall EVENT crossed with head maturity. event_log has a `rain` type (723 rows) but no rainfall depth that would distinguish 'heavy' from any rain, and no head-maturity signal. This is a weather-reactive alert, not a seasonal deadline — it does not belong in a deadline dataset even once buildable. Cabbage is also frost-tolerant, so no fall date applies.",
+      "needed": "Rainfall depth on rain events plus a head-formed signal. Belongs to a weather-alert feature, not this one."
+    },
+    "potato": {
+      "finding": "Examined and rejected. UMass gives harvest conditions (soil 45-65F, tuber 50-60F) and a 10-14 day skin-set hold after vine kill, but NO calendar cutoff. Tubers are unharmed by the frost that kills the vines; the real limit is ground freeze, far later than first frost and not anchored anywhere in the app. 3 live plantings.",
+      "needed": "A ground-freeze anchor, which the app does not have. FROST_ANCHORS has no such field."
+    },
+    "carrot": {
+      "finding": "Frost-tolerant and deliberately left in ground — extension guidance is to hold carrots in the soil UNTIL frost and harvest before the ground freezes. A first-frost deadline would be actively wrong: it would pull a crop that improves. 3 live plantings.",
+      "needed": "Nothing. This crop correctly has no deadline."
+    },
+    "beet": {
+      "finding": "Recovers from 1-2 light freezings; guidance is to harvest before the first MODERATE freeze or mulch for winter harvest. No first-frost deadline. Dave picked beets on 07-16, 07-31 (x2) and 08-04 unprompted. 2 live plantings.",
+      "needed": "Nothing. This crop correctly has no deadline."
+    },
+    "leek": {
+      "finding": "The most frost-tolerant of the set — some varieties take temperatures near 20F, and delaying harvest past first frost is the recommended practice. crop_types.loss_horizon_hours=1440 (60 days) already encodes that it holds. 2 live plantings.",
+      "needed": "Nothing. This crop correctly has no deadline."
+    }
+  }
+}
