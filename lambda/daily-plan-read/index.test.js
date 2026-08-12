@@ -40,9 +40,26 @@ describe('daily-plan-read Lambda — static read-path invariants', () => {
     expect(SRC).toMatch(/annotateDone/);
   });
 
+  // The vocabulary moved to ./doneEvents.js (dependency-free, so doneEvents.test.js can EXECUTE the
+  // fold instead of regex-asserting it). This guard follows it rather than being deleted: the claim
+  // "rain counts as watering" is still worth pinning, and index.js must still route through the fold.
   it('V3-RAINDONE: a logged rain event checks off Water (rain counts as watering, 2026-06-22)', () => {
-    expect(SRC).toMatch(/water_due:\s*\[[^\]]*'rain'[^\]]*\]/);
-    expect(SRC).toMatch(/no_history:\s*\[[^\]]*'rain'[^\]]*\]/);
+    const DONE_SRC = decomment(readFileSync(resolve(__dirname, 'doneEvents.js'), 'utf8'));
+    expect(DONE_SRC).toMatch(/water_due:\s*\[[^\]]*'rain'[^\]]*\]/);
+    expect(DONE_SRC).toMatch(/no_history:\s*\[[^\]]*'rain'[^\]]*\]/);
+    // annotateDone must actually apply the shared fold, not a local reimplementation of it.
+    expect(SRC).toMatch(/from '\.\/doneEvents\.js'/);
+    expect(SRC).toMatch(/return applyDone\(plan, sat\)/);
+  });
+
+  // V4-WATERMATH-001 F0 — the interim pre-F2 snooze window. A moisture_check must ALSO satisfy on a
+  // rolling now()-24h basis; ET-day-only means a morning snooze dies at midnight and the planting
+  // re-nags at the next run, which is the affordance-extinction the design forbids.
+  it('V4-WATERMATH-001: the done query gives moisture_check a rolling 24h window', () => {
+    expect(stmts[1]).toMatch(/e\.event_type = 'moisture_check'/);
+    expect(stmts[1]).toMatch(/e\.event_date > now\(\) - INTERVAL '24 hours'/);
+    // watering/rain are NOT widened — they keep the ET calendar-day rule.
+    expect(stmts[1]).toMatch(/AT TIME ZONE 'America\/New_York'\)::date\s*\n?\s*=/);
   });
 
   it('DEFAULT is PER-USER (dp.user_id = ${userId}); household widening is OPT-IN only', () => {

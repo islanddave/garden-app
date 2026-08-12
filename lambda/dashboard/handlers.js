@@ -19,6 +19,7 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 import { householdScope } from './household.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
+import { NON_REWARD_EVENT_TYPES } from './eventTypes.rewards.js';
 
 // DRG-WATERRECON-002: pinned to lambda/daily-plan/engine.js PLAN_SCHEMA_VERSION (kept in lockstep by the
 // anti-drift source test). The alert bar trusts a daily_plan ONLY when its stored items.schema_version
@@ -325,6 +326,19 @@ export function queryUserStats(sql, userId) {
 // V1.2-streak-fix (2026-05-25): DISTINCT activity days (by event_date in the user's TZ) + today,
 // for live streak recompute via the pure helper. Per-USER (created_by) — a streak is the user's
 // own activity, not household-scoped. Recomputing here means the displayed streak is never stale.
+//
+// V4-WATERMATH-001 F0 (2026-08-12) — NON_REWARD_EVENT_TYPES filter. This recompute is AUTHORITATIVE
+// for what the user sees: handleDashboard overwrites storedStats.current_streak with
+// computeStreak(activityDays, …), so whatever this query returns IS the displayed streak, no matter
+// what the write path stored. The events Lambda filters the reward partition out of its grant path,
+// both of its recomputes and its achievement counts — but this is a THIRD, independent reader, and
+// until now it counted every event type. Left unfiltered, tapping "I checked the soil" every morning
+// would sustain a streak indefinitely: a rewarded farmable loop, which is the exact thing the
+// partition exists to prevent.
+//
+// Scoped to the activity-DAY subquery only. The `today` term is a clock reading, not an event
+// aggregate, so it takes no predicate — filtering there would be meaningless, and a blanket WHERE
+// would be the easy mistake.
 export function queryActivityDays(sql, userId) {
   return sql`
       WITH z AS (
@@ -338,6 +352,7 @@ export function queryActivityDays(sql, userId) {
             FROM event_log e
             WHERE e.created_by = ${userId}
               AND e.deleted_at IS NULL
+              AND NOT (e.event_type = ANY(${NON_REWARD_EVENT_TYPES}::text[]))
               AND (e.event_date AT TIME ZONE (SELECT tz FROM z))::date
                   <= (NOW() AT TIME ZONE (SELECT tz FROM z))::date
           ) days
@@ -430,7 +445,27 @@ export function queryWaterDueFromPlan(sql, userId) {
         -- defensive: jsonb_array_elements THROWS on a JSON scalar/null (would 500 the whole dashboard);
         -- coalesce a malformed/absent water_due to an empty array. Drop elements missing id/project_id.
         SELECT (e->>'id') AS plant_id, (e->>'project_id') AS project_id, (e->>'name') AS name,
-               COALESCE((e->>'overdue_by')::int, 0) AS overdue_by
+               -- DEFENSIVE (V4-WATERMATH-001). This was COALESCE((e->>'overdue_by')::int, 0), and
+               -- ::int THROWS 22P02 on ANY non-integer text — '2.3', and even '2.0' — which 500s the
+               -- ENTIRE dashboard, not just this tile. COALESCE does not help: the cast fails before
+               -- it, and the jsonb_typeof guard above only protects the array, not the element. That
+               -- is a live tripwire the F2 ledger walks straight into: the ledger's D is fractional
+               -- by design, so the first fractional overdue_by the engine writes takes the dashboard
+               -- down for every user until the plan row rolls over. Verified against live Neon: the
+               -- old expression errors on 2.3; this one is total over 17 shapes (json number,
+               -- numeric string, 'abc', '', null, absent, bool, array, object, 1e30, '2e3', ' 2 ').
+               -- Regex-gated so only a plain decimal is cast at all; floor() because the field is
+               -- "days overdue" and a partial day is not a whole one; LEAST/GREATEST because numeric
+               -- accepts values that overflow int4 and would throw 22003 on the way out. Anything
+               -- unparseable degrades to 0 (the row still renders, just unsorted) rather than 500ing.
+               COALESCE(
+                 -- The '\\.' is DELIBERATE: this is a JS template literal, where '\.' cooks to a bare
+                 -- '.', and a bare '.' in a POSIX regex matches ANY character — so '2x3' would pass
+                 -- the guard and then throw 22P02 inside ::numeric, reinstating the exact crash this
+                 -- expression exists to prevent. Postgres must receive a literal backslash-dot.
+                 CASE WHEN (e->>'overdue_by') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                      THEN LEAST(GREATEST(floor((e->>'overdue_by')::numeric), -3650), 3650)::int
+                 END, 0) AS overdue_by
         FROM plan,
              jsonb_array_elements(
                CASE WHEN jsonb_typeof(plan.items->'water_due') = 'array'
@@ -447,12 +482,23 @@ export function queryWaterDueFromPlan(sql, userId) {
         -- — and the client half belongs to whoever lands PROJHIDE. See the V4-CAREKEY-001 report.
         WHERE (e->>'id') IS NOT NULL AND (e->>'project_id') IS NOT NULL
       ),
+      -- V4-WATERMATH-001 F0. 'moisture_check' ("Not thirsty") joins the bar's satisfied-set in the
+      -- SAME deploy as daily-plan-read's DONE_EVENTS.water_due — the :714 lockstep test enforces
+      -- that pairing. Ship one without the other and the flagship tap visibly does nothing on
+      -- whichever surface lagged, for up to ~11h.
+      -- The rolling 24h arm is the interim pre-F2 snooze rule (canon V100 §"Pre-F2 interim snooze
+      -- semantics"): an ET-day-only snooze tapped in the morning expires at midnight and re-nags at
+      -- the next run, which extinguishes the affordance. watering/rain are untouched and keep the
+      -- ET-calendar-day rule. Superseded by the engine fold at F2.
       fresh AS (
         SELECT DISTINCT ev.plant_id::text AS plant_id
         FROM event_log ev, params
-        WHERE ev.deleted_at IS NULL AND ev.event_type IN ('watering','rain')
+        WHERE ev.deleted_at IS NULL AND ev.event_type IN ('watering','rain','moisture_check')
           AND ev.plant_id::text IN (SELECT plant_id FROM wd)
-          AND (ev.event_date AT TIME ZONE 'America/New_York')::date = et_today
+          AND (
+                (ev.event_date AT TIME ZONE 'America/New_York')::date = et_today
+                OR (ev.event_type = 'moisture_check' AND ev.event_date > now() - INTERVAL '24 hours')
+              )
       ),
       due AS (SELECT wd.* FROM wd WHERE NOT EXISTS (SELECT 1 FROM fresh f WHERE f.plant_id = wd.plant_id)),
       grouped AS (

@@ -8,6 +8,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope } from './household.js';  // V4-ASSIGNLENS-001 opt-in household widening (per-dir copy; bundle-safe)
+import { applyDone, planItemIds } from './doneEvents.js';  // V3-TODAYDONE-001 vocabulary + pure fold (per-dir copy; bundle-safe)
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const SCHEMA_VERSION = 1;       // API-response envelope version (client contract)
@@ -129,32 +130,36 @@ export const handler = async (event) => {
 // V3-TODAYDONE-001 — read-time check-off. An actionable plan item is "done" for the day when a satisfying
 // event was logged today (ET) for that planting. Derived from event_log, never stored (cross-device truthful).
 // Placed AFTER the handler so the plan SELECT remains the first tagged query in the file (static-guard ordering).
-const DONE_EVENTS = {
-  water_due:  ['watering', 'rain'],
-  no_history: ['watering', 'rain'],
-  fertilize:  ['fertilizing'],
-  pest:       ['observation', 'pest_treatment'],
-  cold:       ['brought_inside', 'cover'],
-};
+// The done vocabulary and the fold itself live in ./doneEvents.js — dependency-free so CI can
+// actually EXECUTE them (nothing may import this file: its @neondatabase / @clerk / @aws-sdk
+// imports are not installed by the root-only `npm ci`). What stays here is the query that decides
+// WHICH events count as satisfying.
 export async function annotateDone(sql, plan) {
-  const ids = [];
-  for (const k of Object.keys(DONE_EVENTS)) for (const it of (plan?.[k] || [])) if (it && it.id) ids.push(it.id);
+  const ids = planItemIds(plan);
   if (ids.length === 0) return plan;
+  // V4-WATERMATH-001 F0 interim snooze window. watering/rain keep the ET-calendar-day rule (a
+  // watering "counts for today"). A `moisture_check` ADDITIONALLY satisfies on a rolling 24h
+  // window, because an ET-day-only snooze tapped at 09:00 expires at midnight and the planting
+  // re-nags at the 02:00/12:00 run ~17-21h later — a snooze the app visibly overrides, which is the
+  // affordance-extinction pattern canon V100 §"Pre-F2 interim snooze semantics" forbids. Two
+  // reader-level SQL edits (this one and the dashboard bar's `fresh` CTE), superseded by the engine
+  // fold at F2. Written as an OR against the unchanged day predicate rather than as an exclusive
+  // branch so no existing type's behaviour moves; the two windows differ only for a moisture_check
+  // logged >24h ago but still inside a 25-hour DST fall-back day, where the union is the more
+  // lenient (snooze survives ~1h longer) and therefore fail-safe direction.
   const rows = await sql`
     SELECT DISTINCT e.plant_id, e.event_type
     FROM event_log e
     WHERE e.plant_id = ANY(${ids})
       AND e.deleted_at IS NULL
-      AND (e.event_date AT TIME ZONE 'America/New_York')::date
-          = (now() AT TIME ZONE 'America/New_York')::date
+      AND (
+            (e.event_date AT TIME ZONE 'America/New_York')::date
+              = (now() AT TIME ZONE 'America/New_York')::date
+            OR (e.event_type = 'moisture_check' AND e.event_date > now() - INTERVAL '24 hours')
+          )
   `;
   const sat = new Set(rows.map((r) => `${r.plant_id}|${r.event_type}`));
-  const out = { ...plan };
-  for (const [k, types] of Object.entries(DONE_EVENTS)) {
-    if (!Array.isArray(plan[k])) continue;
-    out[k] = plan[k].map((it) => ({ ...it, done: !!(it && it.id && types.some((t) => sat.has(`${it.id}|${t}`))) }));
-  }
-  return out;
+  return applyDone(plan, sat);
 }
 
 

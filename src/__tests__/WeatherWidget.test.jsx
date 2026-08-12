@@ -31,7 +31,7 @@ describe('WeatherWidget — honest snapshot presentation', () => {
 describe('WeatherWidget — V4-WATERWHY-002 the why-expander is gone', () => {
   // Explicit supersede of V3-WATERWHY-001. These assert the ABSENCE of the old surface, so a
   // re-introduction is caught rather than silently landing.
-  const hydro = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
+  const hydro = { recent_precip_in: 0.6, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.6, tomorrow_pop: 70, rain_coming: true }
 
   it('renders no watering-explanation region and no Why? affordance', () => {
     render(<WeatherWidget weather={weather} hydrology={hydro} />)
@@ -47,7 +47,12 @@ describe('WeatherWidget — V4-WATERWHY-002 the why-expander is gone', () => {
   })
 
   it('each lane announces its own recommendation THROUGH THE A11Y TREE', () => {
-    // beds: a reliable soak is coming -> hold. containers: base 2 cans, no rain has landed -> water.
+    // beds: already moist AND a qualifying soak is coming -> the engine's `incoming` branch -> hold.
+    // containers: 0.6" of MEASURED rain eases them one can but never zeroes them (BUG-TODAYWATER-001
+    // decision 3 — a forecast may not suppress a container at all, and 0.6 is under SOAK_CAP_IN).
+    // Was `{recent 0, tomorrow 0.74@63}`, which held beds only under the widget's old private 0.3"/50%
+    // bar; the engine requires the media to ALREADY be wet before incoming rain justifies a skip, so a
+    // bone-dry bed with rain coming tomorrow now correctly gets watered today.
     //
     // getByRole, NOT getByLabelText. getByLabelText matches the aria-label ATTRIBUTE and passes even
     // when the name never reaches the accessibility tree — it passed against the first cut of this
@@ -56,7 +61,7 @@ describe('WeatherWidget — V4-WATERWHY-002 the why-expander is gone', () => {
     // difference, so it is the contract: it fails if role="img" is ever dropped.
     render(<WeatherWidget weather={weather} hydrology={hydro} />)
     expect(screen.getByRole('img', { name: /In-ground beds: hold, no water needed today/i })).toBeTruthy()
-    expect(screen.getByRole('img', { name: /Containers: water — 2 of 3 cans/i })).toBeTruthy()
+    expect(screen.getByRole('img', { name: /Containers: water — 1 of 3 cans/i })).toBeTruthy()
   })
 })
 
@@ -200,7 +205,11 @@ describe('WeatherWidget — V200 Slice 6 derived no-wrap headline', () => {
   })
 
   it('reads "Water containers, skip the beds" when only containers water (rain coming for beds)', () => {
-    const h = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
+    // BUG-TODAYWATER-001: bumped from {recent 0.05, tomorrow 0.74@63} to a bag that satisfies the
+    // ENGINE's incoming branch — already moist (windowPrecip >= SOAK_WET_FLOOR_IN) AND >= SOAK_FCST_QPF_IN
+    // more coming at >= SOAK_FCST_POP_PCT. The old bag zeroed beds only under the widget's private
+    // thresholds, which is the divergence this change exists to remove.
+    const h = { recent_precip_in: 0.6, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.6, tomorrow_pop: 70, rain_coming: true }
     const { container } = render(<WeatherWidget weather={w} hydrology={h} />)
     const el = headlineEl(container)
     expect(el).toBeTruthy()
@@ -208,7 +217,10 @@ describe('WeatherWidget — V200 Slice 6 derived no-wrap headline', () => {
   })
 
   it('reads "All set" when both lanes hold (already soaked)', () => {
-    const h = { recent_precip_in: 0.9, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, rain_coming: false }
+    // 0.9 -> 1.0: the zero-both bar is now SOAK_CAP_IN (the engine's), not the widget's old private
+    // 0.8. At 0.9 the lanes deliberately do NOT both hold any more — see the sibling test below.
+    // No waterDueCount is passed, so the absolute sentence is still the correct output here.
+    const h = { recent_precip_in: 1.0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, rain_coming: false }
     const { container } = render(<WeatherWidget weather={w} hydrology={h} />)
     const el = headlineEl(container)
     expect(el).toBeTruthy()
@@ -236,7 +248,7 @@ describe('WeatherWidget — V200 Slice 6 derived no-wrap headline', () => {
     // via getByText (real text in the DOM), NOT getByLabelText — the old aria-label-on-a-div was
     // silent, and getByLabelText could not detect that. Two nodes carry the sentence: the
     // visually-hidden span (AT) and the aria-hidden truncated div (sighted), so scope to the former.
-    const h = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
+    const h = { recent_precip_in: 0.6, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.6, tomorrow_pop: 70, rain_coming: true }
     render(<WeatherWidget weather={w} hydrology={h} />)
     const nodes = screen.getAllByText('Water containers, skip the beds today.')
     const readable = nodes.filter(n => !n.closest('[aria-hidden="true"]'))

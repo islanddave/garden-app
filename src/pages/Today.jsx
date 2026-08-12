@@ -77,8 +77,12 @@ export default function Today() {
 
       {!loading && !error && hasPlan && plan && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* BUG-TODAYWATER-001 honesty guard — the widget's headline and <CareNeeded>'s list are two
+              independently-thresholded verdicts on the same plan, and they demonstrably disagreed
+              (08-03, 08-08). Handing the widget the SAME list it sits above is what lets it stop
+              claiming "All set" over a non-empty one. Length, not contents: no new coupling. */}
           {plan.weather && (
-            <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={data?.generated_at} planDate={data?.plan_date} liveHydrology={liveHydrology} refreshedAt={refreshedAt} />
+            <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={data?.generated_at} planDate={data?.plan_date} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={Array.isArray(plan.water_due) ? plan.water_due.length : 0} />
           )}
 
           {/* V4-TODAYHOLD-001 — Today is an ACTION surface: show the substrate/feeding note only

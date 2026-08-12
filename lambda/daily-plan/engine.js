@@ -228,18 +228,61 @@ function rainCreditDaysTiered(tier, wi, hy){
 // vessel-agnostic gate is the only design robust to the dominant NULL case (NULL is outdoor -> suppressed ->
 // fails safe). covered/indoor never got the rain -> exempt. Independent of CARE_RAIN_CREDIT_ENABLED so the
 // eventual credit-ON flip cannot bypass it. Recovery is automatic as the 72h windowPrecip decays (no counter).
-const SOAK_CAP_IN = 1.0;         // >= this over the 72h windowPrecip -> suppress outdoor watering
-const SOAK_WET_FLOOR_IN = 0.5;   // "already moist" prerequisite for the incoming-rain trigger
-const SOAK_FCST_QPF_IN = 0.5;    // incoming 24h amount that counts
-const SOAK_FCST_POP_PCT = 60;    // min PoP for an incoming-rain skip
-// BUG-TODAYWATER-001: a small vessel needs MUCH more gross rainfall than a bed before a skip is safe. A
-// 5-gal fabric bag is a ~113 sq-in footprint and a mature canopy sheds water AWAY from it, so a 1" event
-// delivers under half of one hand-watering — while the plant transpires 1.5-3 L/day. The cost asymmetry is
-// roughly 50:1 against the bed case: a false skip on a bag aborts pepper/tomato flowers within 24h above
-// 85F and locks in blossom-end-rot in fruit that ripen 2-3 weeks later (Ca is transpiration-delivered, so
-// the damage is invisible when it is caused and irreversible when it shows). A false WATER on a bag costs
-// nothing — it is free-draining by construction. Hence a deliberately high bar.
-const SOAK_TODAY_SMALL_IN = 2.0; // today-forecast bar for small vessels (bags/pots/cells)
+// BUG-TODAYWATER-001 (2026-08-12) — these four moved OUT of this file. They are now required from
+// wateringThresholds.json, which src/lib/wateringScale.js (the WeatherWidget headline on Today)
+// imports from this same path. Until this change the widget owned a private, unharmonized copy —
+// 0.8" with no probability gate at all — so on 2026-08-03 (0.98") and 2026-08-08 (0.99") the two
+// models straddled the same number and Today printed "All set — no watering needed today." above a
+// full watering list. The file lives in THIS directory because deploy-lambda.yml packages it with
+// `zip -r .`, so the engine's copy ships with no workflow change; the client bundles it at build.
+// Values are unchanged — this is a re-homing, not a retune. src/lib/wateringModelParity.test.js
+// fails if either module reintroduces a literal.
+const SOAK_THRESHOLDS = require('./wateringThresholds.json');
+const SOAK_CAP_IN = SOAK_THRESHOLDS.SOAK_CAP_IN;                 // >= this over the 72h windowPrecip -> suppress outdoor watering
+const SOAK_WET_FLOOR_IN = SOAK_THRESHOLDS.SOAK_WET_FLOOR_IN;     // "already moist" prerequisite for the incoming-rain trigger
+const SOAK_FCST_QPF_IN = SOAK_THRESHOLDS.SOAK_FCST_QPF_IN;       // incoming 24h amount that counts
+const SOAK_FCST_POP_PCT = SOAK_THRESHOLDS.SOAK_FCST_POP_PCT;     // min PoP for an incoming-rain skip
+// BUG-SOAKBAR-001 (2026-08-12) — was 2.0", now DERIVED. The cost asymmetry below is real and unchanged;
+// what was wrong is that 2.0" was picked to express it rather than computed, so it asserted that a small
+// vessel needs 2" of rain to bank one day of water. It does not, and Dave's own observation says so:
+// his containers are VERY happy on 0.075"/day, mulched, and he inspects them daily.
+//
+// DERIVATION (every input is either Dave-observed or already shipped in this file):
+//   need    0.075"/day  — Dave-observed satisfaction figure for a mulched container.
+//   loss    0.35"       — RAIN_TIER_IA.small_fast above: this engine's OWN initial abstraction for a
+//                         small fast-drying vessel ("first-wetting/runoff/canopy loss"). It is LIVE in
+//                         prod (CARE_RAIN_CREDIT_ENABLED=true), so this borrows a number already in
+//                         force rather than inventing a second, disagreeing one. It is also where the
+//                         "canopy sheds water away" physics is already priced in — counting that effect
+//                         again here would be double-charging it.
+//   => a container banks a full day only once rain clears 0.35 + 0.075 = 0.425".
+//   haircut 0.47        — this branch acts on a FORECAST, not a gauge, which is the one thing that
+//                         distinguishes it from the soak branch. Measured against 56 days of this
+//                         season's own prior_runs, the worst realized/forecast ratio on a day that
+//                         cleared the PoP gate was 0.47 (2026-06-22: 1.42" forecast, 0.67" delivered).
+//   => 0.425 / 0.47 = 0.9043", rounded UP to 0.91" — a safety bar must round toward watering, and 0.90
+//      actually banks 0.073" against a 0.075" need. Two decimals is the gauge's own resolution; more
+//      would be false precision on a 4-sample haircut. At this bar even the season's worst bust leaves
+//      the container its full day's water; at 0.70" that same bust delivers 0.33" and banks NOTHING.
+//
+// Only the WORST observed bust pushes the answer this high — the mean ratio (0.93) would put it at 0.46",
+// under the 0.5" floor below. Designing to the worst case is deliberate: a false WATER on a free-draining
+// vessel costs nothing, while a false SKIP above 85F aborts pepper/tomato flowers within 24h and locks in
+// blossom-end-rot in fruit ripening 2-3 weeks later (Ca is transpiration-delivered, so the damage is
+// invisible when caused and irreversible when it shows).
+//
+// FLOOR: todayQualifies() below already gates on `q >= SOAK_FCST_QPF_IN` (0.5"), so any value <= 0.5 makes
+// this constant dead code and silently collapses containers onto the bed bar. The meaningful domain is
+// strictly (0.5, inf). 0.91 is interior to the (0.74, 1.42] band in which season behaviour is identical, so
+// the choice is robust to a haircut estimate anywhere in [0.30, 0.57] — the precision is not load-bearing.
+//
+// MEASURED BLAST RADIUS: none this season. Replaying all 56 nightly runs through saturationSuppressed,
+// 2.0 -> 0.91 changes zero days, because soak/incoming claim the wet days first and only 4 days all season
+// clear todayQualifies at all. See soakcontainer.test.js. That is the honest result: this constant is
+// near-inert at ANY value above 0.74", and the reason the rule feels pointless is the PoP+0.5" gate and
+// the branch ordering, NOT this number. Lowering it below 0.74" to force it to fire would be fitting to a
+// single observed day (2026-07-07, 0.74") and would breach the derivation above.
+const SOAK_TODAY_SMALL_IN = SOAK_THRESHOLDS.SOAK_TODAY_SMALL_IN; // today-forecast bar for small vessels (bags/pots/cells)
 // Returns { wp, kind:'soak'|'incoming', fq?, pop? } when an outdoor planting must NOT be watered (media
 // saturated, or wet with more rain imminent = no drying window), else null. Pure fn of hydrology + exposure.
 // BUG-TODAYWATER-001 — "is meaningful rain forecast for TODAY?" Deliberately reuses SOAK_FCST_QPF_IN and
