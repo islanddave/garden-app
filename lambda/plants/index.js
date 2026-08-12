@@ -778,14 +778,51 @@ export const handler = async (event) => {
                       AND (ph.plant_id = p.id OR e.plant_id = p.id)
                     LIMIT 1
                  ) fp ON TRUE
+            -- BUG-HEROLISTPERF-001 — the LIST fallback is split into two index-usable arms and
+            -- gated on the explicit arm. The by-id read above keeps the plain
+            -- (ph.plant_id = p.id OR e.plant_id = p.id) disjunction because it resolves ONE row;
+            -- here that same disjunction spans TWO relations, so the planner cannot use
+            -- idx_photos_plant and re-scans the whole photo set per planting. Measured live on
+            -- prod (259 live plantings x 1253 live photos, EXPLAIN ANALYZE 2026-08-12):
+            -- 864 ms with loops=324527 -- on GET /api/plants, which every log-form mount fires.
+            -- Split + gated: 4.6 ms, same 259 rows, byte-identical hero ids/urls/flags.
+            --
+            -- SEMANTICS ARE UNCHANGED, and both halves of that matter:
+            --   * UNION ALL of (plant_id arm, event arm) is the SAME row set as the OR. Taking the
+            --     newest of each arm and then the newest of those two is the newest overall, so
+            --     the ORDER BY ... LIMIT 1 still picks exactly the row the disjunction picked.
+            --   * fp.storage_path IS NULL gates the whole fallback on the explicit arm having
+            --     resolved, reproducing the COALESCE below for EVERY nullability case -- including
+            --     a hypothetical fp row with a NULL storage_path, which still falls through to fb.
+            --     Deliberately NOT fp.id IS NULL: that is equivalent only while photos.storage_path
+            --     stays NOT NULL, i.e. it would silently couple this query to a column constraint.
+            --     Postgres compiles it to a One-Time Filter, so the fallback runs only for the
+            --     plantings that actually need it (19 of 259 live).
+            -- Event-inclusive membership is preserved by the second arm and is still load-bearing
+            -- (123 live heroes) -- see the by-id rationale above before touching either arm.
             LEFT JOIN LATERAL (
-                   SELECT ph.id, ph.storage_path
-                     FROM photos ph
-                     LEFT JOIN public.event_log e ON e.id = ph.event_id
-                    WHERE ph.deleted_at IS NULL
-                      AND ph.created_by = ANY(${householdIds})
-                      AND (ph.plant_id = p.id OR e.plant_id = p.id)
-                    ORDER BY ph.created_at DESC, ph.id DESC
+                   SELECT x.id, x.storage_path
+                     FROM (
+                            ( SELECT ph.id, ph.storage_path, ph.created_at
+                                FROM photos ph
+                               WHERE fp.storage_path IS NULL
+                                 AND ph.plant_id = p.id
+                                 AND ph.deleted_at IS NULL
+                                 AND ph.created_by = ANY(${householdIds})
+                               ORDER BY ph.created_at DESC, ph.id DESC
+                               LIMIT 1 )
+                            UNION ALL
+                            ( SELECT ph.id, ph.storage_path, ph.created_at
+                                FROM photos ph
+                                JOIN public.event_log e ON e.id = ph.event_id
+                               WHERE fp.storage_path IS NULL
+                                 AND e.plant_id = p.id
+                                 AND ph.deleted_at IS NULL
+                                 AND ph.created_by = ANY(${householdIds})
+                               ORDER BY ph.created_at DESC, ph.id DESC
+                               LIMIT 1 )
+                          ) x
+                    ORDER BY x.created_at DESC, x.id DESC
                     LIMIT 1
                  ) fb ON TRUE
             WHERE pp.created_by = ANY(${householdIds})
@@ -846,14 +883,51 @@ export const handler = async (event) => {
                       AND (ph.plant_id = p.id OR e.plant_id = p.id)
                     LIMIT 1
                  ) fp ON TRUE
+            -- BUG-HEROLISTPERF-001 — the LIST fallback is split into two index-usable arms and
+            -- gated on the explicit arm. The by-id read above keeps the plain
+            -- (ph.plant_id = p.id OR e.plant_id = p.id) disjunction because it resolves ONE row;
+            -- here that same disjunction spans TWO relations, so the planner cannot use
+            -- idx_photos_plant and re-scans the whole photo set per planting. Measured live on
+            -- prod (259 live plantings x 1253 live photos, EXPLAIN ANALYZE 2026-08-12):
+            -- 864 ms with loops=324527 -- on GET /api/plants, which every log-form mount fires.
+            -- Split + gated: 4.6 ms, same 259 rows, byte-identical hero ids/urls/flags.
+            --
+            -- SEMANTICS ARE UNCHANGED, and both halves of that matter:
+            --   * UNION ALL of (plant_id arm, event arm) is the SAME row set as the OR. Taking the
+            --     newest of each arm and then the newest of those two is the newest overall, so
+            --     the ORDER BY ... LIMIT 1 still picks exactly the row the disjunction picked.
+            --   * fp.storage_path IS NULL gates the whole fallback on the explicit arm having
+            --     resolved, reproducing the COALESCE below for EVERY nullability case -- including
+            --     a hypothetical fp row with a NULL storage_path, which still falls through to fb.
+            --     Deliberately NOT fp.id IS NULL: that is equivalent only while photos.storage_path
+            --     stays NOT NULL, i.e. it would silently couple this query to a column constraint.
+            --     Postgres compiles it to a One-Time Filter, so the fallback runs only for the
+            --     plantings that actually need it (19 of 259 live).
+            -- Event-inclusive membership is preserved by the second arm and is still load-bearing
+            -- (123 live heroes) -- see the by-id rationale above before touching either arm.
             LEFT JOIN LATERAL (
-                   SELECT ph.id, ph.storage_path
-                     FROM photos ph
-                     LEFT JOIN public.event_log e ON e.id = ph.event_id
-                    WHERE ph.deleted_at IS NULL
-                      AND ph.created_by = ANY(${householdIds})
-                      AND (ph.plant_id = p.id OR e.plant_id = p.id)
-                    ORDER BY ph.created_at DESC, ph.id DESC
+                   SELECT x.id, x.storage_path
+                     FROM (
+                            ( SELECT ph.id, ph.storage_path, ph.created_at
+                                FROM photos ph
+                               WHERE fp.storage_path IS NULL
+                                 AND ph.plant_id = p.id
+                                 AND ph.deleted_at IS NULL
+                                 AND ph.created_by = ANY(${householdIds})
+                               ORDER BY ph.created_at DESC, ph.id DESC
+                               LIMIT 1 )
+                            UNION ALL
+                            ( SELECT ph.id, ph.storage_path, ph.created_at
+                                FROM photos ph
+                                JOIN public.event_log e ON e.id = ph.event_id
+                               WHERE fp.storage_path IS NULL
+                                 AND e.plant_id = p.id
+                                 AND ph.deleted_at IS NULL
+                                 AND ph.created_by = ANY(${householdIds})
+                               ORDER BY ph.created_at DESC, ph.id DESC
+                               LIMIT 1 )
+                          ) x
+                    ORDER BY x.created_at DESC, x.id DESC
                     LIMIT 1
                  ) fb ON TRUE
             -- V4-SOFTDEL-001 F4 container-deleted gate (rationale at the seen_event INSERT above).

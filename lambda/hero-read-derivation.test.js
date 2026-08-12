@@ -175,6 +175,57 @@ describe('W-HERO — every hero-resolving read DERIVES the effective hero', () =
     }
   });
 
+  // BUG-HEROLISTPERF-001 — the derivation must stay INDEX-USABLE on the two LIST reads.
+  //
+  // This is a SHAPE guard and nothing more, and the distinction matters: a regex over SQL text
+  // cannot see a query plan, which is exactly how the regression it guards got shipped past the
+  // clauses above. The evidence for the fix is a live `EXPLAIN ANALYZE` against prod on 2026-08-12
+  // — unscoped list 864 ms -> 4.6 ms, project-scoped 178 ms -> 1.2 ms, both returning byte-identical
+  // rows. What THIS test buys is that the shape those numbers were measured on cannot be quietly
+  // reverted to the O(plantings x photos) form by a later "make all four parents look alike" pass.
+  //
+  // The by-id read is deliberately held to the OPPOSITE shape. It resolves ONE row, where the plain
+  // disjunction is both cheaper and clearer; splitting it there would be churn. Pinning both
+  // directions is what stops a future refactor from "unifying" them in either direction.
+  describe('BUG-HEROLISTPERF-001 — list fallbacks are index-usable, by-id is untouched', () => {
+    // Everything after `) fp ON TRUE` is the fallback lateral. The EXPLICIT arm legitimately keeps
+    // the disjunction, so asserting against the whole query would match its OR and pass no matter
+    // what the fallback does.
+    const fallbackOf = (sql) => sql.split(/\)\s*fp\s+ON\s+TRUE/i)[1] ?? '';
+    const plants = heroReads.filter((r) => r.file === 'plants/index.js');
+    const lists = plants.filter((r) => /LIMIT\s+5000/i.test(r.sql));
+    const byId = plants.filter((r) => !/LIMIT\s+5000/i.test(r.sql));
+
+    it('finds 2 list reads and 1 by-id read (anti-vacuity floor)', () => {
+      expect(lists).toHaveLength(2);
+      expect(byId).toHaveLength(1);
+      for (const r of plants) expect(fallbackOf(r.sql)).not.toBe('');
+    });
+
+    it.each([0, 1])('list read %i: fallback has no cross-relation OR', (i) => {
+      const fb = fallbackOf(lists[i].sql);
+      // THE regression. This disjunction spans photos and event_log, so the planner cannot use
+      // idx_photos_plant and re-scans every photo per planting (loops=324527 measured live).
+      expect(fb, 'list fallback reintroduced the cross-relation OR — this is the 187x regression')
+        .not.toMatch(/ph\.plant_id\s*=\s*p\.id\s+OR\s+e\.plant_id\s*=\s*p\.id/);
+      // Replaced by two separately-indexable arms...
+      expect(fb, 'list fallback is not split into UNION ALL arms').toMatch(/UNION ALL/);
+      // ...gated so it runs only for plantings with no explicit hero (One-Time Filter, 19 of 259).
+      expect(fb, 'list fallback lost its explicit-arm short-circuit').toMatch(/fp\.storage_path IS NULL/);
+      // And event-inclusive membership SURVIVES the split — the 123-live-heroes clause above is
+      // satisfied by the explicit arm alone, so without this the fallback could quietly go
+      // plant_id-only and every assertion in this file would still pass.
+      expect(fb, 'list fallback dropped its event_log arm').toMatch(/e\.plant_id\s*=\s*p\.id/);
+      expect(fb, 'list fallback dropped its plant_id arm').toMatch(/ph\.plant_id\s*=\s*p\.id/);
+    });
+
+    it('by-id read KEEPS the plain disjunction (single row — the split would be churn)', () => {
+      const fb = fallbackOf(byId[0].sql);
+      expect(fb).toMatch(/ph\.plant_id\s*=\s*p\.id\s+OR\s+e\.plant_id\s*=\s*p\.id/);
+      expect(fb).not.toMatch(/UNION ALL/);
+    });
+  });
+
   // inventory-items is the ONE surface where the SQL can be entirely correct and the response
   // still wrong, so it needs an assertion the SQL-text clauses above structurally cannot make.
   // `SELECT i.*` already emits the raw featured_photo_id column, so the derived value is aliased to
