@@ -18,6 +18,15 @@
 // sticky section headers give a jump anchor for the flat single-column layout; scroll-to-top on
 // mount (BrowserRouter doesn't reset scroll on push); breadcrumb is arbitrary-depth.
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+// V4-EVENTHISTPAGE-001 (BD0806-19) — the event log used to stop at the first 50 with nothing saying
+// so. GET /api/events (Route 4) reads `Math.min(parseInt(limit ?? '50'), 200)` and exposes NO offset
+// param, so 200 is a hard server ceiling and true server-side paging is not available on this route.
+// Prod's busiest planting carries 156 events and none exceed 200, so asking for the ceiling returns
+// every planting's complete history today. The rows are then revealed a page at a time client-side —
+// a 156-row list dumped into one 390px scroll is not an improvement on a truncated one — and if the
+// server ever DOES return exactly the ceiling we say the history is clipped rather than lying quietly.
+const EVENT_FETCH_LIMIT = 200
+const EVENT_PAGE_SIZE = 50
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
@@ -92,6 +101,9 @@ export default function PlantingDetail() {
   const [events, setEvents] = useState([])
   const [eventsLoading, setEventsLoading] = useState(true)
   const [eventsError, setEventsError] = useState(null)
+  // V4-EVENTHISTPAGE-001: how many of the fetched events are on screen. Raised a page at a time by
+  // the Show-more control below; reset by the fetch effect so a re-fetch never leaves a stale count.
+  const [eventsShown, setEventsShown] = useState(EVENT_PAGE_SIZE)
 
   // V3-PHOTOMULTI-001 (V1, display-only): every photo linked to THIS planting — uploaded directly
   // (plant_id) or attached to one of its events (event_id). No backend/migration: read the
@@ -179,11 +191,13 @@ export default function PlantingDetail() {
     let cancelled = false
     setEventsLoading(true)
     setEventsError(null)
+    // A re-fetch is a new list; showing page 3 of the previous one would be a lie about this one.
+    setEventsShown(EVENT_PAGE_SIZE)
     // V4-UNSCOPEDROUTES-001: project_id omitted when the planting has none (CaptureFlow rows) —
     // a literal "project_id=null" param would silently match nothing.
     fetch(planting.project_id
-      ? `/api/events?project_id=${planting.project_id}&plant_id=${planting.id}`
-      : `/api/events?plant_id=${planting.id}`)
+      ? `/api/events?project_id=${planting.project_id}&plant_id=${planting.id}&limit=${EVENT_FETCH_LIMIT}`
+      : `/api/events?plant_id=${planting.id}&limit=${EVENT_FETCH_LIMIT}`)
       .then(data => {
         if (cancelled) return
         setEvents(data ?? [])
@@ -711,7 +725,7 @@ export default function PlantingDetail() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {events.map(ev => (
+            {events.slice(0, eventsShown).map(ev => (
               <Link
                 key={ev.id}
                 to={`/events/${ev.id}`}
@@ -740,6 +754,31 @@ export default function PlantingDetail() {
                 </div>
               </Link>
             ))}
+            {/* V4-EVENTHISTPAGE-001 — full-width, 44pt-min so it is a comfortable thumb target at the
+                bottom of a long scroll on a 390px phone. Label carries the REMAINING count, not a
+                fixed "50 more", so the last page never over-promises. */}
+            {events.length > eventsShown && (
+              <button
+                type="button"
+                data-testid="event-log-show-more"
+                onClick={() => setEventsShown(n => n + EVENT_PAGE_SIZE)}
+                style={{
+                  marginTop: 4, minHeight: 44, width: '100%',
+                  backgroundColor: P.white, color: P.green, border: `1px solid ${P.greenLight}`,
+                  borderRadius: 6, fontSize: '0.85rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                }}
+              >
+                Show more  ·  {events.length - eventsShown} older
+              </button>
+            )}
+            {/* The server returned exactly its hard ceiling, so there may be older events this route
+                cannot reach (Route 4 has no offset). Say it rather than truncate silently — silent
+                truncation is the bug this ticket exists to fix. */}
+            {events.length >= EVENT_FETCH_LIMIT && eventsShown >= events.length && (
+              <p data-testid="event-log-ceiling" style={{ margin: '8px 0 0', color: P.light, fontSize: '0.78rem', lineHeight: 1.5 }}>
+                Showing the {EVENT_FETCH_LIMIT} most recent events for this planting. Older ones aren&apos;t loaded.
+              </p>
+            )}
           </div>
         )}
       </div>
