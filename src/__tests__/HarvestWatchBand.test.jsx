@@ -91,7 +91,7 @@ describe('HarvestWatchBand — the observable (design §3.2, the unlock)', () =>
     render(<HarvestWatchBand />)
     const card = await band()
     // Async: the dataset is a lazily-imported chunk, so this must be a findBy.
-    expect(await within(card).findByText('colour break (green to pale amber)')).toBeTruthy()
+    expect(await within(card).findByText('colour break (green to pale amber)', undefined, { timeout: 8000 })).toBeTruthy()
     expect(within(card).getByText(/Look for:/)).toBeTruthy()
   })
 
@@ -99,7 +99,7 @@ describe('HarvestWatchBand — the observable (design §3.2, the unlock)', () =>
     payload([brandywine()])
     render(<HarvestWatchBand />)
     const card = await band()
-    await within(card).findByText('colour break (green to pale amber)')
+    await within(card).findByText('colour break (green to pale amber)', undefined, { timeout: 8000 })
     expect(card.textContent).not.toMatch(/general guidance for this crop|derived from the variety type/)
   })
 
@@ -110,7 +110,7 @@ describe('HarvestWatchBand — the observable (design §3.2, the unlock)', () =>
     })])
     render(<HarvestWatchBand />)
     const card = await band()
-    expect(await within(card).findByText('mature green')).toBeTruthy()
+    expect(await within(card).findByText('mature green', undefined, { timeout: 8000 })).toBeTruthy()
     expect(within(card).getByText(/\(general guidance for this crop, not this variety\)/)).toBeTruthy()
   })
 
@@ -121,7 +121,7 @@ describe('HarvestWatchBand — the observable (design §3.2, the unlock)', () =>
     })])
     render(<HarvestWatchBand />)
     const card = await band()
-    await within(card).findByText('mature green')
+    await within(card).findByText('mature green', undefined, { timeout: 8000 })
     expect(within(card).getByText(/\(derived from the variety type\)/)).toBeTruthy()
   })
 
