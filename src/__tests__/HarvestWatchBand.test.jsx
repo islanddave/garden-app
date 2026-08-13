@@ -26,8 +26,10 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getTok
 
 import HarvestWatchBand from '../components/HarvestWatchBand.jsx'
 
-const WATCH = '/api/harvests/watch'
+// Panel Q4 contract: the band fetches the whole queue (limit=200) so the tail expands in place.
+const WATCH = '/api/harvests/watch?limit=200'
 const DISMISS = '/api/harvests/watch/dismiss'
+const DISMISSALS = '/api/harvests/watch/dismissals'
 
 // Real dataset keys. `yellowbrandywine` is a cultivar record (confidence medium, no qualifier);
 // `tomato` is a crop-level record whose first point is "mature green"; `capeliente` is a
@@ -46,12 +48,12 @@ const basil = (over = {}) => ({
   variety_ref: { name: 'Genovese Basil', crop_type_slug: 'basil' }, ...over,
 })
 
-const payload = (candidates) => fetchMock.mockImplementation((url) =>
-  Promise.resolve(url === WATCH ? { candidates } : null))
+const payload = (candidates, extra = {}) => fetchMock.mockImplementation((url) =>
+  Promise.resolve(url === WATCH ? { candidates, snoozed: [], ...extra } : null))
 
-beforeEach(() => { navigateMock.mockReset(); fetchMock.mockReset() })
+beforeEach(() => { navigateMock.mockReset(); fetchMock.mockReset(); sessionStorage.clear() })
 
-const band = () => screen.findByRole('region', { name: /Worth checking this week/i })
+const band = () => screen.findByRole('region', { name: /Worth checking soon/i })
 
 describe('HarvestWatchBand — the check form (the load-bearing voice rule)', () => {
   it('renders each row as a CHECK prompt, never a readiness assertion', async () => {
@@ -65,12 +67,21 @@ describe('HarvestWatchBand — the check form (the load-bearing voice rule)', ()
       /is ready|are ready|ready to pick|window (has )?opened|window is open|now ripe|is ripe|it'?s time to pick/i)
   })
 
-  it('titles the group as a watch list and frames it as a plan, not tonight’s dinner', async () => {
+  it('titles the group per panel Q1 and frames it as a plan, not tonight’s dinner', async () => {
     payload([brandywine()])
     render(<HarvestWatchBand />)
     const card = await band()
-    expect(within(card).getByText('Worth checking this week')).toBeTruthy()
+    expect(within(card).getByText('Worth checking soon')).toBeTruthy()
     expect(within(card).getByText(/The start of a stream, not tonight’s dinner\./)).toBeTruthy()
+  })
+
+  // Panel Q1: every denominator SENTENCE is deleted — the count lives only on the tail button.
+  it('prints no "Showing N of M" prose anywhere in the band', async () => {
+    payload(Array.from({ length: 9 }, (_, i) =>
+      brandywine({ plant_id: `p${i}`, project_id: `proj-${i}`, name: `Row ${i}`, watching_since: `2026-08-0${i + 1}` })))
+    render(<HarvestWatchBand />)
+    const card = await band()
+    expect(card.textContent).not.toMatch(/Showing \d+ of \d+/i)
   })
 })
 
@@ -138,10 +149,11 @@ describe('HarvestWatchBand — row payload and ordering', () => {
   })
 
   it('orders rows newest-watched first', async () => {
+    // Distinct projects so the Q2 per-project slot cap does not bind here.
     payload([
-      brandywine({ plant_id: 'a', name: 'Older Row', watching_since: '2026-07-20' }),
-      brandywine({ plant_id: 'b', name: 'Newest Row', watching_since: '2026-08-10' }),
-      brandywine({ plant_id: 'c', name: 'Middle Row', watching_since: '2026-08-02' }),
+      brandywine({ plant_id: 'a', project_id: 'proj-a', name: 'Older Row', watching_since: '2026-07-20' }),
+      brandywine({ plant_id: 'b', project_id: 'proj-b', name: 'Newest Row', watching_since: '2026-08-10' }),
+      brandywine({ plant_id: 'c', project_id: 'proj-c', name: 'Middle Row', watching_since: '2026-08-02' }),
     ])
     render(<HarvestWatchBand />)
     const card = await band()
@@ -152,11 +164,44 @@ describe('HarvestWatchBand — row payload and ordering', () => {
   })
 
   it('caps the visible group at five — a nine-row declarative group is an inventory again', async () => {
+    // Distinct projects so the Q2 per-project cap does not bind — this pins the SLOT cap alone.
     payload(Array.from({ length: 9 }, (_, i) =>
-      brandywine({ plant_id: `p${i}`, name: `Row ${i}`, watching_since: `2026-08-0${i + 1}` })))
+      brandywine({ plant_id: `p${i}`, project_id: `proj-${i}`, name: `Row ${i}`, watching_since: `2026-08-0${i + 1}` })))
     render(<HarvestWatchBand />)
     const card = await band()
     expect(within(card).getAllByRole('listitem')).toHaveLength(5)
+  })
+
+  // PANEL Q2: any one project holds at most 2 of the 5 visible slots — a display device over slot
+  // allocation, not grouping. The capped-out rows are not lost; they lead the tail.
+  it('caps any one project at 2 of the 5 visible slots', async () => {
+    payload([
+      brandywine({ plant_id: 'a1', project_id: 'proj-peppers', name: 'Pepper 1', watching_since: '2026-08-10' }),
+      brandywine({ plant_id: 'a2', project_id: 'proj-peppers', name: 'Pepper 2', watching_since: '2026-08-09' }),
+      brandywine({ plant_id: 'a3', project_id: 'proj-peppers', name: 'Pepper 3', watching_since: '2026-08-08' }),
+      brandywine({ plant_id: 'b1', project_id: 'proj-melons', name: 'Melon 1', watching_since: '2026-08-07' }),
+      brandywine({ plant_id: 'b2', project_id: 'proj-melons', name: 'Melon 2', watching_since: '2026-08-06' }),
+      brandywine({ plant_id: 'c1', project_id: 'proj-beans', name: 'Bean 1', watching_since: '2026-08-05' }),
+    ])
+    render(<HarvestWatchBand />)
+    const card = await band()
+    const items = within(card).getAllByRole('listitem').map(li => li.textContent)
+    expect(items).toHaveLength(5)
+    // Pepper 3 (rank #3) is displaced by the cap; Bean 1 (rank #6) takes the freed slot.
+    expect(items.filter(t => /Pepper/.test(t))).toHaveLength(2)
+    expect(items.some(t => /Bean 1/.test(t))).toBe(true)
+    expect(items.some(t => /Pepper 3/.test(t))).toBe(false)
+    // The displaced row leads the tail rather than vanishing.
+    expect(within(card).getByRole('button', { name: /Show 1 more worth checking/ })).toBeTruthy()
+  })
+
+  it('a single-project queue shows 2 rows and an honest tail — the cap does not backfill', async () => {
+    payload(Array.from({ length: 6 }, (_, i) =>
+      brandywine({ plant_id: `p${i}`, project_id: 'proj-peppers', name: `Pepper ${i}`, watching_since: `2026-08-0${i + 1}` })))
+    render(<HarvestWatchBand />)
+    const card = await band()
+    expect(within(card).getAllByRole('listitem')).toHaveLength(2)
+    expect(within(card).getByRole('button', { name: /Show 4 more worth checking/ })).toBeTruthy()
   })
 })
 
@@ -191,6 +236,32 @@ describe('HarvestWatchBand — the "not yet" dismissal (the first negative-class
     expect(card.textContent).not.toMatch(/Not checking Yellow Brandywine for now\./)
     const posts = fetchMock.mock.calls.filter(([u]) => u === DISMISS).map(([, o]) => JSON.parse(o.body))
     expect(posts.map(p => p.dismissed)).toEqual([true, false])
+  })
+
+  // PANEL Q3: the collapsed row names the RETURN DATE (copy changed from "for now"), and the undo
+  // retracts EXACTLY the dismissal that was just made — by id, via DELETE /watch/dismissals/:id —
+  // never the planting's accumulated samples.
+  it('names the return date on the collapsed row and retracts by id on Undo', async () => {
+    const del = vi.fn(() => Promise.resolve({ undone: true }))
+    fetchMock.mockImplementation((url, opts) => {
+      if (url === WATCH) return Promise.resolve({ candidates: [brandywine()], snoozed: [] })
+      if (url === DISMISS) return Promise.resolve({ dismissal: { id: 'd-77', suppressed_until: '2026-08-22' } })
+      if (url === `${DISMISSALS}/d-77` && opts?.method === 'DELETE') return del()
+      return Promise.resolve(null)
+    })
+    render(<HarvestWatchBand />)
+    const card = await band()
+    await userEvent.click(within(card).getByRole('button', { name: /Not yet — Yellow Brandywine/ }))
+
+    // The snooze states its end — never an ambiguous exit.
+    expect(await within(card).findByText(/Not checking Yellow Brandywine — back Aug 22\./)).toBeTruthy()
+
+    await userEvent.click(within(card).getByRole('button', { name: /Undo — Yellow Brandywine/ }))
+    expect(await within(card).findByText(/Start checking Yellow Brandywine/)).toBeTruthy()
+    // The undo went through the by-id path, not the plural toggle.
+    expect(del).toHaveBeenCalledTimes(1)
+    const posts = fetchMock.mock.calls.filter(([u]) => u === DISMISS)
+    expect(posts).toHaveLength(1) // only the dismissal itself
   })
 
   it('reverts the row when the write fails — the UI never rests on a write that did not land', async () => {
@@ -260,6 +331,94 @@ describe('HarvestWatchBand — logging, empty states, and posture', () => {
     // stray tap lands. DOM order pins it left of the (reversible, write-free) navigation.
     expect(notYet.compareDocumentPosition(log) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(notYet.parentElement.style.justifyContent).toBe('space-between')
+  })
+})
+
+// PANEL Q4 — the expandable tail. One tail per section; in-place expand DOWNWARD (content inserted
+// after the trigger, so its top edge keeps its viewport y); count in the button label, never a pill.
+describe('HarvestWatchBand — the tail (panel Q4)', () => {
+  const many = (n, over = (i) => ({})) => Array.from({ length: n }, (_, i) =>
+    brandywine({
+      plant_id: `p${String(i).padStart(2, '0')}`, project_id: `proj-${i}`,
+      name: `Row ${String(i).padStart(2, '0')}`, watching_since: '2026-08-05', ...over(i),
+    }))
+
+  it('overflow is a real full-width expand control, not dead text', async () => {
+    payload(many(9))
+    render(<HarvestWatchBand />)
+    const card = await band()
+    const btn = within(card).getByRole('button', { name: 'Show 4 more worth checking' })
+    expect(btn.getAttribute('aria-expanded')).toBe('false')
+    expect(btn.getAttribute('aria-controls')).toBe('harvest-watch-tail')
+    // Mobile floor: full-width, >=48px tall (52 matches CareNeeded's pattern).
+    expect(btn.style.width).toBe('100%')
+    expect(parseInt(btn.style.minHeight, 10)).toBeGreaterThanOrEqual(48)
+    // The count lives in the LABEL — no pill anywhere in the band.
+    expect(card.textContent).not.toMatch(/\+\d+ more/)
+
+    await userEvent.click(btn)
+    expect(within(card).getAllByRole('listitem')).toHaveLength(9)
+    // Trigger keeps its place ABOVE the expanded content — expansion goes downward only.
+    const panel = card.querySelector('#harvest-watch-tail')
+    expect(btn.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // A second collapse control sits at the bottom.
+    const fewer = within(card).getByRole('button', { name: /Show fewer/ })
+    await userEvent.click(fewer)
+    expect(within(card).getAllByRole('listitem')).toHaveLength(5)
+  })
+
+  it('groups the expanded overflow by location', async () => {
+    payload(many(8, (i) => ({ location_name: i < 6 ? 'Hilltop bed 2' : 'Kitchen bed' })))
+    render(<HarvestWatchBand />)
+    const card = await band()
+    await userEvent.click(within(card).getByRole('button', { name: /Show 3 more worth checking/ }))
+    const panel = card.querySelector('#harvest-watch-tail')
+    expect(panel.textContent).toMatch(/Hilltop bed 2/)
+    expect(panel.textContent).toMatch(/Kitchen bed/)
+  })
+
+  it('reveals 20 at a time above 25 hidden, remaining count staying on the trigger', async () => {
+    payload(many(40))
+    render(<HarvestWatchBand />)
+    const card = await band()
+    const btn = within(card).getByRole('button', { name: 'Show 35 more worth checking' })
+    await userEvent.click(btn)
+    expect(within(card).getAllByRole('listitem')).toHaveLength(25)
+    const btn2 = within(card).getByRole('button', { name: 'Show 15 more worth checking' })
+    await userEvent.click(btn2)
+    expect(within(card).getAllByRole('listitem')).toHaveLength(40)
+    expect(within(card).queryByRole('button', { name: /more worth checking/ })).toBeNull()
+    expect(within(card).getByRole('button', { name: /Show fewer/ })).toBeTruthy()
+  })
+
+  it('the Snoozed subgroup defaults collapsed and prints return dates when opened', async () => {
+    payload(many(8), {
+      snoozed: [
+        { plant_id: 's1', project_id: 'proj-s', name: 'Charentais', location_name: 'Hilltop bed 2', crop_display_name: 'Melon', suppressed_until: '2026-08-20', reason: 'dismissed' },
+        { plant_id: 's2', project_id: 'proj-s', name: 'Old Row', location_name: null, crop_display_name: 'Melon', suppressed_until: null, reason: 'dismissed' },
+      ],
+    })
+    render(<HarvestWatchBand />)
+    const card = await band()
+    await userEvent.click(within(card).getByRole('button', { name: /Show 3 more worth checking/ }))
+    const snoozeBtn = within(card).getByRole('button', { name: /Snoozed \(2\)/ })
+    expect(snoozeBtn.getAttribute('aria-expanded')).toBe('false')
+    expect(card.textContent).not.toMatch(/back Aug 20/)
+    await userEvent.click(snoozeBtn)
+    expect(within(card).getByText(/back Aug 20/)).toBeTruthy()
+    // A pre-bounded season-long row states that honestly instead of inventing a date.
+    expect(within(card).getByText(/snoozed for the season/)).toBeTruthy()
+  })
+
+  it('snoozed rows stay reachable when every candidate is suppressed (R6)', async () => {
+    payload([], {
+      snoozed: [{ plant_id: 's1', project_id: 'p', name: 'Charentais', location_name: null, crop_display_name: 'Melon', suppressed_until: '2026-08-20', reason: 'dismissed' }],
+    })
+    render(<HarvestWatchBand />)
+    const card = await band()
+    const snoozeBtn = within(card).getByRole('button', { name: /Snoozed \(1\)/ })
+    await userEvent.click(snoozeBtn)
+    expect(within(card).getByText(/back Aug 20/)).toBeTruthy()
   })
 })
 
