@@ -19,7 +19,11 @@ const locationRef = { pathname: '/today' }
 vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
   useLocation: () => locationRef,
-  Link: ({ children }) => <a>{children}</a>,
+  // BD-007: carries `to` -> href so the row-headline link is assertable by destination;
+  // preventDefault silences jsdom's "Not implemented: navigation" noise when a test clicks it.
+  Link: ({ children, to, ...rest }) => (
+    <a href={typeof to === 'string' ? to : '#'} onClick={(e) => e.preventDefault()} {...rest}>{children}</a>
+  ),
 }))
 const fetchMock = vi.fn()
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }) }))
@@ -334,6 +338,66 @@ describe('HarvestWatchBand — logging, empty states, and posture', () => {
   })
 })
 
+// BD-007 / V4-BANDROWTAP-001 — the row headline IS the navigation to the planting detail: a plain
+// react-router Link to /plantings/:plantingId (the canonical UN-scoped route), deliberately NOT
+// useOverlayNavigate — the detail route is not in the overlayable set, so a background-carrying
+// navigate would leave the overlay tree with no matching route. Same row-body Link convention as
+// CareNeeded. The name tap must stay perfectly inert on the band's own state: no dismissal write,
+// no overlay navigation, no row collapse — it is the reversible, write-free control on the row.
+describe('HarvestWatchBand — the name tap (BD-007 / V4-BANDROWTAP-001)', () => {
+  it('links each row headline to ITS planting detail — the right id per row', async () => {
+    payload([brandywine(), basil()])
+    render(<HarvestWatchBand />)
+    const card = await band()
+    const yb = within(card).getByRole('link', { name: /Start checking Yellow Brandywine/ })
+    const bz = within(card).getByRole('link', { name: /Start checking Genovese Basil/ })
+    // plant_id, never project_id — a project holds multiple sibling plantings.
+    expect(yb.getAttribute('href')).toBe('/plantings/p-yb')
+    expect(bz.getAttribute('href')).toBe('/plantings/p-bz')
+  })
+
+  it('a name tap fires neither the dismissal write nor the log navigation, and the row stays open', async () => {
+    payload([brandywine()])
+    render(<HarvestWatchBand />)
+    const card = await band()
+    await userEvent.click(within(card).getByRole('link', { name: /Start checking Yellow Brandywine/ }))
+    // No write of any kind, and no imperative (overlay) navigation — href navigation only.
+    expect(fetchMock.mock.calls.filter(([u]) => u !== WATCH)).toHaveLength(0)
+    expect(navigateMock).not.toHaveBeenCalled()
+    // The row did not collapse into the dismissed acknowledgement.
+    expect(within(card).getByText(/Start checking Yellow Brandywine/)).toBeTruthy()
+    expect(card.textContent).not.toMatch(/Not checking Yellow Brandywine/)
+  })
+
+  it('mobile: the name target clears 44px with both 48px buttons intact — and Log harvest still navigates', async () => {
+    payload([brandywine()])
+    render(<HarvestWatchBand />)
+    const card = await band()
+    const link = within(card).getByRole('link', { name: /Start checking Yellow Brandywine/ })
+    expect(parseInt(link.style.minHeight, 10)).toBeGreaterThanOrEqual(44)
+    // Same typography as the old headline — the check-form voice keeps its exact weight.
+    expect(link.style.fontSize).toBe('0.88rem')
+    expect(link.style.textDecoration).toBe('none')
+    // The buttons keep their own 48px row: nothing shrank to make room for the link.
+    const notYet = within(card).getByRole('button', { name: /Not yet — Yellow Brandywine/ })
+    const log = within(card).getByRole('button', { name: /Log harvest — Yellow Brandywine/ })
+    expect(notYet.style.minHeight).toBe('48px')
+    expect(log.style.minHeight).toBe('48px')
+    await userEvent.click(log)
+    expect(navigateMock.mock.calls[0][0]).toBe('/log?project=proj-1&plant=p-yb&event_type=harvest')
+  })
+
+  it('a dismissed row carries no link — Undo is the only control', async () => {
+    payload([brandywine()])
+    render(<HarvestWatchBand />)
+    const card = await band()
+    await userEvent.click(within(card).getByRole('button', { name: /Not yet — Yellow Brandywine/ }))
+    await within(card).findByText(/Not checking Yellow Brandywine for now\./)
+    expect(within(card).queryByRole('link')).toBeNull()
+    expect(within(card).getByRole('button', { name: /Undo — Yellow Brandywine/ })).toBeTruthy()
+  })
+})
+
 // PANEL Q4 — the expandable tail. One tail per section; in-place expand DOWNWARD (content inserted
 // after the trigger, so its top edge keeps its viewport y); count in the button label, never a pill.
 describe('HarvestWatchBand — the tail (panel Q4)', () => {
@@ -433,3 +497,5 @@ describe('HarvestWatchBand — the tail (panel Q4)', () => {
 //   .catch that keeps `dismissed: true` on failure       => the write-failure revert test
 //   one-tap POST instead of overlayNavigate              => the navigate test
 //   minHeight 48 -> unset, or controls reordered         => the mobile touch-floor test
+//   headline Link dropped, or href built from project_id => the BD-007 right-id href test
+//   name Link wired to dismissRow or overlayNavigate     => the BD-007 name-tap isolation test

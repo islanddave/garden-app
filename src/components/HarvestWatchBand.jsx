@@ -40,6 +40,7 @@
 // of HarvestReadyBand / PutUpUseSoonBand: this is a supplementary glance and must never throw onto
 // Today.
 import React, { useState, useEffect, useCallback, useReducer, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import { useOverlayLocation, useOverlayNavigate } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -236,10 +237,24 @@ export default function HarvestWatchBand() {
 
     return (
       <li key={r.plant_id} style={rowStyle}>
-        {/* THE CHECK FORM. Not "Yellow Brandywine is ready", not "your window opened". */}
-        <div style={{ fontSize: '0.88rem', fontWeight: 600, color: P.dark, lineHeight: 1.35 }}>
+        {/* THE CHECK FORM. Not "Yellow Brandywine is ready", not "your window opened".
+            BD-007 / V4-BANDROWTAP-001 — the headline is the row's navigation to the planting
+            detail (/plantings/:plantingId, the canonical UN-scoped route, V4-UNSCOPEDROUTES-001).
+            A plain react-router Link, deliberately NOT useOverlayNavigate: the detail route is not
+            in the overlayable set (/log, /log/many, /put-up, /search only), so a background-
+            carrying navigate would leave the overlay tree with no matching route. Same row-body
+            Link convention as CareNeeded. minHeight 44 = the touch floor for a secondary target
+            (the two write/nav controls below keep their own 48px row); typography unchanged so
+            the check-form voice reads exactly as before. */}
+        <Link
+          to={`/plantings/${r.plant_id}`}
+          style={{
+            display: 'flex', alignItems: 'center', minHeight: 44, textDecoration: 'none',
+            fontSize: '0.88rem', fontWeight: 600, color: P.dark, lineHeight: 1.35,
+          }}
+        >
           Start checking {name}
-        </div>
+        </Link>
 
         {/* §5: location on every row — you cannot walk to a crop name, and a project holds
             multiple sibling plantings, so the name alone is ambiguous on the ground. */}
