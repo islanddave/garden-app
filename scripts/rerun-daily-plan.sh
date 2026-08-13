@@ -23,6 +23,8 @@
 #   scripts/rerun-daily-plan.sh --live               # LIVE re-run (warning + type OVERWRITE)
 #   scripts/rerun-daily-plan.sh --live --today 2026-07-22
 #   scripts/rerun-daily-plan.sh --diff --today 2026-08-03   # DRY replay + diff vs the STORED plan (ZERO writes)
+#   scripts/rerun-daily-plan.sh --flag-overrides '{"CARE_WATER_LEDGER_ENABLED": true}'
+#                                                    # DRY shadow replay under overridden engine flags (never live)
 #
 # NOTES for agents:
 #   * The AWS CLI on this Mac has NO default region — every aws call here passes --region us-east-1.
@@ -35,6 +37,13 @@
 #     .env.local at the repo root), and prints a per-user semantic diff: counts, per-bucket task ids,
 #     rain_skipped/water_due reasons, and hydrology decision inputs. Exit 0 = no drift, 2 = drift found.
 #     Requires the DEPLOYED Lambda to return plans on dry runs (A0.3-DRY-PLANS sentinel, preflight-checked).
+#   * --flag-overrides '<json>' (V4-WATERMATH-001 F2 shadow replay) is DRY-RUN ONLY — it refuses --live,
+#     --ping, and --diff — and forwards whitelisted engine flags to the dry invoke as
+#     {"dryRun": true, "flagOverrides": {...}}. Keys must be in the Lambda whitelist
+#     (handler.LEDGER_OVERRIDABLE_FLAGS) with strict-boolean values. Preflight additionally requires the
+#     A0.4-FLAG-OVERRIDES sentinel in the DEPLOYED zip: older deploys SILENTLY IGNORE the key, so without
+#     the check a "shadow" run would really be a plain flag-OFF run. For the plain-vs-ledger soak diff,
+#     use scripts/f2-shadow-soak.sh (it runs both legs and stores the per-planting report).
 set -euo pipefail
 
 REGION=us-east-1
@@ -43,9 +52,10 @@ LIVE=0
 PING=0
 DIFF=0
 TODAY=""
+FLAG_OVERRIDES=""
 
 die() { echo "ERROR: $*" >&2; exit 1; }
-usage() { sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -54,6 +64,8 @@ while [[ $# -gt 0 ]]; do
     --diff) DIFF=1; shift ;;
     --today) [[ $# -ge 2 ]] || die "--today requires a YYYY-MM-DD argument"; TODAY="$2"; shift 2 ;;
     --today=*) TODAY="${1#--today=}"; shift ;;
+    --flag-overrides) [[ $# -ge 2 ]] || die "--flag-overrides requires a JSON object argument"; FLAG_OVERRIDES="$2"; shift 2 ;;
+    --flag-overrides=*) FLAG_OVERRIDES="${1#--flag-overrides=}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1 (run with --help for usage)" ;;
   esac
@@ -62,10 +74,53 @@ done
 [[ $LIVE -eq 1 && $PING -eq 1 ]] && die "--live and --ping are mutually exclusive"
 [[ $DIFF -eq 1 && $LIVE -eq 1 ]] && die "--diff is a DRY-replay tool; it cannot be combined with --live"
 [[ $DIFF -eq 1 && $PING -eq 1 ]] && die "--diff needs a computed plan; it cannot be combined with --ping"
+# A0.4: flag overrides are a SHADOW/PARITY tool and exist ONLY on the dry path. The entrypoint would
+# hard-reject them on a live run anyway (handler.resolveInvokeOptions nulls flagOverrides when the
+# resolved run is live), but this wrapper refuses up front so the operator hears it from the tool in
+# their hand, loudly, before anything is downloaded or invoked.
+if [[ -n "$FLAG_OVERRIDES" ]]; then
+  [[ $LIVE -eq 1 ]] && die "--flag-overrides is DRY-RUN ONLY and cannot be combined with --live.
+       Engine-flag overrides exist for zero-write shadow replays (V4-WATERMATH-001 F2); arming a
+       LIVE run under overridden flags is exactly the env-based A/B the design forbids. The deployed
+       entrypoint would discard the overrides on a live run anyway — refusing here instead of
+       silently running live with different flags than you asked for. Nothing was invoked."
+  [[ $PING -eq 1 ]] && die "--flag-overrides has no effect on a --ping probe (no engine runs); refusing rather than pretending it did something"
+  [[ $DIFF -eq 1 ]] && die "--flag-overrides cannot be combined with --diff: --diff's exit-2 contract means
+       'the stored plan drifted from the current engine+data', and diffing an OVERRIDDEN replay against
+       the stored (flag-OFF) plan would report the override's delta as drift. For the plain-vs-ledger
+       shadow comparison use scripts/f2-shadow-soak.sh, which runs both legs and stores the report."
+fi
 if [[ -n "$TODAY" ]] && ! [[ "$TODAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   die "--today must be YYYY-MM-DD (got: $TODAY)"
 fi
 for c in aws curl unzip python3; do command -v "$c" >/dev/null || die "required command not found: $c"; done
+# --flag-overrides validated up front (fail fast, before any network work). Mirrors the Lambda's own
+# whitelist (handler.LEDGER_OVERRIDABLE_FLAGS) so a typo'd key or non-boolean value is refused HERE,
+# loudly — the entrypoint would drop it silently, and a silently-dropped override is indistinguishable
+# from "the override did nothing".
+if [[ -n "$FLAG_OVERRIDES" ]]; then
+  FLAG_OVERRIDES=$(python3 - "$FLAG_OVERRIDES" <<'PY'
+import json, sys
+ALLOWED = ['CARE_WATER_LEDGER_ENABLED', 'CARE_RAIN_CREDIT_ENABLED',
+           'CARE_RAIN_MAXDAYS_ENABLED', 'CARE_TODAY_AWARE_ENABLED', 'CARE_CADENCE_SCOPES_ENABLED']
+try:
+    o = json.loads(sys.argv[1])
+except Exception as e:
+    sys.exit(f"--flag-overrides is not valid JSON: {e}")
+if not isinstance(o, dict) or not o:
+    sys.exit('--flag-overrides must be a non-empty JSON object, e.g. {"CARE_WATER_LEDGER_ENABLED": true}')
+bad = [k for k in o if k not in ALLOWED]
+if bad:
+    sys.exit(f"--flag-overrides key(s) not in the Lambda whitelist (handler.LEDGER_OVERRIDABLE_FLAGS): "
+             f"{', '.join(bad)}. Allowed: {', '.join(ALLOWED)}")
+nonbool = [k for k, v in o.items() if not isinstance(v, bool)]
+if nonbool:
+    sys.exit(f"--flag-overrides values must be strict JSON booleans (true/false) — the entrypoint drops "
+             f"anything else silently. Non-boolean: {', '.join(nonbool)}")
+print(json.dumps(o))
+PY
+) || die "invalid --flag-overrides (see message above); nothing was invoked"
+fi
 # --diff prerequisites resolved up front (fail fast, before any network work). Read-only by construction:
 # the only DB statement --diff ever issues is the SELECT below.
 if [[ $DIFF -eq 1 ]]; then
@@ -96,16 +151,25 @@ if [[ $DIFF -eq 1 ]] && ! unzip -p "$TMPD/code.zip" index.js 2>/dev/null | grep 
        Its dry responses carry no plans[], so there is nothing to diff. Promote + deploy the
        A0.3 lambda change first. Nothing was invoked."
 fi
+if [[ -n "$FLAG_OVERRIDES" ]] && ! unzip -p "$TMPD/code.zip" index.js 2>/dev/null | grep -q 'A0.4-FLAG-OVERRIDES'; then
+  die "deployed $FN PREDATES flag-override support (A0.4-FLAG-OVERRIDES sentinel absent from index.js).
+       Older entrypoints SILENTLY IGNORE event.flagOverrides — the run would proceed dry but under the
+       DEPLOYED env flags, and a shadow replay that quietly ran flag-OFF is worse than no replay
+       (its diff is vacuously empty). Promote + deploy the A0.4 lambda change first. Nothing was invoked."
+fi
 
 # ---------- payload ----------
-PAYLOAD=$(python3 - "$LIVE" "$PING" "$TODAY" <<'PY'
+PAYLOAD=$(python3 - "$LIVE" "$PING" "$TODAY" "$FLAG_OVERRIDES" <<'PY'
 import json, sys
-live, ping, today = sys.argv[1] == "1", sys.argv[2] == "1", sys.argv[3]
+live, ping, today, fovr = sys.argv[1] == "1", sys.argv[2] == "1", sys.argv[3], sys.argv[4]
 p = {}
 if ping: p["ping"] = True
 elif not live: p["dryRun"] = True     # default-safe: explicit dry override
 # live: no dryRun key -> Lambda env DRY_RUN decides (payload cannot force live)
 if today: p["today"] = today
+# A0.4: only reachable on the dry path (every live/ping/diff combo was refused above), and the
+# entrypoint re-checks — resolveInvokeOptions nulls flagOverrides on any resolved-live run.
+if fovr: p["flagOverrides"] = json.loads(fovr)
 print(json.dumps(p))
 PY
 )
