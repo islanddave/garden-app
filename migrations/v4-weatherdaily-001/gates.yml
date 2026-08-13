@@ -84,9 +84,7 @@ post:
        WHERE table_schema='public' AND table_name='weather_daily'
     expect: rowcount_eq
     value: 1
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
-                        # scheduled sweep runs post gates against LIVE prod and would report a
-                        # standing red until then; convention per v4-softdelcascade-001)
+    continuous: true    # flipped 2026-08-12: applied to staging (rehearsed 0r) + prod; sweep may assert
 
   - name: post_all_columns_present
     sql: |
@@ -96,9 +94,7 @@ post:
                              'precip_source','et0_source','created_at','updated_at')
     expect: rowcount_eq
     value: 10
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
-                        # scheduled sweep runs post gates against LIVE prod and would report a
-                        # standing red until then; convention per v4-softdelcascade-001)
+    continuous: true    # flipped 2026-08-12: applied to staging (rehearsed 0r) + prod; sweep may assert
 
   - name: post_no_extra_columns
     note: >
@@ -109,9 +105,7 @@ post:
        WHERE table_schema='public' AND table_name='weather_daily'
     expect: rowcount_eq
     value: 10
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
-                        # scheduled sweep runs post gates against LIVE prod and would report a
-                        # standing red until then; convention per v4-softdelcascade-001)
+    continuous: true    # flipped 2026-08-12: applied to staging (rehearsed 0r) + prod; sweep may assert
 
   - name: post_no_created_by_column
     note: >
@@ -123,9 +117,7 @@ post:
        WHERE table_schema='public' AND table_name='weather_daily' AND column_name='created_by'
     expect: rowcount_eq
     value: 0
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
-                        # scheduled sweep runs post gates against LIVE prod and would report a
-                        # standing red until then; convention per v4-softdelcascade-001)
+    continuous: true    # flipped 2026-08-12: applied to staging (rehearsed 0r) + prod; sweep may assert
 
   - name: post_date_column_is_date_not_timestamp
     note: >
@@ -138,9 +130,7 @@ post:
          AND column_name='date' AND data_type='date'
     expect: rowcount_eq
     value: 1
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
-                        # scheduled sweep runs post gates against LIVE prod and would report a
-                        # standing red until then; convention per v4-softdelcascade-001)
+    continuous: true    # flipped 2026-08-12: applied to staging (rehearsed 0r) + prod; sweep may assert
 
   - name: post_pk_columns_are_space_id_and_date
     note: >
@@ -163,9 +153,7 @@ post:
          AND a.attname IN ('space_id','date')
     expect: rowcount_eq
     value: 2
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
-                        # scheduled sweep runs post gates against LIVE prod and would report a
-                        # standing red until then; convention per v4-softdelcascade-001)
+    continuous: true    # flipped 2026-08-12: applied to staging (rehearsed 0r) + prod; sweep may assert
 
   - name: post_pk_has_exactly_two_columns
     note: >
@@ -179,9 +167,7 @@ post:
        WHERE c.conrelid='public.weather_daily'::regclass AND c.contype='p'
     expect: rowcount_eq
     value: 2
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
-                        # scheduled sweep runs post gates against LIVE prod and would report a
-                        # standing red until then; convention per v4-softdelcascade-001)
+    continuous: true    # flipped 2026-08-12: applied to staging (rehearsed 0r) + prod; sweep may assert
 
   - name: post_fk_to_spaces_on_delete_cascade
     sql: |
@@ -190,9 +176,7 @@ post:
          AND confrelid='public.spaces'::regclass AND confdeltype='c'
     expect: rowcount_eq
     value: 1
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
-                        # scheduled sweep runs post gates against LIVE prod and would report a
-                        # standing red until then; convention per v4-softdelcascade-001)
+    continuous: true    # flipped 2026-08-12: applied to staging (rehearsed 0r) + prod; sweep may assert
 
   - name: post_check_constraints_present
     note: >
@@ -207,9 +191,7 @@ post:
                          'weather_daily_et0_nonneg_chk','weather_daily_precip_nonneg_chk')
     expect: rowcount_eq
     value: 4
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
-                        # scheduled sweep runs post gates against LIVE prod and would report a
-                        # standing red until then; convention per v4-softdelcascade-001)
+    continuous: true    # flipped 2026-08-12: applied to staging (rehearsed 0r) + prod; sweep may assert
 
   - name: post_starts_empty
     note: Additive-only proof — this migration creates a relation and touches no existing one.
@@ -217,6 +199,6 @@ post:
       SELECT 1 FROM public.weather_daily
     expect: rowcount_eq
     value: 0
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
-                        # scheduled sweep runs post gates against LIVE prod and would report a
-                        # standing red until then; convention per v4-softdelcascade-001)
+    continuous: false   # PERMANENTLY apply-window-only: asserts emptiness, which is true only before
+                        # the backfill/nightly writer populate the table (90 archive rows landed
+                        # 2026-08-12). A continuous sweep would red on healthy data.
