@@ -67,6 +67,9 @@ post:
        WHERE table_schema='public' AND table_name='plant_anchor_derivation'
     expect: rowcount_eq
     value: 1
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
+                        # scheduled sweep runs post gates against LIVE prod and would report a
+                        # standing red until then; convention per v4-softdelcascade-001)
 
   - name: post_indexes_present
     sql: |
@@ -77,6 +80,9 @@ post:
                            'idx_plant_anchor_derivation_model_source')
     expect: rowcount_eq
     value: 3
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
+                        # scheduled sweep runs post gates against LIVE prod and would report a
+                        # standing red until then; convention per v4-softdelcascade-001)
 
   - name: post_check_constraints_present
     sql: |
@@ -88,6 +94,9 @@ post:
                          'plant_anchor_derivation_offset_chk')
     expect: rowcount_eq
     value: 4
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
+                        # scheduled sweep runs post gates against LIVE prod and would report a
+                        # standing red until then; convention per v4-softdelcascade-001)
 
   # Additive-only proof for 0a on its own: the DDL step must leave the table empty. If 0b has
   # already been applied this gate is expected to fail and 0c check 4 is the census to read instead.
@@ -96,6 +105,9 @@ post:
       SELECT 1 FROM public.plant_anchor_derivation
     expect: rowcount_eq
     value: 0
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
+                        # scheduled sweep runs post gates against LIVE prod and would report a
+                        # standing red until then; convention per v4-softdelcascade-001)
 
   # The marking rule, as a gate rather than only as a validation query. Zero tolerance: a derived
   # anchor coexisting with an observed one is the exact failure this whole item exists to prevent.
@@ -108,6 +120,9 @@ post:
               OR p.planted_out_at IS NOT NULL)
     expect: rowcount_eq
     value: 0
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration; the
+                        # scheduled sweep runs post gates against LIVE prod and would report a
+                        # standing red until then; convention per v4-softdelcascade-001)
 
 # ROLLBACK (documentation only — gate_runner.py's strict schema admits ONLY pre/sweep/post as
 # top-level keys and exits 2 on anything else, making every gate above silently unrunnable.

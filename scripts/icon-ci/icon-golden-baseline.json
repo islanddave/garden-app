@@ -86,6 +86,7 @@
     "event.hardening_off": 28.88,
     "event.watering": 19.97,
     "event.rain": 22.25,
+    "event.moisture_check": 27.53,
     "event.fertilizing": 26.89,
     "event.pest_treatment": 26.63,
     "event.doctored": 29.21,
