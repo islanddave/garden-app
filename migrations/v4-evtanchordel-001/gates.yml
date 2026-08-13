@@ -163,6 +163,11 @@ post:
       SELECT 1 FROM public.event_log_archive
     expect: rowcount_eq
     value: 0
+    continuous: false   # 2026-08-13 corpus audit: apply-window receipt — the archive legitimately
+                        # populates the first time archive_plant_events() runs; an implicitly-
+                        # continuous emptiness assert is a sweep time bomb (5th instance of the
+                        # class: weatherdaily/anchorbase/harvwatch post_starts_empty, evtcascade
+                        # critter receipt, these two archive gates).
 
   - name: post_archive_function_exists
     sql: |

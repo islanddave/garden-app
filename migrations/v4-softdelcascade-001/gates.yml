@@ -487,6 +487,10 @@ post:
       SELECT 1 FROM public.harvest_log_archive
     expect: rowcount_eq
     value: 0
+    continuous: false   # 2026-08-13 corpus audit: the note above ALWAYS said apply-window-only, but
+                        # the flag was never set and the runner DEFAULTS to continuous — the note
+                        # and the mechanism disagreed. The sweep passed only because both archives
+                        # still hold 0 rows; first escape-hatch use would have redded it.
 
   # NO NEW TRIGGERS. scripts/restore-verify.py builds a table:trigger:function inventory and hard-
   # fails on prod-vs-restore drift. This migration deliberately adds none — the fix is a constraint
