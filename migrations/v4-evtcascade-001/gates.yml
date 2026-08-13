@@ -74,11 +74,20 @@ post:
 
   # critter_state is deliberately out of scope — assert the migration did not touch it.
   - name: post_critter_state_untouched
+    note: >
+      Asserts the MIGRATION touched no critter rows — a time-relative check ("nothing updated in
+      the last hour") that is only meaningful in the apply window. Left implicitly continuous, it
+      reds whenever ordinary critter activity (server-hook visits, daily-plan reruns) lands within
+      an hour of a sweep — exactly what happened 2026-08-13T01:51Z: 11 legitimate rows updated
+      00:55–01:02Z by normal app usage failed the prod sweep. Same class as post_starts_empty
+      gates: apply-window receipt, not a standing invariant.
     sql: |
       SELECT 1 FROM public.critter_state
        WHERE deleted_at IS NULL AND updated_at >= NOW() - INTERVAL '1 hour'
     expect: rowcount_eq
     value: 0
+    continuous: false   # window-scoped 2026-08-12: time-relative apply receipt; continuous sweep
+                        # reds on healthy activity (verified live, 11 legit rows 2026-08-13T00:55Z)
 
   - name: post_schema_version_recorded
     sql: |
