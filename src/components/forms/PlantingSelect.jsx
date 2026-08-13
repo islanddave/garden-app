@@ -27,6 +27,7 @@ import { formatQty } from '../../lib/format.js'
 import { PROJECTS_HIDDEN } from '../../lib/featureFlags.js'
 import { useInOverlaySurface } from '../../context/OverlayContext.jsx'
 import FilterChipRow from './FilterChipRow.jsx'
+import { readCropRank } from '../../lib/cropLogLedger.js'
 import {
   useComboboxInput, looseIncludes,
   kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingRight,
@@ -46,6 +47,14 @@ const CHIPS_MIN_ROWS = 8          // ≤7 rows → scanning beats filtering; no 
 const CHIPS_MIN_CROPS = 2
 const PIN_COUNT = 2
 const PIN_TIE_PREF = ['pepper', 'tomato']
+// V4-CROPLISTORDER-001 (BD-010) + V4-CROPFILTERLAYOUT-001 (BD-011) — band order + tray budget.
+const RECENT_BAND_N = 12          // band-2 cap: pins (2) + recents (12) ≈ the first 14 chips
+const RANK_WINDOW_DAYS = 60       // trailing window for distinct-log-days — survives a rainy
+                                  // fortnight, turns over per season phase (consult §3)
+const TRAY_MAX_H = 184            // expanded-tray scrollport: 3.5 chip rows — the half-clipped
+                                  // 4th row IS the scroll affordance (deliberate ADHD-UX detail)
+const CHIP_ROW_BASE = 36          // chrome around the tray inside the panel: chipRowWrap padding
+                                  // (12) + "N hidden" note line (~22) + separator border (2)
 const pinTieRank = s => { const i = PIN_TIE_PREF.indexOf(s); return i === -1 ? PIN_TIE_PREF.length : i }
 // 'sweet-corn' → 'Sweet Corn' — display fallback until a labels map is ever needed (§ Deferred).
 const titleizeSlug = s => String(s).split(/[-_]/).map(w => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ')
@@ -53,6 +62,48 @@ const titleizeSlug = s => String(s).split(/[-_]/).map(w => (w ? w[0].toUpperCase
 // SHARED FROZEN CONST, not an inline `{}` — an inline literal is a new identity every host render,
 // which would thrash the memos keyed on it on the app's highest-frequency form.
 export const CROP_CHIPS_AUTO = Object.freeze({})
+
+// V4-CROPLISTORDER-001 (BD-010) — the chip band order, as a pure function of injected data.
+// Exported for direct unit tests: this is the computePlacement discipline — the ONLY part of the
+// ordering that matters is the mapping from (options, pins, rank, counts) to a sequence, so that
+// is where the arithmetic lives, with no component render in the way. Any future Garden crop
+// selector should consume THIS plus FilterChipRow (promote to src/lib/ if that happens).
+//
+// Three bands:
+//   1. pins — in the order given (pinnedSlugs already encodes count-desc + PIN_TIE_PREF). A pin
+//      that is also top-ranked appears ONCE, here — never again in band 2.
+//   2. recents — up to `bandN` non-pinned crops with ≥1 distinct log day in the rank window,
+//      by the total, terminal tie-chain: days DESC → mostRecentLogDay DESC → livePlantingCount
+//      DESC → PIN_TIE_PREF rank ASC → displayLabel.localeCompare ASC. Recency-DECAY was rejected
+//      in the consult: an invisible tunable that reshuffles between opens is wrong for spatial
+//      memory; a day-count over a fixed window moves only when the facts move.
+//   3. tail — everything else (unranked, plus rank overflow past bandN), alphabetical by DISPLAY
+//      LABEL, not slug: the user scans rendered text, and 'sweet-corn' ≠ 'Sweet Corn' in sort
+//      position once labels stop being titleized slugs.
+// Cold start (empty rank) ⇒ pins + alphabetical tail — already better than today's count-desc.
+export function bandOrder({ options = [], pinned = [], rank, counts, bandN = RECENT_BAND_N }) {
+  const rk = rank ?? new Map()
+  const ct = counts ?? new Map()
+  const pinIndex = new Map(pinned.map((s, i) => [s, i]))
+  const pins = []
+  const rest = []
+  for (const o of options) (pinIndex.has(o.value) ? pins : rest).push(o)
+  pins.sort((a, b) => pinIndex.get(a.value) - pinIndex.get(b.value))
+  const ranked = rest.filter(o => (rk.get(o.value)?.days ?? 0) > 0)
+  const unranked = rest.filter(o => (rk.get(o.value)?.days ?? 0) === 0)
+  ranked.sort((a, b) => {
+    const ra = rk.get(a.value)
+    const rb = rk.get(b.value)
+    return (rb.days - ra.days)
+      || (ra.last > rb.last ? -1 : ra.last < rb.last ? 1 : 0)
+      || ((ct.get(b.value) ?? 0) - (ct.get(a.value) ?? 0))
+      || (pinTieRank(a.value) - pinTieRank(b.value))
+      || String(a.label ?? '').localeCompare(String(b.label ?? ''))
+  })
+  const tail = [...ranked.slice(bandN), ...unranked]
+    .sort((a, b) => String(a.label ?? '').localeCompare(String(b.label ?? '')))
+  return [...pins, ...ranked.slice(0, bandN), ...tail]
+}
 
 // V4-PICKERUX-001 P1 — the listbox used to be a hardcoded 280px box that always opened DOWNWARD,
 // with no idea how much room was actually below the input. On Android with the keyboard up, the
@@ -391,6 +442,25 @@ export default function PlantingSelect({
     () => cropUniverse.map(([slug]) => ({ value: slug, label: titleizeSlug(slug) })),
     [cropUniverse],
   )
+  // V4-CROPLISTORDER-001 (BD-010) — rank refresh contract: the ledger is read ONCE per
+  // picker-OPEN (rankNonce bumps on the open→true transition), mirroring EventNew's
+  // logone.lastPlant read-at-open. NOT on mount (a closed picker renders no chips, and an
+  // in-burst save must rank fresh on the NEXT open), NOT while open (a reorder under the
+  // user's thumb is worse than a stale order), and NOT on resetNonce (the burst-logging
+  // contract — order survives resetForNext exactly like chipSelection does). No timers.
+  const [rankNonce, setRankNonce] = useState(0)
+  useEffect(() => { if (open) setRankNonce(n => n + 1) }, [open])
+  const cropRank = useMemo(() => {
+    // rankNonce === 0 ⇒ never opened ⇒ no read: "read on open, not mount" is literal.
+    if (!cropChips || rankNonce === 0) return null
+    return readCropRank({ windowDays: RANK_WINDOW_DAYS })
+    // rankNonce is the deliberate (and only) recompute key — see the contract above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cropChips, rankNonce])
+  const orderedChipOptions = useMemo(() => {
+    if (!cropChips) return []
+    return bandOrder({ options: chipOptions, pinned: pinnedSlugs, rank: cropRank, counts: new Map(cropUniverse) })
+  }, [cropChips, chipOptions, pinnedSlugs, cropRank, cropUniverse])
   // Toggle/clear own the Set immutably — a mutated Set would not re-run the filter memo.
   const toggleChip = useCallback((slug) => {
     setChipSelection(prev => {
@@ -659,12 +729,18 @@ export default function PlantingSelect({
   const chipRow = chipsEligible ? (
     <div ref={chipRowRef} style={chipRowWrap(!!placement?.flip)}>
       <FilterChipRow
-        options={chipOptions}
+        // BD-010: band-ordered (pins → recents → alphabetical tail), not count-desc — see
+        // bandOrder above. FilterChipRow's pinned-first re-sort is STABLE, so this order
+        // passes through it untouched (comment at its `shown` memo).
+        options={orderedChipOptions}
         selected={chipSelection}
         onToggle={toggleChip}
         pinned={pinnedSlugs}
         onClear={clearChips}
         onLayoutChange={() => setChipLayoutNonce(n => n + 1)}
+        // BD-011: the expanded tray becomes its own bounded scrollport instead of feeding
+        // ~26 chip lines into computePlacement as panelExtra (the one-row-listbox mechanism).
+        trayMaxHeight={TRAY_MAX_H}
         aria-label="Filter by crop"
         data-testid={dataTestId ? `${dataTestId}-crop-chips` : 'ps-crop-chips'}
       />
@@ -918,6 +994,12 @@ function listboxStyle(placement, nested = false) {
       padding: 4,
       listStyle: 'none',
       maxHeight: placement?.maxHeight ?? LIST_MAX_H,
+      // V4-CROPFILTERLAYOUT-001 (BD-011): inside the flex-column panel the list is the elastic
+      // member (flex:1) with a HARD floor — LIST_MIN_H (3 rows) — so no chip-row height can ever
+      // again starve it to the one-row LIST_ABS_MIN while the tray takes the room. The panel's
+      // own maxHeight (panelStyle) bounds the total; the tray cap bounds the chips.
+      flex: '1 1 auto',
+      minHeight: LIST_MIN_H,
       overflowY: 'auto',
       overscrollBehavior: 'contain',
     }
@@ -946,6 +1028,13 @@ function listboxStyle(placement, nested = false) {
 }
 
 // The chrome the <ul> used to carry, moved out one level when chips share the panel.
+// V4-CROPFILTERLAYOUT-001 (BD-011): the panel had NO maxHeight — an expanded ~80-chip tray ran
+// to ~1,400px, fed computePlacement as panelExtra, drove room deeply negative, and floored the
+// listbox at ONE 44px row while the panel overflowed the viewport (consult §2 — an unbounded
+// input to a subtraction, not a tuning problem). Fix: bound the PANEL, budget the tray
+// (TRAY_MAX_H, via FilterChipRow's trayMaxHeight), floor the listbox (listboxStyle nested
+// branch). computePlacement itself is UNCHANGED. Flex-COLUMN always — PanelShell owns flip
+// ordering by swapping children, never column-reverse (DOM order = reading order).
 function panelStyle(placement) {
   const flip = !!placement?.flip
   return {
@@ -960,6 +1049,13 @@ function panelStyle(placement) {
     border: `1px solid ${P.border}`,
     borderRadius: T.radiusField,
     boxShadow: flip ? '0 -6px 18px rgba(0,0,0,0.12)' : '0 6px 18px rgba(0,0,0,0.12)',
+    display: 'flex',
+    flexDirection: 'column',
+    // Finite by construction: list budget + tray budget + tray chrome. When placement measured,
+    // the list budget is the measured room; unmeasured (jsdom / pre-layout) it is the LIST_MAX_H
+    // constant, keeping the pre-BD-011 fallback discipline.
+    maxHeight: (placement?.maxHeight ?? LIST_MAX_H) + TRAY_MAX_H + CHIP_ROW_BASE,
+    overflow: 'hidden',
   }
 }
 

@@ -36,6 +36,11 @@ export default function FilterChipRow({
   // Optional: fired when the More tray expands/collapses — a combobox host re-measures its
   // panel geometry (the row's height enters the flip/room computation, §1b).
   onLayoutChange,
+  // V4-CROPFILTERLAYOUT-001 (BD-011) — optional: while EXPANDED, cap the row at this height and
+  // make it its own scrollport. Collapsed stays unbounded — it is 1-2 lines by construction
+  // (pinned ∪ selected), and capping it would clip the only always-visible chips. Absent (the
+  // HarvestExportSheet contract, and any no-pin caller) ⇒ byte-identical render.
+  trayMaxHeight,
   'aria-label': ariaLabel = 'Filters',
   'data-testid': dataTestId,
 }) {
@@ -47,6 +52,12 @@ export default function FilterChipRow({
   // Collapsed view = pinned ∪ SELECTED. A non-pinned chip selected from the tray stays visible
   // after collapse — hiding an ACTIVE filter is the invisible-filter trap the §1b "loud
   // active-filter signal" rule exists to prevent.
+  // V4-CROPLISTORDER-001 (BD-010) NOTE — sort STABILITY here is LOAD-BEARING. `options` arrive
+  // pre-ordered by the caller (PlantingSelect's bandOrder: pins → recents band → alphabetical
+  // tail). This pinned-first comparator only partitions; within each partition the caller's
+  // order must pass through untouched, which is exactly what Array.prototype.sort's guaranteed
+  // stability (ES2019+) provides. Replacing it with a non-stable sort — or "simplifying" to a
+  // full comparator over labels — would silently scramble the recents band.
   const shown = useMemo(() => {
     const pinnedFirst = [...options].sort((a, b) =>
       (pinnedSet.has(b.value) ? 1 : 0) - (pinnedSet.has(a.value) ? 1 : 0))
@@ -64,7 +75,16 @@ export default function FilterChipRow({
       // Combobox-host contract — see header. Root-level so every child (chips, More, Clear)
       // inherits the no-blur behavior without per-button wiring.
       onMouseDown={e => e.preventDefault()}
-      style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}
+      style={{
+        display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center',
+        // BD-011: the EXPANDED tray is a bounded scrollport, never an unbounded wrap (the
+        // ~26-line row that starved the host's listbox). overscrollBehavior 'contain' is
+        // MANDATORY — same reason as PlantingSelect's listboxStyle: an end-of-tray flick must
+        // not chain the scroll to the Sheet and drag the anchored input away mid-choice.
+        ...(expanded && trayMaxHeight != null
+          ? { maxHeight: trayMaxHeight, overflowY: 'auto', overscrollBehavior: 'contain' }
+          : null),
+      }}
     >
       {shown.map(o => {
         const active = sel.has(o.value)
@@ -72,7 +92,21 @@ export default function FilterChipRow({
           <button
             key={o.value}
             type="button"
-            onClick={() => onToggle?.(o.value)}
+            onClick={() => {
+              onToggle?.(o.value)
+              // BD-011 rider — collapse-on-select: SELECTING a tray-only chip while expanded
+              // collapses the tray (the list below is the next thing the user needs to see).
+              // DESELECT keeps the tray open (the user is still browsing chips), and pinned
+              // chips never collapse it. `shown` already includes selected values when
+              // collapsed, so the just-tapped chip stays visible after the collapse. Cost:
+              // picking a second different crop needs a re-expand — flagged for Dave's smoke
+              // pass (consult §4). `active` is the PRE-toggle state, so !active ⇔ this tap
+              // is a select.
+              if (expanded && !active && !pinnedSet.has(o.value)) {
+                setExpanded(false)
+                onLayoutChange?.()
+              }
+            }}
             aria-pressed={active}
             style={{
               padding: '6px 14px', minHeight: 48, borderRadius: 20,

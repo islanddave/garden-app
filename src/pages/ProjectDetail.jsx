@@ -24,6 +24,8 @@ import PhotoImg from '../components/PhotoImg.jsx'
 import EventDeleteConfirm from '../components/photo/EventDeleteConfirm.jsx'
 import { PlantForm, Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
+// V4-CROPLISTORDER-001 (BD-010): crop-rank ledger write on the mini-logger save.
+import { recordCropLog } from '../lib/cropLogLedger.js'
 import Spinner from '../components/forms/Spinner.jsx'
 import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
 
@@ -296,6 +298,14 @@ export default function ProjectDetail() {
           has_photo:     !!miniPhotoFile,
         }),
       })
+
+      // V4-CROPLISTORDER-001 (BD-010): the event row exists — mark the crop's log day for
+      // picker chip ranking. Slug resolved from the already-loaded project plants; String()
+      // compare mirrors PlantingSelect's own id convention. No-op when plant-less/unresolvable.
+      if (eventForm.plant_id) {
+        const rankSlug = plants.find(p => String(p.id) === String(eventForm.plant_id))?.variety_ref?.crop_type_slug
+        if (rankSlug) recordCropLog(rankSlug, eventForm.event_date)
+      }
 
       // V2-PHOTO-F1 S2: upload staged photo (if any) — non-fatal via 'swallow'.
       const newEventId = created?.id
