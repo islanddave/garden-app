@@ -15,7 +15,7 @@ const APP_ROUTES = [
   '/locations', '/locations/abc', '/zone', '/project-types',
   '/plants/catch-up', '/achievements', '/collection', '/helper',
   '/settings', '/settings/notifications', '/about', '/releases',
-  '/admin/classify', '/admin/garden-activity', '/inactive', '/feed',
+  '/admin/classify', '/admin/garden-activity', '/admin/voice-debug', '/inactive', '/feed',
 ]
 
 describe('routeClass — header IA guard', () => {

@@ -42,6 +42,7 @@ import Collection from './pages/Collection.jsx'
 import InactiveProjects from './pages/InactiveProjects.jsx'
 import ProjectsAdminClassify from './pages/ProjectsAdminClassify.jsx'
 import GardenActivity from './pages/GardenActivity.jsx'
+import VoiceDebug from './pages/VoiceDebug.jsx'
 import GardenHelper from './pages/GardenHelper.jsx'
 import FieldCapture from './pages/FieldCapture.jsx'
 import Settings from './pages/Settings.jsx'
@@ -214,6 +215,9 @@ export function renderRoutes({ overlay, user }) {
     { path: '/collection',    element: <Protected><Collection /></Protected> },
     { path: '/admin/classify', element: <Protected><ProjectsAdminClassify /></Protected> },
     { path: '/admin/garden-activity', element: <Protected><GardenActivity /></Protected> },
+    // BUG-VOICEDUPE-002 raw Web Speech capture. Unlinked + Jen-invisible, same convention as
+    // /admin/garden-activity. Shows only this browser's own localStorage — no server call.
+    { path: '/admin/voice-debug', element: <Protected><VoiceDebug /></Protected> },
     { path: '/helper',        element: <Protected><GardenHelper /></Protected> },
     { path: '/settings',      element: <Protected><Settings /></Protected> },
     { path: '/settings/notifications', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SettingsNotifications /></ErrorBoundary></Protected> },
