@@ -91,6 +91,9 @@ const NS_VARIETIES = `SELECT id FROM plant_varieties WHERE created_by LIKE ${NS}
 const NS_ENTITY    = `SELECT id FROM entity WHERE display_name LIKE ${NS} OR planting_ref_id IN (${NS_PLANTS}) OR cultivar_ref_id IN (${NS_VARIETIES})`
 const NS_EVENTLOG  = `SELECT id FROM event_log WHERE created_by LIKE ${NS} OR logged_by LIKE ${NS} OR project_id IN (${NS_PROJECTS}) OR plant_id IN (${NS_PLANTS})`
 const NS_HARVEST   = `SELECT id FROM harvest_log WHERE created_by LIKE ${NS} OR project_id IN (${NS_PROJECTS}) OR event_id IN (${NS_EVENTLOG})`
+// BUG-ENTITYTAGORPHAN-001: locations is a guarded entity_tag parent, so the sweep needs to resolve
+// namespaced locations the same way it resolves the other three.
+const NS_LOCATIONS = `SELECT id FROM locations WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR slug LIKE ${NS}`
 
 const SAMPLE_PRED = `created_by LIKE ${NS} OR cultivar_id IN (${NS_VARIETIES}) OR source_event_id IN (${NS_EVENTLOG})`
 
@@ -115,6 +118,15 @@ const STEPS = [
   ['event_log',                   `DELETE FROM event_log WHERE created_by LIKE ${NS} OR logged_by LIKE ${NS} OR project_id IN (${NS_PROJECTS}) OR plant_id IN (${NS_PLANTS})`],
   ['entity',                      `DELETE FROM entity WHERE display_name LIKE ${NS} OR planting_ref_id IN (${NS_PLANTS}) OR cultivar_ref_id IN (${NS_VARIETIES})`],
   ['inventory_items',             `DELETE FROM inventory_items WHERE created_by LIKE ${NS} OR user_id LIKE ${NS} OR name LIKE ${NS} OR variety_id IN (${NS_VARIETIES})`],
+  // BUG-ENTITYTAGORPHAN-001. entity_tag was never swept at all — the polymorphic edge had no FK, no
+  // working cleanup trigger, and no line here. It MUST precede all four of its parents (plants,
+  // plant_varieties, plant_projects, locations, all below), because those parents now carry
+  // BEFORE DELETE guards that raise 23503 rather than let an association be orphaned. Placing it
+  // here covers every one of them in a single step.
+  // NOT filtered by deleted_at, matching what the guard counts: a foreign key does not know what a
+  // soft delete is. `tag` itself is still not swept — a pre-existing leak, out of scope here, and
+  // harmless to the guards since entity_tag.tag_id points the other way.
+  ['entity_tag',                  `DELETE FROM entity_tag WHERE created_by LIKE ${NS} OR entity_id IN (${NS_PLANTS}) OR entity_id IN (${NS_VARIETIES}) OR entity_id IN (${NS_PROJECTS}) OR entity_id IN (${NS_LOCATIONS})`],
   ['plants',                      `DELETE FROM plants WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR project_id IN (${NS_PROJECTS})`],
   ['plant_varieties',             `DELETE FROM plant_varieties WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR crop_type_slug LIKE ${NS}`],
   ['crop_types',                  `DELETE FROM crop_types WHERE slug LIKE ${NS} OR created_by LIKE ${NS}`],

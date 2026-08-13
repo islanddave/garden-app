@@ -1,0 +1,170 @@
+# gates.yml
+# BUG-ENTITYTAGORPHAN-001 — the polymorphic edge. entity_tag.entity_id can carry no declared foreign
+# key, so four BEFORE DELETE guard triggers stand in for one.
+#
+# SEQUENCING: one file, 0c-guard.sql. No 0a — the escape hatch is a single explicit statement, not a
+# routine, so there is nothing to install first.
+#
+# DEPLOY BOUNDARY — the falsifiable test, answered.
+#   QUESTION: would the CURRENTLY DEPLOYED prod code perform a delete these guards now refuse?
+#   METHOD: all 27 deployed prod Lambda bundles (aws lambda get-function Code.Location, staging
+#   excluded) downloaded and grepped for `DELETE FROM`, against prod at
+#   5c232164616228dfce4f3e669ef8011a2cf7a456 = v4.14.0.
+#   RESULT: the only real DELETE statements in deployed prod code are `DELETE FROM favorites` and
+#   `DELETE FROM public.entity_memory`. Neither is a parent of entity_tag. Every app DELETE route on
+#   plants, plant_projects, locations and varieties soft-deletes.
+#   ANSWER: NO. No deployed writer hard-deletes any of the four guarded parents, so no deployed
+#   behaviour changes and there is no pre-deploy/post-deploy split.
+#
+#   THE CALLERS THAT DO HARD-DELETE are non-app, and their companion edits ship in the same commit:
+#     1. deploy-staging.yml smoke purge — gains an entity_tag sweep before the parent deletes. A
+#        0-row no-op today (smoke runs create no tags); it is insurance, not a fix.
+#     2. tests/integration/_cleanup.js — the namespace sweep never included entity_tag at all.
+#     The two suites that DO create entity_tag rows (tags-authz, crop-types) already delete them
+#     first, forced there by entity_tag.tag_id -> tag(id) being RESTRICT. Verified by reading AND by
+#     running the full integration suite with this migration live.
+#
+# APPLY ORDER CONSEQUENCE FOR CI: gate-invariants.yml runs `--phase post --continuous-only` against
+# BOTH prod and staging and fires on `migrations/**` pushes. The post gates assert the POST-apply
+# state, so this directory must be applied to STAGING AND PROD BEFORE it is pushed.
+#
+# RLS TRAP: entity_tag, plants, plant_projects and locations all carry RLS. Run the orphan gate as a
+# role subject to RLS (garden_ro) and it reports phantom orphans — the child rows are visible while
+# the parents are filtered. gate_runner connects with NEON_DATABASE_URL / NEON_STAGING_URL (owner,
+# RLS-exempt, conn.read_only = True) and gets the true answer. Every count in 0c-guard.sql's header
+# was measured on the owner DSN for the same reason.
+
+pre:
+  # The defect: no guard exists yet. Apply-window only — false forever after 0c runs, by design.
+  - name: pre_no_entity_tag_guard_triggers_yet
+    continuous: false
+    sql: |
+      SELECT 1 FROM pg_trigger
+       WHERE NOT tgisinternal AND tgname LIKE 'trg_guard_entity_tag_%'
+    expect: rowcount_eq
+    value: 0
+
+  # The premise of the whole ticket, and the reason a trigger is doing a foreign key's job:
+  # entity_id carries NO foreign key, and none can be declared while the referent table is chosen by
+  # a sibling column. Standing invariant — if this ever returns a row, someone has restructured
+  # entity_tag into typed columns and these triggers should be retired in the same change.
+  - name: pre_entity_tag_entity_id_has_no_declared_fk
+    sql: |
+      SELECT 1 FROM pg_constraint c
+       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+       WHERE c.contype = 'f'
+         AND c.conrelid = 'public.entity_tag'::regclass
+         AND a.attname = 'entity_id'
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # L-058: the predicate the guard is about to enforce must ALREADY hold. Unlike an ALTER adding a
+  # foreign key, a trigger performs no validation scan — it binds only future deletes — so an
+  # existing orphan would be admitted silently and would then be un-fixable through the guard.
+  # Measure first. Live prod 2026-08-13: 0 across all four types.
+  #
+  # DELIBERATELY UNFILTERED by deleted_at, matching what the guard counts. A soft-deleted
+  # association still names a parent, and V4-SOFTDEL-001's promise is that data stays RECOVERABLE —
+  # an association whose referent is gone cannot be restored, only resurrected as a dangling pointer.
+  - name: sweep_no_orphaned_entity_tag_rows
+    sql: |
+      SELECT 1 FROM public.entity_tag et
+       WHERE NOT EXISTS (
+               SELECT 1 FROM public.plants p
+                WHERE et.entity_type = 'plant' AND p.id = et.entity_id
+               UNION ALL
+               SELECT 1 FROM public.plant_varieties v
+                WHERE et.entity_type = 'cultivar' AND v.id = et.entity_id
+               UNION ALL
+               SELECT 1 FROM public.locations l
+                WHERE et.entity_type = 'location' AND l.id = et.entity_id
+               UNION ALL
+               SELECT 1 FROM public.plant_projects c
+                WHERE et.entity_type = 'project' AND c.id = et.entity_id
+             )
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # THE FIX, asserted. One guard per entity_type admitted by the CHECK, on that type's parent table.
+  - name: post_guard_triggers_on_all_four_parents
+    sql: |
+      SELECT 1 FROM pg_trigger g
+       JOIN pg_class t ON t.oid = g.tgrelid
+       WHERE NOT g.tgisinternal
+         AND g.tgname LIKE 'trg_guard_entity_tag_%'
+         AND t.relname IN ('plants','plant_projects','locations','plant_varieties')
+    expect: rowcount_eq
+    value: 4
+
+  # THE COVERAGE GATE, and the one that earns its keep over time. The guard set is only complete
+  # relative to the entity types entity_tag ADMITS. Pinning the CHECK's exact definition means that
+  # adding a fifth type reds this gate instead of shipping a type with no parent guard — the same
+  # silent-omission class the three legacy triggers already demonstrate, where cover exists for
+  # types that have no tags and the type holding all 1,016 had none.
+  - name: post_entity_type_check_still_admits_exactly_the_four_guarded_types
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'entity_tag_entity_type_check'
+         AND pg_get_constraintdef(oid) =
+             'CHECK ((entity_type = ANY (ARRAY[''plant''::text, ''cultivar''::text, ''location''::text, ''project''::text])))'
+    expect: rowcount_eq
+    value: 1
+
+  # THE INVARIANT the whole migration exists to establish, and the only gate here that would catch a
+  # guard that is present but wrong. Standing, and true on every run forever.
+  - name: post_no_orphaned_entity_tag_rows
+    sql: |
+      SELECT 1 FROM public.entity_tag et
+       WHERE NOT EXISTS (
+               SELECT 1 FROM public.plants p
+                WHERE et.entity_type = 'plant' AND p.id = et.entity_id
+               UNION ALL
+               SELECT 1 FROM public.plant_varieties v
+                WHERE et.entity_type = 'cultivar' AND v.id = et.entity_id
+               UNION ALL
+               SELECT 1 FROM public.locations l
+                WHERE et.entity_type = 'location' AND l.id = et.entity_id
+               UNION ALL
+               SELECT 1 FROM public.plant_projects c
+                WHERE et.entity_type = 'project' AND c.id = et.entity_id
+             )
+    expect: rowcount_eq
+    value: 0
+
+  # THE GUARD MUST STAY READ-ONLY. A BEFORE DELETE trigger that MODIFIES rows can defuse a
+  # downstream RESTRICT before it fires, leaving a constraint that looks armed and guards nothing —
+  # which is why v4-plantrehomefk-001 originally banned BEFORE DELETE triggers on these tables
+  # outright. That ban is relaxed to this property check (see that migration's amended gates), so
+  # this gate is now the thing carrying the safety argument for BOTH migrations. It greps prosrc:
+  # the function's HINT deliberately avoids spelling any write statement so this stays a clean test.
+  - name: post_guard_function_is_read_only
+    sql: |
+      SELECT 1 FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname = 'guard_entity_tag_parent_delete'
+         AND p.prosrc ~* '(insert\s+into|update\s+public\.|delete\s+from)'
+    expect: rowcount_eq
+    value: 0
+
+  # The guard function must actually EXIST and be the one the triggers call. A trigger pointing at a
+  # dropped function fails loudly, but a function replaced by a stub would not — this pins presence,
+  # and post_guard_function_is_read_only pins its shape.
+  - name: post_guard_function_present
+    sql: |
+      SELECT 1 FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname = 'guard_entity_tag_parent_delete'
+    expect: rowcount_eq
+    value: 1
+
+  # continuous: false — the apply-time receipt, which cannot be self-armed without becoming
+  # tautological. Same call v4-plantrehomefk-001 and v4-softdelcascade-001 make for their own rows.
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '4.23.8-entitytagorphan-001'
+    expect: rowcount_eq
+    value: 1

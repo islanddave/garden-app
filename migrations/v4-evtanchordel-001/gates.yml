@@ -211,7 +211,13 @@ post:
          AND t.relname IN ('event_log','photos','plants','locations')
          AND g.tgname NOT IN ('set_updated_at','prevent_ownership_transfer','garden_node_bump',
                               'plants_entity_ins','plants_entity_softdel','trg_delete_entity_tags_plant',
-                              'trg_delete_entity_tags_location','plants_entity_rename')
+                              'trg_delete_entity_tags_location','plants_entity_rename',
+                              -- Added 2026-08-13 by BUG-ENTITYTAGORPHAN-001: read-only BEFORE DELETE
+                              -- guards standing in for the foreign key entity_tag.entity_id cannot
+                              -- have. They REFUSE deletes; they never modify a row, so they cannot
+                              -- defuse this migration's RESTRICTs. Read-only-ness is asserted by
+                              -- v4-entitytagorphan-001 post_guard_function_is_read_only.
+                              'trg_guard_entity_tag_plant','trg_guard_entity_tag_location')
     expect: rowcount_eq
     value: 0
 

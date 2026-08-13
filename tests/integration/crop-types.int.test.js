@@ -99,6 +99,13 @@ describe('POST /api/varieties/crop-types — create', () => {
     // A trigger auto-registers an `entity` row per cultivar (FK ON DELETE RESTRICT), so it must be
     // cleared before the cultivar can be hard-deleted — same pattern as preservation.int.test.js.
     await directSql`DELETE FROM entity WHERE cultivar_ref_id = ${variety.body.id}`
+    // BUG-ENTITYTAGORPHAN-001: the crop-type mirror above links this cultivar into the tag
+    // vocabulary via entity_tag, and plant_varieties now carries a BEFORE DELETE guard that raises
+    // 23503 rather than orphan an association. So the link goes before its parent — the same
+    // child-first discipline the entity row above already needed. This is not incidental to the
+    // test: it means every cultivar created through the API carries a tag, which is why 412 of 424
+    // prod cultivars are tagged and why this guard had to exist.
+    await directSql`DELETE FROM public.entity_tag WHERE entity_type = 'cultivar' AND entity_id = ${variety.body.id}`
     await directSql`DELETE FROM cultivar WHERE id = ${variety.body.id}`
   })
 })

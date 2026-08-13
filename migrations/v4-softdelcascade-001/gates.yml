@@ -504,7 +504,13 @@ post:
                            'event_log_archive','harvest_log_archive')
          AND g.tgname NOT IN ('set_updated_at','prevent_ownership_transfer','container_bump',
                               'container_closure_after_ins','container_reparent_after',
-                              'trg_delete_entity_tags_project')
+                              'trg_delete_entity_tags_project',
+                              -- Added 2026-08-13 by BUG-ENTITYTAGORPHAN-001: a read-only BEFORE
+                              -- DELETE guard standing in for the foreign key entity_tag.entity_id
+                              -- cannot have. It REFUSES deletes and never modifies a row, so it
+                              -- cannot defuse this migration's RESTRICTs. Read-only-ness is
+                              -- asserted by v4-entitytagorphan-001 post_guard_function_is_read_only.
+                              'trg_guard_entity_tag_project')
     expect: rowcount_eq
     value: 0
 

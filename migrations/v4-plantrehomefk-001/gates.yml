@@ -172,17 +172,32 @@ post:
     expect: rowcount_eq
     value: 0
 
-  # NO BEFORE DELETE TRIGGER on either table. A BEFORE DELETE trigger is the one mechanism that
-  # could re-home rows out from under the RESTRICT before it fires — defusing the constraint while
-  # leaving it looking armed. There is none today; this keeps it that way.
-  - name: post_no_before_delete_trigger_on_touched_tables
+  # NO BEFORE DELETE TRIGGER THAT WRITES. A BEFORE DELETE trigger is the one mechanism that could
+  # re-home rows out from under the RESTRICT before it fires — defusing the constraint while leaving
+  # it looking armed.
+  #
+  # AMENDED 2026-08-13 by BUG-ENTITYTAGORPHAN-001. This gate originally banned BEFORE DELETE
+  # triggers on these tables OUTRIGHT, and that was the wrong shape: it forbade the mechanism rather
+  # than the hazard. entity_tag.entity_id can carry no declared foreign key (its referent table is
+  # chosen by a sibling column), so its guard HAS to be a BEFORE DELETE trigger — a read-only one
+  # that raises 23503 and touches nothing. Banning that outright would have blocked the correct fix
+  # for a defect on the very same tables.
+  #
+  # The gate now asserts the PROPERTY it always meant: every BEFORE DELETE trigger here must be a
+  # known guard AND its function must be read-only. An unknown trigger fails; a known one that gains
+  # a write fails. v4-entitytagorphan-001's post_guard_function_is_read_only checks the same body
+  # independently, so the two migrations corroborate rather than one trusting the other.
+  - name: post_no_writing_before_delete_trigger_on_touched_tables
     sql: |
       SELECT 1 FROM pg_trigger g
        JOIN pg_class t ON t.oid = g.tgrelid
+       JOIN pg_proc  p ON p.oid = g.tgfoid
        WHERE NOT g.tgisinternal
          AND t.relname IN ('plants','plant_projects','tasks')
          AND (g.tgtype & 8) <> 0      -- TRIGGER_TYPE_DELETE  (1<<3); 4 is INSERT, not DELETE
          AND (g.tgtype & 2) <> 0      -- TRIGGER_TYPE_BEFORE  (1<<1); unset = AFTER
+         AND ( g.tgname NOT IN ('trg_guard_entity_tag_plant','trg_guard_entity_tag_project')
+               OR p.prosrc ~* '(insert\s+into|update\s+public\.|delete\s+from)' )
     expect: rowcount_eq
     value: 0
 
@@ -200,7 +215,12 @@ post:
                               'container_closure_after_ins','container_reparent_after',
                               'trg_delete_entity_tags_project','garden_node_bump',
                               'plants_entity_ins','plants_entity_rename','plants_entity_softdel',
-                              'trg_delete_entity_tags_plant')
+                              'trg_delete_entity_tags_plant',
+                              -- Added 2026-08-13 by BUG-ENTITYTAGORPHAN-001: the polymorphic
+                              -- entity_tag parent guards. Read-only by construction; asserted by
+                              -- post_no_writing_before_delete_trigger_on_touched_tables above and
+                              -- by that migration's post_guard_function_is_read_only.
+                              'trg_guard_entity_tag_plant','trg_guard_entity_tag_project')
     expect: rowcount_eq
     value: 0
 
