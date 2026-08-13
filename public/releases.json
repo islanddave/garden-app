@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.15.0",
+    "date": "2026-08-13",
+    "highlights": [
+      "Nothing looks different, but your garden data got a lot harder to lose. Deleting a bed, a container or a cultivar can no longer quietly take your photos, plantings, tags, earned badges or put-up records with it — the database now refuses instead of silently tidying up. Deleted locations and plantings can also be listed and restored again."
+    ]
+  },
+  {
     "version": "4.14.0",
     "date": "2026-08-13",
     "highlights": [
