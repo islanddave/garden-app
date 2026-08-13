@@ -1,6 +1,7 @@
 import React, { useState, useLayoutEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { useOverlayLocation, OverlayLink } from '../context/OverlayContext.jsx'
+import { useOverlayLocation, OverlayLink, useOverlayNavigate } from '../context/OverlayContext.jsx'
+import { readMarker } from '../lib/backNav.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import WhatsNewDot from './WhatsNewDot.jsx'
 import { P, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
@@ -95,6 +96,39 @@ const menuRowStyle = {
   fontFamily: 'inherit', minHeight: 48,
 }
 
+// BUG-BACKNAVMORE-001 (BD-009) — a nav-sheet row that CONSUMES the armed Back entry when it
+// navigates. The two BottomNav sheets were deliberately excluded from V4-BACKNAV-001's arming
+// (armsBack=false — see lib/backNav.js and Sheet.jsx) because every row here closes the sheet AND
+// navigates: a plain push from an armed sheet strands the marker entry MID-STACK
+// ([tab, tab+marker, dest]) — a permanent dead Back press on the app's most frequent path, and no
+// browser API can remove a mid-stack entry. The cost of NOT arming was the shipped bug: Android
+// Back over an open sheet navigated the tab underneath instead of closing the sheet.
+// This wrapper resolves the orphaning from the NAVIGATION side so the sheets can finally arm: at
+// click time, if the CURRENT history entry is the session marker (readMarker — the same predicate
+// disarm() guards on), the row REPLACE-navigates instead of pushing, collapsing the marker entry
+// into the destination ([tab, dest]). One Back from the destination lands on the ORIGINAL tab.
+// The registry needs no edit: disarm() already treats a replace-while-armed as "marker deleted,
+// do nothing" (react-router's replace writes fresh {usr,key,idx} — that guard predates this).
+// When the marker is NOT current — flags off, no provider (isolated tests/jsdom without arming),
+// or any other reason — the row falls through to the Link's normal push, byte-identical to the
+// pre-arming behavior. Modified/non-primary clicks (new tab) also fall through untouched.
+function SheetRowLink({ to, overlay = false, onClick, children, ...rest }) {
+  const navigate = useNavigate()
+  const overlayNavigate = useOverlayNavigate()
+  const Comp = overlay ? OverlayLink : Link
+  function handleClick(e) {
+    onClick?.(e)
+    if (e.defaultPrevented) return
+    // Mirror Link's own navigation guards: only a plain primary-button click navigates in-tab.
+    if (e.button !== 0 || e.metaKey || e.altKey || e.ctrlKey || e.shiftKey) return
+    if (typeof window === 'undefined' || !window.history) return
+    if (!readMarker(window.history.state)) return
+    e.preventDefault()
+    ;(overlay ? overlayNavigate : navigate)(to, { replace: true })
+  }
+  return <Comp to={to} onClick={handleClick} {...rest}>{children}</Comp>
+}
+
 function SectionLabel({ children }) {
   return (
     <div style={{
@@ -166,19 +200,24 @@ export default function BottomNav() {
 
   return (
     <>
-      {/* +LOG create action sheet (Sheet primitive) */}
-      <Sheet open={showCreate} onClose={closeCreate} ariaLabel="Create new">
+      {/* +LOG create action sheet (Sheet primitive). armsBack (BUG-BACKNAVMORE-001): Android Back
+          now closes this sheet instead of navigating the tab beneath. Arming is safe here ONLY
+          because every row is a SheetRowLink, which consumes the armed entry on row-navigate —
+          the orphaning that originally justified the exclusion (see SheetRowLink above). */}
+      <Sheet open={showCreate} onClose={closeCreate} ariaLabel="Create new" armsBack>
         <div style={{ padding: '6px 24px 8px', fontSize: '0.8rem', color: P.light }}>
           Add to your garden
         </div>
         {CREATE_ACTIONS.map(action => {
           // V4-OVERLAY-001 Slice 2: /log + /log/many open as flyovers over the current page; /sow and
           // /garden?add=1 stay plain page navigations (§6 — /sow is a page, add-planting is Slice 3).
-          const RowLink = OVERLAYABLE_CREATE.has(action.to) ? OverlayLink : Link
+          // BUG-BACKNAVMORE-001: SheetRowLink keeps that split via `overlay` and consumes the armed
+          // Back entry on tap.
           return (
-            <RowLink
+            <SheetRowLink
               key={action.label}
               to={action.to}
+              overlay={OVERLAYABLE_CREATE.has(action.to)}
               onClick={closeCreate}
               // V4-HARVFAB-001: the budget guard counts THESE, not links filtered by an href
               // allow-list — an allow-list passes vacuously against exactly the change it is
@@ -197,13 +236,14 @@ export default function BottomNav() {
                 <span style={{ fontSize: '1rem', fontWeight: 600 }}>{action.label}</span>
                 <span style={{ fontSize: '0.78rem', color: P.light }}>{action.sub}</span>
               </span>
-            </RowLink>
+            </SheetRowLink>
           )
         })}
       </Sheet>
 
-      {/* More menu (Sheet primitive) */}
-      <Sheet open={showMore} onClose={closeMore} ariaLabel="More navigation options">
+      {/* More menu (Sheet primitive). armsBack (BUG-BACKNAVMORE-001) — same contract as the create
+          sheet above: every navigating row is a SheetRowLink. */}
+      <Sheet open={showMore} onClose={closeMore} ariaLabel="More navigation options" armsBack>
         {/* Signed-in identity */}
         <div style={{ padding: '4px 24px 12px', fontSize: '0.8rem', color: P.light }}>
           {profile?.display_name || profile?.email || 'Signed in'}
@@ -228,19 +268,19 @@ export default function BottomNav() {
         </button>
 
         <SectionLabel>Your garden</SectionLabel>
-        <Link to="/dashboard" onClick={closeMore} style={menuRowStyle}>
+        <SheetRowLink to="/dashboard" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.dashboard" size={22} decorative />Dashboard
-        </Link>
+        </SheetRowLink>
         {/* V4-NAVHARVEST-001 — DrG demoted here from the tab bar. DEMOTED, NOT REMOVED: /findings
             keeps its route, its page and its drawn nav.findings icon, and every deep link into it
             still resolves. It sits beside Dashboard because both are read-only overview surfaces.
             BottomNavDot (the critter poll) is unaffected — it hangs off the nav shell, not this tab. */}
-        <Link to="/findings" onClick={closeMore} style={menuRowStyle}>
+        <SheetRowLink to="/findings" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.findings" size={22} decorative />DrG
-        </Link>
-        <Link to="/photos" onClick={closeMore} style={menuRowStyle}>
+        </SheetRowLink>
+        <SheetRowLink to="/photos" onClick={closeMore} style={menuRowStyle}>
           <Icon name="media.camera" size={22} decorative />Photos
-        </Link>
+        </SheetRowLink>
         {/* V4-SPACEPHOTO-001 Lane C — a NEW row, above the zones row, because the two are different
             tiers and neither can stand in for the other: "Space" (singular) is the property itself
             (the one `spaces` row), while /locations is the tree of six level-0 ZONES beneath it
@@ -250,9 +290,9 @@ export default function BottomNav() {
             shipped single row unchanged. Emoji glyph mirrors Harvests/Put-Up (a new row would
             otherwise need an iconRegistry entry + the icon-completeness harness). */}
         {SPACE_PHOTOS_ENABLED && (
-          <Link to="/space" onClick={closeMore} style={menuRowStyle}>
+          <SheetRowLink to="/space" onClick={closeMore} style={menuRowStyle}>
             <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏡</span>Space
-          </Link>
+          </SheetRowLink>
         )}
         {/* V4-PHOTOLOCFIND-001 — /locations previously had ZERO nav entries (reachable only
             from Search/Favorites/ProjectNew/ZonePicker), which is half of why only 5 of 913 photos
@@ -265,12 +305,12 @@ export default function BottomNav() {
             orthogonal to the feature gate: leaving it conditional would mean a rollback silently
             RENAMES a nav row under the user, which is worse than a stable, correct name. Label
             change only; the route and the page are untouched. */}
-        <Link to="/locations" onClick={closeMore} style={menuRowStyle}>
+        <SheetRowLink to="/locations" onClick={closeMore} style={menuRowStyle}>
           <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>📍</span>Zones
-        </Link>
-        <Link to="/inventory" onClick={closeMore} style={menuRowStyle}>
+        </SheetRowLink>
+        <SheetRowLink to="/inventory" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.inventory" size={22} decorative />Inventory
-        </Link>
+        </SheetRowLink>
         {/* V4-NAVHARVEST-001 — the Harvests row that lived here was PROMOTED to the tab bar, not
             duplicated: two doors to one destination is the redundant door-pair the IA work exists to
             merge. Put-Up stays here and still reads as adjacent to Harvests (what you kept, next to
@@ -279,13 +319,15 @@ export default function BottomNav() {
             OverlayLink so it opens as a flyover over the current page when OVERLAY_ROUTES_ENABLED (flag
             off: a plain <Link>, full-page — byte-identical). Emoji glyph mirrors the Achievements row
             (avoids the icon-completeness harness for a brand-new destination). */}
-        <OverlayLink to="/put-up" onClick={closeMore} style={menuRowStyle}>
+        <SheetRowLink overlay to="/put-up" onClick={closeMore} style={menuRowStyle}>
           <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🫙</span>Put-Up
-        </OverlayLink>
-        <Link to="/achievements" onClick={closeMore} style={menuRowStyle}>
+        </SheetRowLink>
+        <SheetRowLink to="/achievements" onClick={closeMore} style={menuRowStyle}>
           <span aria-hidden="true" style={{ fontSize: '1.4rem' }}>🏆</span>Achievements
-        </Link>
-        {/* Catch-up badge — gated behind CATCH_UP_EDITOR_SHIPPED (currently off). */}
+        </SheetRowLink>
+        {/* Catch-up badge — gated behind CATCH_UP_EDITOR_SHIPPED (currently off).
+            BUG-BACKNAVMORE-001 NOTE: if this ever ships, CatchUpBadge's inner link must adopt the
+            SheetRowLink consume-on-navigate contract or its tap will orphan the armed Back entry. */}
         {CATCH_UP_EDITOR_SHIPPED && (
           <div data-testid="catch-up-nav-item" onClick={closeMore} style={{ padding: '12px 24px 4px' }}>
             <CatchUpBadge />
@@ -295,7 +337,7 @@ export default function BottomNav() {
         <SectionLabel>Rewards</SectionLabel>
         {/* Critters — ambient reward surface (Reward UX V102): distinguished by placement +
             subtitle, NEVER by a badge/count/alert. */}
-        <Link
+        <SheetRowLink
           to="/collection"
           onClick={closeMore}
           style={{ ...menuRowStyle, alignItems: 'flex-start' }}
@@ -305,21 +347,21 @@ export default function BottomNav() {
             <span style={{ fontSize: '1rem', fontWeight: 500 }}>Critters</span>
             <span style={{ fontSize: '0.78rem', color: P.light }}>Who&apos;s been visiting</span>
           </span>
-        </Link>
+        </SheetRowLink>
 
         <SectionLabel>Help &amp; account</SectionLabel>
-        <Link to="/helper" onClick={closeMore} style={menuRowStyle}>
+        <SheetRowLink to="/helper" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.helper" size={22} decorative />Garden Helper
-        </Link>
-        <Link to="/settings" onClick={closeMore} style={menuRowStyle}>
+        </SheetRowLink>
+        <SheetRowLink to="/settings" onClick={closeMore} style={menuRowStyle}>
           <Icon name="action.settings" size={22} decorative />Settings
-        </Link>
-        <Link to="/about" onClick={closeMore} style={menuRowStyle}>
+        </SheetRowLink>
+        <SheetRowLink to="/about" onClick={closeMore} style={menuRowStyle}>
           <Icon name="action.info" size={22} decorative />About
-        </Link>
-        <Link to="/releases" onClick={closeMore} style={menuRowStyle}>
+        </SheetRowLink>
+        <SheetRowLink to="/releases" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.notes" size={22} decorative />Release Notes<WhatsNewDot variant="inline" />
-        </Link>
+        </SheetRowLink>
 
         {/* Sign Out — inline 2-step confirm (BottomNav-owned; Sheet stays a dumb container).
             A session-ending action must not be an impulsive mis-tap target. */}
