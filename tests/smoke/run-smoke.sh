@@ -424,17 +424,22 @@ else
       # legacy grammar on PUT, so both PUTs re-send it deliberately. water_depth vocabulary is
       # the edge whitelist in lambda/events/validators.js ('light'|'normal'|'deep' / 'user'|'default');
       # the l108_marker key rides the historic pass-through and gives a run-unique preserve assert.
+      # The PUT contract REQUIRES event_type on every body (full-replace legacy grammar — real
+      # callers always send the full set; a body without it 400s before the metadata arm runs).
+      # First version of this block omitted it AND redirected auth_request to /dev/null, so the
+      # 400s were invisible and the read-backs failed with no evidence — hence: event_type present,
+      # and the PUT result lines left VISIBLE in the log.
       if [[ -n "${CREATED_EVENT_ID:-}" ]]; then
         CLERK_JWT=$(mint_session_token)
         auth_request "write:PUT /events/$CREATED_EVENT_ID metadata" \
           "${STAGING_API_EVENTS%/}/api/events/${CREATED_EVENT_ID}" "PUT" \
-          "{\"notes\": \"CI smoke — safe to delete\", \"metadata\": {\"water_depth\": \"deep\", \"water_depth_source\": \"user\", \"l108_marker\": \"$TEST_RUN_ID\"}}" >/dev/null || true
+          "{\"event_type\": \"observation\", \"notes\": \"CI smoke — safe to delete\", \"metadata\": {\"water_depth\": \"deep\", \"water_depth_source\": \"user\", \"l108_marker\": \"$TEST_RUN_ID\"}}" || true
         assert_readback "write:event-metadata-readback" \
           "${STAGING_API_EVENTS%/}/api/events/${CREATED_EVENT_ID}" ".metadata.water_depth" "deep"
         # Metadata-FREE PUT must NOT clobber the stored object (has-key: absent preserves).
         auth_request "write:PUT /events/$CREATED_EVENT_ID no-metadata" \
           "${STAGING_API_EVENTS%/}/api/events/${CREATED_EVENT_ID}" "PUT" \
-          "{\"notes\": \"CI smoke — metadata-free edit\"}" >/dev/null || true
+          "{\"event_type\": \"observation\", \"notes\": \"CI smoke — metadata-free edit\"}" || true
         assert_readback "write:event-metadata-preserved-on-absent-key" \
           "${STAGING_API_EVENTS%/}/api/events/${CREATED_EVENT_ID}" ".metadata.l108_marker" "$TEST_RUN_ID"
       else
