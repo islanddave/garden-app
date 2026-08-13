@@ -76,6 +76,9 @@ describe('AUTHZ preservation cross-tenant plant_id /api/preservation — attribu
   afterAll(async () => {
     // entity registry (planting_ref_id) FK is ON DELETE RESTRICT — clear entity rows before plants.
     await directSql`DELETE FROM preservation_log WHERE user_id IN (${OWNER}, ${FOREIGN})`
+    // V4-SOFTDELCASCADE-001: event_log.project_id is ON DELETE RESTRICT once 0c lands — clear
+    // project-anchored events before the plant_projects delete below (same shape as plants.int).
+    await directSql`DELETE FROM event_log WHERE project_id IN (SELECT id FROM plant_projects WHERE created_by IN (${OWNER}, ${FOREIGN}))`
     await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (${ownerPlantId}, ${foreignPlantId})`
     await directSql`DELETE FROM plants WHERE created_by IN (${OWNER}, ${FOREIGN})`
     await directSql`DELETE FROM plant_projects WHERE created_by IN (${OWNER}, ${FOREIGN})`

@@ -51,6 +51,10 @@ afterAll(async () => {
   // band-aid. The supported non-test path is archive_plant_events(); tests delete outright
   // because fixture events are not history worth keeping.
   await directSql`DELETE FROM event_log WHERE plant_id IN (SELECT id FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
+  // V4-SOFTDELCASCADE-001: event_log.project_id is ON DELETE RESTRICT once 0c lands, so an event
+  // anchored ONLY by project_id (no plant_id) would block the plant_projects delete below. The
+  // plant_id-scoped line above cannot see such a row; this one exists for it.
+  await directSql`DELETE FROM event_log WHERE project_id IN (SELECT id FROM plant_projects WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
   // entity_memory.plant_id is ON DELETE RESTRICT — a status change writes a plant-keyed row.
   await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
   // entity registry (DRG-ENGINE-002) FK is ON DELETE RESTRICT — clear the auto-created

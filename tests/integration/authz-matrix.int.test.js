@@ -49,6 +49,10 @@ describeAuthzMatrix({
     return r[0] ?? null
   },
   cleanup: async (ctx) => {
+    // V4-SOFTDELCASCADE-001: event_log.project_id is ON DELETE RESTRICT once 0c lands. This matrix
+    // is green today only because its write body never sends `status` (no event rows created) —
+    // that is a property, not a guarantee. Clear project-anchored events before plant_projects.
+    await directSql`DELETE FROM event_log WHERE project_id IN (SELECT id FROM plant_projects WHERE created_by = ${ctx.__owner})`
     // entity registry (planting_ref_id) FK is ON DELETE RESTRICT — clear before plants.
     await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (SELECT id FROM plants WHERE created_by = ${ctx.__owner})`
     await directSql`DELETE FROM plants WHERE created_by = ${ctx.__owner}`
