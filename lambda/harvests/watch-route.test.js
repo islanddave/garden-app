@@ -19,7 +19,9 @@ import {
   resolveNurseryOffset, NURSERY_MIN_SAMPLE,
   handleWatchGet, handleDismissToggle, handleDismissalPost, handleDismissalUndo,
 } from './watch-route.js';
-import { WATCH_MODEL_VERSION, NURSERY_OFFSET_DAYS_FALLBACK, UI_CONTRACT_FIELDS } from './watch.js';
+import {
+  WATCH_MODEL_VERSION, WATCH_SUPPRESS_DAYS, NURSERY_OFFSET_DAYS_FALLBACK, UI_CONTRACT_FIELDS, addDays,
+} from './watch.js';
 
 const USER = 'user_dave';
 const HOUSEHOLD = ['user_dave', 'user_jen'];
@@ -199,6 +201,40 @@ describe('GET /api/harvests/watch', () => {
     expect(res.body.excluded).toEqual({ dismissed: 1 });
   });
 
+  // PANEL Q3/Q4: the GET payload carries the suppressed rows themselves, each with its return date,
+  // so the tail's "Snoozed" subgroup can print "back {date}" without a second endpoint.
+  it('returns snoozed rows with their return dates in the GET payload', async () => {
+    const sql = makeSql([[
+      row(),
+      row({
+        plant_id: '22222222-2222-4333-8444-555555555555', planting_name: 'Charentais',
+        dismissed_active: true, dismissal_suppressed_until: '2026-08-20',
+      }),
+    ]]);
+    const res = await handleWatchGet(ctx(sql, { query: {} }));
+    expect(res.body.candidates).toHaveLength(1);
+    expect(res.body.snoozed).toEqual([{
+      plant_id: '22222222-2222-4333-8444-555555555555',
+      project_id: '99999999-2222-4333-8444-555555555555',
+      name: 'Charentais',
+      location_name: 'Hilltop Bed 2',
+      crop_display_name: 'Watermelon',
+      suppressed_until: '2026-08-20',
+      reason: 'dismissed',
+    }]);
+  });
+
+  // Snoozing more plantings must never HIDE them: the snoozed list is not subject to `limit`.
+  it('snoozed rows are not subject to the visible limit', async () => {
+    const many = Array.from({ length: 8 }, (_, i) => row({
+      plant_id: `${i}1111111-2222-4333-8444-555555555555`, planting_name: `S${i}`,
+      dismissed_active: true, dismissal_suppressed_until: '2026-08-20',
+    }));
+    const sql = makeSql([many]);
+    const res = await handleWatchGet(ctx(sql, { query: { limit: '5' } }));
+    expect(res.body.snoozed).toHaveLength(8);
+  });
+
   it('rejects a bad limit rather than silently substituting one', async () => {
     const res = await handleWatchGet(ctx(makeSql([[]]), { query: { limit: '0' } }));
     expect(res.statusCode).toBe(400);
@@ -229,6 +265,27 @@ describe('POST /api/harvests/watch/dismissals — the calibration write', () => 
     expect(insert.params).toContain(TODAY);          // observed_on
     expect(insert.params).toContain('watermelon');
     expect(insert.params).toContain(CALIBRATION_REASON);
+  });
+
+  // PANEL Q3 — bounded suppression rides the INSERT. suppressed_until = observed_on + 10 days,
+  // bound with an explicit ::date cast in the column list (it was absent before this change; the
+  // read path already honoured it). MUTATION TARGET: drop the column from the INSERT -> red here.
+  it('writes suppressed_until = observed_on + WATCH_SUPPRESS_DAYS with a ::date cast', async () => {
+    const sql = makeSql([[row()], [{ id: 'd-1', plant_id: PLANT, observed_on: TODAY }]]);
+    await handleDismissalPost(ctx(sql, { body: { plant_id: PLANT } }));
+    const insert = sql.calls[1];
+    expect(insert.text).toMatch(/suppressed_until/);
+    expect(insert.text).toMatch(/\?::date/);
+    expect(WATCH_SUPPRESS_DAYS).toBe(10);
+    expect(insert.params).toContain(addDays(TODAY, WATCH_SUPPRESS_DAYS)); // 2026-08-22
+  });
+
+  // A backdated observation returns from the OBSERVATION day, not the write day — same event_date
+  // convention the rest of the row follows.
+  it('a backdated dismissal suppresses from the observation date', async () => {
+    const sql = makeSql([[row()], [{ id: 'd-1' }]]);
+    await handleDismissalPost(ctx(sql, { body: { plant_id: PLANT, observed_on: '2026-08-10' } }));
+    expect(sql.calls[1].params).toContain(addDays('2026-08-10', WATCH_SUPPRESS_DAYS)); // 2026-08-20
   });
 
   // A client that could post its own snapshot could poison the calibration set, and a stale PWA
@@ -317,14 +374,23 @@ describe('POST /api/harvests/watch/dismiss — the boolean the UI lane committed
     expect(sql.calls[0].params).toContain(USER);
   });
 
-  // The day-grain unique index permits one active row per observation DAY, so a planting re-checked
-  // across several days can carry more than one. Clearing only the newest would leave the row
-  // suppressed with no control left to clear it.
-  it('a retraction clears EVERY active dismissal on that planting', async () => {
-    const sql = makeSql([[{ id: 'd-1' }, { id: 'd-2' }]]);
+  // PANEL Q3, BLOCKING PREREQUISITE — retraction is scoped to the SINGLE most recent active
+  // dismissal. This reverses the original clear-them-all behaviour: under bounded 10-day suppression
+  // rows ACCUMULATE across the season, and one Undo tap that cleared them all would retract every
+  // accumulated calibration sample for the planting. MUTATION TARGET: remove the LIMIT 1 subquery
+  // (revert to the plural WHERE user_id AND plant_id) -> red here.
+  it('a retraction hits ONLY the most recent active dismissal, never the accumulated samples', async () => {
+    const sql = makeSql([[{ id: 'd-newest' }]]);
     const res = await handleDismissToggle(ctx(sql, { body: { plant_id: PLANT, dismissed: false } }));
-    expect(res.body.retracted).toHaveLength(2);
-    expect(sql.calls[0].text).toMatch(/undone_at IS NULL/);
+    expect(res.body.retracted).toHaveLength(1);
+    const q = sql.calls[0].text;
+    // The UPDATE targets one id selected as the newest active row — not the whole planting.
+    expect(q).toMatch(/WHERE id = \(/s);
+    expect(q).toMatch(/ORDER BY observed_on DESC, dismissed_at DESC/);
+    expect(q).toMatch(/LIMIT 1/);
+    expect(q).toMatch(/undone_at IS NULL/);
+    // Ownership is enforced on the UPDATE itself, not only inside the subquery.
+    expect((q.match(/user_id/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
   it('requires a real boolean — an absent or stringy flag is a 400', async () => {

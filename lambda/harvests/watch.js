@@ -62,6 +62,18 @@ export const WATCH_LEAD_MAX_FRACTION = 0.25;
 // documented fallback when a household has too little data to compute its own.
 export const NURSERY_OFFSET_DAYS_FALLBACK = 31;
 
+// JUDGMENT BOUND, panel-decided (harvest-panel-decisions-20260812.md Q3). A "not yet" tap silences
+// a planting for this many days, then the row RETURNS — dismissal is a snooze, not a queue exit.
+// Both bounds were confirmed: season-long suppression yields exactly ONE negative-class label per
+// planting per season (starving the calibration set the table exists to build); 10 days over the 47
+// days to frost yields 2-3; 3 days yields duplicates-in-substance against observables that move on
+// a multi-day scale. Deliberately UNIFORM, no crop-class clamp: the obvious clamp column,
+// crop_types.loss_horizon_hours, measures POST-HARVEST shelf life, not on-plant velocity (verified:
+// melon 168h / watermelon 240h vs basil 24h — it would clamp exactly the wrong crops and miss the
+// fast-flip melons entirely). No schema column encodes observable velocity; the refit supplies the
+// crop-level answer once the dismissal table has real taps.
+export const WATCH_SUPPRESS_DAYS = 10;
+
 // V4-ANCHORBASE-001. OFF, and off is the decision, not a placeholder.
 //
 // A fourth anchor tier — `derived` — reads a backfilled anchor for plantings that have NO date of
@@ -427,15 +439,34 @@ export function siblingLabel(name) {
   return s.length <= SIBLING_NAME_MAX ? s : `${s.slice(0, SIBLING_NAME_MAX - 1).trimEnd()}…`;
 }
 
+// PANEL Q2 (harvest-panel-decisions-20260812.md): "Add the sibling's planting-date offset where
+// available — a 3-week succession breaks the shared-clock premise even for `single` crops." The
+// offset is only meaningful comparing LIKE dates, so it uses the first field BOTH plantings carry.
+// Positive = this planting went in AFTER the sibling (its clock started later, so the borrowed pick
+// date overstates its progress by about this much).
+export function siblingPlantingOffsetDays(row) {
+  for (const f of ['sown_at', 'transplanted_at', 'planted_out_at']) {
+    const own = toYmd(row?.[f]);
+    const sib = toYmd(row?.[`sibling_${f}`]);
+    if (own != null && sib != null) return daysBetween(sib, own);
+  }
+  return null;
+}
+
 export function describeBasis(anchor, etToday, row = null) {
   if (!anchor) return null;
   if (anchor.kind === 'sibling') {
     const who = siblingLabel(row?.sibling_planting_name ?? anchor.source_planting_name);
     // Falls back to the unnamed form rather than printing an empty slot — a sibling with no name on
     // the row is a data gap, not a reason to drop the provenance entirely.
-    return who == null
+    const core = who == null
       ? `sibling picked ${shortDate(anchor.anchor_date)}`
       : `sibling ${who} picked ${shortDate(anchor.anchor_date)}`;
+    // The planting-date offset makes the borrow's weakest premise visible: a sibling planted weeks
+    // apart is not on this planting's clock. Zero offset says nothing and is omitted.
+    const off = siblingPlantingOffsetDays(row);
+    if (off == null || off === 0) return core;
+    return `${core} · planted ${Math.abs(off)}d ${off > 0 ? 'earlier' : 'later'}`;
   }
   if (anchor.kind === 'observed') return `fruit set ${shortDate(anchor.anchor_date)}`;
 
@@ -477,6 +508,45 @@ export function describeBasis(anchor, etToday, row = null) {
   return anchor.basis_shifted ? `${core} (est.)` : core;
 }
 
+// ── Bounded-suppression guard (panel Q3) ─────────────────────────────────────────────────────────
+//
+// A returning row must carry NEW content. Panel decision: "if the basis string is byte-identical to
+// the dismissed instance, suppress another cycle rather than show it, because an identical row
+// genuinely is the app ignoring him." The dismissed instance's basis string is reconstructed from
+// the FROZEN snapshot columns (anchor kind/date/basis/shift/expected/lead) rendered as of the
+// observation day. In practice this only ever matches for the age-free anchor kinds (sibling,
+// observed): a calendar basis embeds an age ("sown 93d") that moves daily, which is exactly the
+// "fresh basis date" the panel said makes a calendar return legitimate.
+
+export function reconstructDismissedBasis(row) {
+  const kind = row?.dismissal_anchor_kind;
+  if (!kind) return null;
+  const frozen = {
+    kind,
+    anchor_date: toYmd(row.dismissal_anchor_date),
+    basis: row.dismissal_anchor_basis ?? null,
+    basis_shifted: !!row.dismissal_anchor_basis_shifted,
+    basis_field: null,
+    expected_days: row.dismissal_expected_days == null ? null : Number(row.dismissal_expected_days),
+    lead_days: row.dismissal_lead_days == null ? null : Number(row.dismissal_lead_days),
+    nursery_offset_applied: 0,
+  };
+  return describeBasis(frozen, toYmd(row.dismissal_observed_on), row);
+}
+
+// Returns the extended return date when the guard suppresses, else null. Bounded to ONE extra cycle
+// (the panel's words: "suppress another cycle") — past dismissal_suppressed_until + WATCH_SUPPRESS_DAYS
+// the row shows even if still identical, so the guard can never quietly become season-long.
+export function basisUnchangedUntil(row, anchor, today) {
+  const until = toYmd(row?.dismissal_suppressed_until);
+  if (until == null || until > today) return null; // no bounded dismissal, or it is still active
+  const extra = addDays(until, WATCH_SUPPRESS_DAYS);
+  if (today >= extra) return null;
+  const frozen = reconstructDismissedBasis(row);
+  if (frozen == null) return null;
+  return describeBasis(anchor, today, row) === frozen ? extra : null;
+}
+
 // ── Candidate classification ─────────────────────────────────────────────────────────────────────
 //
 // Returns a discriminated result for EVERY row, eligible or not, so the route can report why a
@@ -497,10 +567,15 @@ export function classifyWatchCandidate(row, etToday, opts = {}) {
     return { eligible: false, reason: 'already_harvested' };
   }
 
-  // Queue exit 2 — an active "not yet" dismissal. Suppression is a JOIN condition on the live route
-  // as well; repeated here so the pure function tells the whole truth on its own.
+  // Queue SNOOZE — an active "not yet" dismissal. Suppression is a JOIN condition on the live route
+  // as well; repeated here so the pure function tells the whole truth on its own. Under bounded
+  // suppression (panel Q3) this is a snooze, not an exit: suppressed_until rides the verdict so the
+  // route can print the return date.
   if (row.dismissed_active === true) {
-    return { eligible: false, reason: 'dismissed' };
+    return {
+      eligible: false, reason: 'dismissed',
+      suppressed_until: toYmd(row.dismissal_suppressed_until),
+    };
   }
 
   const anchor = resolveWatchAnchor(row, { ...opts, etToday: today });
@@ -510,6 +585,13 @@ export function classifyWatchCandidate(row, etToday, opts = {}) {
   const daysWatching = daysBetween(anchor.check_from, today);
   if (daysWatching == null) return { eligible: false, reason: 'no_anchor' };
   if (daysWatching < 0) return { eligible: false, reason: 'not_yet_open', check_from: anchor.check_from };
+
+  // Byte-identical-basis guard (panel Q3): a row returning from suppression with a basis string
+  // identical to the one it was dismissed under is suppressed one more cycle instead of shown.
+  const guardUntil = basisUnchangedUntil(row, anchor, today);
+  if (guardUntil != null) {
+    return { eligible: false, reason: 'basis_unchanged', suppressed_until: guardUntil };
+  }
 
   return { eligible: true, reason: 'watching', anchor, check_from: anchor.check_from, days_watching: daysWatching };
 }
@@ -594,17 +676,48 @@ export const UI_CONTRACT_FIELDS = Object.freeze([
   'plant_id', 'project_id', 'name', 'location_name', 'variety_ref', 'watching_since', 'basis',
 ]);
 
+// Snoozed wire projection (panel Q3 + Q4). Everything the tail's "Snoozed" subgroup needs to print
+// a row and its return date — nothing more. suppressed_until NULL = a pre-bounded-suppression
+// season-long row (0 in prod at ship time, but the shape must not lie about them).
+export function projectSnoozedRow(row, verdict) {
+  return {
+    plant_id: row.plant_id,
+    project_id: row.project_id ?? null,
+    name: row.planting_name ?? null,
+    location_name: row.location_name ?? null,
+    crop_display_name: row.crop_display_name ?? null,
+    suppressed_until: verdict.suppressed_until ?? null,
+    reason: verdict.reason,
+  };
+}
+
 // Full pipeline over raw SQL rows. Returns the ranked list PLUS a reason census, so a zero-length
-// list is explainable at the API boundary instead of being an unreadable silence.
+// list is explainable at the API boundary instead of being an unreadable silence — and the snoozed
+// rows themselves, so the tail can print each suppressed planting with its return date (panel Q4).
+//
+// RANKING NOTE (panel Q3: "the returning row must not come back at the top"). No code change was
+// needed for that and none should be added: rankWatchCandidates orders by days_watching ascending
+// (newest watch first) and suppression never touches check_from, so a returning row re-enters
+// exactly where its watch age puts it — never promoted by the "not yet" tap. Pinned in the suite.
 export function buildWatchList(rows, etToday, opts = {}) {
   const candidates = [];
   const excluded = {};
+  const snoozed = [];
   for (const row of rows ?? []) {
     const verdict = classifyWatchCandidate(row, etToday, opts);
     if (verdict.eligible) candidates.push(projectWatchRow(row, verdict, etToday));
-    else excluded[verdict.reason] = (excluded[verdict.reason] ?? 0) + 1;
+    else {
+      excluded[verdict.reason] = (excluded[verdict.reason] ?? 0) + 1;
+      if (verdict.reason === 'dismissed' || verdict.reason === 'basis_unchanged') {
+        snoozed.push(projectSnoozedRow(row, verdict));
+      }
+    }
   }
-  return { candidates: rankWatchCandidates(candidates), excluded };
+  // Soonest-returning first; name then plant_id break ties so the payload is stable.
+  snoozed.sort((a, b) => String(a.suppressed_until ?? '9999').localeCompare(String(b.suppressed_until ?? '9999'))
+    || String(a.name ?? '').localeCompare(String(b.name ?? ''))
+    || String(a.plant_id).localeCompare(String(b.plant_id)));
+  return { candidates: rankWatchCandidates(candidates), excluded, snoozed };
 }
 
 // ── Dismissal snapshot ───────────────────────────────────────────────────────────────────────────
@@ -643,6 +756,9 @@ export function buildDismissalSnapshot(candidate, observedOn) {
     plant_id: candidate.plant_id,
     project_id: candidate.project_id ?? null,
     observed_on: toYmd(observedOn),
+    // Bounded suppression (panel Q3): the row returns this many days after the OBSERVATION — the
+    // date the human looked, not the write timestamp, per the backdating convention above.
+    suppressed_until: addDays(toYmd(observedOn), WATCH_SUPPRESS_DAYS),
     model_version: WATCH_MODEL_VERSION,
     crop_type_slug: candidate.crop_type_slug ?? null,
     variety_id: candidate.variety_id ?? null,

@@ -36,8 +36,11 @@ export const CALIBRATION_REASON = 'not_yet';
 // Default visible cap (design §3.5: "Cap the visible group at 5 — a nine-row declarative group is an
 // inventory again"). Enforced SERVER-side as the default so a client that forgets cannot regress the
 // surface into the shape Dave rejected, and overridable because the client owns an expandable tail.
+// MAX_LIMIT raised 50 -> 200 for the tail contract (panel Q4): the band fetches the whole queue in
+// one request so the in-place expand needs no second round trip; total_watching stays the honest
+// depth if the queue ever exceeds even this.
 export const DEFAULT_LIMIT = 5;
-export const MAX_LIMIT = 50;
+export const MAX_LIMIT = 200;
 
 export function parseLimit(raw) {
   if (raw == null || raw === '') return DEFAULT_LIMIT;
@@ -142,10 +145,16 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
       SELECT l.plant_id,
              s.plant_id      AS sibling_plant_id,
              s.planting_name AS sibling_planting_name,
-             s.first_pick_date AS sibling_first_pick_date
+             s.first_pick_date AS sibling_first_pick_date,
+             -- Panel Q2: the sibling's own planting dates ride along so the basis string can state
+             -- the planting-date offset — a 3-week succession breaks the shared-clock premise.
+             s.sown_at        AS sibling_sown_at,
+             s.transplanted_at AS sibling_transplanted_at,
+             s.planted_out_at AS sibling_planted_out_at
         FROM live l
         JOIN LATERAL (
-          SELECT sl.plant_id, sl.planting_name, pk.first_pick_date
+          SELECT sl.plant_id, sl.planting_name, sl.sown_at, sl.transplanted_at, sl.planted_out_at,
+                 pk.first_pick_date
             FROM live sl
             JOIN picks pk ON pk.plant_id = sl.plant_id
            WHERE sl.project_id = l.project_id
@@ -171,6 +180,22 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
          AND (d.suppressed_until IS NULL OR d.suppressed_until > b.et_today)
        GROUP BY d.plant_id
     ),
+    -- The MOST RECENT (not-undone) dismissal per planting this season, active or expired. Two
+    -- consumers, both panel-decided (Q3/Q4): the snoozed payload prints its suppressed_until as the
+    -- return date, and the byte-identical-basis guard reconstructs the dismissed instance's basis
+    -- from its frozen anchor columns. Separate from the dismissed CTE above on purpose — that one
+    -- answers "is suppression ACTIVE", this one answers "what did the last dismissal freeze".
+    last_dismissal AS (
+      SELECT DISTINCT ON (d.plant_id)
+             d.plant_id, d.observed_on, d.suppressed_until,
+             d.anchor_kind, d.anchor_date, d.anchor_basis, d.anchor_basis_shifted,
+             d.expected_days, d.lead_days
+        FROM public.harvest_watch_dismissal d CROSS JOIN bounds b
+       WHERE d.user_id = ${userId}
+         AND d.undone_at IS NULL
+         AND d.observed_on >= b.season_start
+       ORDER BY d.plant_id, d.observed_on DESC, d.dismissed_at DESC
+    ),
     nursery AS (
       SELECT count(*)::int AS n,
              percentile_cont(0.5) WITHIN GROUP (
@@ -188,7 +213,16 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
            COALESCE(pk.harvest_count, 0)      AS prior_harvest_count,
            fs.fruit_set_date,
            sb.sibling_plant_id, sb.sibling_planting_name, sb.sibling_first_pick_date,
+           sb.sibling_sown_at, sb.sibling_transplanted_at, sb.sibling_planted_out_at,
            (dm.plant_id IS NOT NULL)          AS dismissed_active,
+           to_char(ld.observed_on, 'YYYY-MM-DD')       AS dismissal_observed_on,
+           to_char(ld.suppressed_until, 'YYYY-MM-DD')  AS dismissal_suppressed_until,
+           ld.anchor_kind                     AS dismissal_anchor_kind,
+           to_char(ld.anchor_date, 'YYYY-MM-DD')       AS dismissal_anchor_date,
+           ld.anchor_basis                    AS dismissal_anchor_basis,
+           ld.anchor_basis_shifted            AS dismissal_anchor_basis_shifted,
+           ld.expected_days                   AS dismissal_expected_days,
+           ld.lead_days                       AS dismissal_lead_days,
            loc.name                           AS location_name,
            to_char(b.et_today, 'YYYY-MM-DD')  AS et_today,
            to_char(b.season_start, 'YYYY-MM-DD') AS season_start,
@@ -201,6 +235,7 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
       LEFT JOIN fruit_set fs ON fs.plant_id = l.plant_id
       LEFT JOIN sibling sb   ON sb.plant_id = l.plant_id
       LEFT JOIN dismissed dm ON dm.plant_id = l.plant_id
+      LEFT JOIN last_dismissal ld ON ld.plant_id = l.plant_id
       LEFT JOIN locations loc ON loc.id = l.location_id AND loc.deleted_at IS NULL
   `;
 }
@@ -229,7 +264,17 @@ export async function handleWatchGet(ctx) {
   const etToday = toYmd(rows?.[0]?.et_today) ?? toYmd(ctx.etTodayFallback);
   const nursery = resolveNurseryOffset(rows);
 
-  const { candidates, excluded } = buildWatchList(rows, etToday, { nurseryOffsetDays: nursery.days });
+  const { candidates, excluded, snoozed } = buildWatchList(rows, etToday, { nurseryOffsetDays: nursery.days });
+
+  // PANEL Q2: persist the resolver's exclusion breakdown, do not merely return it. v1 is one
+  // structured JSON line per invocation — CloudWatch retains it, so the model's own false-positive
+  // region stays on record across resolver changes (the sibling restriction removed the only two
+  // n>=20 calibration crops; this line is the audit trail of what the restriction excluded). A DB
+  // impression log is filed separately; deliberately NO migration here.
+  console.log(JSON.stringify({
+    metric: 'watch_excluded', model_version: WATCH_MODEL_VERSION, et_today: etToday,
+    total_watching: candidates.length, snoozed: snoozed.length, excluded,
+  }));
 
   return {
     statusCode: 200,
@@ -243,14 +288,17 @@ export async function handleWatchGet(ctx) {
       // household's own data or on the documented constant.
       nursery_offset: nursery,
       limit,
-      // total_watching is the TRUE queue depth, so a client can render "showing 5 of 9" with an
-      // honest denominator. The shipped band's "Showing 3 of 28 ready" line is arithmetically false
-      // for exactly the reason this field exists: it counted a different population than it showed.
+      // total_watching is the TRUE queue depth, so a client can render an honest tail count. The
+      // shipped band's "Showing 3 of 28 ready" line was arithmetically false for exactly the reason
+      // this field exists: it counted a different population than it showed.
       total_watching: candidates.length,
       candidates: candidates.slice(0, limit),
       // Why every non-candidate is absent. A zero-length list is then explainable instead of being
       // the unreadable silence HarvestReadyBand's `return null` produces for three different states.
       excluded,
+      // The suppressed rows themselves (panel Q3/Q4): the tail's "Snoozed" subgroup prints each one
+      // with its return date. NOT subject to `limit` — snoozing more things must never hide them.
+      snoozed,
     },
   };
 }
@@ -302,13 +350,17 @@ export async function handleDismissalPost(ctx) {
   // ON CONFLICT DO NOTHING against the partial day-grain unique index: a double-tap is a 200 with
   // the existing row rather than a 409 the UI would have to explain, and it does not mint a second
   // sample for the same observation. A genuine re-check on a LATER day is a new row by design.
+  // suppressed_until (panel Q3, bounded suppression): observed_on + WATCH_SUPPRESS_DAYS, computed
+  // in the snapshot and bound with an explicit ::date cast. The read path already honoured the
+  // column; this write is the one bind that had been missing.
   const inserted = await sql`
     INSERT INTO public.harvest_watch_dismissal (
-      user_id, plant_id, project_id, observed_on, reason, note, model_version,
+      user_id, plant_id, project_id, observed_on, suppressed_until, reason, note, model_version,
       crop_type_slug, variety_id, anchor_kind, anchor_date, anchor_basis, anchor_basis_shifted,
       expected_days, lead_days, check_from, days_watching
     ) VALUES (
       ${userId}, ${snap.plant_id}::uuid, ${snap.project_id}::uuid, ${snap.observed_on}::date,
+      ${snap.suppressed_until}::date,
       ${reason}, ${note}, ${snap.model_version},
       ${snap.crop_type_slug}, ${snap.variety_id}::uuid, ${snap.anchor_kind}, ${snap.anchor_date}::date,
       ${snap.anchor_basis}, ${snap.anchor_basis_shifted},
@@ -316,7 +368,8 @@ export async function handleDismissalPost(ctx) {
       ${snap.check_from}::date, ${snap.days_watching}::smallint
     )
     ON CONFLICT (user_id, plant_id, observed_on) WHERE undone_at IS NULL DO NOTHING
-    RETURNING id, plant_id, observed_on, dismissed_at, reason, model_version
+    RETURNING id, plant_id, observed_on, to_char(suppressed_until, 'YYYY-MM-DD') AS suppressed_until,
+              dismissed_at, reason, model_version
   `;
 
   if (inserted.length > 0) {
@@ -324,7 +377,8 @@ export async function handleDismissalPost(ctx) {
   }
 
   const existing = await sql`
-    SELECT id, plant_id, observed_on, dismissed_at, reason, model_version
+    SELECT id, plant_id, observed_on, to_char(suppressed_until, 'YYYY-MM-DD') AS suppressed_until,
+           dismissed_at, reason, model_version
       FROM public.harvest_watch_dismissal
      WHERE user_id = ${userId} AND plant_id = ${plantId}::uuid
        AND observed_on = ${observedOn}::date AND undone_at IS NULL
@@ -368,14 +422,29 @@ export async function handleDismissToggle(ctx) {
     };
   }
 
-  // Retract: soft-undo EVERY active dismissal this user holds on the planting. Plural on purpose —
-  // the day-grain unique index permits one active row per observation day, so a planting re-checked
-  // across several days can legitimately carry more than one, and a toggle-off that cleared only
-  // the newest would leave the row still suppressed with no control left to clear it.
+  // Retract: soft-undo ONLY the single most recent active dismissal on the planting.
+  //
+  // PANEL Q3, BLOCKING PREREQUISITE (harvest-panel-decisions-20260812.md) — this REVERSES the
+  // earlier plural retraction. Under season-long suppression only one active row ever existed, so
+  // clearing "all" was harmless. Under bounded 10-day suppression rows ACCUMULATE (one per
+  // observation day across the season), and a single "Undo" tap that clears them all retracts every
+  // accumulated calibration sample for the planting — corrupting the dataset the table exists to
+  // build. Undo now means "take back the tap I just made": one row, the newest. Older samples are
+  // independent observations made on other days and stand on their own; a user who truly wants them
+  // gone peels them one Undo at a time (or via DELETE /watch/dismissals/:id, the preferred by-id
+  // path the client uses when it holds the id). Suppression concerns don't arise: only the newest
+  // row's suppressed_until can still be in the future, so undoing it always un-suppresses.
   const rows = await sql`
     UPDATE public.harvest_watch_dismissal
        SET undone_at = now()
-     WHERE user_id = ${userId} AND plant_id = ${plantId}::uuid AND undone_at IS NULL
+     WHERE id = (
+             SELECT id
+               FROM public.harvest_watch_dismissal
+              WHERE user_id = ${userId} AND plant_id = ${plantId}::uuid AND undone_at IS NULL
+              ORDER BY observed_on DESC, dismissed_at DESC
+              LIMIT 1
+           )
+       AND user_id = ${userId}
      RETURNING id, plant_id, observed_on, undone_at
   `;
   return {
@@ -384,11 +453,12 @@ export async function handleDismissToggle(ctx) {
   };
 }
 
-// DELETE /api/harvests/watch/dismissals/:id — soft undo of ONE specific dismissal by id, for an
-// audit/admin path that needs to retract a single observation rather than clear a planting.
-// NEVER a hard delete: an undo is itself signal (the user changed their mind about what they saw),
-// and deleting samples biases the calibration set toward the observations someone stayed confident
-// about.
+// DELETE /api/harvests/watch/dismissals/:id — soft undo of ONE specific dismissal by id. As of the
+// panel Q3 retraction fix this is the PREFERRED undo path: the band holds the id from the dismissal
+// response and retracts exactly the row it created, with zero ambiguity about which sample is being
+// taken back. NEVER a hard delete: an undo is itself signal (the user changed their mind about what
+// they saw), and deleting samples biases the calibration set toward the observations someone stayed
+// confident about.
 export async function handleDismissalUndo(ctx, dismissalId) {
   const { sql, userId } = ctx;
   if (!isUuid(dismissalId)) return { statusCode: 400, body: { error: 'id must be a uuid' } };
@@ -405,6 +475,11 @@ export async function handleDismissalUndo(ctx, dismissalId) {
   return { statusCode: 200, body: { undone: true, dismissal: rows[0] } };
 }
 
+// The by-id undo route, as an executable PATTERN rather than a startsWith: the client now calls
+// this path directly (undo-by-id), and clientRouteLambdaContract.test.js proves client paths against
+// the Lambda's own declared regexes — a startsWith is invisible to that guard.
+const DISMISSAL_BY_ID_RE = /^\/api\/harvests\/watch\/dismissals\/([^/]+)$/;
+
 // Path router. Returns null when the request is not a watch route, so index.js falls through to its
 // existing /api/harvests handling unchanged.
 // DISMISS_PATH is matched BEFORE DISMISSALS_PATH's prefix rules. Both start with
@@ -414,8 +489,9 @@ export function matchWatchRoute(method, rawPath) {
   if (rawPath === WATCH_PATH && method === 'GET') return { kind: 'watch_get' };
   if (rawPath === DISMISS_PATH && method === 'POST') return { kind: 'dismiss_toggle' };
   if (rawPath === DISMISSALS_PATH && method === 'POST') return { kind: 'dismissal_post' };
-  if (method === 'DELETE' && rawPath.startsWith(`${DISMISSALS_PATH}/`)) {
-    return { kind: 'dismissal_undo', id: rawPath.slice(DISMISSALS_PATH.length + 1) };
+  const byId = method === 'DELETE' ? rawPath.match(DISMISSAL_BY_ID_RE) : null;
+  if (byId) {
+    return { kind: 'dismissal_undo', id: byId[1] };
   }
   // A watch path with the wrong verb is a 405, NOT a fall-through: falling through would hand it to
   // the /api/harvests read model, which answers a 405 with a message about the wrong route.

@@ -9,9 +9,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   WATCH_MODEL_VERSION, WATCH_LEAD_DAYS, WATCH_LEAD_MAX_FRACTION, NURSERY_OFFSET_DAYS_FALLBACK,
-  WATCHED_HABITS, toYmd, addDays, daysBetween, leadDaysFor, expectedDaysFor, calendarAnchor,
-  resolveWatchAnchor, classifyWatchCandidate, projectWatchRow, rankWatchCandidates, buildWatchList,
-  buildDismissalSnapshot,
+  WATCH_SUPPRESS_DAYS, WATCHED_HABITS, toYmd, addDays, daysBetween, leadDaysFor, expectedDaysFor,
+  calendarAnchor, resolveWatchAnchor, classifyWatchCandidate, projectWatchRow, rankWatchCandidates,
+  buildWatchList, buildDismissalSnapshot, siblingPlantingOffsetDays, basisUnchangedUntil,
+  reconstructDismissedBasis,
 } from './watch.js';
 
 // The ET day every assertion below is evaluated on. Passed in explicitly — this module never calls
@@ -331,8 +332,145 @@ describe('ranking and payload', () => {
   });
 
   it('empty / null input is an empty list, never a throw', () => {
-    expect(buildWatchList(null, TODAY)).toEqual({ candidates: [], excluded: {} });
-    expect(buildWatchList([], TODAY)).toEqual({ candidates: [], excluded: {} });
+    expect(buildWatchList(null, TODAY)).toEqual({ candidates: [], excluded: {}, snoozed: [] });
+    expect(buildWatchList([], TODAY)).toEqual({ candidates: [], excluded: {}, snoozed: [] });
+  });
+});
+
+// ── Bounded suppression (panel Q3, harvest-panel-decisions-20260812.md) ──────────────────────────
+
+describe('bounded suppression + the byte-identical-basis guard', () => {
+  // A dismissed row whose 10-day suppression has EXPIRED, on a sibling anchor whose basis string
+  // cannot age (no elapsed-days component) — the exact case the guard exists for.
+  const returning = (over = {}) => ({
+    ...TENDER_SWEET,
+    dismissed_active: false,
+    dismissal_observed_on: '2026-08-01',
+    dismissal_suppressed_until: '2026-08-11',   // expired: <= TODAY (2026-08-12)
+    dismissal_anchor_kind: 'sibling',
+    dismissal_anchor_date: '2026-08-10',
+    dismissal_anchor_basis: 'sibling-first-pick',
+    dismissal_anchor_basis_shifted: false,
+    dismissal_expected_days: null,
+    dismissal_lead_days: 0,
+    ...over,
+  });
+
+  it('the suppression interval is the panel-decided 10 days', () => {
+    expect(WATCH_SUPPRESS_DAYS).toBe(10);
+  });
+
+  it('an ACTIVE dismissal is snoozed and carries its return date on the verdict', () => {
+    const v = classifyWatchCandidate(returning({ dismissed_active: true, dismissal_suppressed_until: '2026-08-20' }), TODAY);
+    expect(v).toEqual({ eligible: false, reason: 'dismissed', suppressed_until: '2026-08-20' });
+  });
+
+  // THE GUARD. The returning row's basis is byte-identical to the one it was dismissed under —
+  // "an identical row genuinely is the app ignoring him" — so it is suppressed one more cycle.
+  // MUTATION TARGET: delete the basisUnchangedUntil call in classifyWatchCandidate -> red here.
+  it('suppresses another cycle when the returning basis is byte-identical', () => {
+    const row = returning();
+    expect(reconstructDismissedBasis(row)).toBe('sibling Sugar Baby picked Aug 10');
+    const v = classifyWatchCandidate(row, TODAY);
+    expect(v.eligible).toBe(false);
+    expect(v.reason).toBe('basis_unchanged');
+    // One more cycle: expired date + WATCH_SUPPRESS_DAYS, rides the verdict as the new return date.
+    expect(v.suppressed_until).toBe('2026-08-21');
+  });
+
+  it('shows the row when the basis carries new content (a later sibling pick)', () => {
+    const v = classifyWatchCandidate(returning({ sibling_first_pick_date: '2026-08-11' }), TODAY);
+    expect(v.eligible).toBe(true);
+  });
+
+  // The guard is bounded to ONE extra cycle — it must never quietly become season-long suppression.
+  it('never suppresses past one extra cycle, even if still identical', () => {
+    const v = classifyWatchCandidate(
+      returning({ dismissal_observed_on: '2026-07-20', dismissal_suppressed_until: '2026-07-30' }),
+      TODAY, // 2026-08-12 >= 07-30 + 10d
+    );
+    expect(v.eligible).toBe(true);
+  });
+
+  // A calendar basis embeds an elapsed-days figure that moves every day — the "fresh basis date"
+  // the panel says makes a calendar return legitimate. The guard must not catch it.
+  it('a calendar-anchored row always returns — its aging basis IS new content', () => {
+    const row = {
+      ...GREEN_FLESH,
+      dismissed_active: false,
+      dismissal_observed_on: '2026-08-01',
+      dismissal_suppressed_until: '2026-08-11',
+      dismissal_anchor_kind: 'calendar',
+      dismissal_anchor_date: '2026-05-11',
+      dismissal_anchor_basis: 'from-sow',
+      dismissal_anchor_basis_shifted: true,
+      dismissal_expected_days: 85,
+      dismissal_lead_days: 21,
+    };
+    expect(classifyWatchCandidate(row, TODAY).eligible).toBe(true);
+  });
+
+  it('a row with no dismissal history is untouched by the guard', () => {
+    expect(basisUnchangedUntil(TENDER_SWEET, resolveWatchAnchor(TENDER_SWEET, { etToday: TODAY }), TODAY)).toBeNull();
+  });
+
+  // PANEL Q3: "the returning row must not come back at the top, or 'not yet' becomes the button
+  // that promotes things." Suppression never touches check_from, so the returning row re-enters at
+  // its watch age — below anything newer. MUTATION TARGET: reset check_from (or days_watching) on
+  // return -> red here.
+  it('a returning row re-enters at its watch age, never at the top', () => {
+    const { candidates } = buildWatchList(
+      [returning({ sibling_first_pick_date: '2026-08-11' }), CABBAGE],
+      TODAY,
+    );
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0].name).toBe('Cabbage');                 // days_watching 4
+    expect(candidates[1].name).toBe('Tender Sweet Orange');     // returning, days_watching ~28
+  });
+
+  it('buildWatchList reports snoozed rows with their return dates, census intact', () => {
+    const { candidates, excluded, snoozed } = buildWatchList(
+      [returning({ dismissed_active: true, dismissal_suppressed_until: '2026-08-20' }), returning(), CABBAGE],
+      TODAY,
+    );
+    expect(candidates.map((c) => c.name)).toEqual(['Cabbage']);
+    expect(excluded).toEqual({ dismissed: 1, basis_unchanged: 1 });
+    expect(snoozed.map((s) => [s.name, s.suppressed_until, s.reason])).toEqual([
+      ['Tender Sweet Orange', '2026-08-20', 'dismissed'],
+      ['Tender Sweet Orange', '2026-08-21', 'basis_unchanged'],
+    ]);
+    expect(snoozed[0]).toMatchObject({ plant_id: 'p-tendersweet', project_id: 'proj-watermelon' });
+  });
+});
+
+// ── Sibling planting-date offset (panel Q2) ──────────────────────────────────────────────────────
+
+describe('sibling planting-date offset in the basis string', () => {
+  it('states the offset when both plantings carry a comparable date', () => {
+    const row = { ...TENDER_SWEET, sibling_transplanted_at: '2026-05-21' }; // own transplant 06-11
+    expect(siblingPlantingOffsetDays(row)).toBe(21);
+    const [c] = buildWatchList([row], TODAY).candidates;
+    expect(c.basis).toBe('sibling Sugar Baby picked Aug 10 · planted 21d earlier');
+  });
+
+  it('says later when the sibling went in after this planting', () => {
+    const row = { ...TENDER_SWEET, sibling_transplanted_at: '2026-06-25' };
+    expect(siblingPlantingOffsetDays(row)).toBe(-14);
+    const [c] = buildWatchList([row], TODAY).candidates;
+    expect(c.basis).toBe('sibling Sugar Baby picked Aug 10 · planted 14d later');
+  });
+
+  it('omits a zero offset — same-day plantings share the clock, nothing to flag', () => {
+    const row = { ...TENDER_SWEET, sibling_transplanted_at: '2026-06-11' };
+    expect(siblingPlantingOffsetDays(row)).toBe(0);
+    const [c] = buildWatchList([row], TODAY).candidates;
+    expect(c.basis).toBe('sibling Sugar Baby picked Aug 10');
+  });
+
+  it('stays silent when no comparable date pair exists (the pre-change string)', () => {
+    expect(siblingPlantingOffsetDays(TENDER_SWEET)).toBeNull();
+    const [c] = buildWatchList([TENDER_SWEET], TODAY).candidates;
+    expect(c.basis).toBe('sibling Sugar Baby picked Aug 10');
   });
 });
 
