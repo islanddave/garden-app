@@ -266,7 +266,13 @@ export const handler = async (event) => {
   const typesItemMatch = rawPath.match(/^\/api\/projects\/types\/([^/]+)$/);
   const typesMatch = rawPath === '/api/projects/types';
 
-  const idMatch = rawPath.match(/^\/api\/projects\/([^/]+)$/);
+  // /deleted is a single trailing segment, so idMatch would parse it as a project id — excluded
+  // here for the same reason /types already is (see the comment above).
+  const idMatch = rawPath !== '/api/projects/deleted'
+    && rawPath.match(/^\/api\/projects\/([^/]+)$/);
+
+  // V4-RESTORESURFACE-001: recovery path for containers. Extra segment, so idMatch can't catch it.
+  const restoreMatch = rawPath.match(/^\/api\/projects\/([^/]+)\/restore$/);
 
   // V3-ARCHIVE-001: soft-archive toggle. Extra path segment, so idMatch above won't catch it.
   const archiveMatch = rawPath.match(/^\/api\/projects\/([^/]+)\/archive$/);
@@ -389,6 +395,73 @@ export const handler = async (event) => {
     }
 
     // --- /api/projects/:id ---
+    // ── V4-RESTORESURFACE-001 — the recovery path for containers (audit I9) ────────────────────
+    //
+    // 12 containers are soft-deleted in prod with no way back — and restoring one is worth more
+    // than its own row: 11 of the 33 soft-deleted PLANTINGS are invisible to the plants recovery
+    // surface precisely because their container is deleted (the F4 gate). This route is the first
+    // step of that two-step path, so it unblocks a third of the planting backlog as a side effect.
+    if (rawPath === '/api/projects/deleted' && method === 'GET') {
+      const rawLimit = Number(event?.queryStringParameters?.limit);
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200) : 50;
+      // The planting counts are a SEPARATE query rather than a correlated subquery on purpose: a
+      // subquery's own FROM truncates this block for select-columns.test.js's extractor, which
+      // would silently exempt this read from the PROJ-RESCOPE column guard. A read that dodges a
+      // guard by accident is worse than one that fails it.
+      const rows = await sql`
+        SELECT c.id, c.display_name AS name, c.slug, c.type AS kind,
+               c.parent_id AS parent_project_id, c.target_end_date, c.kind_set_at,
+               c.created_at, c.deleted_at
+          FROM public.container c
+         WHERE c.deleted_at IS NOT NULL
+           AND c.created_by = ANY(${householdIds})
+         ORDER BY c.deleted_at DESC, c.id DESC
+         LIMIT ${limit}
+      `;
+      const ids = rows.map((r) => r.id);
+      // Why the count matters: restoring a container is the FIRST step of a two-step recovery —
+      // plantings under a deleted container are invisible to /api/plants/deleted until it is live.
+      const counts = ids.length ? await sql`
+        SELECT container_id, count(*)::int AS n
+          FROM public.garden_node
+         WHERE container_id = ANY(${ids}::uuid[]) AND deleted_at IS NOT NULL
+         GROUP BY container_id
+      ` : [];
+      const byId = Object.fromEntries(counts.map((c) => [c.container_id, c.n]));
+      return resp(200, {
+        projects: rows.map((r) => ({ ...r, deleted_planting_count: byId[r.id] ?? 0 })),
+      });
+    }
+
+    if (restoreMatch && method === 'POST') {
+      const projectId = restoreMatch[1];
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(projectId))) {
+        return resp(404, { error: 'Not found' });
+      }
+      const [existing] = await sql`
+        SELECT /* restore-probe */ id, deleted_at FROM public.container
+         WHERE id = ${projectId} AND created_by = ANY(${householdIds})
+      `;
+      if (!existing) return resp(404, { error: 'Not found' });
+      if (!existing.deleted_at) {
+        return resp(200, { id: existing.id, deleted_at: null, already_restored: true });
+      }
+      // Restores the CONTAINER ONLY. Its plantings keep whatever deleted_at they carry: the DELETE
+      // arm above never cascaded to them, so resurrecting them here would restore rows the user
+      // never deleted at this level. They become visible in /api/plants/deleted once this row is
+      // live, and are restored individually from there — the deliberate two-step.
+      const rows = await sql`
+        UPDATE public.container
+           SET deleted_at = NULL
+         WHERE id = ${projectId}
+           AND created_by = ANY(${householdIds})
+           AND deleted_at IS NOT NULL
+        RETURNING id, display_name AS name, deleted_at
+      `;
+      if (!rows.length) return resp(404, { error: 'Not found' });
+      return resp(200, rows[0]);
+    }
+
     if (idMatch) {
       const projectId = idMatch[1];
 

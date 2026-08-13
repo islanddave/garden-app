@@ -20,6 +20,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, testRunId, setTestUserId, callHandler } from './_harness.js'
 import { handler as locationsHandler } from '../../lambda/locations/index.js'
 import { handler as plantsHandler } from '../../lambda/plants/index.js'
+import { handler as varietiesHandler } from '../../lambda/varieties/index.js'
+import { handler as projectsHandler } from '../../lambda/projects/index.js'
 
 const RUN = testRunId()
 const USER = `user_int_restore_${RUN}`
@@ -27,6 +29,7 @@ const FOREIGN_USER = `user_int_restore_foreign_${RUN}`
 
 let deletedLocId, liveLocId, foreignDeletedLocId
 let liveProjId, deletedProjId, delPlantLiveProj, delPlantDeadProj, livePlantId
+let delVarietyId, liveVarietyId, delProjForRestore
 
 beforeAll(async () => {
   setTestUserId(USER)
@@ -77,12 +80,32 @@ beforeAll(async () => {
     INSERT INTO plants (project_id, name, created_by)
     VALUES (${liveProjId}, ${'restore-plant-c-' + RUN}, ${USER}) RETURNING id`
   livePlantId = c[0].id
+
+  const dv = await directSql`
+    INSERT INTO plant_varieties (name, created_by, deleted_at)
+    VALUES (${'restore-var-del-' + RUN}, ${USER}, NOW()) RETURNING id`
+  delVarietyId = dv[0].id
+  const lv = await directSql`
+    INSERT INTO plant_varieties (name, created_by)
+    VALUES (${'restore-var-live-' + RUN}, ${USER}) RETURNING id`
+  liveVarietyId = lv[0].id
+
+  const dpr = await directSql`
+    INSERT INTO plant_projects (slug, name, created_by, kind, deleted_at)
+    VALUES (${'restore-proj-r-' + RUN}, ${'restore-proj-r-' + RUN}, ${USER}, 'campaign', NOW())
+    RETURNING id`
+  delProjForRestore = dpr[0].id
 })
 
 afterAll(async () => {
+  await directSql`DELETE FROM public.entity_tag WHERE entity_id IN (
+    SELECT id FROM plant_varieties WHERE created_by = ${USER})`
   await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (
     SELECT id FROM plants WHERE created_by = ${USER})`
   await directSql`DELETE FROM plants WHERE created_by = ${USER}`
+  await directSql`DELETE FROM entity WHERE cultivar_ref_id IN (
+    SELECT id FROM plant_varieties WHERE created_by = ${USER})`
+  await directSql`DELETE FROM plant_varieties WHERE created_by = ${USER}`
   await directSql`DELETE FROM plant_projects WHERE created_by = ${USER}`
   await directSql`DELETE FROM locations WHERE created_by IN (${USER}, ${FOREIGN_USER})`
 })
@@ -282,5 +305,97 @@ describe('V4-RESTORESURFACE-001 — plantings, and the container precondition', 
       method: 'POST', path: '/api/plants/00000000-0000-4000-8000-000000000000/restore',
     })
     expect(status).toBe(404)
+  })
+})
+
+describe('V4-RESTORESURFACE-001 — cultivars', () => {
+  it('lists only soft-deleted cultivars the caller can act on', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(varietiesHandler, {
+      method: 'GET', path: '/api/varieties/deleted',
+    })
+    expect(status).toBe(200)
+    const ids = body.varieties.map(v => v.id)
+    expect(ids).toContain(delVarietyId)
+    expect(ids, 'a live cultivar is not a deletion').not.toContain(liveVarietyId)
+  })
+
+  it('restores a soft-deleted cultivar', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(varietiesHandler, {
+      method: 'POST', path: `/api/varieties/${delVarietyId}/restore`,
+    })
+    expect(status).toBe(200)
+    expect(body.deleted_at).toBeNull()
+    const [row] = await directSql`SELECT deleted_at FROM plant_varieties WHERE id = ${delVarietyId}`
+    expect(row.deleted_at).toBeNull()
+  })
+
+  it('is idempotent, and 404s an unknown id', async () => {
+    setTestUserId(USER)
+    const again = await callHandler(varietiesHandler, {
+      method: 'POST', path: `/api/varieties/${liveVarietyId}/restore`,
+    })
+    expect(again.status).toBe(200)
+    expect(again.body.already_restored).toBe(true)
+
+    const unknown = await callHandler(varietiesHandler, {
+      method: 'POST', path: '/api/varieties/00000000-0000-4000-8000-000000000000/restore',
+    })
+    expect(unknown.status).toBe(404)
+  })
+})
+
+describe('V4-RESTORESURFACE-001 — containers, and the two-step they unlock', () => {
+  it('lists soft-deleted containers with a count of the plantings waiting inside them', async () => {
+    // The count is what makes the two-step legible: it tells the user that restoring this container
+    // is not just about the container.
+    setTestUserId(USER)
+    const { status, body } = await callHandler(projectsHandler, {
+      method: 'GET', path: '/api/projects/deleted',
+    })
+    expect(status).toBe(200)
+    const row = body.projects.find(p => p.id === delProjForRestore)
+    expect(row, 'the soft-deleted container must be listed').toBeTruthy()
+    expect(row).toHaveProperty('deleted_planting_count')
+    expect(body.projects.map(p => p.id), 'a live container is not a deletion').not.toContain(liveProjId)
+  })
+
+  it('restores the container WITHOUT resurrecting its plantings', async () => {
+    // The DELETE arm never cascaded to plantings, so restore must not either — that would return
+    // rows the user never deleted at this level.
+    const before = await directSql`
+      INSERT INTO plants (project_id, name, created_by, deleted_at)
+      VALUES (${delProjForRestore}, ${'restore-inner-' + RUN}, ${USER}, NOW()) RETURNING id`
+    const innerId = before[0].id
+
+    setTestUserId(USER)
+    const { status, body } = await callHandler(projectsHandler, {
+      method: 'POST', path: `/api/projects/${delProjForRestore}/restore`,
+    })
+    expect(status).toBe(200)
+    expect(body.deleted_at).toBeNull()
+
+    const [inner] = await directSql`SELECT deleted_at FROM plants WHERE id = ${innerId}`
+    expect(inner.deleted_at, 'the planting stays deleted — restored separately, on purpose')
+      .not.toBeNull()
+
+    // ...and it is now VISIBLE to the plants recovery surface, which is the whole point.
+    const listed = await callHandler(plantsHandler, { method: 'GET', path: '/api/plants/deleted' })
+    expect(listed.body.plants.map(p => p.id)).toContain(innerId)
+  })
+
+  it('is idempotent, and 404s an unknown id', async () => {
+    setTestUserId(USER)
+    const again = await callHandler(projectsHandler, {
+      method: 'POST', path: `/api/projects/${liveProjId}/restore`,
+    })
+    expect(again.status).toBe(200)
+    expect(again.body.already_restored).toBe(true)
+
+    const unknown = await callHandler(projectsHandler, {
+      method: 'POST', path: '/api/projects/00000000-0000-4000-8000-000000000000/restore',
+    })
+    expect(unknown.status).toBe(404)
   })
 })

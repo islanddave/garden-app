@@ -25,6 +25,7 @@ vi.mock('react-router-dom', () => ({
 
 import RecentlyDeleted from '../pages/RecentlyDeleted.jsx'
 import { DELETED_PHOTOS_PATH, restorePhotoPath } from '../lib/deletedPhotos.js'
+import { DELETED_ENTITY_KINDS } from '../lib/deletedEntities.js'
 
 const photo = (over = {}) => ({
   id: '11111111-1111-4111-8111-111111111111',
@@ -38,15 +39,37 @@ const photo = (over = {}) => ({
   ...over,
 })
 
+// V4-RESTORESURFACE-001: this page now makes FIVE list calls, not one — photos plus a section per
+// non-photo entity type, and React runs the children's effects BEFORE the parent's. A
+// mockResolvedValueOnce queue therefore hands the sections the photo fixture and leaves the photo
+// list undefined, which is exactly how this file first failed. The mock is path-aware instead of
+// ordered, so it no longer encodes an assumption about how many calls the page makes or in what
+// order it makes them.
+const ENTITY_LIST_PATHS = new Set(DELETED_ENTITY_KINDS.map((k) => k.listPath))
+let listRows
+let restoreResult
+
 beforeEach(() => {
   fetchSpy.mockReset()
+  listRows = []
+  restoreResult = { id: photo().id, deleted_at: null }
+  fetchSpy.mockImplementation((path, opts) => {
+    if (ENTITY_LIST_PATHS.has(path)) return Promise.resolve({})
+    if (path === DELETED_PHOTOS_PATH) {
+      return listRows instanceof Error ? Promise.reject(listRows) : Promise.resolve(listRows)
+    }
+    if (opts?.method === 'POST') {
+      return restoreResult instanceof Error ? Promise.reject(restoreResult) : Promise.resolve(restoreResult)
+    }
+    return Promise.resolve(undefined)
+  })
   invalidateSpy.mockReset()
   toastSpy.mockReset()
 })
 
 describe('RecentlyDeleted — the list', () => {
   it('RENDERS a row per soft-deleted photo, with its caption, parent and delete date', async () => {
-    fetchSpy.mockResolvedValueOnce([photo(), photo({ id: 'b', caption: 'Second one', project_name: null })])
+    listRows = [photo(), photo({ id: 'b', caption: 'Second one', project_name: null })]
     render(<RecentlyDeleted />)
 
     expect(await screen.findByText('Celebrity Rescue harvest')).toBeTruthy()
@@ -59,7 +82,7 @@ describe('RecentlyDeleted — the list', () => {
   })
 
   it('fetches the deleted list from the shared contract path', async () => {
-    fetchSpy.mockResolvedValueOnce([])
+    listRows = []
     render(<RecentlyDeleted />)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith(DELETED_PHOTOS_PATH))
   })
@@ -69,7 +92,7 @@ describe('RecentlyDeleted — the list', () => {
     // page passes tier=THUMB to PhotoView instead of hand-rolling `thumb_url || view_url`. It did
     // hand-roll it in the first draft — thumb_url is a presigned string on every row whether or not
     // the object exists, so that `||` can never fall through and the tile stays broken forever.
-    fetchSpy.mockResolvedValueOnce([photo()])
+    listRows = [photo()]
     render(<RecentlyDeleted />)
     const img = await screen.findByAltText('Celebrity Rescue harvest')
     expect(img.getAttribute('src')).toBe('https://s3.example/thumb.jpg')
@@ -80,7 +103,7 @@ describe('RecentlyDeleted — the list', () => {
   it('offers NO permanent-delete affordance — the only verb on the page is Restore', async () => {
     // Soft-Delete-Only is binding. This surface can only ever put things back; an "empty trash" here
     // would be the one place in the app where user content could actually be destroyed.
-    fetchSpy.mockResolvedValueOnce([photo()])
+    listRows = [photo()]
     render(<RecentlyDeleted />)
     await screen.findByText('Celebrity Rescue harvest')
     for (const btn of screen.getAllByRole('button')) {
@@ -91,11 +114,11 @@ describe('RecentlyDeleted — the list', () => {
 
 describe('RecentlyDeleted — restore', () => {
   it('POSTs to the restore path and REMOVES the row from the document', async () => {
-    fetchSpy.mockResolvedValueOnce([photo(), photo({ id: 'b', caption: 'Second one' })])
+    listRows = [photo(), photo({ id: 'b', caption: 'Second one' })]
     render(<RecentlyDeleted />)
     await screen.findByText('Celebrity Rescue harvest')
 
-    fetchSpy.mockResolvedValueOnce({ id: photo().id, deleted_at: null })
+    restoreResult = { id: photo().id, deleted_at: null }
     fireEvent.click(screen.getByRole('button', { name: 'Restore Celebrity Rescue harvest' }))
 
     await waitFor(() =>
@@ -108,21 +131,21 @@ describe('RecentlyDeleted — restore', () => {
   })
 
   it('invalidates the cached photo lists so the restored photo reappears where it belongs', async () => {
-    fetchSpy.mockResolvedValueOnce([photo()])
+    listRows = [photo()]
     render(<RecentlyDeleted />)
     await screen.findByText('Celebrity Rescue harvest')
 
-    fetchSpy.mockResolvedValueOnce({ id: photo().id, deleted_at: null })
+    restoreResult = { id: photo().id, deleted_at: null }
     fireEvent.click(screen.getByRole('button', { name: /^Restore/ }))
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith('/api/photos'))
   })
 
   it('confirms ambiently and operationally — no celebration (Reward-UX)', async () => {
-    fetchSpy.mockResolvedValueOnce([photo()])
+    listRows = [photo()]
     render(<RecentlyDeleted />)
     await screen.findByText('Celebrity Rescue harvest')
 
-    fetchSpy.mockResolvedValueOnce({ id: photo().id, deleted_at: null })
+    restoreResult = { id: photo().id, deleted_at: null }
     fireEvent.click(screen.getByRole('button', { name: /^Restore/ }))
     await waitFor(() => expect(toastSpy).toHaveBeenCalledWith({ message: 'Photo restored' }))
     const msg = toastSpy.mock.calls[0][0].message
@@ -133,23 +156,23 @@ describe('RecentlyDeleted — restore', () => {
     // This is prod's real day-one shape: exactly ONE soft-deleted photo exists (verified live
     // 2026-08-12 — the §0 incident photo 4bf9dcd4, hand-remediated). Restoring it is the first thing
     // this page will ever be asked to do, and it must land somewhere coherent.
-    fetchSpy.mockResolvedValueOnce([photo()])
+    listRows = [photo()]
     render(<RecentlyDeleted />)
     await screen.findByText('Celebrity Rescue harvest')
 
-    fetchSpy.mockResolvedValueOnce({ id: photo().id, deleted_at: null })
+    restoreResult = { id: photo().id, deleted_at: null }
     fireEvent.click(screen.getByRole('button', { name: /^Restore/ }))
     expect(await screen.findByText('Nothing deleted')).toBeTruthy()
   })
 
   it('keeps the list intact and surfaces the reason when a restore FAILS', async () => {
-    fetchSpy.mockResolvedValueOnce([photo()])
+    listRows = [photo()]
     render(<RecentlyDeleted />)
     await screen.findByText('Celebrity Rescue harvest')
 
     // The typed 409: the same bytes were re-uploaded while this one sat deleted. Its message is
     // actionable, so it is shown rather than flattened to a generic failure.
-    fetchSpy.mockRejectedValueOnce(new Error('A copy of this photo has since been re-uploaded'))
+    restoreResult = new Error('A copy of this photo has since been re-uploaded')
     fireEvent.click(screen.getByRole('button', { name: /^Restore/ }))
 
     expect(await screen.findByText('A copy of this photo has since been re-uploaded')).toBeTruthy()
@@ -164,7 +187,7 @@ describe('RecentlyDeleted — the empty state (the DEFAULT state)', () => {
     // Nothing is ever deleted automatically, so a household that has deleted nothing sees only this.
     // It must answer "where do deleted photos go?" — the question that brought the user here from
     // the delete confirm's "recoverable from Recently deleted".
-    fetchSpy.mockResolvedValueOnce([])
+    listRows = []
     render(<RecentlyDeleted />)
 
     expect(await screen.findByText('Nothing deleted')).toBeTruthy()
@@ -174,7 +197,7 @@ describe('RecentlyDeleted — the empty state (the DEFAULT state)', () => {
   })
 
   it('states the durability promise the delete confirm makes — no expiry, no timer', async () => {
-    fetchSpy.mockResolvedValueOnce([])
+    listRows = []
     render(<RecentlyDeleted />)
     await screen.findByText('Nothing deleted')
     // V3-ARCHIVE-001 shipped a 6s undo and no restore path. The copy here must not reintroduce a
@@ -192,7 +215,7 @@ describe('RecentlyDeleted — the empty state (the DEFAULT state)', () => {
     // geometry itself — the measurement was taken in the layout harness at 390px, where the link was
     // 104x17 before this and 128x44 after. On an otherwise blank page it is the only way out, so a
     // 17px target is not a rounding error.
-    fetchSpy.mockResolvedValueOnce([])
+    listRows = []
     render(<RecentlyDeleted />)
     const link = await screen.findByText('Back to Photos')
     expect(link.style.minHeight).toBe('44px')
@@ -200,7 +223,7 @@ describe('RecentlyDeleted — the empty state (the DEFAULT state)', () => {
   })
 
   it('shows the empty state, NOT an error, when the list is legitimately empty', async () => {
-    fetchSpy.mockResolvedValueOnce([])
+    listRows = []
     render(<RecentlyDeleted />)
     await screen.findByText('Nothing deleted')
     expect(screen.queryByRole('alert')).toBeNull()
@@ -209,13 +232,13 @@ describe('RecentlyDeleted — the empty state (the DEFAULT state)', () => {
 
 describe('RecentlyDeleted — load failure', () => {
   it('shows a retryable error card and recovers on retry', async () => {
-    fetchSpy.mockRejectedValueOnce(new Error('Service temporarily unavailable'))
+    listRows = new Error('Service temporarily unavailable')
     render(<RecentlyDeleted />)
 
     expect(await screen.findByText('Service temporarily unavailable')).toBeTruthy()
     expect(screen.getByText('Couldn’t load Recently deleted')).toBeTruthy()
 
-    fetchSpy.mockResolvedValueOnce([photo()])
+    listRows = [photo()]   // the retry re-runs the LIST, not a restore
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await screen.findByText('Celebrity Rescue harvest')).toBeTruthy()
   })

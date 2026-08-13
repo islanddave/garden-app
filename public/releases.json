@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.16.0",
+    "date": "2026-08-13",
+    "highlights": [
+      "Recently deleted now covers everything, not just photos. Deleted containers, plantings, locations and cultivars are listed there with a Restore button each — 68 things that previously had no way back. Containers are listed first on purpose: restoring one brings the plantings inside it back into view."
+    ]
+  },
+  {
     "version": "4.15.0",
     "date": "2026-08-13",
     "highlights": [

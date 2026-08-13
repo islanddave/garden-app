@@ -28,6 +28,7 @@ import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { formatDate } from '../lib/format.js'
 import { DELETED_PHOTOS_PATH, restorePhotoPath } from '../lib/deletedPhotos.js'
+import { DELETED_ENTITY_KINDS, rowsFromResponse } from '../lib/deletedEntities.js'
 import { invalidatePrefix } from '../lib/dataCache.js'
 import { useOptionalToast } from '../context/ToastContext.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
@@ -137,6 +138,109 @@ export function EmptyState() {
   )
 }
 
+
+// ── V4-RESTORESURFACE-001 — one section per non-photo entity type ─────────────────────────────
+//
+// EACH SECTION LOADS ITSELF. Four independent fetches rather than one orchestrated load, for the
+// same reason this page already keeps load and restore errors apart: one entity type failing must
+// not blank the other three. A section that errors says so in its own space and offers its own
+// retry; the rest of the page keeps working.
+//
+// A section with nothing in it renders NOTHING — no heading, no empty state. The page-level empty
+// state already answers "where do deleted things go?", and four "No deleted cultivars" headings
+// would bury the one section that actually has rows. Silence is the correct default here because
+// the default state of every one of these is empty.
+export function DeletedEntitySection({ kind, apiFetch, toast }) {
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
+  const [restoreError, setRestoreError] = useState(null)
+  const [restoringId, setRestoringId] = useState(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setLoadError(null)
+    try {
+      setRows(rowsFromResponse(kind, await apiFetch(kind.listPath)))
+    } catch (err) {
+      setRows([])
+      setLoadError(err?.message || `Could not load deleted ${kind.label.toLowerCase()}.`)
+    }
+    setLoading(false)
+  }, [apiFetch, kind])
+
+  useEffect(() => { load() }, [load])
+
+  const restore = useCallback(async (row) => {
+    if (restoringId) return
+    setRestoringId(row.id)
+    setRestoreError(null)
+    try {
+      await apiFetch(kind.restorePath(row.id), { method: 'POST' })
+      // Drop locally rather than refetching — the server answer IS the confirmation.
+      setRows((prev) => prev.filter((r) => r.id !== row.id))
+      // Every cached list that filtered this row out is now wrong. Containers invalidate the
+      // plantings prefix too: restoring one can make previously-invisible plantings appear.
+      for (const prefix of kind.invalidatePrefixes) invalidatePrefix(prefix)
+      toast?.show?.({ message: kind.toast })
+    } catch (err) {
+      setRestoreError(err?.message || 'Could not restore that item.')
+    }
+    setRestoringId(null)
+  }, [apiFetch, kind, restoringId, toast])
+
+  if (loading) return null
+  if (!loadError && rows.length === 0) return null
+
+  return (
+    <section style={{ marginTop: 24 }}>
+      <h2 style={{
+        margin: '0 0 8px', color: P.green, fontSize: '1rem', fontWeight: 700,
+      }}>
+        {kind.label}
+      </h2>
+      {loadError && <ErrorBanner>{loadError}</ErrorBanner>}
+      {restoreError && <ErrorBanner>{restoreError}</ErrorBanner>}
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {rows.map((row) => {
+          const sub = kind.subtitle(row)
+          const when = formatDate(row.deleted_at)
+          const busy = restoringId === row.id
+          return (
+            <li
+              key={row.id}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                padding: '10px 0', borderBottom: `1px solid ${P.line ?? '#e6e2d8'}`,
+              }}
+            >
+              <div style={{ minWidth: 0, flex: '1 1 60%' }}>
+                <div style={{ color: P.dark, fontSize: '0.95rem', fontWeight: 600 }}>
+                  {row.name || 'Untitled'}
+                </div>
+                <div style={{ color: P.mid, fontSize: '0.82rem' }}>
+                  {[sub, when && `Deleted ${when}`].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+              {/* 44px tap floor, wrapping to its own line rather than shrinking — the same mobile
+                  rule the photo rows follow. Nothing here is destructive, so the safe action is
+                  allowed to be the easy one. */}
+              <Button
+                onClick={() => restore(row)}
+                disabled={busy}
+                aria-label={busy ? undefined : `Restore ${row.name || 'item'}`}
+                style={{ minWidth: 96, minHeight: 44, marginLeft: 'auto' }}
+              >
+                {busy ? 'Restoring…' : 'Restore'}
+              </Button>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
 export default function RecentlyDeleted() {
   const { fetch: apiFetch } = useApiFetch()
   const toast = useOptionalToast()
@@ -197,7 +301,9 @@ export default function RecentlyDeleted() {
           Recently deleted
         </h1>
         <p style={{ margin: '0 0 20px', color: P.mid, fontSize: '0.88rem', lineHeight: 1.5 }}>
-          Deleted photos are kept here. Restore one any time — nothing expires.
+          Deleted photos, containers, plantings, locations and cultivars are kept here. Restore
+          anything any time — nothing expires. Restore a container first if the plantings inside it
+          are missing from the list.
         </p>
 
         <AsyncRegion
@@ -221,6 +327,10 @@ export default function RecentlyDeleted() {
             ))}
           </ul>
         </AsyncRegion>
+
+        {DELETED_ENTITY_KINDS.map((kind) => (
+          <DeletedEntitySection key={kind.key} kind={kind} apiFetch={apiFetch} toast={toast} />
+        ))}
       </div>
     </div>
   )

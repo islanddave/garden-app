@@ -104,6 +104,10 @@ function extractSelectBlocks(src) {
     // probe (SELECT id … created_by = ANY(householdIds)), not a client GET read, so it has no
     // business exposing the PROJ-RESCOPE columns. Same skip precedent as reparent-internal above.
     if (/authz-parent-check/.test(m[1])) continue;
+    // V4-RESTORESURFACE-001: skip the restore existence/ownership probe — same class and same
+    // reasoning as authz-parent-check above. The /deleted LIST is NOT skipped: it is a real client
+    // GET read and carries the PROJ-RESCOPE columns like every other one.
+    if (/restore-probe/.test(m[1])) continue;
     blocks.push(m[1]);
   }
   return blocks;
@@ -112,11 +116,15 @@ function extractSelectBlocks(src) {
 describe('projects Lambda SELECT clauses (S1.A-hotfix regression guard)', () => {
   const selectBlocks = extractSelectBlocks(SRC);
 
-  it('extracts exactly the 6 client GET read blocks', () => {
+  // 6 -> 7 (V4-RESTORESURFACE-001): the GET /deleted recovery list is a seventh client read. It is
+  // deliberately NOT skipped — it carries the PROJ-RESCOPE columns like the other six, and its
+  // planting counts were moved out of a correlated subquery into a second query precisely so this
+  // extractor can see it. A read that dodges this guard by accident is worse than one that fails it.
+  it('extracts exactly the 7 client GET read blocks', () => {
     // EXACT, not >=. A floor is what let the broken extractor look healthy: it returned 6 blocks
     // too, but three of them were junk spans that happened to satisfy the floor while the real
     // reads went uncovered. A count that can only be met by the right blocks is the point.
-    expect(selectBlocks.length).toBe(6);
+    expect(selectBlocks.length).toBe(7);
   });
 
   it('no extracted block over-spans its own statement', () => {

@@ -210,9 +210,78 @@ export const handler = async (event) => {
       return resp(405, { error: 'Method not allowed' });
     }
 
+    // ── V4-RESTORESURFACE-001 — the recovery path for cultivars (audit I9) ─────────────────────
+    //
+    // 13 cultivars are soft-deleted in prod with no way back. Same contract as lambda/locations and
+    // lambda/plants; the ownership predicate is this Lambda's own (`created_by` OR a managed
+    // principal pattern), NOT the household-only shape the other two use — a cultivar can be owned
+    // by a managed importer principal, and scoping this list to `household` alone would hide those
+    // rows from the person who can actually restore them.
+    //
+    // Checked BEFORE idMatch below for the same reason `/api/varieties/crop-types` already is: a
+    // single trailing segment would otherwise be parsed as a variety id.
+    if (rawPath === '/api/varieties/deleted' && method === 'GET') {
+      const rawLimit = Number(event?.queryStringParameters?.limit);
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200) : 50;
+      const rows = await sql`
+        SELECT id, display_name AS name, crop_type_slug, species, genus, created_at, deleted_at
+          FROM public.cultivar
+         WHERE deleted_at IS NOT NULL
+           AND ( created_by = ANY(${household})
+                 OR created_by LIKE ANY(${managedPatterns}::text[]) )
+         ORDER BY deleted_at DESC, id DESC
+         LIMIT ${limit}
+      `;
+      return resp(200, { varieties: rows });
+    }
+
+    const restoreMatch = rawPath.match(/^\/api\/varieties\/([^/]+)\/restore$/);
+    if (restoreMatch && method === 'POST') {
+      const varietyId = restoreMatch[1];
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(varietyId))) {
+        return resp(404, { error: 'Not found' });
+      }
+      const [existing] = await sql`
+        SELECT id, deleted_at FROM public.cultivar
+         WHERE id = ${varietyId}
+           AND ( created_by = ANY(${household})
+                 OR created_by LIKE ANY(${managedPatterns}::text[]) )
+      `;
+      if (!existing) return resp(404, { error: 'Not found or not owner' });
+      if (!existing.deleted_at) {
+        return resp(200, { id: existing.id, deleted_at: null, already_restored: true });
+      }
+      // Wrapped in the same set_config transaction the DELETE arm uses: plant_varieties carries
+      // trg_audit_plant_varieties, which reads app.actor_clerk_sub. A restore that skipped this
+      // would land in the audit trail with no actor — the one asymmetry that would make the delete
+      // attributable and its undo anonymous.
+      const [, rows] = await sql.transaction([
+        sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+        sql`
+          UPDATE public.cultivar
+             SET deleted_at = NULL
+           WHERE id = ${varietyId}
+             AND ( created_by = ANY(${household})
+                   OR created_by LIKE ANY(${managedPatterns}::text[]) )
+             AND deleted_at IS NOT NULL
+          -- Deliberately NOT a full client row. select-columns.test.js treats any RETURNING that
+          -- aliases display_name to name as a full-row shape which must list every seed-inventory
+          -- column; a restore answers identity + state, and the caller already has the name from
+          -- the list it clicked. (No backticks in this comment: it lives inside a JS template
+          -- literal, where one would terminate the string.)
+          RETURNING id, deleted_at
+        `,
+      ]);
+      if (!rows.length) return resp(404, { error: 'Not found or not owner' });
+      return resp(200, rows[0]);
+    }
+
     const idMatch = rawPath.match(/^\/api\/varieties\/([^/]+)$/);
 
-    if (idMatch) {
+    // The /deleted exclusion rides on the USE, not the declaration: crop-type.test.js anchors the
+    // route-ordering guard on the literal `const idMatch = rawPath.match`, and rewriting that line
+    // would blind a guard that has nothing to do with this change.
+    if (idMatch && rawPath !== '/api/varieties/deleted') {
       const varietyId = idMatch[1];
 
       if (method === 'GET') {
