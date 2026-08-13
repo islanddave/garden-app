@@ -109,11 +109,14 @@ post:
     expect: rowcount_eq
     value: 0
 
-rollback:
-  file: 0r-rollback.sql
-  note: >
-    Safe at any time by construction — this migration never writes to public.plants, so there is no
-    user data to restore. The only loss is the superseded-row history, which is the sole accuracy
-    measurement the add-date baseline will ever produce; \copy the table out first if any exists.
-    To retract only the derived values while keeping the schema, DELETE WHERE model_version =
-    'anchor-derive-v1' instead of dropping.
+# ROLLBACK (documentation only — gate_runner.py's strict schema admits ONLY pre/sweep/post as
+# top-level keys and exits 2 on anything else, making every gate above silently unrunnable.
+# Same defect was fixed in v4-harvwatch-001 on 2026-08-12; this file had copied it as a template.)
+# rollback:
+#   file: 0r-rollback.sql
+#   note: >
+#     Safe at any time by construction — this migration never writes to public.plants, so there is no
+#     user data to restore. The only loss is the superseded-row history, which is the sole accuracy
+#     measurement the add-date baseline will ever produce; \copy the table out first if any exists.
+#     To retract only the derived values while keeping the schema, DELETE WHERE model_version =
+#     'anchor-derive-v1' instead of dropping.

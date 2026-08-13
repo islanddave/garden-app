@@ -184,23 +184,46 @@ describe('W-BATCHNULL — single-event undo, same statement, same guarantee', ()
     expect(hasAnyParent(p)).toBe(true)
   })
 
-  it('404s a project-less event BEFORE any write — the ownership JOIN, measured not assumed', async () => {
-    // lane photodelete read `:1790`'s `JOIN container` correctly as an OWNERSHIP pre-read, then
-    // concluded the single path was therefore exposed. Both halves are tested here: the JOIN is not
-    // a parent-null guard by intent, but its null-exclusion is real, and it fires first — so
-    // e.project_id can never be NULL by the time the photo statement runs. The event and its photo
-    // must be COMPLETELY untouched, which is what makes this an ordering assertion and not just a
-    // status-code assertion.
+  it('deletes a plant-anchored project-less event and re-parents its photo to the plant (BUG-NULLPROJEVENT-001)', async () => {
+    // HISTORY: this test originally asserted 404 — documenting the INNER-JOIN ownership trap that
+    // made project-less events unreachable (2 live prod rows were stuck un-editable). lane-seams
+    // then FIXED that trap (2c567cb: LEFT JOIN + two-arm ownership predicate), so 404 became the
+    // BUG's behavior, not the contract. The W-BATCHNULL fallback below the pre-read is exactly what
+    // makes the widening safe: e.project_id may now be NULL, and the photo COALESCEs onto
+    // e.plant_id instead. The two fixes compose; this asserts the composed contract.
     const eventId = await newEvent({ project: null, plant: plantId })
     const photoId = await newEventOnlyPhoto(eventId)
 
     const res = await callHandler(handler, { method: 'DELETE', path: `/api/events/${eventId}` })
-    expect(res.status).toBe(404)
+    expect(res.status).toBe(200)
 
     const [ev] = await directSql`SELECT deleted_at FROM event_log WHERE id = ${eventId}`
-    expect(ev.deleted_at).toBeNull()
+    expect(ev.deleted_at).not.toBeNull()
     const p = await photo(photoId)
-    expect(p.event_id).toBe(eventId)
+    expect(p.event_id).toBeNull()
+    expect(p.plant_id).toBe(plantId)          // re-parented from the event row, not orphaned
+    expect(p.intake_status).toBeNull()        // has a real parent, so NOT pending_tag
+    expect(hasAnyParent(p)).toBe(true)
+  })
+
+  it('still 404s when NO ownership arm can pass — nothing written (the ordering assertion survives)', async () => {
+    // The true negative the old test was protecting: ownership is measured, not assumed. A
+    // project-less event whose plant parent is soft-deleted fails BOTH arms of the two-arm
+    // predicate, and the 404 must fire BEFORE any write — event and photo completely untouched.
+    const eventId = await newEvent({ project: null, plant: plantId })
+    const photoId = await newEventOnlyPhoto(eventId)
+    await directSql`UPDATE garden_node SET deleted_at = NOW() WHERE id = ${plantId}`
+    try {
+      const res = await callHandler(handler, { method: 'DELETE', path: `/api/events/${eventId}` })
+      expect(res.status).toBe(404)
+
+      const [ev] = await directSql`SELECT deleted_at FROM event_log WHERE id = ${eventId}`
+      expect(ev.deleted_at).toBeNull()
+      const p = await photo(photoId)
+      expect(p.event_id).toBe(eventId)
+    } finally {
+      await directSql`UPDATE garden_node SET deleted_at = NULL WHERE id = ${plantId}`
+    }
   })
 })
 
