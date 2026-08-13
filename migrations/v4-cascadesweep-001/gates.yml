@@ -168,11 +168,22 @@ post:
                       WHERE a.attrelid = c.conrelid AND a.attname = 'deleted_at'
                         AND NOT a.attisdropped)
          AND c.conname NOT IN (
-               -- Derived caches and closure rows: rebuilt from live data, correct to cascade.
-               'entity_memory_plant_id_fkey','entity_memory_project_id_fkey',
-               'entity_memory_location_id_fkey',
+               -- Closure rows and dismissal state: derived from live data, correct to cascade.
                'container_closure_ancestor_id_fkey','container_closure_descendant_id_fkey',
                'inactive_project_dismissals_project_id_fkey'
+               -- CORRECTED 2026-08-13 (V4-SPACESOFTDEL/OPS-CACHEFKPARITY assessment): the three
+               -- entity_memory FKs were listed here as "derived caches, correct to cascade". Both
+               -- halves of that were wrong and the entries were VACUOUS besides — entity_memory has
+               -- no deleted_at, so this gate's predicate never reached them.
+               --   * entity_memory is NOT merely a derived cache. v4-carekey-001 design §8.3
+               --     explicitly REJECTED mirroring the project CASCADE onto the plant arm, because
+               --     "entity_memory is durable care memory" and cascading "silently deletes care
+               --     history". entity_memory_plant_id_fkey is RESTRICT and gated as such by that
+               --     migration.
+               --   * Removed rather than re-annotated on purpose: a pre-emptive exemption for a
+               --     table this gate cannot currently reach would silently exempt it the day
+               --     entity_memory gains a deleted_at — which is exactly when someone should be
+               --     forced to make the decision instead of inheriting mine.
              )
     expect: rowcount_eq
     value: 0
