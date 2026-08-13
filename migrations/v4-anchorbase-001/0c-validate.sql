@@ -41,7 +41,9 @@ SELECT CASE WHEN count(*) = 3 THEN 'PASS' ELSE 'FAIL' END AS result, count(*) AS
                      'idx_plant_anchor_derivation_model_source');
 
 \echo '== 4. tier census — POST-BACKFILL. Compare against the measurement before trusting it. =='
-\echo '   Expected on prod 2026-08-12: 64 rows / sow 0 / transplant 0 / proxy 7 / baseline 57.'
+\echo '   ADVISORY, not an assertion — the population is a moving target (authored: 64/57; re-'
+\echo '   measured 2026-08-12 late: 66/59, 5 clamped at +9 offset, ~4 expected at the +7 shipped).'
+\echo '   Re-measure at apply time; a mismatch here means drift, not failure.'
 SELECT source, confidence, count(*) AS rows,
        round(100.0 * count(*) / NULLIF(sum(count(*)) OVER (), 0), 1) AS pct
   FROM public.plant_anchor_derivation

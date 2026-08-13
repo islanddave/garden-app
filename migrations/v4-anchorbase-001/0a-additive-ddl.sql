@@ -2,8 +2,10 @@
 -- V4-ANCHORBASE-001 (BD-001a + BD0806-27) — public.plant_anchor_derivation.
 -- Logic: lambda/harvests/anchorDerive.js. Measurement: scripts/measure-anchor-coverage.sql.
 --
--- NOT APPLIED as of authoring (2026-08-12). Not on staging, not on prod. No DDL has been executed
--- anywhere by the authoring lane, and no derived anchor has been written to any environment.
+-- STATUS: 0a APPLIED to staging + prod 2026-08-12 (gates 5/5 both envs; see gates.yml annotations).
+-- Amended same day by 0a2-fk-cascade.sql (FK -> ON DELETE CASCADE + plausibility column, pre-0b
+-- consult conditions). The original "NOT APPLIED as of authoring" prose stood here and went stale
+-- within hours — status now lives in the gates annotations, not this header.
 --
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- WHY A SEPARATE TABLE AND NOT derived_anchor_* COLUMNS ON public.plants
@@ -51,7 +53,9 @@
 -- by running lambda/harvests/anchorDerive.js over live rows (scripts/measure-anchor-coverage.{sql,
 -- mjs}). Household = Dave; Jen has zero live plantings, so these are Dave's figures, not a
 -- household average. Of the 64 anchorless live plantings:
---       sow events        0   (event_log holds zero 'sowing' and zero 'seed_soak' rows)
+--       sow events        0   (no anchorless target has one; NB the original claim "event_log holds
+--                              zero sowing/seed_soak rows" was WRONG — 6 seed_soak rows exist, just
+--                              none on anchorless plantings. Corrected per consult 2026-08-12.)
 --       transplant events 0   (all 110 plantings with a transplant event already have the column —
 --                              the app writes it when the event is logged, so this tier cannot fire)
 --       nursery proxies   7   (potting_up / hardening_off / brought_outside)

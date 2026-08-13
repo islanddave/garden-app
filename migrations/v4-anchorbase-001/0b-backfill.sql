@@ -22,18 +22,27 @@
 -- `confidence='proxy'` so a consumer can drop it in one predicate.
 --
 -- THE OFFSET. Dave specified +7 (BD0806-27: "transplant happened within a week of the date the
--- planting was added"). This file uses the household's OWN median instead when it has >= 5
--- dual-dated plantings, falling back to 7 — the same pattern as watch.js's nursery offset, and it
--- records which one it used in offset_source. On live prod today Dave's median is +9 over 112
--- samples. The reason the median is used rather than the stated 7 is that the offset should track
--- HIS data as it accumulates; pinning the number in a backfill file freezes a 2026 estimate into
--- every future run. Either way the spread swamps the point estimate — 47.3% within a week — so the
--- choice between 7 and 9 changes far less than the label on the result does.
+-- planting was added"). ── OFFSET DECISION REVERSED 2026-08-12 (pre-apply expert consult): this
+-- file originally preferred the household MEDIAN (>= 5 dual-dated samples, +9 on live prod today)
+-- over the stated +7, on the "track HIS data" rationale, believing "the spread swamps the point
+-- estimate" so the choice barely mattered. The data-analytics seat MEASURED that and it is false:
+-- an offset sweep over the same 112 dual-dated plantings scores hit-rate-within-±7d as
+--   +7 -> 77/112 (68.8%)   +5/+6 -> 73   +4 -> 68   ...   +9 (the median) -> 52/112 (46.4%)
+-- i.e. the median is the measured WORST candidate in range, because the delta distribution is
+-- right-skewed with a 0-1-day spike (26/112 = plantings entered at the moment of transplant), a
+-- subpopulation DEFINITIONALLY ABSENT from the anchorless targets this file predicts for. The
+-- median chases that spike's complement; the argmax does not. So: stated +7, always, and
+-- offset_source records 'stated_baseline'. Revisit ONLY via a time-split validation (fit before
+-- 2026-06-15, score after) once this table's own prospective labels accrue — which is exactly the
+-- measurement this backfill exists to create. (Also note: the widely-quoted "47.3% within a week"
+-- grades an offset-ZERO model — neither the +7 shipped here nor the +9 the median would have
+-- written. Do not reuse that number as this model's accuracy.)
 --
--- WHAT IT WILL WRITE, measured read-only against prod 2026-08-12 (household = Dave; Jen has zero
--- live plantings): 64 rows, of which 0 sow_event, 0 transplant_event, 7 nursery_proxy_event and
--- 57 add_date_baseline, with 3 future baselines clamped to today. Run 0c check 4 after applying and
--- confirm those proportions before believing anything downstream.
+-- WHAT IT WILL WRITE, re-measured read-only against prod 2026-08-12 LATE (population drifted since
+-- authoring; household = Dave, Jen has zero live plantings): 66 rows — 0 sow_event, 0
+-- transplant_event, 7 nursery_proxy_event, 59 add_date_baseline, 5 clamped to today (at +9; expect
+-- ~4 at +7). Re-measure at apply time rather than trusting either census; 0c check 4's printed
+-- expectation is advisory, not an assertion.
 --
 -- IDEMPOTENT. Re-running supersedes nothing and inserts nothing for a planting that already has a
 -- live derivation (the partial unique index is the backstop; the NOT EXISTS is the intent).
@@ -64,11 +73,19 @@ WITH params AS (
 -- Every live planting with no anchor of its own. Live = the definition lambda/harvests/watch-route.js
 -- settled on: not deleted, not archived, project not deleted/archived, status not in the dead set.
 target AS (
+  -- user_id = plant_projects.created_by (the HOUSEHOLD owner), deliberately — 13 of the live
+  -- targets carry plants.created_by = a data-import pseudo-user ('rescue-intake-…'); derivations
+  -- serve per-household lookups (idx_plant_anchor_derivation_user_live), so project-owner
+  -- attribution is the intended semantics. (Consult 2026-08-12, regression seat condition 3.)
   SELECT p.id            AS plant_id,
          pj.created_by   AS user_id,
-         (p.created_at AT TIME ZONE prm.tz)::date AS add_date
+         (p.created_at AT TIME ZONE prm.tz)::date AS add_date,
+         p.name          AS plant_name,
+         p.status        AS plant_status,
+         v.days_to_maturity_min AS dtm_min
     FROM public.plants p
     JOIN public.plant_projects pj ON pj.id = p.project_id
+    LEFT JOIN public.plant_varieties v ON v.id = p.variety_id
     CROSS JOIN params prm
    WHERE p.deleted_at IS NULL
      AND p.archived_at IS NULL
@@ -96,9 +113,12 @@ offsets AS (
    GROUP BY pj.created_by
 ),
 resolved_offset AS (
+  -- ALWAYS the stated +7 (consult 2026-08-12: in-sample argmax 68.8% vs the household median's
+  -- 46.4% — see header). sample_n still recorded so the provenance shows how much dual-dated data
+  -- existed when the choice was made; the offsets CTE is retained for that count alone.
   SELECT t.user_id,
-         CASE WHEN o.sample_n >= prm.offset_min_sample THEN o.median_days ELSE prm.stated_offset_days END AS days,
-         CASE WHEN o.sample_n >= prm.offset_min_sample THEN 'household_median' ELSE 'stated_baseline' END AS src,
+         prm.stated_offset_days AS days,
+         'stated_baseline'::text AS src,
          coalesce(o.sample_n, 0) AS sample_n
     FROM (SELECT DISTINCT user_id FROM target) t
     CROSS JOIN params prm
@@ -118,7 +138,7 @@ evidence AS (
 -- First tier whose evidence is present wins. This CASE ladder IS the precedence; it mirrors
 -- deriveAnchor() in lambda/harvests/anchorDerive.js and the two must not drift.
 derived AS (
-  SELECT t.plant_id, t.user_id, prm.model_version,
+  SELECT t.plant_id, t.user_id, prm.model_version, t.plant_name, t.plant_status, t.dtm_min,
          CASE WHEN ev.sow_date        IS NOT NULL THEN 'sow_event'
               WHEN ev.transplant_date IS NOT NULL THEN 'transplant_event'
               WHEN ev.proxy_date      IS NOT NULL THEN 'nursery_proxy_event'
@@ -151,11 +171,21 @@ clamped AS (
          (d.evidence_date + d.offset_days) > d.today     AS clamped_to_today
     FROM derived d
 )
+-- plausibility (consult 2026-08-12, horticulture seat — see 0a2 for the column):
+--   post_frost_impossible wins over rescue_suspect (the stronger objection): even the EARLIEST
+--   catalogue maturity (dtm_min) from the derived anchor lands after the 2026-09-28 first-frost
+--   anchor. rescue_suspect: the add-date is likely an acquisition date, not a planting date.
 INSERT INTO public.plant_anchor_derivation
   (user_id, plant_id, anchor_date, anchor_field, source, confidence, model_version,
-   evidence_date, offset_days, offset_source, offset_sample_n, clamped_to_today, derived_on)
+   evidence_date, offset_days, offset_source, offset_sample_n, clamped_to_today, derived_on,
+   plausibility)
 SELECT c.user_id, c.plant_id, c.anchor_date, c.anchor_field, c.source, c.confidence, c.model_version,
-       c.evidence_date, c.offset_days, c.offset_source, c.offset_sample_n, c.clamped_to_today, c.today
+       c.evidence_date, c.offset_days, c.offset_source, c.offset_sample_n, c.clamped_to_today, c.today,
+       CASE WHEN c.dtm_min IS NOT NULL
+              AND c.anchor_date + c.dtm_min > DATE '2026-09-28' THEN 'post_frost_impossible'
+            WHEN c.plant_name ILIKE '%rescue%'
+              OR c.plant_status IN ('flowering', 'fruiting')    THEN 'rescue_suspect'
+            ELSE NULL END
   FROM clamped c
  WHERE NOT EXISTS (
          SELECT 1 FROM public.plant_anchor_derivation x
