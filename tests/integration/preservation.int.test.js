@@ -77,10 +77,15 @@ afterAll(async () => {
   await directSql`DELETE FROM preservation_log WHERE user_id IN (${USER}, ${FOREIGN_USER})`
   await directSql`DELETE FROM harvest_log WHERE created_by = ${USER}`
   await directSql`DELETE FROM event_log WHERE created_by = ${USER}`
-  await directSql`DELETE FROM plant_projects WHERE created_by = ${USER}`
   // entity FK (ON DELETE RESTRICT) references plantings — clear registry rows before the plants.
   await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (SELECT id FROM plants WHERE created_by = ${USER})`
   await directSql`DELETE FROM plants WHERE created_by = ${USER}`
+  // plant_projects LAST: plants.project_id is ON DELETE RESTRICT as of v4-plantrehomefk-001, so a
+  // container must be emptied before it can be dropped. This delete used to sit ABOVE the two
+  // lines above and passed anyway — but only because every fixture planting in this file happens
+  // to be inserted with no project_id. Green by property, not by construction; the first fixture
+  // to gain a container would have redded the suite with a 23503 far from its cause.
+  await directSql`DELETE FROM plant_projects WHERE created_by = ${USER}`
   await directSql`DELETE FROM storage_location WHERE user_id = ${USER}`
 })
 

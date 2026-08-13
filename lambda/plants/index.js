@@ -447,21 +447,28 @@ export const handler = async (event) => {
         //     GARDEN_HOUSEHOLD_IDS gets [their own sub], so the new arm resolves to "rows I
         //     created myself" — strictly narrower than what they can already read.
         //  2. The `container_id IS NULL` conjunct is LOAD-BEARING, not decoration. Without it,
-        //     own-created_by would reach a planting sitting INSIDE another household's container —
-        //     and the POST path does not verify that body.project_id is a container you own, so a
-        //     foreign user can create such a row today. With the conjunct, the instant a planting
-        //     has a container the caller must own that container. Do not "simplify" it away.
+        //     own-created_by would reach a planting sitting INSIDE a container it does not own.
+        //     With the conjunct, the instant a planting has a container the caller must own that
+        //     container. Do not "simplify" it away.
+        //     CORRECTED 2026-08-13 (BUG-PLANTREHOMEFK-001 recon): this bullet used to justify
+        //     itself with "the POST path does not verify that body.project_id is a container you
+        //     own, so a foreign user can create such a row today." That is FALSE — POST gates
+        //     project_id through loadOwnedProject(householdIds) and 400s (see :999 below). The
+        //     conjunct is still load-bearing, for a different and better reason: NON-APP writers
+        //     create container-ful rows whose created_by is not the container's. 24 exist in prod
+        //     right now from rescue-intake (see claim 5). The guard must hold for rows the API
+        //     never minted, so it cannot rest on an API-side check.
         //  3. No APPLICATION path re-homes a planting: container_id is absent from the PUT SET-list
         //     and nothing in the repo writes plants.project_id after INSERT, so a caller cannot move
         //     a row between the two arms. created_by is equally immutable — the BEFORE UPDATE
         //     trigger `prevent_ownership_transfer` RAISEs on any change to it.
-        //     CAVEAT (adversarial review F1, pre-existing, NOT closed here): the DB does not
-        //     guarantee that. `plants_project_id_fkey` is ON DELETE SET NULL, so HARD-deleting a
-        //     container silently moves every child planting into the project-less arm — handing
-        //     each one to its own created_by. No app path does that (projects DELETE is a
-        //     soft-delete), but admin SQL, purge/backfill scripts and test teardowns do
-        //     `DELETE FROM plant_projects` literally. Tracked as a separate FK ticket
-        //     (ON DELETE RESTRICT); do not read claim 3 as a DB-level guarantee.
+        //     AND THE DB NOW GUARANTEES IT TOO, as of v4-plantrehomefk-001 (2026-08-13):
+        //     `plants_project_id_fkey` is ON DELETE RESTRICT, so hard-deleting a container is
+        //     REFUSED (23503) rather than silently re-homing every child planting into the
+        //     project-less arm and handing each one to its own created_by. The old caveat here
+        //     said this was "tracked as a separate FK ticket" — it was not; no such row existed
+        //     when that was written. It does now, and it is closed. Claim 3 IS a DB-level
+        //     guarantee; the escape hatch is an explicit `UPDATE plants SET project_id = NULL`.
         //  4. Nothing here loosens the household boundary: members already read each other's
         //     project-less plantings via the list query and already write each other's projected
         //     plantings via pp.created_by. This closes a read/write asymmetry rather than opening
