@@ -217,21 +217,24 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
     ),
     -- V4-ANCHORFLIP-001 condition 1 — the derived anchor (public.plant_anchor_derivation,
     -- migrations/v4-anchorbase-001). Until this join existed, flipping watch.js's
-    -- DERIVED_ANCHOR_ENABLED was a RUNTIME NO-OP: availableAnchors() read `undefined` for every
+    -- DERIVED_ANCHOR_ENABLED was a RUNTIME NO-OP: availableAnchors() read undefined for every
     -- derived_anchor_* field and the tier could never fire. That is what the expert consult refused
     -- to flip, and the join is the first of its nine conditions.
+    --
+    -- (No backticks anywhere in this comment block, deliberately: it lives inside a tagged-template
+    -- literal, where a backtick TERMINATES the SQL string. Caught by the parse gate, 2026-08-13.)
     --
     -- TWO PREDICATES, BOTH LOAD-BEARING, and neither is a tidiness filter:
     --   * superseded_at IS NULL — a derivation contradicted by a real date is RETIRED, not deleted
     --     (it is the only accuracy measurement tier 3 will ever produce). Selecting a retired row
     --     would cite a guess the data has already disproved. uq_plant_anchor_derivation_live makes
     --     this predicate return at most one row per planting, so the LEFT JOIN cannot fan out.
-    --   * plausibility IS NULL — 0a2's marks. `rescue_suspect` (the add-date is an ACQUISITION date,
-    --     not a planting date) and `post_frost_impossible` (anchor + catalogue DTM lands past first
+    --   * plausibility IS NULL — 0a2's marks. rescue_suspect (the add-date is an ACQUISITION date,
+    --     not a planting date) and post_frost_impossible (anchor + catalogue DTM lands past first
     --     frost) are rows the backfill itself flagged as not believable. On prod that is 26 of 66.
     --     They stay in the table as evidence and MUST NOT feed the tier.
     --
-    -- No user_id predicate on purpose: `live` above is already scoped to the household through
+    -- No user_id predicate on purpose: the live CTE above is already scoped to the household through
     -- plant_projects.created_by, and the derivation's own user_id is the PROJECT OWNER (consult
     -- decision 1, item 4) — re-filtering on it would drop the 13 plantings whose plants.created_by
     -- is the rescue-intake pseudo-user without adding any isolation the join does not already have.
@@ -277,9 +280,9 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
            ld.anchor_basis_shifted            AS dismissal_anchor_basis_shifted,
            ld.expected_days                   AS dismissal_expected_days,
            ld.lead_days                       AS dismissal_lead_days,
-           -- V4-ANCHORFLIP-001 condition 1. to_char, matching the dismissal dates above: a bare
-           -- `date` round-trips through the driver as a Date whose civil day depends on the reader's
-           -- zone, and this value feeds date arithmetic the whole tier rests on.
+           -- V4-ANCHORFLIP-001 condition 1. to_char, matching the dismissal dates above: a bare date
+           -- column round-trips through the driver as a Date whose civil day depends on the reader's
+           -- zone, and this value feeds the date arithmetic the whole tier rests on.
            to_char(dv.derived_anchor_date, 'YYYY-MM-DD') AS derived_anchor_date,
            dv.derived_anchor_field, dv.derived_anchor_source, dv.derived_anchor_confidence,
            loc.name                           AS location_name,

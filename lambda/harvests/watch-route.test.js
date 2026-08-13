@@ -422,3 +422,135 @@ describe('DELETE /api/harvests/watch/dismissals/:id', () => {
     expect(res.statusCode).toBe(400);
   });
 });
+
+// ── V4-ANCHORFLIP-001 condition 1 — the derived join, tested AT THE ROUTE ─────────────────────────
+//
+// WHY THIS BLOCK EXISTS AND WHY IT IS NOT A FIXTURE TEST. The expert consult
+// (project-state/anchor-consult-20260812.md) refused the DERIVED_ANCHOR_ENABLED flip on the ground
+// that it was a RUNTIME NO-OP: queryWatchRows never joined plant_anchor_derivation, so
+// availableAnchors() read `undefined` for every derived_anchor_* field and the tier could not fire
+// however the flag was set. The pure resolver's flag-on path was already covered
+// (anchorDerive.test.js), and that coverage is exactly what made the no-op invisible — the one
+// thing nobody was testing was the COMPOSITION: query aliases -> row shape -> resolver.
+//
+// So these tests drive handleWatchGet / handleDismissalPost end to end with the flag on. A column
+// aliased `anchor_date` instead of `derived_anchor_date`, or a predicate that let a superseded row
+// through, would pass every fixture test in the repo and fail here.
+describe('V4-ANCHORFLIP-001 derived anchor, at the route', () => {
+  // The join's output shape: an anchorless planting carrying the four aliased columns.
+  const derivedRow = (over = {}) => row({
+    plant_id: '33333333-2222-4333-8444-555555555555',
+    planting_name: 'Fingerling Potatoes', crop_display_name: 'Potato',
+    variety_name: 'Russian Banana', crop_type_slug: 'potato',
+    status: 'growing', harvest_habit: 'single', dtm_basis: null,
+    days_to_maturity_min: 90, days_to_maturity_max: null,
+    sown_at: null, transplanted_at: null, planted_out_at: null,
+    set_to_first_pick_days: null, fruit_set_date: null,
+    sibling_plant_id: null, sibling_planting_name: null, sibling_first_pick_date: null,
+    derived_anchor_date: '2026-05-10', derived_anchor_field: 'planted_out_at',
+    derived_anchor_source: 'add_date_baseline', derived_anchor_confidence: 'baseline',
+    ...over,
+  });
+
+  it('selects the derivation with both live predicates and joins it per planting', async () => {
+    const sql = makeSql([[derivedRow()]]);
+    await handleWatchGet(ctx(sql, { query: {} }));
+    const q = sql.calls[0].text;
+    expect(q).toMatch(/FROM public\.plant_anchor_derivation/);
+    // superseded_at IS NULL — a derivation a real date has already contradicted is retired
+    // evidence, never a citable anchor. uq_plant_anchor_derivation_live is partial on this
+    // predicate, so it is also what keeps the LEFT JOIN one-to-one.
+    expect(q).toMatch(/d\.superseded_at IS NULL/);
+    // plausibility IS NULL — 0a2's rescue_suspect / post_frost_impossible marks. 26 of prod's 66
+    // rows are marked, and the backfill flagged them precisely so no consumer would trust them.
+    expect(q).toMatch(/d\.plausibility IS NULL/);
+    expect(q).toMatch(/LEFT JOIN derived dv\s+ON dv\.plant_id = l\.plant_id/);
+    // Aliased to the names watch.js reads. A mismatch here is the whole no-op, restored.
+    for (const alias of [
+      'AS derived_anchor_date', 'AS derived_anchor_field',
+      'AS derived_anchor_source', 'AS derived_anchor_confidence',
+    ]) expect(q).toContain(alias);
+  });
+
+  // THE FLAG IS STILL FALSE. This asserts the shipped behaviour: the join runs, the columns arrive,
+  // and the tier stays shut — which is what makes applying the migration and deploying the Lambda
+  // ahead of Dave's decision a safe, observable no-op rather than a leap.
+  it('serves nothing from the derived tier while the flag is off', async () => {
+    const sql = makeSql([[derivedRow()]]);
+    const res = await handleWatchGet(ctx(sql, { query: {} }));
+    expect(res.body.candidates).toEqual([]);
+    expect(res.body.excluded).toEqual({ no_anchor: 1 });
+  });
+
+  it('serves the derived row, correctly anchored, when the tier is enabled', async () => {
+    const sql = makeSql([[derivedRow()]]);
+    const res = await handleWatchGet(ctx(sql, { query: {}, derivedEnabled: true }));
+    expect(res.body.total_watching).toBe(1);
+    const c = res.body.candidates[0];
+    expect(c.confidence).toBe('derived');
+    expect(c.anchor.derived).toBe(true);
+    expect(c.anchor.derived_source).toBe('add_date_baseline');
+    expect(c.anchor.derived_confidence).toBe('baseline');
+    expect(c.anchor.derived_anchor_field).toBe('planted_out_at');
+    // 2026-05-10 + 90 - min(22, round(90*0.25)=23) = 2026-05-10 + 68.
+    expect(c.watching_since).toBe('2026-07-17');
+    // The marking rule survives the round trip: the copy leads with `est.`, never a bare date.
+    expect(c.basis.startsWith('est.')).toBe(true);
+    expect(c.basis.length).toBeLessThanOrEqual(40);
+  });
+
+  // Condition 6, proven where it actually bites — through the route, on the consult's own shape.
+  it('does not let the derived date set watching_since when the row cites a sibling', async () => {
+    const sql = makeSql([[derivedRow({
+      sibling_plant_id: 'sib-1', sibling_planting_name: 'Minnesota Mini',
+      sibling_first_pick_date: '2026-08-08',
+    })]]);
+    const res = await handleWatchGet(ctx(sql, { query: {}, derivedEnabled: true }));
+    const c = res.body.candidates[0];
+    expect(c.confidence).toBe('sibling');
+    expect(c.watching_since).toBe('2026-08-08');
+    expect(c.basis).toContain('sibling Minnesota Mini');
+    expect(c.days_watching).toBe(4);
+  });
+
+  // Conditions 3/4/5 at the route. Each row would be served but for its one suppression, so a
+  // regression in any of them shows up as a row appearing rather than as a silent internal change.
+  it.each([
+    ['cut_and_come_again habit (condition 5)', { harvest_habit: 'cut_and_come_again' }],
+    ['a fruiting planting (condition 4)', { status: 'fruiting' }],
+    ['a watch opening inside the frost window (condition 3)', { derived_anchor_date: '2026-07-25' }],
+  ])('suppresses %s even with the tier enabled', async (_label, over) => {
+    const sql = makeSql([[derivedRow(over)]]);
+    const res = await handleWatchGet(ctx(sql, { query: {}, derivedEnabled: true }));
+    expect(res.body.candidates).toEqual([]);
+    expect(res.body.excluded.no_anchor).toBe(1);
+  });
+
+  // Condition 2's other half. The migration widens the CHECK; this proves the value that would hit
+  // it is in fact 'derived', so the two halves of the fix are about the same string.
+  it('binds anchor_kind = derived on a dismissal, which is what the CHECK must admit', async () => {
+    const sql = makeSql([[derivedRow()], [{ id: PLANT, plant_id: PLANT }]]);
+    const res = await handleDismissalPost(ctx(sql, {
+      derivedEnabled: true,
+      body: { plant_id: '33333333-2222-4333-8444-555555555555' },
+    }));
+    expect(res.statusCode).toBe(201);
+    const insert = sql.calls[1];
+    expect(insert.text).toMatch(/INSERT INTO public\.harvest_watch_dismissal/);
+    expect(insert.params).toContain('derived');
+    // Pre-migration this INSERT violates harvest_watch_dismissal_anchor_chk and 500s. That is the
+    // whole reason migrations/v4-anchorkind-derived-001 must land before the flag flips.
+  });
+
+  // The GET and the dismissal POST must resolve the queue identically, or a row the user can SEE is
+  // a row they cannot dismiss — a 404 on the tap, on the only action the calibration table records.
+  it('the dismissal path sees the same queue the GET served', async () => {
+    const body = { plant_id: '33333333-2222-4333-8444-555555555555' };
+    const off = await handleDismissalPost(ctx(makeSql([[derivedRow()]]), { body }));
+    expect(off.statusCode).toBe(404);
+    const on = await handleDismissalPost(ctx(
+      makeSql([[derivedRow()], [{ id: PLANT }]]), { body, derivedEnabled: true },
+    ));
+    expect(on.statusCode).toBe(201);
+  });
+});

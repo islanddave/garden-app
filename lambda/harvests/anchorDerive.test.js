@@ -18,7 +18,13 @@ import {
 import {
   DERIVED_ANCHOR_ENABLED, SIBLING_ANCHOR_HABITS, TIER_RANK, resolveWatchAnchor,
   classifyWatchCandidate, projectWatchRow, describeBasis, siblingLabel, buildWatchList,
+  DERIVED_ANCHOR_HABITS, DERIVED_STATUS_SUPPRESSED, DERIVED_FIRST_FALL_FROST_MMDD,
+  DERIVED_FROST_WINDOW_DAYS, firstFallFrostFor, WATCHED_HABITS, addDays,
 } from './watch.js';
+// V4-ANCHORFLIP-001 condition 3. Imported HERE and nowhere in lambda/**: the harvests Lambda and
+// src/lib are separate module graphs, so the frost constants are necessarily restated in watch.js.
+// This import is the lockstep pin that stops the two copies drifting — see the frost test below.
+import { FROST_ANCHORS } from '../../src/lib/sowEngine.js';
 
 const TODAY = '2026-08-12';
 
@@ -413,4 +419,257 @@ describe('sibling anchor is restricted to single-habit crops', () => {
     expect(describeBasis(anchor, TODAY, { sibling_planting_name: null })).toBe('sibling picked Jul 20');
   });
 
+});
+
+// ── V4-ANCHORFLIP-001 — the flip prerequisites (consult items 3-7) ────────────────────────────────
+//
+// project-state/anchor-consult-20260812.md refused the DERIVED_ANCHOR_ENABLED flip until these
+// existed. Every test below drives the flag ON explicitly; the flag itself is still false and the
+// pin above still asserts so. These are what make the flip a decision about horticulture rather
+// than a decision about untested code.
+describe('V4-ANCHORFLIP-001 derived-tier suppressions', () => {
+  // Anchorless, watched, no contradicting status. dtm_min 40 -> lead = min(22, round(40*0.25)) = 10,
+  // so check_from = anchor + 30.
+  const BASE = {
+    plant_id: 'p-flip', project_id: 'proj-flip', planting_name: 'Flip Fixture',
+    crop_type_slug: 'garlic', harvest_habit: 'single', status: 'growing', prior_harvest_count: 0,
+    dtm_basis: null, days_to_maturity_min: 40, days_to_maturity_max: null,
+    sown_at: null, transplanted_at: null, planted_out_at: null,
+    set_to_first_pick_days: null, fruit_set_date: null, sibling_first_pick_date: null,
+    derived_anchor_date: '2026-05-28', derived_anchor_source: 'add_date_baseline',
+    derived_anchor_confidence: 'baseline', derived_anchor_field: null,
+  };
+  const ON = { etToday: TODAY, derivedEnabled: true };
+
+  it('the fixture itself is admitted, so every suppression below is the suppression talking', () => {
+    const a = resolveWatchAnchor(BASE, ON);
+    expect(a.kind).toBe('derived');
+    expect(a.check_from).toBe('2026-06-27');
+  });
+
+  // ── Condition 3: the frost window (the horticulture seat's one non-negotiable) ──────────────────
+
+  it('restates the frost anchor in lockstep with src/lib/sowEngine.js FROST_ANCHORS', () => {
+    // The Lambda cannot import src/lib at runtime, so the constants are duplicated. A TEST can
+    // import both, and this is the only thing standing between that duplication and a silent
+    // divergence the day the frost date is retuned.
+    expect(DERIVED_FIRST_FALL_FROST_MMDD).toBe(FROST_ANCHORS.firstFallFrost);
+    expect(DERIVED_FROST_WINDOW_DAYS).toBe(FROST_ANCHORS.windowClosingDays);
+  });
+
+  it('resolves the frost anchor into the grow year the date sits in', () => {
+    expect(firstFallFrostFor('2026-08-12')).toBe('2026-09-28');
+    expect(firstFallFrostFor('2026-01-04')).toBe('2026-09-28');
+    // Grow year runs Nov 1 - Oct 31, so from November the NEXT first fall frost is next year's.
+    expect(firstFallFrostFor('2026-11-15')).toBe('2027-09-28');
+    expect(firstFallFrostFor(null)).toBeNull();
+  });
+
+  it('suppresses a derived row whose watch would open inside the frost window', () => {
+    // check_from = anchor + 30 = 2026-09-20, i.e. 8 days before first frost — inside +/-10d.
+    const row = { ...BASE, derived_anchor_date: '2026-08-21' };
+    expect(resolveWatchAnchor(row, ON)).toBeNull();
+    expect(classifyWatchCandidate(row, TODAY, { derivedEnabled: true }).reason).toBe('no_anchor');
+  });
+
+  it('suppresses a derived row that would open AFTER first frost, not only near it', () => {
+    // check_from = 2026-11-01. More wrong than a row opening 5 days early, not less — which is why
+    // the cutoff is one-sided at (frost - 10) rather than a literal symmetric band.
+    const row = { ...BASE, derived_anchor_date: '2026-10-02' };
+    expect(resolveWatchAnchor(row, ON)).toBeNull();
+  });
+
+  it('admits a derived row that opens the day before the frost cutoff', () => {
+    // cutoff = 2026-09-28 - 10 = 2026-09-18; anchor 2026-08-18 -> check_from 2026-09-17.
+    expect(resolveWatchAnchor({ ...BASE, derived_anchor_date: '2026-08-18' }, ON).check_from)
+      .toBe('2026-09-17');
+    // ...and refuses it one day later, so the boundary is pinned from both sides.
+    expect(resolveWatchAnchor({ ...BASE, derived_anchor_date: '2026-08-19' }, ON)).toBeNull();
+  });
+
+  it('never applies the frost window to a real anchor', () => {
+    // Same late date, but Dave's own. A calendar row rests on his data and stays visible; only the
+    // invented tier is suppressed.
+    const row = { ...BASE, derived_anchor_date: null, transplanted_at: '2026-10-02' };
+    expect(resolveWatchAnchor(row, ON).kind).toBe('calendar');
+  });
+
+  // ── Condition 4: the contradicting-status guard ─────────────────────────────────────────────────
+
+  it.each(['flowering', 'fruiting'])('suppresses a derived row on a %s planting', (status) => {
+    expect(resolveWatchAnchor({ ...BASE, status }, ON)).toBeNull();
+    expect(DERIVED_STATUS_SUPPRESSED.has(status)).toBe(true);
+  });
+
+  it('leaves a real anchor alone on a fruiting planting', () => {
+    // The guard says "a guess must not speak over a record", not "fruiting plants are uninteresting"
+    // — a fruiting planting with its own date is exactly what the watch list is for.
+    const row = { ...BASE, status: 'fruiting', derived_anchor_date: null, transplanted_at: '2026-06-11' };
+    expect(resolveWatchAnchor(row, ON).kind).toBe('calendar');
+  });
+
+  it('admits a derived row on a status the derivation does not contradict', () => {
+    expect(resolveWatchAnchor({ ...BASE, status: 'vegetative' }, ON).kind).toBe('derived');
+    expect(resolveWatchAnchor({ ...BASE, status: null }, ON).kind).toBe('derived');
+  });
+
+  // ── Condition 5: cut_and_come_again leaves the derived tier ─────────────────────────────────────
+
+  it('refuses a derived anchor for cut_and_come_again crops', () => {
+    const row = { ...BASE, harvest_habit: 'cut_and_come_again' };
+    expect(resolveWatchAnchor(row, ON)).toBeNull();
+    expect(DERIVED_ANCHOR_HABITS.has('cut_and_come_again')).toBe(false);
+    // Still a WATCHED habit — it just may not rest on an invented date.
+    expect(WATCHED_HABITS.has('cut_and_come_again')).toBe(true);
+  });
+
+  it.each(['single', 'repeat'])('keeps the derived anchor for %s crops', (habit) => {
+    expect(resolveWatchAnchor({ ...BASE, harvest_habit: habit }, ON).kind).toBe('derived');
+  });
+
+  it('keeps a cut_and_come_again planting that stands on its own date', () => {
+    const row = {
+      ...BASE, harvest_habit: 'cut_and_come_again', derived_anchor_date: null,
+      transplanted_at: '2026-06-11',
+    };
+    const { candidates } = buildWatchList([row], TODAY, { derivedEnabled: true });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].confidence).toBe('calendar');
+  });
+
+  // ── Condition 6: the uncited-derived-date leak ──────────────────────────────────────────────────
+
+  it('never lets an uncited derived anchor set watching_since', () => {
+    // The consult's Cantaloupe shape: the derived anchor opens first (2026-06-27) but the row cites
+    // the sibling pick (2026-08-10). Before the fix, watching_since slid to the invented date while
+    // the basis still said "sibling picked Aug 10" — two numbers that cannot both be true, with
+    // days_watching inflated from 2 to 46.
+    const row = {
+      ...BASE, sibling_first_pick_date: '2026-08-10', sibling_planting_name: 'Minnesota Mini',
+    };
+    const v = classifyWatchCandidate(row, TODAY, { derivedEnabled: true });
+    expect(v.anchor.kind).toBe('sibling');
+    expect(v.check_from).toBe('2026-08-10');
+    expect(v.anchor.opened_by).toBe('sibling');
+    expect(v.days_watching).toBe(2);
+
+    const projected = projectWatchRow(row, v, TODAY);
+    expect(projected.watching_since).toBe('2026-08-10');
+    expect(projected.basis).toContain('sibling');
+    // The derived anchor is not erased — it stays auditable as an alternate.
+    expect(v.anchor.alternates.some((a) => a.kind === 'derived')).toBe(true);
+  });
+
+  it('still lets a derived anchor open the watch when it is also what the row cites', () => {
+    // The rule is "the displayed date and the cited basis come from the same anchor", NOT "derived
+    // anchors never open a watch" — the latter would delete the tier the flip is about.
+    const v = classifyWatchCandidate(BASE, TODAY, { derivedEnabled: true });
+    expect(v.anchor.kind).toBe('derived');
+    expect(v.check_from).toBe('2026-06-27');
+    expect(v.anchor.opened_by).toBe('derived');
+  });
+
+  it('leaves the earliest-anchor rule untouched between two REAL anchors', () => {
+    // The two-question split (queue entry = earliest, citation = strongest fired) is load-bearing
+    // for the real tiers and is deliberately NOT narrowed. A calendar anchor that opened in May
+    // still sets watching_since even when an August sibling pick is what the row cites.
+    const row = {
+      ...BASE, derived_anchor_date: null, transplanted_at: '2026-05-01',
+      sibling_first_pick_date: '2026-08-10', sibling_planting_name: 'Minnesota Mini',
+    };
+    const v = classifyWatchCandidate(row, TODAY);
+    expect(v.anchor.kind).toBe('sibling');
+    expect(v.anchor.opened_by).toBe('calendar');
+    expect(v.check_from).toBe('2026-05-31');
+  });
+
+  // ── Condition 7: dtm_basis parity between the calendar and derived paths ────────────────────────
+
+  it('applies the same dtm_basis correction through the derived path as the calendar path', () => {
+    // ONE date, TWO paths. A from-sow DTM measured off a transplant date: the calendar path
+    // subtracts the nursery offset and, before this fix, the derived path did not — so the same
+    // date opened watches a month apart depending on which path carried it.
+    const shared = { dtm_basis: 'from-sow', days_to_maturity_min: 85, days_to_maturity_max: null };
+    const viaCalendar = resolveWatchAnchor(
+      { ...BASE, ...shared, derived_anchor_date: null, transplanted_at: '2026-06-11' },
+      { etToday: TODAY },
+    );
+    const viaDerived = resolveWatchAnchor(
+      { ...BASE, ...shared, derived_anchor_date: '2026-06-11', derived_anchor_field: 'transplanted_at' },
+      ON,
+    );
+
+    expect(viaCalendar.kind).toBe('calendar');
+    expect(viaDerived.kind).toBe('derived');
+    expect(viaDerived.check_from).toBe(viaCalendar.check_from);
+    expect(viaDerived.anchor_date).toBe(viaCalendar.anchor_date);
+    expect(viaDerived.nursery_offset_applied).toBe(viaCalendar.nursery_offset_applied);
+    expect(viaDerived.basis_shifted).toBe(viaCalendar.basis_shifted);
+
+    // Pinned as ABSOLUTES too, so a shared bug moving both paths together cannot pass this test:
+    // 2026-06-11 - 31 (nursery offset) + 85 - 21 (lead) = 2026-07-14.
+    expect(viaDerived.check_from).toBe('2026-07-14');
+    expect(viaDerived.nursery_offset_applied).toBe(31);
+    // And the UNcorrected answer — what the derived path used to produce — is a month LATER, which
+    // is the direction that matters: uncorrected, the watch opens late and hides a ripening crop.
+    expect(addDays('2026-06-11', 85 - 21)).toBe('2026-08-14');
+  });
+
+  it('honours the household nursery offset in the derived path, not just the constant', () => {
+    const row = {
+      ...BASE, dtm_basis: 'from-sow', days_to_maturity_min: 85,
+      derived_anchor_date: '2026-06-11', derived_anchor_field: 'transplanted_at',
+    };
+    const a = resolveWatchAnchor(row, { ...ON, nurseryOffsetDays: 10 });
+    // 2026-06-11 - 10 + 64 = 2026-08-04, i.e. 21 days later than the 31-day fallback produces.
+    expect(a.nursery_offset_applied).toBe(10);
+    expect(a.check_from).toBe('2026-08-04');
+  });
+
+  it('applies no correction when the derivation does not say which column it stands for', () => {
+    // anchor_field is NOT NULL in plant_anchor_derivation, so this is the defensive branch: an
+    // unlabelled date cannot be re-based without inventing which end of the nursery gap it sits on.
+    const row = {
+      ...BASE, dtm_basis: 'from-sow', days_to_maturity_min: 85,
+      derived_anchor_date: '2026-06-11', derived_anchor_field: null,
+    };
+    const a = resolveWatchAnchor(row, ON);
+    expect(a.nursery_offset_applied).toBe(0);
+    expect(a.basis_shifted).toBe(false);
+  });
+
+  it('carries the correction on the wire, where the 40-char basis string has no room for it', () => {
+    const row = {
+      ...BASE, dtm_basis: 'from-sow', days_to_maturity_min: 85,
+      derived_anchor_date: '2026-06-11', derived_anchor_field: 'transplanted_at',
+    };
+    const v = classifyWatchCandidate(row, TODAY, { derivedEnabled: true });
+    const projected = projectWatchRow(row, v, TODAY);
+    expect(projected.anchor.derived).toBe(true);
+    expect(projected.anchor.derived_anchor_field).toBe('transplanted_at');
+    expect(projected.anchor.basis_shifted).toBe(true);
+    expect(projected.anchor.nursery_offset_applied).toBe(31);
+    // observed_date is the RAW derivation, before the correction — both halves stay auditable.
+    expect(projected.anchor.observed_date).toBe('2026-06-11');
+    expect(projected.anchor.date).toBe('2026-05-11');
+  });
+
+  // ── The whole point: with the flag OFF none of this changes anything ────────────────────────────
+
+  it('is a strict no-op with the flag off', () => {
+    const rows = [
+      BASE,
+      { ...BASE, plant_id: 'p-2', harvest_habit: 'cut_and_come_again' },
+      { ...BASE, plant_id: 'p-3', status: 'fruiting' },
+      { ...BASE, plant_id: 'p-4', derived_anchor_date: '2026-10-02' },
+      { ...BASE, plant_id: 'p-5', sibling_first_pick_date: '2026-08-10' },
+    ];
+    const { candidates, excluded } = buildWatchList(rows, TODAY);
+    // Only the sibling row survives, exactly as it did before this item — every other row is
+    // anchorless the moment the derived tier is off.
+    expect(candidates.map((c) => c.plant_id)).toEqual(['p-5']);
+    expect(candidates[0].confidence).toBe('sibling');
+    expect(candidates[0].watching_since).toBe('2026-08-10');
+    expect(excluded.no_anchor).toBe(4);
+  });
 });
