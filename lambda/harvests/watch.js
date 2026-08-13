@@ -102,9 +102,70 @@ export const WATCH_SUPPRESS_DAYS = 10;
 // (16 -> 25), i.e. it HIDES them; the derived tier is what buys them back and then some (25 -> 9).
 // The derivation is what makes the sibling restriction affordable, not a queue-thinning measure.
 //
-// While false, the tier is inert twice over: this flag, and the fact that the derivation relation
-// does not exist in any environment yet, so the route never selects it.
+// STATUS 2026-08-13 (V4-ANCHORFLIP-001). The second half of that last sentence is NO LONGER TRUE:
+// public.plant_anchor_derivation is applied and populated in staging (12 rows) and prod (66 rows),
+// and watch-route.js now JOINs it, so `derived_anchor_*` arrives on every row. The flag is therefore
+// the ONLY thing holding the tier off — which is exactly the state the expert consult
+// (project-state/anchor-consult-20260812.md) required BEFORE the flip could be considered, because
+// flipping it while the route did not join was a runtime no-op that would have manufactured
+// confidence in an untested path. It stays FALSE here; flipping it is condition 9 and Dave's call.
 export const DERIVED_ANCHOR_ENABLED = false;
+
+// ── The derived tier's suppression rules (V4-ANCHORFLIP-001 conditions 3/4/5) ────────────────────
+//
+// Each of these narrows the derived tier and NONE of them touches any other anchor kind. They exist
+// because the horticulture seat read all 9 net-new rows the flip would have opened and found 1
+// decision-bearing, 3 marginal and 5 noise. These three rules remove the noise and the one class of
+// error the seat called non-negotiable, so what the flip is worth can be re-measured honestly.
+
+// Condition 5. `cut_and_come_again` is DROPPED from the derived tier — 5 of the 9 net-new rows were
+// cut-and-come-again herbs and bolted greens. The habit is still watched (WATCHED_HABITS) and still
+// admitted on every OTHER anchor: a cut-and-come-again crop with a real sow date keeps its calendar
+// row. What it may not have is a row resting on a date the system invented, because for a crop
+// harvested continuously from the moment it has leaves, "the catalogue says day 45" answers a
+// question nobody asked — the plant is either big enough to cut or it is not, and looking at it is
+// both cheap and conclusive. The derivation buys nothing it does not already know.
+export const DERIVED_ANCHOR_HABITS = new Set(['single', 'repeat']);
+
+// Condition 4. A planting whose OWN logged status already says `flowering` or `fruiting` does not
+// get a derived row. The status is a signal Dave entered; the derivation is a guess about the same
+// underlying question, and a guess must never speak over a record (the same marking-rule ordering
+// TIER_RANK encodes). 3 of the 9 net-new rows were peppers the app already knew were fruiting.
+//
+// RECOMMENDATION, NOT BUILT (consult condition 4's open half): `status='fruiting'` SHOULD eventually
+// open its own row, as an `observed`-class anchor rather than a derived one — a logged status change
+// is strictly better evidence than any derivation, and today it is used only to SUPPRESS. That is a
+// new tier with its own interval question ("how long from status=fruiting to first pick?", which no
+// column currently answers) and it is deliberately out of scope here: adding it under this item
+// would ship an unmeasured tier alongside a measured suppression. File it as its own ledger row.
+export const DERIVED_STATUS_SUPPRESSED = new Set(['flowering', 'fruiting']);
+
+// Condition 3 — the horticulture seat's ONE non-negotiable. A derived row that opens within ~10 days
+// either side of first fall frost is wrong in a way that looking at the plant cannot fix: the window
+// it points at does not exist, because the plant will be dead. Suppression is therefore applied at
+// `check_from >= firstFallFrost - DERIVED_FROST_WINDOW_DAYS` — which contains the seat's symmetric
+// ±10d window and everything past it, since a row opening 30 days AFTER frost is more wrong than one
+// opening 5 days after, not less.
+//
+// SINGLE SOURCE OF TRUTH: src/lib/sowEngine.js FROST_ANCHORS (`firstFallFrost` / `windowClosingDays`).
+// This Lambda CANNOT import it — lambda/** and src/** are separate module graphs and bundling src
+// into the harvests Lambda is not a thing this repo does (the same constraint watch-route.js states
+// for IMPRESSION_PROJECT_SLOT_CAP). So the two values are RESTATED here and pinned in lockstep by
+// anchorDerive.test.js, which imports BOTH modules at test time and fails if they ever diverge.
+// Change them in sowEngine.js; this copy follows.
+export const DERIVED_FIRST_FALL_FROST_MMDD = '09-28'; // = FROST_ANCHORS.firstFallFrost
+export const DERIVED_FROST_WINDOW_DAYS = 10;          // = FROST_ANCHORS.windowClosingDays
+
+// The first-fall-frost date for the grow year `ymd` sits in. The grow year runs Nov 1 - Oct 31 (the
+// boundary watch-route.js's `bounds` CTE already uses), so from November onward the NEXT first fall
+// frost belongs to the following calendar year.
+export function firstFallFrostFor(ymd) {
+  const s = toYmd(ymd);
+  if (s == null) return null;
+  const year = Number(s.slice(0, 4));
+  const month = Number(s.slice(5, 7));
+  return `${month >= 11 ? year + 1 : year}-${DERIVED_FIRST_FALL_FROST_MMDD}`;
+}
 
 // A single-habit crop is the POINT of this module (see the blind-spot note above). Repeating habits
 // are admitted too: their FIRST harvest of the season is a watch-list event even though every
@@ -216,28 +277,52 @@ export function leadDaysFor(expectedDays) {
   return Math.min(WATCH_LEAD_DAYS, Math.round(n * WATCH_LEAD_MAX_FRACTION));
 }
 
+// V4-ANCHORFLIP-001 condition 7. The basis correction, EXTRACTED from calendarAnchor so the derived
+// tier below runs the identical arithmetic rather than a parallel copy of it.
+//
+// The defect this closes: the calendar path corrects a from-sow DTM read off a transplant date by
+// subtracting the nursery offset, and the derived path did not — so the SAME date arriving through
+// the two paths produced a `check_from` about a MONTH apart, with no way to tell from the payload
+// which correction a row had received. Sharing one function makes the parity structural instead of
+// a convention; anchorDerive.test.js pins it by driving both paths off one date and asserting the
+// two check_from values are equal.
+//
+// `field` is the column the date STANDS FOR — the real column for a calendar anchor, and
+// plant_anchor_derivation.anchor_field for a derived one. NULL means the source did not say, in
+// which case nothing is shifted and nothing is corrected (an unlabelled date cannot be re-based
+// without inventing which end of the nursery gap it sits on).
+export function applyBasisCorrection(basis, field, date, nurseryOffsetDays) {
+  const order = BASIS_PREFERENCE[basis] ?? DEFAULT_PREFERENCE;
+  const shifted = field != null && field !== order[0];
+  // Only the from-sow-measured-from-transplant direction is corrected; see the note above.
+  const needsOffset = basis === 'from-sow' && (field === 'transplanted_at' || field === 'planted_out_at');
+  const offset = needsOffset
+    ? Math.max(0, Math.trunc(Number(nurseryOffsetDays ?? NURSERY_OFFSET_DAYS_FALLBACK)) || 0)
+    : 0;
+  return {
+    date: offset > 0 ? addDays(date, -offset) : date,
+    observed_date: date,
+    basis_shifted: shifted,
+    nursery_offset_applied: offset,
+  };
+}
+
 // Pick the calendar anchor for a row, honouring dtm_basis and reporting any basis shift.
 export function calendarAnchor(row, nurseryOffsetDays) {
   const basis = row?.dtm_basis ?? null;
   const order = BASIS_PREFERENCE[basis] ?? DEFAULT_PREFERENCE;
-  const preferred = order[0];
   for (const field of order) {
     const date = toYmd(row?.[field]);
     if (date == null) continue;
-    const shifted = field !== preferred;
-    // Only the from-sow-measured-from-transplant direction is corrected; see the note above.
-    const needsOffset = basis === 'from-sow' && (field === 'transplanted_at' || field === 'planted_out_at');
-    const offset = needsOffset
-      ? Math.max(0, Math.trunc(Number(nurseryOffsetDays ?? NURSERY_OFFSET_DAYS_FALLBACK)) || 0)
-      : 0;
+    const c = applyBasisCorrection(basis, field, date, nurseryOffsetDays);
     return {
       kind: 'calendar',
-      date: offset > 0 ? addDays(date, -offset) : date,
-      observed_date: date,
+      date: c.date,
+      observed_date: c.observed_date,
       basis,
       basis_field: field,
-      basis_shifted: shifted,
-      nursery_offset_applied: offset,
+      basis_shifted: c.basis_shifted,
+      nursery_offset_applied: c.nursery_offset_applied,
     };
   }
   return null;
@@ -273,8 +358,11 @@ export const TIER_RANK = Object.freeze({ observed: 0, sibling: 1, calendar: 2, d
 // harness (scripts/measure-anchor-coverage.mjs) can price the restriction against live rows in BOTH
 // directions. Without it, "what did restricting the sibling anchor cost/save" is unanswerable except
 // by editing the module and re-running, which is how a claimed effect size ends up unverified.
+// `etToday` rides along ONLY for the frost window (condition 3) — it selects which grow year's frost
+// anchor applies and nothing else. When absent it falls back to the derived date's own year, so this
+// function stays callable without a clock.
 function availableAnchors(row, nurseryOffsetDays, siblingHabits = SIBLING_ANCHOR_HABITS,
-  derivedEnabled = DERIVED_ANCHOR_ENABLED) {
+  derivedEnabled = DERIVED_ANCHOR_ENABLED, etToday = null) {
   const out = [];
 
   // Observed — a fruit_set event Dave logged, plus the crop's fruit-set-to-first-pick interval
@@ -323,18 +411,48 @@ function availableAnchors(row, nurseryOffsetDays, siblingHabits = SIBLING_ANCHOR
   // Guarded by BOTH the feature flag and the presence of the column, and — the invariant that makes
   // this safe — it is skipped outright whenever `cal` produced anything, because a planting with a
   // real date must never also carry a derived one.
-  if (derivedEnabled && cal == null && expected != null) {
+  //
+  // V4-ANCHORFLIP-001 layers three further suppressions on top, each stated where its constant is
+  // declared: the habit gate (condition 5), the contradicting-status gate (condition 4) and the
+  // frost window (condition 3). All three narrow ONLY this tier — no other anchor kind changes
+  // behaviour, so with the flag off this whole block remains dead code and the module is
+  // byte-for-byte equivalent to the shipped one.
+  if (derivedEnabled && cal == null && expected != null
+      && DERIVED_ANCHOR_HABITS.has(row?.harvest_habit)
+      && !DERIVED_STATUS_SUPPRESSED.has(row?.status)) {
     const derivedDate = toYmd(row?.derived_anchor_date);
     if (derivedDate != null) {
+      // Condition 7. The derived date is re-based exactly as a calendar date would be, using the
+      // column the derivation says it STANDS FOR (plant_anchor_derivation.anchor_field). Without
+      // this, a from-sow crop whose derived anchor stands for `transplanted_at` opened its watch a
+      // nursery-gap (~31d) later through this path than through the calendar path.
+      const basisField = row?.derived_anchor_field ?? null;
+      const c = applyBasisCorrection(row?.dtm_basis ?? null, basisField, derivedDate, nurseryOffsetDays);
       const lead = leadDaysFor(expected);
-      out.push({
-        kind: 'derived', anchor_date: derivedDate, basis: 'derived-anchor', basis_shifted: false,
-        basis_field: 'derived_anchor_date', expected_days: expected, lead_days: lead,
-        nursery_offset_applied: 0, check_from: addDays(derivedDate, expected - lead),
-        source_plant_id: null,
-        derived_source: row?.derived_anchor_source ?? null,
-        derived_confidence: row?.derived_anchor_confidence ?? null,
-      });
+      const checkFrom = addDays(c.date, expected - lead);
+
+      // Condition 3 — the frost window. Suppression compares the date the watch would OPEN against
+      // the frost anchor, not the anchor date: a row is useless precisely when the thing it invites
+      // Dave to go look for cannot happen before the plant dies.
+      const frost = firstFallFrostFor(etToday ?? derivedDate);
+      const frostCutoff = frost == null ? null : addDays(frost, -DERIVED_FROST_WINDOW_DAYS);
+      const frostSuppressed = checkFrom != null && frostCutoff != null && checkFrom >= frostCutoff;
+
+      if (!frostSuppressed) {
+        out.push({
+          kind: 'derived', anchor_date: c.date, observed_anchor_date: c.observed_date,
+          basis: 'derived-anchor', basis_shifted: c.basis_shifted,
+          basis_field: 'derived_anchor_date', expected_days: expected, lead_days: lead,
+          nursery_offset_applied: c.nursery_offset_applied, check_from: checkFrom,
+          source_plant_id: null,
+          derived_source: row?.derived_anchor_source ?? null,
+          derived_confidence: row?.derived_anchor_confidence ?? null,
+          // The column the derived date stands in for, carried so an audit can see WHICH correction
+          // was applied without re-deriving it. `basis_field` stays 'derived_anchor_date' because
+          // that is where the row's date literally came from — the two answer different questions.
+          derived_anchor_field: basisField,
+        });
+      }
     }
   }
 
@@ -375,23 +493,44 @@ function availableAnchors(row, nurseryOffsetDays, siblingHabits = SIBLING_ANCHOR
 export function resolveWatchAnchor(row, opts = {}) {
   const nurseryOffsetDays = opts.nurseryOffsetDays ?? NURSERY_OFFSET_DAYS_FALLBACK;
   const anchors = availableAnchors(row, nurseryOffsetDays, opts.siblingHabits ?? SIBLING_ANCHOR_HABITS,
-    opts.derivedEnabled ?? DERIVED_ANCHOR_ENABLED);
+    opts.derivedEnabled ?? DERIVED_ANCHOR_ENABLED, toYmd(opts.etToday));
   if (anchors.length === 0) return null;
 
   const byDate = [...anchors].sort((a, b) => (
     a.check_from < b.check_from ? -1 : a.check_from > b.check_from ? 1
       : TIER_RANK[a.kind] - TIER_RANK[b.kind]
   ));
-  const earliest = byDate[0];
+  const earliestAll = byDate[0];
 
   // Strongest anchor already in hand. Before ANY anchor has fired the row is not eligible anyway, so
   // fall back to the earliest — that is the one whose firing will admit it.
   const today = toYmd(opts.etToday);
   const fired = today == null ? [] : anchors.filter((a) => a.check_from <= today);
-  const pool = fired.length > 0 ? fired : [earliest];
+  const pool = fired.length > 0 ? fired : [earliestAll];
   const strongest = [...pool].sort((a, b) => (
     TIER_RANK[a.kind] - TIER_RANK[b.kind] || (a.check_from < b.check_from ? -1 : 1)
   ))[0];
+
+  // V4-ANCHORFLIP-001 condition 6 — the UNCITED-DERIVED-DATE LEAK, and the ONE place the two-question
+  // split above needed narrowing rather than defending.
+  //
+  // THE LEAK. Queue entry takes the earliest anchor; the citation takes the strongest FIRED one. For
+  // the three real anchor kinds that is exactly right and stays untouched — an early calendar anchor
+  // opening a watch that a later sibling pick then explains is two true statements about the same
+  // planting. But a DERIVED anchor is not a fourth kind of observation, it is a date the system made
+  // up, and TIER_RANK deliberately forbids it from ever being cited while a real date exists. The
+  // combination produced a row whose `watching_since` came from the invented date and whose `basis`
+  // cited something else entirely: the consult's Cantaloupe, sliding to Jul 27 while still reading
+  // "sibling picked Aug 8". The two do not reconcile, and `days_watching` inflates by the gap.
+  //
+  // THE RULE. A derived anchor may set `watching_since` only when it is also what the row CITES.
+  // Whenever the citation is real, queue entry is computed over the real anchors alone, so the
+  // displayed date and the stated basis always come from the same resolved anchor.
+  //
+  // NON-CIRCULAR, and a strict no-op with the flag off: `strongest` is computed before this and
+  // never depends on it, and with no derived anchor in `anchors` the filter removes nothing.
+  const entryPool = strongest.kind === 'derived' ? byDate : byDate.filter((a) => a.kind !== 'derived');
+  const earliest = entryPool[0] ?? earliestAll;
 
   return {
     ...strongest,
@@ -653,6 +792,11 @@ export function projectWatchRow(row, verdict, etToday) {
       derived: a.kind === 'derived',
       derived_source: a.derived_source ?? null,
       derived_confidence: a.derived_confidence ?? null,
+      // V4-ANCHORFLIP-001 condition 7: the column the derived date stands in for. Paired with
+      // basis_shifted / nursery_offset_applied above, this is what makes the basis correction
+      // AUDITABLE on the wire — the ~40-char basis string has no room to say it, and a correction
+      // nobody can see is a correction nobody can check.
+      derived_anchor_field: a.derived_anchor_field ?? null,
       alternates: a.alternates ?? [],
     },
     check_from: verdict.check_from,
