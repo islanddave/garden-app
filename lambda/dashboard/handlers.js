@@ -260,6 +260,16 @@ export function queryFavoriteCount(sql, userId) {
 // producing a false POSITIVE; the observation MAXes go UP, SUPPRESSING a genuine stale/harvest alert.
 // Soft-deleted plantings belong to neither class and are already excluded everywhere — a soft-delete
 // is a retraction of the record, an archive is a completion of it.
+//
+// ── BUG-WATERBARARCHIVED-001 — the same predicate exists up to FOUR times per query ──────────────
+// Each actionable query repeats the lifecycle predicate at: (1) the entity_memory rollup arm,
+// (2) the EXISTS eligibility guard, (3) the displayed `plantings` json_agg, and in queryHeadsUp
+// (4) a per-event `gn.id = el.plant_id` filter. rollup-lifecycle.test.js compares (1) against (2)
+// only; copy (3) — the array this row DISPLAYS, and so the one that makes the contradiction visible
+// to the grower — was unpinned, and a mutation dropping archived_at + 'rooting' from it left all 170
+// dashboard tests green. waterbar-archived.test.js now pins ALL sites to one population, by mutual
+// agreement rather than by literal, and alias/count-agnostically so a 5th copy is covered on sight.
+// Edit any one of these and you must edit them together, or that file goes red naming the outlier.
 export function queryActiveProjects(sql, userId) {
   // HOUSEHOLD-MODE: widened at V3-ROLES teardown
   const householdIds = householdScope(userId);
