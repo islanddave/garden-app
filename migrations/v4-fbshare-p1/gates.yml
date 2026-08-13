@@ -54,12 +54,29 @@ post:
     expect: rowcount_eq
     value: 1
 
-  # ON DELETE CASCADE on photo_id: a purged photo takes its share log with it.
-  - name: post_photo_fk_cascade
+  # SUPERSEDED 2026-08-13 by V4-CASCADESWEEP-001 (BUG-SHARELOGCASCADE-001, audit finding I5).
+  #
+  # This gate used to assert ON DELETE CASCADE, on the rationale "a purged photo takes its share log
+  # with it." That decision is reversed, deliberately and with evidence, rather than quietly
+  # allow-listed:
+  #   * lambda/photos/photoDelete.js:14-16 states in prose that a hard photo delete "would SILENTLY
+  #     DESTROY share history via share_log.photo_id (ON DELETE CASCADE)", and its DD4 classification
+  #     records share_log as the ONE ledger pointer that must RETAIN — "a soft delete inside this app
+  #     cannot retract that post, so erasing the local record of it would make the ledger lie.
+  #     RETAIN is a correctness decision, not laziness." The schema and the handler disagreed; the
+  #     handler is right.
+  #   * THE PURGE THE OLD RATIONALE ASSUMED DOES NOT EXIST. Repo-wide, every `DELETE FROM photos` is
+  #     a test teardown; there is no photo-purge job in any deployed bundle. The `orphan_cleaned`
+  #     status is reached by UPDATE in lambda/facebook-share/index.js, never by deleting a photo.
+  #     So nothing was relying on the cascade.
+  #   * share_log holds 0 rows in prod, so the flip changes no behaviour today.
+  # The supported path is unchanged and still works: photoDelete.js SOFT-deletes and retains the
+  # share row. RESTRICT only ever refuses a HARD delete.
+  - name: post_photo_fk_restrict
     sql: |
       SELECT 1 FROM pg_constraint
        WHERE conrelid='public.share_log'::regclass AND contype='f'
-         AND confrelid='public.photos'::regclass AND confdeltype='c'
+         AND confrelid='public.photos'::regclass AND confdeltype='r'
     expect: rowcount_eq
     value: 1
 

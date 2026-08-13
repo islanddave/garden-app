@@ -94,6 +94,9 @@ const NS_HARVEST   = `SELECT id FROM harvest_log WHERE created_by LIKE ${NS} OR 
 // BUG-ENTITYTAGORPHAN-001: locations is a guarded entity_tag parent, so the sweep needs to resolve
 // namespaced locations the same way it resolves the other three.
 const NS_LOCATIONS = `SELECT id FROM locations WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR slug LIKE ${NS}`
+// V4-CASCADESWEEP-001: photos.inventory_item_id is ON DELETE RESTRICT, and inventory_items is swept
+// AFTER photos — so the photos sweep has to be able to resolve namespaced inventory items too.
+const NS_INVENTORY = `SELECT id FROM inventory_items WHERE created_by LIKE ${NS} OR user_id LIKE ${NS} OR name LIKE ${NS} OR variety_id IN (${NS_VARIETIES})`
 
 const SAMPLE_PRED = `created_by LIKE ${NS} OR cultivar_id IN (${NS_VARIETIES}) OR source_event_id IN (${NS_EVENTLOG})`
 
@@ -103,7 +106,14 @@ const SAMPLE_PRED = `created_by LIKE ${NS} OR cultivar_id IN (${NS_VARIETIES}) O
 const STEPS = [
   ['cultivar_weight_void',        `DELETE FROM cultivar_weight_void WHERE created_by LIKE ${NS} OR sample_id IN (SELECT id FROM cultivar_weight_sample WHERE ${SAMPLE_PRED})`],
   ['preservation_log',            `DELETE FROM preservation_log WHERE user_id LIKE ${NS} OR crop_type_slug LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR variety_id IN (${NS_VARIETIES}) OR harvest_log_id IN (${NS_HARVEST})`],
-  ['photos',                      `DELETE FROM photos WHERE created_by LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR project_id IN (${NS_PROJECTS}) OR event_id IN (${NS_EVENTLOG})`],
+  // V4-CASCADESWEEP-001: share_log.photo_id is ON DELETE RESTRICT (it is a LEDGER pointer — a post
+  // to an external page cannot be retracted by deleting our record of it, per photoDelete.js DD4),
+  // so any share row must go before its photo. There was no share_log step here at all.
+  ['share_log',                   `DELETE FROM share_log WHERE requested_by LIKE ${NS} OR photo_id IN (SELECT id FROM photos WHERE created_by LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR project_id IN (${NS_PROJECTS}) OR event_id IN (${NS_EVENTLOG}) OR inventory_item_id IN (${NS_INVENTORY}))`],
+  // inventory_item_id arm added by V4-CASCADESWEEP-001: that FK is now RESTRICT and inventory_items
+  // is swept AFTER this step, so a photo attached ONLY to a namespaced inventory item would have
+  // blocked its parent's delete.
+  ['photos',                      `DELETE FROM photos WHERE created_by LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR project_id IN (${NS_PROJECTS}) OR event_id IN (${NS_EVENTLOG}) OR inventory_item_id IN (${NS_INVENTORY})`],
   ['user_achievements',           `DELETE FROM user_achievements WHERE user_id LIKE ${NS} OR trigger_event_id IN (${NS_EVENTLOG})`],
   ['harvest_log',                 `DELETE FROM harvest_log WHERE created_by LIKE ${NS} OR project_id IN (${NS_PROJECTS}) OR event_id IN (${NS_EVENTLOG})`],
   // cultivar_weight_sample is handled by purgeImmutableSamples() — BEFORE DELETE trigger.

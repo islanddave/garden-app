@@ -1,0 +1,188 @@
+# gates.yml
+# V4-CASCADESWEEP-001 — the four remaining destructive CASCADEs from the V4-SOFTDEL-001 audit.
+# Closes BUG-PHOTOINVCASCADE-001 (I2), BUG-ACHIEVECASCADE-001 (I4), BUG-SHARELOGCASCADE-001 (I5),
+# BUG-FINDINGSCASCADE-001 (I6).
+#
+# SEQUENCING: one file, 0c-constraint.sql. No 0a — nothing needs installing first. Unlike
+# v4-softdelcascade-001 these four need no archive routine: three of the four children are NOT NULL
+# so there is no partial state to preserve, and the fourth (photos) already has photoDelete.js's
+# soft-delete path as its supported route.
+#
+# DEPLOY BOUNDARY — the falsifiable test, answered.
+#   QUESTION: would the CURRENTLY DEPLOYED prod code perform a delete these RESTRICTs reject?
+#   METHOD: all 27 deployed prod Lambda bundles (aws lambda get-function Code.Location, staging
+#   excluded) downloaded and grepped for `DELETE FROM`, against prod at
+#   5c232164616228dfce4f3e669ef8011a2cf7a456 = v4.14.0. Plus a repo-wide grep for
+#   `DELETE FROM achievements` (ZERO hits anywhere — the catalog has never had a delete path).
+#   RESULT: the only real DELETE statements in deployed prod code are `DELETE FROM favorites` and
+#   `DELETE FROM public.entity_memory` (a child-row delete). Nothing deployed hard-deletes
+#   inventory_items, achievements, photos or plants.
+#   IN-DATABASE WRITERS: archive_plant_events() DETACHES photos before deleting events and never
+#   deletes a photo row, so share_log.photo_id is untouched by it.
+#   ANSWER: NO, for all four. Safe to apply before or after a code deploy; no pre/post-deploy split.
+#
+#   COMPANION EDITS in the same commit, for the non-app callers that DO hard-delete:
+#     1. tests/integration/_cleanup.js — the `photos` sweep did not cover inventory_item_id while
+#        `inventory_items` is deleted after it; adds that arm, plus a `share_log` step (there was
+#        none) ahead of photos.
+#     2. deploy-staging.yml smoke purge — the same two gaps (photos :595, inventory_items :605).
+#        0-row no-ops today.
+#     `findings` and `user_achievements` already precede their parents in both sweeps — verified.
+#
+#   NOT AFFECTED, checked rather than assumed: scripts/preflight-photodelete.sh compares the
+#   table.column SET of FKs referencing photos against PHOTO_POINTERS and does NOT compare
+#   confdeltype, so flipping share_log.photo_id's action leaves its prod<->staging parity check and
+#   its constant-sync check untouched.
+#
+# APPLY ORDER CONSEQUENCE FOR CI: gate-invariants.yml runs `--phase post --continuous-only` against
+# BOTH prod and staging and fires on `migrations/**` pushes. The post gates assert the POST-apply
+# state, so this directory must be applied to STAGING AND PROD BEFORE it is pushed.
+#
+# RLS TRAP: photos and plants carry RLS; a role subject to it reports phantom results on the sweep
+# gates below. gate_runner connects with NEON_DATABASE_URL / NEON_STAGING_URL (owner, RLS-exempt,
+# conn.read_only = True). Every count in 0c-constraint.sql's header was measured the same way.
+
+pre:
+  # The defect itself, asserted rather than assumed. Fewer than 4 means this has already been
+  # applied (or the schema is not what was surveyed) — stop and re-survey.
+  - name: pre_four_fks_are_cascade
+    continuous: false   # APPLY-WINDOW ONLY (L-369): asserts the PRE-apply state, false forever after.
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('photos_inventory_item_id_fkey','user_achievements_achievement_id_fkey',
+                         'share_log_photo_id_fkey','findings_garden_node_id_fkey')
+         AND confdeltype = 'c'
+    expect: rowcount_eq
+    value: 4
+
+  # The premise for photos.inventory_item_id specifically: it is an arm of the disjunctive anchor
+  # CHECK, which is what makes SET NULL unavailable and CASCADE the only thing that was ever
+  # standing there. Standing invariant — if the CHECK loses that arm, the rationale in 0c changes
+  # and this migration's reasoning should be re-read before anyone touches the FK again.
+  - name: pre_inventory_item_id_is_an_anchor_check_arm
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'photos_must_have_parent'
+         AND pg_get_constraintdef(oid) LIKE '%inventory_item_id IS NOT NULL%'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  # L-058: every predicate the constraint is about to enforce must ALREADY hold. RESTRICT can only
+  # be added if every existing child value resolves to a live parent — this is the scan the ALTER
+  # performs, run first so a mid-ALTER failure becomes a clean pre-apply stop.
+  #
+  # DELIBERATELY UNFILTERED by deleted_at: a foreign key does not know what a soft delete is.
+  #
+  # VACUITY NOTE, stated honestly: all four FKs are already convalidated = 't', Postgres's own proof
+  # that no dangling child exists on those columns, and 0c changes only the referential ACTION while
+  # keeping the same columns and parents. These gates therefore CANNOT fail for a reason that would
+  # block the ALTER. Kept because they cost nothing and would catch a hand-edited NOT VALID FK — but
+  # the real evidence is post_four_fks_are_validated below.
+  - name: sweep_no_dangling_children_on_the_four_fks
+    sql: |
+      SELECT 1 FROM public.photos x
+       WHERE x.inventory_item_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.inventory_items p WHERE p.id = x.inventory_item_id)
+      UNION ALL
+      SELECT 1 FROM public.user_achievements x
+       WHERE NOT EXISTS (SELECT 1 FROM public.achievements p WHERE p.id = x.achievement_id)
+      UNION ALL
+      SELECT 1 FROM public.share_log x
+       WHERE NOT EXISTS (SELECT 1 FROM public.photos p WHERE p.id = x.photo_id)
+      UNION ALL
+      SELECT 1 FROM public.findings x
+       WHERE NOT EXISTS (SELECT 1 FROM public.plants p WHERE p.id = x.garden_node_id)
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # THE FIX, asserted. Standing invariant: once these are RESTRICT they stay RESTRICT, and this gate
+  # is what makes a silent revert (a hand-run 0r, a restore from an older snapshot, a future
+  # migration recreating an FK from a stale definition) fail loudly instead of quietly re-arming.
+  - name: post_four_fks_are_restrict
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('photos_inventory_item_id_fkey','user_achievements_achievement_id_fkey',
+                         'share_log_photo_id_fkey','findings_garden_node_id_fkey')
+         AND confdeltype = 'r'
+    expect: rowcount_eq
+    value: 4
+
+  # VALIDATED, not merely present. An FK added NOT VALID enforces new writes but never proves the
+  # existing rows conform — it would satisfy the gate above while leaving the dangling question
+  # open. This is the gate carrying the safety claim the sweep gates only gesture at.
+  - name: post_four_fks_are_validated
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('photos_inventory_item_id_fkey','user_achievements_achievement_id_fkey',
+                         'share_log_photo_id_fkey','findings_garden_node_id_fkey')
+         AND convalidated
+    expect: rowcount_eq
+    value: 4
+
+  # THE DELIBERATE ASYMMETRY, pinned. user_achievements.trigger_event_id stays SET NULL while
+  # achievement_id (same table) becomes RESTRICT: the badge is protected, its provenance pointer is
+  # not, because nulling provenance costs no user-visible data and rewards are never clawed back
+  # (V4-EVTCASCADE-001's policy, restated by V4-SOFTDELCASCADE-001). Without this gate the pair
+  # reads like an oversight and a future sweep "fixes" it.
+  - name: post_trigger_event_id_deliberately_still_set_null
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'user_achievements_trigger_event_id_fkey'
+         AND confdeltype = 'n'
+    expect: rowcount_eq
+    value: 1
+
+  # THE CLASS GATE. The V4-SOFTDEL-001 audit had to enumerate destructive FKs by hand to find these
+  # four; this makes the next one fail automatically. The invariant: **no FK in public may CASCADE
+  # into a table that carries `deleted_at`.** A table with deleted_at has declared itself
+  # soft-delete-only, so a CASCADE into it is a contradiction inside the schema, whatever the app
+  # layer does.
+  #
+  # ITS COVERAGE IS NARROWER THAN THIS MIGRATION, and saying so is the point — an overstated gate is
+  # how "a guard already covers this" becomes false (L-367). Of the four FKs flipped here it covers
+  # only TWO: findings and photos carry deleted_at; `share_log` and `user_achievements` do not
+  # (they are append-only ledger/award tables and were never soft-deletable). Those two are pinned
+  # individually by post_four_fks_are_restrict above and have no class-level protection.
+  #
+  # A BROADER criterion was measured and rejected: keying on deleted_at OR created_by OR user_id
+  # matches 8 FKs, needs a 5-entry allow-list of things that SHOULD cascade
+  # (notification_subscriptions.user_id, plant_anchor_derivation.plant_id, spacetheme.space_id,
+  # inactive_project_dismissals x2) — and still misses share_log, which carries none of the three.
+  # A gate with more exemptions than findings asserts less, not more.
+  #
+  # ALLOW-LIST = derived caches and closure rows, rebuilt from live data, correct to die with their
+  # parent. Each is a real decision recorded in a prior migration, not an exemption of convenience.
+  # NOT allow-listed and NOT in scope: spacetheme.space_id cascades off `spaces`, which has no
+  # deleted_at at all — that is V4-SPACESOFTDEL-001 (audit I8), still open.
+  - name: post_no_cascade_onto_a_soft_deletable_table
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE c.contype = 'f'
+         AND c.confdeltype = 'c'
+         AND EXISTS (SELECT 1 FROM pg_attribute a
+                      WHERE a.attrelid = c.conrelid AND a.attname = 'deleted_at'
+                        AND NOT a.attisdropped)
+         AND c.conname NOT IN (
+               -- Derived caches and closure rows: rebuilt from live data, correct to cascade.
+               'entity_memory_plant_id_fkey','entity_memory_project_id_fkey',
+               'entity_memory_location_id_fkey',
+               'container_closure_ancestor_id_fkey','container_closure_descendant_id_fkey',
+               'inactive_project_dismissals_project_id_fkey'
+             )
+    expect: rowcount_eq
+    value: 0
+
+  # continuous: false — the apply-time receipt, which cannot be self-armed without becoming
+  # tautological. Same call every prior migration in this family makes for its own version row.
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '4.23.9-cascadesweep-001'
+    expect: rowcount_eq
+    value: 1
