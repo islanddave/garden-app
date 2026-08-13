@@ -8,6 +8,9 @@ import SeverityBadge from '../components/SeverityBadge.jsx'
 import { EVENT_TYPE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
+// DD9 / W-EVTDEL adoption: the disclose-and-offer delete confirm (shared with ProjectDetail's
+// event rows — the two delete surfaces must stay behaviorally identical).
+import EventDeleteConfirm from '../components/photo/EventDeleteConfirm.jsx'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from '../components/forms'
 import { PROJECTS_HIDDEN, EVENT_REANCHOR_ENABLED, WATER_DEPTH_EDIT_ENABLED } from '../lib/featureFlags.js'
 // V4-WATERMATH-001 F0 — the amount class is correctable from history (flag-gated; see featureFlags).
@@ -81,6 +84,7 @@ export default function EventDetail() {
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   useEffect(() => {
     // V4-UNSCOPEDROUTES-001: the event record is the source of truth for its project — the
@@ -268,8 +272,17 @@ export default function EventDetail() {
     setSaving(false)
   }
 
+  // DD9 / W-EVTDEL adoption: the header Delete tap ARMS the EventDeleteConfirm sheet (rendered at
+  // the bottom of this page); this function runs only from that sheet's Delete button. The DELETE
+  // call is byte-identical to the window.confirm era — only the confirm step changed, and with it
+  // the copy: the old "Delete this event permanently?" was untruthful, this route has been
+  // SOFT-delete-only since 2026-06-10 (deleted_at; photos detach + re-parent, BUG-EVTCASCADE-001).
+  // photoCount/coverFor ride the component defaults (0 / []) for now: neither GET /api/events/:id
+  // nor any live endpoint reports an event's photos or cover usage, so the offer cannot yet be
+  // populated — and the component's UNCHECKED default (no photo write) is exactly what this DELETE
+  // already does, so no behavior is promised that doesn't happen. When the photo plumbing lands,
+  // wire photoCount/coverFor here and honor onConfirm's { deletePhotos } via DELETE /api/photos/:id.
   async function handleDelete() {
-    if (!window.confirm('Delete this event permanently?')) return
     setDeleting(true)
     try {
       await fetch('/api/events/' + eventId, { method: 'DELETE' })
@@ -279,6 +292,7 @@ export default function EventDetail() {
     } catch (e) {
       setError(e.message)
       setDeleting(false)
+      setConfirmingDelete(false) // close the sheet so the inline ErrorBanner is visible
     }
   }
 
@@ -318,7 +332,7 @@ export default function EventDetail() {
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => shareEntity({ title: event.title || event.event_type.replace(/_/g, ' '), url: window.location.href })} aria-label="Share this event" style={outlineBtn}>Share</button>
             <button onClick={startEdit} style={outlineBtn}>Edit</button>
-            <button onClick={handleDelete} disabled={deleting} style={{ ...outlineBtn, color: P.terra, borderColor: P.terra }}>
+            <button onClick={() => setConfirmingDelete(true)} disabled={deleting} style={{ ...outlineBtn, color: P.terra, borderColor: P.terra }}>
               {deleting ? '…' : 'Delete'}
             </button>
           </div>
@@ -585,6 +599,15 @@ export default function EventDetail() {
           />
         </div>
       )}
+
+      {/* DD9 / W-EVTDEL: kept mounted-open with busy={deleting} while the write is in flight, per
+          the component's contract — never closed optimistically over a request that may fail. */}
+      <EventDeleteConfirm
+        open={confirmingDelete}
+        busy={deleting}
+        onCancel={() => setConfirmingDelete(false)}
+        onConfirm={handleDelete}
+      />
     </Shell>
   )
 }
