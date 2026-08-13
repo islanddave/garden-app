@@ -438,7 +438,9 @@ export default function EventNew() {
   const [harvestError, setHarvestError] = useState(null)
   // BUG-LOGTARGETREQ-001 per-crop unit: true once the user explicitly picks a unit for the CURRENT
   // entry — the per-crop re-seed effect below must never override a deliberate in-entry choice.
-  // Reset wherever the entry resets (type change, resetForNext).
+  // Reset wherever the entry resets (type change, resetForNext) AND on a planting SWAP
+  // (BUG-HARVUNITSTICKY-001 / BD-012): a pick made under planting A is evidence about A's crop,
+  // not about whatever planting replaces it — see the re-seed effect for the swap semantics.
   const unitTouchedRef = useRef(false)
 
   // V4-FLAG-001: flag-mode state (event_type='flag_issue'). Severity is REQUIRED; the issue is a
@@ -556,8 +558,23 @@ export default function EventNew() {
   // permitted here because a wrong unit is visible beside the quantity and user-confirmable —
   // unlike the removed planting seed, it never silently targets a write. Never fires over an
   // explicit in-entry unit pick (unitTouchedRef); a cleared planting falls back to the global key.
+  // BUG-HARVUNITSTICKY-001 (BD-012): the touched guard is scoped to the planting it was set UNDER.
+  // Pre-fix it was entry-scoped — reset on type change and post-save but never on a plant_id
+  // change — so "cup" picked for blueberries survived a mid-entry swap to cucumber and shipped a
+  // wrong-unit row (the same crop×unit corruption class the per-crop key exists to stop). A swap
+  // OFF a real planting now clears the guard so the new planting seeds through the exact chain a
+  // fresh selection uses. Deliberately NOT cleared on the FIRST selection (prev = no planting):
+  // a unit picked before any planting is chosen is planting-agnostic intent, pinned by the
+  // 'never overrides an explicit in-entry unit choice' case. The prev-plant ref exists because
+  // this effect also re-fires on plantsForProject identity changes (refetch) and type flips —
+  // neither of which is a swap, and neither may clobber an explicit pick.
+  const unitSeedPlantRef = useRef(form.plant_id)
   useEffect(() => {
-    if (form.event_type !== 'harvest' || unitTouchedRef.current) return
+    if (form.event_type !== 'harvest') return
+    const prevPlant = unitSeedPlantRef.current
+    unitSeedPlantRef.current = form.plant_id
+    if (prevPlant && prevPlant !== form.plant_id) unitTouchedRef.current = false
+    if (unitTouchedRef.current) return
     // V4-HARVUNITDEFAULT-001: both halves come off the SAME variety_ref, so a planting with no
     // variety (3 live on prod) or an unmapped crop type yields undefined for both and the chain
     // degrades to exactly the pre-change behavior rather than to some other crop's unit.
@@ -1607,8 +1624,10 @@ export default function EventNew() {
                     <Select
                       id="harvest-unit"
                       value={harvest.unit}
-                      // BUG-LOGTARGETREQ-001: an explicit pick pins the unit for THIS entry — the
-                      // per-crop re-seed effect must not override it on a later planting change.
+                      // BUG-LOGTARGETREQ-001: an explicit pick pins the unit — the per-crop
+                      // re-seed effect must not override it while the target stays put.
+                      // BUG-HARVUNITSTICKY-001: the pin is per-PLANTING, not per-entry — swapping
+                      // to a different planting un-pins it and the unit re-seeds for the new crop.
                       onChange={e => { unitTouchedRef.current = true; setHarvest(h => ({ ...h, unit: e.target.value })) }}
                       aria-label="Harvest unit"
                       style={{ minHeight: 44, minWidth: 44 }}
