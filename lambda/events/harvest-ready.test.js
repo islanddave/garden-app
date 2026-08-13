@@ -121,6 +121,33 @@ describe('harvest-ready SQL shape', () => {
     expect(candidates).toMatch(/c\.created_by = ANY\(\$\{householdIds\}\)/);
   });
 
+  // R5 / panel Q7 interim win #2 (read half): a candidate under an ACTIVE "not yet" dismissal is
+  // excluded. Same active-row predicate the watch read path uses (watch-route.js dismissed CTE);
+  // live data cannot exercise it yet (no writer can create a post-pick dismissal), so a dropped
+  // predicate would pass every behavioural test — exactly the class this file guards.
+  it('excludes candidates under an active "not yet" dismissal', () => {
+    expect(candidates).toMatch(/NOT EXISTS/);
+    expect(candidates).toMatch(/public\.harvest_watch_dismissal d/);
+    expect(candidates).toMatch(/d\.undone_at IS NULL/);
+    expect(candidates).toMatch(/d\.suppressed_until IS NULL/);
+    expect(candidates).toMatch(/d\.suppressed_until > \(NOW\(\) AT TIME ZONE \$\{HARVEST_TZ\}\)::date/);
+  });
+
+  // A dismissal records who OBSERVED, not who owns: Jen dismissing a row must not clear Dave's
+  // band (both observations are independently valid calibration samples — watch-route.js).
+  it('dismissal exclusion is observer-scoped (user_id), not household-scoped', () => {
+    expect(candidates).toMatch(/d\.user_id = \$\{userId\}/);
+  });
+
+  // SUPERSESSION GUARD — the delta from the watch CTE, and the predicate that keeps the shipped
+  // season-long (suppressed_until NULL) watch-era dismissals from permanently hiding a planting
+  // from this band the moment its first harvest lands. A pick logged after the observation
+  // restarts the cadence and supersedes the "not yet"; strictly-greater so a same-day
+  // pick+dismissal resolves in favor of showing.
+  it('a pick on/after the dismissal day lifts the suppression (observed_on > last_date)', () => {
+    expect(candidates).toMatch(/d\.observed_on > lp\.last_date/);
+  });
+
   it('returns candidates only — the eligibility predicate is NOT duplicated in SQL', () => {
     // Single source of truth: src/lib/harvestReadiness.js decides. If these ever appear here the
     // predicate has two homes and they will drift.

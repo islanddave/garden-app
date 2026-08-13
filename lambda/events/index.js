@@ -912,6 +912,27 @@ export const handler = async (event) => {
     //     no-op for non-positive intervals, so rows the pure client predicate is responsible for
     //     rejecting (NULL interval, `single` habit) still arrive unchanged — and a NEGATIVE
     //     days_since (future-dated pick) still passes through for the client to reject, as before.
+    //   * "Not yet" suppression (R5 / panel Q7 interim win #2 — the READ half). A candidate under
+    //     an ACTIVE dismissal in public.harvest_watch_dismissal is excluded, with the same active
+    //     predicate the watch read path uses (undone_at IS NULL AND (suppressed_until IS NULL OR
+    //     suppressed_until > today)) and the same OBSERVER scope (d.user_id — a dismissal records
+    //     who LOOKED; Jen dismissing must not clear Dave's band, per the watch route's rationale).
+    //     Two deliberate deltas from the watch CTE:
+    //       - SUPERSESSION GUARD: only a dismissal observed STRICTLY AFTER the last pick counts
+    //         (d.observed_on > lp.last_date). A pick logged after a "not yet" restarts the cadence
+    //         and supersedes the observation — without this, the season-long (suppressed_until
+    //         NULL) watch-era dismissals would permanently hide a planting from this band the
+    //         moment its first harvest lands, the exact trains-disbelief failure R5's exit exists
+    //         to remove. Same-day pick+dismissal resolves in favor of showing (the pick wins).
+    //       - No season_start filter: the guard above is strictly tighter for this band (a pick
+    //         resets it), so a second time fence would be dead weight.
+    //     WRITE PATH STATUS: no route can yet CREATE a dismissal for a ready-band row — the
+    //     existing POST /api/harvests/watch/dismissals validates candidacy against the WATCH list,
+    //     whose classifier rejects any planting with a prior pick ('already_harvested'), and its
+    //     anchor_kind CHECK has no ready-band vocabulary. So this predicate cannot match a
+    //     displayable candidate today (watch dismissals only exist on zero-pick plantings); it is
+    //     the read-side contract the ready-band dismissal writer lands into, shipped first so the
+    //     exclusion is already enforced the day that writer exists.
     if (rawPath === '/api/events/harvest-ready' && method === 'GET') {
       const rows = await sql`
         WITH last_pick AS (
@@ -948,6 +969,15 @@ export const handler = async (event) => {
             OR ct.repeat_interval_days <= 0
             OR ((NOW() AT TIME ZONE ${HARVEST_TZ})::date - lp.last_date)
                  <= ${HARVEST_STALE_INTERVAL_CEILING} * ct.repeat_interval_days
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM public.harvest_watch_dismissal d
+            WHERE d.plant_id = p.id
+              AND d.user_id = ${userId}
+              AND d.undone_at IS NULL
+              AND d.observed_on > lp.last_date
+              AND (d.suppressed_until IS NULL
+                   OR d.suppressed_until > (NOW() AT TIME ZONE ${HARVEST_TZ})::date)
           )
       `;
       const meta = await sql`
