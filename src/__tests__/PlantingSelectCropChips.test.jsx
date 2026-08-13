@@ -200,7 +200,11 @@ describe('V4-CROPFILTER-001 — the filter can never be invisible', () => {
     open()
     fireEvent.click(chip('More ▾'))
     fireEvent.click(chip('Squash'))
-    fireEvent.click(chip('Less ▴'))
+    // V4-CROPFILTERLAYOUT-001 (BD-011) collapse-on-select rider: selecting a tray-only chip now
+    // collapses the tray ITSELF — the manual 'Less ▴' tap this test used to perform. The
+    // invariant pinned here is unchanged and still the point: the ACTIVE filter chip must stay
+    // visible after the collapse (the §1b invisible-filter trap).
+    expect(chip('More ▾')).toBeTruthy()
     expect(chip('Squash').getAttribute('aria-pressed')).toBe('true')
   })
 
