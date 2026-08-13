@@ -25,8 +25,10 @@ const D = '2026-07-22';
 
 describe('A0.2 resolveInvokeOptions', () => {
   it('EventBridge nightly payload + env live -> live run, default date (byte-identical nightly)', () => {
+    // flagOverrides:null on a live run is part of the contract (A0.4): the nightly's RUN behavior is
+    // unchanged — run() treats null exactly as the pre-A0.4 absence of the parameter.
     expect(resolveInvokeOptions(EVENTBRIDGE, { envDryRun: 'false', todayDefault: D }))
-      .toEqual({ dryRun: false, today: D, ping: false });
+      .toEqual({ dryRun: false, today: D, ping: false, flagOverrides: null });
   });
   it('EventBridge nightly payload + env dry -> dry run', () => {
     expect(resolveInvokeOptions(EVENTBRIDGE, { envDryRun: 'true', todayDefault: D }).dryRun).toBe(true);

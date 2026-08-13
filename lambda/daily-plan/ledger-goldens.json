@@ -1,0 +1,489 @@
+{
+ "evening-soak-wi1": {
+  "note": "(a) 19:00 Normal on wi=1: legacy re-dues next morning, ledger does not",
+  "off": {
+   "dave": {
+    "counts": {
+     "plantings": 2,
+     "water_due": 2,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "ctl",
+      "days_since": 9,
+      "interval": 3,
+      "overdue_by": 6
+     },
+     {
+      "id": "ev1",
+      "days_since": 1,
+      "interval": 1,
+      "overdue_by": 0
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  },
+  "on": {
+   "dave": {
+    "counts": {
+     "plantings": 2,
+     "water_due": 1,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "ctl",
+      "days_since": 9,
+      "interval": 3,
+      "overdue_by": 6,
+      "d": 9.33,
+      "confidence": "HIGH"
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  }
+ },
+ "deep-vs-normal-inground": {
+  "note": "(b) same in-ground planting pair, Deep banks and crosses later than Normal",
+  "off": {
+   "dave": {
+    "counts": {
+     "plantings": 2,
+     "water_due": 0,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  },
+  "on": {
+   "dave": {
+    "counts": {
+     "plantings": 2,
+     "water_due": 0,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  }
+ },
+ "rain-week-resurfaces": {
+  "note": "(d) a week of qualifying rain floors D at 0; planting resurfaces once it stops",
+  "off": {
+   "dave": {
+    "counts": {
+     "plantings": 1,
+     "water_due": 1,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "rw",
+      "days_since": 25,
+      "interval": 3,
+      "overdue_by": 22
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  },
+  "on": {
+   "dave": {
+    "counts": {
+     "plantings": 1,
+     "water_due": 1,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "rw",
+      "days_since": 25,
+      "interval": 3,
+      "overdue_by": 4,
+      "d": 7.08,
+      "confidence": "HIGH"
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  }
+ },
+ "heatwave-fixed-ref": {
+  "note": "(e) 14 flat hot days: demand stays >1 all wave; bag ramp reads weather_daily.tmax_f",
+  "off": {
+   "dave": {
+    "counts": {
+     "plantings": 1,
+     "water_due": 0,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  },
+  "on": {
+   "dave": {
+    "counts": {
+     "plantings": 1,
+     "water_due": 1,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "hw",
+      "days_since": 2,
+      "interval": 3,
+      "overdue_by": 0,
+      "d": 3.76,
+      "confidence": "HIGH"
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  }
+ },
+ "degraded-no-weather": {
+  "note": "(f) empty weather_daily: demand 1.0 flat, weather_degraded driver + one-step tier demotion, run does not blank",
+  "off": {
+   "dave": {
+    "counts": {
+     "plantings": 1,
+     "water_due": 1,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "dg",
+      "days_since": 9,
+      "interval": 3,
+      "overdue_by": 6
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  },
+  "on": {
+   "dave": {
+    "counts": {
+     "plantings": 1,
+     "water_due": 1,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "dg",
+      "days_since": 9,
+      "interval": 3,
+      "overdue_by": 6,
+      "d": 9.33,
+      "confidence": "MEDIUM"
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  }
+ },
+ "never-watered": {
+  "note": "(g) no watering history: the never:true/no_history path is byte-identical",
+  "off": {
+   "dave": {
+    "counts": {
+     "plantings": 1,
+     "water_due": 0,
+     "no_history": 1,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [],
+    "no_history": [
+     "nv"
+    ],
+    "rain_skipped": []
+   }
+  },
+  "on": {
+   "dave": {
+    "counts": {
+     "plantings": 1,
+     "water_due": 0,
+     "no_history": 1,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [],
+    "no_history": [
+     "nv"
+    ],
+    "rain_skipped": []
+   }
+  }
+ },
+ "snooze-today": {
+  "note": "(h) due planting with a moisture_check this morning drops out of water_due",
+  "off": {
+   "dave": {
+    "counts": {
+     "plantings": 1,
+     "water_due": 1,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "sz",
+      "days_since": 9,
+      "interval": 3,
+      "overdue_by": 6
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  },
+  "on": {
+   "dave": {
+    "counts": {
+     "plantings": 1,
+     "water_due": 0,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  }
+ },
+ "satcap-supremacy": {
+  "note": "heavy soak outranks a ledger-due verdict -> rain_skipped saturated, D-gated (not dW-gated)",
+  "off": {
+   "dave": {
+    "counts": {
+     "plantings": 2,
+     "water_due": 0,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 2,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [],
+    "no_history": [],
+    "rain_skipped": [
+     {
+      "id": "sat",
+      "saturated": true,
+      "sat_kind": "soak"
+     },
+     {
+      "id": "fresh",
+      "saturated": true,
+      "sat_kind": "soak"
+     }
+    ]
+   }
+  },
+  "on": {
+   "dave": {
+    "counts": {
+     "plantings": 2,
+     "water_due": 0,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 1,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [],
+    "no_history": [],
+    "rain_skipped": [
+     {
+      "id": "sat",
+      "saturated": true,
+      "sat_kind": "soak",
+      "d": 9.33
+     }
+    ]
+   }
+  }
+ },
+ "live-combo-confidence": {
+  "note": "researched scopes + known vessel + weather -> HIGH; genus fallback -> LOW; 2 snoozes demote",
+  "off": {
+   "dave": {
+    "counts": {
+     "plantings": 3,
+     "water_due": 3,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "hi",
+      "days_since": 9,
+      "interval": 3,
+      "overdue_by": 6
+     },
+     {
+      "id": "lo",
+      "days_since": 9,
+      "interval": 3,
+      "overdue_by": 6
+     },
+     {
+      "id": "dm",
+      "days_since": 9,
+      "interval": 3,
+      "overdue_by": 6
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  },
+  "on": {
+   "dave": {
+    "counts": {
+     "plantings": 3,
+     "water_due": 3,
+     "no_history": 0,
+     "fertilize": 0,
+     "pest": 0,
+     "cold": 0,
+     "dormant": 0,
+     "rain_skipped": 0,
+     "dormancy_suppressed": 0
+    },
+    "water_due": [
+     {
+      "id": "hi",
+      "days_since": 9,
+      "interval": 3,
+      "overdue_by": 6,
+      "d": 9.33,
+      "confidence": "HIGH"
+     },
+     {
+      "id": "lo",
+      "days_since": 9,
+      "interval": 3,
+      "overdue_by": 6,
+      "d": 9.33,
+      "confidence": "LOW"
+     },
+     {
+      "id": "dm",
+      "days_since": 9,
+      "interval": 3,
+      "overdue_by": 1,
+      "d": 4.21,
+      "confidence": "MEDIUM"
+     }
+    ],
+    "no_history": [],
+    "rain_skipped": []
+   }
+  }
+ }
+}

@@ -325,18 +325,39 @@ describe('the substrate can never take down the nightly plan', () => {
     expect(msgs).toContain('weather_daily read failed — ledger degrades to demand 1.0');
   });
 
-  it('the stored plan payload is byte-identical whether the ledger flag is on or off', async () => {
-    // F1 ships substrate ONLY. generatePlan has no `weatherDaily` parameter yet, so passing one must
-    // change nothing that lands in daily_plan. If this ever goes red, F2 has leaked into F1's ship.
+  it('the stored plan payload is byte-identical with the flag OFF, whatever weather_daily holds', async () => {
+    // F1's original pin was "flag ON == flag OFF" because generatePlan had no weatherDaily parameter
+    // yet. F2 consumed the seam, so flag ON now legitimately CHANGES the plan (that is the feature —
+    // its deltas are pinned by ledger-engine.test.js + the committed ledger goldens). What must hold
+    // forever is the OFF half: with the flag off, neither weather_daily contents nor their absence
+    // may move a byte of the stored payload.
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const off = await drive();
-    vi.stubEnv('CARE_WATER_LEDGER_ENABLED', 'true');
-    const on = await drive({ pgOpts: { weatherRows: [{ date: YESTERDAY, et0_in: 0.193 }] } });
+    const offWithRows = await drive({ pgOpts: { weatherRows: [{ date: YESTERDAY, et0_in: 0.193 }] } });
     const items = (pg) => planWrites(pg).map((c) => {
       const o = JSON.parse(c.params[2]);
       delete o.generated_at;
       return o;
     });
-    expect(items(on.pg)).toEqual(items(off.pg));
+    expect(items(offWithRows.pg)).toEqual(items(off.pg));
+  });
+
+  it('flag ON, the ledger key appears on due water items — F2 is armed, not decorative', async () => {
+    // The falsifiability half of the rewritten pin above: flag ON with an empty event window makes
+    // the fixture planting hard-due through the ledger path, and every due item carries the additive
+    // `ledger` payload key (d / due_at / wi_eff / confidence / drivers) with INTEGER calendar keys
+    // beside it — the (e->>'overdue_by')::int contract at dashboard handlers.js:433.
+    vi.stubEnv('CARE_WATER_LEDGER_ENABLED', 'true');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { pg } = await drive();
+    const due = planWrites(pg).flatMap((c) => JSON.parse(c.params[2]).water_due || []);
+    expect(due.length).toBeGreaterThan(0);
+    for (const w of due) {
+      expect(w.ledger).toBeTruthy();
+      expect(['HIGH', 'MEDIUM', 'LOW']).toContain(w.ledger.confidence);
+      expect(Number.isInteger(w.overdue_by)).toBe(true);
+      expect(Number.isInteger(w.days_since)).toBe(true);
+      expect(Number.isInteger(w.interval)).toBe(true);
+    }
   });
 });
