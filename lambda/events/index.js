@@ -26,6 +26,7 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES } from './validators.js';
 import { isEventOwned } from './eventOwnership.js';
+import { loadEventPhotos } from './eventPhotos.js';
 import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
@@ -1875,7 +1876,19 @@ export const handler = async (event) => {
         // The two owner columns exist to decide ownership, not to be part of the wire contract —
         // stripped so this GET's response shape is byte-identical to what it returned before.
         const { project_owner_id: _po, plant_owner_id: _pn, ...detail } = rows[0];
-        return resp(200, detail);
+        // V4-EVTDELCONFIRM-001: the event's live photos + cover usage, for the DD9 delete-confirm
+        // sheet (see eventPhotos.js for the shape and every scoping decision). Additive key.
+        // BEST-EFFORT, deliberately: runs after both ownership gates, and a failure here must not
+        // take down the event read itself — a missing `photos` degrades the sheet to its unchecked
+        // default (no photo write), which is exactly the pre-DD9 behavior, while a 500 would make
+        // the event unviewable over an enrichment. The annotateDone (daily-plan-read) precedent.
+        let photos = [];
+        try {
+          photos = await loadEventPhotos(sql, eventId, householdIds);
+        } catch (e) {
+          console.error('event-photos read (non-fatal):', e?.message ?? String(e));
+        }
+        return resp(200, { ...detail, photos });
       }
 
       // DELETE /api/events/:id — single-event undo. SOFT-DELETE ONLY (deleted_at; never

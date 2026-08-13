@@ -56,6 +56,32 @@ function generateSlug(name, startDate) {
   return `${slugify(name)}-${year}`
 }
 
+// V4-EVTDELCONFIRM-001 — coverFor for the confirm sheet: the union of every photo's cover_for
+// entries, deduped by entity (one planting covered by two of the event's photos must be named
+// ONCE — the disclosure names parents, not photo-parent pairs). Duplicated verbatim in
+// EventDetail.jsx: this lane's file budget is the two callsites + lambda + tests, so no shared
+// lib module; the two copies must not diverge (same rule as the sheet itself).
+function coverForFromPhotos(photos) {
+  const seen = new Set()
+  const out = []
+  for (const ph of photos ?? []) {
+    for (const c of ph.cover_for ?? []) {
+      const key = `${c.type}:${c.id}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ id: c.id, name: c.name })
+    }
+  }
+  return out
+}
+
+// The partial-failure report, shared copy across both delete surfaces (see confirmEventDelete's
+// header comment for the continue-and-report decision this narrates).
+function photoDeleteFailureCopy(failed, total) {
+  if (total === 1) return 'The event was deleted, but its photo could not be deleted — it is still in your garden photos.'
+  return `The event was deleted, but ${failed} of ${total} photos could not be deleted — they are still in your garden photos.`
+}
+
 // I7 fix (2026-05-18, V1.2a-3 Increment C / PR-C2): STATUS_COLORS replaced by
 // shared getStatusColors() from src/lib/status.js (single source of truth across
 // Dashboard / ProjectList / ProjectDetail).
@@ -97,6 +123,11 @@ export default function ProjectDetail() {
   const [deletingId,    setDeletingId]    = useState(null)
   // DD9 / W-EVTDEL: the event id armed for deletion — non-null renders the confirm sheet.
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState(null)
+  // V4-EVTDELCONFIRM-001: the armed event's photos, lazily fetched on the delete tap — keyed by
+  // event id so a slow response for an abandoned arm can never populate a DIFFERENT event's sheet.
+  const [confirmPhotoInfo, setConfirmPhotoInfo] = useState(null) // { evId, photos } | null
+  // Partial photo-delete failure report (continue-and-report; see confirmEventDelete).
+  const [deleteErr, setDeleteErr] = useState(null)
   const logFormRef = useRef(null)
 
   // V2-PHOTO-F1 Session 2: staged photo for inline mini-event-logger. Mirrors
@@ -306,19 +337,50 @@ export default function ProjectDetail() {
   }
 
   // DD9 / W-EVTDEL adoption — same sheet, same confirm/cancel semantics as EventDetail's delete
-  // (the two event-delete surfaces must not diverge). The row's × tap ARMS the sheet; the DELETE
-  // fires only from its Delete button and is byte-identical to the window.confirm era. See
-  // EventDetail.handleDelete for why photoCount/coverFor stay at the component defaults for now.
+  // (the two event-delete surfaces must not diverge). The row's × tap ARMS the sheet; the event
+  // DELETE fires only from its Delete button and is byte-identical to the window.confirm era.
+  //
+  // V4-EVTDELCONFIRM-001 — the photo path is now REACHABLE, via a LAZY per-event read: the project
+  // events list deliberately carries no photo data (no list bloat for a rarely-used path), so the
+  // single-event GET — which now reports photos + cover usage, see lambda/events/eventPhotos.js —
+  // is fetched only when a delete is armed. One read per delete-tap. Non-blocking (the sheet opens
+  // instantly; the offer populates when the read lands) and non-fatal (a failed read degrades to
+  // the component defaults 0/[], i.e. the unchecked default — no offer is safer than a wrong one,
+  // and the delete itself is never blocked).
   function handleDeleteEvent(evId) {
     setConfirmDeleteEventId(evId)
+    setDeleteErr(null)
+    setConfirmPhotoInfo(null)
+    fetch('/api/events/' + evId)
+      .then(ev => setConfirmPhotoInfo({ evId, photos: ev?.photos ?? [] }))
+      .catch(() => setConfirmPhotoInfo({ evId, photos: [] }))
   }
 
-  async function confirmEventDelete() {
+  // { deletePhotos } honored with the SAME semantics as EventDetail.handleDelete (the two surfaces
+  // must not diverge — same order, same copy, same failure posture):
+  //   • UNCHECKED (the asserted default) is the pre-DD9 behavior EXACTLY — server-side detach +
+  //     re-parent; no photo write fires from this client.
+  //   • CHECKED fires the live DELETE /api/photos/:id per photo, ONLY after the event DELETE
+  //     succeeded. W-DEL soft deletes — recoverable from Recently deleted, as the sheet promises.
+  //   • PARTIAL FAILURE is continue-and-report: independent idempotent deletes, so one failure
+  //     must not strand the rest; a failed delete leaves that photo exactly where the unchecked
+  //     path leaves all of them (live in the gallery). Reported as an honest count in the banner
+  //     above the timeline; the event delete itself still refreshes the list.
+  async function confirmEventDelete({ deletePhotos } = {}) {
     const evId = confirmDeleteEventId
     if (!evId || deletingId) return
+    const photos = confirmPhotoInfo?.evId === evId ? confirmPhotoInfo.photos : []
     setDeletingId(evId)
     try {
       await fetch('/api/events/' + evId, { method: 'DELETE' })
+      if (deletePhotos && photos.length > 0) {
+        // busy={deletingId != null} keeps the sheet up and disabled across these too.
+        const results = await Promise.allSettled(
+          photos.map(p => fetch('/api/photos/' + p.id, { method: 'DELETE' }))
+        )
+        const failed = results.filter(r => r.status === 'rejected').length
+        if (failed > 0) setDeleteErr(photoDeleteFailureCopy(failed, photos.length))
+      }
       await refreshEvents()
     } catch (e) {
       console.error('delete event failed', e)
@@ -495,6 +557,10 @@ export default function ProjectDetail() {
   if (loading) return <Shell><Spinner block /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
   if (!project) return null
+
+  // V4-EVTDELCONFIRM-001: the armed event's photos — only when the lazy read's id still matches
+  // the armed id (a stale response for an abandoned arm must never populate another event's sheet).
+  const confirmPhotos = confirmPhotoInfo?.evId === confirmDeleteEventId ? confirmPhotoInfo.photos : []
 
 
   return (
@@ -994,6 +1060,10 @@ export default function ProjectDetail() {
           </form>
         )}
 
+        {/* V4-EVTDELCONFIRM-001: the continue-and-report surface for a partial photo-delete
+            failure — same copy as EventDetail's banner (the two surfaces must not diverge). */}
+        {deleteErr && <ErrorBanner style={{ marginBottom: 12 }}>{deleteErr}</ErrorBanner>}
+
         {eventsLoading ? (
           <div style={{ padding: '24px 0', textAlign: 'center', color: P.light, fontSize: '0.875rem' }}>Loading…</div>
         ) : events.length === 0 ? (
@@ -1020,9 +1090,12 @@ export default function ProjectDetail() {
       </div>
 
       {/* DD9 / W-EVTDEL: kept mounted-open with busy while the write is in flight, per the
-          component's contract — never closed optimistically over a request that may fail. */}
+          component's contract — never closed optimistically over a request that may fail.
+          V4-EVTDELCONFIRM-001: photoCount/coverFor now populated from the lazy per-event read. */}
       <EventDeleteConfirm
         open={confirmDeleteEventId != null}
+        photoCount={confirmPhotos.length}
+        coverFor={coverForFromPhotos(confirmPhotos)}
         busy={deletingId != null}
         onCancel={() => setConfirmDeleteEventId(null)}
         onConfirm={confirmEventDelete}
