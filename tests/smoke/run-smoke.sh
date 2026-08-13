@@ -657,18 +657,18 @@ else
         echo "⚠️  WARN [write:ux-events] STAGING_API_UX_EVENTS unset/placeholder — ux-events assert NOT run"
       fi
 
-      # ── J) Critter award flow (write→read-back + idempotency) ─────────────────────
-      # POST /api/critters awards a critter row anchored to a plant-bearing event.
-      # Per mvp-critter-pre-build-revision-V001-20260528 §2 (Lambda) + §3.27 (UNIQUE INDEX
-      # idempotency). species_id=255 is the SMOKE_SENTINEL (revision §2.6) — out of the
-      # MVP 1-8 pool so future CHECK constraints catch leakage. L-058 sweep below also
-      # nukes species_id=255 rows.
-      # Gating per revision §2.6 / L-109: HARD-FAIL once Lambda is deployed; graceful skip
-      # only on first-deploy (placeholder URL) so the wiring round-trip can complete.
+      # ── J) Critter routes — retirement contract + surviving read surface ─────────────
+      # POST /api/critters was RETIRED on 2026-08-12 (BUG-CRITTERAPIUNGATED-001): it granted a
+      # critter_state row for ANY event with no event_type gate and no roll, and the CALLER
+      # picked the species. Awards now come ONLY from the server-side hook on POST /events
+      # (deterministic_seed, pickSpecies, NON_REWARD-gated) — a seeded roll, so a single event
+      # does NOT deterministically create a row and no assert here may demand one.
+      # This section now asserts the retirement HOLDS (a resurrected unsafe route = FAIL) and
+      # that the surviving read surface stays healthy.
       if [[ -n "${STAGING_API_CRITTERS:-}" && "$STAGING_API_CRITTERS" != *placeholder* ]]; then
         if [[ -n "$CREATED_PLANT_ID" ]]; then
           CLERK_JWT=$(mint_session_token)
-          # Step 1: create a plant-anchored event (the critter\'s source_event_id must have plant_id != NULL).
+          # Step 1: a plant-anchored event still writes cleanly (the hook's entry path).
           C_EV_BODY=$(mktemp)
           C_EV_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
             -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
@@ -679,95 +679,56 @@ else
           if [[ "${C_EV_HTTP:0:1}" == "2" && -n "$CRITTER_SRC_EVENT_ID" ]]; then
             echo "✅ PASS [crud:POST /events (critter source)] HTTP $C_EV_HTTP"
             PASS=$((PASS+1))
-
-            # Step 2: POST /api/critters — first call should 201.
-            C_BODY=$(mktemp)
-            C_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
-              -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
-              -o "$C_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters" \
-              -d "{\"source_event_id\": \"$CRITTER_SRC_EVENT_ID\", \"plant_id\": \"$CREATED_PLANT_ID\", \"species_id\": 255}") || C_HTTP="000"
-            CRITTER_ID=$(jq -r '.critter.id // empty' "$C_BODY" 2>/dev/null || echo "")
-            CRITTER_FIRST_IDEM=$(jq -r '.idempotent // false' "$C_BODY" 2>/dev/null || echo "false")
-            rm -f "$C_BODY"
-            # Phase B++ (2026-05-30) added a server-side critter-award hook on POST /events
-            # with plant_id. Result: the events POST above already created the critter row,
-            # so this explicit POST hits the UNIQUE-INDEX idempotency path → HTTP 200 +
-            # .idempotent=true. Accept either shape; downstream species_id/target_id
-            # readback + second-POST same-row idempotency assertions still cover the contract.
-            if [[ "$C_HTTP" == "201" && -n "$CRITTER_ID" ]]                || [[ "$C_HTTP" == "200" && "$CRITTER_FIRST_IDEM" == "true" && -n "$CRITTER_ID" ]]; then
-              echo "✅ PASS [crud:POST /critters] HTTP $C_HTTP (id: $CRITTER_ID, idempotent=$CRITTER_FIRST_IDEM)"
-              PASS=$((PASS+1))
-
-              # Step 3: GET /api/critters/:id → assert target_id == plant.
-              # Per Phase B++ (2026-05-30): if the first POST returned 200+idempotent=true the
-              # row was created by the server-side events-Lambda hook, which calls pickSpecies()
-              # and ignores caller-supplied species_id. Only assert species_id == 255 (smoke
-              # sentinel) on the legacy 201 path. The target_id assertion is the load-bearing
-              # check either way — verifies the critter is anchored to our smoke plant.
-              if [[ "$C_HTTP" == "201" ]]; then
-                assert_readback "write:critter-species-readback" \
-                  "${STAGING_API_CRITTERS%/}/api/critters/${CRITTER_ID}" ".critter.species_id" "255"
-              else
-                echo "ℹ️  SKIP [write:critter-species-readback] hook-created row uses pickSpecies — sentinel 255 not applicable"
-              fi
-              assert_readback "write:critter-target-readback" \
-                "${STAGING_API_CRITTERS%/}/api/critters/${CRITTER_ID}" ".critter.target_id" "$CREATED_PLANT_ID"
-
-              # Step 4: idempotency — POST again with SAME source_event_id → 200 + idempotent flag.
-              # Per revision §3.27 + Lambda 23505 catch path. Closes the multi-user concurrent-write race surface.
-              C_IDEM_BODY=$(mktemp)
-              C_IDEM_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
-                -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
-                -o "$C_IDEM_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters" \
-                -d "{\"source_event_id\": \"$CRITTER_SRC_EVENT_ID\", \"plant_id\": \"$CREATED_PLANT_ID\", \"species_id\": 255}") || C_IDEM_HTTP="000"
-              IDEM=$(jq -r '.idempotent // false' "$C_IDEM_BODY" 2>/dev/null || echo "false")
-              IDEM_ID=$(jq -r '.critter.id // empty' "$C_IDEM_BODY" 2>/dev/null || echo "")
-              rm -f "$C_IDEM_BODY"
-              if [[ "$C_IDEM_HTTP" == "200" && "$IDEM" == "true" && "$IDEM_ID" == "$CRITTER_ID" ]]; then
-                echo "✅ PASS [write:critter-idempotency] same source_event_id returns SAME row (id=$IDEM_ID, idempotent=true)"
-                PASS=$((PASS+1))
-              else
-                echo "❌ FAIL [write:critter-idempotency] HTTP $C_IDEM_HTTP idempotent=$IDEM id=$IDEM_ID (expected $CRITTER_ID)"
-                FAIL=$((FAIL+1))
-              fi
-
-              # Step 5: collection readback — GET /api/critters/collection.
-              # Stickerbook Phase 2 (laughing-sleepy-gauss 2026-05-31). Per-USER scope
-              # per Dave's directive. Asserts: HTTP 200 + species[] is an array + the
-              # species_id we just wrote appears in the response with count >= 1.
-              # Defensive: every jq is wrapped (route 400/empty body would make .species[]
-              # iterate-null with exit-5 under set -e + pipefail without these guards).
-              C_OUR_SP_BODY=$(mktemp)
-              C_OUR_SP_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
-                -X GET -H "Authorization: Bearer $CLERK_JWT" \
-                -o "$C_OUR_SP_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters/${CRITTER_ID}") || C_OUR_SP_HTTP="000"
-              C_OUR_SPECIES=$(jq -r '.critter.species_id // empty' "$C_OUR_SP_BODY" 2>/dev/null || echo "")
-              rm -f "$C_OUR_SP_BODY"
-              C_COL_BODY=$(mktemp)
-              C_COL_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
-                -X GET -H "Authorization: Bearer $CLERK_JWT" \
-                -o "$C_COL_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters/collection") || C_COL_HTTP="000"
-              C_COL_SHAPE=$(jq -r '(.species | type) // "missing"' "$C_COL_BODY" 2>/dev/null || echo "missing")
-              C_COL_LEN=$(jq -r '(.species | length) // 0' "$C_COL_BODY" 2>/dev/null || echo "0")
-              C_COL_OUR_COUNT="0"
-              if [[ -n "$C_OUR_SPECIES" && "$C_COL_SHAPE" == "array" ]]; then
-                FOUND=$(jq -r --argjson sid "$C_OUR_SPECIES" '(.species // []) | map(select(.species_id == $sid)) | .[0].count // 0' "$C_COL_BODY" 2>/dev/null || echo "0")
-                C_COL_OUR_COUNT="${FOUND:-0}"
-              fi
-              rm -f "$C_COL_BODY"
-              if [[ "$C_COL_HTTP" == "200" && "$C_COL_SHAPE" == "array" && "${C_COL_OUR_COUNT:-0}" -ge 1 ]]; then
-                echo "✅ PASS [write:critter-collection-readback] HTTP $C_COL_HTTP species[]=array len=$C_COL_LEN our_species=$C_OUR_SPECIES count=$C_COL_OUR_COUNT"
-                PASS=$((PASS+1))
-              else
-                echo "❌ FAIL [write:critter-collection-readback] HTTP $C_COL_HTTP shape=$C_COL_SHAPE len=$C_COL_LEN our_species=$C_OUR_SPECIES count=${C_COL_OUR_COUNT:-0}"
-                FAIL=$((FAIL+1))
-              fi
-            else
-              echo "❌ FAIL [crud:POST /critters] HTTP $C_HTTP (id=$CRITTER_ID)"
-              FAIL=$((FAIL+1))
-            fi
           else
             echo "❌ FAIL [crud:POST /events (critter source)] HTTP $C_EV_HTTP"
+            FAIL=$((FAIL+1))
+          fi
+
+          # Step 2: the retired route must STAY retired — 404, no critter row, no id.
+          C_BODY=$(mktemp)
+          C_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+            -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$C_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters" \
+            -d "{\"source_event_id\": \"$CRITTER_SRC_EVENT_ID\", \"plant_id\": \"$CREATED_PLANT_ID\", \"species_id\": 255}") || C_HTTP="000"
+          C_RETIRED_ID=$(jq -r '.critter.id // empty' "$C_BODY" 2>/dev/null || echo "")
+          rm -f "$C_BODY"
+          if [[ "$C_HTTP" == "404" && -z "$C_RETIRED_ID" ]]; then
+            echo "✅ PASS [retire:POST /critters stays 404] caller-picks-species route is gone"
+            PASS=$((PASS+1))
+          else
+            echo "❌ FAIL [retire:POST /critters stays 404] HTTP $C_HTTP id=$C_RETIRED_ID — the ungated award route is BACK (BUG-CRITTERAPIUNGATED-001)"
+            FAIL=$((FAIL+1))
+          fi
+
+          # Step 3: surviving read surface — collection GET stays 200 with array shape.
+          # No count assertion: hook awards are a seeded roll, so row existence is not
+          # deterministic from one smoke event.
+          C_COL_BODY=$(mktemp)
+          C_COL_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+            -X GET -H "Authorization: Bearer $CLERK_JWT" \
+            -o "$C_COL_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters/collection") || C_COL_HTTP="000"
+          C_COL_SHAPE=$(jq -r '(.species | type) // "missing"' "$C_COL_BODY" 2>/dev/null || echo "missing")
+          C_COL_LEN=$(jq -r '(.species | length) // 0' "$C_COL_BODY" 2>/dev/null || echo "0")
+          rm -f "$C_COL_BODY"
+          if [[ "$C_COL_HTTP" == "200" && "$C_COL_SHAPE" == "array" ]]; then
+            echo "✅ PASS [read:critter-collection] HTTP $C_COL_HTTP species[]=array len=$C_COL_LEN"
+            PASS=$((PASS+1))
+          else
+            echo "❌ FAIL [read:critter-collection] HTTP $C_COL_HTTP shape=$C_COL_SHAPE"
+            FAIL=$((FAIL+1))
+          fi
+
+          # Step 4: active-critters read stays healthy too (Garden ambient surface reads it).
+          C_ACT_BODY=$(mktemp)
+          C_ACT_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+            -X GET -H "Authorization: Bearer $CLERK_JWT" \
+            -o "$C_ACT_BODY" -w "%{http_code}" "${STAGING_API_CRITTERS%/}/api/critters/active") || C_ACT_HTTP="000"
+          rm -f "$C_ACT_BODY"
+          if [[ "$C_ACT_HTTP" == "200" ]]; then
+            echo "✅ PASS [read:critters-active] HTTP $C_ACT_HTTP"
+            PASS=$((PASS+1))
+          else
+            echo "❌ FAIL [read:critters-active] HTTP $C_ACT_HTTP"
             FAIL=$((FAIL+1))
           fi
         else
