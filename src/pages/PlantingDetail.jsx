@@ -28,6 +28,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 const EVENT_FETCH_LIMIT = 200
 const EVENT_PAGE_SIZE = 50
 import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useOverlayNavigate } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { resolvePager, resolveSwipe } from '../lib/plantingSequence.js'
@@ -72,6 +73,7 @@ export default function PlantingDetail() {
   const [savingFeatured, setSavingFeatured] = useState(null)  // V4-PHOTOFEATURE-001: photo id in flight
   const ux = useUxFlow(FLOWS.OPEN_PLANTING)
   const navigate = useNavigate()
+  const overlayNavigate = useOverlayNavigate()
   // PLANTING-PAGER refs: commit-lock (ignore paging until the target settles), a deferred
   // focus-move to the pager after a paged planting loads, the pager DOM node, and swipe start.
   const navLockRef = useRef(false)
@@ -543,6 +545,33 @@ export default function PlantingDetail() {
             {unarchiving ? 'Working…' : 'Unarchive'}
           </button>
         )}
+        {/* V4-QUICKLOG-001 (R10, ATTESTED 14:52Z): "I definitely want a quick log button right
+            there… It doesn't have to be prominent." A quiet secondary affordance — same visual
+            weight as Edit beside it, NOT a FAB and NOT the primary QuickActions row — that opens
+            the EXISTING /log flow (EventNew) prefilled to THIS planting via the shipped
+            ?project=&plant= deep-link contract (the same producer HarvestReadyBand/QuickActions
+            use; pinned by a4c8c2b I-2). No event_type: this is a general log, Dave picks the type.
+            NAVIGATES only — never a one-tap POST, no toast/celebration (Reward-UX: task-required
+            action). minHeight 44 per the house touch floor (deliberately not btnGhost's ~34px).
+            Project param omitted when the planting has none (V4-UNSCOPEDROUTES-001 CaptureFlow
+            rows) — a literal project=undefined would poison EventNew's deep-link seed. */}
+        <button
+          type="button"
+          onClick={() => overlayNavigate(pl.project_id
+            ? `/log?project=${pl.project_id}&plant=${pl.id}`
+            : `/log?plant=${pl.id}`)}
+          aria-label="Log an event for this planting"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            backgroundColor: P.white, color: P.green,
+            border: `1px solid ${P.greenLight}`, borderRadius: 8,
+            padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
+            minHeight: 44, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+          }}
+        >
+          <Icon name="nav.plus" size={16} decorative style={{ color: P.green }} />
+          Log
+        </button>
         {/* V3-EDIT-001: edit affordance — deep-links to the Garden PlantingEditor for this planting. */}
         <Link
           to={`/garden?edit=${plantingId}`}
