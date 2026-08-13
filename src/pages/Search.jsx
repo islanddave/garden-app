@@ -89,6 +89,7 @@ export default function Search() {
     setVoice('listening')
     voiceRef.current = startLiveTranscription({
       languageCode: 'en-US',
+      debugLabel: 'Search',   // BUG-VOICEDUPE-002 — names this surface in /admin/voice-debug
       onResult: ({ transcript }) => { if (transcript) setQ(transcript) },
       onError: () => { voiceRef.current = null; setVoice('error') },
       onEnd: ({ finalTranscript }) => { if (finalTranscript) setQ(finalTranscript); voiceRef.current = null; setVoice('idle') },

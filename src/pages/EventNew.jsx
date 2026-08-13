@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { takePendingCapture } from '../lib/pendingCapture.js'
+import { createFinalResultReader } from '../lib/voiceResults.js'
+import { recordVoiceEvent, recordVoiceMark } from '../lib/voiceDebug.js'
 import { saveFileToDevice } from '../lib/saveFileToDevice.js'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
@@ -201,7 +203,18 @@ function useVoiceInput() {
 
   const start = useCallback((key, onResult) => {
     if (!supported) return
-    recRef.current?.stop()
+
+    // BUG-VOICEDUPE-002 (b): the outgoing recognizer must be MUTED, not merely stopped. `stop()` is
+    // a graceful shutdown — it asks the engine to finalize, which can dispatch one more onresult on
+    // the OLD instance. That handler still closes over the OLD onResult, so it appends into the same
+    // field the new session is about to append to. Detaching first makes the handover silent.
+    const prev = recRef.current
+    if (prev) {
+      prev.onresult = null
+      prev.onend    = null
+      prev.onerror  = null
+      try { prev.stop() } catch { /* already dead */ }
+    }
 
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     const rec = new SR()
@@ -209,14 +222,33 @@ function useVoiceInput() {
     rec.interimResults = false
     rec.lang          = 'en-US'
 
+    // BUG-VOICEDUPE-002 (a) — THE ROOT CAUSE, and the reason BUG-VOICEDUPE-001's fix could not
+    // work. This hook does NOT go through src/lib/transcribe.js, so the dedupe shipped there never
+    // covered this path — and this is the path Dave dictates notes on.
+    //
+    // The old handler was `const text = e.results[0][0].transcript; onResult(text)`. It read a FIXED
+    // index, ignoring event.resultIndex, while three of the four MicBtn call sites APPEND
+    // (`f.notes ? f.notes + ' ' + text : text`). event.results is cumulative for the session, so the
+    // moment the engine dispatches a second onresult — which Chrome on Android does even with
+    // continuous=false, when it segments an utterance or revises a settled final — index 0 is read
+    // and appended a SECOND time. Duplicated words the user never said, "often, not always",
+    // because whether a second dispatch happens is cadence-dependent.
+    //
+    // createFinalResultReader() carries a high-water mark, so each result index is emitted at most
+    // once per recognizer no matter how many events visit it.
+    const readNewFinals = createFinalResultReader()
     rec.onresult = (e) => {
-      const text = e.results[0][0].transcript
-      onResult(text)
+      recordVoiceEvent(`EventNew:${key}`, e)
+      for (const text of readNewFinals(e)) onResult(text)
     }
-    rec.onend  = () => { setListening(false); setFieldKey(null) }
-    rec.onerror = () => { setListening(false); setFieldKey(null) }
+    rec.onend  = () => { recordVoiceMark(`EventNew:${key}`, 'end'); setListening(false); setFieldKey(null) }
+    rec.onerror = (e) => {
+      recordVoiceMark(`EventNew:${key}`, 'error', e && e.error)
+      setListening(false); setFieldKey(null)
+    }
 
     recRef.current = rec
+    recordVoiceMark(`EventNew:${key}`, 'start')
     rec.start()
     setListening(true)
     setFieldKey(key)

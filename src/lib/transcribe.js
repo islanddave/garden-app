@@ -46,6 +46,8 @@
  * an awaited async boundary.
  */
 
+import { recordVoiceEvent, recordVoiceMark } from './voiceDebug.js'
+
 export const START_TIMEOUT_MS = 3500
 export const NO_SPEECH_TIMEOUT_MS = 8000
 
@@ -84,6 +86,9 @@ export function startLiveTranscription(opts = {}) {
     onEnd             = noop,
     startTimeoutMs    = START_TIMEOUT_MS,
     noSpeechTimeoutMs = NO_SPEECH_TIMEOUT_MS,
+    // BUG-VOICEDUPE-002: names this session in the /admin/voice-debug capture so a recorded
+    // sequence can be traced back to the surface that produced it. Inert unless the flag is on.
+    debugLabel        = 'transcribe',
   } = opts
 
   const Ctor = getSpeechRecognitionCtor()
@@ -150,11 +155,15 @@ export function startLiveTranscription(opts = {}) {
 
   recognition.onstart = () => {
     started = true
+    recordVoiceMark(debugLabel, 'start')
     if (startWatchdog !== null) { clearTimeout(startWatchdog); startWatchdog = null }
     armNoSpeechWatchdog()
   }
 
   recognition.onresult = (event) => {
+    // BUG-VOICEDUPE-002: capture the RAW event BEFORE any interpretation, so the recorded
+    // sequence is ground truth about the browser rather than about this file's reading of it.
+    recordVoiceEvent(debugLabel, event)
     // Any result resets the no-speech watchdog (user is speaking).
     armNoSpeechWatchdog()
     const results = event.results || []
@@ -181,6 +190,7 @@ export function startLiveTranscription(opts = {}) {
   recognition.onerror = (event) => {
     clearWatchdogs()
     const err = (event && event.error) || 'failed'
+    recordVoiceMark(debugLabel, 'error', err)
     const code =
         err === 'not-allowed'          ? 'denied'
       : err === 'service-not-allowed'  ? 'denied'
@@ -196,6 +206,7 @@ export function startLiveTranscription(opts = {}) {
     clearWatchdogs()
     if (endedFired) return
     endedFired = true
+    recordVoiceMark(debugLabel, 'end', `finalTranscript=${JSON.stringify(finalTranscript)}`)
     if (cancelled) return
     try { onEnd({ finalTranscript }) } catch {}
   }

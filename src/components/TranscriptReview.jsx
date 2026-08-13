@@ -144,6 +144,7 @@ export default function TranscriptReview({
     let accumulated = ''
     liveHandleRef.current = startLiveTranscription({
       languageCode:      'en-US',
+      debugLabel:        'TranscriptReview:speak',   // BUG-VOICEDUPE-002 — names this surface in /admin/voice-debug
       startTimeoutMs:    START_TIMEOUT_MS,
       noSpeechTimeoutMs: NO_SPEECH_TIMEOUT_MS,
       onResult: ({ transcript, isFinal }) => {
