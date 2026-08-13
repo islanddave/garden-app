@@ -192,8 +192,31 @@ export default function BottomNav() {
     setShowCreate(false)
   }
 
+  // BUG-SIGNOUTBACKRACE-001 — the ONE navigating row in this sheet that is not a SheetRowLink, and
+  // therefore the one path the consume-on-navigate gate did not cover when the sheets started
+  // arming (v4.13.0, BD-009 / BUG-BACKNAVMORE-001).
+  //
+  // THE RACE. closeMore() unmounts the Sheet → useDismissable cleanup → disarm() → history.back().
+  // A traversal is ASYNC, so it races the replace-navigate below, and BOTH orderings were wrong:
+  //   - signOut() deferred (production-dominant — a real network round trip): back() commits first,
+  //     so the replace lands on the entry BENEATH the marker. The user reaches '/', but the tab they
+  //     came from has been overwritten — it is gone from the back stack.
+  //   - signOut() immediate (offline, already signed out, fast reject): the replace lands on the
+  //     marker entry first and the queued back() then walks the user one entry BACKWARD, off '/' and
+  //     onto a stale authed route while signed out.
+  //
+  // THE FIX is the gate SheetRowLink already uses, applied here at CLICK TIME — synchronously,
+  // before the first await can interleave and before closeMore()'s effects can run. Consuming the
+  // marker with a replace makes disarm() a no-op by its own guard (it fires back() only while the
+  // marker is still current), so exactly one history write remains on either ordering. Deliberately
+  // NOT a timing hack: nothing here depends on when signOut() settles, so both orderings converge.
+  // The trailing navigate stays unconditional — it is what lands an UNARMED sign-out (flag off, no
+  // provider), and re-replacing '/' with '/' when the gate did fire is inert.
   async function handleSignOutConfirmed() {
     closeMore()
+    if (typeof window !== 'undefined' && window.history && readMarker(window.history.state)) {
+      navigate('/', { replace: true })
+    }
     await signOut()
     navigate('/', { replace: true })
   }

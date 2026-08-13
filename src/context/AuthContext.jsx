@@ -1,7 +1,13 @@
-import { createContext, useContext, useEffect } from 'react'
+// The DEFAULT React import is required to render this provider under vitest: the unit run falls
+// back to the CLASSIC JSX transform (React.createElement), so a file that relies on the automatic
+// runtime throws "React is not defined" the moment a test mounts it. Every other rendered .jsx in
+// src/ already carries it; this one never did because nothing had mounted it until
+// clientPrefs.test.jsx. Inert in the production build, which uses the automatic runtime.
+import React, { createContext, useContext, useEffect } from 'react'
 import { useUser, useClerk } from '@clerk/react'
 import { invalidateAll as invalidateDataCache } from '../lib/dataCache.js'
 import { useCacheLifecycle } from '../hooks/useCacheLifecycle.js'
+import { clearClientPrefs } from '../lib/clientPrefs.js'
 import { POST_LOGIN_ROUTE } from '../lib/constants.js'
 
 const AuthContext = createContext(null)
@@ -44,7 +50,15 @@ export function AuthProvider({ children }) {
     }
   }
 
+  // V4-RANKCLEAR-001 — the ONE sign-out funnel in the app (BottomNav's confirm row is its only
+  // caller), so the client-preference clear belongs here rather than at the call site.
+  //
+  // BEFORE the await, deliberately. Clerk's signOut may navigate, and anything after the await is
+  // therefore not guaranteed to run — which would leave the leak in place on exactly the paths that
+  // matter. The cost of the other ordering is that a FAILED sign-out also resets these prefs; they
+  // are presentation-only and rebuild from normal use within days, so that is the cheaper failure.
   async function signOut() {
+    clearClientPrefs()
     await clerkSignOut()
   }
 

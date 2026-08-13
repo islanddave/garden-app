@@ -222,15 +222,23 @@ export const DISMISS_REGISTRY_ENABLED = true
 
 // V4-BACKNAV-001 Slice 3a — the Android system Back is arbitrated by the dismiss registry, so Back
 // and Escape resolve to the SAME surface. One provider-owned marker per modal session (not one per
-// surface). Opted in via `armsBack` at 8 surfaces:
+// surface). Opted in via `armsBack` at, originally, 8 surfaces:
 // PlantingDetail Details, both Harvests pickers, Lightbox, CareNeeded bulk, TransplantDatePrompt,
-// AddSeeds row edit, SowNow sow sheet, PhotoModal.
+// AddSeeds row edit, SowNow sow sheet, PhotoModal — plus BottomNav's two sheets since v4.13.0
+// (next paragraph). `grep -rn armsBack src/` is the live list; this one is a summary.
 //
-// NOT BottomNav, though an earlier draft of this comment said so: every row in both its sheets
-// closes the sheet AND navigates, which orphans the pushed entry and costs a second Back forever on
-// the app's most frequent path. As of Slice 3a that exclusion is MECHANISED, not conventional: the
-// `armsBack` prop defaults FALSE, so BottomNav's two Sheets never arm even though they register.
-// See src/lib/backNav.js for the rule.
+// BottomNav's two sheets were EXCLUDED in Slice 3a and ARE INCLUDED AS OF v4.13.0
+// (BD-009 / BUG-BACKNAVMORE-001). The exclusion was real: every row in both sheets closes the sheet
+// AND navigates, so a plain push from an armed sheet strands the marker entry mid-stack — a
+// permanent dead Back on the app's most frequent path. Its cost was the shipped bug: Back over an
+// open sheet navigated the tab underneath instead of closing the sheet.
+// The orphaning is now solved on the NAVIGATION side rather than by refusing to arm: every
+// navigating row is a SheetRowLink (BottomNav.jsx), which replace-navigates when the session marker
+// is the current entry, collapsing that entry into the destination. Sign-out — the one row that is
+// not a SheetRowLink — applies the same gate at click time (BUG-SIGNOUTBACKRACE-001).
+// `armsBack` still DEFAULTS FALSE, so arming remains opt-in per render site; what changed is that
+// these two sheets now opt in. See src/lib/backNav.js for the rule and
+// src/__tests__/BottomNav.backNav.test.jsx for the pins.
 //
 // Scoped to an opaque history.state marker, NOT a URL. Needing a history entry is not the same as
 // needing a URL: a transient action menu must be poppable by Back but must never be deep-linkable
