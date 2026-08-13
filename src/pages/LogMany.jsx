@@ -240,7 +240,7 @@ export default function LogMany() {
     try {
       // V4-WATERMATH-001 F0 — batch metadata contract with the events Lambda (W-F0-LAMBDA):
       //   metadata            applied to EVERY row in the batch
-      //   metadata_overrides  { [plant_id]: {...} } merged OVER metadata for that row only
+      //   plant_metadata      { [plant_id]: {...} } merged OVER metadata for that row only
       // The server merges these on top of its own hardcoded {batch_id, batch_v} rather than
       // replacing it — batch_id is what the durable undo (DELETE /api/events/batch/:id) resolves
       // against, so an override that clobbered it would strand the batch.
@@ -256,7 +256,7 @@ export default function LogMany() {
         ...(eventDate ? { event_date: eventDate } : {}),
         ...(depthApplies ? { metadata: waterDepthMetadata(batchDepth, batchDepthTouched) } : {}),
         ...(overrideEntries.length ? {
-          metadata_overrides: Object.fromEntries(
+          plant_metadata: Object.fromEntries(
             overrideEntries.map(([plantId, depth]) => [plantId, waterDepthMetadata(depth, true)]),
           ),
         } : {}),

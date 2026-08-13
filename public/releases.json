@@ -1,5 +1,23 @@
 [
   {
+    "version": "4.11.0",
+    "date": "2026-08-12",
+    "highlights": [
+      "Today no longer says “All set — no watering needed” above a full watering list. The headline and the plant list now read the same rain thresholds, so they cannot disagree again, and forecast rain no longer talks you out of watering a container.",
+      "New “Worth checking” list on Today: a short list of plantings whose window may be opening, phrased as a prompt to go look rather than a claim that something is ready. Tap “Not yet” to clear a row — with an undo if you mis-tap.",
+      "Watering now records how much: Light, Normal or Deep, preset to Normal. Works on a single log and on Log Many, where you can set one amount for the batch and override any row.",
+      "New “Soil check” event for when you look at a plant and it does not need water. It counts as attention paid — today’s list clears — but earns nothing, so it can never be farmed.",
+      "You can delete a photo now, and get it back: deleting tells you plainly if it is a cover photo, never removes it from anywhere silently, and everything lands in a new Recently deleted page you can restore from.",
+      "Fixed a live bug where moving a photo to a different planting left the old one showing a cover photo it no longer had.",
+      "The app starts faster and stops flashing white on the way in — the opening screen now waits for the app to actually be ready instead of a fixed timer, and paints immediately on a cold start.",
+      "The plantings list loads roughly 190× faster on the screens that open it, including every time you open a log form.",
+      "Event history no longer stops at 50 — you can page back through a planting’s full log.",
+      "The harvest unit now pre-selects your crop’s usual unit, so logging in the wrong unit is harder.",
+      "Notes moved to the bottom of the log form, collapsed, so Save is closer to your thumb.",
+      "Removed the Plants | Photos switch from Garden — Photos has its own place in the menu."
+    ]
+  },
+  {
     "version": "4.10.0",
     "date": "2026-08-12",
     "highlights": [

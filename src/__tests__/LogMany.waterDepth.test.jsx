@@ -76,7 +76,7 @@ describe('LogMany — ONE batch-level chip', () => {
     await renderReady()
     await confirm()
     expect(batchPosts[0].metadata).toEqual({ water_depth: 'normal', water_depth_source: 'default' })
-    expect(batchPosts[0].metadata_overrides).toBeUndefined()
+    expect(batchPosts[0].plant_metadata).toBeUndefined()
   })
 
   it('the tapped batch chip reaches the batch POST as a user choice', async () => {
@@ -101,7 +101,7 @@ describe('LogMany — per-row override', () => {
     }
   })
 
-  it('tapping a row chip reveals that row\'s chips, and the pick rides in metadata_overrides', async () => {
+  it('tapping a row chip reveals that row\'s chips, and the pick rides in plant_metadata', async () => {
     await renderReady()
     await openReviewList()
     fireEvent.click(screen.getByTestId('row-depth-toggle-pl-2'))
@@ -116,7 +116,7 @@ describe('LogMany — per-row override', () => {
 
     await confirm()
     expect(batchPosts[0].metadata).toEqual({ water_depth: 'normal', water_depth_source: 'default' })
-    expect(batchPosts[0].metadata_overrides).toEqual({
+    expect(batchPosts[0].plant_metadata).toEqual({
       'pl-2': { water_depth: 'light', water_depth_source: 'user' },
     })
   })
@@ -129,7 +129,7 @@ describe('LogMany — per-row override', () => {
     fireEvent.click(await screen.findByTestId('row-depth-toggle-pl-1'))
     fireEvent.click(screen.getByTestId('row-depth-pl-1-normal'))
     await confirm()
-    expect(batchPosts[0].metadata_overrides).toBeUndefined()
+    expect(batchPosts[0].plant_metadata).toBeUndefined()
   })
 
   it('an override on an EXCLUDED planting never reaches the POST', async () => {
@@ -143,7 +143,7 @@ describe('LogMany — per-row override', () => {
     fireEvent.click(await screen.findByText(/^Log watered on 1$/))
     await waitFor(() => expect(batchPosts.length).toBe(1))
     expect(batchPosts[0].exclude_plant_ids).toEqual(['pl-2'])
-    expect(batchPosts[0].metadata_overrides).toBeUndefined()
+    expect(batchPosts[0].plant_metadata).toBeUndefined()
   })
 })
 
@@ -156,7 +156,7 @@ describe('LogMany — non-watering batches carry no class', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^Log fertilized .* on 2$/ }))
     await waitFor(() => expect(batchPosts.length).toBe(1))
     expect(batchPosts[0].metadata).toBeUndefined()
-    expect(batchPosts[0].metadata_overrides).toBeUndefined()
+    expect(batchPosts[0].plant_metadata).toBeUndefined()
   })
 })
 
