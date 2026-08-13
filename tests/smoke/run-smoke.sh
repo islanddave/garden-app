@@ -417,6 +417,30 @@ else
         FAIL=$((FAIL+1))
       fi
 
+      # ── E) Events PUT metadata has-key round-trip (V4-WATERMATH-001 F0 edit half, L-108) ────
+      # The PUT metadata arm landed 2026-08-12: an explicit object REPLACES the column, an ABSENT
+      # key PRESERVES it (the stale-PWA-bundle clobber class, cf. BUG-EVENTEDITFIELDS-001), and
+      # the stored value reads back on GET. Reuses block C's event. NOTE: notes is full-replace
+      # legacy grammar on PUT, so both PUTs re-send it deliberately. water_depth vocabulary is
+      # the edge whitelist in lambda/events/validators.js ('light'|'normal'|'deep' / 'user'|'default');
+      # the l108_marker key rides the historic pass-through and gives a run-unique preserve assert.
+      if [[ -n "${CREATED_EVENT_ID:-}" ]]; then
+        CLERK_JWT=$(mint_session_token)
+        auth_request "write:PUT /events/$CREATED_EVENT_ID metadata" \
+          "${STAGING_API_EVENTS%/}/api/events/${CREATED_EVENT_ID}" "PUT" \
+          "{\"notes\": \"CI smoke — safe to delete\", \"metadata\": {\"water_depth\": \"deep\", \"water_depth_source\": \"user\", \"l108_marker\": \"$TEST_RUN_ID\"}}" >/dev/null || true
+        assert_readback "write:event-metadata-readback" \
+          "${STAGING_API_EVENTS%/}/api/events/${CREATED_EVENT_ID}" ".metadata.water_depth" "deep"
+        # Metadata-FREE PUT must NOT clobber the stored object (has-key: absent preserves).
+        auth_request "write:PUT /events/$CREATED_EVENT_ID no-metadata" \
+          "${STAGING_API_EVENTS%/}/api/events/${CREATED_EVENT_ID}" "PUT" \
+          "{\"notes\": \"CI smoke — metadata-free edit\"}" >/dev/null || true
+        assert_readback "write:event-metadata-preserved-on-absent-key" \
+          "${STAGING_API_EVENTS%/}/api/events/${CREATED_EVENT_ID}" ".metadata.l108_marker" "$TEST_RUN_ID"
+      else
+        echo "⚠ SKIP [write:event-metadata] block C event unavailable"
+      fi
+
       # ── D) Plants variety_id set→clear read-back (this thread's origin bug) ─────────────────
       # The PUT used COALESCE, which can SET a variety but never CLEAR one (null collapses to the
       # existing value). The presence-sentinel CASE fix lets an explicit null clear it. POST a
