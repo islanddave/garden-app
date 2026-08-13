@@ -19,6 +19,9 @@ import ProjectOptions from '../components/ProjectOptions.jsx'
 import SortToggle from '../components/SortToggle.jsx'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
 import PhotoImg from '../components/PhotoImg.jsx'
+// DD9 / W-EVTDEL adoption: the disclose-and-offer delete confirm (shared with EventDetail —
+// the two event-delete surfaces must stay behaviorally identical).
+import EventDeleteConfirm from '../components/photo/EventDeleteConfirm.jsx'
 import { PlantForm, Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect } from '../components/forms'
 import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
@@ -92,6 +95,8 @@ export default function ProjectDetail() {
   const [loggingEvent,  setLoggingEvent]  = useState(false)
   const [logErr,        setLogErr]        = useState(null)
   const [deletingId,    setDeletingId]    = useState(null)
+  // DD9 / W-EVTDEL: the event id armed for deletion — non-null renders the confirm sheet.
+  const [confirmDeleteEventId, setConfirmDeleteEventId] = useState(null)
   const logFormRef = useRef(null)
 
   // V2-PHOTO-F1 Session 2: staged photo for inline mini-event-logger. Mirrors
@@ -300,8 +305,17 @@ export default function ProjectDetail() {
     setMiniPhotoPreview(null)
   }
 
-  async function handleDeleteEvent(evId) {
-    if (!window.confirm('Delete this event?')) return
+  // DD9 / W-EVTDEL adoption — same sheet, same confirm/cancel semantics as EventDetail's delete
+  // (the two event-delete surfaces must not diverge). The row's × tap ARMS the sheet; the DELETE
+  // fires only from its Delete button and is byte-identical to the window.confirm era. See
+  // EventDetail.handleDelete for why photoCount/coverFor stay at the component defaults for now.
+  function handleDeleteEvent(evId) {
+    setConfirmDeleteEventId(evId)
+  }
+
+  async function confirmEventDelete() {
+    const evId = confirmDeleteEventId
+    if (!evId || deletingId) return
     setDeletingId(evId)
     try {
       await fetch('/api/events/' + evId, { method: 'DELETE' })
@@ -310,6 +324,7 @@ export default function ProjectDetail() {
       console.error('delete event failed', e)
     }
     setDeletingId(null)
+    setConfirmDeleteEventId(null)
   }
 
   // V3-REPARENT-001: first-class Move (atomic reparent + pre-move snapshot) with inline Undo.
@@ -1003,6 +1018,15 @@ export default function ProjectDetail() {
           </div>
         )}
       </div>
+
+      {/* DD9 / W-EVTDEL: kept mounted-open with busy while the write is in flight, per the
+          component's contract — never closed optimistically over a request that may fail. */}
+      <EventDeleteConfirm
+        open={confirmDeleteEventId != null}
+        busy={deletingId != null}
+        onCancel={() => setConfirmDeleteEventId(null)}
+        onConfirm={confirmEventDelete}
+      />
     </Shell>
   )
 }
