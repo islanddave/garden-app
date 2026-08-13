@@ -24,9 +24,9 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, toGrams, isUserSuppliedWeight, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES } from './validators.js';
 import { isEventOwned } from './eventOwnership.js';
-import { validateClear, resolveFlagPair } from './clearFields.js';
+import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
 import { computeStreak, STREAK_GRACE_DAYS } from './streak.js';
 import { householdScope, loadOwnedLocation, loadOwnedInventoryItem, warnRejectedFk } from './household.js';
 import { FRUITING_SOURCE_STATUSES, FLOWERING_SOURCE_STATUSES } from './statusTransitions.js';
@@ -1196,6 +1196,18 @@ export const handler = async (event) => {
         const catErr = validateTreatmentCategory(body.treatment_category);
         if (catErr) return resp(catErr.status, { error: catErr.error });
 
+        // V4-WATERMATH-001 F0, edit half. Same shared edge vocabulary check the POST applies
+        // (validators.js:140) — the depth keys are load-bearing for the F2 ledger, and a hand-rolled
+        // copy here is the drift class validateTreatmentCategory above exists to prevent. A body
+        // with no metadata key, and an explicit null (the clear channel), both pass untouched.
+        const metaErr = validateEventMetadata(body.metadata);
+        if (metaErr) return resp(metaErr.status, { error: metaErr.error });
+        // HAS-KEY grammar: absent preserves, explicit null clears, object replaces. Resolved by a
+        // pure function so the semantics are executable-testable; see clearFields.js for why this
+        // is neither the full-replace grammar (a stale bundle would blank every annotation) nor a
+        // clear:[] arm (JSON can say null for a jsonb column directly).
+        const meta = resolveMetadataArm(body);
+
         // Authz + existence in one read, matching the DELETE/GET pattern exactly.
         // BUG-NULLPROJEVENT-001: this used to INNER JOIN container on el.project_id and justify it
         // with "0 of 11,583 undeleted events carry a NULL project_id". That count is now 2 and
@@ -1367,6 +1379,17 @@ export const handler = async (event) => {
                  private_notes = ${body.private_notes ?? null},
                  quantity      = ${body.quantity ?? null},
                  is_public     = COALESCE(${body.is_public ?? null}::boolean, el.is_public),
+                 -- V4-WATERMATH-001 F0 edit half: HAS-KEY grammar, resolved in JS (meta.has /
+                 -- meta.value — see clearFields.js resolveMetadataArm). Absent key keeps
+                 -- el.metadata byte-identical; an explicit JSON null arrives as has=true with a
+                 -- NULL bind and clears the column; an object replaces it wholesale (EventDetail
+                 -- sends the row's metadata pre-merged with the edited key). A COALESCE here would
+                 -- collapse null into absent and make the column write-once, the
+                 -- BUG-COALESCECLEAR-001 class. The jsonb cast keeps the bind typed in every
+                 -- position, NULL included (the Neon missing-cast failure names the parameter, not
+                 -- the null).
+                 metadata      = CASE WHEN ${meta.has}::boolean THEN ${meta.value}::jsonb
+                                      ELSE el.metadata END,
                  -- Slice 3 re-anchor. Bound from the RESOLVED locals, not from the body: project_id
                  -- must never become NULL (the ownership SELECT, this UPDATE and the DELETE route
                  -- all INNER JOIN container on it, so a NULL is a permanently unreachable event).
@@ -1415,7 +1438,12 @@ export const handler = async (event) => {
                     -- the SAVED row rather than from what it hoped it sent. The isTreatment gate
                     -- above can null all five, and the client has to be able to see that happen.
                     el.treatment_product_id, el.treatment_product_text, el.treatment_category,
-                    el.treatment_amount, el.pest_target
+                    el.treatment_amount, el.pest_target,
+                    -- V4-WATERMATH-001 F0 edit half: the STORED metadata rides back for the same
+                    -- re-seed reason as the treatment columns above — EventDetail replaces its
+                    -- whole event state from this response (setEvent), so a response without the
+                    -- column blanks the Details block on every save even when the row kept it.
+                    el.metadata
         `;
         if (!updatedRows.length) return resp(404, { error: 'Not found' });
 
