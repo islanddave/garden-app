@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.14.0",
+    "date": "2026-08-13",
+    "highlights": [
+      "Voice dictation stops repeating (and stops dropping) words when you speak into notes. Signing out from the More menu behaves. Under the hood: the watch list learned to use derived planting dates, still switched off pending a look."
+    ]
+  },
+  {
     "version": "4.13.0",
     "date": "2026-08-13",
     "highlights": [
