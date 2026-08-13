@@ -156,6 +156,7 @@ export default function MicCaptureButton({
     try {
       liveHandleRef.current = startLiveTranscription({
         languageCode: 'en-US',
+        debugLabel: 'FieldCapture:mic',   // BUG-VOICEDUPE-002 — names this surface in /admin/voice-debug
         onResult: ({ transcript, isFinal }) => {
           // Confirmed segments append to finalText; the in-progress segment lives
           // in interimRef and is REPLACED by its final when it lands. The combined

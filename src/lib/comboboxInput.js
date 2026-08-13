@@ -84,6 +84,7 @@ export function useComboboxInput({ open, inputRef, onVoiceText }) {
     // startLiveTranscription MUST be called synchronously in the tap handler's frame — the
     // user-activation contract documented in transcribe.js. Do not add async hops here.
     voiceRef.current = startLiveTranscription({
+      debugLabel: 'Picker',   // BUG-VOICEDUPE-002 — names this surface in /admin/voice-debug
       onError: (code) => {
         voiceRef.current = null
         setVoiceState(code === 'denied' ? 'denied' : 'idle')
