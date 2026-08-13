@@ -97,6 +97,8 @@ const createIsOpen = () => !!screen.queryByText('Add a planting')
 beforeEach(() => {
   flags.DISMISS_REGISTRY_ENABLED = true
   flags.BACKNAV_ENABLED = true
+  signOutSpy.mockReset()
+  signOutSpy.mockResolvedValue(undefined)
   window.history.replaceState(SENTINEL, '', '/today')
 })
 afterEach(() => { document.body.style.overflow = ''; document.body.style.overscrollBehavior = '' })
@@ -257,6 +259,91 @@ describe('close-in-place (Close button) consumes the entry — no stranded Back'
     expect(moreIsOpen()).toBe(false)
     expect(atFloor()).toBe(true)                 // self-pop guard consumed our entry exactly once
     expect(path()).toBe('/today')
+  })
+})
+
+// BUG-SIGNOUTBACKRACE-001 — the ONE More-sheet row that is not a SheetRowLink.
+//
+// handleSignOutConfirmed used to do `closeMore(); await signOut(); navigate('/', {replace})`. Since
+// the sheets arm (above), closeMore() unmounts the Sheet -> useDismissable cleanup -> disarm() ->
+// history.back(). That traversal is ASYNC, so it races the replace-navigate:
+//
+//   deferred signOut (production-dominant — a real network round trip): back() commits first, the
+//     replace then lands on the FLOOR entry, and the marker entry is left as a forward entry. The
+//     user is at '/', but the tab they came from is GONE from the back stack.
+//   immediate signOut (offline / already-signed-out / fast reject): the replace lands on the marker
+//     entry FIRST and the queued back() then walks the user one entry BACKWARD — out of '/' and
+//     onto a stale authed route, while signed out.
+//
+// Two mocked orderings, ONE expected outcome. The fix is the same consume-on-navigate gate
+// SheetRowLink uses, applied at click time before any await can interleave.
+describe('BUG-SIGNOUTBACKRACE-001 — sign out consumes the armed entry, in EITHER ordering', () => {
+  const startSignOut = () => {
+    fireEvent.click(screen.getByText('Sign out'))          // step 1 of the 2-step confirm
+    fireEvent.click(screen.getByText('Yes, sign out'))     // step 2 — fires the async handler
+  }
+
+  // The single outcome both orderings must reach: signed out at '/', sheet closed, and the stack
+  // collapsed so ONE Back reaches the ORIGINAL tab. atFloor() is the no-stray-entry oracle — the
+  // marker entry must have been REUSED as the '/' entry, not left standing beside it.
+  const expectLandedCleanly = async () => {
+    expect(signOutSpy).toHaveBeenCalledTimes(1)
+    expect(moreIsOpen()).toBe(false)
+    expect(path()).toBe('/')
+    expect(armed()).toBe(false)
+    await back()
+    expect(path()).toBe('/today')
+    expect(atFloor()).toBe(true)
+  }
+
+  it('ADVERSARIAL — signOut resolves immediately: no queued back() walks the user off /', async () => {
+    signOutSpy.mockResolvedValue(undefined)
+    renderNav()
+    openMore()
+    await settle()
+    expect(armed()).toBe(true)
+
+    startSignOut()
+    await settle()
+    await expectLandedCleanly()
+  })
+
+  it('REALISTIC — signOut deferred (network round trip): the tab stays reachable by ONE Back', async () => {
+    // A manually-settled promise, so the disarm traversal is GUARANTEED to have committed before
+    // the navigate runs. This is the ordering production actually takes, and the one that silently
+    // ate the original tab entry.
+    let release
+    signOutSpy.mockImplementation(() => new Promise((r) => { release = r }))
+    renderNav()
+    openMore()
+    await settle()
+    expect(armed()).toBe(true)
+
+    startSignOut()
+    await settle()                       // any disarm-driven traversal fully commits here
+    await act(async () => { release() })
+    await settle()
+    await expectLandedCleanly()
+  })
+
+  it('flag OFF — nothing armed, so the consume gate is inert and the row behaves as shipped', async () => {
+    // The gate is `readMarker(history.state)`, the same predicate SheetRowLink uses: with no marker
+    // it must not fire, leaving exactly one history write (the post-signOut replace).
+    flags.BACKNAV_ENABLED = false
+    renderNav()
+    openMore()
+    await settle()
+    expect(armed()).toBe(false)
+
+    const push = vi.spyOn(window.history, 'pushState')
+    startSignOut()
+    await settle()
+    expect(signOutSpy).toHaveBeenCalledTimes(1)
+    expect(path()).toBe('/')
+    expect(push).not.toHaveBeenCalled()  // no arming, and the row never pushes
+    push.mockRestore()
+
+    window.history.replaceState(SENTINEL, '', '/today')
   })
 })
 
