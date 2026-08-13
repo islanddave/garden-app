@@ -41,10 +41,21 @@ export function readAnyMarker(state) {
 // `armsBack` DEFAULTS FALSE and that inversion is deliberate. useBackDismiss was opt-IN at 8
 // hand-picked call sites, and its own doc comment scoped that to surfaces which OPEN AND CLOSE IN
 // PLACE. Moving Back into useDismissable would have made it opt-OUT — and because Sheet.jsx calls
-// useDismissable ONCE on behalf of all 9 <Sheet> render sites, that would have silently enrolled
-// BottomNav's two sheets, whose every row closes the sheet AND navigates, orphaning the entry and
-// costing a permanent extra Back on the app's most frequent path. Registry membership must not
-// imply Back membership; they are different questions with different safety scopes.
+// useDismissable ONCE on behalf of all 9 <Sheet> render sites, that would have SILENTLY enrolled
+// surfaces nobody had judged. Registry membership must not imply Back membership; they are
+// different questions with different safety scopes. That is why the default is false, and it still
+// is.
+//
+// WHAT IS NO LONGER TRUE: BottomNav's two sheets. This comment used to name them as the case the
+// false default existed to keep out, because every row there closes the sheet AND navigates, which
+// orphans the pushed entry. As of v4.13.0 (BD-009 / BUG-BACKNAVMORE-001) they ARM — the exclusion
+// cost a live bug (Back over an open sheet navigated the tab underneath), and the orphaning is
+// fixed where it is actually caused, on the NAVIGATION side: BottomNav's SheetRowLink
+// replace-navigates while the session marker is current, collapsing that entry into the
+// destination, and its sign-out row applies the same gate at click time
+// (BUG-SIGNOUTBACKRACE-001). So the false default is still the right default — it just no longer
+// has BottomNav as its motivating example. A surface that navigates away MUST either consume the
+// marker on the way out or leave armsBack false; those are the only two safe options.
 export function isArmable(e) {
   return !!e && e.kind !== 'route' && !!e.armsBack
 }
