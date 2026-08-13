@@ -1,0 +1,121 @@
+'use strict';
+// V4-WATERMATH-001 F2 — the ONE table-driven params module for every tuned Water Ledger constant.
+// Canon: watering-cadence-math-design-V100-20260812.md Part 5: "All tuned constants live in ONE
+// table-driven params module … bank magnitudes, hedge thresholds, vessel/size factors, ramps, clamp
+// bounds, snooze floor, confidence thresholds, and the flip gate's global normalization multiplier —
+// ~15 constants across four mechanism families are tunable as a set or the 'one global normalization
+// constant' lever is unexercisable."
+//
+// Everything here is a POLICY NUMBER, not code: the fold (ledger.js) and the engine branch read these
+// and only these. Retuning for the flip gate is an edit to THIS file (or, for the whole-system case,
+// to GLOBAL_NORMALIZATION alone), never a hunt through the fold.
+
+// ── Demand family ────────────────────────────────────────────────────────────────────────────────
+// ET0_ref(month): FIXED monthly climatological reference, inches/day, for the one live Space
+// (42.5087,-72.6471, W. MA). NEVER a rolling median — canon Decision 2: a rolling median is a
+// high-pass filter that re-centers onto a heat wave by day ~7-10 (demand -> 1.0 exactly in the lethal
+// window) and deletes the fall decline. Provenance:
+//   May-Aug: measured means from live weather_daily (90-day Open-Meteo archive backfill,
+//            v4-weatherdaily-001, queried 2026-08-12: May 0.160 n=18 / Jun 0.202 n=30 /
+//            Jul 0.190 n=31 / Aug 0.174 n=11).
+//   Sep-Apr: FAO-56 climatological estimates for 42.5N humid-continental; the archive does not cover
+//            them yet. Refresh yearly from weather_daily once each month has a measured season
+//            (canon: "derived once from the archive at migration, refreshed yearly").
+// Months with ref < WINTER_REF_MIN never compute the ratio at all (winter mode pins it at the clamp
+// floor), so the Nov-Feb estimates are gate inputs, not modelling inputs.
+const ET0_REF_MONTHLY = {
+  1: 0.02, 2: 0.03, 3: 0.06, 4: 0.11,
+  5: 0.160, 6: 0.202, 7: 0.190, 8: 0.174,
+  9: 0.12, 10: 0.07, 11: 0.03, 12: 0.02,
+};
+const WINTER_REF_MIN = 0.04;                 // ref below this -> "winter mode": ratio pinned at DEMAND_CLAMP.min
+const DEMAND_CLAMP = { min: 0.5, max: 2.0 }; // clamp bounds on ET0(day)/ET0_ref(month)
+// The flip gate's single lever (canon Part 5): if the shadow diff shows a median effective-interval
+// shift per crop class > +-10%, ONE multiplier is applied here — never hand-edits to 159 profiles.
+// Multiplies the whole demand term: >1 shortens effective intervals, <1 lengthens them.
+const GLOBAL_NORMALIZATION = 1.0;
+
+// ── Vessel family ────────────────────────────────────────────────────────────────────────────────
+// Class factors (canon Part 2 vesselFactor table). NOTE the grouping differs from the rain-credit
+// tier taxonomy: raised_bed rides with in_ground here (thermal mass/soil coupling) while it is
+// 'intermediate' for rain IA/hold. fabric_bag is handled by the continuous heat ramp below, and the
+// tray class is handled by the wi hard cap, so neither appears in this map.
+// Unknown/NULL container_type fails toward prompting (small_fast-ish 1.1), same direction as
+// rainTierFor's unknown->small_fast convention.
+const VESSEL_CLASS_FACTOR = {
+  in_ground: 0.85, raised_bed: 0.85,
+  trough: 1.0, whiskey_barrel: 1.0, window_box: 1.0,
+  plastic_pot: 1.1, terracotta: 1.1, ceramic: 1.1, pot: 1.1, hanging_basket: 1.1, other: 1.1,
+};
+const VESSEL_UNKNOWN_FACTOR = 1.1;
+// fabric_bag: factor = base + gain x ramp(Tmax, lo -> hi), continuous — replaces the demand-side
+// binary >=85F step (canon: the legacy binary gates double-count heat next to ET scaling).
+const FABRIC_BAG = { base: 1.1, rampGain: 0.25, rampLoF: 80, rampHiF: 90 };
+// tray_cell / soil_block / solo_cup: own class — tablespoons of buffer, dries in hours at 90F.
+// wi is HARD-CAPPED at 1 day; unprofiled tray plantings render LOW.
+const TRAY_TYPES = ['tray_cell', 'soil_block', 'solo_cup'];
+const TRAY_WI_CAP_DAYS = 1;
+// Size buckets (multiply the class factor). Parsed from free-text container_size by
+// ledger.parseContainerGal; unparseable/ambiguous -> unsized (x1.0 + LOW driver).
+const SIZE_BUCKETS = {
+  smallMaxGal: 3, smallFactor: 1.3,
+  midFactor: 1.0,
+  largeMinGal: 15, largeFactor: 0.85,
+  unsizedFactor: 1.0,
+  bedGal: 100,          // ft-dimension strings ("6x2 ft") parse to bed/large — any value >= largeMinGal
+};
+
+// ── Stage family ─────────────────────────────────────────────────────────────────────────────────
+// Establishment x1.3 for the first 14 days after a REAL transplant event (p.transplant_at — the
+// signal the rain-credit carve-out already uses). Fruiting-load x1.2 is deferred to V1.1 (canon).
+const STAGE = { establishmentDays: 14, establishmentFactor: 1.3 };
+
+// ── Credit / bank family ─────────────────────────────────────────────────────────────────────────
+const DUE = { droughtHighBias: 1.15 };       // dueThreshold = wi_eff x (drought_tolerance=='high' ? this : 1.0)
+// Deep-soak banking — IN-GROUND CLASS (in_ground/raised_bed) or >=15-gal containers ONLY (canon
+// Decision 4: banking is physically fictional in a drained vessel; the deficit->soak cycle is the
+// textbook BER trigger in bag solanums). Deliberately small: fractional time already fixes the
+// evening-soak failure and stacking both over-corrects (canon Part 2, fractional-time note).
+const BANK = { deepBankWi: 0.15, bankFloorWi: 0.25 };
+// Partial-rewet hedges on a Normal watering of a long-dry profile (D > longDryWi x wi at watering):
+//   in-ground class:  D := min(D - wi, inGroundCapWi x wi)   (top of profile wetted, not root zone)
+//   container:        D := containerResetWi x wi             (hydrophobic peat channels the shrinkage gap)
+// Deep clears both hedges.
+const HEDGE = { longDryWi: 1.5, inGroundCapWi: 0.5, containerResetWi: 0.25 };
+const LIGHT_CREDIT_WI = 0.5;                 // Light: D := max(0, D - this x wi)
+// Gauge/forecast rain day-credits, applied ONCE per qualifying weather_daily day at 23:59 ET,
+// floored at 0 (rain never banks negative — the resurfacing guarantee that retires the maxdays
+// ceiling). IA/hold values MIRROR engine.js RAIN_TIER_IA / RAIN_TIER_HOLD (same tiers, canon: "Same
+// IA tiers, same transplant carve-out"); duplicated here because ledger.js must not require
+// engine.js (engine requires ledger), and pinned equal by ledger.test.js.
+const RAIN_DAY = {
+  ia: { in_ground: 0.20, intermediate: 0.25, small_fast: 0.35 },
+  hold: { in_ground: 3, intermediate: 2, small_fast: 1 },
+  // Bag >=85F credit denial SOFTENED to 50% (canon legacy-term table: demand now carries the heat
+  // physics; full denial + 1.25x demand was a double penalty). Keyed to weather_daily.tmax_f of the
+  // qualifying day, not today's forecast high.
+  bagHeatSoftenF: 85, bagHeatSoftenFactor: 0.5,
+};
+const TRANSPLANT_CARVEOUT_DAYS = 21;         // mirrors engine.TRANSPLANT_CARVEOUT_DAYS (pinned by test)
+
+// ── Snooze / confidence family ───────────────────────────────────────────────────────────────────
+// Moisture check ("Not thirsty"): D := min(D, max(0, thr - max(minFloorWi x wi, demand(day)))).
+// The demand term is what makes the snooze survive to at least tomorrow's run (canon: a snooze that
+// resurfaces in hours reads as the app overriding the user). The max(0,·) floor keeps a snooze from
+// ever BANKING water — on a wi=1 planting in a 2.0-demand heat wave the target would go negative;
+// physically that means even D=0 re-dues tomorrow, which is the honest answer.
+const SNOOZE = { minFloorWi: 0.5 };
+const CONFIDENCE = {
+  minWeatherRows: 7,        // <7 weather_daily rows in the window -> Space degenerate: demand 1.0 flat + LOW driver
+  overrideDemoteCount: 2,   // >=2 moisture_check taps in the window demote one tier (F2 approximation
+                            // of the canon 5-due-cycle override rate; full cycle tracking is F3+)
+};
+
+const WINDOW_DAYS = 30;      // fold lookback; MUST equal handler.WEATHER_DAILY_WINDOW_DAYS (pinned by test)
+
+module.exports = {
+  ET0_REF_MONTHLY, WINTER_REF_MIN, DEMAND_CLAMP, GLOBAL_NORMALIZATION,
+  VESSEL_CLASS_FACTOR, VESSEL_UNKNOWN_FACTOR, FABRIC_BAG, TRAY_TYPES, TRAY_WI_CAP_DAYS, SIZE_BUCKETS,
+  STAGE, DUE, BANK, HEDGE, LIGHT_CREDIT_WI, RAIN_DAY, TRANSPLANT_CARVEOUT_DAYS,
+  SNOOZE, CONFIDENCE, WINDOW_DAYS,
+};

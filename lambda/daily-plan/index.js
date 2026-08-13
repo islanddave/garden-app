@@ -172,6 +172,15 @@ async function fetchPrecip(lat, lng) {
       // enters the current day's stored plan (byte-parity safe). null, NEVER 0, when Open-Meteo omits the
       // value — absence of data must not be recorded as "no rain fell".
       yesterday_precip_actual_in: Number.isFinite(ps[1]) ? round2(ps[1]) : null,
+      // V4-WATERMATH-001 F2 — D0's live forecast ET0 + Tmax (index 2, same [D-2,D-1,D0,...] daily
+      // indexing as ps/pop/tmin above; no URL change — both fields are already fetched for
+      // settled_days). Canon Part 4: "Today's demand at any run uses the live forecast ET0 from the
+      // existing fetch (D0 index) — full-day value, conservative in the safe direction." weather_daily
+      // holds COMPLETED days only, so without these keys today's demand would always degrade to the
+      // 1.0 branch. Engine copies hydrology by NAMED key -> flag-OFF byte-parity holds; null (never
+      // 0) on absence, same rule as every field above.
+      today_et0_in: Number.isFinite(et0[2]) ? round3(et0[2]) : null,
+      today_tmax_f: Number.isFinite(tmax[2]) ? round2(tmax[2]) : null,
       // BUG-RAINACTUAL-001 H5 — the hour-resolution forecast, carried VERBATIM (local ISO timestamps + the tz
       // they are expressed in) so station.remainingHourlyIn can scope "still to come" to the hours that have
       // not elapsed. Passed through untransformed on purpose: the date-string matching in that helper is what
@@ -271,7 +280,11 @@ exports.handler = async (event) => {
   // this exact marker before ANY invoke (older deploys ignored the payload entirely, so a "dry" invoke
   // against them would really run env-live). Do not rename/remove. Override semantics are fail-safe-only:
   // see handler.resolveInvokeOptions — the payload can force DRY or override the date, never force live.
-  const { dryRun, today, ping } = resolveInvokeOptions(event, {
+  // A0.4-FLAG-OVERRIDES sentinel — dry-run-ONLY engine-flag overrides for the V4-WATERMATH-001 F2
+  // shadow/parity replay (event.flagOverrides, whitelisted + strict-boolean, hard-rejected on any
+  // live run by handler.resolveInvokeOptions). The wrapper preflight-greps the deployed zip for this
+  // marker before any --flag-overrides invoke, same pattern as A0.2/A0.3. Do not rename/remove.
+  const { dryRun, today, ping, flagOverrides } = resolveInvokeOptions(event, {
     envDryRun: process.env.DRY_RUN, todayDefault: todayET(),
   });
   if (ping) return { ok: true, ping: true, eventOverrides: true, today, dryRun };
@@ -279,7 +292,7 @@ exports.handler = async (event) => {
   const { NEON_DATABASE_URL } = await getSecrets();
   const pool = new Pool({ connectionString: NEON_DATABASE_URL });
   try {
-    const res = await run({ pg: pool, today, dryRun, geocodeZip, fetchNWS, fetchPrecip, fetchStation, publishAlert, etHour: hourET(), event });
+    const res = await run({ pg: pool, today, dryRun, flagOverrides, geocodeZip, fetchNWS, fetchPrecip, fetchStation, publishAlert, etHour: hourET(), event });
     console.log(JSON.stringify({ msg: 'daily-plan', today, dryRun, rows: res.rows, ms: Date.now() - started }));
     // A0.3-DRY-PLANS sentinel — DRY responses carry the computed plans so scripts/rerun-daily-plan.sh
     // --diff can compare a zero-write replay against the stored rows (it preflight-greps the deployed zip

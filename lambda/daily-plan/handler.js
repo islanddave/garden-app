@@ -251,6 +251,49 @@ async function readWeatherDaily(pg, spaceId, fromDate, toDate) {
 // accrue demand 1.0 against real events.
 const WEATHER_DAILY_WINDOW_DAYS = 30;
 
+// ── V4-WATERMATH-001 F2 — the engine INPUT-CONTRACT change (canon Part 5: "the largest single F2
+// code change"). The planting query above still fetches one MAX(event_date) DATE per planting (the
+// legacy dW input, untouched for flag-OFF byte-parity); the fold additionally needs each planting's
+// 30-day event window WITH TIMESTAMPS and metadata.water_depth. ONE windowed query across all
+// plantings (~3.7k rows/30d live), grouped in JS — not a per-planting lateral, so the cost is one
+// round trip regardless of planting count.
+//
+// FLAG-GATED at the call site exactly like readWeatherDaily: flag OFF issues ZERO of these
+// statements (same executing-test pin; BUG-SEEDEDGATE-001 class). FAIL-CLOSED TO NULL, not to {}:
+// an empty object means "the query ran and found no events" (a legitimate fold input), while null
+// means "the read failed" — and a fold run against a falsely-empty window would declare every
+// planting ~30 demand-days overdue, so the handler degrades the WHOLE RUN to flag-OFF instead
+// (canon: every data gap falls back to today's model, never to a wrong model).
+//
+// The +-1-day margins absorb the date->timestamptz cast landing on the session's (UTC) midnight
+// rather than ET midnight; the fold clips precisely to [window start 00:00 ET, effNow] itself.
+// Every parameter carries an explicit cast (Neon cannot type a bare bind — same rule as the
+// weather_daily writer above).
+async function readLedgerEvents(pg, fromDate, toDate) {
+  try {
+    const { rows } = await pg.query(
+      `select e.id, e.plant_id, e.event_type,
+              (extract(epoch from e.event_date) * 1000)::float8 as t_ms,
+              e.metadata->>'water_depth' as water_depth
+         from event_log e
+        where e.event_type in ('watering','rain','moisture_check')
+          and e.deleted_at is null
+          and e.plant_id is not null
+          and e.event_date >= ($1::date - interval '1 day')
+          and e.event_date <  ($2::date + interval '2 days')
+        order by e.event_date, e.id`,
+      [fromDate, toDate]);
+    const by = {};
+    for (const r of rows) {
+      (by[r.plant_id] ||= []).push({ id: r.id, t: Number(r.t_ms), type: r.event_type, depth: r.water_depth || null });
+    }
+    return by;
+  } catch (e) {
+    console.warn(JSON.stringify({ msg: 'ledger event-window read failed — ledger degrades to flag-OFF this run', error: e?.message }));
+    return null;
+  }
+}
+
 function weatherWindowStart(today, days = WEATHER_DAILY_WINDOW_DAYS) {
   const d = new Date(today + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() - days);
@@ -289,7 +332,14 @@ function frostSubject(d) {
   return `Garden alert - ${label}${low}`.replace(/[^\x20-\x7E]/g, '').slice(0, 100);
 }
 
-async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchStation, publishAlert, etHour, event }) {
+// V4-WATERMATH-001 F2: `flagOverrides` is the SHADOW/PARITY seam (canon Part 5 "shadow-soak that can
+// actually run"). Honored ONLY when this run is DRY — resolveInvokeOptions already refuses to emit
+// it otherwise, and the guard below re-checks so no future caller can arm a live A/B through it.
+// An env flip arms the LIVE 02:00/12:00/15:30 runs; this is the only safe replay path.
+async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchStation, publishAlert, etHour, event, flagOverrides = null }) {
+  const _ovr = (dryRun === true && flagOverrides && typeof flagOverrides === 'object') ? flagOverrides : null;
+  const _flag = (name, envOn) => (_ovr && typeof _ovr[name] === 'boolean' ? _ovr[name] : envOn);
+  if (_ovr) console.log(JSON.stringify({ msg: 'flag-overrides (dry-run shadow)', overrides: _ovr }));
   // DRG-NIGHTLYTIMEOUT-001 — cheap nightly progress markers (db-ready / station-fetched / space-wx)
   // pin the stall site (Neon cold-resume vs fetch hang) in CloudWatch in one night. ms = since run() start.
   const t0 = Date.now();
@@ -413,7 +463,12 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // new relation. The WRITE below is deliberately NOT behind this flag: the substrate has to be
   // accumulating before the fold that consumes it is switched on, which is the entire reason F1 is a
   // separate ship. Mirror any flip in src/lib/featureFlags.js when F2 gives it a client-side meaning.
-  const waterLedgerEnabled = process.env.CARE_WATER_LEDGER_ENABLED === 'true';
+  const waterLedgerEnabled = _flag('CARE_WATER_LEDGER_ENABLED', process.env.CARE_WATER_LEDGER_ENABLED === 'true');
+  // V4-WATERMATH-001 F2 — the fold's per-planting event window, ONE query per run, STRICTLY behind
+  // the flag (flag OFF issues zero of these — pinned by an executing test in ledger-run.test.js,
+  // same reachability proof as the weather_daily read below). null = read failed -> the generatePlan
+  // call passes enabled=false and the whole run degrades to flag-OFF (see readLedgerEvents).
+  const ledgerEvents = waterLedgerEnabled ? await readLedgerEvents(pg, weatherWindowStart(today), today) : null;
   // Resolve each Space's weather once (zip-driven). Multi-Space ready: keyed by space id.
   const wxBySpace = {}, hyBySpace = {}, coordsBySpace = {}, stationProvBySpace = {}, wxDailyBySpace = {};
   for (const s of spaces) {
@@ -472,12 +527,12 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // DRG-WXWATER-001 coarse-v1: SINGLE flag read-site (spec I2 — plan is computed once nightly, all readers consume
   // the stored plan, so one flag here is inherently consistent). Default OFF; the 3-substrate-tier rain model is
   // inert (byte-identical plan) until CARE_RAIN_CREDIT_ENABLED=true is set after shadow-soak.
-  const rainCreditEnabled = process.env.CARE_RAIN_CREDIT_ENABLED === 'true';
+  const rainCreditEnabled = _flag('CARE_RAIN_CREDIT_ENABLED', process.env.CARE_RAIN_CREDIT_ENABLED === 'true');
   // DRG-WXFLAGSPLIT-001 F1: the max-days CEILING gets its own flag, split out of CARE_RAIN_CREDIT_ENABLED.
   // Both default OFF, so this ship is inert (byte-identical plan). The split exists so F2 can flip the tiered
   // CREDIT on by itself, with the interval ceiling still off, instead of the two behaviours moving together.
   // Mirror any flip in src/lib/featureFlags.js — the CJS Lambda cannot import that ESM module.
-  const rainMaxDaysEnabled = process.env.CARE_RAIN_MAXDAYS_ENABLED === 'true';
+  const rainMaxDaysEnabled = _flag('CARE_RAIN_MAXDAYS_ENABLED', process.env.CARE_RAIN_MAXDAYS_ENABLED === 'true');
   // BUG-TODAYWATER-001: today-forecast suppression. DEFAULT OFF, so this ship is inert (byte-identical
   // plan) until flipped after a dry-run replay. The flag is not ceremony -- it is the rollback path. This
   // Lambda has NO staging surface (deploy-staging.yml's matrix omits daily-plan) and deploy-lambda.yml
@@ -485,7 +540,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // approval plus a 26-function redeploy. With the flag, rollback is one update-function-configuration
   // followed by scripts/rerun-daily-plan.sh --live: about two minutes, no promote.
   // Mirror any flip in src/lib/featureFlags.js -- the CJS Lambda cannot import that ESM module.
-  const todayAwareEnabled = process.env.CARE_TODAY_AWARE_ENABLED === 'true';
+  const todayAwareEnabled = _flag('CARE_TODAY_AWARE_ENABLED', process.env.CARE_TODAY_AWARE_ENABLED === 'true');
   // BUG-SEEDEDGATE-001 — structural cadence provenance replaces the in-payload _seeded marker.
   // DEFAULT OFF, and OFF is byte-identical.
   //
@@ -499,7 +554,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // Garlic Chives 3->4, Christmas Cactus 7->8 (inert, dormant), Echeveria x2 10->12, and Jade Plant
   // 16->12 — the only one that GAINS a task on flip day. Collards stays 2: its cadence_scopes is [].
   // Rollback is one update-function-configuration plus a rerun; no promote needed.
-  const cadenceScopesEnabled = process.env.CARE_CADENCE_SCOPES_ENABLED === 'true';
+  const cadenceScopesEnabled = _flag('CARE_CADENCE_SCOPES_ENABLED', process.env.CARE_CADENCE_SCOPES_ENABLED === 'true');
   if (!cadenceScopesEnabled) { for (const p of plantings) p.cadence_scopes = null; }
   // Loud, not silent: if the driver ever hands text[] back unparsed, resolveCadence's Array.isArray
   // fails safe to the flag-OFF answer — which is indistinguishable from "the flag did nothing".
@@ -524,12 +579,12 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   const bySpace = {};
   for (const p of plantings) (bySpace[p.workspace_id] ||= []).push(p);
   for (const [spaceId, rows] of Object.entries(bySpace)) {
-    // V4-WATERMATH-001 F1 — `weatherDaily` is passed but NOT YET CONSUMED: generatePlan destructures
-    // named parameters and has no `weatherDaily` among them, so this is inert today and the plan stays
-    // byte-identical. It is here as the F2 seam, so the fold's input arrives by the same route as every
-    // other engine input rather than being threaded in as a late special case. It is null whenever
-    // CARE_WATER_LEDGER_ENABLED is off, which is always, until F2 flips it.
-    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled });
+    // V4-WATERMATH-001 F2 — the F1 seam is CONSUMED now: weatherDaily + the per-planting event
+    // window + the run instant feed the ledger fold, all behind waterLedgerEnabled. enabled is
+    // ANDed with `ledgerEvents != null` so a failed event-window read degrades the run to flag-OFF
+    // (a fold against a falsely-empty window would over-due every planting — see readLedgerEvents).
+    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled,
+      waterLedgerEnabled: waterLedgerEnabled && ledgerEvents != null, eventsByPlant: ledgerEvents, nowMs: Date.now() });
     // Frost is a SITE-level event (§3-3): evaluated once per Space, then annotated with the affected crop
     // types. D6: one coalesced alert naming every crop type that tripped ITS OWN threshold; plantings
     // already under cover are excluded (frostClass.summarize's covered filter).
@@ -662,13 +717,29 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
 //     secrets/DB/network work).
 // EventBridge scheduled events ({source:'aws.events','detail-type':'Scheduled Event',detail:{},...})
 // carry none of these keys, so the nightly run's behavior is byte-identical to pre-A0.2.
+// V4-WATERMATH-001 F2 (A0.4-FLAG-OVERRIDES) — `event.flagOverrides` lets a replay run the engine
+// under a different flag combo, DRY RUNS ONLY. The fail-safe contract extends A0.2's: the payload
+// can never change what a LIVE run does. When the resolved run is live, flagOverrides is null no
+// matter what the event carried (hard-reject, not best-effort); when dry, only whitelisted flag
+// names with strict-boolean values pass through. NEVER an env-based A/B — an env flip arms the live
+// EventBridge runs (canon landmine).
+const LEDGER_OVERRIDABLE_FLAGS = ['CARE_WATER_LEDGER_ENABLED', 'CARE_RAIN_CREDIT_ENABLED',
+  'CARE_RAIN_MAXDAYS_ENABLED', 'CARE_TODAY_AWARE_ENABLED', 'CARE_CADENCE_SCOPES_ENABLED'];
 function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   const envLive = String(envDryRun ?? 'true').toLowerCase() === 'false';
   const dryRun = (event && event.dryRun === true) ? true : !envLive;
   const today = (event && typeof event.today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(event.today))
     ? event.today : todayDefault;
-  return { dryRun, today, ping: !!(event && event.ping === true) };
+  let flagOverrides = null;
+  const fo = event && event.flagOverrides;
+  if (dryRun === true && fo && typeof fo === 'object' && !Array.isArray(fo)) {
+    for (const k of LEDGER_OVERRIDABLE_FLAGS) {
+      if (typeof fo[k] === 'boolean') (flagOverrides ||= {})[k] = fo[k];
+    }
+  }
+  return { dryRun, today, ping: !!(event && event.ping === true), flagOverrides };
 }
 
 module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, ALERTS_SENT_MAX,
-  writeWeatherDaily, readWeatherDaily, weatherWindowStart, WEATHER_DAILY_WINDOW_DAYS };
+  writeWeatherDaily, readWeatherDaily, weatherWindowStart, WEATHER_DAILY_WINDOW_DAYS,
+  readLedgerEvents, LEDGER_OVERRIDABLE_FLAGS };

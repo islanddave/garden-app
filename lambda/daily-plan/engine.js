@@ -5,6 +5,11 @@
 // never-logged-aware, temp-aware, per-variety cold, strict per-user. No I/O; caller passes today/weather/cadence/fertModel.
 const DAY = 86400000;
 const HOT_F = 88;
+// V4-WATERMATH-001 F2 — the Water Ledger fold (flag-gated: CARE_WATER_LEDGER_ENABLED, default OFF).
+// engine requires ledger, NEVER the reverse; shared rain-IA constants are mirrored in ledgerParams
+// and pinned equal by ledger.test.js.
+const ledger = require('./ledger');
+const LP = require('./ledgerParams');
 // DRG-WXPROB-001 — display gate for the nightly rain-AMOUNT callout (mirrors the Today widget). Presentation only.
 const RAIN_POP_DISPLAY_THRESHOLD = 30; // percent
 // DRG-WATERCREDIT-004: fabric grow bags have breathable sidewalls and dry top-to-bottom fast in heat, so a
@@ -411,10 +416,48 @@ function waterSuppression(p, c){
   return null;
 }
 
+// ── V4-WATERMATH-001 F2 — per-planting ledger verdict (only reached when the flag is ON) ──────────
+// Computes wi_eff (RETIRES the >=88F heat gate and the maxdays ceiling in-flag — canon legacy-term
+// table: keeping them next to ET scaling double-counts heat; tray class hard-caps at 1 day), the
+// drought-tolerant late-bias threshold, the fold, and server-side confidence. Returns the additive
+// `ledger` payload key plus the INTEGER calendar-day fields the three verified readers depend on
+// ((e->>'overdue_by')::int at dashboard handlers.js:433 throws 22P02 on any fraction — proven live).
+function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
+  const vp = ledger.vesselProfile(p.container_type, p.container_size);
+  const wiEff = vp.tray ? Math.min(wiBase, LP.TRAY_WI_CAP_DAYS) : wiBase;
+  const thr = wiEff * (c.drought_tolerance === 'high' ? LP.DUE.droughtHighBias : 1);
+  const exposure = ledger.exposureClass(p);
+  const fold = ledger.foldLedger({
+    wiEff, thr, events: lo.eventsByPlant[p.id] || [],
+    weatherByDate: lo.weatherByDate, weatherRowCount: lo.weatherRowCount,
+    todayStr: today, effNowMs: lo.effNowMs,
+    todayEt0: hydrology ? (hydrology.today_et0_in ?? null) : null,
+    todayTmax: hydrology ? (hydrology.today_tmax_f ?? null) : null,
+    exposure, vessel: vp, rainTier: rainTierFor(p.container_type),
+    transplantAt: p.transplant_at || null,
+  });
+  const via = c._via || 'default';
+  const confidence = ledger.computeConfidence({
+    via, vesselKnown: vp.known,
+    weatherOk: lo.weatherRowCount >= LP.CONFIDENCE.minWeatherRows && !!hydrology,
+    snoozeCount: fold.snoozeCount, trayUnprofiled: vp.tray && via !== 'db',
+  });
+  return {
+    due: fold.due, overdueBy: fold.overdueBy, wiEff,
+    pub: { d: Math.round(fold.d * 100) / 100, due_at: new Date(fold.dueAtMs).toISOString(),
+      wi_eff: wiEff, confidence, drivers: fold.drivers },
+  };
+}
+
 // DRG-WXFLAGSPLIT-001 F1: rainMaxDaysEnabled gates the max-days CEILING independently of rainCreditEnabled
 // (which gates the tiered credit). Trailing param, default false -> every existing caller keeps flag-OFF
 // behaviour and the plan stays byte-identical until an env flip.
-function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false){
+// V4-WATERMATH-001 F2: `ledgerOpts` (10th param, default null) carries the Water Ledger inputs from
+// generatePlan — {enabled, eventsByPlant, weatherByDate, weatherRowCount, effNowMs}. Null/absent ->
+// byte-identical legacy path; the fold requires BOTH the flag and a real event window (a failed
+// event-window read degrades the whole run to flag-OFF, per the canon fail-to-today's-model rule).
+function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null){
+  const _ledgerOn = !!(ledgerOpts && ledgerOpts.enabled && ledgerOpts.eventsByPlant);
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[];
   const phaseCounts={};
   const low=weather?weather.tonightLow:null, high=weather?weather.highToday:null, hot=high!=null&&high>=HOT_F;
@@ -446,6 +489,9 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     let wi=(inGround ? c.water_interval_days_inground : c.water_interval_days_container)
           ?? c.water_interval_days_container
           ?? cad.default.water_interval_days_container;
+    // V4-WATERMATH-001 F2: the ledger fold consumes the PRE-heat-gate interval — the >=88F wi-=1
+    // gate is RETIRED in-flag (continuous ET0 demand subsumes it; retaining it double-counts heat).
+    const _wiBase = wi;
     if(hot && c.drought_tolerance==='low' && wi>1) wi=wi-1;
     // DRG-WXWATER-001 coarse-v1 (flag-ON only): clamp the interval to the substrate x stage ceiling so a
     // rain-credited planting still re-surfaces for a moisture check. Flag-OFF leaves wi exactly as computed above.
@@ -495,7 +541,37 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // and outrank freshTransplant would skip a small root ball — both cost plants when the rain no-shows,
     // and both are exactly the cases those carve-outs were written to protect.
     const _satApplies = _sat && (_sat.kind !== 'today' || !(freshTransplant || bagHeatGate));
-    if(dW!=null && dW>=wi && _satApplies){
+    // ── V4-WATERMATH-001 F2 fork ──────────────────────────────────────────────────────────────────
+    // Flag ON + watering history exists -> the continuous ledger replaces the dW>=wi chain below.
+    // dW==null deliberately FALLS THROUGH to the legacy never:true push (canon: never-watered path
+    // byte-identical). Rain day-credits, amount classes, snoozes and fractional time are all folded
+    // into D, so the legacy 72h-credit rain_skipped branch has no in-flag analog: a rain-covered
+    // planting simply is not due. The saturation cap is RETAINED and still SUPREME — unchanged
+    // _satApplies (incl. the 'today'-subordinate-to-carve-outs rule), with its eligibility gate now
+    // D >= dueThreshold instead of dW>=wi (canon legacy-term table, engine.js:455 note).
+    const _lg = (_ledgerOn && dW!=null) ? ledgerVerdictFor(p, c, _wiBase, today, hydrology, ledgerOpts) : null;
+    if(_lg){
+      if(_lg.due && _satApplies){
+        rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
+          days_since:dW,interval:_lg.wiEff,saturated:true,
+          sat_kind:_sat.kind, sat_wp:_sat.wp,
+          today_in:(hydrology&&hydrology.today_precip_in)??null, today_pop:(hydrology&&hydrology.today_pop)??null,
+          reason: _sat.kind==='soak'
+            ? `Skip — saturated (heavy soak, ${_sat.wp}" over the last few days; let it drain)`
+            : _sat.kind==='today'
+            ? `Skip — ${_sat.fq}" rain falling today${_sat.pop==null?'':' @ '+_sat.pop+'%'}`
+            : `Skip — rain incoming on already-wet media (${_sat.fq}" forecast${_sat.pop==null?'':' @ '+_sat.pop+'%'}); let it drain`,
+          ledger:_lg.pub});
+      } else if(_lg.due){
+        // PAYLOAD CONTRACT (canon Decision 10): days_since/overdue_by/interval stay INTEGER CALENDAR
+        // values — the ledger's fractional precision rides ONLY in the additive `ledger` key.
+        water.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
+          days_since:dW,interval:_lg.wiEff,overdue_by:_lg.overdueBy,method:c.water_method,moisture:c.soil_moisture_target,
+          never:false,rain_note:null,ledger:_lg.pub});
+      }
+      // not due -> no row: day-credits/snoozes/amounts already spoke through D
+    }
+    else if(dW!=null && dW>=wi && _satApplies){
       // DRG-WXSATCAP-001: heavy-soak saturation cap OUTRANKS the tier decay + fast-dry discount + heat-gate.
       rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
         days_since:dW,interval:wi,saturated:true,
@@ -600,7 +676,14 @@ function hydrologyStatus(hy){
   return {ok:true, uncertainty: reason ? {flag:true, reason} : {flag:false}};
 }
 
-function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false}){
+// V4-WATERMATH-001 F2: waterLedgerEnabled/weatherDaily/eventsByPlant/nowMs are the fold inputs the
+// handler threads through (weatherDaily was already passed as the F1 seam; it is consumed now).
+// All default to inert — an un-updated caller is byte-identical, and enabled-without-events stays
+// legacy (the handler passes enabled=false when the event-window read fails).
+function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null}){
+  const ledgerOpts = (waterLedgerEnabled && eventsByPlant)
+    ? ledger.buildLedgerOpts({ weatherDaily, eventsByPlant, today, nowMs })
+    : null;
   const byUser=new Map();
   for(const p of plantings){ const c=resolveCadence(p,cadence); const u=ownerFor(p,c,ownerFallback)||'__UNASSIGNED__'; if(!byUser.has(u))byUser.set(u,[]); byUser.get(u).push(p); }
   const hy=hydrology||null; const callout=computeCallout(weather,hy); const hs=hydrologyStatus(hy);
@@ -615,7 +698,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
   const rainComing = _todayComing || _tomorrowComing;
   const rainHorizon = _todayComing ? 'today' : (_tomorrowComing ? 'tomorrow' : null);
   const users={};
-  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled);
+  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts);
     users[u]=up; }
   return {date:today,
     weather: weather? {tonightLow:weather.tonightLow, highToday:weather.highToday, code:weather.code, short:weather.short, unit:weather.unit||'F', callout} : null,
