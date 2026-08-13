@@ -46,8 +46,13 @@ export const CLEARABLE_FIELDS = [
 //   is_public
 //   resolved_at,      Owned by the PATCH resolve route, not by this edit form.
 //   resolved_by
-//   metadata,         No edit surface owns them.
-//   quantity_numeric,
+//   metadata          Has its OWN clear channel and does not need this one (V4-WATERMATH-001 F0
+//                     edit half). The PUT resolves it with resolveMetadataArm below — a HAS-KEY
+//                     test, so absent preserves, explicit JSON null clears, an object replaces.
+//                     jsonb can say null on the wire directly; the clear:[] channel exists for
+//                     columns whose COALESCE grammar erases the null/absent distinction, and
+//                     routing metadata through it would add a second spelling for the same intent.
+//   quantity_numeric, No edit surface owns them.
 //   source
 export const CLEARABLE_SET = new Set(CLEARABLE_FIELDS);
 
@@ -66,6 +71,36 @@ export function validateClear(clear, body = {}) {
     if (body[k] != null) return `${k} cannot be both cleared and set in the same request`;
   }
   return null;
+}
+
+// V4-WATERMATH-001 F0 edit half — resolve the metadata COLUMN for a PARTIAL update.
+//
+// THE GRAMMAR (the route's third, chosen deliberately): HAS-KEY.
+//   * key absent          -> { has: false } — the SQL arm keeps el.metadata byte-identical. This is
+//     the stale-PWA-bundle rule that justified preserve-on-absent for the treatment columns, and it
+//     matters MORE here: metadata is a bag every writer shares (batch_id, water_depth, capture
+//     provenance), so a cached bundle that PUTs without the key must not blank annotations it has
+//     never heard of.
+//   * key explicitly null -> { has: true, value: null } — clears the column. This is the
+//     harvest.weight grammar (index.js hClearWeight), not a fourth invention: JSON can say null for
+//     a jsonb column directly, which is exactly the distinction the clear:[] channel exists to
+//     recover for scalar columns bound through COALESCE. Not routed through clear:[] — see the
+//     exclusion table above.
+//   * key carries object  -> { has: true, value: <object> } — REPLACES the column wholesale.
+//     Replace, not a server-side jsonb merge: EventDetail sends the full merged object (a spread of
+//     the row's stored metadata plus the edited key), and replace is what lets an edit REMOVE a key
+//     at all. Matches the POST, which stores body.metadata verbatim.
+//
+// `{ metadata: undefined }` cannot arrive over the wire (JSON has no undefined; JSON.parse never
+// produces one), so the ?? null normalization only defends a direct-call path — it resolves to
+// clear, the same verdict a JSON null gets.
+//
+// Vocabulary validation (water_depth et al) stays in validators.js validateEventMetadata, shared
+// with the POST and called by the route BEFORE this resolver — same split as
+// validateTreatmentCategory (shared rule) vs resolveFlagPair (partial-update resolution).
+export function resolveMetadataArm(body) {
+  const has = body != null && typeof body === 'object' && Object.hasOwn(body, 'metadata');
+  return { has, value: has ? (body.metadata ?? null) : null };
 }
 
 // Resolve the flagged/severity pair for a PARTIAL update, then validate it.
