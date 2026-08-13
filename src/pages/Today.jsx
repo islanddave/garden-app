@@ -6,7 +6,6 @@ import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
 import CultivationLead from '../components/today/CultivationLead.jsx'
 import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'
-import HarvestReadyBand from '../components/HarvestReadyBand.jsx'
 import HarvestWatchBand from '../components/HarvestWatchBand.jsx'
 import ComposeHarvestBand from '../components/ComposeHarvestBand.jsx'
 import { P } from '../lib/constants.js'
@@ -61,7 +60,7 @@ export default function Today() {
       {/* PANEL Q1 (harvest-panel-decisions-20260812.md) — the cultivation lead line, the demoted
           third region of Today: one or two imperative lines at the very top, no heading, no count,
           renders nothing when empty. Reads the sow engine's own window_closing output; invents no
-          cue. Deliberately ABOVE the plan/weather block and both harvest bands. */}
+          cue. Deliberately ABOVE the plan/weather block and the harvest watch band. */}
       <CultivationLead />
 
       {loading && <div style={{ padding: 20, color: P.light, textAlign: 'center' }}>Loading&hellip;</div>}
@@ -128,21 +127,24 @@ export default function Today() {
           fetching; renders nothing when empty, so it costs no space on a fresh account. */}
       <PutUpUseSoonBand />
 
-      {/* V4-HARVESTSURF-001 — cadence-evidence "ready to pick" nudge. Same ambient, self-fetching,
-          hidden-when-empty posture as the band above; never fires without a prior harvest. */}
-      <HarvestReadyBand />
+      {/* BD-008 / V4-HIDEREADYBAND-001 — HarvestReadyBand (V4-HARVESTSURF-001, "Due for a pick")
+          is UNMOUNTED from Today, not deleted. Dave 08-13: he does not log harvests from that
+          block, so it earns no space on the app's highest-traffic route. Hide-not-delete is
+          deliberate: the component and its 15 unit tests stay intact because HarvestWatchBand
+          shares harvestWindows.json with it and the band may return (re-open V4-READYDISMISS-001
+          if it does). Restoring = re-import + re-mount here, above the watch band. */}
 
       {/* V4-HARVSURFACE-001 Slice 1 — Section 2 of the two-section harvest surface: the "worth
-          checking" watch list. Deliberately BELOW the ready band: that one is an action surface
-          (imperative, go/no-go now), this one is a plan surface (declarative, "what changed since
-          I last looked"). Design §4 — the mood and weight difference is what stops these rows from
-          being read as tasks, which is what would turn the screen back into an inventory. Same
-          ambient posture as its neighbours: self-fetching, error swallowed, hidden when empty. */}
+          checking" watch list — since BD-008 the one harvest band on Today. A plan surface
+          (declarative, "what changed since I last looked"), never an action surface. Design §4 —
+          the mood and weight difference is what stops these rows from being read as tasks, which
+          is what would turn the screen back into an inventory. Same ambient posture as its
+          neighbours: self-fetching, error swallowed, hidden when empty. */}
       <HarvestWatchBand />
 
       {/* V4-COMPOSEPOST-001 — compose tonight's harvest post from what was just logged. Same ambient
           posture again: self-fetching, error swallowed, renders nothing unless there is a batch from
-          the last 18 hours. Deliberately AFTER the ready-to-pick band — that one asks you to go pick
+          the last 18 hours. Deliberately AFTER the watch band — that one asks you to go check
           something; this one is what you reach for once you already have. */}
       <ComposeHarvestBand />
 
