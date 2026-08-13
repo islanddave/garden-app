@@ -247,3 +247,16 @@ describe('GET /api/harvests/watch — the impression write', () => {
     expect(q).toMatch(/ON CONFLICT \(user_id, plant_id, shown_on, region\) DO NOTHING/);
   });
 });
+
+// ── Mirrored display constants — lockstep pin (pre-promote pass v4.12.0, MINOR-4) ────────────────
+// The server restates the client's slot allocation so impressions record the region split the
+// client actually renders (module graphs can't share). Both sides carry change-in-lockstep
+// comments; this is the executable version. If either side moves alone, this fails.
+describe('mirrored display constants stay in lockstep with src/lib/harvestWatch.js', () => {
+  it('IMPRESSION_PROJECT_SLOT_CAP === WATCH_PROJECT_SLOT_CAP and DEFAULT_LIMIT === MAX_WATCH_ROWS', async () => {
+    const client = await import('../../src/lib/harvestWatch.js');
+    const server = await import('./watch-route.js');
+    expect(server.IMPRESSION_PROJECT_SLOT_CAP).toBe(client.WATCH_PROJECT_SLOT_CAP);
+    expect(server.DEFAULT_LIMIT).toBe(client.MAX_WATCH_ROWS);
+  });
+});
