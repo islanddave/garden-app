@@ -54,7 +54,6 @@ beforeEach(() => {
 
 describe('EventDetail — PROJHIDE post-delete nav', () => {
   it('navigates to /today after delete even with a resolved project', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(
       <MemoryRouter initialEntries={['/events/e1']}>
         <Routes><Route path="/events/:eventId" element={<EventDetail />} /></Routes>
@@ -65,7 +64,10 @@ describe('EventDetail — PROJHIDE post-delete nav', () => {
     await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects/p1'))
     await act(async () => { await Promise.resolve() })
 
-    await act(async () => { fireEvent.click(screen.getByText('Delete')) })
+    // DD9 / W-EVTDEL: delete now interposes the EventDeleteConfirm sheet — arm it from the
+    // header action, then confirm from the sheet ("Delete event"), same as EventDetail.deleteConfirm.
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Delete' })) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Delete event' })) })
     await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith('/today'))
     expect(navigateSpy).not.toHaveBeenCalledWith('/projects/p1')
   })
