@@ -18,9 +18,26 @@
 // impression-log section below; it too touches no existing relation and cannot fail the request.)
 
 import {
-  WATCH_MODEL_VERSION, NURSERY_OFFSET_DAYS_FALLBACK,
+  WATCH_MODEL_VERSION, NURSERY_OFFSET_DAYS_FALLBACK, DERIVED_ANCHOR_ENABLED,
   buildWatchList, buildDismissalSnapshot, toYmd,
 } from './watch.js';
+
+// V4-ANCHORFLIP-001 condition 1 — the seam that makes a ROUTE-LEVEL flag-on test possible.
+//
+// The consult's objection to the flip was that the flag-on path had never been exercised through
+// the ROUTE, only through fixtures handed straight to the pure module — so the join, the column
+// aliases and the resolver were each tested in isolation and their COMPOSITION was tested nowhere.
+// Reading the flag through one function lets watch-route.test.js drive the whole handler flag-on
+// against real-shaped rows, which is the only place a mis-aliased column would surface.
+//
+// THIS IS NOT THE FLIP AND DOES NOT WEAKEN IT. `ctx` is a closed object literal built in
+// index.js — no request field, header or query parameter reaches it — so in every deployed
+// environment this resolves to DERIVED_ANCHOR_ENABLED, which is `false` and stays false until
+// condition 9 (Dave's call). The override exists for tests exactly as `siblingHabits` does in
+// watch.js, and for the same reason: a measured effect nobody can reproduce is an unverified one.
+export function resolveDerivedEnabled(ctx) {
+  return typeof ctx?.derivedEnabled === 'boolean' ? ctx.derivedEnabled : DERIVED_ANCHOR_ENABLED;
+}
 
 export const WATCH_PATH = '/api/harvests/watch';
 export const DISMISS_PATH = '/api/harvests/watch/dismiss';
@@ -198,6 +215,44 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
          AND d.observed_on >= b.season_start
        ORDER BY d.plant_id, d.observed_on DESC, d.dismissed_at DESC
     ),
+    -- V4-ANCHORFLIP-001 condition 1 — the derived anchor (public.plant_anchor_derivation,
+    -- migrations/v4-anchorbase-001). Until this join existed, flipping watch.js's
+    -- DERIVED_ANCHOR_ENABLED was a RUNTIME NO-OP: availableAnchors() read undefined for every
+    -- derived_anchor_* field and the tier could never fire. That is what the expert consult refused
+    -- to flip, and the join is the first of its nine conditions.
+    --
+    -- (No backticks anywhere in this comment block, deliberately: it lives inside a tagged-template
+    -- literal, where a backtick TERMINATES the SQL string. Caught by the parse gate, 2026-08-13.)
+    --
+    -- TWO PREDICATES, BOTH LOAD-BEARING, and neither is a tidiness filter:
+    --   * superseded_at IS NULL — a derivation contradicted by a real date is RETIRED, not deleted
+    --     (it is the only accuracy measurement tier 3 will ever produce). Selecting a retired row
+    --     would cite a guess the data has already disproved. uq_plant_anchor_derivation_live makes
+    --     this predicate return at most one row per planting, so the LEFT JOIN cannot fan out.
+    --   * plausibility IS NULL — 0a2's marks. rescue_suspect (the add-date is an ACQUISITION date,
+    --     not a planting date) and post_frost_impossible (anchor + catalogue DTM lands past first
+    --     frost) are rows the backfill itself flagged as not believable. On prod that is 26 of 66.
+    --     They stay in the table as evidence and MUST NOT feed the tier.
+    --
+    -- No user_id predicate on purpose: the live CTE above is already scoped to the household through
+    -- plant_projects.created_by, and the derivation's own user_id is the PROJECT OWNER (consult
+    -- decision 1, item 4) — re-filtering on it would drop the 13 plantings whose plants.created_by
+    -- is the rescue-intake pseudo-user without adding any isolation the join does not already have.
+    --
+    -- RELATION EXISTS EVERYWHERE THIS RUNS: 0a/0a2 are applied to staging (12 rows) and prod (66),
+    -- and CI's integration job branches off staging. Unlike the impression writer this join is NOT
+    -- wrapped in a try/catch — it is in the request's critical path, so a missing relation must fail
+    -- loudly rather than silently degrade the queue to its pre-derivation shape.
+    derived AS (
+      SELECT d.plant_id,
+             d.anchor_date  AS derived_anchor_date,
+             d.anchor_field AS derived_anchor_field,
+             d.source       AS derived_anchor_source,
+             d.confidence   AS derived_anchor_confidence
+        FROM public.plant_anchor_derivation d
+       WHERE d.superseded_at IS NULL
+         AND d.plausibility IS NULL
+    ),
     nursery AS (
       SELECT count(*)::int AS n,
              percentile_cont(0.5) WITHIN GROUP (
@@ -225,6 +280,11 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
            ld.anchor_basis_shifted            AS dismissal_anchor_basis_shifted,
            ld.expected_days                   AS dismissal_expected_days,
            ld.lead_days                       AS dismissal_lead_days,
+           -- V4-ANCHORFLIP-001 condition 1. to_char, matching the dismissal dates above: a bare date
+           -- column round-trips through the driver as a Date whose civil day depends on the reader's
+           -- zone, and this value feeds the date arithmetic the whole tier rests on.
+           to_char(dv.derived_anchor_date, 'YYYY-MM-DD') AS derived_anchor_date,
+           dv.derived_anchor_field, dv.derived_anchor_source, dv.derived_anchor_confidence,
            loc.name                           AS location_name,
            to_char(b.et_today, 'YYYY-MM-DD')  AS et_today,
            to_char(b.season_start, 'YYYY-MM-DD') AS season_start,
@@ -238,6 +298,7 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
       LEFT JOIN sibling sb   ON sb.plant_id = l.plant_id
       LEFT JOIN dismissed dm ON dm.plant_id = l.plant_id
       LEFT JOIN last_dismissal ld ON ld.plant_id = l.plant_id
+      LEFT JOIN derived dv   ON dv.plant_id = l.plant_id
       LEFT JOIN locations loc ON loc.id = l.location_id AND loc.deleted_at IS NULL
   `;
 }
@@ -379,7 +440,9 @@ export async function handleWatchGet(ctx) {
   const etToday = toYmd(rows?.[0]?.et_today) ?? toYmd(ctx.etTodayFallback);
   const nursery = resolveNurseryOffset(rows);
 
-  const { candidates, excluded, snoozed } = buildWatchList(rows, etToday, { nurseryOffsetDays: nursery.days });
+  const { candidates, excluded, snoozed } = buildWatchList(rows, etToday, {
+    nurseryOffsetDays: nursery.days, derivedEnabled: resolveDerivedEnabled(ctx),
+  });
 
   // PANEL Q2: persist the resolver's exclusion breakdown, do not merely return it. v1 is one
   // structured JSON line per invocation — CloudWatch retains it, so the model's own false-positive
@@ -465,7 +528,12 @@ export async function handleDismissalPost(ctx) {
   // Household membership is proven by the candidate query itself: it is already scoped to
   // plant_projects.created_by = ANY(household), so a planting outside the household is simply not
   // in `rows`. Same generic answer for absent / foreign / soft-deleted — no existence oracle.
-  const { candidates } = buildWatchList(rows, etToday, { nurseryOffsetDays: nursery.days });
+  // Same resolver settings as the GET, and that is a correctness requirement rather than tidiness:
+  // if the two disagreed, a row the GET served could not be dismissed (404 "no active candidate")
+  // — the dismissal path must see exactly the queue the user was looking at.
+  const { candidates } = buildWatchList(rows, etToday, {
+    nurseryOffsetDays: nursery.days, derivedEnabled: resolveDerivedEnabled(ctx),
+  });
   const candidate = candidates.find((c) => c.plant_id === plantId);
   if (!candidate) {
     return { statusCode: 404, body: { error: 'No active watch-list candidate for that planting' } };
