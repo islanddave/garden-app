@@ -102,7 +102,10 @@ export const handler = async (event) => {
   const method = event.requestContext?.http?.method ?? 'GET';
   const rawPath = event.rawPath ?? '/api/plants';
 
-  const idMatch = rawPath.match(/^\/api\/plants\/([^/]+)$/);
+  // `/api/plants/deleted` is a single trailing segment, so this matcher would otherwise capture it
+  // as a planting id and 404 from the by-id GET. Excluded here; the route is handled inside the try
+  // below, mirroring lambda/locations and lambda/photos.
+  const idMatch = rawPath !== '/api/plants/deleted' && rawPath.match(/^\/api\/plants\/([^/]+)$/);
   // V3-SEEN-001 (Lane A Foundation): seen-contract write path. New-endpoint-only,
   // additive — does NOT touch any existing GET/PUT/POST/DELETE handler. idMatch's
   // /^\/api\/plants\/([^/]+)$/ does NOT match the /seen suffix, so no route collision.
@@ -113,8 +116,98 @@ export const handler = async (event) => {
   // V3-ARCHIVE-001: soft-archive toggle (distinct from deleted_at). Checked before idMatch
   // (idMatch's /([^/]+)$/ won't match the /archive suffix). PATCH-only, symmetric set/unset.
   const archiveMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/archive$/);
+  const restoreMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/restore$/);
 
   try {
+    // ── V4-RESTORESURFACE-001 — the recovery path for plantings (audit I9) ───────────────────────
+    //
+    // 33 plantings are soft-deleted in prod with no affordance to bring any of them back. The
+    // governing principle is lambda/photos': "A destructive control must not ship ahead of the
+    // recovery path it advertises" — the DELETE arm below shipped long ago, so this closes a gap.
+    //
+    // THE CONTAINER PRECONDITION IS THE INTERESTING PART, and it is why this route is not a copy of
+    // the locations one. The DELETE arm requires the planting's container to be LIVE (the F4
+    // container-deleted gate), and restore mirrors that predicate — you cannot restore a planting
+    // into a container that is itself deleted. That is the correct rule, but it is NOT a rare edge:
+    // MEASURED on live prod 2026-08-13, 11 of the 33 soft-deleted plantings sit under a container
+    // that is also deleted. A third of the list.
+    //
+    // So the list below deliberately INCLUDES those rows and flags each one, rather than hiding
+    // them (a third of the user's deletions silently missing) or listing them as restorable and
+    // failing (a dead end with no explanation). The restore route answers them with a typed 409
+    // naming the container, which is a thing the user can act on: restore the container first.
+    if (rawPath === '/api/plants/deleted' && method === 'GET') {
+      const rawLimit = Number(event?.queryStringParameters?.limit);
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200) : 50;
+      // Ownership WITHOUT the liveness requirement: a soft-deleted planting's container may itself
+      // be deleted, and the row is still the household's to see. Liveness is a RESTORE precondition,
+      // not an ownership test — conflating the two is what would hide the 11.
+      const rows = await sql`
+        SELECT p.id, p.display_name AS name, p.container_id AS project_id, p.status,
+               p.deleted_at, p.created_at,
+               pp.display_name AS project_name,
+               (p.container_id IS NOT NULL AND pp.deleted_at IS NOT NULL) AS restore_blocked_by_container
+          FROM public.garden_node p
+          LEFT JOIN public.container pp ON pp.id = p.container_id
+         WHERE p.deleted_at IS NOT NULL
+           AND ( pp.created_by = ANY(${householdIds})
+                 OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
+         ORDER BY p.deleted_at DESC, p.id DESC
+         LIMIT ${limit}
+      `;
+      return resp(200, { plants: rows });
+    }
+
+    if (restoreMatch && method === 'POST') {
+      const plantId = restoreMatch[1];
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(plantId))) {
+        return resp(404, { error: 'Not found' });
+      }
+      const [existing] = await sql`
+        SELECT p.id, p.deleted_at, p.container_id, pp.deleted_at AS container_deleted_at,
+               pp.display_name AS project_name
+          FROM public.garden_node p
+          LEFT JOIN public.container pp ON pp.id = p.container_id
+         WHERE p.id = ${plantId}
+           AND ( pp.created_by = ANY(${householdIds})
+                 OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
+      `;
+      if (!existing) return resp(404, { error: 'Not found' });
+      // Idempotent, matching restorePhoto and lambda/locations.
+      if (!existing.deleted_at) {
+        return resp(200, { id: existing.id, deleted_at: null, already_restored: true });
+      }
+      // The precondition, answered as something actionable rather than as a 404. A 404 here would
+      // be a lie — the row exists and is theirs — and a silent no-op would be worse.
+      if (existing.container_id && existing.container_deleted_at) {
+        return resp(409, {
+          error: `Restore "${existing.project_name}" first — this planting lives inside it`,
+          code: 'container_deleted',
+          project_id: existing.container_id,
+        });
+      }
+
+      const rows = await sql`
+        UPDATE public.garden_node p
+           SET deleted_at = NULL
+         WHERE p.id = ${plantId}
+           AND p.deleted_at IS NOT NULL
+           AND (
+             EXISTS (SELECT 1 FROM public.container pp
+                      WHERE pp.id = p.container_id AND pp.created_by = ANY(${householdIds})
+                        AND pp.deleted_at IS NULL)
+             OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
+           )
+        RETURNING p.id, p.display_name AS name, p.deleted_at
+      `;
+      // The `plants_entity_softdel` trigger mirrors deleted_at onto the entity registry row in BOTH
+      // directions (it assigns NEW.deleted_at rather than a literal), so the planting comes back
+      // visible to search and the registry with no extra statement here. Verified on the live
+      // trigger body, not assumed.
+      if (!rows.length) return resp(404, { error: 'Not found' });
+      return resp(200, rows[0]);
+    }
+
     if (seenMatch) {
       const plantId = seenMatch[1];
       if (method !== 'POST') return resp(405, { error: 'Method not allowed' });

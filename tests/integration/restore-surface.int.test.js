@@ -19,12 +19,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, testRunId, setTestUserId, callHandler } from './_harness.js'
 import { handler as locationsHandler } from '../../lambda/locations/index.js'
+import { handler as plantsHandler } from '../../lambda/plants/index.js'
 
 const RUN = testRunId()
 const USER = `user_int_restore_${RUN}`
 const FOREIGN_USER = `user_int_restore_foreign_${RUN}`
 
 let deletedLocId, liveLocId, foreignDeletedLocId
+let liveProjId, deletedProjId, delPlantLiveProj, delPlantDeadProj, livePlantId
 
 beforeAll(async () => {
   setTestUserId(USER)
@@ -49,9 +51,39 @@ beforeAll(async () => {
     VALUES (${'restore-foreign-' + RUN}, ${'restore-foreign-' + RUN}, ${0}, ${FOREIGN_USER}, NOW())
     RETURNING id`
   foreignDeletedLocId = foreign[0].id
+
+  // ── plantings ────────────────────────────────────────────────────────────────────────────────
+  const lp = await directSql`
+    INSERT INTO plant_projects (slug, name, created_by, kind)
+    VALUES (${'restore-proj-live-' + RUN}, ${'restore-proj-live-' + RUN}, ${USER}, 'campaign')
+    RETURNING id`
+  liveProjId = lp[0].id
+  const dp = await directSql`
+    INSERT INTO plant_projects (slug, name, created_by, kind, deleted_at)
+    VALUES (${'restore-proj-dead-' + RUN}, ${'restore-proj-dead-' + RUN}, ${USER}, 'campaign', NOW())
+    RETURNING id`
+  deletedProjId = dp[0].id
+
+  const a = await directSql`
+    INSERT INTO plants (project_id, name, created_by, deleted_at)
+    VALUES (${liveProjId}, ${'restore-plant-a-' + RUN}, ${USER}, NOW()) RETURNING id`
+  delPlantLiveProj = a[0].id
+  // The blocked case — 11 of 33 real prod rows look like this.
+  const b = await directSql`
+    INSERT INTO plants (project_id, name, created_by, deleted_at)
+    VALUES (${deletedProjId}, ${'restore-plant-b-' + RUN}, ${USER}, NOW()) RETURNING id`
+  delPlantDeadProj = b[0].id
+  const c = await directSql`
+    INSERT INTO plants (project_id, name, created_by)
+    VALUES (${liveProjId}, ${'restore-plant-c-' + RUN}, ${USER}) RETURNING id`
+  livePlantId = c[0].id
 })
 
 afterAll(async () => {
+  await directSql`DELETE FROM entity WHERE entity_type='planting' AND planting_ref_id IN (
+    SELECT id FROM plants WHERE created_by = ${USER})`
+  await directSql`DELETE FROM plants WHERE created_by = ${USER}`
+  await directSql`DELETE FROM plant_projects WHERE created_by = ${USER}`
   await directSql`DELETE FROM locations WHERE created_by IN (${USER}, ${FOREIGN_USER})`
 })
 
@@ -159,5 +191,75 @@ describe('V4-RESTORESURFACE-001 — Soft-Delete-Only holds on the new surface', 
       method: 'DELETE', path: '/api/locations/deleted',
     })
     expect(status).not.toBe(200)
+  })
+})
+
+describe('V4-RESTORESURFACE-001 — plantings, and the container precondition', () => {
+  it('lists soft-deleted plantings INCLUDING those blocked by a deleted container', async () => {
+    // Hiding the blocked ones would drop a third of the user's deletions off the surface with no
+    // explanation. They are listed and flagged instead.
+    setTestUserId(USER)
+    const { status, body } = await callHandler(plantsHandler, {
+      method: 'GET', path: '/api/plants/deleted',
+    })
+    expect(status).toBe(200)
+    const byId = Object.fromEntries(body.plants.map(p => [p.id, p]))
+    expect(byId[delPlantLiveProj], 'restorable planting must be listed').toBeTruthy()
+    expect(byId[delPlantDeadProj], 'blocked planting must ALSO be listed').toBeTruthy()
+    expect(byId[livePlantId], 'a live planting is not a deletion').toBeUndefined()
+
+    expect(byId[delPlantLiveProj].restore_blocked_by_container).toBe(false)
+    expect(byId[delPlantDeadProj].restore_blocked_by_container,
+      'the flag is what lets the UI explain the dead end instead of hitting it').toBe(true)
+  })
+
+  it('restores a planting whose container is live', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(plantsHandler, {
+      method: 'POST', path: `/api/plants/${delPlantLiveProj}/restore`,
+    })
+    expect(status).toBe(200)
+    expect(body.deleted_at).toBeNull()
+    const [row] = await directSql`SELECT deleted_at FROM plants WHERE id = ${delPlantLiveProj}`
+    expect(row.deleted_at).toBeNull()
+  })
+
+  it('the entity registry row comes back too — the mirror trigger runs in both directions', async () => {
+    // A planting restored but still soft-deleted in the entity registry would be back yet missing
+    // from search. The trigger assigns NEW.deleted_at rather than a literal, so NULL propagates.
+    const [ent] = await directSql`
+      SELECT deleted_at FROM entity
+       WHERE entity_type = 'planting' AND planting_ref_id = ${delPlantLiveProj}`
+    expect(ent, 'the registry row must exist').toBeTruthy()
+    expect(ent.deleted_at, 'restored planting must be live in the registry too').toBeNull()
+  })
+
+  it('409s with a typed, actionable code when the container is also deleted', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(plantsHandler, {
+      method: 'POST', path: `/api/plants/${delPlantDeadProj}/restore`,
+    })
+    expect(status, 'a 404 here would be a lie — the row exists and is theirs').toBe(409)
+    expect(body.code).toBe('container_deleted')
+    expect(body.project_id).toBe(deletedProjId)
+    const [row] = await directSql`SELECT deleted_at FROM plants WHERE id = ${delPlantDeadProj}`
+    expect(row.deleted_at, 'and it must still be deleted').not.toBeNull()
+  })
+
+  it('is idempotent on a live planting', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(plantsHandler, {
+      method: 'POST', path: `/api/plants/${livePlantId}/restore`,
+    })
+    expect(status).toBe(200)
+    expect(body.already_restored).toBe(true)
+  })
+
+  it('404s an unknown planting id', async () => {
+    setTestUserId(USER)
+    const { status } = await callHandler(plantsHandler, {
+      method: 'POST', path: '/api/plants/00000000-0000-4000-8000-000000000000/restore',
+    })
+    expect(status).toBe(404)
   })
 })
