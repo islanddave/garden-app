@@ -4,6 +4,7 @@ import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import WeatherWidget, { asOfLabel } from '../components/today/WeatherWidget.jsx'
 import { useLiveRain } from '../hooks/useLiveRain.js'
 import CareNeeded from '../components/today/CareNeeded.jsx'
+import CultivationLead from '../components/today/CultivationLead.jsx'
 import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'
 import HarvestReadyBand from '../components/HarvestReadyBand.jsx'
 import HarvestWatchBand from '../components/HarvestWatchBand.jsx'
@@ -56,6 +57,12 @@ export default function Today() {
       <p style={{ fontSize: '0.84rem', color: P.light, marginTop: 0, marginBottom: 16 }}>
         {formatDate(data?.plan_date) || 'Your garden, at a glance'}
       </p>
+
+      {/* PANEL Q1 (harvest-panel-decisions-20260812.md) — the cultivation lead line, the demoted
+          third region of Today: one or two imperative lines at the very top, no heading, no count,
+          renders nothing when empty. Reads the sow engine's own window_closing output; invents no
+          cue. Deliberately ABOVE the plan/weather block and both harvest bands. */}
+      <CultivationLead />
 
       {loading && <div style={{ padding: 20, color: P.light, textAlign: 'center' }}>Loading&hellip;</div>}
       {error && <div style={{ padding: 20, color: '#b94a3a', textAlign: 'center' }}>{error}</div>}
