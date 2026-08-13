@@ -43,8 +43,11 @@ describe('App route table (single source of truth)', () => {
     // confirm's "recoverable from Recently deleted" copy names. It is NOT flag-gated: the copy
     // promising it ships unconditionally, so the destination must too.
     const paths = pagePaths()
-    expect(paths).toHaveLength(52)
-    expect(new Set(paths).size).toBe(52)
+    // 53 since BUG-VOICEDUPE-002 added /admin/voice-debug (unlinked, Protected, admin-only
+    // raw Web Speech capture). Registered exactly once in App.jsx — the uniqueness assert below
+    // is what proves a count bump is a new route rather than a duplicate registration.
+    expect(paths).toHaveLength(53)
+    expect(new Set(paths).size).toBe(53)
   })
 
   it('includes the catch-all, index redirect, and every key route', () => {

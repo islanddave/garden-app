@@ -92,8 +92,9 @@ describe('flag OFF — the /space routes are ABSENT from the table, not merely r
   it('restores the shipped 50-route table exactly, with no duplicates', async () => {
     const { renderRoutes } = await import('../App.jsx')
     const paths = renderRoutes({ overlay: false, user: true }).map(r => r.props.path)
-    expect(paths).toHaveLength(50)
-    expect(new Set(paths).size).toBe(50)
+    // 51 since BUG-VOICEDUPE-002 added /admin/voice-debug (flag-independent — it is not a /space route)
+    expect(paths).toHaveLength(51)
+    expect(new Set(paths).size).toBe(51)
   })
 
   it('adds NO route to the overlay tree either', async () => {
