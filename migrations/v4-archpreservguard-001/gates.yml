@@ -1,0 +1,143 @@
+# gates.yml
+# BUG-ARCHPRESERVGUARD-001 — the archive routines guard calibration evidence and photos, but not
+# preservation provenance (audit finding I7). Scope is the ROUTINES only: the FK actions on
+# preservation_log are deliberately unchanged and filed as V4-PRESERVFKACTION-001 (0c section 3).
+# M3 resolved as NO CHANGE — see 0c §M3.
+#
+# SEQUENCING: one file, 0c-guard.sql. It replaces two function bodies in one transaction and
+# changes no constraint and no row; there is no 0a.
+#
+# DEPLOY BOUNDARY — the falsifiable test, answered.
+#   QUESTION: would the CURRENTLY DEPLOYED prod code perform an operation this now rejects?
+#   METHOD: all 27 deployed prod bundles grepped for `DELETE FROM` at prod
+#   5c232164616228dfce4f3e669ef8011a2cf7a456 = v4.14.0, plus a repo grep for callers of the two
+#   routines.
+#   RESULT: no deployed writer hard-deletes harvest_log or plants, and NOTHING deployed calls
+#   archive_plant_events() or archive_container_events() — they are operator-invoked escape hatches
+#   by design. The only in-database writer deleting harvest_log IS those two routines, which this
+#   migration is editing.
+#   ANSWER: NO. Safe to apply before or after a code deploy; no pre/post-deploy split.
+#
+#   COMPANION EDITS: none required, verified rather than assumed. tests/integration/_cleanup.js
+#   already sweeps preservation_log BEFORE harvest_log and plants, and both preservation suites
+#   delete preservation_log first. The staging smoke purge never touches preservation_log.
+#
+# APPLY ORDER CONSEQUENCE FOR CI: gate-invariants.yml runs `--phase post --continuous-only` against
+# BOTH prod and staging and fires on `migrations/**` pushes. Apply to STAGING AND PROD BEFORE push.
+#
+# CROSS-MIGRATION RISK, checked: V4-SOFTDELCASCADE-001 carries
+# post_archive_functions_detach_photos_before_deleting_events, which asserts POSITIONALLY against
+# prosrc that the photo DETACH precedes the event DELETE in both routines. This migration inserts a
+# guard ABOVE the detach in each, so the two remain in the same relative order — but that gate is
+# the reason the whole corpus must be re-run on both envs after applying, not just this directory's.
+
+pre:
+  # The premise the routine guard exists to cover: both provenance pointers ARE SET NULL, so a
+  # harvest_log delete silently nulls them. Standing invariant, NOT apply-window — this migration
+  # deliberately leaves the FK actions alone (v4-putup-001 chose them on purpose), so it stays true
+  # after apply. If it ever fails, V4-PRESERVFKACTION-001 has been decided and both this gate and
+  # v4-putup-001's post_plant_fk_set_null / post_harvest_fk_set_null need revisiting together.
+  - name: pre_preservation_pointers_are_set_null
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('preservation_log_harvest_log_id_fkey','preservation_log_plant_id_fkey')
+         AND confdeltype = 'n'
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_archive_routines_have_no_preservation_guard
+    continuous: false
+    sql: |
+      SELECT 1 FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('archive_plant_events','archive_container_events')
+         AND p.prosrc NOT ILIKE '%preservation_log%'
+    expect: rowcount_eq
+    value: 2
+
+  # The premise: both routines exist and are the only in-database deleters of harvest_log. If a
+  # third appears, it needs the same guard and this migration's reasoning must be re-read.
+  # Standing invariant.
+  - name: pre_only_the_two_archive_routines_delete_harvest_log
+    sql: |
+      SELECT 1 FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+         AND p.prosrc ~* 'delete\s+from\s+(public\.)?harvest_log\b'
+         AND p.proname NOT IN ('archive_plant_events','archive_container_events')
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # L-058: the predicate the constraints are about to enforce must ALREADY hold. Both FKs are
+  # already convalidated = 't', so this cannot fail for a reason that would block the ALTER — kept
+  # as belt-and-braces against a hand-edited NOT VALID FK. DELIBERATELY UNFILTERED by deleted_at.
+  - name: sweep_no_dangling_preservation_pointers
+    sql: |
+      SELECT 1 FROM public.preservation_log pl
+       WHERE pl.harvest_log_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.harvest_log h WHERE h.id = pl.harvest_log_id)
+      UNION ALL
+      SELECT 1 FROM public.preservation_log pl
+       WHERE pl.plant_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.plants p WHERE p.id = pl.plant_id)
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # THE FIX, layer 1 — both routines now name preservation_log, i.e. the guard is present in each.
+  - name: post_both_archive_routines_guard_preservation
+    sql: |
+      SELECT 1 FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('archive_plant_events','archive_container_events')
+         AND p.prosrc ILIKE '%preservation_log%'
+    expect: rowcount_eq
+    value: 2
+
+  # NOTE there is no FK gate here on purpose. An earlier draft of this migration ALSO flipped
+  # preservation_log.harvest_log_id and .plant_id to RESTRICT as a backstop; v4-putup-001's
+  # post_plant_fk_set_null / post_harvest_fk_set_null caught it, and reading that migration showed
+  # the SET NULL was a stated design choice ("planting deleted -> keep put-up history"; harvest_log_id
+  # is an OPTIONAL link), not an oversight. The flip is a product decision, filed as
+  # V4-PRESERVFKACTION-001. Those two putup gates remain the authority on the FK action; this
+  # migration asserts only the routine behaviour. See 0c section 3.
+
+  # THE GUARD MUST PRECEDE THE WRITES it protects, in BOTH routines — otherwise it is decoration:
+  # the harvest_log DELETE would already have fired and nulled the pointers before anything raised.
+  # Positional, mirroring the technique V4-SOFTDELCASCADE-001 used for the detach/delete ordering
+  # (and mutation-tested the same way: moving the guard below the DELETE makes this fail).
+  - name: post_preservation_guard_precedes_the_harvest_delete
+    sql: |
+      SELECT 1 FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE p.proname IN ('archive_plant_events','archive_container_events')
+         AND position('preservation_log' in p.prosrc) > 0
+         AND position('preservation_log' in p.prosrc)
+             < position('DELETE FROM public.harvest_log' in p.prosrc)
+    expect: rowcount_eq
+    value: 2
+
+  # THE M3 DECISION, pinned. user_achievements.trigger_event_id stays SET NULL deliberately: nulling
+  # a reward's provenance pointer costs no user-visible data, rewards are never clawed back
+  # (V4-EVTCASCADE-001 policy), and the event itself survives in event_log_archive so the provenance
+  # remains recoverable — unlike a preservation record, which has no other record of its source.
+  # Duplicated from V4-CASCADESWEEP-001 on purpose: this migration is where someone would go looking
+  # to "finish the job", and finding the decision here is what stops them.
+  - name: post_m3_trigger_event_id_deliberately_still_set_null
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'user_achievements_trigger_event_id_fkey'
+         AND confdeltype = 'n'
+    expect: rowcount_eq
+    value: 1
+
+  # continuous: false — the apply-time receipt, which cannot be self-armed without becoming
+  # tautological.
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '4.23.10-archpreservguard-001'
+    expect: rowcount_eq
+    value: 1
