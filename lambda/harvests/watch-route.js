@@ -13,7 +13,9 @@
 // THIS LAMBDA WAS READ-ONLY BEFORE THIS SLICE and index.js 405s anything that is not
 // GET /api/harvests. The dismissal write is the first mutation it has ever performed, so it is
 // deliberately narrow: one INSERT into one new standalone table, one UPDATE that sets undone_at on
-// a row the caller owns. It touches no existing relation.
+// a row the caller owns. It touches no existing relation. (V4-WATCHIMPRESSION-001 later added one
+// more narrow write: the GET path's NON-FATAL batch insert into public.watch_impression — see the
+// impression-log section below; it too touches no existing relation and cannot fail the request.)
 
 import {
   WATCH_MODEL_VERSION, NURSERY_OFFSET_DAYS_FALLBACK,
@@ -254,6 +256,119 @@ export function resolveNurseryOffset(rows) {
   return { days: NURSERY_OFFSET_DAYS_FALLBACK, source: 'fallback_constant', sample_n: n };
 }
 
+// ── Impression log (V4-WATCHIMPRESSION-001) ──────────────────────────────────────────────────────
+//
+// Panel Q3 named this "the highest-value missing piece in the whole design": the dismissal table
+// records every "not yet" tap, but nothing records which rows were SHOWN — so every rate in the
+// dismissal-calibration refit has an unrecoverable denominator, and a row that was
+// correct-but-not-tapped is indistinguishable from a row never seen. The GET path writes one row
+// per SERVED planting per region per ET day into public.watch_impression
+// (migrations/v4-watchimpression-001), stamped with the SAME WATCH_MODEL_VERSION the dismissal
+// rows carry, so numerator and denominator join within one model generation.
+//
+// REGION HONESTY (the column that keeps the analysis truthful): the server knows what it SERVED,
+// not what a human looked at. 'top5' rows render without user action (served ~= seen is fair
+// there); 'tail' means IN-THE-RESPONSE-BUT-COLLAPSED — the client expands on tap and there is NO
+// client beacon in v1 to say whether it ever did; 'snoozed' rows sit inside the tail's collapsed
+// Snoozed subgroup. Rates over 'tail'/'snoozed' impressions are rates over opportunities, not
+// views, and the region column is what lets the refit say so instead of silently conflating them.
+//
+// THE SPLIT MIRRORS THE CLIENT. src/lib/harvestWatch.js selectWatchDisplay allocates the 5 visible
+// slots (MAX_WATCH_ROWS=5, per-project cap WATCH_PROJECT_SLOT_CAP=2 — panel Q2) CLIENT-side over
+// the served ranked list. That walk is deterministic, so the server reproduces it here to label
+// regions; the lambda cannot import src/lib (separate module graphs), so the constants are
+// mirrored: DEFAULT_LIMIT already IS the §3.5 visible cap of 5, and the project cap is restated
+// below. If either side's constants drift, the region labels lie — change them in lockstep.
+export const IMPRESSION_PROJECT_SLOT_CAP = 2; // mirrors src/lib/harvestWatch.js WATCH_PROJECT_SLOT_CAP
+
+// Region/slot assignment over the SERVED slice (post-limit) plus the snoozed payload. Slices, not
+// the full queue, on purpose: an unserved row was never on any screen and gets NO impression —
+// "never seen" must stay distinguishable from "shown", which is the whole point of the table.
+// slot is the 1-based position WITHIN the region (top5 1..5; tail in rank order — tail position
+// governs how many reveal-taps stand between the row and a human); NULL for snoozed, whose order
+// is a return date, not a rank.
+export function splitImpressionRegions(served, snoozed) {
+  const rows = [];
+  const byProject = new Map();
+  let visible = 0;
+  let tail = 0;
+  for (const c of served ?? []) {
+    if (c?.plant_id == null) continue;
+    const key = c.project_id ?? `plant:${c.plant_id}`; // a projectless row can never monopolize
+    const held = byProject.get(key) ?? 0;
+    const isVisible = visible < DEFAULT_LIMIT && held < IMPRESSION_PROJECT_SLOT_CAP;
+    if (isVisible) { byProject.set(key, held + 1); visible += 1; } else { tail += 1; }
+    rows.push({
+      plant_id: c.plant_id,
+      slot: isVisible ? visible : tail,
+      region: isVisible ? 'top5' : 'tail',
+      // Frozen as served, same leakage/drift rationale as the dismissal snapshot. Snoozed rows
+      // carry neither — their frozen anchor already lives on their dismissal row.
+      anchor_kind: c.anchor?.kind ?? null,
+      check_from: toYmd(c.check_from),
+    });
+  }
+  for (const s of snoozed ?? []) {
+    if (s?.plant_id == null) continue;
+    rows.push({ plant_id: s.plant_id, slot: null, region: 'snoozed', anchor_kind: null, check_from: null });
+  }
+  return rows;
+}
+
+// NON-FATAL BY CONSTRUCTION — same fail-open posture as weather_daily's writer (daily-plan
+// handler.js writeWeatherDaily): this is substrate accumulation, and losing one request's
+// impressions is a rounding error against failing the GET that renders Today. Never throws, never
+// returns a rejected promise; a failure (including "relation does not exist" while the migration
+// has not landed yet) logs a warning and the response goes out unchanged.
+//
+// One statement per request: the batch rides a single INSERT..SELECT over unnest'd arrays, with an
+// explicit ::cast on EVERY bind — scalar binds in a SELECT list and nullable array elements are
+// both untypeable for Neon's driver ("could not determine data type of parameter"), which inside
+// this try/catch would present as the impression log silently never populating.
+//
+// ON CONFLICT (user_id, plant_id, shown_on, region) DO NOTHING against uq_watch_impression_day:
+// N Today opens in one day collapse to one row per region — the DAY is the exposure grain (the
+// queue only re-ranks at midnight ET), and without the guard "impressions per day" would measure
+// phone-checking frequency, not exposure. region is in the key because a mid-day dismissal
+// legitimately moves a row between regions within one day; both facts get recorded.
+export async function recordWatchImpressions(sql, { userId, shownOn, served, snoozed }) {
+  try {
+    // No ET day to stamp -> write nothing. Guessing a civil day would corrupt the dedupe grain,
+    // and binding NULL into a NOT NULL column would fail the whole batch anyway.
+    if (!shownOn) return 0;
+    const rows = splitImpressionRegions(served, snoozed);
+    if (rows.length === 0) return 0;
+    await sql`
+      INSERT INTO public.watch_impression
+        (user_id, plant_id, shown_on, slot, region, model_version, anchor_kind, check_from)
+      SELECT ${userId}::text, u.plant_id, ${shownOn}::date, u.slot, u.region,
+             ${WATCH_MODEL_VERSION}::text, u.anchor_kind, u.check_from
+        FROM unnest(
+               ${rows.map((r) => r.plant_id)}::uuid[],
+               ${rows.map((r) => r.slot)}::smallint[],
+               ${rows.map((r) => r.region)}::text[],
+               ${rows.map((r) => r.anchor_kind)}::text[],
+               ${rows.map((r) => r.check_from)}::date[]
+             ) AS u(plant_id, slot, region, anchor_kind, check_from)
+      ON CONFLICT (user_id, plant_id, shown_on, region) DO NOTHING
+    `;
+    // Named observability, matching the weather writer: a log that quietly writes nothing (empty
+    // splits, all-conflict days) stays visible in CloudWatch before the refit ever reads it.
+    console.log(JSON.stringify({
+      metric: 'watch_impressions', model_version: WATCH_MODEL_VERSION, shown_on: shownOn,
+      top5: rows.filter((r) => r.region === 'top5').length,
+      tail: rows.filter((r) => r.region === 'tail').length,
+      snoozed: rows.filter((r) => r.region === 'snoozed').length,
+    }));
+    return rows.length;
+  } catch (e) {
+    console.warn(JSON.stringify({
+      msg: 'watch_impression write failed — GET response unaffected', error: e?.message,
+    }));
+    return 0;
+  }
+}
+
 // GET /api/harvests/watch
 export async function handleWatchGet(ctx) {
   const { sql, householdIds, userId, tz, query = {} } = ctx;
@@ -269,12 +384,23 @@ export async function handleWatchGet(ctx) {
   // PANEL Q2: persist the resolver's exclusion breakdown, do not merely return it. v1 is one
   // structured JSON line per invocation — CloudWatch retains it, so the model's own false-positive
   // region stays on record across resolver changes (the sibling restriction removed the only two
-  // n>=20 calibration crops; this line is the audit trail of what the restriction excluded). A DB
-  // impression log is filed separately; deliberately NO migration here.
+  // n>=20 calibration crops; this line is the audit trail of what the restriction excluded). The
+  // filed impression log now exists too — recordWatchImpressions below writes the row-level
+  // denominator to public.watch_impression; this line stays as the aggregate-level view of the
+  // same request.
   console.log(JSON.stringify({
     metric: 'watch_excluded', model_version: WATCH_MODEL_VERSION, et_today: etToday,
     total_watching: candidates.length, snoozed: snoozed.length, excluded,
   }));
+
+  // What actually goes on the wire — and therefore what the impression log records. An unserved
+  // row (a limit below the queue depth) was never on any screen and gets NO impression row.
+  const served = candidates.slice(0, limit);
+
+  // V4-WATCHIMPRESSION-001 (panel Q3's "highest-value missing piece"): record what was served,
+  // BEFORE the response goes out but never in its way — the writer is non-fatal by construction
+  // and a failure (including the migration not having landed yet) cannot affect this GET.
+  await recordWatchImpressions(sql, { userId, shownOn: etToday, served, snoozed });
 
   return {
     statusCode: 200,
@@ -292,7 +418,7 @@ export async function handleWatchGet(ctx) {
       // shipped band's "Showing 3 of 28 ready" line was arithmetically false for exactly the reason
       // this field exists: it counted a different population than it showed.
       total_watching: candidates.length,
-      candidates: candidates.slice(0, limit),
+      candidates: served,
       // Why every non-candidate is absent. A zero-length list is then explainable instead of being
       // the unreadable silence HarvestReadyBand's `return null` produces for three different states.
       excluded,

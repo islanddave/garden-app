@@ -1,0 +1,205 @@
+# gates.yml
+# V4-WATCHIMPRESSION-001 — public.watch_impression (the watch-surface impression log).
+#
+# STATUS AT AUTHORING (2026-08-12): AUTHORED, NOT APPLIED. Not applied to staging, not applied to
+# prod. The authoring lane executed no DDL anywhere.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# SEQUENCING
+#
+#   staging apply -> rehearse 0r-rollback -> re-apply to staging -> PROD apply -> dev push -> promote
+#
+# The DDL must reach STAGING BEFORE THE DEV PUSH: CI's integration job branches off staging and
+# does NOT apply migrations, so a missing relation there presents as an infra flake, gets retried
+# green, and stays hidden. It must ALSO reach PROD before the promote — the writer is non-fatal by
+# construction (a failed impression insert logs a warning and never affects the GET response), so a
+# late migration does not break anything, but every request served before it lands is a day of
+# denominator the refit will never have, and impressions are the one artifact in this family that
+# no backfill can ever reconstruct (see 0r-rollback.sql).
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
+#
+#   * Every post gate below carries `continuous: false` at authoring because the migration is
+#     UNAPPLIED — the scheduled sweep runs post gates against LIVE prod and would report a standing
+#     red until the apply (convention per v4-softdelcascade-001 / v4-weatherdaily-001).
+#   * The SCHEMA-SHAPE gates (table/columns/constraints/index) stay true forever once applied:
+#     flip those to `continuous: true` AFTER the prod apply.
+#   * post_starts_empty is PERMANENTLY window-scoped — never flip it. It is an L-369 category-1
+#     emptiness assert: the watch GET writer populates this table from the first request after the
+#     Lambda ships, so its truth decays BY DESIGN the moment the feature runs. It exists only to
+#     prove the DDL itself seeded nothing, inside the apply window.
+#   * No time-relative gates and no data-expectation gates in this file at all (L-369 categories 2
+#     and 3): this migration touches no existing relation, so there is nothing to assert "was not
+#     touched", and impression counts are facts about traffic, not invariants of any environment.
+
+pre:
+  - name: pre_plants_present
+    note: FK target. watch_impression.plant_id references public.plants(id).
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plants'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_plants_has_primary_key
+    note: >
+      A REFERENCES clause needs a unique constraint on the target. Reads pg_catalog, NOT
+      information_schema.table_constraints — that view is privilege-filtered to the table owner and
+      returns zero rows for garden_ro while the PK sits there perfectly healthy (measured on live
+      prod 2026-08-12, v4-weatherdaily-001 note).
+    sql: |
+      SELECT 1 FROM pg_class t
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_index i ON i.indrelid = t.oid AND i.indisprimary
+       WHERE n.nspname='public' AND t.relname='plants'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_table_absent
+    note: Greenfield. If this returns a row, someone already applied 0a — stop and diff before re-running.
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='watch_impression'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_table_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='watch_impression'
+    expect: rowcount_eq
+    value: 1
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration;
+                        # the scheduled sweep runs post gates against LIVE prod and would report a
+                        # standing red until then; convention per v4-weatherdaily-001)
+
+  - name: post_all_columns_present
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='watch_impression'
+         AND column_name IN ('id','user_id','plant_id','shown_on','slot','region',
+                             'model_version','anchor_kind','check_from','created_at')
+    expect: rowcount_eq
+    value: 10
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+
+  - name: post_no_extra_columns
+    note: >
+      Paired with the gate above so the two together pin the column set EXACTLY. The IN-filter gate
+      alone passes happily on a table that also grew a column nobody intended.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='watch_impression'
+    expect: rowcount_eq
+    value: 10
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+
+  - name: post_no_created_by_column
+    note: >
+      Deliberate absence, not an oversight — same as weather_daily. The V4-OWNERSHIP-001 transfer
+      trigger fires on created_by across 9 tables and reads NULL -> value as an ownership transfer;
+      a table the GET path batch-writes on every request must stay outside that machinery. The
+      user column is user_id (who was served), matching harvest_watch_dismissal's convention.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='watch_impression' AND column_name='created_by'
+    expect: rowcount_eq
+    value: 0
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+
+  - name: post_shown_on_is_date_not_timestamp
+    note: >
+      Load-bearing. shown_on is contracted to be an ET CIVIL DAY stamped from the queue's own
+      et_today. A timestamptz here would compile, write and read fine while silently re-anchoring
+      the dedupe grain to UTC — splitting one evening's queue across two "days" for five hours
+      every night and double-counting exposure.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='watch_impression'
+         AND column_name='shown_on' AND data_type='date'
+    expect: rowcount_eq
+    value: 1
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+
+  - name: post_check_constraints_present
+    note: >
+      region is this table's own contract (top5/tail/snoozed is what keeps the analysis honest
+      about served-vs-seen); anchor_kind is closed at watch.js TIER_RANK and includes 'derived'
+      ahead of the flag flip. The writer inserts a whole response in one statement, so an
+      out-of-vocabulary value fails the batch loudly instead of poisoning the region split.
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.watch_impression'::regclass AND contype='c'
+         AND conname IN ('watch_impression_region_chk','watch_impression_anchor_chk')
+    expect: rowcount_eq
+    value: 2
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+
+  - name: post_unique_guard_columns
+    note: >
+      The ON CONFLICT target the writer names: (user_id, plant_id, shown_on, region). Without it,
+      every Today open mints duplicate rows and "impressions per day" measures phone-checking
+      frequency instead of exposure. Reads pg_catalog for the same owner-privilege reason as
+      pre_plants_has_primary_key.
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN LATERAL unnest(c.conkey) AS k(attnum) ON true
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+       WHERE c.conrelid='public.watch_impression'::regclass AND c.contype='u'
+         AND c.conname='uq_watch_impression_day'
+         AND a.attname IN ('user_id','plant_id','shown_on','region')
+    expect: rowcount_eq
+    value: 4
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+
+  - name: post_unique_guard_has_exactly_four_columns
+    note: >
+      Pairs with the gate above: that one proves the four expected columns are IN the key; this one
+      proves nothing else is. A five-column key would satisfy the filtered gate and still break the
+      writer's ON CONFLICT column-list target.
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN LATERAL unnest(c.conkey) AS k(attnum) ON true
+       WHERE c.conrelid='public.watch_impression'::regclass AND c.contype='u'
+         AND c.conname='uq_watch_impression_day'
+    expect: rowcount_eq
+    value: 4
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+
+  - name: post_fk_to_plants
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.watch_impression'::regclass AND contype='f'
+         AND confrelid='public.plants'::regclass
+    expect: rowcount_eq
+    value: 1
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+
+  - name: post_plant_day_index_present
+    note: >
+      The refit's read shape (per-plant time series). A missing index never errors — it just makes
+      the calibration join quietly awful — so its presence is asserted here rather than discovered
+      in a query plan later.
+    sql: |
+      SELECT 1 FROM pg_indexes
+       WHERE schemaname='public' AND tablename='watch_impression'
+         AND indexname='idx_watch_impression_plant_day'
+    expect: rowcount_eq
+    value: 1
+    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+
+  - name: post_starts_empty
+    note: >
+      PERMANENT apply-window gate — NEVER flip to continuous (L-369 category 1). The watch GET
+      writer populates this table from the first request after the Lambda ships, so this assert is
+      true only inside the apply window. It exists solely to prove the DDL itself seeded nothing.
+    sql: |
+      SELECT 1 FROM public.watch_impression
+    expect: rowcount_eq
+    value: 0
+    continuous: false   # PERMANENTLY window-scoped — the feature's own writer fills the table
+                        # (L-369: emptiness asserts are never continuous)
