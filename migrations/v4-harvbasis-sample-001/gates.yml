@@ -189,6 +189,10 @@ post:
 
   # Both sides of the split must be non-vacuous, or the two gates above pass by matching nothing.
   - name: post_at_least_one_corroborated_row_exists
+    note: >
+      DATA-EXPECTATION gate (real user calibration data; prod-only fact). Staging emptied
+      ~2026-08-11 (OPS-STAGINGSAMPLES-001). Scoped env: prod 2026-08-12.
+    env: prod
     sql: |
       SELECT 1 FROM public.cultivar_weight_derived
        WHERE confidence IN ('high','medium') OR sample_n >= 5
@@ -319,6 +323,10 @@ post:
     value: 0
 
   - name: post_samples_intact
+    note: >
+      DATA-EXPECTATION gate (see post_at_least_one_corroborated_row_exists). Scoped env: prod
+      2026-08-12 per OPS-STAGINGSAMPLES-001.
+    env: prod
     sql: |
       SELECT 1 FROM public.cultivar_weight_sample
     expect: rowcount_gte

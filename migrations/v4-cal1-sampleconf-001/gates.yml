@@ -96,6 +96,12 @@ post:
 
   # ...and that at least one row actually exercises it, so the gate above cannot pass vacuously.
   - name: post_at_least_one_corroborated_row_exists
+    note: >
+      DATA-EXPECTATION gate — asserts a fact about real user calibration data, which only prod
+      owns. Staging's sample tables are disposable (branch resets / test envs wipe them; emptied
+      ~2026-08-11, OPS-STAGINGSAMPLES-001) so asserting it there is structurally flaky, not a
+      schema invariant. Scoped env: prod 2026-08-12.
+    env: prod
     sql: |
       SELECT 1 FROM public.cultivar_weight_derived
        WHERE confidence IN ('high','medium') OR sample_n >= 5
