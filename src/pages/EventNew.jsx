@@ -37,6 +37,9 @@ import PostSaveFeedback, { confirmBtnGhost } from '../components/PostSaveFeedbac
 import { useToast } from '../context/ToastContext.jsx'
 import { OverlaySwapLink, useInOverlaySurface, useOverlaySwap, useOverlayDismiss, useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
+// V4-CROPLISTORDER-001 (BD-010): crop-rank ledger — fed at the same post-save moment as
+// logone.lastPlant below; PlantingSelect reads it at picker-open to band-order its crop chips.
+import { recordCropLog } from '../lib/cropLogLedger.js'
 // V4-WATERMATH-001 F0 — watering amount class (Light/Normal/Deep). See src/lib/waterDepth.js
 // for the metadata contract with the events Lambda and why it is NOT quantity_numeric.
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
@@ -1033,6 +1036,16 @@ export default function EventNew() {
       if (form.plant_id) localStorage.setItem(LAST_PLANT_KEY, form.plant_id)
       else localStorage.removeItem(LAST_PLANT_KEY)
     } catch { /* noop */ }
+    // V4-CROPLISTORDER-001 (BD-010): one distinct-day mark for the saved planting's crop —
+    // the picker's chip ranking source. Same moment as the lastPlant write above (this is a
+    // deliberate single-planting log, exactly the attention signal the ranking wants; LogMany
+    // stays excluded — see cropLogLedger.js header). Slug resolution mirrors the per-crop
+    // harvest-unit write; a plant-less save or unresolvable slug is a silent no-op, and the
+    // ledger try/catches its own storage.
+    if (form.plant_id) {
+      const rankSlug = plantsForProject.find(p => p.id === form.plant_id)?.variety_ref?.crop_type_slug
+      if (rankSlug) recordCropLog(rankSlug, eventDateStr)
+    }
 
     // V4-TREATLOG-001: DrG "Treated…" deep-link — mark the source finding resolved now that the
     // treatment is logged. Non-fatal: the treatment event is already saved.

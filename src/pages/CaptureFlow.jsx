@@ -24,6 +24,8 @@ import Input from '../components/forms/Input.jsx'
 import Select from '../components/forms/Select.jsx'
 import PlantingSelect, { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 import Button from '../components/forms/Button.jsx'
+// V4-CROPLISTORDER-001 (BD-010): crop-rank ledger write on the event save below.
+import { recordCropLog } from '../lib/cropLogLedger.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
 
 const MODES = [
@@ -133,6 +135,9 @@ export default function CaptureFlow() {
         const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify({
           project_id: pl.project_id ?? null, plant_id: pl.id, event_type: evType, event_date: evDate, is_public: true,
         }) })
+        // V4-CROPLISTORDER-001 (BD-010): the event row exists — mark the crop's log day for
+        // picker chip ranking (falsy/unresolvable slug is a silent no-op inside the ledger).
+        recordCropLog(pl.variety_ref?.crop_type_slug, evDate)
         const eventId = res?.eventId ?? res?.id
         await attach({ event_id: eventId, plant_id: pl.id }, 'events', eventId)
         setResult({ kind: 'event', id: eventId, label: `${EVENT_TYPE_META[evType]?.label ?? evType} logged on ${pl.name}`,
