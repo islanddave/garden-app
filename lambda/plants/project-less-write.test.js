@@ -127,7 +127,9 @@ describe('plants Lambda — the widened predicate stays narrow (authz guard)', (
         .toBe(arms.length);
       total += arms.length;
     }
-    expect(total, 'expected 7 own-created_by ownership arms (list + 6 by-id routes)').toBe(7);
+    // 7 -> 10: V4-RESTORESURFACE-001 added the /deleted list, the restore UPDATE. Every one of the three keeps the `container_id IS NULL AND` guard, which
+    // is what the assertion above this line proves — this line only counts them.
+    expect(total, 'expected 10 own-created_by ownership arms (list + 6 by-id + 3 restore-surface)').toBe(10);
   });
 
   it('container ownership is still asserted on every by-id route', () => {

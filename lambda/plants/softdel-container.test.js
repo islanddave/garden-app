@@ -67,7 +67,13 @@ describe('plants Lambda — F4 container soft-delete gate', () => {
     // appear with no audit at all; an ADD is a deliberate change, so bump this in the same commit.
     expect(joined.length,
       'plants container-reaching query count changed. An ADD needs this number bumped deliberately; ' +
-      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(8);
+      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(11);
+    // 8 -> 11: V4-RESTORESURFACE-001 added the GET /deleted list, the restore preflight and the
+    // restore UPDATE. All three reach container for ownership and all three carry the F4 gate — an
+    // earlier draft of the /deleted list deliberately OMITTED it so that plantings under a deleted
+    // container could be surfaced as "blocked", and this guard is what caught it. That draft was
+    // withdrawn rather than exempted: the recovery path for those rows is to restore the container
+    // first, which keeps "invisible" and "immutable" the same set.
     // Gated = every alias this query reaches container through is liveness-checked, not merely
     // "the literal string pp.deleted_at IS NULL occurs somewhere in the template".
     const ungated = joined

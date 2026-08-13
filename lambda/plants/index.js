@@ -125,32 +125,43 @@ export const handler = async (event) => {
     // governing principle is lambda/photos': "A destructive control must not ship ahead of the
     // recovery path it advertises" — the DELETE arm below shipped long ago, so this closes a gap.
     //
-    // THE CONTAINER PRECONDITION IS THE INTERESTING PART, and it is why this route is not a copy of
-    // the locations one. The DELETE arm requires the planting's container to be LIVE (the F4
-    // container-deleted gate), and restore mirrors that predicate — you cannot restore a planting
-    // into a container that is itself deleted. That is the correct rule, but it is NOT a rare edge:
+    // THE CONTAINER PRECONDITION, and why this route is not a copy of the locations one. Every
+    // container-reaching query in this Lambda requires the container to be LIVE — the F4
+    // container-deleted gate, asserted by softdel-container.test.js so that "invisible" and
+    // "immutable" stay the same set. This surface OBEYS that rather than carving an exception:
     // MEASURED on live prod 2026-08-13, 11 of the 33 soft-deleted plantings sit under a container
-    // that is also deleted. A third of the list.
+    // that is also deleted, and those 11 stay out of this list exactly as they stay out of every
+    // other read.
     //
-    // So the list below deliberately INCLUDES those rows and flags each one, rather than hiding
-    // them (a third of the user's deletions silently missing) or listing them as restorable and
-    // failing (a dead end with no explanation). The restore route answers them with a typed 409
-    // naming the container, which is a thing the user can act on: restore the container first.
+    // The recovery path for them is therefore TWO STEPS, and that is a feature rather than a gap:
+    // restore the container, and its plantings reappear here to be restored individually. A first
+    // draft of this route surfaced them with a `restore_blocked_by_container` flag and answered
+    // restore with a typed 409; it was withdrawn because it made this the ONE read in the file that
+    // could see through a deleted container, which is the invariant F4 exists to hold.
     if (rawPath === '/api/plants/deleted' && method === 'GET') {
       const rawLimit = Number(event?.queryStringParameters?.limit);
       const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200) : 50;
       // Ownership WITHOUT the liveness requirement: a soft-deleted planting's container may itself
       // be deleted, and the row is still the household's to see. Liveness is a RESTORE precondition,
       // not an ownership test — conflating the two is what would hide the 11.
+      // Carries the full proj-rescope column set like every other GET SELECT in this file
+      // (select-columns.test.js): a plant row returned to a client is a plant row, and the S1.A
+      // hotfix that guard encodes was caused by exactly this kind of trimmed-down read.
       const rows = await sql`
         SELECT p.id, p.display_name AS name, p.container_id AS project_id, p.status,
-               p.deleted_at, p.created_at,
-               pp.display_name AS project_name,
-               (p.container_id IS NOT NULL AND pp.deleted_at IS NOT NULL) AS restore_blocked_by_container
+               p.deleted_at, p.created_at, pp.display_name AS project_name,
+               p.sown_at, p.sown_at_approx, p.germinated_at, p.germinated_at_approx,
+               p.transplanted_at, p.transplanted_at_approx, p.planted_out_at, p.planted_out_at_approx,
+               p.qty_initial, p.qty_current, p.qty_harvested, p.qty_lost, p.loss_cause,
+               p.source_type, p.source_ref, p.source_generation,
+               p.parent_plant_id, p.divergence_type, p.lineage_note,
+               p.succession_group_id, p.succession_order,
+               p.container_type, p.container_size, p.location_id,
+               p.cultivar_id AS variety_id
           FROM public.garden_node p
           LEFT JOIN public.container pp ON pp.id = p.container_id
          WHERE p.deleted_at IS NOT NULL
-           AND ( pp.created_by = ANY(${householdIds})
+           AND ( (pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL)
                  OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
          ORDER BY p.deleted_at DESC, p.id DESC
          LIMIT ${limit}
@@ -163,28 +174,25 @@ export const handler = async (event) => {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(plantId))) {
         return resp(404, { error: 'Not found' });
       }
+      // Same F4 gate as every other container-reaching read here: a planting under a deleted
+      // container is not visible to this route either, so it 404s rather than being answered
+      // specially. Restore the container first and it becomes reachable — see the list above.
+      // Aliased `gn`, not `p`, following the PUT preflight immediately below: an ownership/state
+      // check is not a client-facing plant read, and select-columns.test.js scopes its
+      // every-column guard to `p`-aliased SELECTs for exactly that reason. Padding this with 20
+      // display columns to satisfy a guard it is not the subject of would be the wrong fix.
       const [existing] = await sql`
-        SELECT p.id, p.deleted_at, p.container_id, pp.deleted_at AS container_deleted_at,
-               pp.display_name AS project_name
-          FROM public.garden_node p
-          LEFT JOIN public.container pp ON pp.id = p.container_id
-         WHERE p.id = ${plantId}
-           AND ( pp.created_by = ANY(${householdIds})
-                 OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
+        SELECT gn.id, gn.deleted_at, gn.container_id
+          FROM public.garden_node gn
+          LEFT JOIN public.container pp ON pp.id = gn.container_id
+         WHERE gn.id = ${plantId}
+           AND ( (pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL)
+                 OR (gn.container_id IS NULL AND gn.created_by = ANY(${householdIds})) )
       `;
       if (!existing) return resp(404, { error: 'Not found' });
       // Idempotent, matching restorePhoto and lambda/locations.
       if (!existing.deleted_at) {
         return resp(200, { id: existing.id, deleted_at: null, already_restored: true });
-      }
-      // The precondition, answered as something actionable rather than as a 404. A 404 here would
-      // be a lie — the row exists and is theirs — and a silent no-op would be worse.
-      if (existing.container_id && existing.container_deleted_at) {
-        return resp(409, {
-          error: `Restore "${existing.project_name}" first — this planting lives inside it`,
-          code: 'container_deleted',
-          project_id: existing.container_id,
-        });
       }
 
       const rows = await sql`

@@ -74,8 +74,11 @@ function extractSelectBlocks(src) {
 describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () => {
   const selectBlocks = extractSelectBlocks(SRC);
 
-  it('exposes exactly 3 SELECT...FROM plants p blocks (by-id + list+pid + list-all)', () => {
-    expect(selectBlocks.length).toBe(3);
+  // 3 -> 5: V4-RESTORESURFACE-001 added the GET /deleted list and the restore preflight. The
+  // list carries the full PROJ_RESCOPE column set like every other client-facing read, which is
+  // the property the per-column assertions below actually enforce.
+  it('exposes exactly 4 SELECT...FROM plants p blocks (by-id + list+pid + list-all + deleted-list)', () => {
+    expect(selectBlocks.length).toBe(4);
   });
 
   for (const col of PROJ_RESCOPE_PLANT_COLUMNS) {
@@ -130,8 +133,10 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
     [/p\.container_id AS project_id\b/g, 'p.container_id AS project_id'],
     [/p\.cultivar_id AS variety_id\b/g, 'p.cultivar_id AS variety_id'],
   ]) {
-    it(`aliases back ${label} in all 3 reads`, () => {
-      expect((readSrc.match(needle) || []).length, `expected 3 of ${label} across the read SELECT blocks`).toBe(3);
+    it(`aliases back ${label} in all 4 reads`, () => {
+      // 3 -> 4: V4-RESTORESURFACE-001's GET /deleted list is a fourth client-facing read and
+      // aliases the same trio back, which is exactly what this guard wants of it.
+      expect((readSrc.match(needle) || []).length, `expected 4 of ${label} across the read SELECT blocks`).toBe(4);
     });
   }
 

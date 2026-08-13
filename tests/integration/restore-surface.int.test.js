@@ -195,22 +195,24 @@ describe('V4-RESTORESURFACE-001 — Soft-Delete-Only holds on the new surface', 
 })
 
 describe('V4-RESTORESURFACE-001 — plantings, and the container precondition', () => {
-  it('lists soft-deleted plantings INCLUDING those blocked by a deleted container', async () => {
-    // Hiding the blocked ones would drop a third of the user's deletions off the surface with no
-    // explanation. They are listed and flagged instead.
+  it('lists soft-deleted plantings, EXCLUDING those under a deleted container (F4)', async () => {
+    // Every container-reaching query in the plants Lambda requires the container to be live — the
+    // F4 gate, asserted by softdel-container.test.js so that "invisible" and "immutable" stay the
+    // same set. This surface obeys it. On live prod that means 11 of the 33 soft-deleted plantings
+    // are not here, because their container is deleted too; restoring the container brings them
+    // back into this list. A first draft surfaced them with a `restore_blocked_by_container` flag
+    // and 409'd the restore — withdrawn, because it made this the one read that could see through
+    // a deleted container.
     setTestUserId(USER)
     const { status, body } = await callHandler(plantsHandler, {
       method: 'GET', path: '/api/plants/deleted',
     })
     expect(status).toBe(200)
-    const byId = Object.fromEntries(body.plants.map(p => [p.id, p]))
-    expect(byId[delPlantLiveProj], 'restorable planting must be listed').toBeTruthy()
-    expect(byId[delPlantDeadProj], 'blocked planting must ALSO be listed').toBeTruthy()
-    expect(byId[livePlantId], 'a live planting is not a deletion').toBeUndefined()
-
-    expect(byId[delPlantLiveProj].restore_blocked_by_container).toBe(false)
-    expect(byId[delPlantDeadProj].restore_blocked_by_container,
-      'the flag is what lets the UI explain the dead end instead of hitting it').toBe(true)
+    const ids = body.plants.map(p => p.id)
+    expect(ids, 'restorable planting must be listed').toContain(delPlantLiveProj)
+    expect(ids, 'a planting under a deleted container stays invisible, as it is everywhere else')
+      .not.toContain(delPlantDeadProj)
+    expect(ids, 'a live planting is not a deletion').not.toContain(livePlantId)
   })
 
   it('restores a planting whose container is live', async () => {
@@ -234,16 +236,35 @@ describe('V4-RESTORESURFACE-001 — plantings, and the container precondition', 
     expect(ent.deleted_at, 'restored planting must be live in the registry too').toBeNull()
   })
 
-  it('409s with a typed, actionable code when the container is also deleted', async () => {
+  it('404s a planting under a deleted container — the F4 gate, not a special case', async () => {
+    // Consistent with the list above and with every other read in the Lambda: that planting is not
+    // visible to this route at all. The recovery path is two steps — restore the container, then
+    // the planting reappears and can be restored.
     setTestUserId(USER)
-    const { status, body } = await callHandler(plantsHandler, {
+    const { status } = await callHandler(plantsHandler, {
       method: 'POST', path: `/api/plants/${delPlantDeadProj}/restore`,
     })
-    expect(status, 'a 404 here would be a lie — the row exists and is theirs').toBe(409)
-    expect(body.code).toBe('container_deleted')
-    expect(body.project_id).toBe(deletedProjId)
+    expect(status).toBe(404)
     const [row] = await directSql`SELECT deleted_at FROM plants WHERE id = ${delPlantDeadProj}`
     expect(row.deleted_at, 'and it must still be deleted').not.toBeNull()
+  })
+
+  it('restoring the CONTAINER makes its plantings reachable again — the two-step path', async () => {
+    // This is the assertion that makes the F4-respecting design honest rather than a dead end.
+    setTestUserId(USER)
+    await directSql`UPDATE plant_projects SET deleted_at = NULL WHERE id = ${deletedProjId}`
+
+    const listed = await callHandler(plantsHandler, { method: 'GET', path: '/api/plants/deleted' })
+    expect(listed.body.plants.map(p => p.id),
+      'with its container live, the planting is now visible to the recovery surface')
+      .toContain(delPlantDeadProj)
+
+    const { status } = await callHandler(plantsHandler, {
+      method: 'POST', path: `/api/plants/${delPlantDeadProj}/restore`,
+    })
+    expect(status).toBe(200)
+    const [row] = await directSql`SELECT deleted_at FROM plants WHERE id = ${delPlantDeadProj}`
+    expect(row.deleted_at).toBeNull()
   })
 
   it('is idempotent on a live planting', async () => {
