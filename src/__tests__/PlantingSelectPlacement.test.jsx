@@ -19,7 +19,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react'
 
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn(() => Promise.resolve([])) }) }))
 
-import PlantingSelect from '../components/forms/PlantingSelect.jsx'
+import PlantingSelect, { computePlacement } from '../components/forms/PlantingSelect.jsx'
 
 const PLANTS = Array.from({ length: 12 }, (_, i) => ({
   id: `pl-${i}`, name: `Planting ${i}`, project_id: 'pr-1', project_name: 'Herbs',
@@ -120,6 +120,48 @@ describe('V4-PICKERUX-001 P1 — measured listbox placement', () => {
     stubGeometry({ inputTop: 100, inputBottom: 144, viewportHeight: 900 })
     const list = await openPicker()
     expect(list.style.overscrollBehavior).toBe('contain')
+  })
+})
+
+// V4-CROPFILTERLAYOUT-001 (BD-011) — regression pin on the UNCHANGED computePlacement, in this
+// file's injected-numbers style: pure inputs, pinned arithmetic, no layout engine pretended.
+//
+// BD-011's mechanism was never a computePlacement bug: an UNBOUNDED chip tray (~80 chips ≈
+// 1,400px) entered as panelExtra, drove below/above deeply negative, and the Math.max(
+// LIST_ABS_MIN, room) floor rendered ONE 44px row. The fix bounds the INPUT — the tray caps at
+// TRAY_MAX_H (184) + chip-row chrome, so panelExtra arrives ≈200, never ≈1,400. This pin is the
+// contract that makes that bound sufficient: with panelExtra bounded at ~200, any anchor with
+// raw room ≥ LIST_MIN_H + 200 (340px — i.e., virtually every real phone layout, keyboard up or
+// down) still seats a full 3-row listbox. If someone "improves" the clamp chain and this fails,
+// the one-row starvation is back.
+describe('V4-CROPFILTERLAYOUT-001 — bounded panelExtra can never starve the listbox', () => {
+  it('keeps maxHeight ≥ LIST_MIN_H (140) whenever raw room ≥ LIST_MIN_H + panelExtra (200)', () => {
+    // Raw downward room = viewBottom - rectBottom - LIST_GAP(8). Sweep from the exact threshold
+    // upward; below = raw - 200 ≥ 140 at every step, so the ≥140 branch of the clamp must hold.
+    for (const raw of [340, 341, 360, 420, 520, 800]) {
+      const { flip, maxHeight } = computePlacement({
+        rectTop: 100, rectBottom: 144,
+        viewTop: 0, viewBottom: 144 + 8 + raw,
+        chromeTop: 0, chromeBottom: 0,
+        panelExtra: 200,
+      })
+      expect(flip).toBe(false)                       // down still seats ≥ LIST_MIN_H — no churn
+      expect(maxHeight).toBeGreaterThanOrEqual(140)  // never the one-row floor
+      expect(maxHeight).toBe(Math.min(280, raw - 200))
+    }
+  })
+
+  it('still floors at LIST_ABS_MIN below the threshold — the pre-BD-011 clamp is untouched', () => {
+    // Contrast case: room genuinely too small in BOTH directions (input at the very top, tiny
+    // viewport). The bounded-overflow behavior V4-KBVIEWPORT-001 chose stays byte-identical —
+    // BD-011 changed the panelExtra INPUT, not this arithmetic.
+    const { maxHeight } = computePlacement({
+      rectTop: 10, rectBottom: 54,
+      viewTop: 0, viewBottom: 200,
+      chromeTop: 0, chromeBottom: 0,
+      panelExtra: 200,
+    })
+    expect(maxHeight).toBe(44)
   })
 })
 
