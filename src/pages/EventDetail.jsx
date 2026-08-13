@@ -64,6 +64,32 @@ const METADATA_LABELS = {
 // rendered Details block (see METADATA_LABELS above for why).
 const METADATA_HIDDEN_KEYS = new Set(['water_depth_source'])
 
+// V4-EVTDELCONFIRM-001 — coverFor for the confirm sheet: the union of every photo's cover_for
+// entries, deduped by entity (one planting covered by two of the event's photos must be named
+// ONCE — the disclosure names parents, not photo-parent pairs). Duplicated verbatim in
+// ProjectDetail.jsx: this lane's file budget is the two callsites + lambda + tests, so no shared
+// lib module; the two copies must not diverge (same rule as the sheet itself).
+function coverForFromPhotos(photos) {
+  const seen = new Set()
+  const out = []
+  for (const ph of photos ?? []) {
+    for (const c of ph.cover_for ?? []) {
+      const key = `${c.type}:${c.id}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ id: c.id, name: c.name })
+    }
+  }
+  return out
+}
+
+// The partial-failure report, shared copy across both delete surfaces (see handleDelete's header
+// comment for the continue-and-report decision this narrates).
+function photoDeleteFailureCopy(failed, total) {
+  if (total === 1) return 'The event was deleted, but its photo could not be deleted — it is still in your garden photos.'
+  return `The event was deleted, but ${failed} of ${total} photos could not be deleted — they are still in your garden photos.`
+}
+
 // Value formatters for keys whose stored value is a code, not display text.
 const METADATA_VALUE_FORMAT = {
   water_depth: v => waterDepthLabel(v),
@@ -273,27 +299,61 @@ export default function EventDetail() {
   }
 
   // DD9 / W-EVTDEL adoption: the header Delete tap ARMS the EventDeleteConfirm sheet (rendered at
-  // the bottom of this page); this function runs only from that sheet's Delete button. The DELETE
-  // call is byte-identical to the window.confirm era — only the confirm step changed, and with it
-  // the copy: the old "Delete this event permanently?" was untruthful, this route has been
+  // the bottom of this page); this function runs only from that sheet's Delete button. The event
+  // DELETE call is byte-identical to the window.confirm era — only the confirm step changed, and
+  // with it the copy: the old "Delete this event permanently?" was untruthful, this route has been
   // SOFT-delete-only since 2026-06-10 (deleted_at; photos detach + re-parent, BUG-EVTCASCADE-001).
-  // photoCount/coverFor ride the component defaults (0 / []) for now: neither GET /api/events/:id
-  // nor any live endpoint reports an event's photos or cover usage, so the offer cannot yet be
-  // populated — and the component's UNCHECKED default (no photo write) is exactly what this DELETE
-  // already does, so no behavior is promised that doesn't happen. When the photo plumbing lands,
-  // wire photoCount/coverFor here and honor onConfirm's { deletePhotos } via DELETE /api/photos/:id.
-  async function handleDelete() {
+  //
+  // V4-EVTDELCONFIRM-001 — the photo path is now REACHABLE. GET /api/events/:id reports the
+  // event's live photos + cover usage (see lambda/events/eventPhotos.js), so the sheet's offer and
+  // disclosure are populated below, and onConfirm's { deletePhotos } is honored here:
+  //   • UNCHECKED (the asserted default) is the pre-DD9 behavior EXACTLY — the server detaches and
+  //     re-parents the photos; no photo write fires from this client.
+  //   • CHECKED fires the live DELETE /api/photos/:id per photo, ONLY after the event DELETE
+  //     succeeded. Those deletes are W-DEL SOFT deletes — recoverable from Recently deleted
+  //     forever — which is what lets the sheet's copy promise that truthfully.
+  //   • PARTIAL FAILURE is continue-and-report: the photo deletes are independent, idempotent soft
+  //     deletes, so one failure must not strand the rest — and a failed delete leaves that photo
+  //     exactly where the unchecked path leaves all of them (live in the gallery). The report is
+  //     an honest count in the inline banner, with NO navigation: leaving the page would discard
+  //     the only surface the message has. ProjectDetail.confirmEventDelete mirrors these semantics
+  //     verbatim — the two event-delete surfaces must not diverge.
+  async function handleDelete({ deletePhotos } = {}) {
     setDeleting(true)
     try {
       await fetch('/api/events/' + eventId, { method: 'DELETE' })
-      // V4-PROJHIDE-001: don't land on the hidden project page post-delete — Home (/today) is the
-      // neutral destination when projects aren't user-facing. Flag OFF keeps the project redirect.
-      navigate(project && !PROJECTS_HIDDEN ? `/projects/${project.id}` : '/today')
     } catch (e) {
       setError(e.message)
       setDeleting(false)
       setConfirmingDelete(false) // close the sheet so the inline ErrorBanner is visible
+      return
     }
+    if (deletePhotos && eventPhotos.length > 0) {
+      // busy={deleting} keeps the sheet up and disabled across these too — never closed
+      // optimistically over writes that may fail.
+      const results = await Promise.allSettled(
+        eventPhotos.map(p => fetch('/api/photos/' + p.id, { method: 'DELETE' }))
+      )
+      const failed = results.filter(r => r.status === 'rejected').length
+      if (failed > 0) {
+        setError(photoDeleteFailureCopy(failed, eventPhotos.length))
+        setDeleting(false)
+        setConfirmingDelete(false)
+        return
+      }
+    }
+    // V4-PROJHIDE-001: don't land on the hidden project page post-delete — Home (/today) is the
+    // neutral destination when projects aren't user-facing. Flag OFF keeps the project redirect.
+    navigate(project && !PROJECTS_HIDDEN ? `/projects/${project.id}` : '/today')
+  }
+
+  // The Delete tap arms the sheet and re-reads the event BEHIND it: PhotoUpload sits on this very
+  // page, so the mount-time photo set can be stale by the time a delete is armed. Non-blocking
+  // (the sheet opens instantly on the data already loaded) and non-fatal (a failed refresh keeps
+  // the mount data — a smaller offer, never a blocked delete).
+  function armDelete() {
+    setConfirmingDelete(true)
+    fetch('/api/events/' + eventId).then(ev => { if (ev) setEvent(ev) }).catch(() => {})
   }
 
   if (loading) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading…</div></Shell>
@@ -301,6 +361,11 @@ export default function EventDetail() {
   // Delete) surface inline via ErrorBanner so the event content stays visible.
   if (error && !event) return <Shell><div style={{ padding: 48, textAlign: 'center', color: P.terra }}>{error}</div></Shell>
   if (!event) return null
+
+  // V4-EVTDELCONFIRM-001: the event's photos, from the GET (see handleDelete's header comment).
+  // `?? []` tolerates an old Lambda paired with a new client — absence degrades the sheet to its
+  // unchecked default (no photo write), which is the pre-DD9 behavior exactly.
+  const eventPhotos = event.photos ?? []
 
   const icon = <Icon name={`event.${event.event_type}`} size={22} decorative style={{ color: P.green, verticalAlign: '-0.15em' }} />
 
@@ -332,7 +397,7 @@ export default function EventDetail() {
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => shareEntity({ title: event.title || event.event_type.replace(/_/g, ' '), url: window.location.href })} aria-label="Share this event" style={outlineBtn}>Share</button>
             <button onClick={startEdit} style={outlineBtn}>Edit</button>
-            <button onClick={() => setConfirmingDelete(true)} disabled={deleting} style={{ ...outlineBtn, color: P.terra, borderColor: P.terra }}>
+            <button onClick={armDelete} disabled={deleting} style={{ ...outlineBtn, color: P.terra, borderColor: P.terra }}>
               {deleting ? '…' : 'Delete'}
             </button>
           </div>
@@ -601,9 +666,12 @@ export default function EventDetail() {
       )}
 
       {/* DD9 / W-EVTDEL: kept mounted-open with busy={deleting} while the write is in flight, per
-          the component's contract — never closed optimistically over a request that may fail. */}
+          the component's contract — never closed optimistically over a request that may fail.
+          V4-EVTDELCONFIRM-001: photoCount/coverFor now populated from the event's own GET. */}
       <EventDeleteConfirm
         open={confirmingDelete}
+        photoCount={eventPhotos.length}
+        coverFor={coverForFromPhotos(eventPhotos)}
         busy={deleting}
         onCancel={() => setConfirmingDelete(false)}
         onConfirm={handleDelete}
