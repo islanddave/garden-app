@@ -97,6 +97,13 @@ post:
       SELECT 1 FROM public.harvest_watch_dismissal
     expect: rowcount_eq
     value: 0
+    continuous: false   # window-scoped 2026-08-13 (V4-HARVWATCHTABLE-001 drift audit): asserts
+                        # emptiness, true only until the first real "Not yet" tap writes a row —
+                        # an implicitly-continuous emptiness gate is a sweep time bomb (same class
+                        # as weatherdaily/anchorbase post_starts_empty and the evtcascade critter
+                        # receipt). The structural gates above stay continuous; the same audit
+                        # verified prod matches this DDL exactly (22 cols, 4 indexes, 2 CHECKs, FK)
+                        # despite the out-of-band apply.
 
 # ROLLBACK (documentation only — gate_runner.py's strict schema admits ONLY the top-level keys
 # pre/sweep/post, and rejects anything else with exit 2. Expressing this as a `rollback:` key made
