@@ -100,9 +100,79 @@ export const handler = async (event) => {
   // path with the locations list (200), silently resurrecting a route contract.
   if (rawPath === '/api/entity-tags') return resp(404, { error: 'Not found' });
 
-  const idMatch = rawPath !== '/api/locations/with-path' && rawPath.match(/^\/api\/locations\/([^/]+)$/);
+  const idMatch = rawPath !== '/api/locations/with-path'
+    && rawPath !== '/api/locations/deleted'
+    && rawPath.match(/^\/api\/locations\/([^/]+)$/);
 
   try {
+    // ── V4-RESTORESURFACE-001 — the recovery path for locations (audit I9) ───────────────────────
+    //
+    // lambda/photos is the reference standard and states the governing principle: "A destructive
+    // control must not ship ahead of the recovery path it advertises." For locations the destructive
+    // control shipped long ago (the DELETE arm below) with no way to see or undo it, so this closes
+    // an existing gap rather than adding a new surface. 10 locations are soft-deleted in prod today
+    // with no affordance to bring any of them back.
+    //
+    // ORDERING IS LOAD-BEARING. `/api/locations/deleted` is a single trailing segment, so idMatch
+    // below would otherwise capture it as a location id and answer with a 404 from the by-id GET.
+    // Declared here, and excluded from idMatch, for the same reason /with-path already is — mirroring
+    // how photos declares its own /deleted above the bare-:id arm.
+    if (rawPath === '/api/locations/deleted' && method === 'GET') {
+      // Clamped exactly like listDeletedPhotos: an unbounded limit on a recovery list is a foot-gun,
+      // and the surface is meant for recent deletions, not an archive trawl.
+      const rawLimit = Number(event?.queryStringParameters?.limit);
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200) : 50;
+      const rows = await sql`
+        SELECT l.id, l.name, l.slug, l.level, l.type_label, l.parent_id, l.created_at, l.deleted_at
+          FROM locations l
+         WHERE l.created_by = ANY(${householdIds})
+           AND l.deleted_at IS NOT NULL
+         ORDER BY l.deleted_at DESC, l.id DESC
+         LIMIT ${limit}
+      `;
+      return resp(200, { locations: rows });
+    }
+
+    // POST /api/locations/:id/restore — two segments, so idMatch cannot capture it; matched here to
+    // keep the whole recovery path in one place.
+    const restoreMatch = rawPath.match(/^\/api\/locations\/([^/]+)\/restore$/);
+    if (restoreMatch && method === 'POST') {
+      const locId = restoreMatch[1];
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(locId))) {
+        return resp(404, { error: 'Not found' });
+      }
+      // IDEMPOTENT, matching restorePhoto: restoring a live row is a 200 with already_restored rather
+      // than a 404, so a double-tap or a replayed request is not an error the user has to interpret.
+      const [existing] = await sql`
+        SELECT id, deleted_at FROM locations
+         WHERE id = ${locId} AND created_by = ANY(${householdIds})
+      `;
+      if (!existing) return resp(404, { error: 'Not found' });
+      if (!existing.deleted_at) return resp(200, { id: existing.id, deleted_at: null, already_restored: true });
+
+      try {
+        const rows = await sql`
+          UPDATE locations
+             SET deleted_at = NULL
+           WHERE id = ${locId}
+             AND created_by = ANY(${householdIds})
+             AND deleted_at IS NOT NULL
+          RETURNING id, name, slug, deleted_at
+        `;
+        return resp(200, rows[0] ?? { id: locId, deleted_at: null, already_restored: true });
+      } catch (err) {
+        // NOT inert here, unlike the photos equivalent. idx_locations_root_slug is UNIQUE over live
+        // root-level slugs, and a deleted location sits OUTSIDE it — so coming back collides if the
+        // slug was reused while it was gone. A typed 409 says something the user can act on (rename
+        // the current one, or the restored one); a 500 says the app is broken.
+        if (err?.code === '23505') {
+          return resp(409, { error: 'A location with that slug already exists', code: 'location_slug_conflict' });
+        }
+        throw err;
+      }
+    }
+
+
     if (idMatch) {
       const locId = idMatch[1];
 
