@@ -10,7 +10,11 @@ export default defineConfig({
     // Integration tests (tests/integration/**) run in the integration-tests workflow via
     // vitest.integration.config.ts (real Neon driver + DB). Exclude them from the unit run
     // so `npm test` doesn't try to resolve @neondatabase/serverless.
-    exclude: [...configDefaults.exclude, 'tests/integration/**'],
+    // '**/.claude/**': agent worktrees under .claude/worktrees/ hold full copies of the repo —
+    // a bare `vitest run` swept 3 of them into 2,145 test files with ~96 phantom-failed files
+    // and zero failing tests, twice (2026-08-12 and -13). Local-DX only; CI runners never have
+    // these directories.
+    exclude: [...configDefaults.exclude, 'tests/integration/**', '**/.claude/**'],
     // Stub VITE_ env vars for tests — real values not needed in unit tests
     env: {
       VITE_CLERK_PUBLISHABLE_KEY: 'pk_test_unit_test_placeholder',
