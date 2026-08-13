@@ -186,11 +186,16 @@ describe('scope pins — what this change deliberately does NOT do', () => {
       .not.toMatch(/@> ARRAY\['metadata'\]/);
   });
 
-  it('WATER_DEPTH_EDIT_ENABLED is not flipped by this change', () => {
-    // Requirement 3: the flag flip is a separate owner decision. The lambda side is now ready;
-    // the flag stays FALSE until the owner turns it on.
+  it('WATER_DEPTH_EDIT_ENABLED flip state matches its recorded decision', () => {
+    // Originally pinned FALSE to prove the PUT-arm change did not smuggle the flip (a separate
+    // owner decision). That decision was then TAKEN, deliberately, on 2026-08-12: the L-108
+    // staging smoke round-trip proved the arm end-to-end against real Postgres
+    // (write:event-metadata-readback + preserved-on-absent-key), and the flag flipped TRUE in its
+    // own commit with that evidence in the flag's comment. The pin now guards the new state the
+    // same way it guarded the old: a silent re-flip in either direction should fail a test.
     const flags = readFileSync(resolve(__dirname, '../../src/lib/featureFlags.js'), 'utf8');
-    expect(flags).toMatch(/export const WATER_DEPTH_EDIT_ENABLED = false/);
+    expect(flags).toMatch(/export const WATER_DEPTH_EDIT_ENABLED = true/);
+    expect(flags).toMatch(/FLIPPED true 2026-08-12/);
   });
 
   it('the metadata arm does not touch the side-effect machinery', () => {

@@ -83,7 +83,10 @@ export const PLANTING_REQUIRED_ENABLED = true
 // NOT in W-F0-LAMBDA's stated scope — it needs its own work item). The chips, the seed from the
 // stored row, and the PUT body are all built and tested behind this flag; flipping it is the whole
 // client-side cost.
-export const WATER_DEPTH_EDIT_ENABLED = false
+// FLIPPED true 2026-08-12 (garden-bigbites-20260812): the blocking PUT arm landed (persists +
+// returns metadata, has-key grammar) and the L-108 staging smoke round-trip proved it end-to-end
+// against real Postgres (write:event-metadata-readback + preserved-on-absent-key, run on ac7cb8e).
+export const WATER_DEPTH_EDIT_ENABLED = true
 
 // V4-PROJHIDE-001 (types-forward): hide "project" as a USER-FACING concept — project choosers,
 // labels, breadcrumbs, nav entries, the /projects tree default, and required-project gates all
