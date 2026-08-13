@@ -71,9 +71,7 @@ post:
        WHERE table_schema='public' AND table_name='watch_impression'
     expect: rowcount_eq
     value: 1
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (unapplied migration;
-                        # the scheduled sweep runs post gates against LIVE prod and would report a
-                        # standing red until then; convention per v4-weatherdaily-001)
+    continuous: true    # flipped 2026-08-12: applied staging (0r rehearsed) + prod; sweep may assert
 
   - name: post_all_columns_present
     sql: |
@@ -83,7 +81,7 @@ post:
                              'model_version','anchor_kind','check_from','created_at')
     expect: rowcount_eq
     value: 10
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+    continuous: true    # flipped 2026-08-12: applied staging (0r rehearsed) + prod; sweep may assert
 
   - name: post_no_extra_columns
     note: >
@@ -94,7 +92,7 @@ post:
        WHERE table_schema='public' AND table_name='watch_impression'
     expect: rowcount_eq
     value: 10
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+    continuous: true    # flipped 2026-08-12: applied staging (0r rehearsed) + prod; sweep may assert
 
   - name: post_no_created_by_column
     note: >
@@ -107,7 +105,7 @@ post:
        WHERE table_schema='public' AND table_name='watch_impression' AND column_name='created_by'
     expect: rowcount_eq
     value: 0
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+    continuous: true    # flipped 2026-08-12: applied staging (0r rehearsed) + prod; sweep may assert
 
   - name: post_shown_on_is_date_not_timestamp
     note: >
@@ -121,7 +119,7 @@ post:
          AND column_name='shown_on' AND data_type='date'
     expect: rowcount_eq
     value: 1
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+    continuous: true    # flipped 2026-08-12: applied staging (0r rehearsed) + prod; sweep may assert
 
   - name: post_check_constraints_present
     note: >
@@ -135,7 +133,7 @@ post:
          AND conname IN ('watch_impression_region_chk','watch_impression_anchor_chk')
     expect: rowcount_eq
     value: 2
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+    continuous: true    # flipped 2026-08-12: applied staging (0r rehearsed) + prod; sweep may assert
 
   - name: post_unique_guard_columns
     note: >
@@ -153,7 +151,7 @@ post:
          AND a.attname IN ('user_id','plant_id','shown_on','region')
     expect: rowcount_eq
     value: 4
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+    continuous: true    # flipped 2026-08-12: applied staging (0r rehearsed) + prod; sweep may assert
 
   - name: post_unique_guard_has_exactly_four_columns
     note: >
@@ -168,7 +166,7 @@ post:
          AND c.conname='uq_watch_impression_day'
     expect: rowcount_eq
     value: 4
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+    continuous: true    # flipped 2026-08-12: applied staging (0r rehearsed) + prod; sweep may assert
 
   - name: post_fk_to_plants
     sql: |
@@ -177,7 +175,7 @@ post:
          AND confrelid='public.plants'::regclass
     expect: rowcount_eq
     value: 1
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+    continuous: true    # flipped 2026-08-12: applied staging (0r rehearsed) + prod; sweep may assert
 
   - name: post_plant_day_index_present
     note: >
@@ -190,7 +188,7 @@ post:
          AND indexname='idx_watch_impression_plant_day'
     expect: rowcount_eq
     value: 1
-    continuous: false   # apply-window gate — flip to true AFTER prod apply (see post_table_present)
+    continuous: true    # flipped 2026-08-12: applied staging (0r rehearsed) + prod; sweep may assert
 
   - name: post_starts_empty
     note: >
