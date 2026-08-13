@@ -87,3 +87,33 @@ post:
        WHERE schemaname='public' AND tablename='photos' AND indexname='idx_photos_space_id'
     expect: scalar_eq
     value: 1
+
+  # ADDED 2026-08-13 by the V4-SPACESOFTDEL-001 assessment (audit finding I8).
+  #
+  # This is the property that actually protects user content on the space axis, and it was
+  # UNASSERTED — the gates above pin that photos.space_id EXISTS and is indexed, but nothing pinned
+  # what a space delete does to the photos hanging off it.
+  #
+  # I8 reads "`spaces` has no deleted_at at all — structurally incapable of soft delete — and
+  # spacetheme cascades off it." True, and the exposure is nonetheless near zero, which is why that
+  # row did not become a migration:
+  #   * There is NO /api/spaces Lambda, deliberately — lambda/photos/index.js:574 records the
+  #     decision ("disproportionate for a ONE-ROW table"). No app path creates, updates or deletes a
+  #     space, so the only caller that could delete one is admin SQL.
+  #   * The only USER CONTENT on the axis is photos, and photos.space_id is already RESTRICT — this
+  #     gate. Soft-Delete-Only's actual promise is kept.
+  #   * What does cascade is spacetheme (1 row of display config) and weather_daily (91 rows of
+  #     re-fetchable external observations). Neither is user-authored; cascading them with their
+  #     space is correct, and neither carries deleted_at either.
+  #   * Adding a deleted_at column to `spaces` was considered and REJECTED: nothing would write or
+  #     read it, which is the inert-feature class (L-371). Making spaces genuinely soft-deletable
+  #     means building the spaces API that was deliberately not built — a product decision, not a
+  #     schema fix.
+  # If this gate ever fails, the space axis has lost its only real protection and I8 stops being
+  # theoretical.
+  - name: photos_space_id_is_restrict
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'photos_space_id_fkey' AND confdeltype = 'r'
+    expect: rowcount_eq
+    value: 1
