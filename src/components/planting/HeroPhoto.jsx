@@ -13,6 +13,7 @@ import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
 import FavoriteToggle from '../FavoriteToggle.jsx'
 import StatusPicker from './StatusPicker.jsx'
+import { formatQty } from '../../lib/format.js'
 import { selectKeyFact, selectCropType, cropFamilyGlyph } from '../../lib/keyFact.js'
 import PhotoHero, { HERO_FLOAT_BTN } from '../PhotoHero.jsx'
 
@@ -27,6 +28,24 @@ function BottomOverlay({ name, planting, keyFact, cropType, onOpenDetails, onSta
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
         {/* V4-STATUSTAP-001 — the status face is now the single tappable status control. */}
         <StatusPicker planting={planting} onStatusChanged={onStatusChanged} />
+        {/* V4-PLANTQTY-001 — how many are in this planting, above the fold. The number was already
+            rendered, but only inside the Details fly-up's Basics tab (PlantingDetail's
+            `basicsRows`), which is a tap away from the page you are already looking at; "×6
+            zucchini / ×30 basil" is a fact you read AT the planting, not one you go looking for.
+            It stays in the fly-up too — that sheet is the complete record and duplicating one
+            pill there is cheaper than orphaning the "Started with" row beside it.
+            ×1 is HIDDEN, matching PlantingTile.jsx and forms/PlantingSelect.jsx: 123 of 258 live
+            plantings are single, so rendering it would add a pill saying nothing to ~half of all
+            planting pages. `> 1` on the raw value is deliberate — quantity is numeric(N,3) and
+            arrives as the string "3.000", which the relational compare coerces, while null and
+            undefined both fall through false. formatQty then rounds to the integer Dave asked
+            for everywhere (Dave directive 2026-06-15). */}
+        {planting?.quantity > 1 && (
+          <span data-testid="hero-quantity" style={{ backgroundColor: 'rgba(255,255,255,0.92)', color: P.green,
+            fontSize: '0.78rem', fontWeight: 700, padding: '4px 10px', borderRadius: 12, whiteSpace: 'nowrap' }}>
+            ×{formatQty(planting.quantity)}
+          </span>
+        )}
         {/* V4-ABOVEFOLD-001 — crop TYPE above the fold (complements the key-fact pill). */}
         {cropType && (
           <span style={{ backgroundColor: 'rgba(255,255,255,0.92)', color: P.green, fontSize: '0.78rem',
