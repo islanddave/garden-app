@@ -266,28 +266,22 @@
     },
     {
       "n": 14,
-      "label": "Echeveria ×4",
+      "label": "Echeveria ×2 (generic rows only — named cultivars withdrawn)",
       "winner": {
         "id": "8a25017f-2678-4b02-8f66-8ae3ad7f14ef",
         "name": "Echeveria"
       },
       "losers": [
         {
-          "id": "ca0196d8-c030-486f-a844-2296428cd65d",
-          "name": "Echeveria 'Perle von Nurnberg'"
-        },
-        {
           "id": "536898f5-ba07-47c3-8f8b-d85adfb15e54",
           "name": "Echeveria (mail order)"
-        },
-        {
-          "id": "0935edd3-1ddb-41d7-b2b9-3c3beeeecd9e",
-          "name": "Love's Fire"
         }
       ],
-      "winner_source": "rule",
-      "hold": true,
-      "hold_reason": "NEEDS A DAVE RULING — same class he ruled on for group 15. Two of these four are DISTINCT NAMED CULTIVARS ('Perle von Nurnberg', \"Love's Fire\"; the plan itself calls them that), and the fallback winner is the generic 'Echeveria', so merging would fold two named cultivars into an unnamed row and lose that identity. variety_id diverges four ways and Love's Fire carries crop_type_slug='succulent' rather than 'echeveria', so the merged row also needs an explicit crop_type resolution. Options: (a) merge only the two generic rows ('Echeveria' + 'Echeveria (mail order)') and leave the two named cultivars standing, (b) merge all four and accept the identity loss, (c) do not merge. Recommend (a)."
+      "winner_source": "dave",
+      "winner_note": "RULED 2026-08-14 — option (a) of the hold_reason below. The group is NARROWED from four rows to two: only the two GENERIC rows merge ('Echeveria' + 'Echeveria (mail order)', which share cultivar_id d9235bc1). The two distinct named cultivars — 'Perle von Nurnberg' (ca0196d8) and \"Love's Fire\" (0935edd3) — are REMOVED from the group and left standing as their own plantings, so no cultivar identity is folded into an unnamed row. Removing them also removes the four-way variety_id divergence and the crop_type_slug='succulent' conflict that made this group need a ruling at all.",
+      "resolved_from_hold": "Held through the 2026-08-14 run (13 of 14 groups executed); ruled and executed separately.",
+      "divergence_note": "No overrides required, verified against live prod before the run: the pair diverges on container_type (NULL vs 'plastic_pot') and container_size (NULL vs '2 in'), but the guard only fires on multiple distinct NON-NULL values, so neither is a divergence. mergeCore's `?? first non-null` arm means the merged row ADOPTS the mail-order row's pot rather than keeping the winner's NULL — the union of information, which is the right outcome when the two rows are one physical plant double-entered. location_id and cultivar_id are already identical; archived_at is NULL on both.",
+      "hold_reason": "RESOLVED — kept verbatim as the record of what was decided and why. Was: NEEDS A DAVE RULING — same class he ruled on for group 15. Two of these four are DISTINCT NAMED CULTIVARS ('Perle von Nurnberg', \"Love's Fire\"; the plan itself calls them that), and the fallback winner is the generic 'Echeveria', so merging would fold two named cultivars into an unnamed row and lose that identity. variety_id diverges four ways and Love's Fire carries crop_type_slug='succulent' rather than 'echeveria', so the merged row also needs an explicit crop_type resolution. Options: (a) merge only the two generic rows ('Echeveria' + 'Echeveria (mail order)') and leave the two named cultivars standing, (b) merge all four and accept the identity loss, (c) do not merge. Recommend (a)."
     }
   ]
 }
