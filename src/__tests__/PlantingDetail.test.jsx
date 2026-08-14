@@ -285,6 +285,121 @@ describe('PlantingDetail — V3-ARCHIVE-001 archived restore path', () => {
   })
 })
 
+// V4-ARCHIVEINPLACE-001 (BD0806-23) — the forward half of the archive pair, on the planting page.
+// Before this, archiving meant Edit -> /garden?edit=<id> -> open the details disclosure -> Archive,
+// four steps to reach a control whose UNDO already lived on this page.
+describe('PlantingDetail — V4-ARCHIVEINPLACE-001 archive in place', () => {
+  it('Archive PATCHes /archive {archived:true} and flips the page to the archived shape in place', async () => {
+    const patchCalls = []
+    apiFetchSpy.mockImplementation((path, opts) => {
+      if (typeof path === 'string' && path.endsWith('/archive')) {
+        patchCalls.push([path, opts])
+        return Promise.resolve({ archived_at: '2026-06-20T00:00:00Z' })
+      }
+      if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING)
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    const btn = screen.getByRole('button', { name: /^Archive this planting$/i })
+    await act(async () => { fireEvent.click(btn); await Promise.resolve() })
+    expect(patchCalls.length).toBe(1)
+    expect(patchCalls[0][0]).toBe('/api/plants/pl1/archive')
+    expect(patchCalls[0][1].method).toBe('PATCH')
+    expect(JSON.parse(patchCalls[0][1].body)).toEqual({ archived: true })
+    // STAY-IN-PLACE contract: no navigation away. The badge + the reverse control appear in the
+    // row the Archive button just vacated, so the undo is permanent rather than a timed race.
+    await waitFor(() => expect(screen.getByText('Archived')).toBeTruthy())
+    expect(screen.getByRole('button', { name: /Unarchive this planting/i })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Megatron Jalapeno' })).toBeTruthy()
+    expect(screen.queryByText('PROJECT PAGE')).toBeNull()
+    expect(screen.queryByText('GARDEN PAGE')).toBeNull()
+    // The two directions are never offered at once. Anchored — an unanchored /Archive this
+    // planting/i is a SUBSTRING of "Unarchive this planting" and would pass vacuously.
+    expect(screen.queryByRole('button', { name: /^Archive this planting$/i })).toBeNull()
+  })
+
+  // The recon-flagged collision: PlantingDetail.test.jsx already pins queryByRole(/Unarchive/i) as
+  // null on a live planting. A control named plain "Archive" would satisfy that, but the reverse
+  // query on an ARCHIVED planting must not become ambiguous either. Pin both directions.
+  it('the two controls have mutually exclusive accessible names, one per archived state', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve({ ...PLANTING, archived_at: '2026-06-20T00:00:00Z' })
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    // Archived: exactly the reverse control, and the forward one is gone.
+    expect(screen.getAllByRole('button', { name: /Unarchive this planting/i })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: /^Archive this planting$/i })).toBeNull()
+  })
+
+  it('a failed archive says so and leaves the planting live — never a silent no-op', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (typeof path === 'string' && path.endsWith('/archive')) return Promise.reject(new Error('nope'))
+      if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING)
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Archive this planting$/i })); await Promise.resolve() })
+    // Still live: no badge, and the control comes back out of its in-flight state.
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Archive this planting$/i }).textContent).toContain('Archive'))
+    expect(screen.queryByText('Archived')).toBeNull()
+    expect(errSpy).toHaveBeenCalled()
+    errSpy.mockRestore()
+  })
+})
+
+// V4-PLANTQTY-001 — the quantity was already rendered, but only inside the Details fly-up. These
+// pin it ABOVE THE FOLD (in the hero overlay, alongside the <h1>) with the ×1 gate intact.
+describe('PlantingDetail — V4-PLANTQTY-001 quantity above the fold', () => {
+  it('renders ×<quantity> in the hero overlay without opening the Details fly-up', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve(PLANTING)   // quantity: 3
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    const h1 = await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    const pill = screen.getByTestId('hero-quantity')
+    expect(pill.textContent).toBe('×3')
+    // "Above the fold" concretely: same hero bottom-overlay container as the page <h1>, and
+    // reachable with the Details sheet still closed (Sheet renders null until opened).
+    expect(h1.parentElement.contains(pill)).toBe(true)
+    expect(screen.getAllByText('×3')).toHaveLength(1)
+  })
+
+  it('hides the pill at ×1 — the same gate PlantingTile and PlantingSelect use', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve({ ...PLANTING, quantity: 1, qty_initial: null })
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    expect(screen.queryByTestId('hero-quantity')).toBeNull()
+    expect(screen.queryByText('×1')).toBeNull()
+  })
+
+  // numeric(N,3) serializes through the pg driver as "3.000"; the gate compares the raw value and
+  // formatQty rounds for display, so a string from the wire must render exactly like a number.
+  it('renders the wire form ("6.000") as ×6', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      if (path.startsWith('/api/plants/')) return Promise.resolve({ ...PLANTING, quantity: '6.000' })
+      if (path.startsWith('/api/events')) return Promise.resolve(EVENTS)
+      return Promise.resolve(null)
+    })
+    renderAt()
+    await screen.findByRole('heading', { name: 'Megatron Jalapeno' })
+    expect(screen.getByTestId('hero-quantity').textContent).toBe('×6')
+  })
+})
+
 
 // Slice 5a — live care band (CareStatus wired between the title row and QuickActions).
 describe('PlantingDetail — Slice 5a care band', () => {

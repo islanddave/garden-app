@@ -86,6 +86,7 @@ export default function PlantingDetail() {
   const [error, setError] = useState(null)
   const [notFound, setNotFound] = useState(false)
   const [unarchiving, setUnarchiving] = useState(false)  // V3-ARCHIVE-001: planting restore path
+  const [archiving, setArchiving] = useState(false)      // V4-ARCHIVEINPLACE-001: archive-in-place
   const [refreshKey, setRefreshKey] = useState(0)  // V4-PLANTINGUI-001: bump to refetch events after a quick-log
 
   // V200 Slice 5b — Details fly-up (tabbed) + Lightbox gallery state.
@@ -365,6 +366,39 @@ export default function PlantingDetail() {
     }
   }
 
+  // V4-ARCHIVEINPLACE-001 (BD0806-23) — archive the planting FROM the planting page. Until now the
+  // only archive affordance lived inside the Garden editor (PlantingEditor.jsx), so putting a
+  // finished planting away meant: planting page → Edit → /garden?edit=<id> → open the details
+  // disclosure → Archive. Four steps to reach a control whose UNDO has been sitting on this very
+  // page since V3-ARCHIVE-001. This is the missing forward half of the pair, and it is the same
+  // PATCH the editor and CaptureFlow's undo already use — no new route, no new state machine.
+  //
+  // STAYS ON THE PAGE, deliberately. The badge flips to Archived and Unarchive appears in the same
+  // row the button just left, which makes the reversal permanent instead of a five-second toast
+  // race — and since an archived planting is reachable only by a URL you already hold, navigating
+  // away would strand the one surface that can bring it back. No confirm dialog for the same
+  // reason: archiving is reversible in place, and a modal would re-add exactly the friction this
+  // removes. (ProjectDetail gates its archive behind a dialog only because that dialog is SHARED
+  // with a destructive delete; there is no delete here.)
+  async function handleArchive() {
+    setArchiving(true)
+    try {
+      const res = await fetch('/api/plants/' + plantingId + '/archive', { method: 'PATCH', body: JSON.stringify({ archived: true }) })
+      // Server-sourced timestamp, never a client clock: archived_at is what every other surface
+      // filters on, and a locally-invented value would disagree with the next record load.
+      setPlanting(prev => ({ ...prev, archived_at: res?.archived_at ?? null }))
+    } catch (err) {
+      console.error('archive failed', err)
+      // Failure MUST be audible. The success path is confirmed by the row visibly changing shape,
+      // so a silent catch here would leave the row looking exactly un-archived with no way to tell
+      // "it didn't work" from "you didn't tap it". Reuses this page's existing error-toast pattern
+      // (setFeatured) rather than inventing a second one.
+      toast?.show?.({ message: "Couldn't archive this planting", tone: 'error' })
+    } finally {
+      setArchiving(false)
+    }
+  }
+
   const pl = planting
   const name = pl.name || 'Planting'
   const variety = pl.variety_ref?.name
@@ -526,9 +560,9 @@ export default function PlantingDetail() {
         onStatusChanged={(status) => setPlanting(prev => ({ ...prev, status }))}
       />
 
-      {/* Secondary affordances row — Edit + (archived) Unarchive. Primary name/status live ON the
-          hero; the Favorite is the single hero heart now (dup removed), and the caretaker control
-          moved below the Event log. Row margin tightened since it usually carries only Edit. */}
+      {/* Secondary affordances row — Archive + Log + Edit, plus (archived) the badge and Unarchive.
+          Primary name/status live ON the hero; the Favorite is the single hero heart now (dup
+          removed), and the caretaker control moved below the Event log. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10,
         flexWrap: 'wrap', margin: '10px 0 14px' }}>
         {pl.archived_at && (
@@ -543,6 +577,35 @@ export default function PlantingDetail() {
               fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
             <Icon name="action.archive" size={16} decorative style={{ color: P.green }} />
             {unarchiving ? 'Working…' : 'Unarchive'}
+          </button>
+        )}
+        {/* V4-ARCHIVEINPLACE-001 — the forward half of the archive pair, mirroring the Unarchive
+            button above it. Gated on a LIVE planting so the row never offers both directions at
+            once, which also keeps the accessible names unambiguous: `Archive this planting` and
+            `Unarchive this planting` are mutually exclusive on any given render, and a
+            /Unarchive/i query can never accidentally match this control.
+            Placed FIRST in a flex-end row, so it takes the leftmost (least prominent) slot and
+            Log/Edit keep the thumb-reachable positions they already had — archiving is a
+            once-per-planting act, logging is a daily one. Quieter chrome than its neighbours
+            (border/ink at P.border/P.mid rather than the green pair) for the same reason, while
+            keeping their shape so the row still reads as one set. minHeight 44 per the house
+            touch floor. */}
+        {!pl.archived_at && (
+          <button
+            type="button"
+            onClick={handleArchive}
+            disabled={archiving}
+            aria-label="Archive this planting"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              backgroundColor: P.white, color: P.mid,
+              border: `1px solid ${P.border}`, borderRadius: 8,
+              padding: '8px 14px', fontSize: '0.85rem', fontWeight: 600,
+              minHeight: 44, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+            }}
+          >
+            <Icon name="action.archive" size={16} decorative style={{ color: P.mid }} />
+            {archiving ? 'Archiving…' : 'Archive'}
           </button>
         )}
         {/* V4-QUICKLOG-001 (R10, ATTESTED 14:52Z): "I definitely want a quick log button right
@@ -923,15 +986,39 @@ function HarvestWeightChip({ entry }) {
   }
   // The ≈ is the only at-a-glance mark separating an estimate from a weighing, so it never carries
   // the meaning alone — title + aria-label spell out the provenance for anyone who never hovers.
+  //
+  // V4-HARVWEIGHTSURF-001 — …except NOBODY hovers, because there is no hover. Dave's only surface is
+  // Chrome on Android, where a `title` attribute never fires at all: no long-press, no tap, nothing.
+  // So on the device this app is actually used on, the provenance sentence was rendered to a
+  // dead-end attribute and the whole basis axis collapsed back onto the bare ≈ glyph the comment
+  // above says must not carry the meaning alone. Only ~37% of the weights on this page are real
+  // weighings — the other ~63% are resolver-derived — so "where did this number come from" is not a
+  // footnote, it is the difference between a measurement and an inference.
+  //
+  // The sentence is therefore rendered VISIBLY, verbatim from describeHarvestWeight (the same
+  // read model, the same words, as the Harvests log — a grower who sees one phrasing here and
+  // another there has to work out whether they mean the same thing). It is a sibling of the chip,
+  // not a child, so the chip's own text/testid/label contract is byte-identical to before; it
+  // joins the existing baseline flex row and wraps to its own line at 390px rather than adding a
+  // block. MEASURED rows get nothing — sourceCopy is null for them by construction, and the
+  // ABSENCE of the ≈ already says "this was weighed" without spending a line to repeat it.
+  // title/aria-label are left in place: they cost nothing and still serve pointer + screen reader.
   return (
-    <span
-      data-testid="harvest-weight"
-      title={wt.sourceCopy ?? 'Weighed.'}
-      aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
-      style={{ fontSize: '0.72rem', fontWeight: 600, color: wt.estimated ? P.light : P.green, whiteSpace: 'nowrap' }}
-    >
-      {wt.estimated ? `≈ ${wt.text}` : wt.text}
-    </span>
+    <>
+      <span
+        data-testid="harvest-weight"
+        title={wt.sourceCopy ?? 'Weighed.'}
+        aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
+        style={{ fontSize: '0.72rem', fontWeight: 600, color: wt.estimated ? P.light : P.green, whiteSpace: 'nowrap' }}
+      >
+        {wt.estimated ? `≈ ${wt.text}` : wt.text}
+      </span>
+      {wt.estimated && wt.sourceCopy && (
+        <span data-testid="harvest-weight-source" style={{ fontSize: '0.7rem', color: P.light, lineHeight: 1.4 }}>
+          {wt.sourceCopy}
+        </span>
+      )}
+    </>
   )
 }
 
