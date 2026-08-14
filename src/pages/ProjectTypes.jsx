@@ -1,4 +1,13 @@
-import { useState, useEffect } from 'react'
+// `React` is imported for its SIDE EFFECT on the unit-test transform, not because this file names
+// it. The Vite BUILD uses the automatic JSX runtime (no React binding needed), but the vitest
+// pipeline here (vitest 2.1.9 against @vitejs/plugin-react 5.2.0) does not apply the plugin's
+// automatic transform, so esbuild's default CLASSIC transform emits `React.createElement` and any
+// rendering test of this file dies with `ReferenceError: React is not defined`. Every component in
+// this repo that a unit test renders already imports React; this file was simply never rendered in
+// a test until deleteNotFoundTolerance.test.jsx. Harmless in the bundle, required for coverage.
+// Seven sibling files still lack it (Achievements, AuthCallback, Home, Inventory, Login, Tasks,
+// ZonePicker) and will hit the same wall the day someone writes their first render test.
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'
@@ -58,10 +67,16 @@ export default function ProjectTypes() {
     if (!window.confirm('Delete this project type?')) return
     try {
       await fetch('/api/projects/types/' + id, { method: 'DELETE' })
-      setTypes(t => t.filter(x => x.id !== id))
     } catch (e) {
-      setError(e.message)
+      // BUG-DELCLIENT-001 — 404 means "no row matched", which for a delete is the outcome the user
+      // asked for. BUG-DELNOOPOK-001 gave this route a RETURNING gate, and apiFetch throws on any
+      // non-2xx (e.status carries it), so an already-deleted type would otherwise leave an error
+      // banner AND the dead row still in the list. Deliberate, scoped to 404 on this DELETE only —
+      // never push it down into apiFetch. 403/500/timeout still surface unchanged.
+      if (e?.status !== 404) { setError(e.message); return }
     }
+    // Both paths drop the row: it is gone server-side either way.
+    setTypes(t => t.filter(x => x.id !== id))
   }
 
   const garden = types.filter(t => t.category === 'garden')
