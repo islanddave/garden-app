@@ -4,9 +4,9 @@ Closes **`V4-PARENTPROJFK-001`**. Flips `plant_projects.parent_project_id` from 
 to `ON DELETE RESTRICT` — the **last SET NULL foreign key on `plant_projects`**, and the one
 `v4-plantrehomefk-001` deliberately deferred pending a product decision.
 
-**Schema version taken: `4.23.11-parentprojfk-001`** (latest in live prod at authoring time was
+**Schema version taken: `4.23.13-parentprojfk-001`** (latest in live prod at authoring time was
 `4.23.10-archpreservguard-001`). A sibling lane in the same fleet is also authoring a migration —
-if it took `4.23.11` too, one of the two must move before either applies.
+RESOLVED: entitytagsdrop kept 4.23.11, archrestore took 4.23.12, this took 4.23.13.
 
 ## What was wrong
 

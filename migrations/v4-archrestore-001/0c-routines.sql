@@ -763,7 +763,7 @@ COMMENT ON FUNCTION public.unarchive_events_apply(text, uuid[], uuid[], uuid[]) 
   'a single provenance key.';
 
 INSERT INTO public.schema_version (version, description)
-VALUES ('4.23.11-archrestore-001',
+VALUES ('4.23.12-archrestore-001',
   'ARCHRESTORE 0c: BOTH halves. (1) archive_plant_events and archive_container_events now RECORD '
   'each photo''s pre-detach parent set into photo_detach_archive, in the same statement as the '
   'detach UPDATE, which is otherwise unchanged term for term — the severed photos.event_id was '

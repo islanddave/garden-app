@@ -381,7 +381,7 @@ post:
     continuous: false
     sql: |
       SELECT 1 FROM public.schema_version
-       WHERE version = '4.23.11-archrestore-001-capture'
+       WHERE version = '4.23.12-archrestore-001-capture'
     expect: rowcount_eq
     value: 1
 
@@ -389,6 +389,6 @@ post:
     continuous: false
     sql: |
       SELECT 1 FROM public.schema_version
-       WHERE version = '4.23.11-archrestore-001'
+       WHERE version = '4.23.12-archrestore-001'
     expect: rowcount_eq
     value: 1

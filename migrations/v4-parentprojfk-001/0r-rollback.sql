@@ -45,8 +45,8 @@ ALTER TABLE public.plant_projects
        FOREIGN KEY (parent_project_id) REFERENCES public.plant_projects(id) ON DELETE SET NULL;
 
 INSERT INTO public.schema_version (version, description)
-VALUES ('4.23.11-parentprojfk-001-rollback',
-  'ROLLBACK of 4.23.11-parentprojfk-001: plant_projects.parent_project_id RESTRICT -> SET NULL. '
+VALUES ('4.23.13-parentprojfk-001-rollback',
+  'ROLLBACK of 4.23.13-parentprojfk-001: plant_projects.parent_project_id RESTRICT -> SET NULL. '
   'Re-arms the silent flatten of a container subtree. No row data touched.')
 ON CONFLICT DO NOTHING;
 

@@ -258,6 +258,6 @@ post:
     continuous: false
     sql: |
       SELECT 1 FROM public.schema_version
-       WHERE version = '4.23.11-parentprojfk-001'
+       WHERE version = '4.23.13-parentprojfk-001'
     expect: rowcount_eq
     value: 1

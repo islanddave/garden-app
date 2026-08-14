@@ -201,7 +201,7 @@ CREATE INDEX IF NOT EXISTS idx_photo_detach_archive_photo
   ON public.photo_detach_archive (photo_id);
 
 INSERT INTO public.schema_version (version, description)
-VALUES ('4.23.11-archrestore-001-capture',
+VALUES ('4.23.12-archrestore-001-capture',
   'ARCHRESTORE 0a: additive substrate for un-archiving. current_schema_fingerprint() and '
   'archive_row_data_drift() helpers; nullable schema_fingerprint on event_log_archive and '
   'harvest_log_archive (added WITHOUT default, then defaulted, so historical rows stay honestly '

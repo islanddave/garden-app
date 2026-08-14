@@ -202,7 +202,7 @@ ALTER TABLE public.plant_projects
 --   * plant_varieties.source_proj_rescope_project_id NO ACTION — already refuses. Correct as-is.
 
 INSERT INTO public.schema_version (version, description)
-VALUES ('4.23.11-parentprojfk-001',
+VALUES ('4.23.13-parentprojfk-001',
   'PARENTPROJFK fix: plant_projects.parent_project_id ON DELETE SET NULL -> RESTRICT. A hard delete '
   'of a parent container silently promoted every child container to top-level — an unrecorded, '
   'unrecoverable loss of structure that nothing logged and no error surfaced; 76 of 86 containers '
