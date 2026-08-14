@@ -37,6 +37,14 @@ function wireLists() {
   })
 }
 
+// V4-PLANTFORMUNIFY-001 — the planting destination now renders the shared <PlantForm/>, which owns
+// its own <form> and its own submit button. The bespoke `cap-pname` Input and the shared `cap-save`
+// button no longer exist on THAT path (the other three destinations still use `cap-save`, and those
+// assertions below are untouched). PlantForm ids off idPrefix="cap-plant", so the name field is
+// `cap-plant-name`; the submit is reached by role, which is what an actual user does.
+const plantName = () => document.getElementById('cap-plant-name')
+const plantSave = () => screen.getByRole('button', { name: 'Save' })
+
 async function snapTo(modeTestId) {
   await waitFor(() => expect(screen.getByTestId('capture-input')).toBeDefined())
   const file = new File(['x'], 'snap.jpg', { type: 'image/jpeg' })
@@ -49,8 +57,8 @@ describe('CaptureFlow — V3-CAPTURE-001', () => {
     wireLists()
     await act(async () => { render(<CaptureFlow />) })
     await snapTo('mode-planting')
-    await act(async () => { fireEvent.change(screen.getByTestId('cap-pname'), { target: { value: 'Charentais' } }) })
-    await act(async () => { fireEvent.click(screen.getByTestId('cap-save')) })
+    await act(async () => { fireEvent.change(plantName(), { target: { value: 'Charentais' } }) })
+    await act(async () => { fireEvent.click(plantSave()) })
     await waitFor(() => expect(screen.getByTestId('cap-result')).toBeDefined())
     const post = fetchSpy.mock.calls.find(c => c[0] === '/api/plants' && c[1]?.method === 'POST')
     expect(post).toBeTruthy()
@@ -66,8 +74,8 @@ describe('CaptureFlow — V3-CAPTURE-001', () => {
     wireLists()
     await act(async () => { render(<CaptureFlow />) })
     await snapTo('mode-planting')
-    await act(async () => { fireEvent.change(screen.getByTestId('cap-pname'), { target: { value: 'Charentais' } }) })
-    await act(async () => { fireEvent.click(screen.getByTestId('cap-save')) })
+    await act(async () => { fireEvent.change(plantName(), { target: { value: 'Charentais' } }) })
+    await act(async () => { fireEvent.click(plantSave()) })
     await waitFor(() => expect(screen.getByTestId('cap-undo')).toBeDefined())
     await act(async () => { fireEvent.click(screen.getByTestId('cap-next')) })
     // BUG-SNAPRETAKE-001: this used to assert on `capture-input`, which is now mounted in EVERY
