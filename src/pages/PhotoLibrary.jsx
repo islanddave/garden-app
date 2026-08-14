@@ -12,6 +12,8 @@ import PlantingSelect from '../components/forms/PlantingSelect.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import { photoLoadErrorMessage } from '../components/PhotosWall.jsx'
 import FacebookShareSheet from '../components/FacebookShareSheet.jsx'
+import PhotoDeleteConfirm from '../components/photo/PhotoDeleteConfirm.jsx'
+import { useOptionalToast } from '../context/ToastContext.jsx'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
@@ -38,6 +40,32 @@ import useScrollRestore from '../hooks/useScrollRestore.js'
 // letting the share sheet fail mid-post. Named because it is asserted in three places (the warning,
 // the disabled state, the cursor) and a literal that appears three times drifts in two of them.
 const MAX_SHARE_PHOTOS = 10
+
+// V4-PHOTOREASSIGN-001 / W-PHOTODEL — which plantings have DESIGNATED this photo as their cover.
+//
+// `featured_is_explicit` is the whole predicate and it is not a nicety. Both the plants list and the
+// projects/spaces reads return an EFFECTIVE hero: COALESCE(explicit pointer, newest photo in the
+// gallery). Matching on featured_photo_id alone would therefore name a planting whose "cover" is
+// merely the most recent photo — deleting that one promotes the next photo and the user sees no
+// change at all, so the disclosure would be crying wolf on the common case and be ignored on the
+// real one. featured_is_explicit is true only when the stored pointer RESOLVED (alive + still a
+// member), which is exactly "this planting picked this photo on purpose" — the same thing
+// eventPhotos.js's cover_for enumerates for the event-delete confirm.
+//
+// PARTIAL BY CONSTRUCTION, and the confirm's copy is written to be honest about that: this sees
+// PLANTINGS only, from the list this page already holds. Containers, zones, inventory items and
+// spaces each carry a featured_photo_id that no PhotoLibrary fetch returns, and GET /api/photos
+// carries no cover data of any kind. Widening it is a Lambda change. So a NAMED line here is always
+// true; the absence of one is never an all-clear (PhotoDeleteConfirm's generic arm covers that).
+// With PROJECTS_HIDDEN on — its live value — `plants` is every live planting in the household, so
+// the planting axis itself is complete; with the flag off it is project-scoped, which narrows the
+// derivation but cannot make it lie.
+export function coverForPhoto(photoId, plants) {
+  if (!photoId) return []
+  return (plants ?? [])
+    .filter(p => p?.featured_is_explicit && p?.featured_photo_id === photoId)
+    .map(p => ({ id: p.id, name: p.name }))
+}
 
 export default function PhotoLibrary() {
   const { fetch: apiFetch } = useApiFetch()
@@ -79,6 +107,14 @@ export default function PhotoLibrary() {
   const [plantsForModal, setPlantsForModal] = useState([])
   const [tagging,        setTagging]        = useState(false)
   const [tagErr,         setTagErr]         = useState(null)
+
+  // V4-PHOTOREASSIGN-001 / W-PHOTODEL — the standalone photo delete. Held as the PHOTO, not a
+  // boolean: the confirm has to name and show the thing it is about to delete, and the tag modal
+  // stays open behind it so a Cancel returns the user exactly where they were.
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting,     setDeleting]     = useState(false)
+  const [deleteErr,    setDeleteErr]    = useState(null)
+  const toast = useOptionalToast()
 
   // V4-FBSHARE-001 — multi-select + Facebook Page share
   const [selectMode,  setSelectMode]  = useState(false)
@@ -385,6 +421,49 @@ export default function PhotoLibrary() {
       setTagging(false)
       setTagErr(err.message)
     }
+  }
+
+  // ---- V4-PHOTOREASSIGN-001 / W-PHOTODEL: standalone photo delete ----
+  //
+  // THE ROUTE IS ALREADY RIGHT — this is a call site, not a new capability. DELETE /api/photos/:id
+  // (lambda/photos/photoDelete.js) soft-deletes: `deleted_at = now()`, every display pointer nulled
+  // in the SAME transaction, no row removed, no S3 object touched, and a restore that puts the photo
+  // back and re-promotes it into any hero slot still standing empty. Nothing here may bypass or
+  // duplicate that; the client's whole job is to ask, disclose, and re-sync.
+  //
+  // Path spelled inline exactly as handleTag's PUT spells it — one route, one literal shape, both
+  // proven by the same live matcher. (deletedPhotos.js holds the two paths that had NO existing
+  // spelling in a component; this one has had one since the tag modal shipped.)
+  async function confirmDelete() {
+    if (!deleteTarget || deleting) return
+    setDeleting(true)
+    setDeleteErr(null)
+    try {
+      await apiFetch('/api/photos/' + deleteTarget.id, { method: 'DELETE' })
+      // Every cached photo list still contains this row. dataCache's only consumers are the photo
+      // lists (see its header), so this ONE prefix covers the routed surfaces; PhotoLibrary's own
+      // grid is uncached and is corrected by the local drop below.
+      invalidatePhotoLists('/api/photos')
+      // Drop locally rather than refetching: the server answer IS the confirmation, and a refetch
+      // would re-presign the whole page to learn one thing already known. `selected` needs no
+      // parallel edit — selectedPhotos derives from `photos`, which is the BUG-PHOTOSELSTALE-001
+      // rule (one source of truth for "the selection", and it is not the id Set).
+      setPhotos(ps => ps.filter(p => p.id !== deleteTarget.id))
+      setDeleteTarget(null)
+      setModal(null)
+      // Operational confirmation of a thing the user explicitly started — the Toast layer's
+      // documented carve-out, not a reward channel. It names Recently deleted because the recovery
+      // path is the reason this delete is allowed to be low-friction, and a user who has just
+      // deleted the wrong photo needs the destination, not congratulations. No undo action: a 5s
+      // window is convenience, and this project already learned once (V3-ARCHIVE-001) that shipping
+      // it AS the recovery model is how things become unrecoverable.
+      toast.show({ message: 'Photo deleted — in Recently deleted' })
+    } catch (err) {
+      // Keep the sheet OPEN and put the message in it. Closing over a failed write would leave the
+      // photo on screen with no explanation, which reads as "the delete silently did nothing".
+      setDeleteErr(err?.message || 'Could not delete that photo.')
+    }
+    setDeleting(false)
   }
 
   // ---- V4-FBSHARE-001 select-mode + share handlers ----
@@ -752,9 +831,29 @@ export default function PhotoLibrary() {
             projects={projects}
             locations={locations}
             onShare={fbShareEnabled ? (() => { setModal(null); openShare([modal]) }) : undefined}
+            onDelete={() => { setDeleteErr(null); setDeleteTarget(modal) }}
           />
         </ErrorBoundary>
       )}
+
+      {/* W-PHOTODEL — rendered as a SIBLING of the modal, not inside it, and after it in document
+          order. Both paint at zIndex 200 (PhotoModal's overlay; Sheet's panel), both register
+          LAYER.SHEET, so the arbiter's insertion-order tiebreak and the paint order agree: the
+          confirm is topmost on both axes and one Escape closes the confirm only. Nesting it inside
+          PhotoModal would put it under that modal's ErrorBoundary and inside its scrollport, which
+          is how a fly-up ends up clipped (BUG-PICKERCLIP-001, same page, same cause).
+          The modal deliberately STAYS mounted behind it: Cancel must return the user to the photo
+          they were looking at, not to the grid. */}
+      <PhotoDeleteConfirm
+        open={!!deleteTarget}
+        photo={deleteTarget}
+        coverFor={coverForPhoto(deleteTarget?.id, plantsForModal)}
+        sharingEnabled={fbShareEnabled}
+        busy={deleting}
+        error={deleteErr}
+        onCancel={() => { if (!deleting) { setDeleteTarget(null); setDeleteErr(null) } }}
+        onConfirm={confirmDelete}
+      />
 
       {/* V4-FBSHARE-001 — selection action bar (only in select-mode) */}
       {selectMode && selectionCount > 0 && (
@@ -847,7 +946,7 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
 
 // ---- Photo modal ----
 // Uses photo.view_url for display
-function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClose, tagging, tagErr, projects, locations, onShare }) {
+function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClose, tagging, tagErr, projects, locations, onShare, onDelete }) {
   const hasEvent = !!photo.event_id
 
   // V4-BACKNAV-001 Slice 2 follow-up — PHOTOMODAL_GAP closed. This was a fixed full-viewport overlay
@@ -1015,6 +1114,40 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
                 {tagging ? 'Saving…' : 'Save tags'}
               </button>
             </form>
+          )}
+
+          {/* W-PHOTODEL — the standalone delete, OUTSIDE the hasEvent branch on purpose.
+              An event-attached photo is precisely the case this whole row exists for: before this
+              control, the only way to remove one was to delete the EVENT it hangs off, destroying a
+              real record of a real thing that happened in the garden in order to get rid of an
+              image. Putting the delete only on the tag-form arm would leave that exact photo
+              unreachable and close the row on paper only.
+
+              Placement is a safety decision, not a layout one: below a divider, at the END of the
+              body, so it is never adjacent to "Save tags" — and it is a plain text-weight control,
+              not a filled button, so the destructive action is never the most prominent thing in a
+              modal whose ordinary purpose is captioning. It only ARMS the confirm; nothing is
+              written from here. */}
+          {onDelete && (
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${P.border}` }}>
+              <button
+                type="button"
+                data-testid="pl-photo-delete"
+                onClick={onDelete}
+                disabled={tagging}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: '100%', minHeight: 44,
+                  background: 'transparent', color: P.terra,
+                  border: `1px solid ${P.border}`, borderRadius: 8,
+                  fontSize: '0.88rem', fontWeight: 700,
+                  cursor: tagging ? 'not-allowed' : 'pointer',
+                  opacity: tagging ? 0.6 : 1,
+                }}
+              >
+                Delete photo
+              </button>
+            </div>
           )}
         </div>
       </div>
