@@ -14,7 +14,7 @@
 // real SELECTs and pinning real columns, which is per-Lambda work. What it CAN do is make the gap
 // impossible to mistake for coverage:
 //
-//   1. Every Lambda is either ENROLLED or NAMED in UNENROLLED below. Silence is no longer an option.
+//   1. Every Lambda is ENROLLED, NAMED in UNENROLLED, or PROVEN read-free. Silence is not an option.
 //   2. UNENROLLED cannot GROW. A newly added Lambda fails this test until someone either enrols it
 //      or deliberately adds it to the list — a new Lambda can never be born silently uncovered.
 //   3. UNENROLLED cannot go STALE. Enrolling a Lambda without removing it from this list fails, so
@@ -25,7 +25,7 @@
 // deleted_at) read index.js directly and are NOT vacuous — this gap is Phase 1 only, which is why
 // the list below is about SELECT coverage specifically.
 import { describe, it, expect } from 'vitest'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const LAMBDA_DIR = resolve(process.cwd(), 'lambda')
@@ -33,12 +33,24 @@ const LAMBDA_DIR = resolve(process.cwd(), 'lambda')
 // Lambdas with NO select-columns.test.js as of 2026-08-14. Their SELECT columns are UNAUDITED
 // against prod's information_schema — an L-081 incident (column exists in staging, not prod, every
 // endpoint 500s on deploy) would not be caught for these.
-// 2026-08-14: 22 -> 21. `locations` enrolled (lambda/locations/select-columns.test.js).
+// 2026-08-14: 22 -> 17. Enrolled `locations`, `favorites`, `inventory-items`, `photos`,
+// `preservation`. `events` is deliberately NOT among them: at 3,074 lines and 30 table references it
+// is the single highest-value enrolment left and needs its own pass, not a rushed one — a wrong
+// column list fails CI against prod and blocks a promote.
 const UNENROLLED = [
-  'achievements', 'app-events', 'critter', 'daily-plan', 'daily-plan-read', 'dashboard',
-  'events', 'evidence-ingest', 'facebook-share', 'favorites', 'findings', 'inventory-items',
-  'members', 'photos', 'preservation', 'shared-state', 'storage-location',
+  'achievements', 'critter', 'daily-plan', 'daily-plan-read', 'dashboard',
+  'events', 'evidence-ingest', 'facebook-share', 'findings',
+  'shared-state', 'storage-location',
   'tags', 'ux-events', 'xp-reconcile',
+]
+
+// STRUCTURALLY EXEMPT, not debt. Phase 1 audits SELECT columns; a Lambda that never reads a row has
+// no SELECT columns to contract, so counting it as "unenrolled" overstates the gap — and an
+// overstated gap is the same species of misleading number as the vacuous green this row is about.
+// Verified below rather than trusted: a Lambda listed here that later grows a read FAILS.
+const NO_SQL_READS = [
+  'members',    // 0 sql`` templates at all — pure Clerk/membership logic, never touches the DB.
+  'app-events', // sql`` templates present but INSERT-only, no FROM. Phase 2 covers its column list.
 ]
 
 // Ceiling, not a target. Lower it with every enrolment; never raise it without a ledger row saying
@@ -61,15 +73,34 @@ describe('L-081 Phase 1 enrollment ratchet (OPS-L081COLS-001)', () => {
     expect(lambdas).toContain('harvests')
   })
 
-  it('accounts for EVERY Lambda — enrolled, or explicitly named as unaudited', () => {
-    const unaccounted = lambdas.filter((n) => !isEnrolled(n) && !UNENROLLED.includes(n))
+  it('accounts for EVERY Lambda — enrolled, named as unaudited, or proven read-free', () => {
+    const unaccounted = lambdas.filter((n) => !isEnrolled(n)
+      && !UNENROLLED.includes(n) && !NO_SQL_READS.includes(n))
     expect(unaccounted).toEqual([])
+  })
+
+  it('proves each exempt Lambda really has no SQL read — an exemption must not rot', () => {
+    // The exemption is only honest while it is true. If one of these grows a SELECT, it becomes real
+    // Phase 1 debt and has to move to UNENROLLED (or get enrolled) — this is what forces that.
+    const nowReads = NO_SQL_READS.filter((n) => {
+      const src = readFileSync(join(LAMBDA_DIR, n, 'index.js'), 'utf8')
+      const sqlOnly = (src.match(/sql`[\s\S]*?`/g) ?? []).join('\n')
+      return /\bFROM\s+/i.test(sqlOnly)
+    })
+    expect(nowReads).toEqual([])
+  })
+
+  it('keeps the two lists disjoint — a Lambda cannot be both exempt and owed', () => {
+    expect(UNENROLLED.filter((n) => NO_SQL_READS.includes(n))).toEqual([])
   })
 
   it('never lets UNENROLLED grow — a new Lambda cannot be born silently uncovered', () => {
     expect(UNENROLLED.length).toBeLessThanOrEqual(MAX_UNENROLLED)
-    const stillMissing = lambdas.filter((n) => !isEnrolled(n))
-    expect(stillMissing.length).toBeLessThanOrEqual(MAX_UNENROLLED)
+    // Exempt Lambdas are excluded: they are unenrolled by nature, not by debt, and the previous test
+    // proves that claim rather than taking it on trust. Counting them here would make the ceiling
+    // track a number that cannot be paid down.
+    const stillOwed = lambdas.filter((n) => !isEnrolled(n) && !NO_SQL_READS.includes(n))
+    expect(stillOwed.length).toBeLessThanOrEqual(MAX_UNENROLLED)
   })
 
   it('never lets UNENROLLED go stale — an enrolled Lambda must leave the list', () => {
@@ -80,7 +111,7 @@ describe('L-081 Phase 1 enrollment ratchet (OPS-L081COLS-001)', () => {
   })
 
   it('lists no Lambda that does not exist — a rename must not silently drop coverage', () => {
-    const ghosts = UNENROLLED.filter((n) => !lambdas.includes(n))
+    const ghosts = [...UNENROLLED, ...NO_SQL_READS].filter((n) => !lambdas.includes(n))
     expect(ghosts).toEqual([])
   })
 })
