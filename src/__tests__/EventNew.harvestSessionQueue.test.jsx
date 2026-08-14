@@ -19,6 +19,7 @@ const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef } = vi.hoi
     plants: [],
     ready: { candidates: [], et_doy: 226 },
     readyError: null,
+    harvests: { entries: [] },
   },
   searchParamsRef: { current: new URLSearchParams() },
 }))
@@ -73,6 +74,7 @@ function wireApiFetch() {
     if (path === '/api/events/harvest-ready') {
       return dataRef.readyError ? Promise.reject(dataRef.readyError) : Promise.resolve(dataRef.ready)
     }
+    if (path.startsWith('/api/harvests')) return Promise.resolve(dataRef.harvests)
     if (path === '/api/projects') return Promise.resolve(dataRef.projects)
     if (path === '/api/locations/with-path') return Promise.resolve(dataRef.locations)
     if (path.startsWith('/api/plants')) return Promise.resolve(dataRef.plants)
@@ -115,6 +117,7 @@ beforeEach(() => {
   dataRef.plants = PLANTS
   dataRef.ready = CHIPS
   dataRef.readyError = null
+  dataRef.harvests = { entries: [] }
   localStorage.clear()
   wireApiFetch()
 })
@@ -143,12 +146,49 @@ describe('EventNew — weigh-in pre-flight queue (V4-HARVSESSION-002)', () => {
     expect(screen.queryByTestId('harvest-session-tray')).toBeNull()
   })
 
-  it('a failed ready fetch renders no tray and leaves the form usable', async () => {
+  it('a failed ready fetch with no recent harvests renders no tray and leaves the form usable', async () => {
     dataRef.readyError = new Error('boom')
     renderEventNew('session=harvest')
     await flushLoad()
     expect(screen.queryByTestId('harvest-session-tray')).toBeNull()
     expect(screen.getByLabelText('Harvest quantity')).toBeTruthy()
+  })
+
+  it('BUG-HARVTRAYEMPTY-001: empty ready list falls back to recent-harvest plantings, deduped, removed skipped', async () => {
+    dataRef.ready = { candidates: [], et_doy: 226 }
+    dataRef.harvests = { entries: [
+      { plant_id: 'plant-3', project_id: 'proj-1', planting_name: 'Pineapple Tomatillo', planting_removed: false },
+      { plant_id: 'plant-3', project_id: 'proj-1', planting_name: 'Pineapple Tomatillo', planting_removed: false }, // dupe — one chip
+      { plant_id: 'plant-9', project_id: 'proj-1', planting_name: 'Pulled Radish', planting_removed: true },        // removed — skipped
+      { plant_id: null, project_id: 'proj-1', planting_name: 'Unattributed', planting_removed: false },             // no plant — skipped
+      { plant_id: 'plant-2', project_id: 'proj-1', planting_name: 'Sun Sugar #1', planting_removed: false },
+    ] }
+    renderEventNew('session=harvest')
+    await flushLoad()
+    await waitFor(() => expect(screen.getByTestId('harvest-session-tray')).toBeTruthy())
+    const tray = screen.getByTestId('harvest-session-tray')
+    expect(screen.getAllByTestId(/session-chip-/).length).toBe(2)
+    expect(tray.textContent).toContain('Pineapple Tomatillo')
+    expect(tray.textContent).toContain('Sun Sugar #1')
+    // Fallback chips are fully functional: tap arms the form with both ids
+    await act(async () => { fireEvent.click(screen.getByTestId('session-chip-plant-3')) })
+    await saveViaButton({ qty: '2', weight: '30' })
+    expect(postCalls[0].plant_id).toBe('plant-3')
+    expect(postCalls[0].project_id).toBe('proj-1')
+  })
+
+  it('ready candidates lead the tray; recent entries append only NEW plantings', async () => {
+    dataRef.harvests = { entries: [
+      { plant_id: 'plant-1', project_id: 'proj-1', planting_name: 'Black Cherry #1', planting_removed: false }, // already in ready — deduped
+      { plant_id: 'plant-7', project_id: 'proj-1', planting_name: 'Ground Cherry', planting_removed: false },
+    ] }
+    renderEventNew('session=harvest')
+    await flushLoad()
+    await waitFor(() => expect(screen.getByTestId('harvest-session-tray')).toBeTruthy())
+    const chips = screen.getAllByTestId(/session-chip-/)
+    expect(chips.length).toBe(4) // 3 ready + 1 new recent
+    expect(chips[0].textContent).toContain('Black Cherry #1')
+    expect(chips[3].textContent).toContain('Ground Cherry')
   })
 
   it('first chip tap becomes CURRENT: fills planting+project, focuses qty, and the save carries both ids', async () => {

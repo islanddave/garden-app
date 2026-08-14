@@ -454,9 +454,34 @@ export default function EventNew() {
   useEffect(() => {
     if (!inHarvestSession) return
     let off = false
-    apiFetch('/api/events/harvest-ready')
-      .then(d => { if (!off && d && Array.isArray(d.candidates)) setReadyChips(rankHarvestReady(d.candidates, d.et_doy)) })
-      .catch(() => { /* tray is supplementary — the picker path stays fully available */ })
+    // BUG-HARVTRAYEMPTY-001: ready candidates ALONE cannot seed the tray — the readiness model is
+    // deliberately strict (repeat-habit crops with a set interval, ≥1 prior harvest, DOY window,
+    // overdue_ratio ≤ 3 staleness ceiling), so real weigh-ins routinely include plantings it
+    // excludes, and a stale dataset (staging) trips the ceiling on EVERYTHING → zero chips. The
+    // field-practitioner seat called this in the crucible ("the list will miss volunteer/off-band
+    // picks"). Fallback: recent harvest entries (the plantings Dave actually picks), deduped,
+    // appended after the ready band's order. Both fetches are best-effort — an empty merge just
+    // hides the tray and the picker remains the full path.
+    Promise.all([
+      apiFetch('/api/events/harvest-ready').catch(() => null),
+      apiFetch('/api/harvests?include=entries').catch(() => null),
+    ]).then(([readyD, harvD]) => {
+      if (off) return
+      const ready = (readyD && Array.isArray(readyD.candidates))
+        ? rankHarvestReady(readyD.candidates, readyD.et_doy)
+        : []
+      const seen = new Set(ready.map(c => c.plant_id))
+      const recent = []
+      for (const e of (harvD?.entries ?? [])) {
+        if (!e.plant_id || e.planting_removed || seen.has(e.plant_id)) continue
+        seen.add(e.plant_id)
+        recent.push({ plant_id: e.plant_id, project_id: e.project_id, name: e.planting_name ?? 'planting' })
+      }
+      setReadyChips([
+        ...ready.map(c => ({ plant_id: c.plant_id, project_id: c.project_id, name: c.name })),
+        ...recent,
+      ].slice(0, 14))
+    })
     return () => { off = true }
   }, [inHarvestSession, apiFetch])
   useEffect(() => {
