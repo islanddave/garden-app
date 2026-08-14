@@ -1,0 +1,263 @@
+# gates.yml
+# V4-PARENTPROJFK-001 — the container HIERARCHY axis: plant_projects.parent_project_id
+# ON DELETE SET NULL -> RESTRICT. The last SET NULL on this parent, and the one FK
+# v4-plantrehomefk-001 deliberately deferred pending a product decision that has now been made.
+#
+# SEQUENCING: one file, 0c-constraint.sql. There is no 0a, matching v4-plantrehomefk-001 and for the
+# same reason — this migration ships no escape-hatch routine, because a subtree needs no cold store,
+# it needs a DECISION. The supported ways through a blocked delete are one explicit statement each;
+# see 0c §WHAT RESTRICT BUYS. Nothing has to be applied before 0c.
+#
+# ┌─ READ THIS FIRST: THIS MIGRATION SUPERSEDES A GATE IN ANOTHER DIRECTORY ─────────────────────┐
+# │ migrations/v4-plantrehomefk-001/gates.yml carries                                            │
+# │   post_parent_project_id_deliberately_still_set_null                                         │
+# │ a CONTINUOUS post gate asserting confdeltype = 'n' on this exact constraint. It WILL FAIL on  │
+# │ BOTH prod and staging the moment 0c is applied. That is not a defect in either file — it is   │
+# │ the pin doing exactly its job, which was to make a silent tidy-up of "the last SET NULL on    │
+# │ this parent" red instead of ship. The answer is to supersede it in place, in the shape        │
+# │ V4-CASCADESWEEP-001 used for v4-fbshare-p1's post_photo_fk_cascade (commit 219f6b2): rename   │
+# │ the gate, flip the asserted value, and record the reversal in a comment block above it.       │
+# │ The exact replacement hunk is prepared and ready to apply at                                  │
+# │   migrations/v4-parentprojfk-001/COMPANION-EDIT-plantrehomefk-gates.patch                     │
+# │ It was NOT applied by the authoring lane, which is bounded to this directory plus             │
+# │ tests/integration/plant-rehome-fk.int.test.js. APPLY IT BEFORE THE WHOLE-CORPUS GATE RUN.     │
+# └──────────────────────────────────────────────────────────────────────────────────────────────┘
+#
+# WHOLE-CORPUS IMPACT — MEASURED, not predicted, because this repo shipped green-per-migration /
+# red-on-corpus twice on 2026-08-13. Prod's schema was pg_dump'd (read-only) into a throwaway local
+# PostgreSQL 17 cluster and the whole corpus run three times: un-migrated, migrated + companion
+# patch, migrated without it. RESULT: with the patch, ZERO new failures (348->351 pass); without it,
+# EXACTLY ONE new failure, post_parent_project_id_deliberately_still_set_null. Live prod's corpus was
+# separately confirmed green beforehand (PASS=403, FAIL=3 = this migration's own pre-apply reds).
+# Full method and numbers in README §Whole-corpus impact. Per-gate classification:
+#   FAILS  v4-plantrehomefk-001  post_parent_project_id_deliberately_still_set_null  (see box above)
+#   PASSES v4-plantrehomefk-001  post_containment_fks_are_restrict / _are_validated  (plants, tasks
+#            only — this constraint is not in either name list)
+#   PASSES v4-plantrehomefk-001  post_no_writing_before_delete_trigger_on_touched_tables,
+#            post_no_new_triggers_on_touched_tables  (no trigger added or removed)
+#   PASSES v4-evtanchordel-001   post_no_setnull_fk_inside_an_anchor_check  (its result set can only
+#            SHRINK when a SET NULL FK is removed; plant_projects carries no anchor CHECK anyway)
+#   PASSES v4-cascadesweep-001   post_no_cascade_onto_a_soft_deletable_table  (keys on CASCADE; this
+#            flip removes a SET NULL and adds no CASCADE)
+#   PASSES v4-cascadesweep-001   post_trigger_event_id_deliberately_still_set_null  (different
+#            constraint, on user_achievements)
+#   PASSES v4-softdelcascade-001 post_no_cascade_* / post_plant_axis_still_restrict  (unrelated
+#            constraint names; no CASCADE introduced)
+#   PASSES v4-archpreservguard-001 / v4-putup-001  confdeltype='n' gates  (preservation_log columns,
+#            untouched by this migration)
+# The local restore carries the prod SCHEMA but no ROWS, so ~55 data-count gates fail in every run
+# there and only the DELTA between runs is signal. That is a real limit of the method and is stated
+# rather than papered over: it proves no SCHEMA-shaped gate breaks, not that no data-shaped one does.
+# The runbook's whole-corpus run on staging (which has rows) closes that gap, and it runs BEFORE prod.
+#
+# APPLY ORDER CONSEQUENCE FOR CI: gate-invariants.yml runs `--phase post --continuous-only` against
+# BOTH prod and staging and fires on `migrations/**` pushes. The post gates below assert the
+# POST-apply state, so this directory must be applied to STAGING AND PROD BEFORE it is pushed.
+# Pushing first reds gate-invariants on whichever environment is still unmigrated.
+#
+# RLS TRAP, and it is WORSE on this FK than anywhere else in the corpus: plant_projects has
+# relrowsecurity = t, and this foreign key is SELF-referential, so both sides of every sweep join sit
+# inside the same filtered table. Run these as a role subject to RLS (garden_ro via
+# scripts/psql-ro.sh) and they report phantom dangling rows — pure visibility artifacts. gate_runner
+# connects with NEON_DATABASE_URL (owner, RLS-exempt, conn.read_only = True) and gets the true
+# answer. Every count in 0c's header was measured that way.
+
+pre:
+  # The defect itself, asserted rather than assumed. If this returns 0, the migration has already
+  # been applied (or the schema is not what was surveyed) — stop and re-survey.
+  - name: pre_parent_project_id_is_set_null
+    continuous: false   # APPLY-WINDOW GATE ONLY (L-369). Asserts the PRE-apply state and is false
+                        # forever after 0c runs, by design. CI runs only `--phase post
+                        # --continuous-only` so it would not be picked up regardless, but the flag is
+                        # set explicitly rather than left to that: the note and the mechanism must
+                        # agree, which is the asymmetry the 2026-08-13 corpus audit found in six
+                        # other gates.
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'plant_projects_parent_project_id_fkey'
+         AND confdeltype = 'n'
+    expect: rowcount_eq
+    value: 1
+
+  # The premise of the whole ticket: every OTHER axis off this same parent is already hardened, so
+  # this finishes a job rather than starting one. If these are not RESTRICT, PLANTREHOMEFK,
+  # SOFTDELCASCADE or EVTANCHORDEL has been rolled back and this migration is answering the wrong
+  # question. Standing invariant — true before and after, so it stays continuous.
+  - name: pre_other_axes_off_container_already_restrict
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('plants_project_id_fkey','tasks_project_id_fkey',
+                         'event_log_project_id_fkey','photos_project_id_fkey',
+                         'harvest_log_project_id_fkey')
+         AND confdeltype = 'r'
+    expect: rowcount_eq
+    value: 5
+
+sweep:
+  # L-058: every predicate the constraint is about to enforce must ALREADY hold. RESTRICT can only be
+  # added if every existing child value resolves to a live parent — this is the scan the ALTER
+  # performs, run first so a mid-ALTER failure becomes a clean pre-apply stop.
+  #
+  # DELIBERATELY UNFILTERED. No `deleted_at IS NULL` anywhere below: a foreign key does not know what
+  # a soft delete is. A row pointing at a soft-deleted parent still satisfies the FK; a row pointing
+  # at a row that is GONE does not. Filtering by deleted_at here would hide exactly the rows that
+  # break the ALTER — and on this table 12 of 86 containers are soft-deleted, so the filter would
+  # hide 14% of the population rather than a rounding error.
+  #
+  # VACUITY NOTE, stated because the honest version is "belt and braces, not coverage": the FK is
+  # already convalidated = 't' in live prod, Postgres's own catalog-level proof that no dangling row
+  # exists on this exact column; and 0c changes only the referential ACTION, keeping the same column
+  # and the same parent. The validation scan 0c's ADD CONSTRAINT runs therefore CANNOT fail for a
+  # reason this gate would catch. It passes because a validated FK already forbids the condition, NOT
+  # because anything about this migration was checked. Kept (it costs nothing and would catch a
+  # hand-edited NOT VALID FK), but do not count it as evidence the apply is safe. That evidence is
+  # the convalidated check in `post`.
+  - name: sweep_no_dangling_parent_project_id
+    sql: |
+      SELECT 1 FROM public.plant_projects a
+       WHERE a.parent_project_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.plant_projects b WHERE b.id = a.parent_project_id)
+    expect: rowcount_eq
+    value: 0
+
+  # THE HAZARD IS REAL; THIS GATE IS DEFENCE IN DEPTH, AND THE DISTINCTION WAS MEASURED RATHER THAN
+  # ASSERTED. A row whose parent_project_id is its OWN id satisfies the FK today and would keep
+  # satisfying it under RESTRICT — but it could then never be deleted by any single-row statement,
+  # because it is its own blocking child. SET NULL tolerates the cycle; RESTRICT turns it into a
+  # permanently stuck row. That much is real, and DEMONSTRATED: on a local restore of the prod schema
+  # a self-referencing row was forced in and `DELETE ... WHERE id = <it>` was refused until
+  # parent_project_id was nulled first.
+  #
+  # BUT THE ROW CANNOT ARISE. An attempt to create one on that same restore was refused by an
+  # existing DB trigger — `gv.container_reparent()` raises "container reparent would create a cycle"
+  # — so the guarantee is enforced one layer BELOW the API check (lambda/projects/index.js also 400s
+  # on `body.parent_project_id === projectId`, but that is not what is holding the line). 0 such rows
+  # live (2026-08-13, owner DSN).
+  #
+  # So this gate is honestly labelled: it is a CHEAP CHECKED PRECONDITION of the apply, not a
+  # discovery. It would only ever fire if that trigger were dropped or bypassed by a direct catalog
+  # write — which is exactly the scenario where the apply must not proceed. Do not cite it as
+  # coverage; the trigger is the protection.
+  - name: sweep_no_self_referencing_container
+    sql: |
+      SELECT 1 FROM public.plant_projects WHERE parent_project_id = id
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # THE FIX, asserted. Standing invariant: once the hierarchy axis is RESTRICT it stays RESTRICT, and
+  # this gate is what makes a silent revert (a hand-run 0r, a restore from an older snapshot, a
+  # future migration recreating the FK from a stale definition) fail loudly instead of quietly
+  # re-arming the silent flatten.
+  #
+  # THIS GATE SUPERSEDES v4-plantrehomefk-001's post_parent_project_id_deliberately_still_set_null,
+  # which asserts the opposite on the same constraint. Both cannot hold. See the box at the top of
+  # this file and the prepared COMPANION-EDIT patch — the corpus reds until that supersession lands.
+  - name: post_parent_project_id_is_restrict
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'plant_projects_parent_project_id_fkey'
+         AND confdeltype = 'r'
+    expect: rowcount_eq
+    value: 1
+
+  # VALIDATED, not merely present. An FK added NOT VALID enforces new writes but never proves the
+  # existing rows conform — it would satisfy the gate above while leaving the dangling-row question
+  # open. This is the gate that actually carries the safety claim the sweep gates only gesture at.
+  - name: post_parent_project_id_fk_is_validated
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname = 'plant_projects_parent_project_id_fkey'
+         AND convalidated
+    expect: rowcount_eq
+    value: 1
+
+  # THE CLASS GATE, and the reason this migration is worth shipping as a class closure rather than a
+  # one-column tidy: with this flip there is NO SET NULL (or SET DEFAULT) foreign key left anywhere
+  # pointing at plant_projects. Every one of the eleven either REFUSES a container delete (6) or
+  # CASCADEs a derived cache/closure row rebuilt from live data (5). The invariant this asserts is
+  # the one the whole soft-delete audit was chasing on this parent: **a container delete may be
+  # refused or may take derived data with it, but it may never silently discard user structure.**
+  #
+  # ITS COVERAGE IS EXACTLY WHAT IT SAYS, stated because an overstated gate is how "a guard already
+  # covers this" becomes false (L-367). It says nothing about the CASCADE half — that is
+  # v4-cascadesweep-001's post_no_cascade_onto_a_soft_deletable_table, which covers a different
+  # criterion and does not cover plant_projects' cascades (none of the five child tables carries
+  # deleted_at except entity_memory, which that gate now allow-lists deliberately). This gate is the
+  # SET NULL half only, and it is total on that half.
+  #
+  # It also makes the next FK author choose: a new child table added with ON DELETE SET NULL against
+  # plant_projects reds here, in a table that does not exist yet, without anyone remembering to
+  # update anything. That is the same shape as the REVIEWED-map class guard in
+  # tests/integration/plant-rehome-fk.int.test.js, asserted at the schema layer as well as the suite
+  # layer so the two corroborate rather than one trusting the other.
+  - name: post_no_setnull_fk_remains_on_plant_projects
+    sql: |
+      SELECT 1 FROM pg_constraint c
+       WHERE c.contype = 'f'
+         AND c.confrelid = 'public.plant_projects'::regclass
+         AND c.confdeltype IN ('n','d')
+    expect: rowcount_eq
+    value: 0
+
+  # THE WHOLE CONTAINER AXIS, pinned together. The five sibling FKs were flipped by three separate
+  # migrations over two days; this asserts they and the sixth now agree, so a partial rollback of any
+  # one of them surfaces here rather than in a future audit.
+  - name: post_container_delete_axis_is_uniformly_restrict
+    sql: |
+      SELECT 1 FROM pg_constraint
+       WHERE conname IN ('plant_projects_parent_project_id_fkey',
+                         'plants_project_id_fkey','tasks_project_id_fkey',
+                         'event_log_project_id_fkey','photos_project_id_fkey',
+                         'harvest_log_project_id_fkey')
+         AND confdeltype = 'r'
+    expect: rowcount_eq
+    value: 6
+
+  # NO IN-DATABASE WRITER may hard-delete a container. The deploy-boundary proof rests on this being
+  # true, and a grep of Lambda bundles cannot see it — a routine added later would silently
+  # reintroduce exactly the caller class this migration defends against.
+  #
+  # HEURISTIC BY CONSTRUCTION: it matches on prosrc text, so a routine merely MENTIONING such a
+  # delete in a comment trips it. That false positive is the intended bias — it forces a read.
+  #
+  # `\y`, NOT `\b`. In a PostgreSQL Advanced Regular Expression `\b` is a BACKSPACE character, not a
+  # word boundary (the word-boundary escapes are \y, \m, \M, \Y). A gate written with `\b` therefore
+  # requires a literal backspace in the routine source and matches NOTHING — it is vacuous while
+  # looking armed. VERIFIED live 2026-08-13 against this exact pattern:
+  #   SELECT 1 WHERE 'delete from plant_projects where' ~* '...plant_projects\y'  -> 1 row
+  #   SELECT 1 WHERE 'delete from plant_projects where' ~* '...plant_projects\b'  -> 0 rows
+  # The same `\b` bug is present, unfixed and out of this lane's boundary, in
+  # v4-plantrehomefk-001/gates.yml:171 and v4-archpreservguard-001/gates.yml:66. Both are reported,
+  # neither is touched here. Do not copy this gate's shape from either of those files.
+  - name: post_no_indb_routine_hard_deletes_containers
+    sql: |
+      SELECT 1 FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+         AND p.prosrc ~* 'delete\s+from\s+(public\.)?plant_projects\y'
+    expect: rowcount_eq
+    value: 0
+
+  # NO TRIGGER INVENTORY HERE, deliberately, and the omission is the decision. A BEFORE DELETE
+  # trigger on plant_projects is the one mechanism that could re-parent children out from under this
+  # RESTRICT before it fires — defusing the constraint while leaving it looking armed. That hazard is
+  # ALREADY covered, by name and on this exact table, by v4-plantrehomefk-001's
+  # post_no_writing_before_delete_trigger_on_touched_tables (every BEFORE DELETE trigger must be a
+  # known read-only guard) and post_no_new_triggers_on_touched_tables (a 12-name allow-list).
+  # Duplicating either here would add a SECOND allow-list that must be kept in step with the first —
+  # and plural trigger-inventory allow-lists drifting out of step is precisely the failure the
+  # 2026-08-13 corpus run caught twice in one day. One inventory, in the migration that introduced
+  # it. This migration adds no trigger and removes none, so that inventory is unchanged and
+  # scripts/restore-verify.py needs no fixture update.
+
+  # continuous: false — this is the APPLY-TIME RECEIPT, the one gate here that is not a standing
+  # invariant and so cannot be self-armed (arming it on its own subject would make it tautological).
+  # Same call v4-cachemissingrow-001, v4-softdelcascade-001 and v4-plantrehomefk-001 make.
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '4.23.11-parentprojfk-001'
+    expect: rowcount_eq
+    value: 1
