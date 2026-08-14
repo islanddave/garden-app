@@ -8,7 +8,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatGrams, describeHarvestWeight, estimateSourceCopy, sumHarvestWeights,
+  estimateSourceShort, weightBasisLabel,
   ESTIMATE_SOURCE_COPY, ESTIMATE_SOURCE_FALLBACK, NO_WEIGHT_COPY,
+  ESTIMATE_SOURCE_SHORT, ESTIMATE_SOURCE_SHORT_FALLBACK, MEASURED_SHORT,
 } from '../lib/harvestWeight.js'
 
 describe('formatGrams', () => {
@@ -120,5 +122,111 @@ describe('sumHarvestWeights — a total must not imply completeness it lacks', (
   it('tolerates an absent list', () => {
     expect(sumHarvestWeights(null).grams).toBe(0)
     expect(sumHarvestWeights(undefined).unweighed).toBe(0)
+  })
+})
+
+// ── V4-HARVWEIGHTSURF-001 — the basis as a RENDERED label ────────────────────────────────────────
+//
+// The defect these pin: the provenance shipped only as title=, and title= requires a hover. On the
+// one browser this app is actually read in (Chrome for Android) it never fires, so the basis was
+// invisible on every harvest surface. These guard the short vocabulary that replaced it — and,
+// because jsdom performs no layout and cannot measure an overflow, they guard the LENGTH BUDGET
+// that keeps the label inside a 390px row structurally rather than by eye.
+describe('weightBasisLabel — provenance the user can see without hovering', () => {
+  it('names the source of each estimate, in the wording the full sentence already uses', () => {
+    expect(weightBasisLabel({ weight_grams: 150, weight_estimated: true, weight_basis: 'cultivar_sample' })).toBe('your weighings')
+    expect(weightBasisLabel({ weight_grams: 492, weight_estimated: true, weight_basis: 'cultivar' })).toBe('typical for this variety')
+    expect(weightBasisLabel({ weight_grams: 300, weight_estimated: true, weight_basis: 'crop_type' })).toBe('typical for this crop')
+  })
+
+  // The single distinction the whole basis axis exists to make: Dave's own data versus a generic
+  // number. If these two ever collapse to the same string the feature is decorative.
+  it('never lets a sample-backed estimate read the same as a catalogue or crop one', () => {
+    const labels = ['cultivar_sample', 'cultivar', 'crop_type'].map(estimateSourceShort)
+    expect(new Set(labels).size).toBe(3)
+    expect(estimateSourceShort('cultivar_sample')).toMatch(/your/i)
+  })
+
+  it('labels a MEASURED weight explicitly — the absent ≈ is not a disclosure', () => {
+    expect(weightBasisLabel({ weight_grams: 337, weight_estimated: false, weight_basis: 'measured' })).toBe(MEASURED_SHORT)
+    expect(MEASURED_SHORT).toBe('weighed')
+  })
+
+  it('returns null where there is nothing to label, rather than an empty chip', () => {
+    for (const h of [{ weight_grams: null }, { weight_grams: 0 }, {}, null, undefined]) {
+      expect(weightBasisLabel(h)).toBeNull()
+    }
+  })
+
+  // weight_basis is widened by MIGRATION, not by a frontend deploy, so a bundle can legitimately
+  // receive a value it has never heard of. Same failure mode ESTIMATE_SOURCE_COPY was audited for.
+  it.each([
+    ['a future vocabulary value', 'cultivar_lab_assay'],
+    ['a value from a newer DB than this bundle', 'basis_shipped_after_this_build'],
+    ['null', null],
+    ['absent from the payload', undefined],
+    ['empty string', ''],
+    ['a non-string', 42],
+  ])('degrades to a still-true generic label for %s, never "undefined"', (_label, basis) => {
+    const l = weightBasisLabel({ weight_grams: 200, weight_estimated: true, weight_basis: basis })
+    expect(l).toBe(ESTIMATE_SOURCE_SHORT_FALLBACK)
+    expect(l).not.toMatch(/undefined/)
+  })
+
+  // A tri-state guard that is live, not hypothetical: 15 rows carry a NULL weight_estimated, and
+  // describeHarvestWeight deliberately treats those as estimated. The label must follow it, or a
+  // guess gets labelled "weighed".
+  it('follows describeHarvestWeight on a NULL weight_estimated — never labels a guess "weighed"', () => {
+    expect(weightBasisLabel({ weight_grams: 200, weight_estimated: null, weight_basis: 'cultivar' }))
+      .toBe('typical for this variety')
+  })
+
+  // DRIFT GUARD. Two maps now describe the same enum. A future value added to one and not the other
+  // silently falls back on a surface Dave reads, with nothing failing.
+  it('carries a short label for every basis the full sentence knows about', () => {
+    expect(Object.keys(ESTIMATE_SOURCE_SHORT).sort()).toEqual(Object.keys(ESTIMATE_SOURCE_COPY).sort())
+  })
+})
+
+describe('the basis label fits a 390px harvest row', () => {
+  // jsdom does no layout, so an overflow cannot be observed here. What CAN be pinned is the
+  // structural budget behind it. A prior harvest-row change overflowed at exactly this viewport
+  // (min-content 399px against a 390px screen), so these are the load-invariant facts:
+  //
+  //   usable row content at 390px ≈ 390 − 32 (page gutters) − 56 (Edit affordance + gap)
+  //                                     − 26 (card padding) ≈ 276px
+  //   the label renders at 0.72rem ≈ 11.5px, so ≈6px per character
+  const ALL = [...Object.values(ESTIMATE_SOURCE_SHORT), ESTIMATE_SOURCE_SHORT_FALLBACK, MEASURED_SHORT]
+
+  it('keeps every label short enough to sit beside the number, not under it', () => {
+    // 28 chars ≈ 170px, leaving room for "≈ 12.5 kg" (~60px) and the separator inside the 276px.
+    for (const l of ALL) expect(l.length, l).toBeLessThanOrEqual(28)
+  })
+
+  // This is the one that actually bounds min-content: the label span is allowed to WRAP, so the
+  // row's minimum width is driven by its longest unbreakable WORD, not by the whole string.
+  it('contains no word long enough to widen the row on its own', () => {
+    for (const l of ALL) {
+      for (const w of l.split(' ')) expect(w.length, w).toBeLessThanOrEqual(12)
+    }
+  })
+
+  // The short label is a COMPRESSION of the sentence already shipped in the tooltip and the
+  // EventDetail edit form, not a second vocabulary for the same idea. Two surfaces render the short
+  // form and two render the long one; if they drift, the basis means different things per screen.
+  it('introduces no new vocabulary — every label reuses the shipped sentence wording', () => {
+    const union = Object.values(ESTIMATE_SOURCE_COPY).join(' ').toLowerCase()
+    for (const [basis, short] of Object.entries(ESTIMATE_SOURCE_SHORT)) {
+      const own = ESTIMATE_SOURCE_COPY[basis].toLowerCase()
+      for (const w of short.split(' ')) {
+        // Every word, function words included, must already exist somewhere in the shipped copy…
+        expect(union, `${basis}: "${w}" is not in any shipped sentence`).toContain(w)
+        // …and every MEANING-bearing word must come from THIS basis's own sentence, or the label is
+        // describing a different provenance than the tooltip beside it.
+        if (w.length >= 4 && !['this', 'from'].includes(w)) {
+          expect(own, `${basis}: "${w}" is not in its own sentence`).toContain(w)
+        }
+      }
+    }
   })
 })

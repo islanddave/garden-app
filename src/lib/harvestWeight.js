@@ -33,6 +33,47 @@ export const ESTIMATE_SOURCE_FALLBACK = 'Currently estimated.'
 export const estimateSourceCopy = basis =>
   ESTIMATE_SOURCE_COPY[basis] ?? ESTIMATE_SOURCE_FALLBACK
 
+// V4-HARVWEIGHTSURF-001 — the SAME provenance, short enough to RENDER instead of hover.
+//
+// ESTIMATE_SOURCE_COPY above reaches every harvest surface through the HTML `title` attribute,
+// which is a hover affordance. There is no hover on a touch screen, and this app is read on Chrome
+// for Android — so the basis, which is the entire reason the weight axis is trustworthy, collapsed
+// in practice to a single ≈ glyph. That matters because only ~37% of stored weights are real
+// weighings: a bare number reads as measured on nearly two-thirds of rows where it is not.
+//
+// These are the same three concepts in the same words — "your own weighings", "typical weight" for
+// the variety, "typical weight for this crop" — compressed to fit a dense log row at a 390px
+// viewport beside the amount and the number. No new vocabulary is introduced.
+//
+// Same `??` discipline as ESTIMATE_SOURCE_COPY, for the same reason: weight_basis is a server enum
+// widened by migration, not by a frontend deploy, so an unrecognised value must degrade to a
+// statement that is still true rather than render `undefined` onto the row.
+export const ESTIMATE_SOURCE_SHORT = {
+  cultivar_sample: 'your weighings',
+  cultivar:        'typical for this variety',
+  crop_type:       'typical for this crop',
+}
+export const ESTIMATE_SOURCE_SHORT_FALLBACK = 'estimated'
+// A measured weight is labelled too. Today the ONLY at-a-glance mark separating a weighing from an
+// estimate is the ABSENCE of ≈, and an absence is not a disclosure — it also hides the ratchet at
+// the one moment it pays off, when a row Dave weighed himself stops being a guess.
+export const MEASURED_SHORT = 'weighed'
+export const estimateSourceShort = basis =>
+  ESTIMATE_SOURCE_SHORT[basis] ?? ESTIMATE_SOURCE_SHORT_FALLBACK
+
+// The visible basis label for one harvest row, or null where there is nothing to label.
+//
+// ADDITIVE ON PURPOSE: it takes the raw harvests read-model row rather than a describeHarvestWeight
+// result, so the existing return shape of that function is untouched and every existing caller keeps
+// working unchanged. Two surfaces render this label (the Harvests log and the PlantingDetail
+// timeline chip) and they must say the same words, which is why the decision lives here and not in
+// either page.
+export function weightBasisLabel(harvest) {
+  const d = describeHarvestWeight(harvest)
+  if (d.state === 'none') return null
+  return d.estimated ? estimateSourceShort(harvest?.weight_basis) : MEASURED_SHORT
+}
+
 // The ratchet, in words. A harvest with no derivable weight is not an error and must not read as
 // one — it is the state that IMPROVES when the next one gets weighed, which is the whole point of
 // surfacing this. Kept here so every surface says it identically.

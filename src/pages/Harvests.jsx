@@ -14,7 +14,7 @@ import { useHarvestSnapshot } from '../hooks/useHarvestSnapshot.js'
 import { useHarvestFilterOptions } from '../hooks/useHarvestFilterOptions.js'
 import { groupByDay, dayLabel, relativeDay } from '../lib/harvestGrouping.js'
 import { fmtQuantity, unitLabel, formatEntry, unitsLine, fmtFirstPick, addDays, etDay } from '../lib/harvestSummary.js'
-import { describeHarvestWeight, formatGrams, weightParts, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
+import { describeHarvestWeight, weightBasisLabel, formatGrams, weightParts, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 import { currentGrowYear, growYearOfDayKey, growYearSpan, growYearOptions, HARVEST_TZ } from '../lib/growYear.js'
 import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN } from '../lib/featureFlags.js'
 
@@ -412,17 +412,33 @@ function HarvestEntry({ entry: e }) {
         {/* V4-HIDEQUALITY-001: output side of the same hide. The row still CARRIES quality_rating
             from the API — only the rendering is gated, so a rollback needs no data backfill. */}
         {!HARVEST_QUALITY_HIDDEN && <QualityDots value={e.quality_rating} />}
-        {/* The ≈ is the ONLY thing distinguishing an estimate from a weighing at a glance, so it is
-            paired with a title/aria-label carrying the provenance sentence rather than left to
-            carry the meaning alone — a symbol nobody hovers is not a disclosure. */}
+        {/* V4-HARVWEIGHTSURF-001. The previous comment here named the hazard and then shipped into
+            it: "a symbol nobody hovers is not a disclosure" — and then delivered the disclosure
+            through title=, which NOBODY CAN HOVER on Chrome for Android, the only browser this app
+            is read in. So the ≈ was carrying the meaning alone after all, on the ~63% of rows whose
+            weight was never actually weighed. The basis now renders as VISIBLE TEXT beside the
+            number. It is ambient by construction — plain text, no tap target, no popover, nothing
+            to dismiss. title= is kept for pointer devices, where it still adds the full sentence
+            this chip has no room for. */}
         {wt.state !== 'none' && (
-          <span
-            data-testid="harvest-weight"
-            title={wt.sourceCopy ?? 'Weighed.'}
-            aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
-            style={{ fontSize: '0.74rem', fontWeight: 600, color: wt.estimated ? P.light : P.green, whiteSpace: 'nowrap' }}
-          >
-            {wt.estimated ? `≈ ${wt.text}` : wt.text}
+          <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 4, minWidth: 0 }}>
+            <span
+              data-testid="harvest-weight"
+              title={wt.sourceCopy ?? 'Weighed.'}
+              aria-label={`${wt.estimated ? 'Estimated weight' : 'Weighed'}: ${wt.text}`}
+              style={{ fontSize: '0.74rem', fontWeight: 600, color: wt.estimated ? P.light : P.green, whiteSpace: 'nowrap' }}
+            >
+              {wt.estimated ? `≈ ${wt.text}` : wt.text}
+            </span>
+            <span aria-hidden="true" style={{ fontSize: '0.72rem', color: P.light }}>·</span>
+            {/* Deliberately NOT whiteSpace:nowrap. The number must never wrap mid-value, but the
+                label may — at 390px an unbreakable label widens the row's min-content past the
+                viewport, which is exactly how a prior harvest-row change overflowed horizontally
+                (min-content 399px against a 390px screen). Letting it break caps the row's
+                min-content at the widest single WORD instead of the widest string. */}
+            <span data-testid="harvest-weight-basis" style={{ fontSize: '0.72rem', color: P.light, minWidth: 0 }}>
+              {weightBasisLabel(e)}
+            </span>
           </span>
         )}
         {wt.state === 'none' && hasQty && (

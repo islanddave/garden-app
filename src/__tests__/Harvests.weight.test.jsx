@@ -21,7 +21,7 @@ vi.mock('react-router-dom', () => ({
 }))
 
 import Harvests from '../pages/Harvests.jsx'
-import { ESTIMATE_SOURCE_COPY } from '../lib/harvestWeight.js'
+import { ESTIMATE_SOURCE_COPY, ESTIMATE_SOURCE_SHORT, ESTIMATE_SOURCE_SHORT_FALLBACK, MEASURED_SHORT } from '../lib/harvestWeight.js'
 import { formatEntry } from '../lib/harvestSummary.js'
 
 beforeEach(() => { fetchSpy.mockReset(); searchParamsRef.current = new URLSearchParams() })
@@ -103,5 +103,85 @@ describe('Harvests — weight chip', () => {
     expect(screen.getByText(amount)).toBeTruthy()
     // Both axes on screen at once is the actual claim: grams are additive, not a replacement.
     expect(chip.textContent).toBe('≈ 492 g')
+  })
+})
+
+// ── V4-HARVWEIGHTSURF-001 — the basis has to be VISIBLE, not hoverable ───────────────────────────
+//
+// The suite above pins title= and aria-label, and both were satisfied while the feature was, in
+// practice, broken: `title` is a hover affordance, there is no hover on a touch screen, and this app
+// is read on Chrome for Android. So the provenance behind ~63% of the numbers on this page reached
+// Dave's screen reader and his desktop, and never his eyes.
+//
+// These assert the basis is in the DOM as rendered text — deliberately not via getAttribute, which
+// is what let the gap ship. They are written against the exported vocabulary rather than hand-copied
+// strings so a copy change cannot leave them "still passing" against wording nobody ships.
+describe('Harvests — the weight basis renders as text, not as a tooltip', () => {
+  it('shows WHERE a catalogue-backed estimate came from, on screen', async () => {
+    renderWith({ weight_grams: 492, weight_estimated: true, weight_basis: 'cultivar' })
+    const basis = await screen.findByTestId('harvest-weight-basis')
+    expect(basis.textContent).toBe(ESTIMATE_SOURCE_SHORT.cultivar)
+    // The claim is visibility, so assert it as page TEXT and not merely as an attribute.
+    expect(screen.getByText(ESTIMATE_SOURCE_SHORT.cultivar)).toBeTruthy()
+  })
+
+  it('says a sample-backed estimate came from YOUR weighings — visibly, the ratchet payoff', async () => {
+    renderWith({ weight_grams: 150, weight_estimated: true, weight_basis: 'cultivar_sample' })
+    const basis = await screen.findByTestId('harvest-weight-basis')
+    expect(basis.textContent).toBe(ESTIMATE_SOURCE_SHORT.cultivar_sample)
+    expect(basis.textContent).toMatch(/your/i)
+    // The distinction that matters most: Dave's own data must not read like a generic crop number.
+    expect(basis.textContent).not.toBe(ESTIMATE_SOURCE_SHORT.crop_type)
+  })
+
+  it('names a crop-level estimate as a crop-level estimate', async () => {
+    renderWith({ weight_grams: 300, weight_estimated: true, weight_basis: 'crop_type' })
+    expect((await screen.findByTestId('harvest-weight-basis')).textContent).toBe(ESTIMATE_SOURCE_SHORT.crop_type)
+  })
+
+  it('labels a MEASURED weight "weighed" instead of relying on an absent ≈', async () => {
+    renderWith({ weight_grams: 337, weight_estimated: false, weight_basis: 'measured' })
+    const basis = await screen.findByTestId('harvest-weight-basis')
+    expect(basis.textContent).toBe(MEASURED_SHORT)
+    // …and the number itself is unchanged: the label is additive, not a rewrite of the value.
+    expect((await screen.findByTestId('harvest-weight')).textContent).toBe('337 g')
+  })
+
+  it('degrades an unknown/future basis to generic wording on screen, never "undefined"', async () => {
+    renderWith({ weight_grams: 200, weight_estimated: true, weight_basis: 'tier_9_from_the_future' })
+    const basis = await screen.findByTestId('harvest-weight-basis')
+    expect(basis.textContent).toBe(ESTIMATE_SOURCE_SHORT_FALLBACK)
+    expect(basis.textContent).not.toMatch(/undefined/)
+  })
+
+  it('renders no basis chip on a row with no derivable weight — nothing to attribute', async () => {
+    renderWith({ weight_grams: null, weight_estimated: null, weight_basis: null })
+    await screen.findByTestId('harvest-weight-none')
+    expect(screen.queryByTestId('harvest-weight-basis')).toBeNull()
+  })
+
+  // Reward UX: this is informational chrome on a surface opened deliberately. It must be ambient —
+  // no button, no dialog, nothing with a dismiss. Pinned structurally so a later "make it tappable"
+  // refactor fails here rather than in review.
+  it('is ambient chrome — not a control, not a dialog, nothing to dismiss', async () => {
+    renderWith({ weight_grams: 492, weight_estimated: true, weight_basis: 'cultivar' })
+    const basis = await screen.findByTestId('harvest-weight-basis')
+    expect(basis.tagName).toBe('SPAN')
+    expect(basis.getAttribute('role')).toBeNull()
+    expect(basis.closest('button')).toBeNull()
+    expect(basis.closest('[role="dialog"]')).toBeNull()
+    expect(basis.querySelector('button, a, input')).toBeNull()
+  })
+
+  // The 390px budget, as far as jsdom can carry it: jsdom does no layout, so what is falsifiable
+  // here is that the LABEL is wrappable. A prior harvest-row change overflowed horizontally at
+  // exactly this viewport because an unbreakable string set the row's min-content to 399px. The
+  // NUMBER must still never wrap mid-value.
+  it('lets the label wrap but never the number — the 390px min-content guard', async () => {
+    renderWith({ weight_grams: 12500, weight_estimated: true, weight_basis: 'cultivar' })
+    const chip = await screen.findByTestId('harvest-weight')
+    const basis = await screen.findByTestId('harvest-weight-basis')
+    expect(chip.style.whiteSpace).toBe('nowrap')
+    expect(basis.style.whiteSpace).toBe('')
   })
 })
