@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.20.0",
+    "date": "2026-08-14",
+    "highlights": [
+      "Log Many can carry a note. One note for the whole batch — 'side-dressed the whole bed' — and the field says so, so it is never ambiguous whether it applies to one plant or thirty. It could not be added before now: the batch endpoint would have accepted the note and silently thrown it away behind a success screen.",
+      "Storage crops warn you before the window closes. Crops you harvest once and store — sweet potatoes, winter squash — have a real 'dig by this date or lose it' deadline that the app could not express anywhere. It appears on Today only when a deadline is genuinely near, and stays silent otherwise. Right now that means it shows nothing: the only sourced deadline opens October 1.",
+      "Housekeeping under the floor: a legacy tag table that nothing had read for months is gone along with three triggers that still fired on every delete; archived events can now be restored with their photo links intact; and a container can no longer be deleted out from under the containers nested inside it."
+    ]
+  },
+  {
     "version": "4.19.0",
     "date": "2026-08-14",
     "highlights": [
