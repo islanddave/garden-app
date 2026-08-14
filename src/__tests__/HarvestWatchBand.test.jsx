@@ -29,6 +29,21 @@ const fetchMock = vi.fn()
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }) }))
 
 import HarvestWatchBand from '../components/HarvestWatchBand.jsx'
+// PRE-WARM THE MODULE REGISTRY — this static import is load-bearing, not a stray.
+//
+// The band resolves its colour-window dataset through a lazy `import('../lib/harvestWindows.js')`
+// (HarvestWatchBand.jsx:125). The observable assertions below therefore raced a real chunk load,
+// and under a loaded worker pool the 8s findBy budget was not enough: this file timed out at
+// ~8029ms in two separate authoritative runs while passing 32/32 in isolation. That is a stopwatch
+// masquerading as an assertion — and a suite that reds on a different file each run randomly blocks
+// the promote, with re-running as the tempting wrong response.
+//
+// Importing the module statically here populates the registry before any render, so the component's
+// dynamic import resolves from it immediately — exactly the mechanism the component documents at
+// its `hwModule` cache (:52-54). The dataset is still the REAL one, never stubbed, so this file
+// keeps its whole reason for existing: it would still catch the colour windows going inert, which
+// is a defect this codebase has actually shipped.
+import '../lib/harvestWindows.js'
 
 // Panel Q4 contract: the band fetches the whole queue (limit=200) so the tail expands in place.
 const WATCH = '/api/harvests/watch?limit=200'
