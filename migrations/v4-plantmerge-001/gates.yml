@@ -1,7 +1,14 @@
 # gates.yml
 # V4-PLANTMERGE-001 — planting merge: merge_event table + archive_events_subset routine.
 #
-# STATUS AT AUTHORING (2026-08-14): AUTHORED, NOT APPLIED. No DDL executed on staging or prod.
+# STATUS (2026-08-14): APPLIED to STAGING and PROD.
+#   staging — applied, 0r rehearsed (refuse-if-used guard verified with a live merge_event row,
+#             then dropped clean and re-applied), pre 6/6 + post 10/10; archive_events_subset
+#             smoke-tested end to end (harvest refusal, chore archive+soft-delete, idempotent
+#             re-run returns 0), probe event fully restored afterwards.
+#   prod    — applied, pre 6/6 + post 10/10; guard verified via the REFUSAL path only, which
+#             mutates nothing by construction. No prod event data was touched.
+# Schema-shape post gates flipped to continuous: true on 2026-08-14 per the classification below.
 #
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
 # SEQUENCING
@@ -95,7 +102,7 @@ post:
        WHERE table_schema='public' AND table_name='merge_event'
     expect: rowcount_eq
     value: 1
-    continuous: false   # flip true after prod apply
+    continuous: true    # flipped 2026-08-14: applied staging (0r rehearsed) + prod
 
   - name: post_all_columns_present
     sql: |
@@ -106,7 +113,7 @@ post:
                              'merged_at','merged_by','restored_at','restored_by','workspace_id')
     expect: rowcount_eq
     value: 14
-    continuous: false
+    continuous: true    # flipped 2026-08-14: applied staging (0r rehearsed) + prod
 
   - name: post_no_extra_columns
     note: >
@@ -117,7 +124,7 @@ post:
        WHERE table_schema='public' AND table_name='merge_event'
     expect: rowcount_eq
     value: 14
-    continuous: false
+    continuous: true    # flipped 2026-08-14: applied staging (0r rehearsed) + prod
 
   - name: post_op_id_unique
     note: >
@@ -129,7 +136,7 @@ post:
          AND indexdef LIKE 'CREATE UNIQUE INDEX%'
     expect: rowcount_eq
     value: 1
-    continuous: false
+    continuous: true    # flipped 2026-08-14: applied staging (0r rehearsed) + prod
 
   - name: post_winner_not_loser_check
     note: >
@@ -140,7 +147,7 @@ post:
        WHERE conrelid='public.merge_event'::regclass AND conname='merge_event_winner_not_loser'
     expect: rowcount_eq
     value: 1
-    continuous: false
+    continuous: true    # flipped 2026-08-14: applied staging (0r rehearsed) + prod
 
   - name: post_losers_nonempty_check
     sql: |
@@ -148,7 +155,7 @@ post:
        WHERE conrelid='public.merge_event'::regclass AND conname='merge_event_losers_nonempty'
     expect: rowcount_eq
     value: 1
-    continuous: false
+    continuous: true    # flipped 2026-08-14: applied staging (0r rehearsed) + prod
 
   - name: post_routine_present
     sql: |
@@ -156,7 +163,7 @@ post:
        WHERE n.nspname='public' AND p.proname='archive_events_subset'
     expect: rowcount_eq
     value: 1
-    continuous: false
+    continuous: true    # flipped 2026-08-14: applied staging (0r rehearsed) + prod
 
   - name: post_routine_guards_present
     note: >
@@ -171,7 +178,7 @@ post:
          AND p.prosrc LIKE '%photos%'
     expect: rowcount_eq
     value: 1
-    continuous: false
+    continuous: true    # flipped 2026-08-14: applied staging (0r rehearsed) + prod
 
   - name: post_starts_empty
     note: >
@@ -192,4 +199,4 @@ post:
       SELECT 1 FROM public.merge_event WHERE snapshot_version IS NULL OR snapshot_version < 1
     expect: rowcount_eq
     value: 0
-    continuous: false
+    continuous: true    # flipped 2026-08-14: applied staging (0r rehearsed) + prod
