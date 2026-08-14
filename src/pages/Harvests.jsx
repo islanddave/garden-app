@@ -201,6 +201,19 @@ export default function Harvests() {
           </button>
         </div>
 
+        {/* V4-HARVSESSION-001: deliberate entry into the weigh-in session (full-page /log with the
+            type locked to harvest + the session ledger). A Link, not a new nav peer — the session
+            is a posture of the existing Log surface, and this stays a discoverable-but-deliberate
+            doorway (never a default anyone can wander into mid-browse). */}
+        <Link
+          to="/log?session=harvest"
+          data-testid="weigh-in-session-link"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: '0 0 14px', padding: '9px 14px', border: `1px solid ${P.green}`, borderRadius: 10, color: P.green, fontWeight: 700, fontSize: '0.85rem', textDecoration: 'none', backgroundColor: P.white }}
+        >
+          <span aria-hidden="true">⚖️</span>
+          <span>Weigh-in session</span>
+        </Link>
+
         <SnapshotStrip snapshot={snapshot} onOpenLog={() => setView('log')} onOpenTotals={() => setView('totals')} />
 
         <div style={{ marginBottom: 12 }}>
