@@ -66,9 +66,13 @@ function wire({ deleteError = null } = {}) {
 // The per-row delete affordance (EventRow's ×) vs the sheet's confirm button.
 const rowDelete = () => screen.getByTitle('Delete event')
 const sheetConfirm = () => screen.getByRole('button', { name: 'Delete event' })
+// BUG-PROJEVENTTRUNC-001 widened this URL with &limit=&offset= (the page now asks Route 4 for a
+// real page rather than riding its 50-row default). Matched by PREFIX so this counter keeps
+// measuring what it was written to measure — how many times the list refetched — instead of
+// silently going to zero and passing the "no extra fetch" half of these assertions vacuously.
 const eventsListFetches = () =>
   apiFetchSpy.mock.calls.filter(([path, opts]) =>
-    path === '/api/events?project_id=proj-1' && (opts?.method ?? 'GET') === 'GET').length
+    path.startsWith('/api/events?project_id=proj-1') && (opts?.method ?? 'GET') === 'GET').length
 
 let confirmSpy
 beforeEach(() => {
