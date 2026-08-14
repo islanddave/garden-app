@@ -14,8 +14,8 @@ import PhotoUpload from '../components/PhotoUpload.jsx'
 // these is already mounted on the planting page — which is the point: an event detail is a SUBSET of
 // that page, not a second design.
 //
-// PutUpPhotoThumb, not <PhotoView>, and not <PhotoImg> — see EventPhotos below for the full reason.
-import PutUpPhotoThumb from '../components/PutUpPhotoThumb.jsx'
+// <PhotoView>, the mandated primitive, on its id-only arm — see EventPhotos below.
+import PhotoView from '../components/photo/PhotoView.jsx'
 import Lightbox from '../components/Lightbox.jsx'
 import { formatEntry } from '../lib/harvestSummary.js'
 // DD9 / W-EVTDEL adoption: the disclose-and-offer delete confirm (shared with ProjectDetail's
@@ -844,22 +844,19 @@ function HarvestReadout({ harvest }) {
 
 // The event's own photos.
 //
-// ⚠️ WHY NOT <PhotoView>, THE MANDATED PRIMITIVE. GET /api/events/:id returns
-// { id, storage_path, cover_for } and NO view_url / thumb_url — presigning lives in the photos
-// Lambda and eventPhotos.js deliberately does not reach for it. PhotoView resolves what to render
-// from photoModel's `sources`, and with no URL on the row that chain is EMPTY, so PhotoView renders
-// `null` (PhotoView.jsx: `if (!p || !source) return null`). It cannot express an ID-ONLY photo today.
+// GET /api/events/:id returns { id, storage_path, cover_for } and NO view_url / thumb_url —
+// presigning lives in the photos Lambda and eventPhotos.js deliberately does not reach for it. That
+// shape used to be inexpressible in <PhotoView> (an empty source chain rendered `null`), which is
+// why this block originally shipped on PutUpPhotoThumb, an allow-listed raw-<PhotoImg> surface.
+// V4-PHOTOIDARM-001 added the id-only arm, so the row goes to the mandated primitive UNMODIFIED:
+// `resolveById` resolves through the same household-scoped GET /api/photos/view-url/:id, and if the
+// events Lambda ever starts presigning, the URL on the row simply wins and this call site does not
+// change (the arm is a fallback, never an override).
 //
-// PutUpPhotoThumb is the repo's EXISTING answer to exactly that shape — preservation_log has the
-// same problem (a photo_id whose Lambda resolves no URL) and the same resolution: hand the id to
-// PhotoImg's fetch-on-mount path (A2b P1) and let it mint against the household-scoped
-// GET /api/photos/view-url/:id. It is allow-listed in photoPrimitive.static.test.js for that reason.
-// Reusing it here is a naming stretch (its default alt says "Put-up photo", overridden below) but it
-// is the right MECHANISM, and it keeps this page out of the raw-<PhotoImg> ratchet the drift guard
-// is defending. THE REAL FIX is a ~3-line id-only arm in PhotoView (empty chain + p.id present →
-// render PhotoImg with photoId and no initialUrl), which would then let BOTH this surface and
-// PutUpPhotoThumb leave that allow-list. That file belongs to no lane in this fleet, so it is
-// reported, not edited — see the lane report.
+// `fallback` is left at 'placeholder' rather than PutUpPhotoThumb's 'none': each thumb sits inside a
+// labelled "Open photo N of M" button, so collapsing to nothing would leave an invisible tappable
+// hole and a count that disagrees with what is on screen. The placeholder inherits the style below,
+// so the 96px box is reserved while the mint is in flight and does not reflow when it lands.
 //
 // Tap opens the SAME shared Lightbox gallery the planting page uses; Lightbox resolves a slide by
 // `photoId ?? id` and tolerates a missing `src`, so the id-only rows feed it unmodified.
@@ -877,9 +874,9 @@ function EventPhotos({ photos }) {
         Photos
         <span style={{ marginLeft: 6, fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>({list.length})</span>
       </FieldLabel>
-      {/* flex-wrap rather than a fluid grid: PutUpPhotoThumb sizes itself in px and forwards no
-          style, so a 1fr track would not stretch it and would only add dead space. At the 390px
-          Android reference width this lands three thumbs per row. */}
+      {/* flex-wrap rather than a fluid grid: the thumbs are sized in px (a 1fr track would only add
+          dead space around a fixed box). At the 390px Android reference width this lands three
+          thumbs per row. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
         {list.map((ph, i) => (
           <button
@@ -889,7 +886,17 @@ function EventPhotos({ photos }) {
             aria-label={`Open photo ${i + 1} of ${list.length}`}
             style={{ display: 'block', padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', lineHeight: 0 }}
           >
-            <PutUpPhotoThumb photoId={ph.id} size={PHOTO_THUMB_PX} alt={`Photo ${i + 1} of ${list.length} on this event`} />
+            <PhotoView
+              photo={ph}
+              resolveById
+              alt={`Photo ${i + 1} of ${list.length} on this event`}
+              width={PHOTO_THUMB_PX}
+              height={PHOTO_THUMB_PX}
+              style={{
+                width: PHOTO_THUMB_PX, height: PHOTO_THUMB_PX, objectFit: 'cover', borderRadius: 6,
+                border: `1px solid ${P.border}`, display: 'block', flexShrink: 0,
+              }}
+            />
           </button>
         ))}
       </div>

@@ -64,7 +64,8 @@ const PHOTOIMG_ALLOWED = new Set([
   'components/Lightbox.jsx',               // full-tier by definition; gallery slides carry pre-picked srcs
   'components/FacebookShareSheet.jsx',     // full-tier: shares the original, a thumb would be wrong
   'components/PlantingTile.jsx',           // featured_photo_view_url — no thumb derivative exists for it
-  'components/PutUpPhotoThumb.jsx',        // id-only thumb: relies on PhotoImg's mount-mint path
+  // components/PutUpPhotoThumb.jsx — MIGRATED (V4-PHOTOIDARM-001). It was here because the primitive
+  // could not express an id-only photo; <PhotoView resolveById> now can, over the SAME mount-mint.
   'components/SpaceAttachPicker.jsx',      // see clause 1
   'components/planting/GrowthStrip.jsx',   // not yet migrated
   'components/today/CareNeeded.jsx',       // not yet migrated
@@ -115,7 +116,7 @@ describe('photo drift guard: one object, one primitive (V4-PHOTOMODEL-001)', () 
   it('clause 2 is a RATCHET — the allow-list may only shrink', () => {
     // Pins the count so migrating a surface without deleting its entry, or re-adding one, fails
     // here. Update this number DOWNWARD only.
-    expect(PHOTOIMG_ALLOWED.size).toBe(13)
+    expect(PHOTOIMG_ALLOWED.size).toBe(12)
     for (const rel of PHOTOIMG_ALLOWED) {
       if (rel === 'components/photo/PhotoView.jsx') continue
       expect(/<PhotoImg\b/.test(stripComments(readFileSync(join(SRC, rel), 'utf8'))),
@@ -123,8 +124,12 @@ describe('photo drift guard: one object, one primitive (V4-PHOTOMODEL-001)', () 
     }
   })
 
-  it('the two migrated surfaces are actually on the primitive', () => {
-    for (const rel of ['pages/PhotoLibrary.jsx', 'components/PhotosWall.jsx']) {
+  it('the migrated surfaces are actually on the primitive', () => {
+    // A delisting is only real if the surface renders <PhotoView>. PutUpPhotoThumb joined this list
+    // with V4-PHOTOIDARM-001; EventDetail is here because it is the surface the id-only arm was
+    // built for, and it must not quietly slide back to an allow-listed wrapper.
+    for (const rel of ['pages/PhotoLibrary.jsx', 'components/PhotosWall.jsx',
+                       'components/PutUpPhotoThumb.jsx', 'pages/EventDetail.jsx']) {
       const code = stripComments(readFileSync(join(SRC, rel), 'utf8'))
       expect(code.includes('<PhotoView'), `${rel} must render <PhotoView>`).toBe(true)
       expect(/<PhotoImg\b/.test(code), `${rel} must not render <PhotoImg> directly`).toBe(false)

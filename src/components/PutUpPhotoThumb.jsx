@@ -5,21 +5,30 @@
 // photos bucket — an infra change for a thumbnail. Instead the id resolves lazily against the EXISTING
 // household-scoped GET /api/photos/view-url/:id.
 //
-// As of A2b this delegates to <PhotoImg> (its fetch-on-mount path: a photoId with no initialUrl mints
-// once on mount) so the thumb inherits the self-heal / storm-dedup / concurrency / viewport-gate
-// machinery for free. fallback='none' keeps the silent-collapse contract: a missing/failed/pending
-// photo renders NOTHING rather than a broken-image glyph — the put-up record is the payload, the photo
-// is garnish, and a broken thumb reads as data loss when none occurred. (The legacy `fetch` prop the
-// call sites pass is now unused — PhotoImg self-fetches via the same household-scoped useApiFetch.)
+// A2b routed this through <PhotoImg>'s fetch-on-mount path (a photoId with no initialUrl mints once
+// on mount) so the thumb inherited the self-heal / storm-dedup / concurrency / viewport-gate
+// machinery for free — but rendering PhotoImg directly is exactly what the V4-PHOTOMODEL-001 drift
+// guard bans, and this file sat on its allow-list solely because the primitive could not express an
+// id-only photo. It can now: <PhotoView resolveById> runs the SAME PhotoImg mount-mint underneath,
+// so the mechanism is unchanged (same endpoint, same cache, same one request per id) while this
+// surface leaves the allow-list. `tier` is not passed on purpose — the id-only arm is tier-blind
+// (view-url mints the original; no thumb derivative is addressable by id), and claiming a tier we
+// do not get is the BUG-PHOTONEWTHUMB-001 mistake in miniature.
+//
+// fallback='none' keeps the silent-collapse contract: a missing/failed/pending photo renders NOTHING
+// rather than a broken-image glyph — the put-up record is the payload, the photo is garnish, and a
+// broken thumb reads as data loss when none occurred. (The legacy `fetch` prop the call sites pass is
+// still unused — the resolve runs on the same household-scoped useApiFetch, one layer down.)
 import React from 'react'
 import { P } from '../lib/constants.js'
-import PhotoImg from './PhotoImg.jsx'
+import PhotoView from './photo/PhotoView.jsx'
 
 export default function PutUpPhotoThumb({ photoId, size = 44, alt = 'Put-up photo', onOpen }) {
   if (!photoId) return null
   return (
-    <PhotoImg
-      photoId={photoId}
+    <PhotoView
+      photo={{ id: photoId }}
+      resolveById
       fallback="none"
       alt={alt}
       onOpen={onOpen}
