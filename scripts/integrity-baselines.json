@@ -9,7 +9,7 @@
     "photos_to_deleted_inventory": "added 2026-07-29 with the BUG-PHOTOPARENT-001 fix — same orphan-edge class as photos_to_deleted_events for the fifth parent type; measured live 0",
     "phantom_photo_events": "W0.2-r1 phantom-count (22; forensic verdict W0.2b-r1 = pre-fix debris)",
     "care_dupe_groups": "W0.2-r1 care-dupe-groups (1314)",
-    "care_dupe_excess": "W0.2-r1 care-dupe-groups (1442)",
+    "care_dupe_excess": "RE-BASELINED 1442 -> 1607 on 2026-08-14 (garden-bdwrap-20260814). Growth is the DESIGNED consequence of V4-PLANTMERGE-001 deliberately NOT collapsing same-day water rows: three specialists refuted the collapse's premise before any prod write (zero water_depth light/deep rows in 10,114, and it bucketed UTC against an ET ledger), so merged winners legitimately now hold multiple same-day water rows where two duplicate plantings each held one. Removing the collapse preserved ~198 rows of real history. Re-baselined AFTER all 14 groups merged (group 14 Echeveria ran 2026-08-14), so this value covers the complete merge, not a partial one.",
     "harvest_multi_groups": "W0.2-r1 care-dupe-groups (37, legitimate/exempt — info only)",
     "user_stats_drift": "W0.2-r1 user-stats-drift (1: user_3CxBE... 275 ledger XP, no user_stats row)",
     "s3_not_in_db": "W0.2-r1 s3-db-mismatch (6)",
@@ -19,7 +19,9 @@
     "critter_state_orphans": "9 -> 0 2026-08-03 — PREDICATE NARROWED, no data repaired. Was counting soft-deleted parents, i.e. deliberate policy: rewards are never clawed back when a source event is undone or a planting deleted (the events Lambda states the same rule for XP/streak/achievements), so the metric could only ratchet upward and 10 of 10 live rows were this benign case. Now counts MISSING (hard-deleted / never-existent) parents only — measured live 0 at the narrowing. That is genuine referential damage and must stay 0",
     "cultivars_untyped": "HARD-ZERO, superseding croptype-population-plan-V102 §5, which specified this metric as 'info-only, not hard-zero' because the 2 then-untyped live cultivars (Lantana, Neon Rose) were ornamentals Dave owns and a hard-zero metric 'would ship permanently red'. Both were resolved between 2026-08-03 and 2026-08-05: Lantana -> crop type 'lantana' (minted), Neon Rose -> 'calibrachoa' (botanically correct; the plan predicted 'rose'). Verified live 2026-08-05. The population is genuinely 0, so the plan's reason for info-only no longer applies. NAMING: the plan calls this cultivars_untyped_total — it is registered here as cultivars_untyped; the croptype-populate-20260803 thread should adopt this name rather than mint a second metric for the same predicate. Its OWN §5 metrics (croptype_underpopulated_new_7d / _total) remain unbuilt and in that thread's scope. || NEW 2026-08-05 (V4-INTAKE-001, L-239). Live cultivars with crop_type_slug IS NULL — the 'Unsorted' class, which NOTHING detected before this metric: check-cultivar-faceting.mjs filters to crop_type_slug IS NOT NULL and healthcheck-cultivar-facets.mjs derives desired tags from the row, so a null slug produces no desired type tag and no gap. Both reported OK on exactly the broken population. Measured live 0 on prod 2026-08-05 (407 live cultivars, 203 of them created in the prior 30 days) with this exact predicate. Baseline 0 and must STAY 0 — any growth is a live intake regression, not accumulated debris. NOT reconciler-fixable: applyDerive cannot invent a crop type, so a hit means the WRITE SITE omitted it (known live candidate: /admin/classify POSTs /api/varieties with only name + source_proj_rescope_project_id)",
     "cultivars_missing_type_tag": "NEW 2026-08-05 (V4-INTAKE-001, L-239). Live cultivars that HAVE a crop_type_slug but no derived type: tag link — a write that reached plant_varieties without the applyDerive tail (direct-Neon insert, or a loader that skipped the heal). Predicate reproduced verbatim from scripts/check-cultivar-faceting.mjs, which existed but was scheduled NOWHERE (no GHA workflow, no package.json script, no claude-ops task referenced it) — this metric is what makes it actually run. Measured live 0 on prod 2026-08-05. Baseline 0 and must STAY 0. Remediate with scripts/reconcile-cultivar-facets.mjs",
-    "checked_edges": "W3.D-r1 dry-run 2026-07-28 (audit-plan V100 point-in-time values were 39/5/4/4/1/4; measured tonight 39/5/4/9/1/4 — critter_state=9 because the shipped definition covers BOTH edges: source_event_id->deleted-event OR plant_id->deleted-plant, broader than the audit's unspecified-edge 4)"
+    "checked_edges": "W3.D-r1 dry-run 2026-07-28 (audit-plan V100 point-in-time values were 39/5/4/4/1/4; measured tonight 39/5/4/9/1/4 — critter_state=9 because the shipped definition covers BOTH edges: source_event_id->deleted-event OR plant_id->deleted-plant, broader than the audit's unspecified-edge 4)",
+    "events_to_deleted_plants": "RE-BASELINED 39 -> 56 on 2026-08-14 (garden-bdwrap-20260814) on an explicit Dave ruling, NOT a repair. The +17 is Curly Parsley (soft-deleted 2026-08-07). Dave ruled the events STAY: 'assume those were real events that happened even if I kept the planting open longer than it was really being worked ... let's keep it.' This RESOLVES the policy switch V4-SOFTDEL-001 F3 deliberately deferred: HIDE_EVENTS_UNDER_DELETED_PLANTING (lambda/events/index.js) STAYS false — a soft-deleted planting retracts the RECORD, not the history of waterings and harvests that really happened in that container. 0 of the 56 carry a harvest_log row, so no harvest total is affected either way. This metric is therefore a CENSUS of an accepted state, not a defect counter: it will keep ratcheting up by design on every future planting soft-delete, and re-baselining it is the expected maintenance, not an alert being silenced. Ledger V4-PLANTDELCASCADE-001 closed as not-a-bug on this ruling.",
+    "entity_memory_orphans": "UNCHANGED at 4, and that is the point: the Curly Parsley plant_id orphan (which took the composite 4 -> 5 on 2026-08-07) was cleared 2026-08-14 after confirming it was a PRE-FIX FOSSIL — BUG-CACHEORPHANLEAK-001's forward fix shipped 2026-08-10, AFTER that delete, so the fix has no hole. Cache rows are an explicit hard-delete carve-out of the Soft-Delete-Only Rule (regenerable from event_log). Pre-state: project-state/entity-memory-orphan-BEFORE-20260814.csv. The remaining 4 are project_id orphans, not plant_id ones — this metric counts BOTH parents."
   },
   "alert_metrics": [
     "event_unattached_new_7d",
@@ -47,7 +49,7 @@
   "metrics": {
     "event_unattached_total": 63,
     "event_unattached_new_7d": 25,
-    "events_to_deleted_plants": 39,
+    "events_to_deleted_plants": 56,
     "photos_to_deleted_events": 0,
     "harvest_log_to_deleted_events": 0,
     "critter_state_orphans": 0,
@@ -56,7 +58,7 @@
     "photos_parentless": 0,
     "photos_to_deleted_inventory": 0,
     "care_dupe_groups": 1314,
-    "care_dupe_excess": 1442,
+    "care_dupe_excess": 1607,
     "harvest_multi_groups": 37,
     "phantom_photo_events": 22,
     "user_stats_drift": 1,
@@ -64,5 +66,7 @@
     "db_not_in_s3": 0,
     "cultivars_untyped": 0,
     "cultivars_missing_type_tag": 0
-  }
+  },
+  "rebaselined_at": "2026-08-14",
+  "rebaselined_by": "garden-bdwrap-20260814 — Dave ruling on V4-SOFTDEL-001 F3 + post-merge steady state. S3 metrics NOT touched (UNMEASURED this run, PHOTOS_BUCKET unset)."
 }
