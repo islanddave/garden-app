@@ -382,6 +382,13 @@ export default function EventNew() {
   // V4-TREATLOG-001: DrG "Treated…" deep-link — resolve this source finding after the treatment logs.
   const resolveEventId = searchParams.get('resolve') || ''
   const fromQuick = searchParams.get('fromquick')
+  // V4-HARVSESSION-001: /log?session=harvest — the weigh-in session. Pins event_type=harvest at
+  // mount (same seed mechanism as ?event_type=), locks the type against mis-tap changes, and
+  // replaces the post-save toast with a persistent in-band session ledger (rows + running totals
+  // + per-row undo). Full-page posture only — `inHarvestSession` (defined below inOverlay) is the
+  // gate every session behavior hangs off; an overlay open with this param degrades to the plain
+  // ?event_type=harvest deep-link behavior.
+  const harvestSessionParam = searchParams.get('session') === 'harvest'
   const { fetch: apiFetch, getToken } = useApiFetch()
   // M1 telemetry (Inc 0) — log_watering flow. Only counts when the event is a watering.
   // Fire-and-forget; never affects the save flow.
@@ -408,7 +415,9 @@ export default function EventNew() {
   // planting or the default-project fallback, and exempt-type logs rely on it.
 
   const [form, setForm] = useState({
-    event_type:    preselectedEventType,
+    // V4-HARVSESSION-001: in session mode harvest wins over any stray ?event_type= — the lock
+    // below hides the picker, so a non-harvest seed here would strand the form typeless.
+    event_type:    harvestSessionParam ? 'harvest' : preselectedEventType,
     project_id:    preselectedProjectId || rememberedProjectId,
     location_id:   '',
     event_date:    toDatetimeLocal(new Date()),
@@ -424,6 +433,12 @@ export default function EventNew() {
   // V4-OVERLAY-001 Slice 2: true only when this form is rendered INSIDE the overlay Sheet. Gates the
   // overlay-only behaviors (in-surface undo, draft stash) so the full-page path is byte-identical.
   const inOverlay = useInOverlaySurface()
+  // V4-HARVSESSION-001: session mode is a full-page posture (the overlay keeps its own
+  // confirmation strip + draft machinery, untouched).
+  const inHarvestSession = harvestSessionParam && !inOverlay
+  // Session ledger — every confirmed save this mount. Undone rows stay listed struck-through
+  // (excluded from totals): the ledger is an honest record of what happened, not a mutable cart.
+  const [sessionRows, setSessionRows] = useState([])
   // V4-HARVESTCENTER-001 (L9): the harvest-log habit-stack trigger. After a harvest saves, offer an
   // ambient "preserve this?" affordance that opens /put-up carrying { prefill } (crop/variety/plant/
   // harvest_log). useOverlaySwap so an in-overlay trigger swaps the SAME overlay's content (preserving
@@ -855,6 +870,17 @@ export default function EventNew() {
       setConfirmation(c => (c ? { ...c, error: "Couldn't undo — try again." } : c))
     }
   }
+  // V4-HARVSESSION-001 per-row undo — the same sanctioned soft-delete as undoEvent above, applied
+  // to any row in the session ledger rather than only the latest save.
+  async function undoSessionRow(rowEventId) {
+    try {
+      await apiFetch('/api/events/' + rowEventId, { method: 'DELETE' })
+      setSessionRows(rows => rows.map(r => r.eventId === rowEventId ? { ...r, undone: true, undoError: null } : r))
+    } catch {
+      setSessionRows(rows => rows.map(r => r.eventId === rowEventId ? { ...r, undoError: "Couldn't undo — try again." } : r))
+    }
+  }
+
   // (V4-HARVFEEDBACK-001 S5a: the confirmPhase-keyed focus effect that used to sit here moved into
   // components/PostSaveFeedback.jsx along with closeBtnRef — the ref's only consumer was the card's
   // Close button. Same derivation, same dep array; EventNew has no other .focus() call, so nothing
@@ -1183,6 +1209,21 @@ export default function EventNew() {
       setPreserveCtx({ prefill: pf })
     }
 
+    // V4-HARVSESSION-001: ledger row captured BEFORE resetForNext clears the panel state. grams is
+    // display-normalized through the same toGrams the server uses, so the strip's running total
+    // agrees with what harvest_log will report.
+    const sessionRow = inHarvestSession && isHarvest && eventId
+      ? {
+          eventId,
+          plantName: plantName ?? projName,
+          qty: harvest.quantity,
+          unit: harvest.unit,
+          grams: harvest.weight !== '' ? Math.round(toGrams(Number(harvest.weight), harvest.weight_unit) * 10) / 10 : null,
+          undone: false,
+          undoError: null,
+        }
+      : null
+
     resetForNext(keepMode)
     clearDraft(EVENTNEW_DRAFT_KEY)   // saved to DB — the working draft is spent
     // Operational confirmation + undo. Undo = soft-delete the just-logged event. Rewards stay
@@ -1230,6 +1271,10 @@ export default function EventNew() {
             .then(d => { const phrase = seasonTotalPhrase(d?.aggregates?.crops?.[0]); if (phrase) setSeasonLine(`Season: ${phrase} (whole garden)`) })
             .catch(() => { /* ambient — the strip never surfaces a harvests-read failure */ })
         }
+      } else if (sessionRow) {
+        // V4-HARVSESSION-001: the session ledger IS the confirmation + undo surface — the
+        // transient toast would duplicate it and pull attention from the next pile on the scale.
+        setSessionRows(rows => [...rows, sessionRow])
       } else {
         // Non-overlay (full page) DELIBERATELY keeps the global operational toast: outside the
         // aria-modal sheet the toast IS AT-reachable, and the full-page rapid-entry flow keeps the
@@ -1383,7 +1428,17 @@ export default function EventNew() {
   )
 
           /* ── Event type ── */
-  const eventTypeBlock = (
+          /* V4-HARVSESSION-001: in session mode the type is LOCKED — the picker is how a mis-tap
+             leaves harvest mid-burst, and the session exists to make that impossible. Exiting the
+             session (back nav / plain /log) is the way to log another type. */
+  const eventTypeBlock = inHarvestSession ? (
+          <Section label="What happened? *">
+            <div data-testid="harvest-session-lock" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', color: P.mid, fontWeight: 600 }}>
+              <span aria-hidden="true" style={{ fontSize: '1.2rem' }}>🧺</span>
+              <span>Weigh-in session — every save logs a harvest</span>
+            </div>
+          </Section>
+  ) : (
           <Section label="What happened? *">
             {form.event_type === 'flag_issue' ? (
               <FlagModeFields
@@ -2085,6 +2140,47 @@ export default function EventNew() {
                 actions={{ onUndo: undoEvent }}
               />
             )}
+            {/* V4-HARVSESSION-001: the session ledger — rows + running totals + per-row undo,
+                folded into the sticky band for the same zero-saccade reason as the overlay strip
+                above (feedback appears where the thumb just was). Capped at the last 3 rows so a
+                12-variety session never pushes Save off a 500px viewport; the header always counts
+                the WHOLE session. Inherits the band's pickerOpen suppression deliberately. */}
+            {inHarvestSession && sessionRows.length > 0 && (() => {
+              const live = sessionRows.filter(r => !r.undone)
+              const totalG = live.reduce((s, r) => s + (r.grams ?? 0), 0)
+              const visible = sessionRows.slice(-3)
+              const totalLabel = totalG >= 1000 ? `${Math.round(totalG / 100) / 10} kg` : `${Math.round(totalG)} g`
+              return (
+                <div data-testid="harvest-session-strip" style={{ backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10, padding: '10px 14px', marginBottom: 10, boxShadow: '0 2px 12px rgba(0,0,0,0.10)' }}>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 700, color: P.green, letterSpacing: '0.3px', textTransform: 'uppercase', marginBottom: 6 }}>
+                    This session: {live.length} harvest{live.length === 1 ? '' : 's'}{totalG > 0 ? ` · ${totalLabel}` : ''}
+                  </div>
+                  {sessionRows.length > visible.length && (
+                    <div style={{ fontSize: '0.74rem', color: P.light, marginBottom: 4 }}>+{sessionRows.length - visible.length} earlier</div>
+                  )}
+                  {visible.map(r => (
+                    <div key={r.eventId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', fontSize: '0.85rem', color: P.mid }}>
+                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: r.undone ? 'line-through' : 'none', opacity: r.undone ? 0.5 : 1 }}>
+                        {r.plantName} — {r.qty} {r.unit}{r.grams != null ? ` · ${r.grams} g` : ''}
+                      </span>
+                      {r.undone ? (
+                        <span style={{ fontSize: '0.74rem', color: P.light }}>removed</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => undoSessionRow(r.eventId)}
+                          aria-label={`Undo ${r.plantName} harvest`}
+                          style={{ background: 'none', border: `1px solid ${P.border}`, borderRadius: 6, color: P.terra, fontWeight: 600, fontSize: '0.74rem', padding: '3px 8px', cursor: 'pointer', flexShrink: 0 }}
+                        >
+                          Undo
+                        </button>
+                      )}
+                      {r.undoError && <span role="alert" style={{ fontSize: '0.72rem', color: P.terra }}>{r.undoError}</span>}
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
             {/* ── ACTION ZONE (row 3) — three functions, three corners (spec §2). Save keeps the
                 right (do NOT move it); Done takes the left, diagonally opposite, for maximum thumb
                 separation; Undo is row 1 right. Undo above Save is unavoidable once those two are
