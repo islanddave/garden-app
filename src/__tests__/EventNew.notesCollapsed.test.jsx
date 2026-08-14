@@ -91,7 +91,7 @@ describe('EventNew — Notes collapsed at the bottom (V4-NOTESCOLLAPSE-001)', ()
 
   it('sits AFTER the When? field in document order — the end of the form, not the middle', async () => {
     await renderForm()
-    const when = screen.getByLabelText('Event date and time')
+    const when = screen.getByLabelText('Event date')
     const pos = when.compareDocumentPosition(toggle())
     // DOCUMENT_POSITION_FOLLOWING === 4. Before this change Notes preceded both Planting and When?.
     expect(pos & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()

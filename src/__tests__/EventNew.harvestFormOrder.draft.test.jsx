@@ -105,7 +105,11 @@ describe('V4-HARVFORMORDER-001 — draft stash survives the reorder', () => {
     expect(screen.getByTestId('harvest-more-toggle').getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByLabelText('Notes').value).toBe('two ripe, one split')
     // The rest of the draft came back too — this is a restore, not just a disclosure state.
-    expect(screen.getByLabelText('Event date and time').value).toBe('2026-08-01T10:00')
+    // V4-EVENTSEL-005: the When control is now type="date". This draft was WRITTEN in the
+    // datetime-local shape ('2026-08-01T10:00'), which is exactly the back-compat case the
+    // `.slice(0, 10)` at the input guards — an <input type="date"> renders that raw string as
+    // EMPTY. Asserting the sliced value here is the regression pin for restored legacy drafts.
+    expect(screen.getByLabelText('Event date').value).toBe('2026-08-01')
     // PlantingSelect swaps its combobox for a selected-state chip once it holds a value, so the
     // restored plant_id is asserted on the chip — NOT on the 'Plant or group' combobox, which is
     // not in the tree at all in this state.
