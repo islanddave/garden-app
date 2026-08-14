@@ -39,9 +39,19 @@ import { PlantForm } from '../components/forms/index.js'
 import { recordCropLog } from '../lib/cropLogLedger.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
 
+// V4-SNAPDEST-001 (BD0806-08) — 'location' is the destination this row was actually missing. Snap
+// could only ever aim a photo at a PLANTING or an inventory item, so anything about the place itself
+// — a bed edge washing out, a trellis leaning, a new fence line — had no home and got logged against
+// whichever planting happened to be nearby, which is a lie about what the photo shows.
+//
+// ORDER IS PART OF THE ROW. 'location' sits directly after 'planting'/'event' because it is the same
+// KIND of act (log something that happened), and 'inventory' stays LAST — the row asks for "Add
+// Inventory to the bottom" and it is the only destination that creates a supply record rather than a
+// garden observation. Appending 'location' after it would have quietly undone that.
 const MODES = [
-  { id: 'planting',  label: 'New planting',     hint: 'Create a planting, this photo becomes its picture' },
+  { id: 'planting',  label: 'New planting',      hint: 'Create a planting, this photo becomes its picture' },
   { id: 'event',     label: 'Log on a planting', hint: 'Attach this photo to an event (Watered, Harvested…)' },
+  { id: 'location',  label: 'Log on a location', hint: 'Attach this photo to a bed, area or structure — no planting needed' },
   { id: 'replace',   label: 'Update a photo',    hint: 'Set this as an existing planting’s photo' },
   { id: 'inventory', label: 'Add inventory',     hint: 'Create a supply/equipment item with this photo' },
 ]
@@ -97,6 +107,12 @@ export default function CaptureFlow() {
   const [evPlant, setEvPlant] = useState('')
   const [evType, setEvType]   = useState('watering')
   const [evDate, setEvDate]   = useState(todayStr())
+  // V4-SNAPDEST-001: own state, deliberately NOT shared with the event destination's. Reusing
+  // evType/evDate would make a half-filled planting log leak into the location log and back on every
+  // Back tap, and the two destinations do not even offer the same event vocabulary.
+  const [locPlace, setLocPlace] = useState('')
+  const [locType, setLocType]   = useState('observation')
+  const [locDate, setLocDate]   = useState(todayStr())
   const [rpPlant, setRpPlant] = useState('')
   const [invName, setInvName] = useState('')
   const [invType, setInvType] = useState('consumable')
@@ -222,6 +238,28 @@ export default function CaptureFlow() {
         const eventId = res?.eventId ?? res?.id
         await attach({ event_id: eventId, plant_id: pl.id }, 'events', eventId)
         setResult({ kind: 'event', id: eventId, label: `${EVENT_TYPE_META[evType]?.label ?? evType} logged on ${pl.name}`,
+          undo: () => fetch('/api/events/' + eventId, { method: 'DELETE' }) })
+      } else if (mode === 'location') {
+        // No plant_id and no project_id, deliberately. The events Lambda requires only event_type and
+        // ownership-validates location_id (lambda/events/index.js), so a place-scoped event is a
+        // supported shape, not a hole — the same plant_id-NULL family the integrity check already
+        // classifies as "a shipped intentional path" rather than an orphan.
+        //
+        // recordCropLog is NOT called here, unlike the planting branch: it ranks crop chips by recent
+        // logging, and a location event has no crop to rank. Feeding it a blank slug would be a
+        // silent no-op today and a wrong ranking the moment that ledger learns to accept one.
+        if (!locPlace) throw new Error('Pick a location')
+        const place = locations.find(l => l.id === locPlace)
+        const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify({
+          project_id: null, plant_id: null, location_id: locPlace,
+          event_type: locType, event_date: locDate, is_public: true,
+        }) })
+        const eventId = res?.eventId ?? res?.id
+        // location_id rides the linkage too: the event is the photo's parent for the CHECK, but the
+        // place is what the photo is OF, and the photo surfaces filter on location_id directly.
+        await attach({ event_id: eventId, location_id: locPlace }, 'events', eventId)
+        setResult({ kind: 'event', id: eventId,
+          label: `${EVENT_TYPE_META[locType]?.label ?? locType} logged on ${place?.full_path ?? 'location'}`,
           undo: () => fetch('/api/events/' + eventId, { method: 'DELETE' }) })
       } else if (mode === 'replace') {
         const pl = plantings.find(p => p.id === rpPlant)
@@ -406,6 +444,32 @@ export default function CaptureFlow() {
                 <Field label="Date">
                   <Input type="date" value={evDate} onChange={e => setEvDate(e.target.value)} />
                 </Field>
+              </>
+            )}
+            {/* V4-SNAPDEST-001. Mirrors the event destination's three fields in the same order, so
+                the two "log something" destinations are muscle-memory identical — only the first
+                field differs (a place instead of a planting). */}
+            {mode === 'location' && (
+              <>
+                <Field label="Location">
+                  <Select data-testid="cap-locplace" value={locPlace} onChange={e => setLocPlace(e.target.value)}>
+                    <option value="">— pick a location —</option>
+                    {locations.map(l => (
+                      <option key={l.id} value={l.id}>{l.full_path ?? l.name}</option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Event">
+                  <Select data-testid="cap-loctype" value={locType} onChange={e => setLocType(e.target.value)}>
+                    {EVENT_TYPES.map(t => <option key={t} value={t}>{EVENT_TYPE_META[t]?.label ?? t}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Date">
+                  <Input type="date" value={locDate} onChange={e => setLocDate(e.target.value)} />
+                </Field>
+                {locations.length === 0 && (
+                  <Note>No locations yet — add one in Garden first, then this photo can log against it.</Note>
+                )}
               </>
             )}
             {mode === 'replace' && (
