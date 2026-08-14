@@ -1,5 +1,20 @@
 [
   {
+    "version": "4.17.0",
+    "date": "2026-08-14",
+    "highlights": [
+      "Hitting Back keeps your place. The photo library and the feed now reopen exactly where you left them — same scroll position, and just as importantly the same number of items loaded, so the page you come back to is the page you left rather than a short one you have to scroll through again.",
+      "Harvest weights now say where the number came from, on the phone. The provenance was always there, but only as a hover tooltip — and there is no hover on Android, so on the only device this app is actually used on it was invisible. Every harvest weight now reads its basis as plain text: \"typical for this variety\", \"your weighings\", or \"weighed\" when it was a real measurement.",
+      "Your harvest totals will drop slightly, and that is the fix, not a loss. Archived plantings were leaking into normal views — 932 events, 28 photos, 4 harvests and their 424 g of weight were being counted in totals they should never have been in. Nothing was deleted; archived things are simply no longer counted as current.",
+      "Event pages are worth opening now. An event shows its planting, the amount and weight you logged, and its photos — instead of repeating the event type three times and telling you little else.",
+      "Container event logs no longer stop at 50. Busy containers page through their full history; the largest here holds over five thousand events.",
+      "Archive a planting straight from its page, and see how many you planted. No more opening the edit form to archive, and the count (×6 zucchini, ×30 basil) sits on the planting itself.",
+      "The planting picker works with a screen reader. It claimed to be an accessible combobox without implementing one; now the arrow keys, Escape and focus all behave, and it announces the option you are on.",
+      "Harvest seasons run November to October, matching how a growing year actually works rather than the calendar. Nothing you can see changes today — it starts to matter with the first November harvest.",
+      "Deleting something that is already gone no longer shows an error. It just closes, the way it always should have."
+    ]
+  },
+  {
     "version": "4.16.0",
     "date": "2026-08-13",
     "highlights": [

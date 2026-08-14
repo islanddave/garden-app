@@ -44,6 +44,17 @@ function flushFrames(n = 1) {
     for (const cb of due) cb()
   }
 }
+// Pump frames until `done()` holds — see the long note in PhotoLibrary.scrollRestore.test.jsx.
+// Short version: the restore effect arms asynchronously and the hook budgets ~20 frames, so an
+// exact `flushFrames(2)` is a stopwatch that reds under worker-pool contention on code that is
+// fine. Only POSITIVE assertions use this; a negative ("nothing moved the viewport") still spends
+// a fixed budget, because you cannot wait for an event that must never arrive.
+async function pumpFramesUntil(done) {
+  await waitFor(() => {
+    act(() => flushFrames(1))
+    if (!done()) throw new Error('not yet restored')
+  }, { timeout: 5000, interval: 0 })
+}
 function setScrollY(y) {
   Object.defineProperty(window, 'scrollY', { configurable: true, writable: true, value: y })
 }
@@ -94,7 +105,7 @@ describe('FeedPage — back-nav scroll restore', () => {
     expect(lastFeedLimit()).toBe(90)
     await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull())
     maxScroll = 5000
-    act(() => flushFrames(2))
+    await pumpFramesUntil(() => window.scrollTo.mock.calls.length > 0)
     expect(window.scrollTo).toHaveBeenCalledWith(0, 1800)
     expect(window.scrollY).toBe(1800)
   })

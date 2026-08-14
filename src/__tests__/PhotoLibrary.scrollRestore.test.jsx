@@ -63,6 +63,25 @@ function flushFrames(n = 1) {
     for (const cb of due) cb()
   }
 }
+// Pump frames until `done()` holds, instead of betting on a fixed count.
+//
+// These tests originally spent an exact budget (`flushFrames(2)`), which made them a stopwatch
+// rather than an assertion: the restore effect arms asynchronously, so on a loaded worker pool it
+// had not armed by frame 2, `window.scrollTo` was never called, and the suite went red on a file
+// that passes 8/8 in isolation. That is the worst kind of red — it looks like broken code, it moves
+// between files run to run, and the reflex is to re-run rather than to look, which is exactly how a
+// real failure gets laundered into "flaky". `build-and-test` gates the promote, so a randomly-red
+// suite randomly blocks shipping.
+//
+// The hook budgets ~20 frames for late layout, so draining to that bound asserts the claim that
+// actually matters — it restores WITHIN its own budget — without pinning which frame it lands on.
+// The ordering claim is unaffected: it is asserted before the pump, on mounted tile count.
+async function pumpFramesUntil(done) {
+  await waitFor(() => {
+    act(() => flushFrames(1))
+    if (!done()) throw new Error('not yet restored')
+  }, { timeout: 5000, interval: 0 })
+}
 function setScrollY(y) {
   Object.defineProperty(window, 'scrollY', { configurable: true, writable: true, value: y })
 }
@@ -122,7 +141,7 @@ describe('PhotoLibrary — back-nav scroll restore', () => {
     await waitFor(() => expect(screen.getByText(/Show more \(48 left\)/)).toBeDefined())
     expect(tiles()).toBe(72)
     maxScroll = 4000
-    act(() => flushFrames(2))
+    await pumpFramesUntil(() => window.scrollTo.mock.calls.length > 0)
     expect(window.scrollTo).toHaveBeenCalledWith(0, 1200)
     expect(window.scrollY).toBe(1200)
   })
