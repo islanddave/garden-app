@@ -88,7 +88,7 @@ describe('V4-EVENTSEL-005 — one note, every row', () => {
   it('writes the note to EVERY row of the batch, and to exactly as many rows as the batch counted', async () => {
     const NOTE = 'side-dressed the whole bed with blood meal'
     const res = await postBatch({ notes: NOTE })
-    expect(res.statusCode).toBe(200)
+    expect(res.status).toBe(200)
     expect(res.body.count).toBe(3)
 
     const c = await noteCensus(res.body.batch_id)
@@ -107,7 +107,7 @@ describe('V4-EVENTSEL-005 — one note, every row', () => {
 
   it('trims the stored note (the client trims too; the server is the one that must)', async () => {
     const res = await postBatch({ notes: '   frost cloth on overnight  \n ' })
-    expect(res.statusCode).toBe(200)
+    expect(res.status).toBe(200)
     const c = await noteCensus(res.body.batch_id)
     expect(c.any_note).toBe('frost cloth on overnight')
     expect(c.nulls).toBe(0)
@@ -115,7 +115,7 @@ describe('V4-EVENTSEL-005 — one note, every row', () => {
 
   it('a WHITESPACE-ONLY note stores SQL NULL, not an empty string', async () => {
     const res = await postBatch({ notes: '   \n\t ' })
-    expect(res.statusCode).toBe(200)
+    expect(res.status).toBe(200)
     const c = await noteCensus(res.body.batch_id)
     expect(c.total).toBe(3)
     expect(c.empties).toBe(0)   // the defect class, stated as a number
@@ -126,7 +126,7 @@ describe('V4-EVENTSEL-005 — one note, every row', () => {
     // Without the ::text cast on ${batchNotes} this is a 500 on every note-less batch, which is
     // ~all of them. Source can see the cast; only a real Postgres proves the statement runs.
     const res = await postBatch()
-    expect(res.statusCode).toBe(200)
+    expect(res.status).toBe(200)
     const c = await noteCensus(res.body.batch_id)
     expect(c.total).toBe(3)
     expect(c.nulls).toBe(3)
@@ -137,7 +137,7 @@ describe('V4-EVENTSEL-005 — one note, every row', () => {
     const before = (await directSql`
       SELECT count(*)::int AS n FROM event_log WHERE created_by = ${USER}`)[0].n
     const res = await postBatch({ notes: 'x'.repeat(MAX_NOTES_LEN + 1) })
-    expect(res.statusCode).toBe(400)
+    expect(res.status).toBe(400)
     const after = (await directSql`
       SELECT count(*)::int AS n FROM event_log WHERE created_by = ${USER}`)[0].n
     expect(after).toBe(before)
@@ -147,7 +147,7 @@ describe('V4-EVENTSEL-005 — one note, every row', () => {
     const before = (await directSql`
       SELECT count(*)::int AS n FROM event_log WHERE created_by = ${USER}`)[0].n
     const res = await postBatch({ notes: { text: 'nope' } })
-    expect(res.statusCode).toBe(400)
+    expect(res.status).toBe(400)
     const after = (await directSql`
       SELECT count(*)::int AS n FROM event_log WHERE created_by = ${USER}`)[0].n
     expect(after).toBe(before)
@@ -161,7 +161,7 @@ describe('V4-EVENTSEL-005 — one note, every row', () => {
     // survivors all carry the note and the excluded one contributes no row at all — a partial
     // SCOPE, which is the only partiality this endpoint has, still yields a total write.
     const res = await postBatch({ notes: 'weeded, mulched', exclude_plant_ids: [plantC] })
-    expect(res.statusCode).toBe(200)
+    expect(res.status).toBe(200)
     expect(res.body.count).toBe(2)
     const c = await noteCensus(res.body.batch_id)
     expect(c.total).toBe(2)
@@ -182,13 +182,13 @@ describe('V4-EVENTSEL-005 — one note, every row', () => {
       body: { idempotency_key: key, event_type: 'pruning',
               scope: { type: 'project', project_id: projectId }, notes: 'first note' },
     })
-    expect(first.statusCode).toBe(200)
+    expect(first.status).toBe(200)
     const second = await callHandler(handler, {
       method: 'POST', path: '/api/events/batch', userId: USER,
       body: { idempotency_key: key, event_type: 'pruning',
               scope: { type: 'project', project_id: projectId }, notes: 'SECOND note' },
     })
-    expect(second.statusCode).toBe(200)
+    expect(second.status).toBe(200)
     expect(second.body.batch_id).toBe(first.body.batch_id)
     expect(second.body.idempotent).toBe(true)
 
@@ -202,9 +202,9 @@ describe('V4-EVENTSEL-005 — one note, every row', () => {
     // "the column was written" from "the note is visible", and the second is the actual ticket.
     const NOTE = 'netting over the whole row'
     const res = await postBatch({ notes: NOTE })
-    expect(res.statusCode).toBe(200)
+    expect(res.status).toBe(200)
     const feed = await callHandler(handler, { method: 'GET', path: '/api/events/feed', userId: USER })
-    expect(feed.statusCode).toBe(200)
+    expect(feed.status).toBe(200)
     const mine = feed.body.events.filter((e) => e.batch_id === res.body.batch_id)
     expect(mine.length).toBeGreaterThan(0)
     for (const e of mine) expect(e.notes).toBe(NOTE)
