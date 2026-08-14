@@ -45,9 +45,17 @@ if (!HOUSEHOLD.length) {
 }
 
 const manifest = JSON.parse(readFileSync(new URL('./merge-groups.json', import.meta.url), 'utf8'))
+// --only accepts one group or a comma list ("--only 2,5,10,13"). A list is how a partially-ruled
+// run proceeds: the clean groups go now, the ones awaiting a decision stay untouched.
 const only = val('only')
-const groups = manifest.groups.filter((g) => (only ? String(g.n) === String(only) : true))
+const onlySet = only ? new Set(only.split(',').map((s) => s.trim()).filter(Boolean)) : null
+const groups = manifest.groups.filter((g) => (onlySet ? onlySet.has(String(g.n)) : true))
 if (!groups.length) { console.error(`no group matches --only ${only}`); process.exit(2) }
+if (onlySet && groups.length !== onlySet.size) {
+  const found = new Set(groups.map((g) => String(g.n)))
+  console.error(`--only names groups not in the manifest: ${[...onlySet].filter((n) => !found.has(n)).join(', ')}`)
+  process.exit(2)
+}
 
 const sql = neon(DSN)
 const money = (n) => String(n).padStart(5)
