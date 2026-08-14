@@ -181,8 +181,15 @@ export default function CaptureFlow() {
         const plant = await fetch('/api/plants', { method: 'POST', body: JSON.stringify({
           project_id: null,
           name:       f.name.trim(),
-          // DUAL-WRITE. `variety` (flat text) and `variety_id` (canonical FK) are both real columns
-          // and every other create path sends both; posting the id alone silently diverges.
+          // `variety_id` is the canonical FK and is the ONLY one of these two that lands.
+          //
+          // `variety` (flat text) is sent for wire-shape parity with every other create path
+          // (PlantingEditor, ProjectDetail) — but it is DISCARDED server-side: `garden_node` has no
+          // `variety` column and the POST handler never reads `body.variety`. This was previously
+          // commented here as a "DUAL-WRITE … both are real columns", which was false; corrected
+          // 2026-08-14 after review. Lossless today because `variety_id` writes correctly, so
+          // dropping the key is safe whenever the other two call sites drop it too — keeping the
+          // three identical is the only reason it is still here.
           variety:    f.variety?.name ?? null,
           variety_id: f.variety?.id ?? null,
           quantity:   isNaN(qty) || qty < 1 ? 1 : qty,

@@ -202,9 +202,9 @@ describe('V4-PLANTFORMUNIFY-001 — adopting the richer form does not slow captu
   })
 })
 
-// ── BD-015 leg A: pick an existing variety, dual-write both halves ─────────────────────────────
-describe('V4-SNAPVARIETY-001 — variety selection dual-writes id AND flat text', () => {
-  it('sends variety_id and variety when an existing variety is picked', async () => {
+// ── BD-015 leg A: pick an existing variety; send the same wire shape as every other create path ──
+describe('V4-SNAPVARIETY-001 — variety selection sends the canonical FK, in the shared wire shape', () => {
+  it('sends variety_id (which lands) and variety (wire parity only) when an existing variety is picked', async () => {
     wire()
     await act(async () => { render(<CaptureFlow />) })
     await snapToPlanting()
@@ -215,11 +215,16 @@ describe('V4-SNAPVARIETY-001 — variety selection dual-writes id AND flat text'
     await act(async () => { fireEvent.click(saveBtn()) })
     await waitFor(() => expect(screen.getByTestId('cap-result')).toBeDefined())
     const body = bodyOf(plantsPost())
-    // BOTH halves. `variety` (flat text) and `variety_id` (canonical FK) are separate real columns;
-    // the old Snap held only an id string and could not have produced the text. Every other create
-    // path sends both, so sending only the id would have made Snap a second, thinner contract for
-    // the same route.
+    // `variety_id` is the assertion that MATTERS — it is the canonical FK and the only one of the
+    // two that the server persists.
     expect(body.variety_id).toBe('var-1')
+    // `variety` (flat text) is asserted for WIRE PARITY, not because it lands: `garden_node` has no
+    // `variety` column and the POST handler never reads `body.variety`, so this key is discarded
+    // server-side. An earlier version of this test called the pair a "dual-write ... separate real
+    // columns", which was false and would have taught the next reader that the text is stored —
+    // corrected 2026-08-14 after review. It is pinned only so Snap keeps the identical wire shape to
+    // PlantingEditor and ProjectDetail; the day those two drop the key, this should drop with them.
+    // Nothing is lost today because the id carries the meaning.
     expect(body.variety).toBe('Charentais')
   })
 })
