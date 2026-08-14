@@ -78,9 +78,15 @@ export function parseLimit(raw) {
 //   * View vocabulary: garden_node = plants, cultivar = plant_varieties. garden_node's FK to the
 //     project is `container_id`, NOT `project_id` (the base table's name). Getting that wrong is a
 //     hard error, not a silent one.
-//   * Household scope anchors on plant_projects.created_by, matching the rest of this Lambda. It
-//     does NOT anchor on the planting: garden_node.created_by exists but the project is the
-//     ownership root everywhere else in this file.
+//   * Household scope anchors on plant_projects.created_by, matching the rest of this Lambda —
+//     the project IS the ownership root wherever a planting has one. AMENDED 2026-08-14
+//     (BUG-ANCHORNOPROJ-001): the original form of this note said scope does NOT anchor on the
+//     planting, and the CTE enforced that with an INNER JOIN. That reasoning has no answer for a
+//     planting with NO project (container_id IS NULL — prod has 4 live), which has no root to
+//     anchor on and was therefore dropped from the query entirely rather than scoped by anything.
+//     Scope now uses the two-arm predicate lambda/plants/index.js already applies at seven sites:
+//     the project when there is one, the planting's own created_by when there is not. Both arms
+//     bind the same householdIds, so this widens VISIBILITY, never ownership.
 //   * Live planting = deleted_at/archived_at NULL and status NOT IN (failed, ended, dormant), the
 //     same definition lambda/events/index.js:893 settled on after a dormant wineberry ranked #1.
 //   * The harvest-evidence CTE keeps the LEFT JOIN + first_harvest escape from the shipped route:
@@ -150,12 +156,19 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
              ct.display_name  AS crop_display_name,
              ct.harvest_habit, ct.dtm_basis, ct.set_to_first_pick_days
         FROM garden_node gn
-        JOIN plant_projects pj ON pj.id = gn.container_id
+        -- BUG-ANCHORNOPROJ-001. A planting may have NO project (container_id IS NULL) — prod has 4
+        -- live ones. An INNER JOIN here dropped every one of them from the watch list entirely, so
+        -- they could never be surfaced no matter what anchor they carried. This two-arm predicate is
+        -- the house household-scoping idiom, applied verbatim at seven sites in lambda/plants/
+        -- index.js: scope through the project when there IS one, through the planting's own
+        -- created_by when there is not. The JS layer already expected these rows — see the
+        -- projectless key fallback in the dismissal grouping below — so this SQL was the only thing
+        -- holding them out. Measured on prod: 230 rows before, 233 after.
+        LEFT JOIN plant_projects pj ON pj.id = gn.container_id
         JOIN cultivar cv       ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
         JOIN crop_types ct     ON ct.slug = cv.crop_type_slug AND ct.deleted_at IS NULL
-       WHERE pj.created_by = ANY(${householdIds})
-         AND pj.deleted_at IS NULL
-         AND pj.archived_at IS NULL
+       WHERE ( (pj.created_by = ANY(${householdIds}) AND pj.deleted_at IS NULL AND pj.archived_at IS NULL)
+               OR (gn.container_id IS NULL AND gn.created_by = ANY(${householdIds})) )
          AND gn.deleted_at IS NULL
          AND gn.archived_at IS NULL
          AND (gn.status IS NULL OR gn.status NOT IN ('failed', 'ended', 'dormant'))
@@ -259,8 +272,14 @@ export async function queryWatchRows(sql, householdIds, userId, tz) {
                ORDER BY (gn.transplanted_at - gn.sown_at)
              )::int AS median_gap
         FROM garden_node gn
-        JOIN plant_projects pj ON pj.id = gn.container_id
-       WHERE pj.created_by = ANY(${householdIds})
+        -- Same two-arm scoping as the live CTE (BUG-ANCHORNOPROJ-001). A PROVABLE NO-OP on prod
+        -- today: this population requires both sown_at and transplanted_at, and all 4 project-less
+        -- plantings are anchorless, so none of them can qualify. Changed anyway — leaving one
+        -- INNER JOIN behind in the file is exactly how the household-scoping gap recurs, and an
+        -- orphan planting that later gains both dates belongs in its household's median.
+        LEFT JOIN plant_projects pj ON pj.id = gn.container_id
+       WHERE ( pj.created_by = ANY(${householdIds})
+               OR (gn.container_id IS NULL AND gn.created_by = ANY(${householdIds})) )
          AND gn.deleted_at IS NULL
          AND gn.sown_at IS NOT NULL
          AND gn.transplanted_at IS NOT NULL

@@ -555,3 +555,51 @@ describe('V4-ANCHORFLIP-001 derived anchor, at the route', () => {
     expect(on.statusCode).toBe(201);
   });
 });
+
+// ── BUG-ANCHORNOPROJ-001 — household scoping must not require a project ──────────────────────────
+//
+// A planting may have NO project (garden_node.container_id IS NULL); prod has 4 live ones. The live
+// CTE reached them through an INNER JOIN on plant_projects, so they were dropped from the watch
+// query before any anchor, dismissal or flag logic ran — invisible for a reason no downstream code
+// could see or report. lambda/plants/index.js already scopes households with a TWO-ARM predicate at
+// seven sites (through the project when there is one, through the planting's own created_by when
+// there is not); this file simply did not. Measured against live prod: 230 rows before, 233 after.
+//
+// These assert on the ASSEMBLED STATEMENT from the recording stub — the SQL the handler actually
+// emitted — not on the module's source text. The distinction is the one this file's header draws:
+// a behaviour-preserving refactor may move these clauses freely, but it may not turn the scoping
+// back into an inner join, which is precisely what the negative assertion below pins.
+describe('BUG-ANCHORNOPROJ-001 project-less plantings stay in scope', () => {
+  async function watchSql() {
+    const sql = makeSql([[row()]]);
+    await handleWatchGet(ctx(sql, { query: {} }));
+    return sql.calls[0].text;
+  }
+
+  it('reaches plant_projects only through a LEFT JOIN', async () => {
+    const q = await watchSql();
+    // The regression this exists to catch. Every plant_projects join in the statement must be
+    // LEFT — a single bare one re-drops every project-less planting, silently and completely.
+    const all = q.match(/JOIN plant_projects/g) ?? [];
+    const left = q.match(/LEFT JOIN plant_projects/g) ?? [];
+    expect(all.length).toBeGreaterThan(0);
+    expect(left.length).toBe(all.length);
+  });
+
+  it('scopes a project-less planting through its own created_by', async () => {
+    const q = await watchSql();
+    expect(q).toMatch(/gn\.container_id IS NULL AND gn\.created_by = ANY\(/);
+    // The project arm keeps carrying the project's own deleted/archived predicates. Moving them
+    // into the WHERE without re-scoping them to the arm would resurrect deleted projects' rows.
+    expect(q).toMatch(/pj\.created_by = ANY\(\?\) AND pj\.deleted_at IS NULL AND pj\.archived_at IS NULL/);
+  });
+
+  it('still binds the household to both arms', async () => {
+    const sql = makeSql([[row()]]);
+    await handleWatchGet(ctx(sql, { query: {} }));
+    // Two arms, two bindings — a fix that scoped the second arm to anything other than the
+    // caller's household would be a cross-household read, not a visibility fix.
+    const bound = sql.calls[0].params.filter((p) => p === HOUSEHOLD);
+    expect(bound.length).toBeGreaterThanOrEqual(2);
+  });
+});
