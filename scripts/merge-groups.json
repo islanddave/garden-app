@@ -6,117 +6,250 @@
     {
       "n": 1,
       "label": "Ghost + Ghost Pepper + Bhut Jolokia",
-      "winner": { "id": "1bbfe326-5a99-4124-8bbe-b25de49e4dde", "name": "Ghost" },
+      "winner": {
+        "id": "1bbfe326-5a99-4124-8bbe-b25de49e4dde",
+        "name": "Ghost"
+      },
       "losers": [
-        { "id": "5bb93741-786e-4546-95d1-ea34faaafa2d", "name": "Ghost Pepper" },
-        { "id": "e4324e33-90ef-4673-a604-057a323281a8", "name": "Bhut Jolokia" }
+        {
+          "id": "5bb93741-786e-4546-95d1-ea34faaafa2d",
+          "name": "Ghost Pepper"
+        },
+        {
+          "id": "e4324e33-90ef-4673-a604-057a323281a8",
+          "name": "Bhut Jolokia"
+        }
       ],
       "winner_source": "dave",
-      "winner_note": "Dave ruled: keep the LATER window; the earlier plantings fell behind. The fallback rule would pick Ghost Pepper — it measures import order, not history."
+      "winner_note": "Dave ruled: keep the LATER window; the earlier plantings fell behind. The fallback rule would pick Ghost Pepper — it measures import order, not history.",
+      "overrides": {
+        "variety_id": "5bbc762a-7d19-4a6a-8ddc-f191329d9c68"
+      },
+      "overrides_source": "dave (default)",
+      "overrides_note": "Keeps the winner's 'Ghost' variety over 'Bhut Jolokia'. Bhut Jolokia IS the ghost pepper botanically, so these are two variety rows for one cultivar — another V4-VARIETYDUP-001 instance, not a real divergence."
     },
     {
       "n": 2,
       "label": "Scotch Bonnet ×2",
-      "winner": { "id": "5d031b08-fa16-4815-bf25-23804d051452", "name": "Scotch Bonnet" },
-      "losers": [{ "id": "5b932e9f-2977-45dd-88d8-6387deb7018c", "name": "Scotch Bonnet 2" }],
+      "winner": {
+        "id": "5d031b08-fa16-4815-bf25-23804d051452",
+        "name": "Scotch Bonnet"
+      },
+      "losers": [
+        {
+          "id": "5b932e9f-2977-45dd-88d8-6387deb7018c",
+          "name": "Scotch Bonnet 2"
+        }
+      ],
       "winner_source": "rule",
       "winner_note": "first_event tied to the microsecond (bulk backfill); created_at breaks it. Keeps the unsuffixed name."
     },
     {
       "n": 3,
       "label": "Habanero ×3",
-      "winner": { "id": "ad489638-a21c-49d8-aaba-ad865900345f", "name": "Habanero" },
+      "winner": {
+        "id": "ad489638-a21c-49d8-aaba-ad865900345f",
+        "name": "Habanero"
+      },
       "losers": [
-        { "id": "2c47235e-e7f5-478c-b56a-8f83c930e98a", "name": "Habanero" },
-        { "id": "e92aa2b5-0f60-4b2d-9198-7290dba23bcb", "name": "Habanero" }
+        {
+          "id": "2c47235e-e7f5-478c-b56a-8f83c930e98a",
+          "name": "Habanero"
+        },
+        {
+          "id": "e92aa2b5-0f60-4b2d-9198-7290dba23bcb",
+          "name": "Habanero"
+        }
       ],
       "winner_source": "rule"
     },
     {
       "n": 4,
       "label": "Serranos + Serrano 2",
-      "winner": { "id": "718e9fea-a366-4103-9fad-f364b81f1772", "name": "Serranos" },
-      "losers": [{ "id": "0ca5901d-d22b-4966-bdb3-ee4aba223abc", "name": "Serrano 2" }],
+      "winner": {
+        "id": "718e9fea-a366-4103-9fad-f364b81f1772",
+        "name": "Serranos"
+      },
+      "losers": [
+        {
+          "id": "0ca5901d-d22b-4966-bdb3-ee4aba223abc",
+          "name": "Serrano 2"
+        }
+      ],
       "winner_source": "rule",
       "winner_note": "first_event tied; created_at breaks it. Keeps the unsuffixed name."
     },
     {
       "n": 5,
       "label": "Cubanelle ×2",
-      "winner": { "id": "e22681d8-0b93-45e8-9b81-6092cc987f4a", "name": "Cubanelle" },
-      "losers": [{ "id": "a0b8d7f2-0e3c-4f38-8db6-61277df15e30", "name": "Cubanelle" }],
+      "winner": {
+        "id": "e22681d8-0b93-45e8-9b81-6092cc987f4a",
+        "name": "Cubanelle"
+      },
+      "losers": [
+        {
+          "id": "a0b8d7f2-0e3c-4f38-8db6-61277df15e30",
+          "name": "Cubanelle"
+        }
+      ],
       "winner_source": "rule"
     },
     {
       "n": 6,
       "label": "Chili Red + Chili Red (later)",
-      "winner": { "id": "937c760e-3093-4a30-a6bb-48baebbb3ab2", "name": "Chili Red" },
-      "losers": [{ "id": "1d206797-d229-42a3-b7d3-a105026e336e", "name": "Chili Red (later)" }],
+      "winner": {
+        "id": "937c760e-3093-4a30-a6bb-48baebbb3ab2",
+        "name": "Chili Red"
+      },
+      "losers": [
+        {
+          "id": "1d206797-d229-42a3-b7d3-a105026e336e",
+          "name": "Chili Red (later)"
+        }
+      ],
       "winner_source": "rule",
       "winner_note": "Rehearsed 13/13 on a branch off prod 2026-08-14. Status resolves to fruiting, not harvested, after V4-MERGESTATUS-001."
     },
     {
       "n": 7,
       "label": "Alaska Mix Nasturtium 1 + 2",
-      "winner": { "id": "8f84f21c-f2f8-4ead-9221-9c5add78036d", "name": "Alaska Mix Nasturtium 1" },
-      "losers": [{ "id": "7ea304c4-5ae5-4408-94e5-546d706e3392", "name": "Alaska Mix Nasturtium 2" }],
+      "winner": {
+        "id": "8f84f21c-f2f8-4ead-9221-9c5add78036d",
+        "name": "Alaska Mix Nasturtium 1"
+      },
+      "losers": [
+        {
+          "id": "7ea304c4-5ae5-4408-94e5-546d706e3392",
+          "name": "Alaska Mix Nasturtium 2"
+        }
+      ],
       "winner_source": "rule",
-      "winner_note": "Distinct variety_ids but BOTH named 'Alaska Mix' — a duplicate row in plant_varieties, agronomically benign. Tracked separately as V4-VARIETYDUP-001."
+      "winner_note": "Distinct variety_ids but BOTH named 'Alaska Mix' — a duplicate row in plant_varieties, agronomically benign. Tracked separately as V4-VARIETYDUP-001.",
+      "overrides": {
+        "variety_id": "a11dd600-84b4-4bd6-8611-f85336bc3c2e"
+      },
+      "overrides_source": "dave (default)",
+      "overrides_note": "Both variety rows are literally named 'Alaska Mix' — the known V4-VARIETYDUP-001 duplicate. Keeps the winner's row; either is equivalent."
     },
     {
       "n": 8,
       "label": "Edible Beauties + Flower Mix Seeds",
-      "winner": { "id": "e017a184-e238-4f2d-bc40-ff9cfde958c0", "name": "Edible Beauties" },
-      "losers": [{ "id": "cc32be66-2184-45ce-a593-cb2b0d570385", "name": "Edible Beauties Flower Mix Seeds" }],
+      "winner": {
+        "id": "e017a184-e238-4f2d-bc40-ff9cfde958c0",
+        "name": "Edible Beauties"
+      },
+      "losers": [
+        {
+          "id": "cc32be66-2184-45ce-a593-cb2b0d570385",
+          "name": "Edible Beauties Flower Mix Seeds"
+        }
+      ],
       "winner_source": "rule"
     },
     {
       "n": 9,
       "label": "French Tarragon ×2",
-      "winner": { "id": "6cfa5410-21ac-4023-98c9-c2dec406acd4", "name": "French Tarragon" },
-      "losers": [{ "id": "4e91b703-804a-4c03-93f5-2aa6ea91a9a0", "name": "French Tarragon" }],
+      "winner": {
+        "id": "6cfa5410-21ac-4023-98c9-c2dec406acd4",
+        "name": "French Tarragon"
+      },
+      "losers": [
+        {
+          "id": "4e91b703-804a-4c03-93f5-2aa6ea91a9a0",
+          "name": "French Tarragon"
+        }
+      ],
       "winner_source": "rule",
       "winner_note": "Russian tarragon is a DIFFERENT plant and is on the never-merge list; these two are both French."
     },
     {
       "n": 10,
       "label": "Marigolds + Marigolds (Mixed)",
-      "winner": { "id": "bbc6c5b6-dc20-4619-a446-e9d2b4a7987d", "name": "Marigolds" },
-      "losers": [{ "id": "91f3f1ee-c174-4443-b566-f7c3c9fd3d4c", "name": "Marigolds (Mixed)" }],
+      "winner": {
+        "id": "bbc6c5b6-dc20-4619-a446-e9d2b4a7987d",
+        "name": "Marigolds"
+      },
+      "losers": [
+        {
+          "id": "91f3f1ee-c174-4443-b566-f7c3c9fd3d4c",
+          "name": "Marigolds (Mixed)"
+        }
+      ],
       "winner_source": "rule",
       "winner_note": "2 live plant_anchor_derivation rows across the pair — the supersede path is exercised here."
     },
     {
       "n": 11,
       "label": "Purple Vienna Kohlrabi + Seeds",
-      "winner": { "id": "d2e8c2df-5a9e-4f24-abf7-665ba849cdfc", "name": "Purple Vienna Kohlrabi" },
-      "losers": [{ "id": "f441211e-c528-49d7-a6f3-5ed8433beb55", "name": "Purple Vienna Kohlrabi Seeds" }],
+      "winner": {
+        "id": "d2e8c2df-5a9e-4f24-abf7-665ba849cdfc",
+        "name": "Purple Vienna Kohlrabi"
+      },
+      "losers": [
+        {
+          "id": "f441211e-c528-49d7-a6f3-5ed8433beb55",
+          "name": "Purple Vienna Kohlrabi Seeds"
+        }
+      ],
       "winner_source": "rule",
       "winner_note": "Loss figures already written to prod 2026-08-14 (16 initial / 10 lost / 6 alive). The loser's 'germination failure' status was STALE — 2 replants did come up."
     },
     {
       "n": 12,
       "label": "Cilantro ×2",
-      "winner": { "id": "0c3e5712-2496-4d0e-92a7-e76b12f804b9", "name": "Cilantro" },
-      "losers": [{ "id": "83bc4fbf-7f77-4233-baa0-ac954de64ab8", "name": "Cilantro" }],
+      "winner": {
+        "id": "0c3e5712-2496-4d0e-92a7-e76b12f804b9",
+        "name": "Cilantro"
+      },
+      "losers": [
+        {
+          "id": "83bc4fbf-7f77-4233-baa0-ac954de64ab8",
+          "name": "Cilantro"
+        }
+      ],
       "winner_source": "rule",
-      "winner_note": "Merged over the crucible's objection — Dave: cilantro succession data is informative, not actionable."
+      "winner_note": "Merged over the crucible's objection — Dave: cilantro succession data is informative, not actionable.",
+      "overrides": {
+        "archived_at": "2026-07-31T03:12:01.33992+00:00"
+      },
+      "overrides_source": "dave (default)",
+      "overrides_note": "Keeps the LATER archive date (2026-07-30 23:12 ET, from the loser) over the winner's 2026-06-18. The merged row was archived when the last of the pair was."
     },
     {
       "n": 13,
       "label": "Cherry Rescue 1 + 2",
-      "winner": { "id": "4e589c00-e9b7-4f05-9ad4-ceb157c69be3", "name": "Cherry Rescue 1" },
-      "losers": [{ "id": "091debdc-ba77-487e-852d-19ace46c5b31", "name": "Cherry Rescue 2" }],
+      "winner": {
+        "id": "4e589c00-e9b7-4f05-9ad4-ceb157c69be3",
+        "name": "Cherry Rescue 1"
+      },
+      "losers": [
+        {
+          "id": "091debdc-ba77-487e-852d-19ace46c5b31",
+          "name": "Cherry Rescue 2"
+        }
+      ],
       "winner_source": "rule"
     },
     {
       "n": 14,
       "label": "Echeveria ×4",
-      "winner": { "id": "8a25017f-2678-4b02-8f66-8ae3ad7f14ef", "name": "Echeveria" },
+      "winner": {
+        "id": "8a25017f-2678-4b02-8f66-8ae3ad7f14ef",
+        "name": "Echeveria"
+      },
       "losers": [
-        { "id": "ca0196d8-c030-486f-a844-2296428cd65d", "name": "Echeveria 'Perle von Nurnberg'" },
-        { "id": "536898f5-ba07-47c3-8f8b-d85adfb15e54", "name": "Echeveria (mail order)" },
-        { "id": "0935edd3-1ddb-41d7-b2b9-3c3beeeecd9e", "name": "Love's Fire" }
+        {
+          "id": "ca0196d8-c030-486f-a844-2296428cd65d",
+          "name": "Echeveria 'Perle von Nurnberg'"
+        },
+        {
+          "id": "536898f5-ba07-47c3-8f8b-d85adfb15e54",
+          "name": "Echeveria (mail order)"
+        },
+        {
+          "id": "0935edd3-1ddb-41d7-b2b9-3c3beeeecd9e",
+          "name": "Love's Fire"
+        }
       ],
       "winner_source": "rule",
       "hold": true,

@@ -311,6 +311,57 @@ describe('mergeCore', () => {
     expect(r.status).toBe(200)
   })
 
+  it('WRITES the override it accepted — taking a ruling and discarding it is the worst outcome', async () => {
+    // Regression: the guarded columns were absent from `resolved` and from the UPDATE, so an
+    // override cleared the 422 and was then silently dropped — the winner kept its own value and the
+    // caller believed the ruling had landed. Found on a branch rehearsal where g12 Cilantro's
+    // archived_at override was taken and discarded. Strictly worse than refusing outright.
+    const plants = [
+      plantRow(WINNER, { archived_at: '2026-06-18T10:54:53Z', container_type: 'fabric_bag' }),
+      plantRow(LOSER1, { archived_at: '2026-07-31T03:12:01Z', container_type: 'fabric_bag' }),
+    ]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, {
+      winnerId: WINNER, loserIds: [LOSER1], ...ok,
+      overrides: { archived_at: '2026-07-31T03:12:01Z' },
+    })
+    expect(r.status).toBe(200)
+    expect(r.body.resolved.archived_at).toBe('2026-07-31T03:12:01Z')
+    // …and it must reach the actual UPDATE, not just the response body. The mock binds values as
+    // $N placeholders, so the literal never appears in the rendered text — assert the column is in
+    // the UPDATE, and pin in source that it is bound to resolved.archived_at rather than to some
+    // other expression that would happen to satisfy the runtime check above.
+    const update = sql.lastTransaction().find((t) => t.includes('UPDATE plants SET'))
+    expect(update).toMatch(/archived_at = \$\d+/)
+    expect(SRC.replace(/\s+/g, ' ')).toContain('archived_at = ${resolved.archived_at}')
+    for (const col of ['container_type', 'container_size', 'location_id', 'variety_id']) {
+      expect(update).toMatch(new RegExp(`${col} = \\$\\d+`))
+      expect(SRC.replace(/\s+/g, ' ')).toContain(`${col} = \${resolved.${col}}`)
+    }
+  })
+
+  it('keeps the winner value on a guarded column when no override is given', async () => {
+    const plants = [
+      plantRow(WINNER, { container_type: 'fabric_bag' }),
+      plantRow(LOSER1, { container_type: 'fabric_bag' }),
+    ]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(200)
+    expect(r.body.resolved.container_type).toBe('fabric_bag')
+  })
+
+  it('takes a losers non-null guarded value when the winner has none', async () => {
+    const plants = [
+      plantRow(WINNER, { location_id: null }),
+      plantRow(LOSER1, { location_id: 'loc-1' }),
+    ]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(200)
+    expect(r.body.resolved.location_id).toBe('loc-1')
+  })
+
   it('does not refuse when only one sibling carries a value — null is absent, not disagreement', async () => {
     const plants = [
       plantRow(WINNER, { container_type: 'fabric_bag' }),

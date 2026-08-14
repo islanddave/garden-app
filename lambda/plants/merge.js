@@ -363,6 +363,20 @@ export async function mergeCore(sql, {
   for (const col of PHENOLOGY_COLUMNS) {
     resolved[col] = overrides[col] ?? resolvePhenology(plants.map((p) => p[col]))
   }
+  // The DIVERGENCE_GUARDED columns must be resolved and WRITTEN too. Accepting an override and then
+  // not applying it is worse than not accepting one: the 422 clears, the caller believes the ruling
+  // landed, and the winner silently keeps its own value — precisely the silent default the guard
+  // exists to prevent. Caught on a branch rehearsal where g12 Cilantro's archived_at override was
+  // taken and discarded. If no override is supplied the group is uniform by construction (a
+  // divergence would have 422'd above), so the winner's value is the only legal outcome — except
+  // where the winner's own value is NULL and a loser carries the group's single value, which is the
+  // `?? first non-null` arm.
+  for (const col of DIVERGENCE_GUARDED) {
+    resolved[col] = overrides[col]
+      ?? winner[col]
+      ?? plants.map((p) => p[col]).find((v) => v != null)
+      ?? null
+  }
 
   if (dryRun) {
     return { status: 200, body: {
@@ -504,6 +518,11 @@ export async function mergeCore(sql, {
       germinated_at = ${resolved.germinated_at},
       transplanted_at = ${resolved.transplanted_at},
       planted_out_at = ${resolved.planted_out_at},
+      container_type = ${resolved.container_type},
+      container_size = ${resolved.container_size},
+      location_id = ${resolved.location_id},
+      variety_id = ${resolved.variety_id},
+      archived_at = ${resolved.archived_at},
       version = version + 1,
       updated_at = now()
     WHERE id = ${winnerId}

@@ -106,6 +106,11 @@ let plannedTotal = 0; let droppedTotal = 0
 for (const g of groups) {
   const ids = [g.winner.id, ...g.losers.map((l) => l.id)]
   const tag = `g${String(g.n).padStart(2)} ${g.label}`
+  // A recorded ruling must be VISIBLE in the run log — an override silently applied is
+  // indistinguishable from the winner-takes-all default the 422 guard exists to prevent.
+  const ruling = g.overrides
+    ? Object.entries(g.overrides).map(([k, v]) => `${k}=${v}`).join(' ')
+    : null
 
   if (g.hold) {
     held.push(g)
@@ -141,6 +146,7 @@ for (const g of groups) {
   const dry = await mergeCore(sql, {
     winnerId: g.winner.id, loserIds: g.losers.map((l) => l.id), opId: `${opId}-dry`,
     userId: HOUSEHOLD[0], householdIds: HOUSEHOLD, groupLabel: g.label, dryRun: true,
+    overrides: g.overrides ?? {},
   })
   // A 422 is "a human must rule on this", not a fault. In DRY RUN we collect them all so the whole
   // decision list lands in one pass — surveying 13 groups one abort at a time is useless. In EXECUTE
@@ -166,6 +172,7 @@ for (const g of groups) {
 
   if (!EXECUTE) {
     console.log(`PLAN  ${tag}\n      ${ids.length} rows -> 1 · ${money(planned)} events would be dropped · winner ${g.winner.name}`)
+    if (ruling) console.log(`      ruling (${g.overrides_source}): ${ruling}`)
     console.log(`      status -> ${dry.body?.resolved?.status ?? '?'}\n`)
     continue
   }
@@ -174,6 +181,7 @@ for (const g of groups) {
   const run = await mergeCore(sql, {
     winnerId: g.winner.id, loserIds: g.losers.map((l) => l.id), opId, fingerprint,
     userId: HOUSEHOLD[0], householdIds: HOUSEHOLD, groupLabel: g.label,
+    overrides: g.overrides ?? {},
   })
   if (run.status !== 200) {
     failed.push({ g, why: `merge ${run.status}: ${JSON.stringify(run.body)}` })
@@ -194,7 +202,9 @@ for (const g of groups) {
 
   droppedTotal += run.body.events_dropped
   done.push({ g, dropped: run.body.events_dropped, repointed: run.body.rows_repointed })
-  console.log(`OK    ${tag}\n      ${money(run.body.events_dropped)} dropped · ${run.body.rows_repointed} repointed · winner ${g.winner.name}\n`)
+  console.log(`OK    ${tag}\n      ${money(run.body.events_dropped)} dropped · ${run.body.rows_repointed} repointed · winner ${g.winner.name}`)
+  if (ruling) console.log(`      ruling (${g.overrides_source}): ${ruling}`)
+  console.log('')
 }
 
 const after = await audit(allIds)
